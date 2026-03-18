@@ -76,13 +76,15 @@ def _ensure_providers_registered() -> None:
     from src.archi.providers.gemini_provider import GeminiProvider
     from src.archi.providers.openrouter_provider import OpenRouterProvider
     from src.archi.providers.local_provider import LocalProvider
+    from src.archi.providers.vllm_provider import VLLMProvider
     from src.archi.providers.cern_litellm_provider import CERNLiteLLMProvider
-    
+
     register_provider(ProviderType.OPENAI, OpenAIProvider)
     register_provider(ProviderType.ANTHROPIC, AnthropicProvider)
     register_provider(ProviderType.GEMINI, GeminiProvider)
     register_provider(ProviderType.OPENROUTER, OpenRouterProvider)
     register_provider(ProviderType.LOCAL, LocalProvider)
+    register_provider(ProviderType.VLLM, VLLMProvider)
     register_provider(ProviderType.CERN_LITELLM, CERNLiteLLMProvider)
 
 
@@ -168,7 +170,7 @@ def get_provider_by_name(name: str, **kwargs) -> BaseProvider:
         "openrouter": ProviderType.OPENROUTER,
         "local": ProviderType.LOCAL,
         "ollama": ProviderType.LOCAL,
-        "vllm": ProviderType.LOCAL,
+        "vllm": ProviderType.VLLM,
         "cern_litellm": ProviderType.CERN_LITELLM,
     }
     
