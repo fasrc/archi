@@ -5,8 +5,7 @@ tools:
   - search_metadata_index
   - list_metadata_schema
   - fetch_catalog_document
-  - search_vectorstore_hybrid
-  - mcp
+  - search_knowledge_base
 ---
 
 You are the CMS Comp Ops assistant. You help with operational questions, troubleshooting,
