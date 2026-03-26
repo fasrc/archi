@@ -1,6 +1,6 @@
 # vLLM Provider
 
-Run open-weight models on your own GPUs using [vLLM](https://docs.vllm.ai/) as an inference backend. Archi deploys vLLM as a **sidecar container** alongside the chatbot — no external server management required.
+Run open-weight models on your own GPUs using [vLLM](https://docs.vllm.ai/) as an inference backend. Archi connects to any vLLM server via its OpenAI-compatible API — you deploy and manage vLLM independently.
 
 ## Why vLLM?
 
@@ -14,89 +14,93 @@ Run open-weight models on your own GPUs using [vLLM](https://docs.vllm.ai/) as a
 
 vLLM is the best fit when you need high-throughput local inference, multi-GPU support, or full data privacy with tool-calling capabilities.
 
-## Prerequisites
+## Architecture
 
-- NVIDIA GPUs with sufficient VRAM for your chosen model
-- NVIDIA drivers and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed
-- Container runtime configured for GPU access (see [Advanced Setup](advanced_setup_deploy.md#running-llms-locally-on-your-gpus))
+```
+┌──────────────────────┐         ┌──────────────────────┐
+│   archi deployment    │         │  vLLM (external)     │
+│                      │         │                      │
+│  ┌────────────────┐  │  HTTP   │  Docker container    │
+│  │ VLLMProvider   │──│────────>│  OR bare metal       │
+│  │ (Python client)│  │  :8000  │  OR Slurm job        │
+│  └────────────────┘  │  /v1/*  │  OR Kubernetes pod   │
+│                      │         │                      │
+└──────────────────────┘         └──────────────────────┘
+```
+
+Archi's `VLLMProvider` is a thin client that talks to vLLM's `/v1` API using the same `ChatOpenAI` LangChain class it would use for the OpenAI API. From the pipeline's perspective, vLLM looks identical to a remote OpenAI endpoint.
+
+**Archi does not manage the vLLM server.** You deploy, configure, and maintain vLLM independently — whether as a Docker container, a bare metal process, a Slurm job, or a Kubernetes pod. Archi only needs a `base_url` to connect.
 
 ## Quick Start
 
-### 1. Configure your deployment
+### 1. Start a vLLM server
 
-In your config YAML, reference models with the `vllm/` provider prefix:
+See [Running vLLM](#running-vllm) below for Docker, bare metal, and Slurm examples.
+
+### 2. Configure archi
+
+In your config YAML, set up the vLLM provider with the URL of your server:
 
 ```yaml
-archi:
-  pipeline_map:
-    CMSCompOpsAgent:
-      models:
-        required:
-          agent_model: vllm/Qwen/Qwen3-8B
-
 services:
-  vllm:
-    model: Qwen/Qwen3-8B          # HuggingFace model ID
-    tool_parser: hermes            # tool-call parser (optional)
+  chat_app:
+    default_provider: vllm
+    default_model: "vllm:Qwen/Qwen3-8B"
+    providers:
+      vllm:
+        enabled: true
+        base_url: http://localhost:8000/v1  # URL of your vLLM server
+        default_model: "Qwen/Qwen3-8B"
+        models:
+          - "vllm:Qwen/Qwen3-8B"
 ```
 
-> **Model naming**: vLLM uses HuggingFace model IDs (e.g. `Qwen/Qwen3-8B`), not Ollama-style names (e.g. `Qwen/Qwen3:8B`). Make sure the model ID matches what is available on HuggingFace Hub.
-
-### 2. Deploy
+### 3. Deploy archi
 
 ```bash
 archi create -n my-deployment \
   -c config.yaml \
   -e .env \
-  --services chatbot,vllm-server \
-  --gpu-ids all
+  --services chatbot
 ```
 
-The CLI will:
-
-1. Add the `vllm-server` sidecar to Docker Compose
-2. Wire `VLLM_BASE_URL` into the chatbot container
-3. Set the chatbot to wait for vLLM's health check before starting
-
-### 3. Verify
-
-Once the deployment is up, check the vLLM server:
+### 4. Verify
 
 ```bash
+# Check vLLM is serving
 curl http://localhost:8000/v1/models
+
+# Check archi can reach it
+curl http://localhost:7861/api/health
 ```
-
-You should see your model listed in the response.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│              Docker Compose stack                │
-│                                                  │
-│  ┌──────────┐    ┌────────────┐    ┌──────────┐ │
-│  │ chatbot  │───>│ vllm-server│    │ postgres │ │
-│  │ (Flask)  │    │ (sidecar)  │    │          │ │
-│  └──────────┘    └────────────┘    └──────────┘ │
-│      :7861           :8000             :5432     │
-│                    GPU access                    │
-└─────────────────────────────────────────────────┘
-```
-
-The vLLM server runs as a **sidecar** — a companion container in the same Compose stack. It:
-
-- Exposes an OpenAI-compatible `/v1` API on port 8000
-- Receives requests from the chatbot over the Docker network
-- Loads the model onto GPU at startup and serves it continuously
-- Reports health via `/v1/models` (chatbot waits for this before starting)
-
-The chatbot talks to vLLM using the same `ChatOpenAI` LangChain class it would use for the OpenAI API. From the pipeline's perspective, vLLM looks identical to a remote OpenAI endpoint.
 
 ## Configuration Reference
 
-### Config YAML
+### Provider settings
 
-#### Model references
+The vLLM provider is configured under `services.chat_app.providers.vllm`:
+
+```yaml
+services:
+  chat_app:
+    providers:
+      vllm:
+        enabled: true
+        base_url: http://localhost:8000/v1
+        default_model: "Qwen/Qwen3-8B"
+        models:
+          - "vllm:Qwen/Qwen3-8B"
+```
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Enable the vLLM provider |
+| `base_url` | string | `http://localhost:8000/v1` | vLLM server OpenAI-compatible endpoint |
+| `default_model` | string | — | HuggingFace model ID to use for inference |
+| `models` | list | — | Available model IDs for the UI model selector |
+
+### Model references
 
 Anywhere a model is referenced in `pipeline_map`, use the `vllm/` prefix:
 
@@ -111,134 +115,95 @@ archi:
 
 The part after `vllm/` must match the HuggingFace model ID that vLLM is serving.
 
-#### vLLM provider settings
+> **Model naming**: vLLM uses HuggingFace model IDs (e.g. `Qwen/Qwen3-8B`), not Ollama-style names (e.g. `Qwen/Qwen3:8B`).
 
-The vLLM provider is configured under `services.chat_app.providers.vllm` in your config YAML. At minimum you need `enabled` and `default_model`:
+## Running vLLM
 
-```yaml
-services:
-  chat_app:
-    providers:
-      vllm:
-        enabled: true
-        base_url: http://localhost:8000/v1
-        default_model: "Qwen/Qwen3-8B"
-        tool_call_parser: hermes          # optional, default: hermes
-        models:
-          - "Qwen/Qwen3-8B"
-```
+Archi does not manage the vLLM server. Below are examples for common deployment scenarios.
 
-| Setting | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | bool | `false` | Enable the vLLM provider |
-| `base_url` | string | `http://localhost:8000/v1` | vLLM server OpenAI-compatible endpoint |
-| `default_model` | string | `Qwen/Qwen2.5-7B-Instruct-1M` | HuggingFace model ID to serve |
-| `tool_call_parser` | string | `hermes` | Parser for structured tool calls (`hermes`, `mistral`, `llama3_json`) |
-| `models` | list | — | Available model IDs for the UI model selector |
-
-#### vLLM Server Tuning
-
-When archi manages the vLLM sidecar container (deployed via `--services vllm-server`), you can configure server launch arguments alongside the provider settings above. Each key is translated to a vLLM CLI flag at container startup. All keys are optional — when omitted, vLLM's own defaults apply.
-
-> **Note**: These keys only affect the managed vLLM sidecar container. If you are pointing `base_url` at an external vLLM server, configure that server directly instead.
-
-| Key | Type | Default | When to change |
-|---|---|---|---|
-| `gpu_memory_utilization` | float | `0.9` | Model barely fits in VRAM, or you want to reserve GPU memory for other processes |
-| `max_model_len` | int | model default | Reduce context window to lower memory usage, or increase it for long-document workloads |
-| `tensor_parallel_size` | int | `1` | Shard a large model across multiple GPUs |
-| `dtype` | string | `auto` | Force a specific weight precision (`float16`, `bfloat16`) instead of auto-detection |
-| `quantization` | string | none | Run quantized model weights (`awq`, `gptq`, `fp8`) to reduce memory |
-| `enforce_eager` | bool | `false` | Disable CUDA graph compilation to save memory at the cost of throughput |
-| `max_num_seqs` | int | `256` | Limit concurrent sequences to reduce memory pressure under high load |
-| `enable_prefix_caching` | bool | `true` | Disable KV cache prefix sharing if it causes issues with your model |
-
-##### Complete config example
-
-A single-GPU deployment with memory tuning:
-
-```yaml
-services:
-  chat_app:
-    providers:
-      vllm:
-        enabled: true
-        base_url: http://localhost:8000/v1
-        default_model: "Qwen/Qwen3-8B"
-        tool_call_parser: hermes
-        models:
-          - "Qwen/Qwen3-8B"
-        gpu_memory_utilization: 0.85
-        max_model_len: 8192
-```
-
-##### `engine_args` passthrough
-
-For any vLLM flag not covered by a named key above, use the `engine_args` map. Each entry is passed as `--<key> <value>` to the vLLM server. Keys use kebab-case matching vLLM's CLI flags. For boolean flags that take no argument (e.g. `--trust-remote-code`), use an empty string as the value. Do not duplicate flags that already have a named key above.
-
-```yaml
-services:
-  chat_app:
-    providers:
-      vllm:
-        engine_args:
-          swap-space: 8        # CPU swap space per GPU in GiB (default: 4)
-          seed: 42
-          trust-remote-code: "" # bare flag (no value) — use "" for boolean flags
-```
-
-##### Multi-GPU example
-
-Sharding a 30B model across 4 GPUs:
-
-```yaml
-services:
-  chat_app:
-    providers:
-      vllm:
-        enabled: true
-        base_url: http://localhost:8000/v1
-        default_model: "Qwen/Qwen3-30B-A3B-Instruct"
-        tool_call_parser: hermes
-        models:
-          - "Qwen/Qwen3-30B-A3B-Instruct"
-        gpu_memory_utilization: 0.92
-        tensor_parallel_size: 4
-        max_model_len: 16384
-        dtype: bfloat16
-        engine_args:
-          swap-space: 8
-```
-
-Deploy with all GPUs:
+### Docker
 
 ```bash
-archi create -n my-deployment \
-  -c config.yaml \
-  --services chatbot,vllm-server \
-  --gpu-ids 0,1,2,3
+docker run -d \
+  --name vllm-server \
+  --gpus all \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -p 8000:8000 \
+  -e NCCL_P2P_DISABLE=1 \
+  vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-8B \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes
 ```
 
-### Environment Variables
+Key flags:
+- `--gpus all` — GPU passthrough
+- `--ipc=host` — required for NCCL multi-GPU communication (Docker's default 64MB shm causes crashes)
+- `--ulimit memlock=-1` — prevents OS from swapping out VRAM-mapped buffers
+- `NCCL_P2P_DISABLE=1` — required for V100s and older GPU topologies
 
-| Variable | Default | Description |
-|---|---|---|
-| `VLLM_BASE_URL` | `http://vllm-server:8000/v1` | Override the vLLM server URL (auto-set by the CLI) |
+### Bare metal
 
-You generally don't need to set `VLLM_BASE_URL` manually — the CLI injects it into the chatbot container. It is useful if you are running vLLM on a separate host.
+```bash
+pip install vllm
 
-### Host Networking
+python -m vllm.entrypoints.openai.api_server \
+  --model Qwen/Qwen3-8B \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes \
+  --host 0.0.0.0 \
+  --port 8000
+```
 
-When deploying with `--hostmode`, the vLLM server uses `network_mode: host` and all services communicate via `localhost`. Without host mode, services communicate via Docker DNS (`vllm-server:8000`).
+### Slurm
+
+```bash
+#!/bin/bash
+#SBATCH --gres=gpu:4
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=128G
+#SBATCH --time=7-00:00:00
+
+module load cuda
+source activate vllm
+
+python -m vllm.entrypoints.openai.api_server \
+  --model Qwen/Qwen3-8B \
+  --tensor-parallel-size 4 \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes \
+  --host 0.0.0.0 \
+  --port 8000
+```
+
+Then set `base_url` in your archi config to the Slurm node's address.
+
+### Common vLLM server flags
+
+These are configured on the vLLM server itself, not in archi:
+
+| Flag | Description |
+|---|---|
+| `--gpu-memory-utilization 0.9` | Fraction of GPU VRAM to use (0.0-1.0) |
+| `--max-model-len 8192` | Cap context window to reduce memory |
+| `--tensor-parallel-size 4` | Shard model across N GPUs |
+| `--dtype bfloat16` | Force weight precision |
+| `--quantization awq` | Run quantized weights (awq, gptq, fp8) |
+| `--enforce-eager` | Disable CUDA graphs to save memory |
+| `--max-num-seqs 256` | Limit concurrent sequences |
+| `--enable-auto-tool-choice` | Enable tool calling pathway |
+| `--tool-call-parser hermes` | Parser for structured tool calls |
+
+See [vLLM documentation](https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html) for the full reference.
 
 ## Tool Calling
 
-vLLM supports function/tool calling for ReAct agents, but requires explicit server flags. Archi configures these automatically:
+vLLM supports function/tool calling for ReAct agents, but requires explicit server flags:
 
 - `--enable-auto-tool-choice` — enables the tool calling pathway
 - `--tool-call-parser <parser>` — selects the parser for the model family
-
-The `tool_parser` setting should match your model's chat template:
 
 | Model family | Parser |
 |---|---|
@@ -246,55 +211,18 @@ The `tool_parser` setting should match your model's chat template:
 | Mistral / Mixtral | `mistral` |
 | Llama 3 | `llama3_json` |
 
-If tool calling is not needed for your use case, these flags are harmless and can be left at defaults.
-
-## Smoke Testing
-
-To run smoke tests against a vLLM deployment:
-
-```bash
-export SMOKE_PROVIDER=vllm
-export SMOKE_VLLM_BASE_URL=http://localhost:8000/v1
-export SMOKE_VLLM_MODEL=Qwen/Qwen3-8B
-scripts/dev/run_smoke_preview.sh my-deployment
-```
-
-This runs preflight checks (verifies vLLM is reachable) followed by a basic chat completion test through the chatbot endpoint.
+These flags must be set when starting the vLLM server, not in archi's config.
 
 ## Troubleshooting
 
-### vLLM server not starting
+### Archi can't reach vLLM
 
-**Symptom**: Container exits immediately or stays in a restart loop.
+**Symptom**: `ConnectionError: Connection refused` or timeout.
 
-**Check logs**:
-```bash
-docker logs vllm-server-<deployment-name>
-```
-
-Common causes:
-
-- **Insufficient VRAM**: The model doesn't fit in GPU memory. Options:
-    - Lower `gpu_memory_utilization` (e.g. `0.7`) to leave headroom for other processes
-    - Set `max_model_len` to a smaller value (e.g. `4096`) to reduce KV cache memory
-    - Add `quantization: awq` or `quantization: gptq` if the model has quantized weights available
-    - Set `enforce_eager: true` to disable CUDA graphs (saves memory, reduces throughput)
-    - Increase `tensor_parallel_size` and add more GPUs via `--gpu-ids`
-    - Try a smaller model
-- **Missing NVIDIA runtime**: Ensure the NVIDIA Container Toolkit is installed and configured.
-- **/dev/shm too small**: vLLM warns at startup if shared memory is below 1 GB. The container uses `ipc: host` by default, but if that is restricted, increase `shm_size`.
-- **Invalid engine argument**: If the vLLM log shows `unrecognized arguments`, check for typos in `engine_args` keys (must be kebab-case, e.g. `swap-space` not `swap_space`) or boolean flags that need an empty-string value (`""`).
-
-### Chatbot can't reach vLLM
-
-**Symptom**: `ConnectionError: Name or service not known` or `Connection refused`.
-
-- Verify both containers are on the same Docker network (default when not using `--hostmode`).
-- Check that `VLLM_BASE_URL` in the chatbot container resolves correctly:
-  ```bash
-  docker exec <chatbot-container> curl http://vllm-server:8000/v1/models
-  ```
-- If using `--hostmode`, ensure `VLLM_BASE_URL` uses `localhost` instead of `vllm-server`.
+- Verify vLLM is running: `curl http://<vllm-host>:8000/v1/models`
+- If vLLM is on a different host, ensure network connectivity and firewall rules allow port 8000
+- If running in Docker, ensure the archi container can reach the vLLM host (use `--network=host` or configure Docker networking)
+- Check that `base_url` in your archi config matches the actual vLLM server address
 
 ### Model not found (404)
 
@@ -302,14 +230,14 @@ Common causes:
 
 vLLM uses HuggingFace model IDs, not Ollama-style names. Check:
 
-- Config uses dashes, not colons: `vllm/Qwen/Qwen3-8B` (not `Qwen/Qwen3:8B`)
-- The model ID matches exactly what vLLM is serving (`curl localhost:8000/v1/models`)
+- Config uses the exact model ID from `curl <vllm-host>:8000/v1/models`
+- Use dashes, not colons: `Qwen/Qwen3-8B` (not `Qwen/Qwen3:8B`)
 
 ### Tool calling returns 400
 
 **Symptom**: `400 Bad Request: "auto" tool choice requires --enable-auto-tool-choice`.
 
-This means the vLLM server wasn't started with tool calling flags. If you are deploying through the CLI, this is handled automatically. If running vLLM manually, add:
+The vLLM server wasn't started with tool calling flags. Add to your vLLM launch command:
 
 ```bash
 --enable-auto-tool-choice --tool-call-parser hermes
@@ -317,4 +245,15 @@ This means the vLLM server wasn't started with tool calling flags. If you are de
 
 ### Slow first response
 
-The first request after startup may be slow (30-60s) while vLLM compiles CUDA kernels and warms up. Subsequent requests will be significantly faster. The chatbot's `depends_on` health check ensures it doesn't send requests before vLLM is ready, but the health check only confirms the server is listening — not that the first compilation is complete. If startup compilation time is a problem, set `enforce_eager: true` to skip CUDA graph compilation (at the cost of lower throughput).
+The first request after startup may be slow (30-60s) while vLLM compiles CUDA kernels. Subsequent requests will be significantly faster. If this is a problem, start vLLM with `--enforce-eager` to skip CUDA graph compilation (at the cost of lower throughput).
+
+### Insufficient VRAM
+
+If vLLM crashes or the model doesn't fit in GPU memory:
+
+- Lower `--gpu-memory-utilization` (e.g. `0.7`)
+- Set `--max-model-len` to a smaller value (e.g. `4096`)
+- Add `--quantization awq` or `--quantization gptq` if quantized weights are available
+- Set `--enforce-eager` to disable CUDA graphs
+- Increase `--tensor-parallel-size` and use more GPUs
+- Try a smaller model

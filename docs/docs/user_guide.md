@@ -413,18 +413,19 @@ To use a local model, specify one of the local model classes in `models.py`:
 
 ### vLLM
 
-For high-throughput GPU inference with tool-calling support, Archi can deploy a [vLLM](https://docs.vllm.ai/) server as a sidecar container. Reference models with the `vllm/` prefix in your config:
+For high-throughput GPU inference with tool-calling support, Archi can connect to an external [vLLM](https://docs.vllm.ai/) server. Reference models with the `vllm/` prefix in your config:
 
 ```yaml
-archi:
-  pipeline_map:
-    CMSCompOpsAgent:
-      models:
-        required:
-          agent_model: vllm/Qwen/Qwen3-8B
+services:
+  chat_app:
+    providers:
+      vllm:
+        enabled: true
+        base_url: http://your-vllm-host:8000/v1
+        default_model: "Qwen/Qwen3-8B"
 ```
 
-Deploy with `--services chatbot,vllm-server --gpu-ids all`. See the [vLLM Provider](vllm.md) page for full configuration, architecture details, and troubleshooting.
+You deploy and manage the vLLM server independently. See the [vLLM Provider](vllm.md) page for setup examples (Docker, bare metal, Slurm) and troubleshooting.
 
 ### Models via APIs
 
@@ -683,7 +684,6 @@ Required secrets for PostgreSQL:
 ```bash
 PG_PASSWORD=your_secure_password
 ```
->>>>>>> 9b860a3f (docs: add vllm provider documentation)
 
 ---
 

@@ -45,7 +45,6 @@ def _format_documents_for_llm(
             doc.metadata.get("filename")
             or "unknown source"
         )
-        url = doc.metadata.get("url") or ""
         hash = (
             doc.metadata.get("resource_hash")
             or "n/a"
@@ -54,8 +53,6 @@ def _format_documents_for_llm(
         if len(text) > max_chars:
             text = f"{text[:max_chars].rstrip()}..."
         header = f"[{idx}] {source} (hash={hash})"
-        if url:
-            header += f"\nURL: {url}"
         footer = f"Score: {score:.4f}" if isinstance(score, (float, int)) else "Score: n/a"
         snippets.append(f"{header}\n{footer}\n{text}")
 
