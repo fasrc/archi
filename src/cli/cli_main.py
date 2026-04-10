@@ -54,6 +54,7 @@ def cli():
 @click.option('--verbosity', '-v', type=int, default=3, help="Logging verbosity level (0-4)")
 @click.option('--force', '-f', is_flag=True, help="Force deployment creation, overwriting existing deployment")
 @click.option('--dry', '--dry-run', is_flag=True, help="Validate configuration and show what would be created without actually deploying")
+@click.option('--dev', is_flag=True, help="Enable dev mode: mount repo source code and agents into containers for restart-only development")
 def create(name: str, config_files: list, config_dir: str, env_file: str, services: list,
            force: bool, dry: bool, verbosity: int, **other_flags):
     """Create an ARCHI deployment with selected services and data sources."""

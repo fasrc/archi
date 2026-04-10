@@ -35,6 +35,9 @@ services:
       - {{ data_manager_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./weblists:/root/archi/weblists
+      {%- if dev_mode %}
+      - {{ repo_path }}/src:/root/archi/src
+      {%- endif %}
     logging:
       options:
         max-size: 10m
@@ -134,6 +137,9 @@ services:
       VERBOSITY: {{ verbosity }}
       # Allow overriding Ollama host via env so containers can reach host daemon
       OLLAMA_HOST: ${OLLAMA_HOST:-}
+      {%- if dev_mode %}
+      PYTHONDONTWRITEBYTECODE: 1
+      {%- endif %}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -160,7 +166,12 @@ services:
       - {{ data_manager_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
+      {%- if dev_mode %}
+      - {{ repo_path }}/src:/root/archi/src
+      - {{ repo_path }}/config/agents:/root/archi/agents
+      {%- else %}
       - ./data/agents:/root/archi/agents
+      {%- endif %}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -283,7 +294,12 @@ services:
       - {{ grader_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
+      {%- if dev_mode %}
+      - {{ repo_path }}/src:/root/archi/src
+      - {{ repo_path }}/config/agents:/root/archi/agents:ro
+      {%- else %}
       - ./data/agents:/root/archi/agents:ro
+      {%- endif %}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -345,7 +361,12 @@ services:
       - {{ data_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
+      {%- if dev_mode %}
+      - {{ repo_path }}/src:/root/archi/src
+      - {{ repo_path }}/config/agents:/root/archi/agents:ro
+      {%- else %}
       - ./data/agents:/root/archi/agents:ro
+      {%- endif %}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -405,7 +426,12 @@ services:
       - {{ data_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
+      {%- if dev_mode %}
+      - {{ repo_path }}/src:/root/archi/src
+      - {{ repo_path }}/config/agents:/root/archi/agents:ro
+      {%- else %}
       - ./data/agents:/root/archi/agents:ro
+      {%- endif %}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -467,7 +493,12 @@ services:
       - {{ data_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
+      {%- if dev_mode %}
+      - {{ repo_path }}/src:/root/archi/src
+      - {{ repo_path }}/config/agents:/root/archi/agents:ro
+      {%- else %}
       - ./data/agents:/root/archi/agents:ro
+      {%- endif %}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -526,7 +557,12 @@ services:
     volumes:
       - ./config.yaml:/root/archi/config.yaml
       - ./data/prompts:/root/archi/data/prompts:ro
+      {%- if dev_mode %}
+      - {{ repo_path }}/src:/root/archi/src
+      - {{ repo_path }}/config/agents:/root/archi/agents:ro
+      {%- else %}
       - ./data/agents:/root/archi/agents:ro
+      {%- endif %}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -604,7 +640,12 @@ services:
       - ./queries.txt:/root/archi/QandA.txt
       - {{ benchmarking_dest }}:/root/archi/benchmarks
       - ./data/prompts:/root/archi/data/prompts:ro
+      {%- if dev_mode %}
+      - {{ repo_path }}/src:/root/archi/src
+      - {{ repo_path }}/config/agents:/root/archi/agents:ro
+      {%- else %}
       - ./data/agents:/root/archi/agents:ro
+      {%- endif %}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
