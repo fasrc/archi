@@ -486,10 +486,17 @@ const API = {
 const Markdown = {
   init() {
     if (typeof marked !== 'undefined') {
+      const renderer = new marked.Renderer();
+      const defaultLinkRenderer = renderer.link.bind(renderer);
+      renderer.link = function(href, title, text) {
+        const html = defaultLinkRenderer(href, title, text);
+        return html.replace('<a ', '<a target="_blank" rel="noopener noreferrer" ');
+      };
       marked.setOptions({
         breaks: true,
         gfm: true,
         highlight: (code, lang) => this.highlightCode(code, lang),
+        renderer: renderer,
       });
     }
   },
