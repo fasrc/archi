@@ -47,8 +47,6 @@ Send a chat completion request. Supports both streaming and non-streaming modes.
 | `model` | string | Yes | Config name from `/v1/models` |
 | `messages` | array | Yes | Array of `{role, content}` objects |
 | `stream` | boolean | No | Enable SSE streaming (default: `false`) |
-| `temperature` | float | No | Override pipeline temperature |
-| `max_tokens` | integer | No | Override max tokens |
 
 **Example request:**
 

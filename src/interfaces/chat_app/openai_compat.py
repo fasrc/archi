@@ -191,9 +191,9 @@ def chat_completions():
     request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
 
     if stream:
-        return _streaming_response(request_id, model, stream_kwargs, conversation_id, query)
+        return _streaming_response(request_id, model, stream_kwargs)
     else:
-        return _non_streaming_response(request_id, model, stream_kwargs, conversation_id, query)
+        return _non_streaming_response(request_id, model, stream_kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +216,7 @@ def _extract_delta(content, accumulated):
 # Streaming response
 # ---------------------------------------------------------------------------
 
-def _streaming_response(request_id, model, stream_kwargs, conversation_id, query):
+def _streaming_response(request_id, model, stream_kwargs):
     """Return an SSE streaming response."""
 
     def generate():
@@ -250,7 +250,6 @@ def _streaming_response(request_id, model, stream_kwargs, conversation_id, query
                     yield _sse_chunk(request_id, model, finish_reason="stop")
                     yield "data: [DONE]\n\n"
 
-                    _persist_messages(conversation_id, query, accumulated[0])
                     return
 
                 elif event_type == "error":
@@ -259,20 +258,17 @@ def _streaming_response(request_id, model, stream_kwargs, conversation_id, query
                     yield _sse_chunk(request_id, model, finish_reason="stop")
                     yield "data: [DONE]\n\n"
 
-                    _persist_messages(conversation_id, query, None)
                     return
 
             # No final event received — close the stream
             yield _sse_chunk(request_id, model, finish_reason="stop")
             yield "data: [DONE]\n\n"
-            _persist_messages(conversation_id, query, accumulated[0])
 
         except Exception as exc:
             logger.error(f"/v1 streaming error: {exc}", exc_info=True)
-            yield _sse_chunk(request_id, model, content=f"\n\n[Error: {exc}]")
+            yield _sse_chunk(request_id, model, content="\n\n[Error: server error; see chat logs for message]")
             yield _sse_chunk(request_id, model, finish_reason="stop")
             yield "data: [DONE]\n\n"
-            _persist_messages(conversation_id, query, None)
 
     return Response(
         generate(),
@@ -288,7 +284,7 @@ def _streaming_response(request_id, model, stream_kwargs, conversation_id, query
 # Non-streaming response
 # ---------------------------------------------------------------------------
 
-def _non_streaming_response(request_id, model, stream_kwargs, conversation_id, query):
+def _non_streaming_response(request_id, model, stream_kwargs):
     """Accumulate from stream() and return a complete JSON response."""
     final_content = ""
     source_documents = []
@@ -299,11 +295,11 @@ def _non_streaming_response(request_id, model, stream_kwargs, conversation_id, q
             event_type = event.get("type", "")
 
             if event_type == "final":
-                # The final event carries the complete PipelineOutput;
-                # use it directly instead of accumulating chunks.
+                # The final event's response is a plain string from
+                # ChatWrapper._finalize_result — use it directly.
                 response = event.get("response")
                 if response:
-                    final_content = response.answer
+                    final_content = response or ""
                 docs = event.get("source_documents", [])
                 scores_list = event.get("retriever_scores", [])
                 if docs:
@@ -312,19 +308,15 @@ def _non_streaming_response(request_id, model, stream_kwargs, conversation_id, q
 
             elif event_type == "error":
                 error_msg = event.get("message", "Unknown error")
-                _persist_messages(conversation_id, query, None)
                 return _openai_error(error_msg, "server_error", 500)
 
     except Exception as exc:
         logger.error(f"/v1 non-streaming error: {exc}", exc_info=True)
-        _persist_messages(conversation_id, query, None)
-        return _openai_error(str(exc), "server_error", 500)
+        return _openai_error("server error; see chat logs for message", "server_error", 500)
 
     citation_text = format_citations(source_documents, source_scores)
     if citation_text:
         final_content += citation_text
-
-    _persist_messages(conversation_id, query, final_content)
 
     return jsonify({
         "id": request_id,
@@ -411,22 +403,11 @@ def _get_or_create_conversation(external_chat_id, user_id, client_id):
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    "SELECT conversation_id FROM conversation_metadata WHERE external_chat_id = %s",
-                    (external_chat_id,)
-                )
-                row = cursor.fetchone()
-                if row:
-                    cursor.execute(
-                        "UPDATE conversation_metadata SET last_message_at = NOW() WHERE conversation_id = %s",
-                        (row[0],)
-                    )
-                    conn.commit()
-                    return row[0]
-
-                cursor.execute(
                     """
                     INSERT INTO conversation_metadata (user_id, client_id, title, external_chat_id)
                     VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (external_chat_id) WHERE external_chat_id IS NOT NULL
+                    DO UPDATE SET last_message_at = NOW()
                     RETURNING conversation_id
                     """,
                     (user_id, client_id, "Open WebUI Chat", external_chat_id)
@@ -441,37 +422,3 @@ def _get_or_create_conversation(external_chat_id, user_id, client_id):
         logger.error(f"Failed to get/create conversation for {external_chat_id}: {exc}")
         return None
 
-
-def _persist_messages(conversation_id, query, response_content):
-    """Persist user and assistant messages to the conversation."""
-    if not conversation_id or not _chat_wrapper:
-        return
-
-    try:
-        conn = psycopg2.connect(**_chat_wrapper.pg_config)
-        try:
-            now = datetime.now(timezone.utc)
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO conversations (conversation_id, archi_service, sender, content, ts)
-                    VALUES (%s, %s, %s, %s, %s)
-                    """,
-                    (conversation_id, "v1", "user", query, now)
-                )
-
-                if response_content:
-                    cursor.execute(
-                        """
-                        INSERT INTO conversations (conversation_id, archi_service, sender, content, ts)
-                        VALUES (%s, %s, %s, %s, %s)
-                        """,
-                        (conversation_id, "v1", "archi", response_content, now)
-                    )
-
-                conn.commit()
-        finally:
-            conn.close()
-
-    except Exception as exc:
-        logger.error(f"Failed to persist /v1 messages: {exc}")

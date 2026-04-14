@@ -8,7 +8,6 @@ Uses Flask's built-in test client with mocked ChatWrapper and UserService.
 
 import json
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import MagicMock, patch
 
@@ -53,7 +52,7 @@ def _make_mock_chat_wrapper(events=None, raises=None):
             {"type": "chunk", "content": "Hello world"},
             {
                 "type": "final",
-                "response": SimpleNamespace(answer="Hello world"),
+                "response": "Hello world",
                 "source_documents": [],
                 "retriever_scores": [],
                 "conversation_id": 1,
@@ -221,7 +220,7 @@ class TestNonStreamingResponse:
         # Reset the mock to return fresh events
         chat_wrapper.stream.return_value = iter([
             {"type": "chunk", "content": "Test answer"},
-            {"type": "final", "response": SimpleNamespace(answer="Test answer"),
+            {"type": "final", "response": "Test answer",
              "source_documents": [], "retriever_scores": []},
         ])
 
@@ -309,7 +308,7 @@ class TestAuthMiddleware:
         app, chat_wrapper = app_no_auth
         chat_wrapper.stream.return_value = iter([
             {"type": "chunk", "content": "ok"},
-            {"type": "final", "response": SimpleNamespace(answer="ok"),
+            {"type": "final", "response": "ok",
              "source_documents": [], "retriever_scores": []},
         ])
 
@@ -342,4 +341,4 @@ class TestErrorHandling:
         data = resp.get_json()
         assert "error" in data
         assert data["error"]["type"] == "server_error"
-        assert "Pipeline exploded" in data["error"]["message"]
+        assert "server error; see chat logs for message" in data["error"]["message"]
