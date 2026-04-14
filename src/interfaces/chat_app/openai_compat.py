@@ -1,0 +1,477 @@
+"""
+OpenAI-compatible API blueprint for archi.
+
+Provides /v1/models and /v1/chat/completions endpoints that allow
+OpenAI-compatible clients (Open WebUI, LiteLLM, Continue.dev, etc.)
+to use archi as a backend.
+
+Registered conditionally via services.chat_app.openai_compat.enabled config.
+"""
+
+import json
+import time
+import uuid
+from datetime import datetime, timezone
+from functools import wraps
+from typing import Any
+
+import psycopg2
+from flask import Blueprint, Response, jsonify, request, g
+
+from src.archi.utils.citation_formatter import format_citations
+from src.utils.logging import get_logger
+from src.utils.rbac import Permission, has_permission, get_registry
+
+logger = get_logger(__name__)
+
+openai_compat = Blueprint("openai_compat", __name__, url_prefix="/v1")
+
+# Module-level references, set during registration
+_chat_wrapper: Any = None
+_user_service: Any = None
+_auth_enabled: bool = False
+_boot_timestamp = int(time.time())
+
+
+def register_openai_compat(app, chat_wrapper, *, user_service=None, auth_enabled=False):
+    """
+    Register the OpenAI-compatible blueprint with a Flask app.
+
+    Args:
+        app: The Flask application
+        chat_wrapper: The ChatWrapper instance for pipeline access
+        user_service: UserService instance for token auth
+        auth_enabled: Whether authentication is enabled
+    """
+    global _chat_wrapper, _user_service, _auth_enabled
+    _chat_wrapper = chat_wrapper
+    _user_service = user_service
+    _auth_enabled = auth_enabled
+    app.register_blueprint(openai_compat)
+    logger.info("Registered OpenAI-compatible API blueprint at /v1")
+
+
+# ---------------------------------------------------------------------------
+# Auth middleware
+# ---------------------------------------------------------------------------
+
+def _openai_error(message, error_type="invalid_request_error", status=400):
+    """Return an OpenAI-format error response."""
+    return jsonify({"error": {"message": message, "type": error_type}}), status
+
+
+def require_bearer_auth(f):
+    """Decorator for /v1 routes that enforces bearer token auth when enabled."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not _auth_enabled:
+            return f(*args, **kwargs)
+
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header:
+            return _openai_error("Authentication required", status=401)
+
+        if not auth_header.startswith("Bearer "):
+            return _openai_error("Invalid authorization format", status=401)
+
+        token = auth_header[len("Bearer "):]
+        if not token:
+            return _openai_error("Authentication required", status=401)
+
+        if _user_service is None:
+            logger.error("UserService not available for /v1 auth")
+            return _openai_error("Authentication service unavailable", "server_error", 500)
+
+        user = _user_service.get_user_by_api_token(token)
+        if user is None:
+            return _openai_error("Invalid token", status=401)
+
+        registry = get_registry()
+        roles = ["admin"] if getattr(user, "is_admin", False) else [registry.default_role]
+        if not has_permission(Permission.Chat.QUERY, roles):
+            return _openai_error("Permission denied", status=403)
+
+        g.v1_user = user
+        return f(*args, **kwargs)
+
+    return decorated
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/models
+# ---------------------------------------------------------------------------
+
+@openai_compat.route("/models", methods=["GET"])
+@require_bearer_auth
+def list_models():
+    """Return available archi configs as OpenAI model objects."""
+    from src.utils.config_access import get_full_config
+
+    config = get_full_config()
+    config_name = config.get("name", "default")
+
+    models = [
+        {
+            "id": config_name,
+            "object": "model",
+            "created": _boot_timestamp,
+            "owned_by": "archi",
+        }
+    ]
+
+    return jsonify({"object": "list", "data": models})
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/chat/completions
+# ---------------------------------------------------------------------------
+
+@openai_compat.route("/chat/completions", methods=["POST"])
+@require_bearer_auth
+def chat_completions():
+    """Handle OpenAI-compatible chat completion requests."""
+    data = request.get_json(silent=True)
+    if not data:
+        return _openai_error("Request body must be valid JSON")
+
+    model = data.get("model")
+    messages = data.get("messages")
+    if not model:
+        return _openai_error("'model' is required")
+    if not messages or not isinstance(messages, list):
+        return _openai_error("'messages' must be a non-empty array")
+
+    from src.utils.config_access import get_full_config
+    config = get_full_config()
+    available_config = config.get("name", "default")
+    if model != available_config:
+        return _openai_error(
+            f"Model '{model}' not found. Available: {available_config}",
+            "invalid_request_error",
+            404,
+        )
+
+    query = messages[-1].get("content", "")
+    history = _messages_to_history(messages[:-1])
+    last_message = [("user", query)]
+
+    stream = data.get("stream", False)
+
+    user_id = None
+    if hasattr(g, "v1_user") and g.v1_user:
+        user_id = g.v1_user.id
+
+    # Stable client_id for the lifetime of this request — used for both
+    # conversation creation and the stream call so DB access checks pass.
+    client_id = user_id or f"v1_{uuid.uuid4().hex[:12]}"
+
+    external_chat_id = request.headers.get("X-OpenWebUI-Chat-Id")
+    conversation_id = None
+    if external_chat_id and _chat_wrapper:
+        conversation_id = _get_or_create_conversation(
+            external_chat_id, user_id, client_id
+        )
+
+    now = datetime.now(timezone.utc)
+    stream_kwargs = {
+        "message": last_message,
+        "conversation_id": conversation_id,
+        "client_id": client_id,
+        "is_refresh": False,
+        "server_received_msg_ts": now,
+        "client_sent_msg_ts": now.timestamp(),
+        "client_timeout": 600.0,
+        "config_name": model,
+        "include_agent_steps": True,
+        "include_tool_steps": False,
+        "user_id": user_id,
+        "external_history": history,
+    }
+
+    request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
+
+    if stream:
+        return _streaming_response(request_id, model, stream_kwargs, conversation_id, query)
+    else:
+        return _non_streaming_response(request_id, model, stream_kwargs, conversation_id, query)
+
+
+# ---------------------------------------------------------------------------
+# Chunk accumulation helper
+# ---------------------------------------------------------------------------
+
+def _extract_delta(content, accumulated):
+    """Extract the new delta from a chunk that may be cumulative or incremental.
+
+    Returns (delta, new_accumulated). delta is None if the chunk is a duplicate.
+    """
+    if content.startswith(accumulated) and len(content) > len(accumulated):
+        return content[len(accumulated):], content
+    if accumulated.endswith(content):
+        return None, accumulated
+    return content, accumulated + content
+
+
+# ---------------------------------------------------------------------------
+# Streaming response
+# ---------------------------------------------------------------------------
+
+def _streaming_response(request_id, model, stream_kwargs, conversation_id, query):
+    """Return an SSE streaming response."""
+
+    def generate():
+        accumulated = [""]
+        source_documents = []
+        source_scores = []
+
+        try:
+            for event in _chat_wrapper.stream(**stream_kwargs):
+                event_type = event.get("type", "")
+
+                if event_type == "chunk":
+                    content = event.get("content", "")
+                    if content:
+                        delta, accumulated[0] = _extract_delta(content, accumulated[0])
+                        if delta:
+                            yield _sse_chunk(request_id, model, content=delta)
+
+                elif event_type == "final":
+                    docs = event.get("source_documents", [])
+                    scores_list = event.get("retriever_scores", [])
+                    if docs:
+                        source_documents = docs
+                        source_scores = scores_list
+
+                    citation_text = format_citations(source_documents, source_scores)
+                    if citation_text:
+                        accumulated[0] += citation_text
+                        yield _sse_chunk(request_id, model, content=citation_text)
+
+                    yield _sse_chunk(request_id, model, finish_reason="stop")
+                    yield "data: [DONE]\n\n"
+
+                    _persist_messages(conversation_id, query, accumulated[0])
+                    return
+
+                elif event_type == "error":
+                    error_msg = event.get("message", "Unknown error")
+                    yield _sse_chunk(request_id, model, content=f"\n\n[Error: {error_msg}]")
+                    yield _sse_chunk(request_id, model, finish_reason="stop")
+                    yield "data: [DONE]\n\n"
+
+                    _persist_messages(conversation_id, query, None)
+                    return
+
+            # No final event received — close the stream
+            yield _sse_chunk(request_id, model, finish_reason="stop")
+            yield "data: [DONE]\n\n"
+            _persist_messages(conversation_id, query, accumulated[0])
+
+        except Exception as exc:
+            logger.error(f"/v1 streaming error: {exc}", exc_info=True)
+            yield _sse_chunk(request_id, model, content=f"\n\n[Error: {exc}]")
+            yield _sse_chunk(request_id, model, finish_reason="stop")
+            yield "data: [DONE]\n\n"
+            _persist_messages(conversation_id, query, None)
+
+    return Response(
+        generate(),
+        content_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Non-streaming response
+# ---------------------------------------------------------------------------
+
+def _non_streaming_response(request_id, model, stream_kwargs, conversation_id, query):
+    """Accumulate from stream() and return a complete JSON response."""
+    final_content = ""
+    source_documents = []
+    source_scores = []
+
+    try:
+        for event in _chat_wrapper.stream(**stream_kwargs):
+            event_type = event.get("type", "")
+
+            if event_type == "final":
+                # The final event carries the complete PipelineOutput;
+                # use it directly instead of accumulating chunks.
+                response = event.get("response")
+                if response:
+                    final_content = response.answer
+                docs = event.get("source_documents", [])
+                scores_list = event.get("retriever_scores", [])
+                if docs:
+                    source_documents = docs
+                    source_scores = scores_list
+
+            elif event_type == "error":
+                error_msg = event.get("message", "Unknown error")
+                _persist_messages(conversation_id, query, None)
+                return _openai_error(error_msg, "server_error", 500)
+
+    except Exception as exc:
+        logger.error(f"/v1 non-streaming error: {exc}", exc_info=True)
+        _persist_messages(conversation_id, query, None)
+        return _openai_error(str(exc), "server_error", 500)
+
+    citation_text = format_citations(source_documents, source_scores)
+    if citation_text:
+        final_content += citation_text
+
+    _persist_messages(conversation_id, query, final_content)
+
+    return jsonify({
+        "id": request_id,
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": final_content,
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        },
+    })
+
+
+# ---------------------------------------------------------------------------
+# SSE helpers
+# ---------------------------------------------------------------------------
+
+def _sse_chunk(request_id, model, content=None, finish_reason=None):
+    """Build a single SSE data line in OpenAI format."""
+    delta = {}
+    if content is not None:
+        delta["content"] = content
+    if finish_reason is not None:
+        delta["role"] = "assistant"
+
+    chunk = {
+        "id": request_id,
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "delta": delta,
+                "finish_reason": finish_reason,
+            }
+        ],
+    }
+    return f"data: {json.dumps(chunk)}\n\n"
+
+
+def _messages_to_history(messages):
+    """Convert OpenAI messages array to archi history tuples.
+
+    Returns a list of (sender, content) tuples compatible with
+    _prepare_chat_context / _prepare_inputs.  System messages are
+    stripped — archi uses its own system prompt from the agent spec.
+    """
+    history = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "system":
+            continue
+        elif role == "assistant":
+            history.append(("archi", content))
+        else:
+            history.append(("user", content))
+    return history
+
+
+# ---------------------------------------------------------------------------
+# Conversation persistence
+# ---------------------------------------------------------------------------
+
+def _get_or_create_conversation(external_chat_id, user_id, client_id):
+    """Look up or create an archi conversation for an external chat ID."""
+    if not _chat_wrapper:
+        return None
+
+    try:
+        conn = psycopg2.connect(**_chat_wrapper.pg_config)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT conversation_id FROM conversation_metadata WHERE external_chat_id = %s",
+                    (external_chat_id,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    cursor.execute(
+                        "UPDATE conversation_metadata SET last_message_at = NOW() WHERE conversation_id = %s",
+                        (row[0],)
+                    )
+                    conn.commit()
+                    return row[0]
+
+                cursor.execute(
+                    """
+                    INSERT INTO conversation_metadata (user_id, client_id, title, external_chat_id)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING conversation_id
+                    """,
+                    (user_id, client_id, "Open WebUI Chat", external_chat_id)
+                )
+                conv_id = cursor.fetchone()[0]
+                conn.commit()
+                return conv_id
+        finally:
+            conn.close()
+
+    except Exception as exc:
+        logger.error(f"Failed to get/create conversation for {external_chat_id}: {exc}")
+        return None
+
+
+def _persist_messages(conversation_id, query, response_content):
+    """Persist user and assistant messages to the conversation."""
+    if not conversation_id or not _chat_wrapper:
+        return
+
+    try:
+        conn = psycopg2.connect(**_chat_wrapper.pg_config)
+        try:
+            now = datetime.now(timezone.utc)
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO conversations (conversation_id, archi_service, sender, content, ts)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (conversation_id, "v1", "user", query, now)
+                )
+
+                if response_content:
+                    cursor.execute(
+                        """
+                        INSERT INTO conversations (conversation_id, archi_service, sender, content, ts)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (conversation_id, "v1", "archi", response_content, now)
+                    )
+
+                conn.commit()
+        finally:
+            conn.close()
+
+    except Exception as exc:
+        logger.error(f"Failed to persist /v1 messages: {exc}")

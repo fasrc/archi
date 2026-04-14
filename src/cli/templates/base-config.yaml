@@ -101,11 +101,13 @@ services:
     {% if services.chat_app.auth.auth_roles is defined %}
       auth_roles: {{ services.chat_app.auth.auth_roles | tojson }}
     {% endif %}
+    openai_compat:
+      enabled: {{ services.chat_app.openai_compat.enabled | default(false, true) }}
     alerts:
       managers:
         {%- for manager in services.chat_app.alerts.managers | default([], true) %}
         - {{ manager }}
-        {%- endfor %} 
+        {%- endfor %}
   data_manager:
     auth:
       enabled: {{ services.data_manager.auth.enabled | default(false) }}

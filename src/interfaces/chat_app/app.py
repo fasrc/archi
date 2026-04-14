@@ -1344,12 +1344,17 @@ class ChatWrapper:
         client_timeout: float,
         timestamps: Dict[str, datetime],
         user_id: Optional[str] = None,
+        external_history: Optional[List] = None,
     ) -> tuple[Optional[ChatRequestContext], Optional[int]]:
         if not client_id:
             raise ValueError("client_id is required to process chat messages")
         sender, content = tuple(message[0])
 
-        if conversation_id is None:
+        if external_history is not None:
+            if conversation_id is None:
+                conversation_id = self.create_conversation(content, client_id, user_id)
+            history = external_history
+        elif conversation_id is None:
             conversation_id = self.create_conversation(content, client_id, user_id)
             history = []
         else:
@@ -1535,7 +1540,7 @@ class ChatWrapper:
 
         return output, message_ids
 
-    def __call__(self, message: List[str], conversation_id: int|None, client_id: str, is_refresh: bool, server_received_msg_ts: datetime,  client_sent_msg_ts: float, client_timeout: float, config_name: str, user_id: Optional[str] = None):
+    def __call__(self, message: List[str], conversation_id: int|None, client_id: str, is_refresh: bool, server_received_msg_ts: datetime,  client_sent_msg_ts: float, client_timeout: float, config_name: str, user_id: Optional[str] = None, external_history: Optional[List] = None):
         """
         Execute the chat functionality.
         """
@@ -1555,6 +1560,7 @@ class ChatWrapper:
                 client_timeout,
                 timestamps,
                 user_id=user_id,
+                external_history=external_history,
             )
             if error_code is not None:
                 return None, None, None, timestamps, error_code
@@ -1612,6 +1618,7 @@ class ChatWrapper:
         model: str = None,
         provider_api_key: str = None,
         user_id: Optional[str] = None,
+        external_history: Optional[List] = None,
     ) -> Iterator[Dict[str, Any]]:
         timestamps = self._init_timestamps()
         context = None
@@ -1671,6 +1678,7 @@ class ChatWrapper:
                 client_timeout,
                 timestamps,
                 user_id=user_id,
+                external_history=external_history,
             )
             if error_code is not None:
                 error_message = "server error; see chat logs for message"
@@ -2000,6 +2008,11 @@ class ChatWrapper:
             self.number_of_queries += 1
             logger.info(f"Number of queries is: {self.number_of_queries}")
 
+            # Extract source docs and scores before _finalize_result consumes them
+            # (needed by /v1 blueprint for citation formatting)
+            raw_source_documents = last_output.get("source_documents", []) if last_output else []
+            raw_retriever_scores = (last_output.get("metadata", {}) or {}).get("retriever_scores", []) if last_output else []
+
             output, message_ids = self._finalize_result(
                 last_output,
                 context=context,
@@ -2062,6 +2075,8 @@ class ChatWrapper:
                 "usage": usage,
                 "model": model,
                 "model_used": self.current_model_used,
+                "source_documents": raw_source_documents,
+                "retriever_scores": raw_retriever_scores,
             }
 
         except GeneratorExit:
@@ -2173,6 +2188,18 @@ class FlaskAppWrapper(object):
         # create the chat from the wrapper and ensure default config is active
         self.chat = ChatWrapper()
         self.chat.update_config(config_name=self.config["name"])
+
+        # Conditionally register OpenAI-compatible /v1 blueprint
+        openai_compat_config = self.chat_app_config.get("openai_compat", {})
+        if openai_compat_config.get("enabled", False):
+            from src.interfaces.chat_app.openai_compat import register_openai_compat
+            user_service = UserService(pg_config=self.pg_config)
+            register_openai_compat(
+                self.app,
+                self.chat,
+                user_service=user_service,
+                auth_enabled=self.auth_enabled,
+            )
 
         # enable CORS:
         CORS(self.app)
