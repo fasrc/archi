@@ -21,6 +21,7 @@ from flask import Blueprint, Response, jsonify, request, g
 from src.archi.utils.citation_formatter import format_citations
 from src.utils.logging import get_logger
 from src.utils.rbac import Permission, has_permission, get_registry
+from src.utils.rbac.audit import log_authentication_event, log_role_assignment, log_permission_check
 
 logger = get_logger(__name__)
 
@@ -30,10 +31,11 @@ openai_compat = Blueprint("openai_compat", __name__, url_prefix="/v1")
 _chat_wrapper: Any = None
 _user_service: Any = None
 _auth_enabled: bool = False
+_token_ttl_days: int = 90
 _boot_timestamp = int(time.time())
 
 
-def register_openai_compat(app, chat_wrapper, *, user_service=None, auth_enabled=False):
+def register_openai_compat(app, chat_wrapper, *, user_service=None, auth_enabled=False, token_ttl_days: int = 90):
     """
     Register the OpenAI-compatible blueprint with a Flask app.
 
@@ -42,11 +44,13 @@ def register_openai_compat(app, chat_wrapper, *, user_service=None, auth_enabled
         chat_wrapper: The ChatWrapper instance for pipeline access
         user_service: UserService instance for token auth
         auth_enabled: Whether authentication is enabled
+        token_ttl_days: Number of days before API tokens expire (default 90)
     """
-    global _chat_wrapper, _user_service, _auth_enabled
+    global _chat_wrapper, _user_service, _auth_enabled, _token_ttl_days
     _chat_wrapper = chat_wrapper
     _user_service = user_service
     _auth_enabled = auth_enabled
+    _token_ttl_days = token_ttl_days
     app.register_blueprint(openai_compat)
     logger.info("Registered OpenAI-compatible API blueprint at /v1")
 
@@ -67,28 +71,53 @@ def require_bearer_auth(f):
         if not _auth_enabled:
             return f(*args, **kwargs)
 
+        # Try to extract bearer token
         auth_header = request.headers.get("Authorization", "")
-        if not auth_header:
-            return _openai_error("Authentication required", status=401)
+        token = None
+        if auth_header.startswith("Bearer "):
+            token = auth_header[len("Bearer "):] or None
 
-        if not auth_header.startswith("Bearer "):
-            return _openai_error("Invalid authorization format", status=401)
-
-        token = auth_header[len("Bearer "):]
         if not token:
-            return _openai_error("Authentication required", status=401)
+            # No valid token — check if anonymous access is allowed
+            registry = get_registry()
+            if registry.allow_anonymous:
+                log_authentication_event("anonymous", "api_anonymous_access", success=True, method="anonymous")
+                g.v1_user = None
+                roles = [registry.default_role]
+                endpoint = request.endpoint or '/v1'
+                granted = has_permission(Permission.Chat.QUERY, roles)
+                log_permission_check("anonymous", str(Permission.Chat.QUERY), granted=granted, endpoint=endpoint, roles=roles)
+                if not granted:
+                    return _openai_error("Permission denied", status=403)
+                g.v1_roles = roles
+                return f(*args, **kwargs)
+            else:
+                log_authentication_event("unknown", "api_token_auth", success=False, method="bearer_token", details="No token provided")
+                return _openai_error("Authentication required", status=401)
 
+        # Token was provided — validate it
         if _user_service is None:
             logger.error("UserService not available for /v1 auth")
+            log_authentication_event("unknown", "token_auth", success=False, method="bearer", details="UserService unavailable")
             return _openai_error("Authentication service unavailable", "server_error", 500)
 
-        user = _user_service.get_user_by_api_token(token)
+        user = _user_service.get_user_by_api_token(token, token_ttl_days=_token_ttl_days)
         if user is None:
-            return _openai_error("Invalid token", status=401)
+            log_authentication_event("unknown", "token_auth", success=False, method="bearer", details="Invalid or expired token")
+            return _openai_error("Invalid or expired token", status=401)
+
+        user_id = getattr(user, 'email', None) or getattr(user, 'id', 'unknown')
+        log_authentication_event(user_id, "token_auth", success=True, method="bearer")
 
         registry = get_registry()
         roles = ["admin"] if getattr(user, "is_admin", False) else [registry.default_role]
-        if not has_permission(Permission.Chat.QUERY, roles):
+        is_default = not getattr(user, "is_admin", False)
+        log_role_assignment(user_id, roles, source="token_auth", is_default=is_default)
+
+        endpoint = request.endpoint or '/v1'
+        granted = has_permission(Permission.Chat.QUERY, roles)
+        log_permission_check(user_id, str(Permission.Chat.QUERY), granted=granted, endpoint=endpoint, roles=roles)
+        if not granted:
             return _openai_error("Permission denied", status=403)
 
         g.v1_user = user

@@ -3,6 +3,7 @@ Unit tests for API token generation, lookup, and revocation in UserService.
 """
 
 import hashlib
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -88,15 +89,17 @@ class TestGenerateApiToken:
 
 class TestGetUserByApiToken:
 
-    def _make_row(self):
+    def _make_row(self, api_token_created_at=None):
         return {
             "id": "user1",
             "display_name": "Test User",
             "email": "test@example.com",
             "auth_provider": "basic",
+            "is_admin": False,
             "theme": "system",
             "preferred_model": None,
             "preferred_temperature": None,
+            "api_token_created_at": api_token_created_at,
             "created_at": "2025-01-01 00:00:00",
             "updated_at": "2025-01-01 00:00:00",
         }
@@ -132,6 +135,64 @@ class TestGetUserByApiToken:
         assert user is None
 
 
+class TestTokenExpiry:
+
+    def _make_row(self, api_token_created_at=None):
+        return {
+            "id": "user1",
+            "display_name": "Test User",
+            "email": "test@example.com",
+            "auth_provider": "basic",
+            "is_admin": False,
+            "theme": "system",
+            "preferred_model": None,
+            "preferred_temperature": None,
+            "api_token_created_at": api_token_created_at,
+            "created_at": "2025-01-01 00:00:00",
+            "updated_at": "2025-01-01 00:00:00",
+        }
+
+    def test_recent_token_returns_user(self, service):
+        """Token created within TTL returns user (Task 3.3)."""
+        conn = MagicMock()
+        cur = MagicMock()
+        recent = datetime.now(timezone.utc) - timedelta(days=10)
+        cur.fetchone.return_value = self._make_row(api_token_created_at=recent)
+        conn.cursor.return_value.__enter__ = MagicMock(return_value=cur)
+        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        service._get_connection = MagicMock(return_value=conn)
+
+        user = service.get_user_by_api_token("archi_abc123", token_ttl_days=90)
+        assert user is not None
+        assert user.id == "user1"
+
+    def test_expired_token_returns_none(self, service):
+        """Token older than TTL returns None (Task 3.4)."""
+        conn = MagicMock()
+        cur = MagicMock()
+        old = datetime.now(timezone.utc) - timedelta(days=100)
+        cur.fetchone.return_value = self._make_row(api_token_created_at=old)
+        conn.cursor.return_value.__enter__ = MagicMock(return_value=cur)
+        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        service._get_connection = MagicMock(return_value=conn)
+
+        user = service.get_user_by_api_token("archi_abc123", token_ttl_days=90)
+        assert user is None
+
+    def test_null_created_at_returns_user(self, service):
+        """Token with NULL api_token_created_at returns user for backward compat (Task 3.5)."""
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchone.return_value = self._make_row(api_token_created_at=None)
+        conn.cursor.return_value.__enter__ = MagicMock(return_value=cur)
+        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        service._get_connection = MagicMock(return_value=conn)
+
+        user = service.get_user_by_api_token("archi_abc123", token_ttl_days=90)
+        assert user is not None
+        assert user.id == "user1"
+
+
 class TestRevokeApiToken:
 
     def test_revoke_existing_token(self, service):
@@ -144,6 +205,18 @@ class TestRevokeApiToken:
 
         result = service.revoke_api_token("user1")
         assert result is True
+
+    @patch("src.utils.user_service.log_authentication_event")
+    def test_revoke_logs_audit_event(self, mock_log, service):
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.rowcount = 1
+        conn.cursor.return_value.__enter__ = MagicMock(return_value=cur)
+        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        service._get_connection = MagicMock(return_value=conn)
+
+        service.revoke_api_token("user1")
+        mock_log.assert_called_once_with("user1", "api_token_revoke", success=True, method="bearer_token")
 
     def test_revoke_no_token_returns_false(self, service):
         conn = MagicMock()

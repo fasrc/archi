@@ -30,6 +30,7 @@ class FakeUser:
     display_name: Optional[str] = "Test"
     email: Optional[str] = "test@example.com"
     auth_provider: str = "basic"
+    is_admin: bool = False
     theme: str = "system"
     preferred_model: Optional[str] = None
     preferred_temperature: Optional[float] = None
@@ -67,7 +68,7 @@ def _make_mock_user_service(valid_token="archi_test123", user=None):
     mock = MagicMock()
     fake_user = user or FakeUser()
 
-    def lookup(token):
+    def lookup(token, **kwargs):
         if token == valid_token:
             return fake_user
         return None
@@ -90,6 +91,7 @@ def app_no_auth():
     compat._chat_wrapper = None
     compat._user_service = None
     compat._auth_enabled = False
+    compat._token_ttl_days = 90
 
 
 @pytest.fixture
@@ -110,6 +112,7 @@ def app_with_auth():
     compat._chat_wrapper = None
     compat._user_service = None
     compat._auth_enabled = False
+    compat._token_ttl_days = 90
 
 
 # We need to patch get_full_config at the point of use (in the route handlers)
@@ -128,6 +131,7 @@ def _patch_rbac():
     """Patch RBAC functions so auth checks work without a real registry."""
     mock_registry = MagicMock()
     mock_registry.default_role = "base-user"
+    mock_registry.allow_anonymous = False
 
     with patch("src.interfaces.chat_app.openai_compat.get_registry",
                return_value=mock_registry), \
@@ -304,6 +308,82 @@ class TestAuthMiddleware:
 
         assert resp.status_code == 401
 
+    def test_admin_user_gets_admin_role(self, app_with_auth):
+        """Admin user (is_admin=True) gets admin role via /v1."""
+        app, chat_wrapper, user_service = app_with_auth
+        admin_user = FakeUser(id="admin-user", is_admin=True)
+        user_service.get_user_by_api_token.side_effect = lambda t, **kw: admin_user if t == "archi_test123" else None
+        chat_wrapper.stream.return_value = iter([
+            {"type": "chunk", "content": "ok"},
+            {"type": "final", "response": "ok",
+             "source_documents": [], "retriever_scores": []},
+        ])
+
+        client = app.test_client()
+        resp = client.post("/v1/chat/completions",
+                           json={"model": "test-model",
+                                 "messages": [{"role": "user", "content": "hi"}],
+                                 "stream": False},
+                           headers={"Authorization": "Bearer archi_test123"})
+
+        assert resp.status_code == 200
+
+    def test_non_admin_user_gets_default_role(self, app_with_auth):
+        """Non-admin user gets default role via /v1."""
+        app, chat_wrapper, user_service = app_with_auth
+        regular_user = FakeUser(id="regular-user", is_admin=False)
+        user_service.get_user_by_api_token.side_effect = lambda t, **kw: regular_user if t == "archi_test123" else None
+        chat_wrapper.stream.return_value = iter([
+            {"type": "chunk", "content": "ok"},
+            {"type": "final", "response": "ok",
+             "source_documents": [], "retriever_scores": []},
+        ])
+
+        client = app.test_client()
+        resp = client.post("/v1/chat/completions",
+                           json={"model": "test-model",
+                                 "messages": [{"role": "user", "content": "hi"}],
+                                 "stream": False},
+                           headers={"Authorization": "Bearer archi_test123"})
+
+        assert resp.status_code == 200
+
+    @patch("src.interfaces.chat_app.openai_compat.log_authentication_event")
+    def test_successful_auth_logs_audit_event(self, mock_log, app_with_auth):
+        """Successful auth produces an audit log entry."""
+        app, chat_wrapper, _ = app_with_auth
+        chat_wrapper.stream.return_value = iter([
+            {"type": "chunk", "content": "ok"},
+            {"type": "final", "response": "ok",
+             "source_documents": [], "retriever_scores": []},
+        ])
+
+        client = app.test_client()
+        resp = client.post("/v1/chat/completions",
+                           json={"model": "test-model",
+                                 "messages": [{"role": "user", "content": "hi"}],
+                                 "stream": False},
+                           headers={"Authorization": "Bearer archi_test123"})
+
+        assert resp.status_code == 200
+        # Find the success call among all calls
+        success_calls = [c for c in mock_log.call_args_list if c.kwargs.get("success") is True]
+        assert len(success_calls) >= 1
+
+    @patch("src.interfaces.chat_app.openai_compat.log_authentication_event")
+    def test_failed_auth_logs_audit_event(self, mock_log, app_with_auth):
+        """Failed auth produces an audit log entry."""
+        app, _, _ = app_with_auth
+        client = app.test_client()
+        resp = client.post("/v1/chat/completions",
+                           json={"model": "test-model",
+                                 "messages": [{"role": "user", "content": "hi"}]},
+                           headers={"Authorization": "Bearer archi_invalid"})
+
+        assert resp.status_code == 401
+        failure_calls = [c for c in mock_log.call_args_list if c.kwargs.get("success") is False]
+        assert len(failure_calls) >= 1
+
     def test_auth_disabled_allows_no_token(self, app_no_auth):
         app, chat_wrapper = app_no_auth
         chat_wrapper.stream.return_value = iter([
@@ -317,6 +397,74 @@ class TestAuthMiddleware:
                            json={"model": "test-model",
                                  "messages": [{"role": "user", "content": "hi"}],
                                  "stream": False})
+
+        assert resp.status_code == 200
+
+    def test_anonymous_access_allowed_when_allow_anonymous_true(self, app_with_auth):
+        """No token + allow_anonymous=True on registry -> 200 (anonymous access)."""
+        app, chat_wrapper, _ = app_with_auth
+        chat_wrapper.stream.return_value = iter([
+            {"type": "chunk", "content": "ok"},
+            {"type": "final", "response": "ok",
+             "source_documents": [], "retriever_scores": []},
+        ])
+
+        mock_registry = MagicMock()
+        mock_registry.allow_anonymous = True
+        mock_registry.default_role = "base-user"
+
+        with patch("src.interfaces.chat_app.openai_compat.get_registry",
+                   return_value=mock_registry), \
+             patch("src.interfaces.chat_app.openai_compat.has_permission",
+                   return_value=True):
+            client = app.test_client()
+            resp = client.post("/v1/chat/completions",
+                               json={"model": "test-model",
+                                     "messages": [{"role": "user", "content": "hi"}],
+                                     "stream": False})
+
+        assert resp.status_code == 200
+
+    def test_anonymous_access_rejected_when_allow_anonymous_false(self, app_with_auth):
+        """No token + allow_anonymous=False on registry -> 401."""
+        app, _, _ = app_with_auth
+
+        mock_registry = MagicMock()
+        mock_registry.allow_anonymous = False
+        mock_registry.default_role = "base-user"
+
+        with patch("src.interfaces.chat_app.openai_compat.get_registry",
+                   return_value=mock_registry):
+            client = app.test_client()
+            resp = client.post("/v1/chat/completions",
+                               json={"model": "test-model",
+                                     "messages": [{"role": "user", "content": "hi"}]})
+
+        assert resp.status_code == 401
+
+    def test_authenticated_user_preferred_over_anonymous(self, app_with_auth):
+        """Valid token + allow_anonymous=True -> 200 as authenticated user, not anonymous."""
+        app, chat_wrapper, _ = app_with_auth
+        chat_wrapper.stream.return_value = iter([
+            {"type": "chunk", "content": "ok"},
+            {"type": "final", "response": "ok",
+             "source_documents": [], "retriever_scores": []},
+        ])
+
+        mock_registry = MagicMock()
+        mock_registry.allow_anonymous = True
+        mock_registry.default_role = "base-user"
+
+        with patch("src.interfaces.chat_app.openai_compat.get_registry",
+                   return_value=mock_registry), \
+             patch("src.interfaces.chat_app.openai_compat.has_permission",
+                   return_value=True):
+            client = app.test_client()
+            resp = client.post("/v1/chat/completions",
+                               json={"model": "test-model",
+                                     "messages": [{"role": "user", "content": "hi"}],
+                                     "stream": False},
+                               headers={"Authorization": "Bearer archi_test123"})
 
         assert resp.status_code == 200
 

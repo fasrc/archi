@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS users (
 
     -- API token for /v1 OpenAI-compatible endpoint (SHA-256 hash)
     api_token_hash VARCHAR(64),
+    api_token_created_at TIMESTAMPTZ,
 
     -- Session tracking
     last_login_at TIMESTAMPTZ,

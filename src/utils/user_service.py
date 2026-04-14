@@ -14,6 +14,7 @@ import hashlib
 import secrets
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import psycopg2
@@ -21,6 +22,7 @@ import psycopg2.extras
 
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
+from src.utils.rbac.audit import log_authentication_event
 
 logger = get_logger(__name__)
 
@@ -39,7 +41,8 @@ class User:
     display_name: Optional[str] = None
     email: Optional[str] = None
     auth_provider: str = "anonymous"
-    
+    is_admin: bool = False
+
     # Preferences
     theme: str = "system"
     preferred_model: Optional[str] = None
@@ -122,7 +125,7 @@ class UserService:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
                 cursor.execute(
                     """
-                    SELECT id, display_name, email, auth_provider,
+                    SELECT id, display_name, email, auth_provider, is_admin,
                            theme, preferred_model, preferred_temperature,
                            created_at, updated_at
                     FROM users
@@ -140,6 +143,7 @@ class UserService:
                     display_name=row["display_name"],
                     email=row["email"],
                     auth_provider=row["auth_provider"],
+                    is_admin=row["is_admin"],
                     theme=row["theme"],
                     preferred_model=row["preferred_model"],
                     preferred_temperature=float(row["preferred_temperature"]) if row["preferred_temperature"] else None,
@@ -148,7 +152,7 @@ class UserService:
                 )
         finally:
             self._release_connection(conn)
-    
+
     def get_or_create_user(
         self,
         user_id: Optional[str] = None,
@@ -197,21 +201,22 @@ class UserService:
                         display_name = COALESCE(EXCLUDED.display_name, users.display_name),
                         email = COALESCE(EXCLUDED.email, users.email),
                         updated_at = NOW()
-                    RETURNING id, display_name, email, auth_provider, theme,
+                    RETURNING id, display_name, email, auth_provider, is_admin, theme,
                               preferred_model, preferred_temperature, created_at, updated_at
                     """,
                     (user_id, display_name, email, auth_provider)
                 )
                 row = cursor.fetchone()
                 conn.commit()
-                
+
                 logger.info(f"Created/updated user: {user_id} (auth={auth_provider})")
-                
+
                 return User(
                     id=row["id"],
                     display_name=row["display_name"],
                     email=row["email"],
                     auth_provider=row["auth_provider"],
+                    is_admin=row["is_admin"],
                     theme=row["theme"],
                     preferred_model=row["preferred_model"],
                     preferred_temperature=float(row["preferred_temperature"]) if row["preferred_temperature"] else None,
@@ -474,7 +479,7 @@ class UserService:
                 cursor.execute(
                     """
                     UPDATE users
-                    SET api_token_hash = %s, updated_at = NOW()
+                    SET api_token_hash = %s, api_token_created_at = NOW(), updated_at = NOW()
                     WHERE id = %s
                     """,
                     (token_hash, user_id)
@@ -489,7 +494,7 @@ class UserService:
         finally:
             self._release_connection(conn)
 
-    def get_user_by_api_token(self, token: str) -> Optional[User]:
+    def get_user_by_api_token(self, token: str, *, token_ttl_days: Optional[int] = None) -> Optional[User]:
         """
         Look up a user by their API token.
 
@@ -498,9 +503,11 @@ class UserService:
 
         Args:
             token: The plaintext API token
+            token_ttl_days: If provided, reject tokens older than this many days.
+                When None, skip expiry check (backward compat).
 
         Returns:
-            User object if token is valid, None otherwise
+            User object if token is valid and not expired, None otherwise
         """
         token_hash = hashlib.sha256(token.encode()).hexdigest()
 
@@ -509,9 +516,9 @@ class UserService:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
                 cursor.execute(
                     """
-                    SELECT id, display_name, email, auth_provider,
+                    SELECT id, display_name, email, auth_provider, is_admin,
                            theme, preferred_model, preferred_temperature,
-                           created_at, updated_at
+                           api_token_created_at, created_at, updated_at
                     FROM users
                     WHERE api_token_hash = %s
                     """,
@@ -522,11 +529,22 @@ class UserService:
                 if row is None:
                     return None
 
+                # Check token expiry when TTL is configured
+                if token_ttl_days is not None and row["api_token_created_at"] is not None:
+                    age = datetime.now(timezone.utc) - row["api_token_created_at"]
+                    if age > timedelta(days=token_ttl_days):
+                        logger.warning(
+                            "Expired API token for user %s (age: %s, ttl: %d days)",
+                            row["id"], age, token_ttl_days,
+                        )
+                        return None
+
                 return User(
                     id=row["id"],
                     display_name=row["display_name"],
                     email=row["email"],
                     auth_provider=row["auth_provider"],
+                    is_admin=row["is_admin"],
                     theme=row["theme"],
                     preferred_model=row["preferred_model"],
                     preferred_temperature=float(row["preferred_temperature"]) if row["preferred_temperature"] else None,
@@ -574,14 +592,17 @@ class UserService:
                 cursor.execute(
                     """
                     UPDATE users
-                    SET api_token_hash = NULL, updated_at = NOW()
+                    SET api_token_hash = NULL, api_token_created_at = NULL, updated_at = NOW()
                     WHERE id = %s AND api_token_hash IS NOT NULL
                     """,
                     (user_id,)
                 )
                 conn.commit()
 
-                return cursor.rowcount > 0
+                revoked = cursor.rowcount > 0
+                if revoked:
+                    log_authentication_event(user_id, "api_token_revoke", success=True, method="bearer_token")
+                return revoked
         finally:
             self._release_connection(conn)
 
