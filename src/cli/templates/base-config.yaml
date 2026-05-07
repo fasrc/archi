@@ -144,7 +144,7 @@ services:
       {%- if services.chat_app.ab_testing.force_yaml_override is defined %}
       force_yaml_override: {{ services.chat_app.ab_testing.force_yaml_override | default(false, true) }}
       {%- endif %}
-      comparison_rate: {{ services.chat_app.ab_testing.comparison_rate | default(services.chat_app.ab_testing.sample_rate | default(0.2, true), true) }}
+      comparison_rate: {{ services.chat_app.ab_testing.comparison_rate | default(services.chat_app.ab_testing.sample_rate | default(0.0)) }}
       variant_label_mode: {{ services.chat_app.ab_testing.variant_label_mode | default(services.chat_app.ab_testing.disclosure_mode | default("post_vote_reveal", true), true) }}
       activity_panel_default_state: {{ services.chat_app.ab_testing.activity_panel_default_state | default(services.chat_app.ab_testing.default_trace_mode | default("hidden", true), true) }}
       max_pending_comparisons_per_conversation: {{ services.chat_app.ab_testing.max_pending_comparisons_per_conversation | default(services.chat_app.ab_testing.max_pending_per_conversation | default(1, true), true) }}
