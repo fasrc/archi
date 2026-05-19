@@ -2219,7 +2219,12 @@ class FlaskAppWrapper(object):
         # Public endpoints (no auth required)
         self.add_endpoint('/', 'landing', self.landing)
         self.add_endpoint('/api/health', 'health', self.health, methods=["GET"])
-        
+
+        # API token management (for /v1 bearer auth)
+        self.add_endpoint('/api/users/me/api-token', 'check_api_token', self.require_auth(self.check_api_token), methods=["GET"])
+        self.add_endpoint('/api/users/me/api-token', 'generate_api_token', self.require_auth(self.generate_api_token), methods=["POST"])
+        self.add_endpoint('/api/users/me/api-token', 'revoke_api_token', self.require_auth(self.revoke_api_token), methods=["DELETE"])
+
         # Protected endpoints (require auth when enabled)
         self.add_endpoint('/chat', 'index', self.require_auth(self.index))
         self.add_endpoint('/api/get_chat_response', 'get_chat_response', self.require_auth(self.get_chat_response), methods=["POST"])
@@ -2634,6 +2639,62 @@ class FlaskAppWrapper(object):
 
     def health(self):
         return jsonify({"status": "OK"}), 200
+
+    # -- API token management (for /v1 bearer auth) --------------------------
+
+    def _get_token_user_id(self) -> str:
+        """Resolve user ID from session or X-Client-ID header."""
+        user_id = session.get('user', {}).get('id')
+        if user_id:
+            return user_id
+        client_id = request.headers.get('X-Client-ID')
+        if client_id:
+            return client_id
+        return jsonify({'error': 'Could not determine user identity'}), 401
+
+    def check_api_token(self):
+        user_id = self._get_token_user_id()
+        if isinstance(user_id, tuple):
+            return user_id
+        try:
+            user_service = UserService(pg_config=self.pg_config)
+            has_token = user_service.has_api_token(user_id)
+            return jsonify({'has_token': has_token}), 200
+        except Exception as e:
+            logger.error(f"Error checking API token: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    def generate_api_token(self):
+        user_id = self._get_token_user_id()
+        if isinstance(user_id, tuple):
+            return user_id
+        try:
+            user_service = UserService(pg_config=self.pg_config)
+            user_service.get_or_create_user(user_id)
+            token = user_service.generate_api_token(user_id)
+            return jsonify({
+                'token': token,
+                'message': 'Save this token — it will not be shown again.',
+            }), 201
+        except Exception as e:
+            logger.error(f"Error generating API token: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    def revoke_api_token(self):
+        user_id = self._get_token_user_id()
+        if isinstance(user_id, tuple):
+            return user_id
+        try:
+            user_service = UserService(pg_config=self.pg_config)
+            revoked = user_service.revoke_api_token(user_id)
+            return jsonify({
+                'success': True,
+                'revoked': revoked,
+                'message': 'API token revoked' if revoked else 'No token to revoke',
+            }), 200
+        except Exception as e:
+            logger.error(f"Error revoking API token: {e}")
+            return jsonify({'error': str(e)}), 500
 
     def get_permissions(self):
         """API endpoint to get current user's permissions"""
