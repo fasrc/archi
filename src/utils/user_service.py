@@ -10,8 +10,11 @@ Implements the Users Table requirements from the consolidate-to-postgres spec:
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import psycopg2
@@ -19,6 +22,7 @@ import psycopg2.extras
 
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
+from src.utils.rbac.audit import log_authentication_event
 
 logger = get_logger(__name__)
 
@@ -37,7 +41,8 @@ class User:
     display_name: Optional[str] = None
     email: Optional[str] = None
     auth_provider: str = "anonymous"
-    
+    is_admin: bool = False
+
     # Preferences
     theme: str = "system"
     preferred_model: Optional[str] = None
@@ -120,7 +125,7 @@ class UserService:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
                 cursor.execute(
                     """
-                    SELECT id, display_name, email, auth_provider,
+                    SELECT id, display_name, email, auth_provider, is_admin,
                            theme, preferred_model, preferred_temperature,
                            created_at, updated_at
                     FROM users
@@ -138,6 +143,7 @@ class UserService:
                     display_name=row["display_name"],
                     email=row["email"],
                     auth_provider=row["auth_provider"],
+                    is_admin=row["is_admin"],
                     theme=row["theme"],
                     preferred_model=row["preferred_model"],
                     preferred_temperature=float(row["preferred_temperature"]) if row["preferred_temperature"] else None,
@@ -146,7 +152,7 @@ class UserService:
                 )
         finally:
             self._release_connection(conn)
-    
+
     def get_or_create_user(
         self,
         user_id: Optional[str] = None,
@@ -195,21 +201,22 @@ class UserService:
                         display_name = COALESCE(EXCLUDED.display_name, users.display_name),
                         email = COALESCE(EXCLUDED.email, users.email),
                         updated_at = NOW()
-                    RETURNING id, display_name, email, auth_provider, theme,
+                    RETURNING id, display_name, email, auth_provider, is_admin, theme,
                               preferred_model, preferred_temperature, created_at, updated_at
                     """,
                     (user_id, display_name, email, auth_provider)
                 )
                 row = cursor.fetchone()
                 conn.commit()
-                
+
                 logger.info(f"Created/updated user: {user_id} (auth={auth_provider})")
-                
+
                 return User(
                     id=row["id"],
                     display_name=row["display_name"],
                     email=row["email"],
                     auth_provider=row["auth_provider"],
+                    is_admin=row["is_admin"],
                     theme=row["theme"],
                     preferred_model=row["preferred_model"],
                     preferred_temperature=float(row["preferred_temperature"]) if row["preferred_temperature"] else None,
@@ -447,6 +454,158 @@ class UserService:
         finally:
             self._release_connection(conn)
     
+    def generate_api_token(self, user_id: str) -> str:
+        """
+        Generate an API token for /v1 endpoint access.
+
+        Creates an `archi_<hex>` token, stores its SHA-256 hash in the database,
+        and returns the plaintext token once. The plaintext is never stored.
+
+        Args:
+            user_id: The user's unique identifier
+
+        Returns:
+            The plaintext API token (shown once to the user)
+
+        Raises:
+            ValueError: If user not found
+        """
+        token = f"archi_{secrets.token_hex(16)}"
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET api_token_hash = %s, api_token_created_at = NOW(), updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (token_hash, user_id)
+                )
+                conn.commit()
+
+                if cursor.rowcount == 0:
+                    raise ValueError(f"User not found: {user_id}")
+
+                logger.info(f"Generated API token for user: {user_id}")
+                return token
+        finally:
+            self._release_connection(conn)
+
+    def get_user_by_api_token(self, token: str, *, token_ttl_days: Optional[int] = None) -> Optional[User]:
+        """
+        Look up a user by their API token.
+
+        Hashes the provided token and queries by hash for O(1) lookup
+        without exposing tokens if the database is compromised.
+
+        Args:
+            token: The plaintext API token
+            token_ttl_days: If provided, reject tokens older than this many days.
+                When None, skip expiry check (backward compat).
+
+        Returns:
+            User object if token is valid and not expired, None otherwise
+        """
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+        conn = self._get_connection()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, display_name, email, auth_provider, is_admin,
+                           theme, preferred_model, preferred_temperature,
+                           api_token_created_at, created_at, updated_at
+                    FROM users
+                    WHERE api_token_hash = %s
+                    """,
+                    (token_hash,)
+                )
+                row = cursor.fetchone()
+
+                if row is None:
+                    return None
+
+                # Check token expiry when TTL is configured
+                if token_ttl_days is not None and row["api_token_created_at"] is not None:
+                    age = datetime.now(timezone.utc) - row["api_token_created_at"]
+                    if age > timedelta(days=token_ttl_days):
+                        logger.warning(
+                            "Expired API token for user %s (age: %s, ttl: %d days)",
+                            row["id"], age, token_ttl_days,
+                        )
+                        return None
+
+                return User(
+                    id=row["id"],
+                    display_name=row["display_name"],
+                    email=row["email"],
+                    auth_provider=row["auth_provider"],
+                    is_admin=row["is_admin"],
+                    theme=row["theme"],
+                    preferred_model=row["preferred_model"],
+                    preferred_temperature=float(row["preferred_temperature"]) if row["preferred_temperature"] else None,
+                    created_at=str(row["created_at"]) if row["created_at"] else None,
+                    updated_at=str(row["updated_at"]) if row["updated_at"] else None,
+                )
+        finally:
+            self._release_connection(conn)
+
+    def has_api_token(self, user_id: str) -> bool:
+        """
+        Check whether a user has an API token.
+
+        Args:
+            user_id: The user's unique identifier
+
+        Returns:
+            True if the user has an API token, False otherwise
+        """
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT api_token_hash IS NOT NULL FROM users WHERE id = %s",
+                    (user_id,)
+                )
+                row = cursor.fetchone()
+                return bool(row and row[0])
+        finally:
+            self._release_connection(conn)
+
+    def revoke_api_token(self, user_id: str) -> bool:
+        """
+        Revoke a user's API token.
+
+        Args:
+            user_id: The user's unique identifier
+
+        Returns:
+            True if a token was revoked, False if user had no token or not found
+        """
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET api_token_hash = NULL, api_token_created_at = NULL, updated_at = NOW()
+                    WHERE id = %s AND api_token_hash IS NOT NULL
+                    """,
+                    (user_id,)
+                )
+                conn.commit()
+
+                revoked = cursor.rowcount > 0
+                if revoked:
+                    log_authentication_event(user_id, "api_token_revoke", success=True, method="bearer_token")
+                return revoked
+        finally:
+            self._release_connection(conn)
+
     def link_anonymous_to_authenticated(
         self,
         anonymous_id: str,

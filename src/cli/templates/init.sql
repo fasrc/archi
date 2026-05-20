@@ -60,7 +60,11 @@ CREATE TABLE IF NOT EXISTS users (
     api_key_openrouter BYTEA,      -- Encrypted
     api_key_openai BYTEA,          -- Encrypted  
     api_key_anthropic BYTEA,       -- Encrypted
-    
+
+    -- API token for /v1 OpenAI-compatible endpoint (SHA-256 hash)
+    api_token_hash VARCHAR(64),
+    api_token_created_at TIMESTAMPTZ,
+
     -- Session tracking
     last_login_at TIMESTAMPTZ,
     login_count INTEGER NOT NULL DEFAULT 0,
@@ -72,6 +76,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_github_id ON users(github_id) WHERE github_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_api_token ON users(api_token_hash) WHERE api_token_hash IS NOT NULL;
 
 -- ============================================================================
 -- 1.1 SESSIONS
@@ -355,11 +360,20 @@ CREATE TABLE IF NOT EXISTS conversation_metadata (
     title TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    archi_version VARCHAR(50)
+    archi_version VARCHAR(50),
+    external_chat_id VARCHAR(200)
 );
 
 CREATE INDEX IF NOT EXISTS idx_conv_meta_user ON conversation_metadata(user_id);
 CREATE INDEX IF NOT EXISTS idx_conv_meta_client ON conversation_metadata(client_id);
+-- Composite to prevent cross-user collision on X-OpenWebUI-Chat-Id.
+-- Existing /v1-enabled deployments (where rows already have external_chat_id
+-- populated) must run, once:
+--   DROP INDEX idx_conv_meta_external_chat;
+--   CREATE UNIQUE INDEX idx_conv_meta_external_chat
+--     ON conversation_metadata(user_id, external_chat_id)
+--     WHERE external_chat_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_meta_external_chat ON conversation_metadata(user_id, external_chat_id) WHERE external_chat_id IS NOT NULL;
 
 -- Add FK to conversation_doc_overrides now that conversation_metadata exists
 DO $$
