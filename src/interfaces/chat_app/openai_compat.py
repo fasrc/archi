@@ -195,6 +195,12 @@ def chat_completions():
     client_id = user_id or f"v1_{uuid.uuid4().hex[:12]}"
 
     external_chat_id = request.headers.get("X-OpenWebUI-Chat-Id")
+    if external_chat_id and len(external_chat_id) > 200:
+        return _openai_error(
+            "X-OpenWebUI-Chat-Id exceeds 200-character limit",
+            error_type="invalid_request_error",
+            status=400,
+        )
     conversation_id = None
     if external_chat_id and _chat_wrapper:
         conversation_id = _get_or_create_conversation(
@@ -435,7 +441,7 @@ def _get_or_create_conversation(external_chat_id, user_id, client_id):
                     """
                     INSERT INTO conversation_metadata (user_id, client_id, title, external_chat_id)
                     VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (external_chat_id) WHERE external_chat_id IS NOT NULL
+                    ON CONFLICT (user_id, external_chat_id) WHERE external_chat_id IS NOT NULL
                     DO UPDATE SET last_message_at = NOW()
                     RETURNING conversation_id
                     """,

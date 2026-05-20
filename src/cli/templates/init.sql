@@ -366,7 +366,14 @@ CREATE TABLE IF NOT EXISTS conversation_metadata (
 
 CREATE INDEX IF NOT EXISTS idx_conv_meta_user ON conversation_metadata(user_id);
 CREATE INDEX IF NOT EXISTS idx_conv_meta_client ON conversation_metadata(client_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_meta_external_chat ON conversation_metadata(external_chat_id) WHERE external_chat_id IS NOT NULL;
+-- Composite to prevent cross-user collision on X-OpenWebUI-Chat-Id.
+-- Existing /v1-enabled deployments (where rows already have external_chat_id
+-- populated) must run, once:
+--   DROP INDEX idx_conv_meta_external_chat;
+--   CREATE UNIQUE INDEX idx_conv_meta_external_chat
+--     ON conversation_metadata(user_id, external_chat_id)
+--     WHERE external_chat_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_meta_external_chat ON conversation_metadata(user_id, external_chat_id) WHERE external_chat_id IS NOT NULL;
 
 -- Add FK to conversation_doc_overrides now that conversation_metadata exists
 DO $$

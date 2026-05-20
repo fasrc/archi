@@ -2199,6 +2199,7 @@ class FlaskAppWrapper(object):
                 self.chat,
                 user_service=user_service,
                 auth_enabled=self.auth_enabled,
+                token_ttl_days=openai_compat_config.get("token_ttl_days", 90),
             )
 
         # enable CORS:
@@ -2643,13 +2644,14 @@ class FlaskAppWrapper(object):
     # -- API token management (for /v1 bearer auth) --------------------------
 
     def _get_token_user_id(self) -> str:
-        """Resolve user ID from session or X-Client-ID header."""
+        """Resolve user ID from session or, when auth is disabled, X-Client-ID."""
         user_id = session.get('user', {}).get('id')
         if user_id:
             return user_id
-        client_id = request.headers.get('X-Client-ID')
-        if client_id:
-            return client_id
+        if not self.auth_enabled:
+            client_id = request.headers.get('X-Client-ID')
+            if client_id:
+                return client_id
         return jsonify({'error': 'Could not determine user identity'}), 401
 
     def check_api_token(self):

@@ -102,6 +102,9 @@ services:
       auth_roles: {{ services.chat_app.auth.auth_roles | tojson }}
     {% endif %}
     openai_compat:
+      # Before enabling on an existing deployment, run the conversation_metadata
+      # composite-unique migration noted in init.sql (drops & recreates
+      # idx_conv_meta_external_chat as (user_id, external_chat_id)).
       enabled: {{ services.chat_app.openai_compat.enabled | default(false, true) }}
     alerts:
       managers:
