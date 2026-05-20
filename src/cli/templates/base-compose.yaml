@@ -1,3 +1,20 @@
+{#-
+  dev-mode mount macros: bind-mount repo src/ and config/agents/ into
+  a service when dev_mode is set. Keeps the per-service blocks in sync.
+-#}
+{%- macro dev_src_mount() -%}
+{%- if dev_mode %}
+      - {{ repo_path }}/src:/root/archi/src
+{%- endif %}
+{%- endmacro -%}
+{%- macro dev_agents_mount(ro=true) -%}
+{%- if dev_mode %}
+      - {{ repo_path }}/src:/root/archi/src
+      - {{ repo_path }}/config/agents:/root/archi/agents{% if ro %}:ro{% endif %}
+{%- else %}
+      - ./data/agents:/root/archi/agents{% if ro %}:ro{% endif %}
+{%- endif %}
+{%- endmacro -%}
 services:
   {% if data_manager_enabled -%}
   data-manager:
@@ -35,9 +52,7 @@ services:
       - {{ data_manager_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./weblists:/root/archi/weblists
-      {%- if dev_mode %}
-      - {{ repo_path }}/src:/root/archi/src
-      {%- endif %}
+      {{ dev_src_mount() }}
     logging:
       options:
         max-size: 10m
@@ -166,12 +181,7 @@ services:
       - {{ data_manager_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
-      {%- if dev_mode %}
-      - {{ repo_path }}/src:/root/archi/src
-      - {{ repo_path }}/config/agents:/root/archi/agents
-      {%- else %}
-      - ./data/agents:/root/archi/agents
-      {%- endif %}
+      {{ dev_agents_mount(ro=false) }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -294,12 +304,7 @@ services:
       - {{ grader_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
-      {%- if dev_mode %}
-      - {{ repo_path }}/src:/root/archi/src
-      - {{ repo_path }}/config/agents:/root/archi/agents:ro
-      {%- else %}
-      - ./data/agents:/root/archi/agents:ro
-      {%- endif %}
+      {{ dev_agents_mount() }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -361,12 +366,7 @@ services:
       - {{ data_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
-      {%- if dev_mode %}
-      - {{ repo_path }}/src:/root/archi/src
-      - {{ repo_path }}/config/agents:/root/archi/agents:ro
-      {%- else %}
-      - ./data/agents:/root/archi/agents:ro
-      {%- endif %}
+      {{ dev_agents_mount() }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -426,12 +426,7 @@ services:
       - {{ data_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
-      {%- if dev_mode %}
-      - {{ repo_path }}/src:/root/archi/src
-      - {{ repo_path }}/config/agents:/root/archi/agents:ro
-      {%- else %}
-      - ./data/agents:/root/archi/agents:ro
-      {%- endif %}
+      {{ dev_agents_mount() }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -493,12 +488,7 @@ services:
       - {{ data_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
-      {%- if dev_mode %}
-      - {{ repo_path }}/src:/root/archi/src
-      - {{ repo_path }}/config/agents:/root/archi/agents:ro
-      {%- else %}
-      - ./data/agents:/root/archi/agents:ro
-      {%- endif %}
+      {{ dev_agents_mount() }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -557,12 +547,7 @@ services:
     volumes:
       - ./config.yaml:/root/archi/config.yaml
       - ./data/prompts:/root/archi/data/prompts:ro
-      {%- if dev_mode %}
-      - {{ repo_path }}/src:/root/archi/src
-      - {{ repo_path }}/config/agents:/root/archi/agents:ro
-      {%- else %}
-      - ./data/agents:/root/archi/agents:ro
-      {%- endif %}
+      {{ dev_agents_mount() }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -640,12 +625,7 @@ services:
       - ./queries.txt:/root/archi/QandA.txt
       - {{ benchmarking_dest }}:/root/archi/benchmarks
       - ./data/prompts:/root/archi/data/prompts:ro
-      {%- if dev_mode %}
-      - {{ repo_path }}/src:/root/archi/src
-      - {{ repo_path }}/config/agents:/root/archi/agents:ro
-      {%- else %}
-      - ./data/agents:/root/archi/agents:ro
-      {%- endif %}
+      {{ dev_agents_mount() }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}

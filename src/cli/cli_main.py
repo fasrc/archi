@@ -71,6 +71,13 @@ def create(name: str, config_files: list, config_dir: str, env_file: str, servic
     setup_cli_logging(verbosity=verbosity)
     logger = get_logger(__name__)
 
+    if other_flags.get('dev', False):
+        click.echo(click.style(
+            "DEV MODE: repo src/ and config/agents/ will be bind-mounted into containers. "
+            "Code changes land on `docker restart`. Do NOT use on a production deployment.",
+            fg="yellow",
+        ))
+
     warn_if_template_mismatch()
     
     # Check if Docker is available when --podman is not specified
