@@ -63,8 +63,7 @@ class ScrapedResource(BaseResource):
         parsed_link = urlparse(link)
         display_name = parsed_link.hostname or link
         if parsed_link.path and parsed_link.path != '/':
-            first_path = parsed_link.path.strip('/').split('/')[0]
-            display_name += f"/{first_path}"
+            display_name += f"/{parsed_link.path.strip('/')}"
         return display_name
 
     def _safe_relative_path(self) -> Optional[Path]:

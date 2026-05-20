@@ -486,10 +486,18 @@ const API = {
 const Markdown = {
   init() {
     if (typeof marked !== 'undefined') {
+      const renderer = new marked.Renderer();
+      const escapeAttr = (s) =>
+        String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      renderer.link = function(href, title, text) {
+        const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
+        return `<a href="${escapeAttr(href)}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
+      };
       marked.setOptions({
         breaks: true,
         gfm: true,
         highlight: (code, lang) => this.highlightCode(code, lang),
+        renderer: renderer,
       });
     }
   },
