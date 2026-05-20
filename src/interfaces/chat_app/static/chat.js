@@ -487,10 +487,11 @@ const Markdown = {
   init() {
     if (typeof marked !== 'undefined') {
       const renderer = new marked.Renderer();
-      const defaultLinkRenderer = renderer.link.bind(renderer);
+      const escapeAttr = (s) =>
+        String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       renderer.link = function(href, title, text) {
-        const html = defaultLinkRenderer(href, title, text);
-        return html.replace('<a ', '<a target="_blank" rel="noopener noreferrer" ');
+        const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
+        return `<a href="${escapeAttr(href)}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
       };
       marked.setOptions({
         breaks: true,
