@@ -158,13 +158,13 @@ class TestGetOrCreateConversationSQL:
         mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
         mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
-        # First query: no existing mapping
-        mock_cursor.fetchone.side_effect = [None, (42,)]
+        mock_cursor.fetchone.return_value = (42,)
 
         result = compat._get_or_create_conversation("ext-123", "user1", "user1")
 
         assert result == 42
-        assert mock_cursor.execute.call_count == 2  # SELECT + INSERT
+        assert mock_cursor.execute.call_count == 1
+        mock_conn.commit.assert_called_once()
         mock_conn.close.assert_called_once()
 
     @patch("psycopg2.connect")
