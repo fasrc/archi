@@ -107,6 +107,7 @@ class TestUserService:
                 "display_name": None,
                 "email": None,
                 "auth_provider": "anonymous",
+                "is_admin": False,
                 "theme": "system",
                 "preferred_model": None,
                 "preferred_temperature": None,
@@ -130,13 +131,14 @@ class TestUserService:
             "display_name": "Test User",
             "email": "test@example.com",
             "auth_provider": "basic",
+            "is_admin": False,
             "theme": "dark",
             "preferred_model": "gpt-4",
             "preferred_temperature": 0.7,
             "created_at": datetime.now(),
             "updated_at": datetime.now(),
         }
-        
+
         service = UserService(connection_pool=mock_pool, encryption_key="test-key")
         user = service.get_or_create_user("user123")
         
