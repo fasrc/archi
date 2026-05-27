@@ -37,3 +37,10 @@ git/
 local_files/
 raw_local_files/
 websites/
+
+# config/ is its own git repository and holds config/benchmarking/secrets.env;
+# committing it would either break as a gitlink or leak the secret.
+/config/
+
+# Claude Code session state (worktrees, plans, memory, local settings).
+/.claude/
