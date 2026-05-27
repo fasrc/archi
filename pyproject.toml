@@ -50,5 +50,11 @@ build-backend = "setuptools.build_meta"
 testpaths = ["tests/unit"]
 addopts = "-v --tb=short"
 
+[tool.pyright]
+pythonVersion = "3.11"
+extraPaths = ["."]
+include = ["src", "tests"]
+exclude = ["**/__pycache__", "**/node_modules", "config", "openspec/changes"]
+
 [project.urls]
 "Homepage" = "https://github.com/archi-physics/archi"
