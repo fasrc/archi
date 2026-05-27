@@ -2,7 +2,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
+import click
+
 from src.cli.service_registry import service_registry
+
+
+def _discover_repo_path() -> Path:
+    """Walk up from this file until we find a pyproject.toml; that's the archi checkout root."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "pyproject.toml").is_file():
+            return parent
+    raise click.ClickException(
+        "archi create --dev requires running from a git checkout "
+        "(no pyproject.toml found in any parent directory)."
+    )
 
 
 @dataclass
@@ -47,7 +60,7 @@ class DeploymentPlan:
         verbosity: int,
         benchmarking_dest: str,
         dev_mode: bool = False,
-        repo_path: str = "",
+        repo_path: Optional[Path] = None,
     ) -> None:
         self.name = name
         self.base_dir = base_dir
@@ -127,7 +140,7 @@ class DeploymentPlan:
             "benchmarking_dest": self.benchmarking_dest,
             "enabled_sources": sorted(self.enabled_sources),
             "dev_mode": self.dev_mode,
-            "repo_path": self.repo_path,
+            "repo_path": str(self.repo_path) if self.repo_path else "",
         }
 
         for name, state in self.services.items():
@@ -174,10 +187,9 @@ class ServiceBuilder:
         benchmarking_dest = other_flags.get("benchmarking_dest", "")
         dev_mode = other_flags.get("dev", False)
 
-        repo_path = ""
+        repo_path: Optional[Path] = None
         if dev_mode:
-            from src.cli.utils._repository_info import REPO_PATH
-            repo_path = REPO_PATH
+            repo_path = _discover_repo_path()
 
         plan = DeploymentPlan(
             name=name,

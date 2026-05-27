@@ -15,6 +15,12 @@
       - ./data/agents:/root/archi/agents{% if ro %}:ro{% endif %}
 {%- endif %}
 {%- endmacro -%}
+{#- dev-only env vars: keep .pyc out of the bind-mounted host repo. -#}
+{%- macro dev_env() -%}
+{%- if dev_mode %}
+      PYTHONDONTWRITEBYTECODE: 1
+{%- endif %}
+{%- endmacro -%}
 services:
   {% if data_manager_enabled -%}
   data-manager:
@@ -39,6 +45,7 @@ services:
       PGUSER: archi
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -152,9 +159,7 @@ services:
       VERBOSITY: {{ verbosity }}
       # Allow overriding Ollama host via env so containers can reach host daemon
       OLLAMA_HOST: ${OLLAMA_HOST:-}
-      {%- if dev_mode %}
-      PYTHONDONTWRITEBYTECODE: 1
-      {%- endif %}
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -271,6 +276,7 @@ services:
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
     environment:
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -352,6 +358,7 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -399,6 +406,7 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -470,6 +478,7 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -530,6 +539,7 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -596,6 +606,7 @@ services:
       PGDATABASE: archi-db
       PGUSER: archi
       PG_PASSWORD: ${PG_PASSWORD}
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
