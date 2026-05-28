@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - dev
 
 permissions:
   contents: read
@@ -79,9 +80,13 @@ jobs:
       - name: Build base images
         if: steps.base_changes.outputs.changed == 'true'
         id: build
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          TAG="main-${GITHUB_SHA::7}"
+          # Tag prefix is the branch name (main-<sha>, dev-<sha>, etc.) so that
+          # publishes from different branches can coexist in the registry.
+          TAG="${REF_NAME}-${GITHUB_SHA::7}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           scripts/dev/build_docker_images.sh "$TAG"
 

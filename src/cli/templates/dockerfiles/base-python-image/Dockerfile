@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
 # FROM pytorch/pytorch:2.0.1-cuda11.7-cudnn8-devel
+# Built and published to ghcr.io/fasrc/a2rchi-python-base by publish-base-images.yml.
 FROM docker.io/library/python:3.10
 RUN mkdir -p /root/archi
 WORKDIR /root/archi
