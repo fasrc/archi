@@ -115,6 +115,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install ".[all]" || pip install .
+          # The base runtime stack (flask, langchain, etc.) lives in requirements-base.txt,
+          # not in pyproject.toml. The smoke-test job runs `archi create`, which imports the
+          # full Python runtime, so install requirements-base too.
+          pip install -r requirements/requirements-base.txt
 
       - name: Ensure scripts are executable
         run: chmod +x scripts/dev/*.sh

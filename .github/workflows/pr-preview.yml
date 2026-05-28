@@ -170,6 +170,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install ".[all]" || pip install .
+          # The base runtime stack (flask, langchain, etc.) lives in requirements-base.txt,
+          # not in pyproject.toml. The preview job runs `archi create`, which imports the
+          # full Python runtime, so install requirements-base too.
+          pip install -r requirements/requirements-base.txt
           python -c "import importlib.util, mkdocs; assert importlib.util.find_spec('mkdocs.__main__'), 'mkdocs.__main__ missing'; print('mkdocs:', mkdocs.__version__)"
 
       - name: Install Ollama and pull model
