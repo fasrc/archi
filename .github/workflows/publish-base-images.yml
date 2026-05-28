@@ -105,13 +105,21 @@ jobs:
         # Docker.io-only pruning. Skipped when DockerHub credentials are not configured
         # (fasrc fork default state), since manage_docker_tags.py talks to the DockerHub
         # REST API and will fail without credentials. No GHCR equivalent in this change.
-        if: ${{ success() && steps.base_changes.outputs.changed == 'true' && secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        # Note: GitHub Actions does not allow `secrets.X` in step-level `if:` expressions,
+        # so the secret-presence check lives in bash here, not in the step's `if:`.
+        if: ${{ success() && steps.base_changes.outputs.changed == 'true' }}
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           CURRENT_TAG: ${{ steps.build.outputs.tag }}
         run: |
           set -euo pipefail
+          # Returns 0 if argument has any non-whitespace character.
+          is_nonempty() { [[ "${1:-}" =~ [^[:space:]] ]]; }
+          if ! is_nonempty "${DOCKERHUB_USERNAME:-}" || ! is_nonempty "${DOCKERHUB_TOKEN:-}"; then
+            echo "DockerHub credentials not configured; skipping docker.io tag prune."
+            exit 0
+          fi
           python scripts/dev/manage_docker_tags.py prune-prefix --prefix main- --keep "${CURRENT_TAG}"
 
       - name: Skip notification
