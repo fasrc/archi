@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   build-images:
@@ -75,6 +76,13 @@ jobs:
       - name: Build Docker base images
         run: scripts/dev/build_docker_images.sh "${{ steps.version.outputs.tag }}"
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Push versioned base images
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -107,6 +115,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install ".[all]" || pip install .
+          # The base runtime stack (flask, langchain, etc.) lives in requirements-base.txt,
+          # not in pyproject.toml. The smoke-test job runs `archi create`, which imports the
+          # full Python runtime, so install requirements-base too.
+          pip install -r requirements/requirements-base.txt
 
       - name: Ensure scripts are executable
         run: chmod +x scripts/dev/*.sh
@@ -131,8 +143,15 @@ jobs:
           sudo systemctl restart docker
           docker info | grep -i "Storage Driver"
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Point Dockerfiles to versioned base images
-        run: python scripts/dev/update_service_base_images.py --tag "${{ needs.build-images.outputs.tag }}" --switch-source dockerhub
+        run: python scripts/dev/update_service_base_images.py --tag "${{ needs.build-images.outputs.tag }}" --switch-source ghcr
 
       - name: Run smoke deployment
         uses: ./.github/actions/run-smoke
@@ -190,20 +209,46 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Promote Docker images to latest
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote base images to latest
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           VERSION_TAG: ${{ needs.build-images.outputs.tag }}
-          REGISTRY_PREFIX: ${{ env.REGISTRY_PREFIX }}
         run: |
           set -euo pipefail
-          echo "$DOCKERHUB_TOKEN" | docker login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin
-          for image in ${REGISTRY_PREFIX}/archi-python-base ${REGISTRY_PREFIX}/archi-pytorch-base; do
-            # Pull the versioned image and re-tag as latest
-            docker pull "docker.io/$image:$VERSION_TAG"
-            docker tag "docker.io/$image:$VERSION_TAG" "docker.io/$image:latest"
-            docker push "docker.io/$image:latest"
+
+          # Returns 0 if argument is non-empty AND contains a non-whitespace char.
+          is_nonempty() { [[ "${1:-}" =~ [^[:space:]] ]]; }
+
+          has_dockerhub=false
+          if is_nonempty "${DOCKERHUB_USERNAME:-}" && is_nonempty "${DOCKERHUB_TOKEN:-}"; then
+            has_dockerhub=true
+            echo "$DOCKERHUB_TOKEN" | docker login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin
+          else
+            echo "DockerHub credentials not configured; will promote GHCR only."
+          fi
+
+          for image in a2rchi-python-base a2rchi-pytorch-base; do
+            # Promote on GHCR (always)
+            docker pull "ghcr.io/fasrc/$image:$VERSION_TAG"
+            docker tag "ghcr.io/fasrc/$image:$VERSION_TAG" "ghcr.io/fasrc/$image:latest"
+            docker push "ghcr.io/fasrc/$image:latest"
+
+            # Promote on Docker Hub (only when credentials present)
+            if $has_dockerhub; then
+              docker pull "docker.io/a2rchi/$image:$VERSION_TAG"
+              docker tag "docker.io/a2rchi/$image:$VERSION_TAG" "docker.io/a2rchi/$image:latest"
+              docker push "docker.io/a2rchi/$image:latest"
+            else
+              echo "Skipping docker.io promotion for $image"
+            fi
           done
       - name: Update version in project files
         run: python scripts/dev/update_version.py "${{ needs.build-images.outputs.clean }}"
