@@ -42,6 +42,7 @@ logger = get_logger(__name__)
 os.environ['OPENAI_API_KEY'] = read_secret("OPENAI_API_KEY")
 os.environ['ANTHROPIC_API_KEY'] = read_secret("ANTHROPIC_API_KEY")
 os.environ['HUGGING_FACE_HUB_TOKEN'] = read_secret("HUGGING_FACE_HUB_TOKEN")
+os.environ['HUIT_API_KEY'] = read_secret("HUIT_API_KEY")
 
 factory = PostgresServiceFactory.from_env(password_override=os.environ.get("PG_PASSWORD"))
 PostgresServiceFactory.set_instance(factory)
@@ -494,6 +495,9 @@ class Benchmarker:
             case "anthropic":
                 from langchain_anthropic import ChatAnthropic
                 return ChatAnthropic(model=model_name)
+            case "huit_bedrock":
+                base_url = benchmark_cfg.get("base_url") or "https://go.apis.huit.harvard.edu/ais-bedrock-llm/v2"
+                return get_model("huit_bedrock", model_name, {"base_url": base_url})
             case _:
                 return ChatOpenAI(model=model_name)
 
