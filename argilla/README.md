@@ -10,20 +10,26 @@ grades on archi benchmark outputs. Runs alongside (not inside) the archi
 # 1. Generate Argilla secrets (32-byte hex each).
 python scripts/bootstrap_argilla.py --generate-secrets
 
-# 2. Ensure the ES data dir exists and is owned by the elasticsearch UID (1000).
+# 2. Materialize the env file docker-compose sources. Argilla's entrypoint
+#    reads raw USERNAME/PASSWORD/API_KEY env vars; Docker's `_FILE` suffix
+#    pattern is NOT supported by their bootstrap script, so we inline.
+python scripts/bootstrap_argilla.py --export-env
+
+# 3. Ensure the ES data dir exists and is owned by the elasticsearch UID (1000).
 sudo mkdir -p /scratch/docker/volumes/argilla-es
 sudo chown -R 1000:1000 /scratch/docker/volumes/argilla-es
 
-# 3. Bring the stack up.
+# 4. Bring the stack up.
 docker compose -f argilla/docker-compose.yaml up -d
 
-# 4. Wait for both containers to report "healthy" (~60s on first start).
+# 5. Wait for all three containers (argilla-server, elasticsearch, redis) to
+#    report "healthy". First start takes ~60s for argilla-server.
 docker compose -f argilla/docker-compose.yaml ps
 
-# 5. Bootstrap the "archi" workspace via SDK.
+# 6. Bootstrap the "archi" workspace via SDK.
 python scripts/bootstrap_argilla.py --create-workspace
 
-# 6. Open tcp/6900 from the staff source range (mirrors port 7861's rule).
+# 7. Open tcp/6900 from the staff source range (mirrors port 7861's rule).
 sudo iptables -I INPUT 12 -p tcp --dport 6900 -s <STAFF_RANGE> -j ACCEPT
 sudo /sbin/service iptables save   # adjust to host's persistence mechanism
 ```

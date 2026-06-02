@@ -15,8 +15,11 @@
 #   docker compose -f argilla/docker-compose.yaml down
 #   sudo rm -rf /scratch/docker/volumes/argilla-es
 #
-# Secrets are sourced from $HOME/.archi/secrets/ — generate them with
-# scripts/bootstrap_argilla.py before first start.
+# Secrets are sourced from $HOME/.archi/argilla.env — generate it with:
+#   python scripts/bootstrap_argilla.py --generate-secrets
+#   python scripts/bootstrap_argilla.py --export-env
+# Argilla's start_argilla_server.sh reads raw USERNAME/PASSWORD/API_KEY env
+# vars (Docker's `_FILE` indirection is not supported), so we have to inline.
 
 services:
   argilla:
@@ -25,22 +28,14 @@ services:
     restart: unless-stopped
     ports:
       - "6900:6900"
+    env_file:
+      - ${HOME}/.archi/argilla.env
     environment:
-      # Argilla server config
+      # Argilla server config (non-secret)
       ARGILLA_HOME_PATH: /var/lib/argilla
       ARGILLA_ELASTICSEARCH: http://elasticsearch:9200
       ARGILLA_REDIS_URL: redis://redis:6379/0
       ARGILLA_DATABASE_URL: sqlite:////var/lib/argilla/argilla.db
-      ARGILLA_AUTH_SECRET_KEY_FILE: /run/secrets/argilla_auth_secret
-      # Owner-account bootstrap (only used on first start; ignored thereafter)
-      USERNAME: owner
-      PASSWORD_FILE: /run/secrets/argilla_owner_password
-      API_KEY_FILE: /run/secrets/argilla_api_key
-      WORKSPACE: archi
-    secrets:
-      - argilla_auth_secret
-      - argilla_api_key
-      - argilla_owner_password
     volumes:
       - argilla-data:/var/lib/argilla
     depends_on:
@@ -105,14 +100,6 @@ services:
 volumes:
   argilla-data:
     name: argilla-data
-
-secrets:
-  argilla_auth_secret:
-    file: ${HOME}/.archi/secrets/argilla_auth_secret.txt
-  argilla_api_key:
-    file: ${HOME}/.archi/secrets/argilla_api_key.txt
-  argilla_owner_password:
-    file: ${HOME}/.archi/secrets/argilla_owner_password.txt
 
 networks:
   argilla-net:
