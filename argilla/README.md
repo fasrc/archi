@@ -53,6 +53,7 @@ Argilla UI's user-management page.
 |---|---|---|
 | Argilla DB (users, workspaces, settings) | named volume `argilla-data` → `/var/lib/argilla` inside the container | SQLite; survives `down`; lost on `docker volume rm argilla-data` |
 | ES indices (records, responses) | host bind `/scratch/docker/volumes/argilla-es/` | Survives `down`; lost on manual `rm -rf` |
+| Redis (task queue) | in-memory only | Pure broker — no persistence; safe to restart |
 
 ## Reset
 

@@ -29,6 +29,7 @@ services:
       # Argilla server config
       ARGILLA_HOME_PATH: /var/lib/argilla
       ARGILLA_ELASTICSEARCH: http://elasticsearch:9200
+      ARGILLA_REDIS_URL: redis://redis:6379/0
       ARGILLA_DATABASE_URL: sqlite:////var/lib/argilla/argilla.db
       ARGILLA_AUTH_SECRET_KEY_FILE: /run/secrets/argilla_auth_secret
       # Owner-account bootstrap (only used on first start; ignored thereafter)
@@ -45,6 +46,8 @@ services:
     depends_on:
       elasticsearch:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - argilla-net
     healthcheck:
@@ -53,6 +56,21 @@ services:
       timeout: 10s
       retries: 10
       start_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    container_name: argilla-redis
+    restart: unless-stopped
+    # No persistence needed — Argilla uses Redis only as a task-queue broker.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - argilla-net
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.4
