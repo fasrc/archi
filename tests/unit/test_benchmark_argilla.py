@@ -16,6 +16,7 @@ from src.utils.benchmark_argilla import (
     _get_workspace,
     _format_trace_html,
     _html_escape,
+    assert_single_sweep,
     generate_dataset_name,
     pull_grades_from_argilla,
     pull_multi_grades_from_argilla,
@@ -642,7 +643,7 @@ def test_generate_dataset_name_with_suffix():
 @patch("src.utils.benchmark_argilla.push_ab_results_to_argilla")
 def test_push_multi_ab_creates_datasets(mock_push):
     """Creates one dataset per comparison pair."""
-    mock_push.side_effect = lambda data, name: name
+    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None: name
 
     comparisons = [
         {
@@ -690,7 +691,7 @@ def test_push_multi_ab_empty_list(mock_push):
 @patch("src.utils.benchmark_argilla.push_ab_results_to_argilla")
 def test_push_multi_ab_default_names(mock_push):
     """Falls back to config_a/config_b when names are missing."""
-    mock_push.side_effect = lambda data, name: name
+    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None: name
 
     comparisons = [
         {"config_a": {}, "config_b": {}, "per_question": []},
@@ -698,6 +699,22 @@ def test_push_multi_ab_default_names(mock_push):
     result = push_multi_ab_results_to_argilla(comparisons, "bench")
     assert len(result) == 1
     assert "config_a-vs-config_b" in result[0]
+
+
+@patch("src.utils.benchmark_argilla.push_ab_results_to_argilla")
+def test_push_multi_ab_forwards_corpus_snapshot_id(mock_push):
+    """corpus_snapshot_id reaches every per-pair push call (spec: same-sweep guarantee)."""
+    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None: name
+
+    comparisons = [
+        {"config_a": {"name": "a"}, "config_b": {"name": "b"}, "per_question": []},
+        {"config_a": {"name": "a"}, "config_b": {"name": "c"}, "per_question": []},
+    ]
+    push_multi_ab_results_to_argilla(comparisons, "bench", corpus_snapshot_id="snap-xyz")
+
+    assert mock_push.call_count == 2
+    for call in mock_push.call_args_list:
+        assert call.kwargs.get("corpus_snapshot_id") == "snap-xyz"
 
 
 # -- pull_multi_grades_from_argilla tests -------------------------------------
@@ -757,3 +774,47 @@ def test_write_state_file_dataset_names_preserved_on_merge(tmp_path):
         full = read_state_file_full()
         # dataset_names should be preserved from previous write
         assert full.get("dataset_names") == ["ds-1", "ds-2"]
+
+
+# -- assert_single_sweep (cross-sweep guard) tests ----------------------------
+
+def test_assert_single_sweep_passes_when_all_same():
+    """All records share one id -> returns it."""
+    grades = {
+        "Q1": {"corpus_snapshot_id": "snap-abc", "responses": []},
+        "Q2": {"corpus_snapshot_id": "snap-abc", "responses": []},
+        "Q3": {"corpus_snapshot_id": "snap-abc", "responses": []},
+    }
+    assert assert_single_sweep(grades) == "snap-abc"
+
+
+def test_assert_single_sweep_refuses_when_mixed():
+    """Different ids across records -> raises with a clear message."""
+    grades = {
+        "Q1": {"corpus_snapshot_id": "snap-abc", "responses": []},
+        "Q2": {"corpus_snapshot_id": "snap-xyz", "responses": []},
+    }
+    with pytest.raises(RuntimeError) as exc_info:
+        assert_single_sweep(grades)
+    assert "cross-sweep" in str(exc_info.value).lower()
+    assert "snap-abc" in str(exc_info.value)
+    assert "snap-xyz" in str(exc_info.value)
+
+
+def test_assert_single_sweep_warns_when_missing():
+    """No ids present -> returns None (exploratory mode), does not raise."""
+    grades = {
+        "Q1": {"responses": []},
+        "Q2": {"responses": []},
+    }
+    assert assert_single_sweep(grades) is None
+
+
+def test_assert_single_sweep_ignores_blank_ids():
+    """None and empty-string ids are treated as missing, not as distinct values."""
+    grades = {
+        "Q1": {"corpus_snapshot_id": "snap-abc", "responses": []},
+        "Q2": {"corpus_snapshot_id": None, "responses": []},
+        "Q3": {"corpus_snapshot_id": "", "responses": []},
+    }
+    assert assert_single_sweep(grades) == "snap-abc"

@@ -155,11 +155,18 @@ def _get_workspace(client) -> str:
 def push_ab_results_to_argilla(
     benchmark_data: Dict[str, Any],
     dataset_name: str,
+    corpus_snapshot_id: Optional[str] = None,
 ) -> str:
     """Push A/B benchmark results to Argilla as an annotation dataset.
 
     Creates an Argilla dataset with one record per question, showing
     answer_a and answer_b side-by-side with RAGAS scores as metadata.
+
+    When ``corpus_snapshot_id`` is provided, it is stamped onto every
+    record as a ``TermsMetadataProperty`` so the analysis notebook can
+    refuse to compute primary-outcome statistics across configs that
+    were not run together (spec: argilla-benchmark-grading "Sweep
+    guarantees same corpus" + "Analysis rejects cross-sweep comparison").
 
     Returns the dataset name.
     """
@@ -221,6 +228,7 @@ def push_ab_results_to_argilla(
             rg.FloatMetadataProperty(name="ragas_recall_b", title="RAGAS Context Recall (B)"),
             rg.FloatMetadataProperty(name="time_a", title="Response Time (A)"),
             rg.FloatMetadataProperty(name="time_b", title="Response Time (B)"),
+            rg.TermsMetadataProperty(name="corpus_snapshot_id", title="Corpus snapshot id"),
         ],
     )
 
@@ -265,6 +273,8 @@ def push_ab_results_to_argilla(
         tb = item.get("time_b")
         if tb is not None:
             metadata["time_b"] = float(tb)
+        if corpus_snapshot_id:
+            metadata["corpus_snapshot_id"] = corpus_snapshot_id
 
         # Build collapsible trace HTML from prepared messages
         trace_a_html = _format_trace_html(item.get("messages_a", []))
@@ -292,11 +302,14 @@ def push_ab_results_to_argilla(
 def push_single_results_to_argilla(
     benchmark_data: Dict[str, Any],
     dataset_name: str,
+    corpus_snapshot_id: Optional[str] = None,
 ) -> str:
     """Push single-config benchmark results to Argilla.
 
     Creates a dataset with question, response, reference answer,
     and RAGAS scores. No winner label — just quality rating and notes.
+    When ``corpus_snapshot_id`` is provided it is stamped onto every
+    record for cross-sweep refusal in the analysis notebook.
 
     Returns the dataset name.
     """
@@ -343,6 +356,7 @@ def push_single_results_to_argilla(
             rg.FloatMetadataProperty(name="ragas_precision", title="RAGAS Context Precision"),
             rg.FloatMetadataProperty(name="ragas_recall", title="RAGAS Context Recall"),
             rg.FloatMetadataProperty(name="time_elapsed", title="Response Time"),
+            rg.TermsMetadataProperty(name="corpus_snapshot_id", title="Corpus snapshot id"),
         ],
     )
 
@@ -368,6 +382,8 @@ def push_single_results_to_argilla(
         te = item.get("time_elapsed")
         if te is not None:
             metadata["time_elapsed"] = float(te)
+        if corpus_snapshot_id:
+            metadata["corpus_snapshot_id"] = corpus_snapshot_id
 
         # Build collapsible trace HTML from prepared messages
         trace_html = _format_trace_html(item.get("messages", []))
@@ -414,8 +430,16 @@ def pull_grades_from_argilla(
         fields = record.fields
         question = fields.get("question", "unknown")
 
+        record_metadata = getattr(record, "metadata", None) or {}
+        corpus_snapshot_id = (
+            record_metadata.get("corpus_snapshot_id")
+            if isinstance(record_metadata, dict)
+            else None
+        )
+
         item_grades: Dict[str, Any] = {
             "question": question,
+            "corpus_snapshot_id": corpus_snapshot_id,
             "responses": [],
         }
 
@@ -470,10 +494,13 @@ def generate_dataset_name(benchmark_name: str = "", suffix: str = "") -> str:
 def push_multi_ab_results_to_argilla(
     ab_comparisons: List[Dict[str, Any]],
     benchmark_name: str,
+    corpus_snapshot_id: Optional[str] = None,
 ) -> List[str]:
     """Push multiple pairwise A/B comparisons to Argilla as separate datasets.
 
     Creates one dataset per pair, named {benchmark_name}-{configA}-vs-{configB}-{timestamp}.
+    All pairs share the same ``corpus_snapshot_id`` since they came from one
+    ``archi evaluate`` invocation.
 
     Returns list of dataset names created.
     """
@@ -488,7 +515,7 @@ def push_multi_ab_results_to_argilla(
         # Wrap into the format push_ab_results_to_argilla expects
         benchmark_data = {"ab_comparison": comp}
         try:
-            push_ab_results_to_argilla(benchmark_data, dataset_name)
+            push_ab_results_to_argilla(benchmark_data, dataset_name, corpus_snapshot_id=corpus_snapshot_id)
             dataset_names.append(dataset_name)
         except Exception:
             logger.exception("Failed to push pair %s vs %s to Argilla.", name_a, name_b)
@@ -534,6 +561,41 @@ def pull_multi_grades_from_argilla(
         logger.info("Multi-dataset grades written to %s", output_path)
 
     return all_grades
+
+
+# -- Cross-sweep guard -------------------------------------------------------
+
+
+def assert_single_sweep(grades_dict: Dict[str, Any]) -> Optional[str]:
+    """Refuse cross-sweep comparisons in the analysis path.
+
+    Spec: ``argilla-benchmark-grading`` — analysis tooling SHALL refuse to
+    compute primary-outcome statistics across configs that were not run in
+    the same ``archi evaluate`` invocation. Every record carries a
+    ``corpus_snapshot_id`` metadata field set once per invocation; if grades
+    from multiple invocations end up here the ids will differ and we raise.
+
+    Returns the shared snapshot id on success, or None when no records have
+    snapshot ids (treated as exploratory; primary outcomes should not be
+    published from such a run).
+    """
+    ids = {g.get("corpus_snapshot_id") for g in grades_dict.values() if g.get("corpus_snapshot_id")}
+    if not ids:
+        logger.warning(
+            "No corpus_snapshot_id metadata found on any record. Treating as exploratory; "
+            "do NOT publish a primary-outcome decision from this run."
+        )
+        return None
+    if len(ids) > 1:
+        raise RuntimeError(
+            "REFUSED: cross-sweep comparison detected. Multiple corpus_snapshot_id values present: "
+            + ", ".join(sorted(str(i) for i in ids))
+            + ". These configs were NOT run in the same archi evaluate invocation; comparing them "
+            "would mix different document snapshots / agent prompts / question banks. Re-run as a "
+            "single `archi evaluate -cd <dir>` sweep, or move to an exploratory notebook with that "
+            "caveat explicit."
+        )
+    return ids.pop()
 
 
 # -- State file utilities (shared with benchmark_grading.py) --

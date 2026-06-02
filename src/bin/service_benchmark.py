@@ -2,6 +2,7 @@ import json
 import math
 import os
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -74,6 +75,22 @@ class ResultHandler:
     metadata = {}  # store the metadata about the benchmark run
     ab_comparison: Dict[str, Any] = {}  # single-pair compat (populated only in ab_mode with 2 configs)
     ab_comparisons: List[Dict[str, Any]] = []  # multi-pair: list of pair comparison dicts
+    # Per-invocation identifier shared by every config in this archi-evaluate run.
+    # Stamped onto Argilla records as metadata so the analysis notebook can refuse
+    # to compute primary-outcome statistics across configs that were NOT run
+    # together (different invocations -> different snapshot ids -> different
+    # corpus state). Spec: argilla-benchmark-grading "Sweep guarantees same corpus".
+    # Initialized lazily on first read or in add_metadata, whichever comes first.
+    _corpus_snapshot_id: Optional[str] = None
+
+    @staticmethod
+    def get_corpus_snapshot_id() -> str:
+        """Return the per-invocation corpus snapshot id, generating it once on first access."""
+        if ResultHandler._corpus_snapshot_id is None:
+            # Respect an override so re-runs or smoke tests can pin the id.
+            override = os.environ.get("ARCHI_CORPUS_SNAPSHOT_ID")
+            ResultHandler._corpus_snapshot_id = override or str(uuid.uuid4())
+        return ResultHandler._corpus_snapshot_id
 
     @staticmethod
     def map_prompts(config: Dict[str, Any]):
@@ -112,12 +129,13 @@ class ResultHandler:
 
     @staticmethod
     def add_metadata():
-        with open(EXTRA_METADATA_PATH, "r") as f: 
+        with open(EXTRA_METADATA_PATH, "r") as f:
             additional_info = yaml.safe_load(f)
 
         meta_data = {
             "time": str(datetime.now(timezone.utc)),
-            "git_info": additional_info, 
+            "git_info": additional_info,
+            "corpus_snapshot_id": ResultHandler.get_corpus_snapshot_id(),
         }
 
         ResultHandler.metadata.update(meta_data)
@@ -866,10 +884,12 @@ class Benchmarker:
                     write_state_file,
                 )
 
+                corpus_id = ResultHandler.get_corpus_snapshot_id()
                 if ResultHandler.ab_comparisons and len(ResultHandler.ab_comparisons) > 1:
                     dataset_names = push_multi_ab_results_to_argilla(
                         ResultHandler.ab_comparisons,
                         self.benchmark_name,
+                        corpus_snapshot_id=corpus_id,
                     )
                     write_state_file(
                         dataset_name=dataset_names[0] if dataset_names else "",
@@ -877,9 +897,9 @@ class Benchmarker:
                     )
                     ResultHandler.metadata["argilla_datasets"] = dataset_names
                     logger.info(
-                        "Argilla export complete. %d datasets created. "
+                        "Argilla export complete. %d datasets created (corpus_snapshot_id=%s). "
                         "Open Argilla to grade: archi grade --serve",
-                        len(dataset_names),
+                        len(dataset_names), corpus_id,
                     )
                 elif ResultHandler.ab_comparison:
                     argilla_dataset_name = generate_dataset_name(self.benchmark_name)
@@ -887,26 +907,26 @@ class Benchmarker:
                         "benchmarking_results": ResultHandler.results,
                         "ab_comparison": ResultHandler.ab_comparison,
                     }
-                    push_ab_results_to_argilla(benchmark_output, argilla_dataset_name)
+                    push_ab_results_to_argilla(benchmark_output, argilla_dataset_name, corpus_snapshot_id=corpus_id)
                     write_state_file(argilla_dataset_name)
                     ResultHandler.metadata["argilla_dataset"] = argilla_dataset_name
                     logger.info(
-                        "Argilla export complete. Dataset: '%s'. "
+                        "Argilla export complete. Dataset: '%s' (corpus_snapshot_id=%s). "
                         "Open Argilla to grade: archi grade --serve",
-                        argilla_dataset_name,
+                        argilla_dataset_name, corpus_id,
                     )
                 else:
                     argilla_dataset_name = generate_dataset_name(self.benchmark_name)
                     benchmark_output = {
                         "benchmarking_results": ResultHandler.results,
                     }
-                    push_single_results_to_argilla(benchmark_output, argilla_dataset_name)
+                    push_single_results_to_argilla(benchmark_output, argilla_dataset_name, corpus_snapshot_id=corpus_id)
                     write_state_file(argilla_dataset_name)
                     ResultHandler.metadata["argilla_dataset"] = argilla_dataset_name
                     logger.info(
-                        "Argilla export complete. Dataset: '%s'. "
+                        "Argilla export complete. Dataset: '%s' (corpus_snapshot_id=%s). "
                         "Open Argilla to grade: archi grade --serve",
-                        argilla_dataset_name,
+                        argilla_dataset_name, corpus_id,
                     )
             except Exception:
                 logger.exception("Argilla push failed — results were still dumped to disk.")
