@@ -1,0 +1,102 @@
+# Argilla 2.x deployment for archi benchmark human-grading.
+#
+# This stack runs alongside (NOT inside) the archi docker-compose deployment
+# managed by `archi evaluate` / `archi create`. It owns its own ports, network,
+# and volumes; the only coupling to archi is at the data layer — `archi
+# evaluate --argilla` pushes records to this server's REST API at port 6900.
+#
+# Bring it up:
+#   docker compose -f argilla/docker-compose.yaml up -d
+#
+# Bring it down (data preserved):
+#   docker compose -f argilla/docker-compose.yaml down
+#
+# Bring it down AND wipe ES data (destructive):
+#   docker compose -f argilla/docker-compose.yaml down
+#   sudo rm -rf /scratch/docker/volumes/argilla-es
+#
+# Secrets are sourced from $HOME/.archi/secrets/ — generate them with
+# scripts/bootstrap_argilla.py before first start.
+
+services:
+  argilla:
+    image: argilla/argilla-server:v2.8.0
+    container_name: argilla-server
+    restart: unless-stopped
+    ports:
+      - "6900:6900"
+    environment:
+      # Argilla server config
+      ARGILLA_HOME_PATH: /var/lib/argilla
+      ARGILLA_ELASTICSEARCH: http://elasticsearch:9200
+      ARGILLA_DATABASE_URL: sqlite:////var/lib/argilla/argilla.db
+      ARGILLA_AUTH_SECRET_KEY_FILE: /run/secrets/argilla_auth_secret
+      # Owner-account bootstrap (only used on first start; ignored thereafter)
+      USERNAME: owner
+      PASSWORD_FILE: /run/secrets/argilla_owner_password
+      API_KEY_FILE: /run/secrets/argilla_api_key
+      WORKSPACE: archi
+    secrets:
+      - argilla_auth_secret
+      - argilla_api_key
+      - argilla_owner_password
+    volumes:
+      - argilla-data:/var/lib/argilla
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - argilla-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:6900/api/_status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.4
+    container_name: argilla-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+      # Modest heap; tune via override if eval workload grows.
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      # Host-bind ES data so it survives container recreation and lives on the
+      # large /scratch filesystem rather than the small root partition.
+      - /scratch/docker/volumes/argilla-es:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks:
+      - argilla-net
+
+volumes:
+  argilla-data:
+    name: argilla-data
+
+secrets:
+  argilla_auth_secret:
+    file: ${HOME}/.archi/secrets/argilla_auth_secret.txt
+  argilla_api_key:
+    file: ${HOME}/.archi/secrets/argilla_api_key.txt
+  argilla_owner_password:
+    file: ${HOME}/.archi/secrets/argilla_owner_password.txt
+
+networks:
+  argilla-net:
+    name: argilla-net
+    driver: bridge
