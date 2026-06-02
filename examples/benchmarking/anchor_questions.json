@@ -1,0 +1,42 @@
+[
+  {
+    "anchor_type": "easy_retrieve",
+    "question": "Which SLURM partition on FASRC Cannon should I submit GPU jobs to, and what flag do I use to request GPUs?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/"],
+    "answer": "Use the gpu partition (or gpu_test for short test jobs). Request GPUs with --gres=gpu:N in your SLURM submit script, e.g. --gres=gpu:1.",
+    "source_match_field": ["url"],
+    "notes": "ANCHOR: easy-retrieve. Tests whether retrieval surfaces a specific FASRC partition + flag combination. A regression here means the retrieval pipeline broke. ANSWER AUTHORING: confirm with operator before locking."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "question": "Where on the FASRC Cannon filesystem should I store large datasets that I don't need backed up?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/cluster-storage/"],
+    "answer": "Use /n/holyscratch01/<lab>/ for fast scratch storage. It is not backed up and is periodically purged of older files.",
+    "source_match_field": ["url"],
+    "notes": "ANCHOR: easy-retrieve. Tests recall of a specific FASRC path + its retention policy. ANSWER AUTHORING: confirm with operator before locking."
+  },
+  {
+    "anchor_type": "reasoning",
+    "question": "My SLURM job on Cannon was killed with an out-of-memory error. How do I diagnose what the actual memory peak was, and how do I request more memory for the next submission?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/"],
+    "answer": "After the job ends, run sacct -j <jobid> --format=JobID,MaxRSS,ReqMem to see the peak memory the job used (MaxRSS) versus what was requested (ReqMem). In your next submit script, increase the memory request via --mem=<N>G (whole-job) or --mem-per-cpu=<N>G (per-task), aiming a bit above the observed MaxRSS so future variations don't kill the job again.",
+    "source_match_field": ["url"],
+    "notes": "ANCHOR: reasoning. Requires synthesizing memory diagnostics + submit-script flags + safety margin. Best signal for prompt/model quality changes. ANSWER AUTHORING: confirm with operator before locking."
+  },
+  {
+    "anchor_type": "reasoning",
+    "question": "I want to run a multi-node MPI program on Cannon that uses one GPU per node. What does the SLURM submit script need to specify, and how do I launch the MPI ranks?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/", "https://docs.rc.fas.harvard.edu/kb/mpi-on-the-cluster/"],
+    "answer": "In your submit script: choose a GPU-enabled partition (e.g. gpu), set --nodes=<N> with --ntasks-per-node=1 and --gres=gpu:1 (per-node GPU request), load the MPI and CUDA modules with module load. Launch the program with srun (not mpirun directly) so SLURM places one rank per node with the bound GPU; e.g. srun --mpi=pmix ./my_program. Use sinfo and scontrol show partition gpu to confirm node configuration before submitting.",
+    "source_match_field": ["url"],
+    "notes": "ANCHOR: reasoning. Multi-doc synthesis: partition selection + GPU request + module load + srun vs mpirun. ANSWER AUTHORING: confirm with operator — specific MPI flavor (OpenMPI vs Intel MPI) on Cannon may shift the srun args."
+  },
+  {
+    "anchor_type": "should_refuse",
+    "question": "What is the GPU partition layout on MIT's Engaging cluster, and how do I request an L40S there?",
+    "sources": [],
+    "answer": "I don't have FASRC documentation covering MIT's Engaging cluster — it's a separate institution's HPC system. For Engaging-specific questions, the right contact is the MIT Research Computing team. If you're trying to compare Engaging and Cannon for an upcoming workload, I can help with the Cannon side.",
+    "source_match_field": ["url"],
+    "notes": "ANCHOR: should-refuse. Out-of-scope (different institution's cluster). Correct behavior is to acknowledge the gap and refer, NOT to hallucinate Engaging partition names. A confident-sounding wrong answer on this question fails the round. ANSWER AUTHORING: pattern is fixed; phrasing can be adjusted."
+  }
+]
