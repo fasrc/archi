@@ -1,9 +1,13 @@
 import json
+import math
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from itertools import combinations
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
 
@@ -43,9 +47,32 @@ factory = PostgresServiceFactory.from_env(password_override=os.environ.get("PG_P
 PostgresServiceFactory.set_instance(factory)
 
 
+@dataclass
+class ABResult:
+    """Paired A/B comparison result for a single question."""
+    question: str
+    reference_answer: str
+    answer_a: str
+    answer_b: str
+    time_a: float
+    time_b: float
+    ragas_a: Dict[str, float] = field(default_factory=dict)
+    ragas_b: Dict[str, float] = field(default_factory=dict)
+    sources_a: List[Dict[str, Any]] = field(default_factory=list)
+    sources_b: List[Dict[str, Any]] = field(default_factory=list)
+    messages_a: List[Dict[str, Any]] = field(default_factory=list)
+    messages_b: List[Dict[str, Any]] = field(default_factory=list)
+    winner_by_metric: Dict[str, str] = field(default_factory=dict)
+    llm_judge_a: Dict[str, Any] = field(default_factory=dict)
+    llm_judge_b: Dict[str, Any] = field(default_factory=dict)
+    llm_judge_pairwise: Dict[str, Any] = field(default_factory=dict)
+
+
 class ResultHandler:
-    results = [] # store the results for each config
-    metadata = {} # store the metadata about the benchmark run 
+    results = []  # store the results for each config
+    metadata = {}  # store the metadata about the benchmark run
+    ab_comparison: Dict[str, Any] = {}  # single-pair compat (populated only in ab_mode with 2 configs)
+    ab_comparisons: List[Dict[str, Any]] = []  # multi-pair: list of pair comparison dicts
 
     @staticmethod
     def map_prompts(config: Dict[str, Any]):
@@ -116,22 +143,158 @@ class ResultHandler:
 
             
 
-    @staticmethod 
+    @staticmethod
     def dump(benchmark_name: Path):
         filename = f"{benchmark_name}-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
         file_path = OUTPUT_DIR / filename
         logger.info(f"Dumping results to {file_path}")
         logger.debug(f"Full results: {ResultHandler.results}")
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        output = {
+        output: Dict[str, Any] = {
             "benchmarking_results": ResultHandler.results,
             "metadata": ResultHandler.metadata,
         }
+        if ResultHandler.ab_comparison:
+            output["ab_comparison"] = ResultHandler.ab_comparison
+        if ResultHandler.ab_comparisons:
+            output["ab_comparisons"] = ResultHandler.ab_comparisons
         with open(file_path, "w") as f:
             json.dump(output, f, indent=4)
 
+    @staticmethod
+    def pair_ab_results(idx_a: int = 0, idx_b: int = 1) -> List[ABResult]:
+        """Pair results from two benchmark configs into ABResult objects."""
+        if idx_a >= len(ResultHandler.results) or idx_b >= len(ResultHandler.results):
+            raise ValueError(
+                f"Result indices ({idx_a}, {idx_b}) out of range for {len(ResultHandler.results)} results"
+            )
 
-class Benchmarker: 
+        results_a = ResultHandler.results[idx_a]["single_question_results"]
+        results_b = ResultHandler.results[idx_b]["single_question_results"]
+
+        ragas_metrics = ["answer_relevancy", "faithfulness", "context_precision", "context_recall"]
+
+        paired: List[ABResult] = []
+        all_keys = list(results_a.keys()) + [k for k in results_b if k not in results_a]
+        for key in all_keys:
+            if key not in results_a:
+                logger.warning("Question key %s not found in config A results, skipping.", key)
+                continue
+            if key not in results_b:
+                logger.warning("Question key %s not found in config B results, skipping.", key)
+                continue
+            qa = results_a[key]
+            qb = results_b[key]
+
+            ragas_a = {m: qa.get(m, float("nan")) for m in ragas_metrics if m in qa}
+            ragas_b = {m: qb.get(m, float("nan")) for m in ragas_metrics if m in qb}
+
+            winner_by_metric: Dict[str, str] = {}
+            for m in ragas_a:
+                sa, sb = ragas_a.get(m, float("nan")), ragas_b.get(m, float("nan"))
+                if math.isnan(sa) or math.isnan(sb):
+                    winner_by_metric[m] = "tie"
+                elif abs(sa - sb) < 1e-9:
+                    winner_by_metric[m] = "tie"
+                elif sa > sb:
+                    winner_by_metric[m] = "a"
+                else:
+                    winner_by_metric[m] = "b"
+
+            paired.append(ABResult(
+                question=qa["question"],
+                reference_answer=qa.get("reference_answer", ""),
+                answer_a=qa.get("answer", ""),
+                answer_b=qb.get("answer", ""),
+                time_a=qa.get("time_elapsed", 0.0),
+                time_b=qb.get("time_elapsed", 0.0),
+                ragas_a=ragas_a,
+                ragas_b=ragas_b,
+                sources_a=qa.get("sources_metadata", []),
+                sources_b=qb.get("sources_metadata", []),
+                messages_a=qa.get("messages", []),
+                messages_b=qb.get("messages", []),
+                winner_by_metric=winner_by_metric,
+                llm_judge_a={k.replace("llm_judge_", ""): v for k, v in qa.items() if k.startswith("llm_judge_")},
+                llm_judge_b={k.replace("llm_judge_", ""): v for k, v in qb.items() if k.startswith("llm_judge_")},
+            ))
+
+        return paired
+
+    @staticmethod
+    def dump_ab_comparison(paired: List[ABResult], idx_a: int = 0, idx_b: int = 1):
+        """Build an ab_comparison section from paired results.
+
+        When called with default indices (0, 1), also sets ab_comparison
+        for backward compatibility.
+        """
+        config_a = ResultHandler.results[idx_a].get("configuration", {})
+        config_b = ResultHandler.results[idx_b].get("configuration", {})
+        bench_a = config_a.get("services", {}).get("benchmarking", {})
+        bench_b = config_b.get("services", {}).get("benchmarking", {})
+
+        config_a_meta = {
+            "name": bench_a.get("name", f"config_{idx_a}"),
+            "agent_class": bench_a.get("agent_class", ""),
+            "model": bench_a.get("model", ""),
+            "provider": bench_a.get("provider", ""),
+            "config_file": ResultHandler.results[idx_a].get("configuration_file", ""),
+        }
+        config_b_meta = {
+            "name": bench_b.get("name", f"config_{idx_b}"),
+            "agent_class": bench_b.get("agent_class", ""),
+            "model": bench_b.get("model", ""),
+            "provider": bench_b.get("provider", ""),
+            "config_file": ResultHandler.results[idx_b].get("configuration_file", ""),
+        }
+
+        per_question = [asdict(r) for r in paired]
+
+        wins_a, wins_b, ties = 0, 0, 0
+        all_metrics = set()
+        for r in paired:
+            for m, w in r.winner_by_metric.items():
+                all_metrics.add(m)
+                if w == "a":
+                    wins_a += 1
+                elif w == "b":
+                    wins_b += 1
+                else:
+                    ties += 1
+
+        mean_scores_a: Dict[str, float] = {}
+        mean_scores_b: Dict[str, float] = {}
+        for m in all_metrics:
+            vals_a = [r.ragas_a[m] for r in paired if r.ragas_a.get(m) is not None and not math.isnan(r.ragas_a.get(m, float("nan")))]
+            vals_b = [r.ragas_b[m] for r in paired if r.ragas_b.get(m) is not None and not math.isnan(r.ragas_b.get(m, float("nan")))]
+            mean_scores_a[m] = sum(vals_a) / len(vals_a) if vals_a else 0.0
+            mean_scores_b[m] = sum(vals_b) / len(vals_b) if vals_b else 0.0
+
+        comparison = {
+            "config_a": config_a_meta,
+            "config_b": config_b_meta,
+            "per_question": per_question,
+            "aggregate": {
+                "wins_a": wins_a,
+                "wins_b": wins_b,
+                "ties": ties,
+                "mean_scores_a": mean_scores_a,
+                "mean_scores_b": mean_scores_b,
+            },
+        }
+
+        ResultHandler.ab_comparisons.append(comparison)
+
+        if idx_a == 0 and idx_b == 1:
+            ResultHandler.ab_comparison = comparison
+
+    @staticmethod
+    def generate_pairwise_combinations(n_configs: int) -> List[Tuple[int, int]]:
+        """Generate all pairwise index combinations for N configs."""
+        return list(combinations(range(n_configs), 2))
+
+
+class Benchmarker:
 
     def __init__(self, configs: Path, q_to_a: dict[str, str]):
         self.queries_to_answers = q_to_a 
@@ -202,6 +365,14 @@ class Benchmarker:
             agent_spec = load_agent_spec(Path(str(agent_md_file)))
         except AgentSpecError as exc:
             raise ValueError(f"Failed to load benchmark agent spec '{agent_md_file}': {exc}") from exc
+
+        self._chain_kwargs = dict(
+            pipeline=pipeline,
+            agent_spec=agent_spec,
+            default_provider=provider,
+            default_model=model,
+            prompt_overrides={},
+        )
         self.chain = archi(
             pipeline,
             agent_spec=agent_spec,
@@ -210,13 +381,101 @@ class Benchmarker:
             prompt_overrides={},
         )
 
+    # Phase 1 audit (2026-06-01): archi() is NOT safe for parallel instantiation
+    # due to three shared-global-state blockers:
+    #   1. AsyncLoopThread MCP singleton at src/utils/mcp_utils.py:20
+    #   2. PostgresServiceFactory.set_instance at src/utils/postgres_service_factory.py:169
+    #   3. HuggingFaceEmbeddings singleton at src/data_manager/vectorstore_connector.py:33
+    # Until those are fixed, the parallel chain pool MUST be invoked with
+    # n_workers=1. The guard below is intentional — callers can lift it after a
+    # follow-up "thread-safe archi" change resolves the three blockers.
+    _PARALLEL_SAFE_MAX_WORKERS = 1
+
+    def _create_chain_pool(self, n_workers: int) -> list:
+        """Create a pool of independent chain instances for parallel execution."""
+        if n_workers > self._PARALLEL_SAFE_MAX_WORKERS:
+            raise RuntimeError(
+                f"archi() is not thread-safe yet (Phase 1 audit identified 3 shared-state blockers); "
+                f"n_workers={n_workers} would risk data corruption. Set n_workers=1 until blockers are fixed."
+            )
+        chains = [self.chain]
+        kw = self._chain_kwargs
+        for _ in range(n_workers - 1):
+            chains.append(archi(
+                kw["pipeline"],
+                agent_spec=kw["agent_spec"],
+                default_provider=kw["default_provider"],
+                default_model=kw["default_model"],
+                prompt_overrides=kw["prompt_overrides"],
+            ))
+        logger.info("Created pool of %d chain instances for parallel execution.", n_workers)
+        return chains
+
+    def _prefetch_questions_parallel(
+        self, n_workers, config_num, total_configs, total_questions, run_start,
+    ):
+        """Run all questions in parallel using a pool of independent chain instances.
+
+        Returns a dict mapping 1-based question_id to (result, elapsed_seconds).
+        """
+        if n_workers > self._PARALLEL_SAFE_MAX_WORKERS:
+            raise RuntimeError(
+                f"_prefetch_questions_parallel called with n_workers={n_workers}; "
+                f"only n_workers=1 is safe today (see _create_chain_pool comment)."
+            )
+        chains = self._create_chain_pool(n_workers)
+        logger.info("Prefetching %d questions with %d parallel workers...", total_questions, n_workers)
+
+        def _ask(chain, question_id, question_text):
+            formatted = [("User", question_text)]
+            start = time.perf_counter()
+            result = chain(history=formatted)
+            elapsed = time.perf_counter() - start
+            logger.info(
+                "[Config %d/%d] Question %d/%d finished (%.2fs)",
+                config_num, total_configs, question_id, total_questions, elapsed,
+            )
+            return question_id, result, elapsed
+
+        results = {}
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {}
+            for idx, question_item in enumerate(self.queries_to_answers):
+                if type(question_item) is not dict:
+                    continue
+                if not all(f in question_item for f in self.required_fields):
+                    continue
+                qid = idx + 1
+                chain = chains[idx % n_workers]
+                future = executor.submit(_ask, chain, qid, question_item["question"])
+                futures[future] = qid
+
+            for future in as_completed(futures):
+                try:
+                    qid, result, elapsed = future.result()
+                    results[qid] = (result, elapsed)
+                except Exception:
+                    qid = futures[future]
+                    logger.exception("Question %d failed in parallel execution", qid)
+
+        wall_elapsed = time.perf_counter() - run_start
+        mins, secs = divmod(int(wall_elapsed), 60)
+        logger.info(
+            "Parallel prefetch complete: %d/%d questions in %dm%02ds wall time.",
+            len(results), total_questions, mins, secs,
+        )
+        return results
+
 
     def get_ragas_llm_evaluator(self):
         ragas_configs = self.config['services']['benchmarking']['mode_settings']['ragas_settings']
         benchmark_cfg = self.config.get("services", {}).get("benchmarking", {})
-        provider = benchmark_cfg.get("provider")
-        model_name = benchmark_cfg.get("model")
-        ollama_url = benchmark_cfg.get("ollama_url")
+        # Judge/SUT config split: when ragas_settings.evaluator_* is set, the RAGAS judge
+        # uses an independent model from the system under test. Falls back to the SUT
+        # provider/model when the evaluator_* keys are absent.
+        provider = ragas_configs.get("evaluator_provider") or benchmark_cfg.get("provider")
+        model_name = ragas_configs.get("evaluator_model") or benchmark_cfg.get("model")
+        ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get("ollama_url")
 
         match str(provider).lower():
             case "openai":
@@ -569,6 +828,85 @@ class Benchmarker:
             self.load_new_configuration()
 
         ResultHandler.add_metadata()
+
+        # A/B comparison: pair results across configs when 2+ were run.
+        # Auto-enabled — no explicit flag — because there's no useful "skip
+        # pairing" case when the user gave us multiple configs.
+        if len(ResultHandler.results) >= 2:
+            pairs = ResultHandler.generate_pairwise_combinations(len(ResultHandler.results))
+            logger.info("Generating %d pairwise A/B comparisons...", len(pairs))
+            for idx_a, idx_b in pairs:
+                paired = ResultHandler.pair_ab_results(idx_a, idx_b)
+                ResultHandler.dump_ab_comparison(paired, idx_a, idx_b)
+                comp = ResultHandler.ab_comparisons[-1]
+                name_a = comp["config_a"].get("name", f"config_{idx_a}")
+                name_b = comp["config_b"].get("name", f"config_{idx_b}")
+                logger.info(
+                    "  %s vs %s: %d questions. Wins A=%d, B=%d, Ties=%d",
+                    name_a, name_b, len(paired),
+                    comp["aggregate"]["wins_a"],
+                    comp["aggregate"]["wins_b"],
+                    comp["aggregate"]["ties"],
+                )
+
+        # Push to Argilla when ARCHI_ARGILLA=1 in the benchmarks container env.
+        # The CLI flag --argilla on `archi evaluate` sets this (see Task 2.5).
+        argilla_enabled = os.environ.get("ARCHI_ARGILLA", "").strip().lower() in ("1", "true", "yes")
+        if argilla_enabled:
+            try:
+                from src.utils.benchmark_argilla import (
+                    generate_dataset_name,
+                    push_ab_results_to_argilla,
+                    push_single_results_to_argilla,
+                    push_multi_ab_results_to_argilla,
+                    write_state_file,
+                )
+
+                if ResultHandler.ab_comparisons and len(ResultHandler.ab_comparisons) > 1:
+                    dataset_names = push_multi_ab_results_to_argilla(
+                        ResultHandler.ab_comparisons,
+                        self.benchmark_name,
+                    )
+                    write_state_file(
+                        dataset_name=dataset_names[0] if dataset_names else "",
+                        dataset_names=dataset_names,
+                    )
+                    ResultHandler.metadata["argilla_datasets"] = dataset_names
+                    logger.info(
+                        "Argilla export complete. %d datasets created. "
+                        "Open Argilla to grade: archi grade --serve",
+                        len(dataset_names),
+                    )
+                elif ResultHandler.ab_comparison:
+                    argilla_dataset_name = generate_dataset_name(self.benchmark_name)
+                    benchmark_output = {
+                        "benchmarking_results": ResultHandler.results,
+                        "ab_comparison": ResultHandler.ab_comparison,
+                    }
+                    push_ab_results_to_argilla(benchmark_output, argilla_dataset_name)
+                    write_state_file(argilla_dataset_name)
+                    ResultHandler.metadata["argilla_dataset"] = argilla_dataset_name
+                    logger.info(
+                        "Argilla export complete. Dataset: '%s'. "
+                        "Open Argilla to grade: archi grade --serve",
+                        argilla_dataset_name,
+                    )
+                else:
+                    argilla_dataset_name = generate_dataset_name(self.benchmark_name)
+                    benchmark_output = {
+                        "benchmarking_results": ResultHandler.results,
+                    }
+                    push_single_results_to_argilla(benchmark_output, argilla_dataset_name)
+                    write_state_file(argilla_dataset_name)
+                    ResultHandler.metadata["argilla_dataset"] = argilla_dataset_name
+                    logger.info(
+                        "Argilla export complete. Dataset: '%s'. "
+                        "Open Argilla to grade: archi grade --serve",
+                        argilla_dataset_name,
+                    )
+            except Exception:
+                logger.exception("Argilla push failed — results were still dumped to disk.")
+
         ResultHandler.dump(self.benchmark_name)
         ResultHandler.dump_html(self.benchmark_name)
         return

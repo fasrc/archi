@@ -61,6 +61,8 @@ class DeploymentPlan:
         benchmarking_dest: str,
         dev_mode: bool = False,
         repo_path: Optional[Path] = None,
+        argilla_enabled: bool = False,
+        argilla_server: str = "",
     ) -> None:
         self.name = name
         self.base_dir = base_dir
@@ -72,6 +74,8 @@ class DeploymentPlan:
         self.benchmarking_dest = benchmarking_dest
         self.dev_mode = dev_mode
         self.repo_path = repo_path
+        self.argilla_enabled = argilla_enabled
+        self.argilla_server = argilla_server
 
         self.enabled_sources: Set[str] = set()
         self._required_secrets: Set[str] = set()
@@ -141,6 +145,8 @@ class DeploymentPlan:
             "enabled_sources": sorted(self.enabled_sources),
             "dev_mode": self.dev_mode,
             "repo_path": str(self.repo_path) if self.repo_path else "",
+            "argilla_enabled": self.argilla_enabled,
+            "argilla_server": self.argilla_server,
         }
 
         for name, state in self.services.items():
@@ -186,6 +192,8 @@ class ServiceBuilder:
         host_mode = other_flags.get("hostmode", other_flags.get("host_mode", False))
         benchmarking_dest = other_flags.get("benchmarking_dest", "")
         dev_mode = other_flags.get("dev", False)
+        argilla_enabled = bool(other_flags.get("argilla_enabled", False))
+        argilla_server = other_flags.get("argilla_server") or ""
 
         repo_path: Optional[Path] = None
         if dev_mode:
@@ -202,6 +210,8 @@ class ServiceBuilder:
             benchmarking_dest=benchmarking_dest,
             dev_mode=dev_mode,
             repo_path=repo_path,
+            argilla_enabled=argilla_enabled,
+            argilla_server=str(argilla_server) if argilla_server else "",
         )
 
         plan.enabled_sources = set(enabled_sources)
