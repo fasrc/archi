@@ -139,7 +139,7 @@ To analyze results, see `scripts/benchmarking/` which contains:
 ```
 1. Edit questions in   config/benchmarking/queries.json          (or a per-round bank)
 2. Run                 archi evaluate --argilla -cd configs/     (sweeps all configs in one snapshot)
-3. Email evaluators    https://archi.rc.fas.harvard.edu:6900/    (the Argilla URL)
+3. Email evaluators    https://archi.rc.fas.harvard.edu:3080/    (the Argilla URL)
 4. After grading       archi grade --export -o grades.json
 5. Analyze             scripts/benchmarking/analyze_grades.ipynb
 ```

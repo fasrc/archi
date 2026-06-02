@@ -27,7 +27,13 @@ services:
     container_name: argilla-server
     restart: unless-stopped
     ports:
-      - "6900:6900"
+      # TEMPORARY: host port 3080 instead of 6900. The FASRC perimeter
+      # firewall allows 3080 inbound from the admin VPN but not 6900.
+      # Network-change ticket is pending with FASRC to open tcp/6900
+      # inbound to this host from 10.255.13.96/27, mirroring the existing
+      # 7861 (archi-chatbot) allowance. Once that lands, switch back to
+      # "6900:6900" and drop the 3080 stopgap.
+      - "3080:6900"
     env_file:
       - ${HOME}/.archi/argilla.env
     environment:

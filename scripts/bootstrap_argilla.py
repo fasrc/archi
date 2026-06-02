@@ -98,7 +98,7 @@ def _client():
         )
         sys.exit(2)
 
-    api_url = os.environ.get("ARGILLA_API_URL", "http://localhost:6900")
+    api_url = os.environ.get("ARGILLA_API_URL", "http://localhost:3080")
     api_key = os.environ.get("ARGILLA_API_KEY") or _read_secret("argilla_api_key.txt")
     return rg.Argilla(api_url=api_url, api_key=api_key)
 

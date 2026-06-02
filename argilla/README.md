@@ -29,19 +29,33 @@ docker compose -f argilla/docker-compose.yaml ps
 # 6. Bootstrap the "archi" workspace via SDK.
 python scripts/bootstrap_argilla.py --create-workspace
 
-# 7. Open tcp/6900 from the staff source range (mirrors port 7861's rule).
-sudo iptables -I INPUT 12 -p tcp --dport 6900 -s <STAFF_RANGE> -j ACCEPT
+# 7. Confirm tcp/3080 is in the host's INPUT chain for the admin VPN
+#    source range (it usually already is — check first):
+sudo iptables -L INPUT -n --line-numbers | grep -E "3080|multiport"
+# If 3080 isn't allowed yet, mirror the existing 7861 rule:
+sudo iptables -I INPUT 12 -p tcp --dport 3080 -s <STAFF_RANGE> -j ACCEPT
 sudo /sbin/service iptables save   # adjust to host's persistence mechanism
 ```
 
 ## Network access
 
-- Internal (on this host): `http://localhost:6900/`
-- Staff (after iptables): `http://archi.rc.fas.harvard.edu:6900/`
+- Internal (on this host): `http://localhost:3080/`
+- Staff (admin VPN, perimeter-allowed): `http://archi.rc.fas.harvard.edu:3080/`
+
+**Port 3080 is a TEMPORARY stopgap.** The FASRC perimeter firewall allows
+tcp/3080 inbound from the admin VPN (`10.255.13.96/27`) but not tcp/6900.
+A network-change ticket is pending with FASRC to open tcp/6900 inbound
+to this host from the same source range, mirroring the existing 7861
+(archi-chatbot) allowance. Once that ticket lands:
+
+1. Edit `argilla/docker-compose.yaml`: change `"3080:6900"` back to `"6900:6900"`
+2. Edit `scripts/bootstrap_argilla.py` default `ARGILLA_API_URL` to `http://localhost:6900`
+3. `docker compose -f argilla/docker-compose.yaml up -d --force-recreate argilla`
+4. Update any external bookmarks / docs that referenced `:3080`
 
 Argilla does not terminate TLS. If TLS is required, front it with the
 existing reverse-proxy (nginx / Caddy) on the host and forward to
-`localhost:6900`.
+`localhost:3080`.
 
 ## Operator credentials
 
