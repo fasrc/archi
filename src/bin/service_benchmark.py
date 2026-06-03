@@ -680,7 +680,9 @@ class Benchmarker:
         res = pd.DataFrame()
 
         ragas_settings = self.config['services']['benchmarking']['mode_settings']['ragas_settings']
-        log_tenacity = self.config['global']['verbosity'] >= 4
+        # The archi config-render pipeline can strip global.verbosity; tolerate
+        # missing key (verbosity 4 enables tenacity retry logging in ragas).
+        log_tenacity = self.config.get('global', {}).get('verbosity', 0) >= 4
         timeout = ragas_settings['timeout']
         batch_settings = ragas_settings['batch_size']
         if not batch_settings: 
