@@ -99,8 +99,19 @@ def main() -> int:
             failed.append(f"missing column: {col}")
             continue
         for idx, val in df[col].items():
-            if val is None or (isinstance(val, float) and math.isnan(val)):
-                failed.append(f"{col}[{idx}] is NaN/None")
+            # Coerce via float() so numpy.float64 (which pandas returns) is
+            # handled; math.isfinite rejects both NaN AND inf, matching the
+            # "finite floats" claim in the docstring.
+            if val is None:
+                failed.append(f"{col}[{idx}] is None")
+                continue
+            try:
+                fval = float(val)
+            except (TypeError, ValueError):
+                failed.append(f"{col}[{idx}] is non-numeric: {val!r}")
+                continue
+            if not math.isfinite(fval):
+                failed.append(f"{col}[{idx}] is NaN/inf: {fval}")
 
     if failed:
         print("FAIL — broken or missing scores:", failed, file=sys.stderr)

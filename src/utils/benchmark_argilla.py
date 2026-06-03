@@ -127,23 +127,29 @@ def _html_escape(text: str) -> str:
     )
 
 
-def _get_client():
-    """Initialize and return an Argilla client.
+def _import_argilla():
+    """Import the argilla SDK with a friendly error if it's missing.
 
-    The argilla package is an optional runtime dep installed only in the
-    benchmarks container image, so the import lives inside the function.
+    The argilla package is an optional runtime dep — installed only in the
+    benchmarks container image and in dev envs. All call sites that need rg.*
+    symbols (clients, fields, questions, records) should go through this
+    helper so the failure mode is consistent regardless of entry point.
     """
     try:
         import argilla as rg  # pyright: ignore[reportMissingImports]
-    except ImportError:
+    except ImportError as exc:
         raise ImportError(
             "The 'argilla' package is required for Argilla export. "
             "Install it with: pip install 'argilla>=2.5,<3'"
-        )
+        ) from exc
+    return rg
 
+
+def _get_client():
+    """Initialize and return an Argilla client."""
+    rg = _import_argilla()
     api_url = os.environ.get("ARGILLA_API_URL", "http://localhost:6900")
     api_key = os.environ.get("ARGILLA_API_KEY", "owner.apikey")
-
     return rg.Argilla(api_url=api_url, api_key=api_key)
 
 
@@ -175,7 +181,7 @@ def push_ab_results_to_argilla(
 
     Returns the dataset name.
     """
-    import argilla as rg  # pyright: ignore[reportMissingImports]
+    rg = _import_argilla()
 
     ab = benchmark_data.get("ab_comparison")
     if not ab:
@@ -318,7 +324,7 @@ def push_single_results_to_argilla(
 
     Returns the dataset name.
     """
-    import argilla as rg  # pyright: ignore[reportMissingImports]
+    rg = _import_argilla()
 
     results_list = benchmark_data.get("benchmarking_results", [])
     if not results_list:

@@ -491,7 +491,8 @@ def list_deployments():
 @click.option('--argilla', 'argilla_enabled', is_flag=True, default=False,
               help="Push benchmark results to Argilla for human grading.")
 @click.option('--argilla-server', 'argilla_server', type=str, default=None,
-              help="Argilla server URL (default: http://localhost:6900). Required with --argilla.")
+              help="Argilla server URL. Optional when --argilla is set; "
+                   "defaults to http://localhost:6900.")
 def evaluate(name: str, config_file: str, config_dir: str, env_file: str, force: bool, verbosity: int, **other_flags):
     """Create an ARCHI deployment with selected services and data sources."""
     if not (bool(config_file) ^ bool(config_dir)): 
