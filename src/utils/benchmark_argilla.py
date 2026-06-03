@@ -148,8 +148,13 @@ def _get_client():
 
 
 def _get_workspace(client) -> str:
-    """Return the configured Argilla workspace name."""
-    return os.environ.get("ARGILLA_WORKSPACE", "admin")
+    """Return the configured Argilla workspace name.
+
+    Default is ``archi`` — the workspace scripts/bootstrap_argilla.py creates
+    on first deploy. Override via ``ARGILLA_WORKSPACE`` env var if you set up
+    a different workspace.
+    """
+    return os.environ.get("ARGILLA_WORKSPACE", "archi")
 
 
 def push_ab_results_to_argilla(

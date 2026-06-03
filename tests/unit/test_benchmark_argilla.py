@@ -136,10 +136,10 @@ def test_get_workspace_env_var():
 
 
 def test_get_workspace_default():
-    """Default workspace is 'admin'."""
+    """Default workspace is 'archi' (the one bootstrap_argilla.py creates)."""
     env = {k: v for k, v in os.environ.items() if k != "ARGILLA_WORKSPACE"}
     with patch.dict(os.environ, env, clear=True):
-        assert _get_workspace(None) == "admin"
+        assert _get_workspace(None) == "archi"
 
 
 # -- generate_dataset_name tests ----------------------------------------------
