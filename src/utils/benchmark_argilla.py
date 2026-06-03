@@ -448,24 +448,23 @@ def pull_grades_from_argilla(
             "responses": [],
         }
 
+        # Argilla 2.5+ flattens responses: each Response object answers ONE
+        # question for ONE user (question_name, value, user_id, status). Group
+        # them back by user so each evaluator gets one row with winner +
+        # quality + notes merged.
+        by_user: Dict[Any, Dict[str, Any]] = {}
         for response in record.responses:
-            if response.status != "submitted":
+            if getattr(response, "status", None) != "submitted":
                 continue
-            resp_data: Dict[str, Any] = {
-                "user": getattr(response, "user_id", None),
-            }
-            values = response.values
-            if values:
-                winner = values.get("winner")
-                if winner is not None:
-                    resp_data["winner"] = winner.value if hasattr(winner, "value") else winner
-                quality = values.get("quality")
-                if quality is not None:
-                    resp_data["quality"] = quality.value if hasattr(quality, "value") else quality
-                notes = values.get("notes")
-                if notes is not None:
-                    resp_data["notes"] = notes.value if hasattr(notes, "value") else notes
-            item_grades["responses"].append(resp_data)
+            user_id = getattr(response, "user_id", None)
+            user_key = str(user_id) if user_id is not None else "anonymous"
+            if user_key not in by_user:
+                by_user[user_key] = {"user": str(user_id) if user_id else None}
+            qname = getattr(response, "question_name", None)
+            value = getattr(response, "value", None)
+            if qname in ("winner", "quality", "notes") and value is not None:
+                by_user[user_key][qname] = value
+        item_grades["responses"].extend(by_user.values())
 
         grades[question] = item_grades
 

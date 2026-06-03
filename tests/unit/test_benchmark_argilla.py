@@ -346,33 +346,28 @@ def test_push_single_results_none_metadata_excluded(mock_client, mock_ws):
 @patch("src.utils.benchmark_argilla._get_workspace", return_value="admin")
 @patch("src.utils.benchmark_argilla._get_client")
 def test_pull_grades_returns_annotated_records(mock_client, mock_ws):
-    """Pulls submitted annotations and returns grades dict."""
+    """Pulls submitted annotations and returns grades dict.
+
+    Argilla 2.5+ Response shape: one Response per (user, question) pair;
+    each has question_name + value + user_id + status. The puller groups
+    by user_id to reassemble per-evaluator rows.
+    """
     mock_ds = MagicMock()
     mock_client.return_value.datasets.return_value = mock_ds
 
-    # Build mock records
-    response1 = SimpleNamespace(
-        status="submitted",
-        user_id="user1",
-        values={
-            "winner": SimpleNamespace(value="A"),
-            "quality": SimpleNamespace(value=4),
-            "notes": SimpleNamespace(value="Good answer"),
-        },
-    )
     record1 = SimpleNamespace(
         fields={"question": "What is X?"},
-        responses=[response1],
-    )
-
-    response2 = SimpleNamespace(
-        status="draft",  # not submitted — should be skipped
-        user_id="user2",
-        values={"winner": SimpleNamespace(value="B")},
+        responses=[
+            SimpleNamespace(status="submitted", user_id="user1", question_name="winner", value="A"),
+            SimpleNamespace(status="submitted", user_id="user1", question_name="quality", value=4),
+            SimpleNamespace(status="submitted", user_id="user1", question_name="notes", value="Good answer"),
+        ],
     )
     record2 = SimpleNamespace(
         fields={"question": "What is Y?"},
-        responses=[response2],
+        responses=[
+            SimpleNamespace(status="draft", user_id="user2", question_name="winner", value="B"),
+        ],
     )
 
     mock_ds.records.return_value = [record1, record2]
@@ -417,14 +412,11 @@ def test_pull_grades_writes_output_file(mock_client, mock_ws, tmp_path):
     mock_ds = MagicMock()
     mock_client.return_value.datasets.return_value = mock_ds
 
-    response = SimpleNamespace(
-        status="submitted",
-        user_id="user1",
-        values={"quality": SimpleNamespace(value=3)},
-    )
     record = SimpleNamespace(
         fields={"question": "Q1"},
-        responses=[response],
+        responses=[
+            SimpleNamespace(status="submitted", user_id="user1", question_name="quality", value=3),
+        ],
     )
     mock_ds.records.return_value = [record]
 
@@ -444,19 +436,14 @@ def test_pull_grades_multiple_annotators(mock_client, mock_ws):
     mock_ds = MagicMock()
     mock_client.return_value.datasets.return_value = mock_ds
 
-    resp1 = SimpleNamespace(
-        status="submitted",
-        user_id="user1",
-        values={"winner": SimpleNamespace(value="A"), "quality": SimpleNamespace(value=5)},
-    )
-    resp2 = SimpleNamespace(
-        status="submitted",
-        user_id="user2",
-        values={"winner": SimpleNamespace(value="B"), "quality": SimpleNamespace(value=3)},
-    )
     record = SimpleNamespace(
         fields={"question": "Q1"},
-        responses=[resp1, resp2],
+        responses=[
+            SimpleNamespace(status="submitted", user_id="user1", question_name="winner", value="A"),
+            SimpleNamespace(status="submitted", user_id="user1", question_name="quality", value=5),
+            SimpleNamespace(status="submitted", user_id="user2", question_name="winner", value="B"),
+            SimpleNamespace(status="submitted", user_id="user2", question_name="quality", value=3),
+        ],
     )
     mock_ds.records.return_value = [record]
 
