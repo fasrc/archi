@@ -945,8 +945,13 @@ class Benchmarker:
         # internal port; the host-network fallbacks use the external port.
         dm_external_port = dm_cfg.get("external_port", 7871)
         dm_internal_port = dm_cfg.get("internal_port", 7871)
+        # Order matters: try the cheap-success cases first. In bridge mode the
+        # in-network hostname resolves; in --hostmode the container shares the
+        # host network so the data-manager is reachable at localhost on its
+        # *internal* port (it binds directly to the host, no port mapping).
         status_urls = [
             f"http://data-manager:{dm_internal_port}/api/ingestion/status",
+            f"http://localhost:{dm_internal_port}/api/ingestion/status",
             f"http://localhost:{dm_external_port}/api/ingestion/status",
             f"http://host.containers.internal:{dm_external_port}/api/ingestion/status",
         ]
