@@ -86,7 +86,22 @@ class SecretsManager:
                         model_secrets.add("ANTHROPIC_API_KEY")
                     elif "HuggingFace" in model_name or "Llama" in model_name or "VLLM" in model_name:
                         logger.warning("You are using open source models; make sure to include a HuggingFace token if required for usage, it won't be explicitly enforced")
-                
+
+        # Scan loaded yaml configs for the huit_bedrock provider, either as the
+        # SUT provider or as the RAGAS evaluator_provider. When found, require
+        # HUIT_API_KEY so the deploy step writes secrets/huit_api_key.txt and
+        # the compose template mounts it into the benchmarks container.
+        for config in self.config_manager.get_configs():
+            services = config.get("services", {}) if isinstance(config, dict) else {}
+            benchmarking = services.get("benchmarking", {}) if isinstance(services, dict) else {}
+            if not isinstance(benchmarking, dict):
+                continue
+            sut_provider = str(benchmarking.get("provider", "")).lower()
+            ragas_settings = (benchmarking.get("mode_settings") or {}).get("ragas_settings") or {}
+            evaluator_provider = str(ragas_settings.get("evaluator_provider", "")).lower()
+            if "huit_bedrock" in (sut_provider, evaluator_provider):
+                model_secrets.add("HUIT_API_KEY")
+
         logger.debug(f"Required model secrets: {model_secrets or 'None'}")
         return model_secrets
 

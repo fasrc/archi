@@ -488,6 +488,11 @@ def list_deployments():
 @click.option('--force', '-f', is_flag=True, help="Force deployment creation, overwriting existing deployment")
 @click.option('--tag', '-t', type=str, default="2000", help="Image tag for built containers")
 @click.option('--verbosity', '-v', type=int, default=3, help="Logging verbosity level (0-4)")
+@click.option('--argilla', 'argilla_enabled', is_flag=True, default=False,
+              help="Push benchmark results to Argilla for human grading.")
+@click.option('--argilla-server', 'argilla_server', type=str, default=None,
+              help="Argilla server URL. Optional when --argilla is set; "
+                   "defaults to http://localhost:6900.")
 def evaluate(name: str, config_file: str, config_dir: str, env_file: str, force: bool, verbosity: int, **other_flags):
     """Create an ARCHI deployment with selected services and data sources."""
     if not (bool(config_file) ^ bool(config_dir)): 
@@ -501,6 +506,13 @@ def evaluate(name: str, config_file: str, config_dir: str, env_file: str, force:
     click.echo("Starting ARCHI benchmarking process...")
     setup_cli_logging(verbosity=verbosity)
     logger = get_logger(__name__)
+
+    argilla_enabled = bool(other_flags.get('argilla_enabled', False))
+    argilla_server = other_flags.get('argilla_server') or None
+    if argilla_enabled and not argilla_server:
+        argilla_server = "http://localhost:6900"
+    if argilla_server and not argilla_enabled:
+        raise click.ClickException("--argilla-server requires --argilla")
 
     # Check if Docker is available when --podman is not specified
     if not other_flags.get('podman', False) and not check_docker_available():
@@ -581,8 +593,57 @@ def evaluate(name: str, config_file: str, config_dir: str, env_file: str, force:
     except Exception as e:
         if verbosity >=4: 
             traceback.print_exc()
-        else: 
+        else:
             raise click.ClickException(f"Failed due to the following exception: {e}")
+
+
+@click.command()
+@click.option('--dataset', '-d', type=str, required=False, default=None,
+              help="Argilla dataset name (defaults to last benchmark run)")
+@click.option('--export', '-e', 'do_export', is_flag=True,
+              help="Pull grades from Argilla and save to JSON")
+@click.option('--output', '-o', type=str, default=None,
+              help="Output path for grades JSON (default: grades.json)")
+@click.option('--serve', 'do_serve', is_flag=True,
+              help="Open the Argilla UI in your browser")
+def grade(dataset: Optional[str], do_export: bool, output: Optional[str], do_serve: bool):
+    """Grade benchmark results using Argilla.
+
+    Use --serve to open the Argilla annotation UI, and --export to pull
+    submitted annotations to a local JSON file.
+    """
+    from src.utils.benchmark_argilla import pull_grades_from_argilla, read_state_file
+
+    if not do_export and not do_serve:
+        raise click.ClickException(
+            "Specify --serve to open Argilla UI, or --export to pull annotations.\n"
+            "Example: archi grade --serve"
+        )
+
+    if not dataset:
+        dataset = read_state_file()
+        if not dataset:
+            raise click.ClickException(
+                "No --dataset specified and no previous benchmark found. "
+                "Run 'archi evaluate --argilla' first or specify --dataset explicitly."
+            )
+        click.echo(f"Using last benchmark dataset: {dataset}")
+
+    if do_serve:
+        import webbrowser
+        api_url = os.environ.get("ARGILLA_API_URL", "http://localhost:6900")
+        url = f"{api_url.rstrip('/')}/datasets"
+        click.echo(f"Opening Argilla UI: {url}")
+        webbrowser.open(url)
+
+    if do_export:
+        out_path = output or "grades.json"
+        try:
+            grades = pull_grades_from_argilla(dataset, output_path=out_path)
+            annotated = sum(1 for g in grades.values() if g.get("responses"))
+            click.echo(f"Exported {annotated}/{len(grades)} annotated questions to {out_path}")
+        except (ValueError, RuntimeError) as e:
+            raise click.ClickException(str(e))
 
 
 def main():
@@ -596,4 +657,5 @@ def main():
     cli.add_command(list_services)
     cli.add_command(list_deployments)
     cli.add_command(evaluate)
+    cli.add_command(grade)
     cli()

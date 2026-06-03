@@ -41,6 +41,7 @@ _DEFAULT_API_KEY_ENV_BY_PROVIDER: Dict[ProviderType, str] = {
     ProviderType.GEMINI: "GEMINI_API_KEY",
     ProviderType.OPENROUTER: "OPENROUTER_API_KEY",
     ProviderType.CERN_LITELLM: "CERN_LITELLM_API_KEY",
+    ProviderType.HUIT_BEDROCK: "HUIT_API_KEY",
 }
 
 
@@ -77,13 +78,15 @@ def _ensure_providers_registered() -> None:
     from src.archi.providers.openrouter_provider import OpenRouterProvider
     from src.archi.providers.local_provider import LocalProvider
     from src.archi.providers.cern_litellm_provider import CERNLiteLLMProvider
-    
+    from src.archi.providers.huit_bedrock_provider import HuitBedrockProvider
+
     register_provider(ProviderType.OPENAI, OpenAIProvider)
     register_provider(ProviderType.ANTHROPIC, AnthropicProvider)
     register_provider(ProviderType.GEMINI, GeminiProvider)
     register_provider(ProviderType.OPENROUTER, OpenRouterProvider)
     register_provider(ProviderType.LOCAL, LocalProvider)
     register_provider(ProviderType.CERN_LITELLM, CERNLiteLLMProvider)
+    register_provider(ProviderType.HUIT_BEDROCK, HuitBedrockProvider)
 
 
 def get_provider(

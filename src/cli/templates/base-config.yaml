@@ -33,7 +33,7 @@ services:
     mode_settings:
       sources_settings:
         default_match_field: {{ services.benchmarking.mode_settings.sources_settings.default_match_field | default("file_name", true) }} # metadata field to check for source matching
-      ragas_settings: 
+      ragas_settings:
         enabled_metrics:
           {%- for metric in services.benchmarking.ragas_settings.enabled_metrics | default(["answer_relevancy", "faithfulness", "context_precision", "context_recall"]) %}
           - {{ metric }}
@@ -41,6 +41,12 @@ services:
         embedding_model: {{ services.benchmarking.mode_settings.ragas_settings.embedding_model | default("OpenAI", true) }}
         timeout: {{ services.benchmarking.mode_settings.ragas_settings.timeout | default(180, true) }}
         batch_size: {{ services.benchmarking.mode_settings.ragas_settings.batch_size | default(false, true) }}
+        # Judge/SUT split: when these are set, the RAGAS judge LLM is constructed
+        # independent of the SUT (services.benchmarking.provider/model). Falls back
+        # to SUT provider/model when unset. Empty string is treated as unset.
+        evaluator_provider: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_provider | default("", true) }}
+        evaluator_model: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_model | default("", true) }}
+        evaluator_ollama_url: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_ollama_url | default("", true) }}
 
 
   piazza:

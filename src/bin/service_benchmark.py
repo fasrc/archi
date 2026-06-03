@@ -1,9 +1,14 @@
 import json
+import math
 import os
 import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from itertools import combinations
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
 
@@ -38,14 +43,54 @@ logger = get_logger(__name__)
 os.environ['OPENAI_API_KEY'] = read_secret("OPENAI_API_KEY")
 os.environ['ANTHROPIC_API_KEY'] = read_secret("ANTHROPIC_API_KEY")
 os.environ['HUGGING_FACE_HUB_TOKEN'] = read_secret("HUGGING_FACE_HUB_TOKEN")
+os.environ['HUIT_API_KEY'] = read_secret("HUIT_API_KEY")
 
 factory = PostgresServiceFactory.from_env(password_override=os.environ.get("PG_PASSWORD"))
 PostgresServiceFactory.set_instance(factory)
 
 
+@dataclass
+class ABResult:
+    """Paired A/B comparison result for a single question."""
+    question: str
+    reference_answer: str
+    answer_a: str
+    answer_b: str
+    time_a: float
+    time_b: float
+    ragas_a: Dict[str, float] = field(default_factory=dict)
+    ragas_b: Dict[str, float] = field(default_factory=dict)
+    sources_a: List[Dict[str, Any]] = field(default_factory=list)
+    sources_b: List[Dict[str, Any]] = field(default_factory=list)
+    messages_a: List[Dict[str, Any]] = field(default_factory=list)
+    messages_b: List[Dict[str, Any]] = field(default_factory=list)
+    winner_by_metric: Dict[str, str] = field(default_factory=dict)
+    llm_judge_a: Dict[str, Any] = field(default_factory=dict)
+    llm_judge_b: Dict[str, Any] = field(default_factory=dict)
+    llm_judge_pairwise: Dict[str, Any] = field(default_factory=dict)
+
+
 class ResultHandler:
-    results = [] # store the results for each config
-    metadata = {} # store the metadata about the benchmark run 
+    results = []  # store the results for each config
+    metadata = {}  # store the metadata about the benchmark run
+    ab_comparison: Dict[str, Any] = {}  # single-pair compat (populated only in ab_mode with 2 configs)
+    ab_comparisons: List[Dict[str, Any]] = []  # multi-pair: list of pair comparison dicts
+    # Per-invocation identifier shared by every config in this archi-evaluate run.
+    # Stamped onto Argilla records as metadata so the analysis notebook can refuse
+    # to compute primary-outcome statistics across configs that were NOT run
+    # together (different invocations -> different snapshot ids -> different
+    # corpus state). Spec: argilla-benchmark-grading "Sweep guarantees same corpus".
+    # Initialized lazily on first read or in add_metadata, whichever comes first.
+    _corpus_snapshot_id: Optional[str] = None
+
+    @staticmethod
+    def get_corpus_snapshot_id() -> str:
+        """Return the per-invocation corpus snapshot id, generating it once on first access."""
+        if ResultHandler._corpus_snapshot_id is None:
+            # Respect an override so re-runs or smoke tests can pin the id.
+            override = os.environ.get("ARCHI_CORPUS_SNAPSHOT_ID")
+            ResultHandler._corpus_snapshot_id = override or str(uuid.uuid4())
+        return ResultHandler._corpus_snapshot_id
 
     @staticmethod
     def map_prompts(config: Dict[str, Any]):
@@ -84,12 +129,13 @@ class ResultHandler:
 
     @staticmethod
     def add_metadata():
-        with open(EXTRA_METADATA_PATH, "r") as f: 
+        with open(EXTRA_METADATA_PATH, "r") as f:
             additional_info = yaml.safe_load(f)
 
         meta_data = {
             "time": str(datetime.now(timezone.utc)),
-            "git_info": additional_info, 
+            "git_info": additional_info,
+            "corpus_snapshot_id": ResultHandler.get_corpus_snapshot_id(),
         }
 
         ResultHandler.metadata.update(meta_data)
@@ -116,22 +162,158 @@ class ResultHandler:
 
             
 
-    @staticmethod 
+    @staticmethod
     def dump(benchmark_name: Path):
         filename = f"{benchmark_name}-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
         file_path = OUTPUT_DIR / filename
         logger.info(f"Dumping results to {file_path}")
         logger.debug(f"Full results: {ResultHandler.results}")
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        output = {
+        output: Dict[str, Any] = {
             "benchmarking_results": ResultHandler.results,
             "metadata": ResultHandler.metadata,
         }
+        if ResultHandler.ab_comparison:
+            output["ab_comparison"] = ResultHandler.ab_comparison
+        if ResultHandler.ab_comparisons:
+            output["ab_comparisons"] = ResultHandler.ab_comparisons
         with open(file_path, "w") as f:
             json.dump(output, f, indent=4)
 
+    @staticmethod
+    def pair_ab_results(idx_a: int = 0, idx_b: int = 1) -> List[ABResult]:
+        """Pair results from two benchmark configs into ABResult objects."""
+        if idx_a >= len(ResultHandler.results) or idx_b >= len(ResultHandler.results):
+            raise ValueError(
+                f"Result indices ({idx_a}, {idx_b}) out of range for {len(ResultHandler.results)} results"
+            )
 
-class Benchmarker: 
+        results_a = ResultHandler.results[idx_a]["single_question_results"]
+        results_b = ResultHandler.results[idx_b]["single_question_results"]
+
+        ragas_metrics = ["answer_relevancy", "faithfulness", "context_precision", "context_recall"]
+
+        paired: List[ABResult] = []
+        all_keys = list(results_a.keys()) + [k for k in results_b if k not in results_a]
+        for key in all_keys:
+            if key not in results_a:
+                logger.warning("Question key %s not found in config A results, skipping.", key)
+                continue
+            if key not in results_b:
+                logger.warning("Question key %s not found in config B results, skipping.", key)
+                continue
+            qa = results_a[key]
+            qb = results_b[key]
+
+            ragas_a = {m: qa.get(m, float("nan")) for m in ragas_metrics if m in qa}
+            ragas_b = {m: qb.get(m, float("nan")) for m in ragas_metrics if m in qb}
+
+            winner_by_metric: Dict[str, str] = {}
+            for m in ragas_a:
+                sa, sb = ragas_a.get(m, float("nan")), ragas_b.get(m, float("nan"))
+                if math.isnan(sa) or math.isnan(sb):
+                    winner_by_metric[m] = "tie"
+                elif abs(sa - sb) < 1e-9:
+                    winner_by_metric[m] = "tie"
+                elif sa > sb:
+                    winner_by_metric[m] = "a"
+                else:
+                    winner_by_metric[m] = "b"
+
+            paired.append(ABResult(
+                question=qa["question"],
+                reference_answer=qa.get("reference_answer", ""),
+                answer_a=qa.get("answer", ""),
+                answer_b=qb.get("answer", ""),
+                time_a=qa.get("time_elapsed", 0.0),
+                time_b=qb.get("time_elapsed", 0.0),
+                ragas_a=ragas_a,
+                ragas_b=ragas_b,
+                sources_a=qa.get("sources_metadata", []),
+                sources_b=qb.get("sources_metadata", []),
+                messages_a=qa.get("messages", []),
+                messages_b=qb.get("messages", []),
+                winner_by_metric=winner_by_metric,
+                llm_judge_a={k.replace("llm_judge_", ""): v for k, v in qa.items() if k.startswith("llm_judge_")},
+                llm_judge_b={k.replace("llm_judge_", ""): v for k, v in qb.items() if k.startswith("llm_judge_")},
+            ))
+
+        return paired
+
+    @staticmethod
+    def dump_ab_comparison(paired: List[ABResult], idx_a: int = 0, idx_b: int = 1):
+        """Build an ab_comparison section from paired results.
+
+        When called with default indices (0, 1), also sets ab_comparison
+        for backward compatibility.
+        """
+        config_a = ResultHandler.results[idx_a].get("configuration", {})
+        config_b = ResultHandler.results[idx_b].get("configuration", {})
+        bench_a = config_a.get("services", {}).get("benchmarking", {})
+        bench_b = config_b.get("services", {}).get("benchmarking", {})
+
+        config_a_meta = {
+            "name": bench_a.get("name", f"config_{idx_a}"),
+            "agent_class": bench_a.get("agent_class", ""),
+            "model": bench_a.get("model", ""),
+            "provider": bench_a.get("provider", ""),
+            "config_file": ResultHandler.results[idx_a].get("configuration_file", ""),
+        }
+        config_b_meta = {
+            "name": bench_b.get("name", f"config_{idx_b}"),
+            "agent_class": bench_b.get("agent_class", ""),
+            "model": bench_b.get("model", ""),
+            "provider": bench_b.get("provider", ""),
+            "config_file": ResultHandler.results[idx_b].get("configuration_file", ""),
+        }
+
+        per_question = [asdict(r) for r in paired]
+
+        wins_a, wins_b, ties = 0, 0, 0
+        all_metrics = set()
+        for r in paired:
+            for m, w in r.winner_by_metric.items():
+                all_metrics.add(m)
+                if w == "a":
+                    wins_a += 1
+                elif w == "b":
+                    wins_b += 1
+                else:
+                    ties += 1
+
+        mean_scores_a: Dict[str, float] = {}
+        mean_scores_b: Dict[str, float] = {}
+        for m in all_metrics:
+            vals_a = [r.ragas_a[m] for r in paired if r.ragas_a.get(m) is not None and not math.isnan(r.ragas_a.get(m, float("nan")))]
+            vals_b = [r.ragas_b[m] for r in paired if r.ragas_b.get(m) is not None and not math.isnan(r.ragas_b.get(m, float("nan")))]
+            mean_scores_a[m] = sum(vals_a) / len(vals_a) if vals_a else 0.0
+            mean_scores_b[m] = sum(vals_b) / len(vals_b) if vals_b else 0.0
+
+        comparison = {
+            "config_a": config_a_meta,
+            "config_b": config_b_meta,
+            "per_question": per_question,
+            "aggregate": {
+                "wins_a": wins_a,
+                "wins_b": wins_b,
+                "ties": ties,
+                "mean_scores_a": mean_scores_a,
+                "mean_scores_b": mean_scores_b,
+            },
+        }
+
+        ResultHandler.ab_comparisons.append(comparison)
+
+        if idx_a == 0 and idx_b == 1:
+            ResultHandler.ab_comparison = comparison
+
+    @staticmethod
+    def generate_pairwise_combinations(n_configs: int) -> List[Tuple[int, int]]:
+        """Generate all pairwise index combinations for N configs."""
+        return list(combinations(range(n_configs), 2))
+
+
+class Benchmarker:
 
     def __init__(self, configs: Path, q_to_a: dict[str, str]):
         self.queries_to_answers = q_to_a 
@@ -202,6 +384,14 @@ class Benchmarker:
             agent_spec = load_agent_spec(Path(str(agent_md_file)))
         except AgentSpecError as exc:
             raise ValueError(f"Failed to load benchmark agent spec '{agent_md_file}': {exc}") from exc
+
+        self._chain_kwargs = dict(
+            pipeline=pipeline,
+            agent_spec=agent_spec,
+            default_provider=provider,
+            default_model=model,
+            prompt_overrides={},
+        )
         self.chain = archi(
             pipeline,
             agent_spec=agent_spec,
@@ -210,13 +400,101 @@ class Benchmarker:
             prompt_overrides={},
         )
 
+    # Phase 1 audit (2026-06-01): archi() is NOT safe for parallel instantiation
+    # due to three shared-global-state blockers:
+    #   1. AsyncLoopThread MCP singleton at src/utils/mcp_utils.py:20
+    #   2. PostgresServiceFactory.set_instance at src/utils/postgres_service_factory.py:169
+    #   3. HuggingFaceEmbeddings singleton at src/data_manager/vectorstore_connector.py:33
+    # Until those are fixed, the parallel chain pool MUST be invoked with
+    # n_workers=1. The guard below is intentional — callers can lift it after a
+    # follow-up "thread-safe archi" change resolves the three blockers.
+    _PARALLEL_SAFE_MAX_WORKERS = 1
+
+    def _create_chain_pool(self, n_workers: int) -> list:
+        """Create a pool of independent chain instances for parallel execution."""
+        if n_workers > self._PARALLEL_SAFE_MAX_WORKERS:
+            raise RuntimeError(
+                f"archi() is not thread-safe yet (Phase 1 audit identified 3 shared-state blockers); "
+                f"n_workers={n_workers} would risk data corruption. Set n_workers=1 until blockers are fixed."
+            )
+        chains = [self.chain]
+        kw = self._chain_kwargs
+        for _ in range(n_workers - 1):
+            chains.append(archi(
+                kw["pipeline"],
+                agent_spec=kw["agent_spec"],
+                default_provider=kw["default_provider"],
+                default_model=kw["default_model"],
+                prompt_overrides=kw["prompt_overrides"],
+            ))
+        logger.info("Created pool of %d chain instances for parallel execution.", n_workers)
+        return chains
+
+    def _prefetch_questions_parallel(
+        self, n_workers, config_num, total_configs, total_questions, run_start,
+    ):
+        """Run all questions in parallel using a pool of independent chain instances.
+
+        Returns a dict mapping 1-based question_id to (result, elapsed_seconds).
+        """
+        if n_workers > self._PARALLEL_SAFE_MAX_WORKERS:
+            raise RuntimeError(
+                f"_prefetch_questions_parallel called with n_workers={n_workers}; "
+                f"only n_workers=1 is safe today (see _create_chain_pool comment)."
+            )
+        chains = self._create_chain_pool(n_workers)
+        logger.info("Prefetching %d questions with %d parallel workers...", total_questions, n_workers)
+
+        def _ask(chain, question_id, question_text):
+            formatted = [("User", question_text)]
+            start = time.perf_counter()
+            result = chain(history=formatted)
+            elapsed = time.perf_counter() - start
+            logger.info(
+                "[Config %d/%d] Question %d/%d finished (%.2fs)",
+                config_num, total_configs, question_id, total_questions, elapsed,
+            )
+            return question_id, result, elapsed
+
+        results = {}
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {}
+            for idx, question_item in enumerate(self.queries_to_answers):
+                if type(question_item) is not dict:
+                    continue
+                if not all(f in question_item for f in self.required_fields):
+                    continue
+                qid = idx + 1
+                chain = chains[idx % n_workers]
+                future = executor.submit(_ask, chain, qid, question_item["question"])
+                futures[future] = qid
+
+            for future in as_completed(futures):
+                try:
+                    qid, result, elapsed = future.result()
+                    results[qid] = (result, elapsed)
+                except Exception:
+                    qid = futures[future]
+                    logger.exception("Question %d failed in parallel execution", qid)
+
+        wall_elapsed = time.perf_counter() - run_start
+        mins, secs = divmod(int(wall_elapsed), 60)
+        logger.info(
+            "Parallel prefetch complete: %d/%d questions in %dm%02ds wall time.",
+            len(results), total_questions, mins, secs,
+        )
+        return results
+
 
     def get_ragas_llm_evaluator(self):
         ragas_configs = self.config['services']['benchmarking']['mode_settings']['ragas_settings']
         benchmark_cfg = self.config.get("services", {}).get("benchmarking", {})
-        provider = benchmark_cfg.get("provider")
-        model_name = benchmark_cfg.get("model")
-        ollama_url = benchmark_cfg.get("ollama_url")
+        # Judge/SUT config split: when ragas_settings.evaluator_* is set, the RAGAS judge
+        # uses an independent model from the system under test. Falls back to the SUT
+        # provider/model when the evaluator_* keys are absent.
+        provider = ragas_configs.get("evaluator_provider") or benchmark_cfg.get("provider")
+        model_name = ragas_configs.get("evaluator_model") or benchmark_cfg.get("model")
+        ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get("ollama_url")
 
         match str(provider).lower():
             case "openai":
@@ -235,6 +513,9 @@ class Benchmarker:
             case "anthropic":
                 from langchain_anthropic import ChatAnthropic
                 return ChatAnthropic(model=model_name)
+            case "huit_bedrock":
+                base_url = benchmark_cfg.get("base_url") or "https://go.apis.huit.harvard.edu/ais-bedrock-llm/v2"
+                return get_model("huit_bedrock", model_name, {"base_url": base_url})
             case _:
                 return ChatOpenAI(model=model_name)
 
@@ -399,7 +680,9 @@ class Benchmarker:
         res = pd.DataFrame()
 
         ragas_settings = self.config['services']['benchmarking']['mode_settings']['ragas_settings']
-        log_tenacity = self.config['global']['verbosity'] >= 4
+        # The archi config-render pipeline can strip global.verbosity; tolerate
+        # missing key (verbosity 4 enables tenacity retry logging in ragas).
+        log_tenacity = self.config.get('global', {}).get('verbosity', 0) >= 4
         timeout = ragas_settings['timeout']
         batch_settings = ragas_settings['batch_size']
         if not batch_settings: 
@@ -430,6 +713,14 @@ class Benchmarker:
         self.wait_for_ingestion_completion()
 
         modes_being_run = set(self.benchmarking_configs['modes'])
+
+        # Merge anchor questions, if any. Anchors live in a separate JSON so
+        # they can be versioned independently of the per-round query bank.
+        # Each anchor carries an `anchor_type` ("easy_retrieve", "reasoning",
+        # "should_refuse"); we propagate that into per-question results below
+        # so the Argilla push and analysis notebook can surface it as
+        # metadata only (graders see no "anchor" marker in any field).
+        self._merge_anchor_questions()
 
         logger.info("")
         logger.info("====== Starting benchmark: %s ======", self.benchmark_name)
@@ -536,6 +827,10 @@ class Benchmarker:
                     sources_trunc_content.append(getattr(document, 'page_content', '')[:300])  # first 300 chars
                 q_results['sources_metadata'] = sources_metadata
                 q_results['sources_trunc_content'] = sources_trunc_content
+                # Forward the anchor marker so the Argilla push can stamp it
+                # onto record metadata. Empty string means "not an anchor"
+                # (Argilla TermsMetadataProperty accepts any string).
+                q_results['anchor_type'] = question_item.get('anchor_type', '') if isinstance(question_item, dict) else ''
                 logger.debug("Sources returned: %s", sources_metadata)
 
                 # store the results for this question
@@ -569,18 +864,191 @@ class Benchmarker:
             self.load_new_configuration()
 
         ResultHandler.add_metadata()
+
+        # A/B comparison: pair results across configs when 2+ were run.
+        # Auto-enabled — no explicit flag — because there's no useful "skip
+        # pairing" case when the user gave us multiple configs.
+        if len(ResultHandler.results) >= 2:
+            pairs = ResultHandler.generate_pairwise_combinations(len(ResultHandler.results))
+            logger.info("Generating %d pairwise A/B comparisons...", len(pairs))
+            for idx_a, idx_b in pairs:
+                paired = ResultHandler.pair_ab_results(idx_a, idx_b)
+                ResultHandler.dump_ab_comparison(paired, idx_a, idx_b)
+                comp = ResultHandler.ab_comparisons[-1]
+                name_a = comp["config_a"].get("name", f"config_{idx_a}")
+                name_b = comp["config_b"].get("name", f"config_{idx_b}")
+                logger.info(
+                    "  %s vs %s: %d questions. Wins A=%d, B=%d, Ties=%d",
+                    name_a, name_b, len(paired),
+                    comp["aggregate"]["wins_a"],
+                    comp["aggregate"]["wins_b"],
+                    comp["aggregate"]["ties"],
+                )
+
+        # Push to Argilla when ARCHI_ARGILLA=1 in the benchmarks container env.
+        # The CLI flag --argilla on `archi evaluate` sets this (see Task 2.5).
+        argilla_enabled = os.environ.get("ARCHI_ARGILLA", "").strip().lower() in ("1", "true", "yes")
+        if argilla_enabled:
+            try:
+                from src.utils.benchmark_argilla import (
+                    generate_dataset_name,
+                    push_ab_results_to_argilla,
+                    push_single_results_to_argilla,
+                    push_multi_ab_results_to_argilla,
+                    write_state_file,
+                )
+
+                corpus_id = ResultHandler.get_corpus_snapshot_id()
+                # services.benchmarking.argilla.min_submitted (default 2) drives
+                # inter-rater reliability sample size by configuring rg.TaskDistribution.
+                argilla_cfg = self.config.get("services", {}).get("benchmarking", {}).get("argilla", {}) or {}
+                min_submitted = int(argilla_cfg.get("min_submitted", 2))
+                if ResultHandler.ab_comparisons and len(ResultHandler.ab_comparisons) > 1:
+                    dataset_names = push_multi_ab_results_to_argilla(
+                        ResultHandler.ab_comparisons,
+                        self.benchmark_name,
+                        corpus_snapshot_id=corpus_id,
+                        min_submitted=min_submitted,
+                    )
+                    write_state_file(
+                        dataset_name=dataset_names[0] if dataset_names else "",
+                        dataset_names=dataset_names,
+                    )
+                    ResultHandler.metadata["argilla_datasets"] = dataset_names
+                    logger.info(
+                        "Argilla export complete. %d datasets created (corpus_snapshot_id=%s). "
+                        "Open Argilla to grade: archi grade --serve",
+                        len(dataset_names), corpus_id,
+                    )
+                elif ResultHandler.ab_comparison:
+                    argilla_dataset_name = generate_dataset_name(self.benchmark_name)
+                    benchmark_output = {
+                        "benchmarking_results": ResultHandler.results,
+                        "ab_comparison": ResultHandler.ab_comparison,
+                    }
+                    push_ab_results_to_argilla(
+                        benchmark_output,
+                        argilla_dataset_name,
+                        corpus_snapshot_id=corpus_id,
+                        min_submitted=min_submitted,
+                    )
+                    write_state_file(argilla_dataset_name)
+                    ResultHandler.metadata["argilla_dataset"] = argilla_dataset_name
+                    logger.info(
+                        "Argilla export complete. Dataset: '%s' (corpus_snapshot_id=%s). "
+                        "Open Argilla to grade: archi grade --serve",
+                        argilla_dataset_name, corpus_id,
+                    )
+                else:
+                    argilla_dataset_name = generate_dataset_name(self.benchmark_name)
+                    benchmark_output = {
+                        "benchmarking_results": ResultHandler.results,
+                    }
+                    push_single_results_to_argilla(
+                        benchmark_output,
+                        argilla_dataset_name,
+                        corpus_snapshot_id=corpus_id,
+                        min_submitted=min_submitted,
+                    )
+                    write_state_file(argilla_dataset_name)
+                    ResultHandler.metadata["argilla_dataset"] = argilla_dataset_name
+                    logger.info(
+                        "Argilla export complete. Dataset: '%s' (corpus_snapshot_id=%s). "
+                        "Open Argilla to grade: archi grade --serve",
+                        argilla_dataset_name, corpus_id,
+                    )
+            except Exception:
+                logger.exception("Argilla push failed — results were still dumped to disk.")
+
         ResultHandler.dump(self.benchmark_name)
         ResultHandler.dump_html(self.benchmark_name)
         return
 
+    def _merge_anchor_questions(self) -> None:
+        """Splice anchor questions into the run's question set.
+
+        Anchors are per-FASRC reference questions of three types
+        (easy_retrieve, reasoning, should_refuse) that run on every round.
+        They detect cross-round regressions and ground the comparison —
+        they should NOT live in the main per-round question bank.
+
+        Config knobs (all under services.benchmarking.anchors, all optional):
+          enabled (bool, default True)   — disable entirely with `false`
+          path (str)                     — override the default JSON path
+        Default path: examples/benchmarking/anchor_questions.json
+
+        Each anchor gets `anchor_type` set on the merged question dict; this
+        flows through to the per-question result, then onto the Argilla
+        record as metadata (NOT a visible field). Graders see anchors as
+        ordinary records.
+        """
+        anchor_cfg = self.benchmarking_configs.get("anchors", {}) or {}
+        if anchor_cfg.get("enabled", True) is False:
+            logger.info("Anchor merging disabled by config; skipping.")
+            return
+
+        path_str = anchor_cfg.get("path") or "examples/benchmarking/anchor_questions.json"
+        anchor_path = Path(path_str)
+        if not anchor_path.is_absolute():
+            # Resolve relative to the data path (matches how queries_path is read).
+            candidates = [Path(self.data_path) / anchor_path, anchor_path]
+            anchor_path = next((p for p in candidates if p.exists()), candidates[-1])
+
+        if not anchor_path.exists():
+            logger.warning(
+                "Anchor questions file not found at %s; running without anchors.",
+                anchor_path,
+            )
+            return
+
+        try:
+            anchors = json.loads(anchor_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Failed to read anchor file %s: %s", anchor_path, exc)
+            return
+
+        if not isinstance(anchors, list) or not anchors:
+            logger.warning("Anchor file %s is empty or malformed.", anchor_path)
+            return
+
+        existing_questions = {
+            q.get("question") for q in self.queries_to_answers
+            if isinstance(q, dict) and q.get("question")
+        }
+        merged = list(self.queries_to_answers)
+        added = 0
+        for a in anchors:
+            if not isinstance(a, dict) or not a.get("question"):
+                continue
+            if a["question"] in existing_questions:
+                continue  # Anchor already in the bank — don't duplicate.
+            merged.append(a)
+            added += 1
+        self.queries_to_answers = merged
+        logger.info(
+            "Merged %d anchor questions from %s (%d total questions).",
+            added, anchor_path, len(merged),
+        )
+
     def wait_for_ingestion_completion(self):
         timeout_seconds = int(os.environ.get("BENCH_INGEST_WAIT_TIMEOUT", "3600"))
         poll_interval_seconds = int(os.environ.get("BENCH_INGEST_POLL_INTERVAL", "5"))
-        dm_port = self.config.get("services", {}).get("data_manager", {}).get("external_port", 7871)
+        dm_cfg = self.config.get("services", {}).get("data_manager", {})
+        # external_port is the HOST-side mapping (e.g. 7881 for benchmarks);
+        # internal_port is what the data-manager listens on INSIDE the compose
+        # network (e.g. 7871). The container-to-container URL must use the
+        # internal port; the host-network fallbacks use the external port.
+        dm_external_port = dm_cfg.get("external_port", 7871)
+        dm_internal_port = dm_cfg.get("internal_port", 7871)
+        # Order matters: try the cheap-success cases first. In bridge mode the
+        # in-network hostname resolves; in --hostmode the container shares the
+        # host network so the data-manager is reachable at localhost on its
+        # *internal* port (it binds directly to the host, no port mapping).
         status_urls = [
-            f"http://data-manager:{dm_port}/api/ingestion/status",
-            f"http://localhost:{dm_port}/api/ingestion/status",
-            f"http://host.containers.internal:{dm_port}/api/ingestion/status",
+            f"http://data-manager:{dm_internal_port}/api/ingestion/status",
+            f"http://localhost:{dm_internal_port}/api/ingestion/status",
+            f"http://localhost:{dm_external_port}/api/ingestion/status",
+            f"http://host.containers.internal:{dm_external_port}/api/ingestion/status",
         ]
         start_time = time.monotonic()
         attempt = 0

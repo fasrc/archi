@@ -616,6 +616,10 @@ services:
       {% endif %}
       VERBOSITY: {{ verbosity }}
       container_name: {{ benchmarking_container_name }}
+      {% if argilla_enabled -%}
+      ARCHI_ARGILLA: "1"
+      ARGILLA_API_URL: {{ argilla_server | default('http://localhost:6900') }}
+      {% endif %}
     env_file:
       - .env
     {% if gpu_ids and not use_podman -%}
