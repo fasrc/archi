@@ -714,6 +714,14 @@ class Benchmarker:
 
         modes_being_run = set(self.benchmarking_configs['modes'])
 
+        # Merge anchor questions, if any. Anchors live in a separate JSON so
+        # they can be versioned independently of the per-round query bank.
+        # Each anchor carries an `anchor_type` ("easy_retrieve", "reasoning",
+        # "should_refuse"); we propagate that into per-question results below
+        # so the Argilla push and analysis notebook can surface it as
+        # metadata only (graders see no "anchor" marker in any field).
+        self._merge_anchor_questions()
+
         logger.info("")
         logger.info("====== Starting benchmark: %s ======", self.benchmark_name)
         logger.info("Modes being run: %s", modes_being_run)
@@ -819,6 +827,10 @@ class Benchmarker:
                     sources_trunc_content.append(getattr(document, 'page_content', '')[:300])  # first 300 chars
                 q_results['sources_metadata'] = sources_metadata
                 q_results['sources_trunc_content'] = sources_trunc_content
+                # Forward the anchor marker so the Argilla push can stamp it
+                # onto record metadata. Empty string means "not an anchor"
+                # (Argilla TermsMetadataProperty accepts any string).
+                q_results['anchor_type'] = question_item.get('anchor_type', '') if isinstance(question_item, dict) else ''
                 logger.debug("Sources returned: %s", sources_metadata)
 
                 # store the results for this question
@@ -887,11 +899,16 @@ class Benchmarker:
                 )
 
                 corpus_id = ResultHandler.get_corpus_snapshot_id()
+                # services.benchmarking.argilla.min_submitted (default 2) drives
+                # inter-rater reliability sample size by configuring rg.TaskDistribution.
+                argilla_cfg = self.config.get("services", {}).get("benchmarking", {}).get("argilla", {}) or {}
+                min_submitted = int(argilla_cfg.get("min_submitted", 2))
                 if ResultHandler.ab_comparisons and len(ResultHandler.ab_comparisons) > 1:
                     dataset_names = push_multi_ab_results_to_argilla(
                         ResultHandler.ab_comparisons,
                         self.benchmark_name,
                         corpus_snapshot_id=corpus_id,
+                        min_submitted=min_submitted,
                     )
                     write_state_file(
                         dataset_name=dataset_names[0] if dataset_names else "",
@@ -909,7 +926,12 @@ class Benchmarker:
                         "benchmarking_results": ResultHandler.results,
                         "ab_comparison": ResultHandler.ab_comparison,
                     }
-                    push_ab_results_to_argilla(benchmark_output, argilla_dataset_name, corpus_snapshot_id=corpus_id)
+                    push_ab_results_to_argilla(
+                        benchmark_output,
+                        argilla_dataset_name,
+                        corpus_snapshot_id=corpus_id,
+                        min_submitted=min_submitted,
+                    )
                     write_state_file(argilla_dataset_name)
                     ResultHandler.metadata["argilla_dataset"] = argilla_dataset_name
                     logger.info(
@@ -922,7 +944,12 @@ class Benchmarker:
                     benchmark_output = {
                         "benchmarking_results": ResultHandler.results,
                     }
-                    push_single_results_to_argilla(benchmark_output, argilla_dataset_name, corpus_snapshot_id=corpus_id)
+                    push_single_results_to_argilla(
+                        benchmark_output,
+                        argilla_dataset_name,
+                        corpus_snapshot_id=corpus_id,
+                        min_submitted=min_submitted,
+                    )
                     write_state_file(argilla_dataset_name)
                     ResultHandler.metadata["argilla_dataset"] = argilla_dataset_name
                     logger.info(
@@ -936,6 +963,72 @@ class Benchmarker:
         ResultHandler.dump(self.benchmark_name)
         ResultHandler.dump_html(self.benchmark_name)
         return
+
+    def _merge_anchor_questions(self) -> None:
+        """Splice anchor questions into the run's question set.
+
+        Anchors are per-FASRC reference questions of three types
+        (easy_retrieve, reasoning, should_refuse) that run on every round.
+        They detect cross-round regressions and ground the comparison —
+        they should NOT live in the main per-round question bank.
+
+        Config knobs (all under services.benchmarking.anchors, all optional):
+          enabled (bool, default True)   — disable entirely with `false`
+          path (str)                     — override the default JSON path
+        Default path: examples/benchmarking/anchor_questions.json
+
+        Each anchor gets `anchor_type` set on the merged question dict; this
+        flows through to the per-question result, then onto the Argilla
+        record as metadata (NOT a visible field). Graders see anchors as
+        ordinary records.
+        """
+        anchor_cfg = self.benchmarking_configs.get("anchors", {}) or {}
+        if anchor_cfg.get("enabled", True) is False:
+            logger.info("Anchor merging disabled by config; skipping.")
+            return
+
+        path_str = anchor_cfg.get("path") or "examples/benchmarking/anchor_questions.json"
+        anchor_path = Path(path_str)
+        if not anchor_path.is_absolute():
+            # Resolve relative to the data path (matches how queries_path is read).
+            candidates = [Path(self.data_path) / anchor_path, anchor_path]
+            anchor_path = next((p for p in candidates if p.exists()), candidates[-1])
+
+        if not anchor_path.exists():
+            logger.warning(
+                "Anchor questions file not found at %s; running without anchors.",
+                anchor_path,
+            )
+            return
+
+        try:
+            anchors = json.loads(anchor_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Failed to read anchor file %s: %s", anchor_path, exc)
+            return
+
+        if not isinstance(anchors, list) or not anchors:
+            logger.warning("Anchor file %s is empty or malformed.", anchor_path)
+            return
+
+        existing_questions = {
+            q.get("question") for q in self.queries_to_answers
+            if isinstance(q, dict) and q.get("question")
+        }
+        merged = list(self.queries_to_answers)
+        added = 0
+        for a in anchors:
+            if not isinstance(a, dict) or not a.get("question"):
+                continue
+            if a["question"] in existing_questions:
+                continue  # Anchor already in the bank — don't duplicate.
+            merged.append(a)
+            added += 1
+        self.queries_to_answers = merged
+        logger.info(
+            "Merged %d anchor questions from %s (%d total questions).",
+            added, anchor_path, len(merged),
+        )
 
     def wait_for_ingestion_completion(self):
         timeout_seconds = int(os.environ.get("BENCH_INGEST_WAIT_TIMEOUT", "3600"))

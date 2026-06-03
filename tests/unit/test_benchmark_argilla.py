@@ -630,7 +630,7 @@ def test_generate_dataset_name_with_suffix():
 @patch("src.utils.benchmark_argilla.push_ab_results_to_argilla")
 def test_push_multi_ab_creates_datasets(mock_push):
     """Creates one dataset per comparison pair."""
-    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None: name
+    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None, min_submitted=2: name
 
     comparisons = [
         {
@@ -678,7 +678,7 @@ def test_push_multi_ab_empty_list(mock_push):
 @patch("src.utils.benchmark_argilla.push_ab_results_to_argilla")
 def test_push_multi_ab_default_names(mock_push):
     """Falls back to config_a/config_b when names are missing."""
-    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None: name
+    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None, min_submitted=2: name
 
     comparisons = [
         {"config_a": {}, "config_b": {}, "per_question": []},
@@ -691,7 +691,7 @@ def test_push_multi_ab_default_names(mock_push):
 @patch("src.utils.benchmark_argilla.push_ab_results_to_argilla")
 def test_push_multi_ab_forwards_corpus_snapshot_id(mock_push):
     """corpus_snapshot_id reaches every per-pair push call (spec: same-sweep guarantee)."""
-    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None: name
+    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None, min_submitted=2: name
 
     comparisons = [
         {"config_a": {"name": "a"}, "config_b": {"name": "b"}, "per_question": []},
@@ -702,6 +702,20 @@ def test_push_multi_ab_forwards_corpus_snapshot_id(mock_push):
     assert mock_push.call_count == 2
     for call in mock_push.call_args_list:
         assert call.kwargs.get("corpus_snapshot_id") == "snap-xyz"
+
+
+@patch("src.utils.benchmark_argilla.push_ab_results_to_argilla")
+def test_push_multi_ab_forwards_min_submitted(mock_push):
+    """min_submitted reaches every per-pair push call (spec: 2-grader minimum)."""
+    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None, min_submitted=2: name
+
+    comparisons = [
+        {"config_a": {"name": "a"}, "config_b": {"name": "b"}, "per_question": []},
+    ]
+    push_multi_ab_results_to_argilla(comparisons, "bench", min_submitted=3)
+
+    assert mock_push.call_count == 1
+    assert mock_push.call_args_list[0].kwargs.get("min_submitted") == 3
 
 
 # -- pull_multi_grades_from_argilla tests -------------------------------------

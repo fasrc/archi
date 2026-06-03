@@ -9,7 +9,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from src.utils.logging import get_logger
 
@@ -167,6 +167,7 @@ def push_ab_results_to_argilla(
     benchmark_data: Dict[str, Any],
     dataset_name: str,
     corpus_snapshot_id: Optional[str] = None,
+    min_submitted: int = 2,
 ) -> str:
     """Push A/B benchmark results to Argilla as an annotation dataset.
 
@@ -241,11 +242,15 @@ def push_ab_results_to_argilla(
             rg.FloatMetadataProperty(name="time_b", title="Response Time (B)"),
             rg.TermsMetadataProperty(name="corpus_snapshot_id", title="Corpus snapshot id"),
         ],
+        distribution=rg.TaskDistribution(min_submitted=max(1, int(min_submitted))),
     )
 
     dataset = rg.Dataset(name=dataset_name, workspace=workspace, settings=settings)
     dataset.create()
-    logger.info("Created Argilla dataset: %s", dataset_name)
+    logger.info(
+        "Created Argilla dataset: %s (min_submitted=%d)",
+        dataset_name, max(1, int(min_submitted)),
+    )
 
     per_question = ab.get("per_question", [])
     records = []
@@ -314,6 +319,7 @@ def push_single_results_to_argilla(
     benchmark_data: Dict[str, Any],
     dataset_name: str,
     corpus_snapshot_id: Optional[str] = None,
+    min_submitted: int = 2,
 ) -> str:
     """Push single-config benchmark results to Argilla.
 
@@ -349,6 +355,27 @@ def push_single_results_to_argilla(
             ),
         ],
         questions=[
+            rg.LabelQuestion(
+                name="correctness",
+                title="Is the response correct?",
+                labels=["correct", "partial", "incorrect"],
+                required=True,
+            ),
+            rg.MultiLabelQuestion(
+                name="failure_modes",
+                title="Failure modes (select all that apply; leave empty if correct)",
+                labels=[
+                    "hallucination",
+                    "wrong-path",
+                    "stale",
+                    "missed-search",
+                    "over-search",
+                    "refused-incorrectly",
+                    "hallucinated-confidence",
+                    "format-issue",
+                ],
+                required=False,
+            ),
             rg.RatingQuestion(
                 name="quality",
                 title="Quality of the response (1=poor, 5=excellent)",
@@ -368,12 +395,17 @@ def push_single_results_to_argilla(
             rg.FloatMetadataProperty(name="ragas_recall", title="RAGAS Context Recall"),
             rg.FloatMetadataProperty(name="time_elapsed", title="Response Time"),
             rg.TermsMetadataProperty(name="corpus_snapshot_id", title="Corpus snapshot id"),
+            rg.TermsMetadataProperty(name="anchor_type", title="Anchor type"),
         ],
+        distribution=rg.TaskDistribution(min_submitted=max(1, int(min_submitted))),
     )
 
     dataset = rg.Dataset(name=dataset_name, workspace=workspace, settings=settings)
     dataset.create()
-    logger.info("Created Argilla dataset: %s", dataset_name)
+    logger.info(
+        "Created Argilla dataset: %s (min_submitted=%d)",
+        dataset_name, max(1, int(min_submitted)),
+    )
 
     records = []
     for i, (q_key, item) in enumerate(sorted(questions.items())):
@@ -395,6 +427,9 @@ def push_single_results_to_argilla(
             metadata["time_elapsed"] = float(te)
         if corpus_snapshot_id:
             metadata["corpus_snapshot_id"] = corpus_snapshot_id
+        anchor_type = item.get("anchor_type")
+        if anchor_type:
+            metadata["anchor_type"] = anchor_type
 
         # Build collapsible trace HTML from prepared messages
         trace_html = _format_trace_html(item.get("messages", []))
@@ -468,7 +503,7 @@ def pull_grades_from_argilla(
                 by_user[user_key] = {"user": str(user_id) if user_id else None}
             qname = getattr(response, "question_name", None)
             value = getattr(response, "value", None)
-            if qname in ("winner", "quality", "notes") and value is not None:
+            if qname in ("winner", "quality", "notes", "correctness", "failure_modes") and value is not None:
                 by_user[user_key][qname] = value
         item_grades["responses"].extend(by_user.values())
 
@@ -505,6 +540,7 @@ def push_multi_ab_results_to_argilla(
     ab_comparisons: List[Dict[str, Any]],
     benchmark_name: str,
     corpus_snapshot_id: Optional[str] = None,
+    min_submitted: int = 2,
 ) -> List[str]:
     """Push multiple pairwise A/B comparisons to Argilla as separate datasets.
 
@@ -525,7 +561,12 @@ def push_multi_ab_results_to_argilla(
         # Wrap into the format push_ab_results_to_argilla expects
         benchmark_data = {"ab_comparison": comp}
         try:
-            push_ab_results_to_argilla(benchmark_data, dataset_name, corpus_snapshot_id=corpus_snapshot_id)
+            push_ab_results_to_argilla(
+                benchmark_data,
+                dataset_name,
+                corpus_snapshot_id=corpus_snapshot_id,
+                min_submitted=min_submitted,
+            )
             dataset_names.append(dataset_name)
         except Exception:
             logger.exception("Failed to push pair %s vs %s to Argilla.", name_a, name_b)
@@ -610,26 +651,84 @@ def assert_single_sweep(grades_dict: Dict[str, Any]) -> Optional[str]:
 
 # -- State file utilities (shared with benchmark_grading.py) --
 
+_BENCHMARKS_BIND_PATH = "/root/archi/benchmarks"  # bind-mount target in the
+                                                  # benchmark container; the host
+                                                  # sees the same dir via the
+                                                  # services.benchmarking.out_dir
+                                                  # config (bench_out/ by default).
+
+
+def _benchmarks_bind_is_accessible() -> bool:
+    """True iff the bind-mount path exists and the current process can stat it.
+
+    On a typical host running `archi grade`, `/root/archi/benchmarks` either
+    doesn't exist or is unreadable (root-owned); just stat'ing it raises
+    PermissionError. Use this guard everywhere before touching the bind path.
+    """
+    try:
+        return Path(_BENCHMARKS_BIND_PATH).is_dir()
+    except (OSError, PermissionError):
+        return False
+
+
+def _candidate_state_paths(out_dir: Optional[str] = None) -> List[Path]:
+    """List candidate state file paths in read priority order.
+
+    The benchmark container writes the state file; `archi grade` reads it from
+    the host. To bridge that gap we write to BOTH:
+      - $ARCHI_DIR/.last-benchmark (legacy / container-private)
+      - <bench-out-dir>/.last-benchmark (bind-mounted to the host)
+    Readers check both; the most-recent wins (by file mtime).
+    """
+    paths: List[Path] = []
+    archi_dir_env = os.environ.get("ARCHI_DIR")
+    paths.append(Path(archi_dir_env or Path.home() / ".archi") / ".last-benchmark")
+    # Container-side bind mount (always /root/archi/benchmarks/.last-benchmark).
+    if _benchmarks_bind_is_accessible():
+        paths.append(Path(_BENCHMARKS_BIND_PATH) / ".last-benchmark")
+    # Caller-supplied out_dir (host-side; ARCHI_BENCH_OUT_DIR can also override).
+    out_dir_env = os.environ.get("ARCHI_BENCH_OUT_DIR")
+    for candidate in (out_dir, out_dir_env):
+        if candidate:
+            paths.append(Path(candidate) / ".last-benchmark")
+    # Project-relative default (host).
+    paths.append(Path("bench_out") / ".last-benchmark")
+    # De-dupe while preserving order.
+    seen: Set[str] = set()
+    unique: List[Path] = []
+    for p in paths:
+        key = str(p)
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
+    return unique
+
+
 def write_state_file(
     dataset_name: str,
     out_dir: Optional[str] = None,
     dataset_names: Optional[List[str]] = None,
 ):
-    """Write the last benchmark state to ~/.archi/.last-benchmark.
+    """Write the last benchmark state.
 
-    Merges with any existing state so that host-side writes (out_dir) and
-    container-side writes (dataset_name) accumulate.
+    Writes to both `~/.archi/.last-benchmark` AND (when present) the
+    `/root/archi/benchmarks/` bind-mounted dir, so `archi grade` running on
+    the host can see the state from the most recent benchmark container run.
+    Merges with any existing state at the primary path so keys like
+    ``dataset_names`` survive subsequent writes that only update
+    ``dataset_name``.
     """
-    archi_dir = Path(os.environ.get("ARCHI_DIR", Path.home() / ".archi"))
-    archi_dir.mkdir(parents=True, exist_ok=True)
-    state_file = archi_dir / ".last-benchmark"
+    primary = _candidate_state_paths(out_dir)[0]
+    primary.parent.mkdir(parents=True, exist_ok=True)
 
     existing: Dict[str, Any] = {}
-    if state_file.exists():
+    if primary.exists():
         try:
-            existing = json.loads(state_file.read_text())
+            existing = json.loads(primary.read_text())
         except (json.JSONDecodeError, OSError):
             pass
+    if not isinstance(existing, dict):
+        existing = {}
 
     existing["dataset_name"] = dataset_name
     existing["timestamp"] = datetime.now(timezone.utc).isoformat()
@@ -638,23 +737,40 @@ def write_state_file(
     if dataset_names is not None:
         existing["dataset_names"] = dataset_names
 
-    state_file.write_text(json.dumps(existing, indent=2))
-    logger.info("Wrote last benchmark state to %s", state_file)
+    payload_text = json.dumps(existing, indent=2)
+    primary.write_text(payload_text)
+    logger.info("Wrote last benchmark state to %s", primary)
+
+    # Best-effort second write to the bind-mounted bench_out path. This is what
+    # `archi grade` on the host actually picks up.
+    if _benchmarks_bind_is_accessible():
+        host_visible = Path(_BENCHMARKS_BIND_PATH) / ".last-benchmark"
+        try:
+            host_visible.write_text(payload_text)
+            logger.info("Mirrored state to host-visible path %s", host_visible)
+        except OSError as exc:
+            logger.warning("Could not mirror state to %s: %s", host_visible, exc)
 
 
 def read_state_file() -> Optional[str]:
-    """Read the last benchmark dataset name from ~/.archi/.last-benchmark."""
+    """Read the last benchmark dataset name. Checks legacy + host-visible paths."""
     state = read_state_file_full()
     return state.get("dataset_name") if state else None
 
 
 def read_state_file_full() -> Optional[Dict[str, Any]]:
-    """Read the full last benchmark state from ~/.archi/.last-benchmark."""
-    archi_dir = Path(os.environ.get("ARCHI_DIR", Path.home() / ".archi"))
-    state_file = archi_dir / ".last-benchmark"
-    if not state_file.exists():
+    """Read the most recent .last-benchmark across known paths (by mtime).
+
+    Lets `archi grade` on the host pick up state written by the benchmark
+    container without needing to know exactly where it landed.
+    """
+    candidates = [p for p in _candidate_state_paths() if p.exists()]
+    if not candidates:
         return None
-    try:
-        return json.loads(state_file.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in candidates:
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+    return None
