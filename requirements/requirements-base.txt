@@ -19,12 +19,12 @@ httpx==0.27.2
 humanfriendly==10.0
 croniter==2.0.5
 langgraph==1.0.2
-# langgraph-prebuilt is a transitive dep of langgraph. 1.0.10+ adds
-# `from langgraph.runtime import ExecutionInfo, ServerInfo` to tool_node.py,
-# which fails on the pinned langgraph 1.0.2 (those symbols arrived in
-# langgraph 1.0.10+). Pin <1.0.10 so the import works. Bump in lockstep
-# if langgraph is bumped. See issue #15.
-langgraph-prebuilt<1.0.10
+# langgraph-prebuilt is a transitive dep of langgraph. 1.0.9+ added
+# `from langgraph.runtime import ExecutionInfo, ServerInfo` to tool_node.py
+# (those symbols arrived in langgraph 1.0.10+; we're pinned to 1.0.2). Pin
+# <1.0.9 to stay on the last compatible release. Bump in lockstep if
+# langgraph is bumped. See issue #15.
+langgraph-prebuilt<1.0.9
 langchain-mcp-adapters==0.1.11
 langchain==1.0.3
 langchain_ollama==1.0.0
