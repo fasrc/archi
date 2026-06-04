@@ -18,6 +18,7 @@ class RunMemory:
         self._notes: List[str] = []
         self._tool_runs: Dict[str, Dict[str, Any]] = {}
         self._pending_tool_inputs_by_name: Dict[str, List[Any]] = {}
+        self._tool_call_counts: Dict[str, int] = {}
 
     def record(self, stage: str, documents: Iterable[Document]) -> None:
         """Store the documents captured for a specific stage or tool call."""
@@ -201,6 +202,20 @@ class RunMemory:
                 "tool_input": run.get("tool_input", {}),
             }
         return payload
+
+    def bump_tool_call_count(self, tool_name: str) -> int:
+        """Increment the per-tool call counter for this run and return the new count."""
+        if not tool_name:
+            return 0
+        new_count = self._tool_call_counts.get(tool_name, 0) + 1
+        self._tool_call_counts[tool_name] = new_count
+        return new_count
+
+    def tool_call_count(self, tool_name: str) -> int:
+        """Read-only access to the per-tool call counter for this run."""
+        if not tool_name:
+            return 0
+        return self._tool_call_counts.get(tool_name, 0)
 
     @staticmethod
     def _parse_tool_arguments(raw_arguments: Any) -> Optional[Any]:

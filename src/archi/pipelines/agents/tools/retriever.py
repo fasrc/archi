@@ -69,6 +69,7 @@ def create_retriever_tool(
     store_docs: Optional[Callable[[str, Sequence[Document]], None]] = None,
     required_permission: Optional[str] = None,
     store_tool_input: Optional[Callable[[str, object], None]] = None,
+    enforce_budget: Optional[Callable[[], Optional[str]]] = None,
 ) -> Callable[[str], str]:
     """
     Wrap a `BaseRetriever` instance in a LangChain tool.
@@ -102,6 +103,13 @@ def create_retriever_tool(
     @tool(name, description=tool_description)
     @require_tool_permission(required_permission)
     def _retriever_tool(query: str) -> str:
+        if enforce_budget is not None:
+            budget_msg = enforce_budget()
+            if budget_msg is not None:
+                logger.info(
+                    "Retriever tool '%s' over budget; returning synthetic response", name,
+                )
+                return budget_msg
         logger.debug("Retriever tool '%s' called with query=%r", name, query)
         if store_tool_input:
             try:
