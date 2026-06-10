@@ -12,6 +12,7 @@ Actions:
 Exits 0 on success, non-zero on failure.
 """
 
+import glob
 import os
 import sys
 import yaml
@@ -23,6 +24,27 @@ from src.utils.config_service import ConfigService
 def load_config(path: str):
     with open(path, "r") as f:
         return yaml.safe_load(f)
+
+
+def resolve_config_path(config_path: str) -> str:
+    """Resolve the config file to seed Postgres from.
+
+    A single-config deployment renders ``config.yaml`` and this returns it
+    unchanged. A multi-config benchmarking deployment renders per-variant files
+    (e.g. ``fasrc-cannon-v1-strict.yaml``) instead, so the hardcoded
+    ``config.yaml`` is absent — fall back to the first ``*.yaml`` in the
+    rendered-config directory rather than aborting the whole deployment.
+    Seeding from any one config is harmless: the benchmarker reads the YAML
+    files directly and never consumes the seeded static_config. If nothing is
+    found, return the original path so ``load_config`` raises a clear error.
+    """
+    if os.path.isfile(config_path):
+        return config_path
+    directory = config_path if os.path.isdir(config_path) else (os.path.dirname(config_path) or ".")
+    candidates = sorted(glob.glob(os.path.join(directory, "*.yaml")))
+    if candidates:
+        return candidates[0]
+    return config_path
 
 
 def seed(config: dict, cs: ConfigService):
@@ -91,6 +113,7 @@ def main():
 
 
 def seed_entry(config_path: str, env: dict):
+    config_path = resolve_config_path(config_path)
     print(f"[config-seed] Loading config from {config_path}")
     config = load_config(config_path)
     factory = PostgresServiceFactory.from_env(password_override=env.get("PGPASSWORD") or env.get("PG_PASSWORD"))
