@@ -130,6 +130,81 @@ To analyze results, see `scripts/benchmarking/` which contains:
 
 ---
 
+## Prompt sweep
+
+A *prompt sweep* runs N agent prompts through the RAGAS harness with everything
+but the prompt held fixed — model, queries, retriever, and the RAGAS judge all
+come from one base config — and ranks the prompts on a **leaderboard** by mean
+RAGAS metric. It generalizes a 2-way A/B to the whole prompt field, which is how
+we settle "which support prompt do we ship?" with data rather than by eyeballing
+one pair at a time (the open question Q5 / Decision 3 in
+`docs/docs/notes_response_tuning.md`).
+
+Only `services.benchmarking.agent_md_file` varies across variants. The model and
+RAGAS judge are deliberately held fixed; the leaderboard's `shared_context`
+cross-checks this and flags any drift.
+
+### 1. Write a manifest
+
+A manifest names one base config and the prompts to sweep. See
+`config/benchmarking/prompt_sweep.yaml` for a worked example:
+
+```yaml
+base_config: config/benchmarking/ragas.yaml   # supplies model/queries/judge/retriever
+out_dir: bench_out/sweep_configs              # optional (this is the default)
+primary_metric: faithfulness                  # leaderboard sort key (optional)
+prompts:
+  - config/agents/fasrc-cannon-v1-strict.md
+  - config/agents/fasrc-cannon-v2-lean.md
+  - config/agents/fasrc-cannon-v3-cited.md
+  - config/agents/fasrc-cannon-v4-linked.md
+```
+
+`primary_metric` is one of `answer_relevancy`, `faithfulness`,
+`context_precision`, `context_recall` (default `faithfulness` — grounding is the
+load-bearing property for a "never guess" support bot). All four metrics are
+reported per variant regardless; this only sets the ranking key.
+
+### 2. Generate the per-prompt configs
+
+```bash
+python scripts/benchmarking/generate_prompt_sweep.py -m config/benchmarking/prompt_sweep.yaml
+```
+
+This writes one config per prompt into the sweep directory, each identical to
+the base except `services.benchmarking.agent_md_file` (the prompt) and `.name`
+(the prompt's filename stem). It refuses to write anything if a prompt path is
+missing, so a bad manifest never leaves a partial set behind.
+
+### 3. Run the sweep
+
+```bash
+archi evaluate --config-dir bench_out/sweep_configs --hostmode
+```
+
+The harness runs each config in turn (the existing `--config-dir` path) and,
+because 2+ configs ran, emits a `leaderboard` block in the dump JSON.
+
+### Reading the leaderboard
+
+The dump JSON gains a `leaderboard` key:
+
+- `rows` — one per variant: `name`, `agent_md_file`, the four mean RAGAS
+  `metrics`, `primary_score`, `rank`, `query_count`, and `incomplete`. Rows are
+  ranked best-first by `primary_metric`; ties share a rank. A variant that
+  failed to produce a metric (missing/NaN) has `None` for it, is marked
+  `incomplete: true`, and sorts after all complete variants — it is never
+  treated as a zero.
+- `shared_context` — the model, provider, judge `evaluator_model`,
+  `queries_path`, and `corpus_snapshot_id` shared by all variants. If any of
+  these differ across the swept configs, the discrepancy is recorded in
+  `shared_context.warnings` (the sweep is no longer apples-to-apples).
+
+The pairwise `ab_comparisons` are still produced alongside the leaderboard; the
+leaderboard is computed independently from each config's aggregates.
+
+---
+
 ## Human grading via Argilla
 
 `archi evaluate --argilla` pushes benchmark results to a self-hosted [Argilla](https://argilla.io/) instance for independent human grading. This is the platform we use to answer the question "is config A better than config B for FASRC users?" with data we trust — RAGAS scores alone can't decide prompt or model choices because the judge LLM has its own biases.

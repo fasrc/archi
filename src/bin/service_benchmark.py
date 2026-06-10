@@ -75,6 +75,7 @@ class ResultHandler:
     metadata = {}  # store the metadata about the benchmark run
     ab_comparison: Dict[str, Any] = {}  # single-pair compat (populated only in ab_mode with 2 configs)
     ab_comparisons: List[Dict[str, Any]] = []  # multi-pair: list of pair comparison dicts
+    leaderboard: Dict[str, Any] = {}  # prompt-sweep leaderboard (populated only when 2+ configs run)
     # Per-invocation identifier shared by every config in this archi-evaluate run.
     # Stamped onto Argilla records as metadata so the analysis notebook can refuse
     # to compute primary-outcome statistics across configs that were NOT run
@@ -177,6 +178,8 @@ class ResultHandler:
             output["ab_comparison"] = ResultHandler.ab_comparison
         if ResultHandler.ab_comparisons:
             output["ab_comparisons"] = ResultHandler.ab_comparisons
+        if ResultHandler.leaderboard:
+            output["leaderboard"] = ResultHandler.leaderboard
         with open(file_path, "w") as f:
             json.dump(output, f, indent=4)
 
@@ -311,6 +314,135 @@ class ResultHandler:
     def generate_pairwise_combinations(n_configs: int) -> List[Tuple[int, int]]:
         """Generate all pairwise index combinations for N configs."""
         return list(combinations(range(n_configs), 2))
+
+    # Leaderboard metric name -> the aggregate key the run loop writes onto
+    # total_results (service_benchmark.py RAGAS block). Order is display order.
+    LEADERBOARD_METRICS: List[Tuple[str, str]] = [
+        ("answer_relevancy", "aggregate_answer_relevancy"),
+        ("faithfulness", "aggregate_faithfulness"),
+        ("context_precision", "aggregate_context_precision"),
+        ("context_recall", "aggregate_context_recall"),
+    ]
+
+    @staticmethod
+    def build_leaderboard(primary_metric: str = "faithfulness") -> Dict[str, Any]:
+        """Rank swept prompt variants by mean RAGAS metric.
+
+        Reads each config's per-run aggregates from ResultHandler.results
+        (the means the RAGAS block already wrote onto total_results) and
+        builds a ranked leaderboard. Independent of the pairwise A/B plumbing:
+        it never touches pair_ab_results/ab_comparisons.
+
+        Each row: {name, agent_md_file, metrics{...}, primary_score, rank,
+        incomplete, query_count}. A metric is None (and the row `incomplete`)
+        when its aggregate key is absent or NaN — never silently zeroed.
+        Incomplete rows always sort after complete ones. Ties share a rank.
+
+        shared_context records the run context common to all variants and
+        flags any drift (a hand-edited config that breaks apples-to-apples).
+        """
+        metric_names = [name for name, _ in ResultHandler.LEADERBOARD_METRICS]
+        if primary_metric not in metric_names:
+            logger.warning(
+                "Leaderboard primary_metric '%s' is not a known RAGAS metric %s; "
+                "falling back to 'faithfulness'.",
+                primary_metric, metric_names,
+            )
+            primary_metric = "faithfulness"
+
+        def _benchmarking(record: Dict[str, Any]) -> Dict[str, Any]:
+            return (
+                record.get("configuration", {})
+                .get("services", {})
+                .get("benchmarking", {})
+            )
+
+        rows: List[Dict[str, Any]] = []
+        # Accumulate shared-context candidates to detect drift across configs.
+        ctx_fields: Dict[str, set] = {
+            "model": set(), "provider": set(),
+            "evaluator_model": set(), "queries_path": set(),
+        }
+
+        for record in ResultHandler.results:
+            bench = _benchmarking(record)
+            total = record.get("total_results", {}) or {}
+
+            agent_md_file = bench.get("agent_md_file", "") or ""
+            name = bench.get("name") or (Path(agent_md_file).stem if agent_md_file else "")
+
+            metrics: Dict[str, Optional[float]] = {}
+            incomplete = False
+            for metric_name, agg_key in ResultHandler.LEADERBOARD_METRICS:
+                value = total.get(agg_key)
+                if value is None or (isinstance(value, float) and math.isnan(value)):
+                    metrics[metric_name] = None
+                    incomplete = True
+                else:
+                    metrics[metric_name] = float(value)
+
+            if incomplete:
+                logger.warning(
+                    "Leaderboard: variant '%s' (%s) is incomplete — missing/NaN metrics: %s",
+                    name, agent_md_file,
+                    [m for m in metric_names if metrics[m] is None],
+                )
+
+            rows.append({
+                "name": name,
+                "agent_md_file": agent_md_file,
+                "metrics": metrics,
+                "primary_score": metrics[primary_metric],
+                "incomplete": incomplete,
+                "query_count": len(record.get("single_question_results") or {}),
+            })
+
+            ragas_settings = (bench.get("mode_settings", {}) or {}).get("ragas_settings", {}) or {}
+            ctx_fields["model"].add(bench.get("model"))
+            ctx_fields["provider"].add(bench.get("provider"))
+            ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
+            ctx_fields["queries_path"].add(bench.get("queries_path"))
+
+        # Complete rows first, then by descending primary score; incomplete last.
+        rows.sort(key=lambda r: (
+            1 if r["incomplete"] else 0,
+            -(r["primary_score"] if r["primary_score"] is not None else 0.0),
+        ))
+
+        # Dense ranking: equal primary scores share a rank.
+        rank = 0
+        prev_score: Any = object()
+        for row in rows:
+            score = row["primary_score"]
+            if score != prev_score:
+                rank += 1
+                prev_score = score
+            row["rank"] = rank
+
+        warnings: List[str] = []
+        shared_context: Dict[str, Any] = {
+            "corpus_snapshot_id": ResultHandler.get_corpus_snapshot_id(),
+        }
+        for field_name, values in ctx_fields.items():
+            present = {v for v in values if v is not None}
+            if len(present) <= 1:
+                shared_context[field_name] = next(iter(present), None)
+            else:
+                shared_context[field_name] = sorted(str(v) for v in present)
+                warnings.append(
+                    f"{field_name} differs across swept configs: {sorted(str(v) for v in present)}"
+                )
+        if warnings:
+            for w in warnings:
+                logger.warning("Leaderboard shared-context drift: %s", w)
+        shared_context["warnings"] = warnings
+
+        ResultHandler.leaderboard = {
+            "shared_context": shared_context,
+            "primary_metric": primary_metric,
+            "rows": rows,
+        }
+        return ResultHandler.leaderboard
 
 
 class Benchmarker:
@@ -883,6 +1015,32 @@ class Benchmarker:
                     comp["aggregate"]["wins_a"],
                     comp["aggregate"]["wins_b"],
                     comp["aggregate"]["ties"],
+                )
+
+        # Prompt-sweep leaderboard: rank every config by mean RAGAS metric.
+        # Independent of the pairwise block above (reads per-config aggregates
+        # directly). Only meaningful with 2+ variants.
+        if len(ResultHandler.results) >= 2:
+            primary_metric = str(
+                self.config.get("services", {}).get("benchmarking", {}).get("primary_metric", "faithfulness")
+            )
+            leaderboard = ResultHandler.build_leaderboard(primary_metric)
+            logger.info("Prompt-sweep leaderboard (ranked by %s):", leaderboard["primary_metric"])
+            logger.info(
+                "  %-4s %-28s %-10s %-10s %-10s %-10s %-10s %s",
+                "rank", "name", "ans_rel", "faith", "ctx_prec", "ctx_rec", "n_q", "prompt",
+            )
+            for row in leaderboard["rows"]:
+                m = row["metrics"]
+                def _fmt(v: Optional[float]) -> str:
+                    return f"{v:.4f}" if isinstance(v, float) else "  n/a"
+                flag = "  (incomplete)" if row["incomplete"] else ""
+                logger.info(
+                    "  %-4d %-28s %-10s %-10s %-10s %-10s %-10d %s%s",
+                    row["rank"], row["name"][:28],
+                    _fmt(m["answer_relevancy"]), _fmt(m["faithfulness"]),
+                    _fmt(m["context_precision"]), _fmt(m["context_recall"]),
+                    row["query_count"], row["agent_md_file"], flag,
                 )
 
         # Push to Argilla when ARCHI_ARGILLA=1 in the benchmarks container env.
