@@ -39,13 +39,22 @@ OUTPUT_DIR = Path(OUTPUT_PATH)
 setup_logging()
 logger = get_logger(__name__)
 
-os.environ['OPENAI_API_KEY'] = read_secret("OPENAI_API_KEY")
-os.environ['ANTHROPIC_API_KEY'] = read_secret("ANTHROPIC_API_KEY")
-os.environ['HUGGING_FACE_HUB_TOKEN'] = read_secret("HUGGING_FACE_HUB_TOKEN")
-os.environ['HUIT_API_KEY'] = read_secret("HUIT_API_KEY")
 
-factory = PostgresServiceFactory.from_env(password_override=os.environ.get("PG_PASSWORD"))
-PostgresServiceFactory.set_instance(factory)
+def _init_runtime() -> None:
+    """Load secrets into the environment and open the Postgres connection pool.
+
+    Called only when this module is run as a script (see __main__), NOT at import
+    time — importing the module for its pure helpers (e.g. ResultHandler.
+    build_leaderboard, exercised by unit tests) must not require live secrets or
+    a reachable database.
+    """
+    os.environ['OPENAI_API_KEY'] = read_secret("OPENAI_API_KEY")
+    os.environ['ANTHROPIC_API_KEY'] = read_secret("ANTHROPIC_API_KEY")
+    os.environ['HUGGING_FACE_HUB_TOKEN'] = read_secret("HUGGING_FACE_HUB_TOKEN")
+    os.environ['HUIT_API_KEY'] = read_secret("HUIT_API_KEY")
+
+    factory = PostgresServiceFactory.from_env(password_override=os.environ.get("PG_PASSWORD"))
+    PostgresServiceFactory.set_instance(factory)
 
 
 @dataclass
@@ -1304,7 +1313,9 @@ class Benchmarker:
 
 if __name__ == "__main__":
 
-    query_file = Path("QandA.txt") 
+    _init_runtime()
+
+    query_file = Path("QandA.txt")
     configs_folder = Path('configs')
 
     with open(Path(query_file), "r") as f:
