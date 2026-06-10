@@ -311,5 +311,6 @@ class CMSCompOpsAgent(BaseReActAgent):
                 description=hybrid_description,
                 store_docs=self._store_documents,
                 store_tool_input=getattr(self, "_store_tool_input", None),
+                enforce_budget=lambda: self._consume_tool_budget("search_vectorstore_hybrid"),
             )
         )

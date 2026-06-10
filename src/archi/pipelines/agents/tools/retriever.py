@@ -69,6 +69,7 @@ def create_retriever_tool(
     store_docs: Optional[Callable[[str, Sequence[Document]], None]] = None,
     required_permission: Optional[str] = None,
     store_tool_input: Optional[Callable[[str, object], None]] = None,
+    enforce_budget: Optional[Callable[[], Optional[str]]] = None,
 ) -> Callable[[str], str]:
     """
     Wrap a `BaseRetriever` instance in a LangChain tool.
@@ -87,6 +88,13 @@ def create_retriever_tool(
         store_docs: Optional callback to store retrieved documents.
         required_permission: Optional RBAC permission required to use this tool.
             If None, no permission check is performed (allow all).
+        store_tool_input: Optional callback invoked with (tool_name, {"query": query})
+            to record the runtime input before retrieval (used to backfill streamed
+            tool-call args).
+        enforce_budget: Optional zero-arg callback checked at the start of every
+            call. If it returns a non-empty string, the tool short-circuits and
+            returns that string instead of retrieving (used to cap per-turn calls);
+            returning None allows the call to proceed.
     """
 
     tool_description = (
@@ -102,6 +110,13 @@ def create_retriever_tool(
     @tool(name, description=tool_description)
     @require_tool_permission(required_permission)
     def _retriever_tool(query: str) -> str:
+        if enforce_budget is not None:
+            budget_msg = enforce_budget()
+            if budget_msg is not None:
+                logger.info(
+                    "Retriever tool '%s' over budget; returning synthetic response", name,
+                )
+                return budget_msg
         logger.debug("Retriever tool '%s' called with query=%r", name, query)
         if store_tool_input:
             try:
