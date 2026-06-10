@@ -37,8 +37,13 @@ def _render_config_target_name(
         return "config.yaml"
     stem = str(benchmarking_name or top_level_name)
     candidate = f"{stem}.yaml"
-    if candidate in used_names:
-        candidate = f"{stem}_{index}.yaml"
+    # Disambiguate against ALL previously-used names, not just once: keep
+    # bumping the suffix until the name is unique so a config can never
+    # silently overwrite an earlier rendered file.
+    suffix = index
+    while candidate in used_names:
+        candidate = f"{stem}_{suffix}.yaml"
+        suffix += 1
     used_names.add(candidate)
     return candidate
 
@@ -190,6 +195,10 @@ class TemplateManager:
             # A multi-config sweep names a distinct agent_md_file per config; stage
             # every one so the benchmarker can load each variant (not just the first).
             dst_dir.mkdir(parents=True, exist_ok=True)
+            # Agent files are staged (and later referenced by the rendered config)
+            # by basename, so two configs whose agent_md_file share a basename
+            # would silently overwrite each other. Detect and reject that.
+            staged_by_basename: Dict[str, Path] = {}
             for bench_config in context.config_manager.get_configs():
                 bench_services = bench_config.get("services", {}) or {}
                 benchmark_cfg = bench_services.get("benchmarking", {}) or {}
@@ -206,6 +215,14 @@ class TemplateManager:
                     raise ValueError(f"Benchmark agent file not found: {source_path}")
                 if source_path.suffix.lower() != ".md":
                     raise ValueError(f"Benchmark agent file must be a .md file: {source_path}")
+                prior = staged_by_basename.get(source_path.name)
+                if prior is not None and prior != source_path:
+                    raise ValueError(
+                        "Two benchmark configs reference different agent files with the "
+                        f"same basename '{source_path.name}' ({prior} vs {source_path}); "
+                        "they would overwrite each other when staged. Rename one."
+                    )
+                staged_by_basename[source_path.name] = source_path
                 shutil.copyfile(source_path, dst_dir / source_path.name)
             return
 

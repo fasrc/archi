@@ -41,6 +41,14 @@ def test_collision_disambiguated_by_index():
     assert first != second
 
 
+def test_repeated_collisions_stay_unique():
+    """Disambiguation must keep bumping until unique, not collide a second time."""
+    used = set()
+    names = [_render_config_target_name(False, "rb", "dup", i, used) for i in range(4)]
+    assert len(set(names)) == 4  # all distinct, none overwrites another
+    assert names[0] == "dup.yaml"
+
+
 def test_multi_falls_back_to_top_level_name_when_no_benchmarking_name():
     used = set()
     assert (

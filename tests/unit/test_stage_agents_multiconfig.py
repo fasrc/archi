@@ -55,3 +55,31 @@ def test_stages_all_configs_agent_files(tmp_path, monkeypatch):
 
     staged = sorted(p.name for p in (base_dir / "data" / "agents").iterdir())
     assert staged == sorted(names)
+
+
+def test_same_basename_different_files_is_rejected(tmp_path, monkeypatch):
+    """Two configs whose agent files share a basename would overwrite each
+    other when staged (and when referenced by the rendered config), so the
+    deployment must reject it instead of silently dropping one variant."""
+    import pytest
+
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    (tmp_path / "a" / "prompt.md").write_text("# a\n")
+    (tmp_path / "b" / "prompt.md").write_text("# b\n")
+    monkeypatch.chdir(tmp_path)
+
+    configs = [_config(tmp_path, "a/prompt.md"), _config(tmp_path, "b/prompt.md")]
+    base_dir = tmp_path / "deploy"
+    base_dir.mkdir()
+
+    class _CM:
+        config = configs[0]
+
+        def get_configs(self):
+            return configs
+
+    context = SimpleNamespace(config_manager=_CM(), base_dir=base_dir, benchmarking=True)
+    mgr = object.__new__(TemplateManager)
+    with pytest.raises(ValueError, match="same basename"):
+        mgr._stage_agents(context)
