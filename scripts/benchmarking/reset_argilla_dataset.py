@@ -80,14 +80,29 @@ def main() -> int:
         )
         return 1
 
-    # Find dataset by (name, workspace_id).
-    dr = requests.get(f"{api_url}/api/v1/me/datasets?limit=200", headers=headers, timeout=10)
-    dr.raise_for_status()
+    # Find dataset by (name, workspace_id), paginating so a workspace with
+    # >200 datasets doesn't yield a false "not found".
     ds_id: Optional[str] = None
-    for d in dr.json().get("items", []):
-        if d.get("name") == args.dataset and d.get("workspace_id") == ws_id:
-            ds_id = d["id"]
+    ds_offset = 0
+    ds_page = 200
+    while ds_id is None:
+        dr = requests.get(
+            f"{api_url}/api/v1/me/datasets",
+            params={"limit": ds_page, "offset": ds_offset},
+            headers=headers,
+            timeout=10,
+        )
+        dr.raise_for_status()
+        ds_items = dr.json().get("items", [])
+        if not ds_items:
             break
+        for d in ds_items:
+            if d.get("name") == args.dataset and d.get("workspace_id") == ws_id:
+                ds_id = d["id"]
+                break
+        if len(ds_items) < ds_page:
+            break
+        ds_offset += ds_page
     if ds_id is None:
         print(
             f"ERROR: dataset {args.dataset!r} not found in workspace {args.workspace!r}",
@@ -95,8 +110,10 @@ def main() -> int:
         )
         return 1
 
-    # Page through records?include=responses and collect every response id.
-    # The REST endpoint returns submitted, draft, and discarded responses.
+    # Page through records?include=responses and collect submitted response ids.
+    # The REST endpoint returns submitted, draft, AND discarded responses, but
+    # this tool only wipes *submitted* annotations — graders' in-progress drafts
+    # and discarded responses are preserved.
     response_ids: list[str] = []
     record_count = 0
     offset = 0
@@ -115,6 +132,8 @@ def main() -> int:
         record_count += len(items)
         for rec in items:
             for resp in rec.get("responses") or []:
+                if resp.get("status") != "submitted":
+                    continue  # preserve draft / discarded responses
                 rid = resp.get("id")
                 if rid:
                     response_ids.append(rid)
