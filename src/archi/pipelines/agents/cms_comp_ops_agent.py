@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any, Callable, Dict, List
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from src.utils.logging import get_logger
 from src.utils.env import read_secret
@@ -313,3 +316,64 @@ class CMSCompOpsAgent(BaseReActAgent):
                 store_tool_input=getattr(self, "_store_tool_input", None),
             )
         )
+
+    def _inject_forced_retrieval(self, messages: List[BaseMessage]) -> List[BaseMessage]:
+        """Force one ``search_vectorstore_hybrid`` call before the model answers.
+
+        The model can ignore an "always search first" prompt and answer from its
+        own weights, leaving ``source_documents`` empty (chat UI shows "Link
+        unavailable"). To enforce retrieval, prefill a completed tool round —
+        an ``AIMessage`` carrying the tool call plus the matching ``ToolMessage``
+        result — so the ReAct loop starts with real chunks already in context.
+        Invoking the existing retriever tool also runs its ``store_docs``
+        callback, so retrieved documents flow into ``source_documents``/links
+        exactly as a model-initiated search would. The model may still search
+        again. Gated by ``services.chat_app.force_initial_retrieval`` (default
+        on) so prompt-vs-enforcement variants can be A/B'd in the sweep.
+        """
+        if not getattr(self, "enable_vector_tools", False):
+            logger.debug("Forced retrieval skipped: vector tools disabled")
+            return messages
+        if not self._chat_app_config.get("force_initial_retrieval", True):
+            logger.debug("Forced retrieval skipped: force_initial_retrieval=false")
+            return messages
+        tools = getattr(self, "_vector_tools", None)
+        if not tools:
+            logger.debug("Forced retrieval skipped: no vector tools built")
+            return messages
+        # Only force on a fresh user turn (the latest message is the question).
+        if not messages or not isinstance(messages[-1], HumanMessage):
+            last_type = type(messages[-1]).__name__ if messages else "none"
+            logger.debug("Forced retrieval skipped: last message is %s", last_type)
+            return messages
+        query = (self._message_content(messages[-1]) or "").strip()
+        if not query:
+            logger.debug("Forced retrieval skipped: empty query")
+            return messages
+
+        try:
+            result = tools[0].invoke({"query": query})
+        except Exception:
+            # Fail open: a retrieval error must not break the chat turn.
+            logger.warning("Forced initial retrieval failed", exc_info=True)
+            return messages
+
+        logger.info("Forced initial retrieval ran: query=%r -> %d chars", query, len(str(result)))
+
+        call_id = f"forced_search_{uuid.uuid4().hex}"
+        ai = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "search_vectorstore_hybrid",
+                    "args": {"query": query},
+                    "id": call_id,
+                }
+            ],
+        )
+        tool_msg = ToolMessage(
+            content=result if isinstance(result, str) else str(result),
+            tool_call_id=call_id,
+            name="search_vectorstore_hybrid",
+        )
+        return list(messages) + [ai, tool_msg]
