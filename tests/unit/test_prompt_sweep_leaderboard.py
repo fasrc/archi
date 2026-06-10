@@ -173,6 +173,35 @@ def test_nan_metric_marks_incomplete():
     assert lb["rows"][-1]["name"] == "nan"
 
 
+# -- scored_counts: per-metric sample size behind each mean ------------------
+
+def test_scored_counts_reflect_non_nan_per_question():
+    """A judge timeout shrinks a metric's sample without making the aggregate
+    NaN; scored_counts must report the real (non-NaN) per-metric count while
+    query_count stays the answered count."""
+    rec = _make_record("v", "p/v.md", faithfulness=0.6, context_precision=0.5, n_questions=3)
+    qs = list(rec["single_question_results"].values())
+    for q in qs:  # all three fully scored on three metrics
+        q["faithfulness"] = 0.6
+        q["answer_relevancy"] = 0.8
+        q["context_recall"] = 0.7
+    # context_precision scored on only the first question; other two timed out
+    qs[0]["context_precision"] = 0.5
+    qs[1]["context_precision"] = float("nan")
+    qs[2]["context_precision"] = float("nan")
+
+    ResultHandler.results = [rec]
+    row = ResultHandler.build_leaderboard()["rows"][0]
+
+    assert row["query_count"] == 3  # answered
+    assert row["scored_counts"]["faithfulness"] == 3
+    assert row["scored_counts"]["answer_relevancy"] == 3
+    assert row["scored_counts"]["context_recall"] == 3
+    assert row["scored_counts"]["context_precision"] == 1  # 2 timed out
+    # the aggregate is still a valid float, so the row is NOT marked incomplete
+    assert row["incomplete"] is False
+
+
 # -- 4.6 name fallback -------------------------------------------------------
 
 def test_name_falls_back_to_prompt_stem():

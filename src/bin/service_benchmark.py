@@ -334,9 +334,13 @@ class ResultHandler:
         it never touches pair_ab_results/ab_comparisons.
 
         Each row: {name, agent_md_file, metrics{...}, primary_score, rank,
-        incomplete, query_count}. A metric is None (and the row `incomplete`)
-        when its aggregate key is absent or NaN — never silently zeroed.
-        Incomplete rows always sort after complete ones. Ties share a rank.
+        incomplete, query_count, scored_counts{...}}. A metric is None (and the
+        row `incomplete`) when its aggregate key is absent or NaN — never
+        silently zeroed. Incomplete rows always sort after complete ones. Ties
+        share a rank. `query_count` is the number of questions answered;
+        `scored_counts[metric]` is how many non-NaN per-question scores actually
+        backed that metric's mean (a judge timeout shrinks the sample without
+        making the aggregate NaN).
 
         shared_context records the run context common to all variants and
         flags any drift (a hand-edited config that breaks apples-to-apples).
@@ -381,11 +385,43 @@ class ResultHandler:
                 else:
                     metrics[metric_name] = float(value)
 
+            # Per-metric sample size actually behind each mean. The RAGAS block
+            # computes aggregate_* via pandas .mean(), which skips NaN, so a
+            # judge timeout on one question silently shrinks the sample for that
+            # metric without making the aggregate NaN. Count the non-NaN
+            # per-question scores so the leaderboard can show, e.g., a
+            # faithfulness mean taken over 4 of 9 answered questions instead of
+            # implying all 9 backed it. query_count is the answered count.
+            single_question_results = record.get("single_question_results") or {}
+            scored_counts: Dict[str, int] = {}
+            for metric_name, _agg_key in ResultHandler.LEADERBOARD_METRICS:
+                count = 0
+                for q in single_question_results.values():
+                    if not isinstance(q, dict):
+                        continue
+                    v = q.get(metric_name)
+                    if v is not None and not (isinstance(v, float) and math.isnan(v)):
+                        count += 1
+                scored_counts[metric_name] = count
+
             if incomplete:
                 logger.warning(
                     "Leaderboard: variant '%s' (%s) is incomplete — missing/NaN metrics: %s",
                     name, agent_md_file,
                     [m for m in metric_names if metrics[m] is None],
+                )
+            # Surface under-sampling even when the aggregate is a valid float.
+            answered = len(single_question_results)
+            undersampled = [
+                f"{m}={scored_counts[m]}/{answered}"
+                for m in metric_names
+                if metrics[m] is not None and scored_counts[m] < answered
+            ]
+            if undersampled:
+                logger.warning(
+                    "Leaderboard: variant '%s' (%s) has under-sampled metrics "
+                    "(mean over fewer than %d answered questions): %s",
+                    name, agent_md_file, answered, undersampled,
                 )
 
             rows.append({
@@ -394,7 +430,8 @@ class ResultHandler:
                 "metrics": metrics,
                 "primary_score": metrics[primary_metric],
                 "incomplete": incomplete,
-                "query_count": len(record.get("single_question_results") or {}),
+                "query_count": answered,
+                "scored_counts": scored_counts,
             })
 
             ragas_settings = (bench.get("mode_settings", {}) or {}).get("ragas_settings", {}) or {}
@@ -1032,15 +1069,24 @@ class Benchmarker:
             )
             for row in leaderboard["rows"]:
                 m = row["metrics"]
-                def _fmt(v: Optional[float]) -> str:
-                    return f"{v:.4f}" if isinstance(v, float) else "  n/a"
+                answered = row["query_count"]
+                scored = row.get("scored_counts", {})
+                # Annotate a metric with @<n> when its mean is over fewer than
+                # the answered questions (judge timeouts), so an under-sampled
+                # score can't masquerade as fully-backed.
+                def _fmt(metric_name: str) -> str:
+                    v = m[metric_name]
+                    if not isinstance(v, float):
+                        return "    n/a"
+                    n = scored.get(metric_name, answered)
+                    return f"{v:.4f}@{n}" if n < answered else f"{v:.4f}"
                 flag = "  (incomplete)" if row["incomplete"] else ""
                 logger.info(
-                    "  %-4d %-28s %-10s %-10s %-10s %-10s %-10d %s%s",
+                    "  %-4d %-28s %-12s %-12s %-12s %-12s %-10d %s%s",
                     row["rank"], row["name"][:28],
-                    _fmt(m["answer_relevancy"]), _fmt(m["faithfulness"]),
-                    _fmt(m["context_precision"]), _fmt(m["context_recall"]),
-                    row["query_count"], row["agent_md_file"], flag,
+                    _fmt("answer_relevancy"), _fmt("faithfulness"),
+                    _fmt("context_precision"), _fmt("context_recall"),
+                    answered, row["agent_md_file"], flag,
                 )
 
         # Push to Argilla when ARCHI_ARGILLA=1 in the benchmarks container env.
