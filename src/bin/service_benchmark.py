@@ -14,15 +14,14 @@ from urllib import request as url_request
 
 import pandas as pd
 import yaml
-from datasets import Dataset
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from ragas import RunConfig, evaluate
-from ragas.embeddings import LangchainEmbeddingsWrapper
-from ragas.llms import LangchainLLMWrapper
-from ragas.metrics import (answer_relevancy, context_precision, context_recall,
-                           faithfulness)
+# NOTE: `datasets` and `ragas` are heavy, benchmark-only deps that live in the
+# benchmarking Docker image but NOT the lean unit-test environment. They are
+# imported lazily inside the methods that use them (get_ragas_results, run)
+# so that importing this module for its pure helpers (e.g. ResultHandler.
+# build_leaderboard / dump, exercised by unit tests) does not require them.
 
 from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
@@ -834,7 +833,14 @@ class Benchmarker:
 
     def get_ragas_results(self, data, to_add):
         """WARNING: this method modifies the to_add dictionary to add the relevant scores to the relevant questions"""
-        
+        # Lazy import: ragas (and its transitive `datasets` dep) is benchmark-only
+        # and absent from the unit-test environment. See the module-header note.
+        from ragas import RunConfig, evaluate
+        from ragas.embeddings import LangchainEmbeddingsWrapper
+        from ragas.llms import LangchainLLMWrapper
+        from ragas.metrics import (answer_relevancy, context_precision,
+                                   context_recall, faithfulness)
+
         all_metrics_dict = {
                 'answer_relevancy': answer_relevancy, 
                 'faithfulness': faithfulness, 
@@ -1011,6 +1017,7 @@ class Benchmarker:
             if "RAGAS" in modes_being_run:
                 # TODO this is likely broken now
                 logger.info(f"Starting to collect RAGAS results")
+                from datasets import Dataset  # lazy: benchmark-only dep (see module header)
                 data = Dataset.from_list(ragas_input)
                 # were modifying final_addition here to add ragas results by question
                 ragas_results = self.get_ragas_results(data, question_wise_results)
