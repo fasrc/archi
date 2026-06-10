@@ -14,15 +14,14 @@ from urllib import request as url_request
 
 import pandas as pd
 import yaml
-from datasets import Dataset
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from ragas import RunConfig, evaluate
-from ragas.embeddings import LangchainEmbeddingsWrapper
-from ragas.llms import LangchainLLMWrapper
-from ragas.metrics import (answer_relevancy, context_precision, context_recall,
-                           faithfulness)
+# NOTE: `datasets` and `ragas` are heavy, benchmark-only deps that live in the
+# benchmarking Docker image but NOT the lean unit-test environment. They are
+# imported lazily inside the methods that use them (get_ragas_results, run)
+# so that importing this module for its pure helpers (e.g. ResultHandler.
+# build_leaderboard / dump, exercised by unit tests) does not require them.
 
 from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
@@ -40,13 +39,22 @@ OUTPUT_DIR = Path(OUTPUT_PATH)
 setup_logging()
 logger = get_logger(__name__)
 
-os.environ['OPENAI_API_KEY'] = read_secret("OPENAI_API_KEY")
-os.environ['ANTHROPIC_API_KEY'] = read_secret("ANTHROPIC_API_KEY")
-os.environ['HUGGING_FACE_HUB_TOKEN'] = read_secret("HUGGING_FACE_HUB_TOKEN")
-os.environ['HUIT_API_KEY'] = read_secret("HUIT_API_KEY")
 
-factory = PostgresServiceFactory.from_env(password_override=os.environ.get("PG_PASSWORD"))
-PostgresServiceFactory.set_instance(factory)
+def _init_runtime() -> None:
+    """Load secrets into the environment and open the Postgres connection pool.
+
+    Called only when this module is run as a script (see __main__), NOT at import
+    time — importing the module for its pure helpers (e.g. ResultHandler.
+    build_leaderboard, exercised by unit tests) must not require live secrets or
+    a reachable database.
+    """
+    os.environ['OPENAI_API_KEY'] = read_secret("OPENAI_API_KEY")
+    os.environ['ANTHROPIC_API_KEY'] = read_secret("ANTHROPIC_API_KEY")
+    os.environ['HUGGING_FACE_HUB_TOKEN'] = read_secret("HUGGING_FACE_HUB_TOKEN")
+    os.environ['HUIT_API_KEY'] = read_secret("HUIT_API_KEY")
+
+    factory = PostgresServiceFactory.from_env(password_override=os.environ.get("PG_PASSWORD"))
+    PostgresServiceFactory.set_instance(factory)
 
 
 @dataclass
@@ -75,6 +83,7 @@ class ResultHandler:
     metadata = {}  # store the metadata about the benchmark run
     ab_comparison: Dict[str, Any] = {}  # single-pair compat (populated only in ab_mode with 2 configs)
     ab_comparisons: List[Dict[str, Any]] = []  # multi-pair: list of pair comparison dicts
+    leaderboard: Dict[str, Any] = {}  # prompt-sweep leaderboard (populated only when 2+ configs run)
     # Per-invocation identifier shared by every config in this archi-evaluate run.
     # Stamped onto Argilla records as metadata so the analysis notebook can refuse
     # to compute primary-outcome statistics across configs that were NOT run
@@ -177,6 +186,8 @@ class ResultHandler:
             output["ab_comparison"] = ResultHandler.ab_comparison
         if ResultHandler.ab_comparisons:
             output["ab_comparisons"] = ResultHandler.ab_comparisons
+        if ResultHandler.leaderboard:
+            output["leaderboard"] = ResultHandler.leaderboard
         with open(file_path, "w") as f:
             json.dump(output, f, indent=4)
 
@@ -311,6 +322,172 @@ class ResultHandler:
     def generate_pairwise_combinations(n_configs: int) -> List[Tuple[int, int]]:
         """Generate all pairwise index combinations for N configs."""
         return list(combinations(range(n_configs), 2))
+
+    # Leaderboard metric name -> the aggregate key the run loop writes onto
+    # total_results (service_benchmark.py RAGAS block). Order is display order.
+    LEADERBOARD_METRICS: List[Tuple[str, str]] = [
+        ("answer_relevancy", "aggregate_answer_relevancy"),
+        ("faithfulness", "aggregate_faithfulness"),
+        ("context_precision", "aggregate_context_precision"),
+        ("context_recall", "aggregate_context_recall"),
+    ]
+
+    @staticmethod
+    def build_leaderboard(primary_metric: str = "faithfulness") -> Dict[str, Any]:
+        """Rank swept prompt variants by mean RAGAS metric.
+
+        Reads each config's per-run aggregates from ResultHandler.results
+        (the means the RAGAS block already wrote onto total_results) and
+        builds a ranked leaderboard. Independent of the pairwise A/B plumbing:
+        it never touches pair_ab_results/ab_comparisons.
+
+        Each row: {name, agent_md_file, metrics{...}, primary_score, rank,
+        incomplete, query_count, scored_counts{...}}. A metric is None (and the
+        row `incomplete`) when its aggregate key is absent or NaN — never
+        silently zeroed. Incomplete rows always sort after complete ones. Ties
+        share a rank. `query_count` is the number of questions answered;
+        `scored_counts[metric]` is how many non-NaN per-question scores actually
+        backed that metric's mean (a judge timeout shrinks the sample without
+        making the aggregate NaN).
+
+        shared_context records the run context common to all variants and
+        flags any drift (a hand-edited config that breaks apples-to-apples).
+        """
+        metric_names = [name for name, _ in ResultHandler.LEADERBOARD_METRICS]
+        if primary_metric not in metric_names:
+            logger.warning(
+                "Leaderboard primary_metric '%s' is not a known RAGAS metric %s; "
+                "falling back to 'faithfulness'.",
+                primary_metric, metric_names,
+            )
+            primary_metric = "faithfulness"
+
+        def _benchmarking(record: Dict[str, Any]) -> Dict[str, Any]:
+            return (
+                record.get("configuration", {})
+                .get("services", {})
+                .get("benchmarking", {})
+            )
+
+        rows: List[Dict[str, Any]] = []
+        # Accumulate shared-context candidates to detect drift across configs.
+        ctx_fields: Dict[str, set] = {
+            "model": set(), "provider": set(),
+            "evaluator_model": set(), "queries_path": set(),
+        }
+
+        for record in ResultHandler.results:
+            bench = _benchmarking(record)
+            total = record.get("total_results", {}) or {}
+
+            agent_md_file = bench.get("agent_md_file", "") or ""
+            name = bench.get("name") or (Path(agent_md_file).stem if agent_md_file else "")
+
+            metrics: Dict[str, Optional[float]] = {}
+            incomplete = False
+            for metric_name, agg_key in ResultHandler.LEADERBOARD_METRICS:
+                value = total.get(agg_key)
+                if value is None or (isinstance(value, float) and math.isnan(value)):
+                    metrics[metric_name] = None
+                    incomplete = True
+                else:
+                    metrics[metric_name] = float(value)
+
+            # Per-metric sample size actually behind each mean. The RAGAS block
+            # computes aggregate_* via pandas .mean(), which skips NaN, so a
+            # judge timeout on one question silently shrinks the sample for that
+            # metric without making the aggregate NaN. Count the non-NaN
+            # per-question scores so the leaderboard can show, e.g., a
+            # faithfulness mean taken over 4 of 9 answered questions instead of
+            # implying all 9 backed it. query_count is the answered count.
+            single_question_results = record.get("single_question_results") or {}
+            scored_counts: Dict[str, int] = {}
+            for metric_name, _agg_key in ResultHandler.LEADERBOARD_METRICS:
+                count = 0
+                for q in single_question_results.values():
+                    if not isinstance(q, dict):
+                        continue
+                    v = q.get(metric_name)
+                    if v is not None and not (isinstance(v, float) and math.isnan(v)):
+                        count += 1
+                scored_counts[metric_name] = count
+
+            if incomplete:
+                logger.warning(
+                    "Leaderboard: variant '%s' (%s) is incomplete — missing/NaN metrics: %s",
+                    name, agent_md_file,
+                    [m for m in metric_names if metrics[m] is None],
+                )
+            # Surface under-sampling even when the aggregate is a valid float.
+            answered = len(single_question_results)
+            undersampled = [
+                f"{m}={scored_counts[m]}/{answered}"
+                for m in metric_names
+                if metrics[m] is not None and scored_counts[m] < answered
+            ]
+            if undersampled:
+                logger.warning(
+                    "Leaderboard: variant '%s' (%s) has under-sampled metrics "
+                    "(mean over fewer than %d answered questions): %s",
+                    name, agent_md_file, answered, undersampled,
+                )
+
+            rows.append({
+                "name": name,
+                "agent_md_file": agent_md_file,
+                "metrics": metrics,
+                "primary_score": metrics[primary_metric],
+                "incomplete": incomplete,
+                "query_count": answered,
+                "scored_counts": scored_counts,
+            })
+
+            ragas_settings = (bench.get("mode_settings", {}) or {}).get("ragas_settings", {}) or {}
+            ctx_fields["model"].add(bench.get("model"))
+            ctx_fields["provider"].add(bench.get("provider"))
+            ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
+            ctx_fields["queries_path"].add(bench.get("queries_path"))
+
+        # Complete rows first, then by descending primary score; incomplete last.
+        rows.sort(key=lambda r: (
+            1 if r["incomplete"] else 0,
+            -(r["primary_score"] if r["primary_score"] is not None else 0.0),
+        ))
+
+        # Dense ranking: equal primary scores share a rank.
+        rank = 0
+        prev_score: Any = object()
+        for row in rows:
+            score = row["primary_score"]
+            if score != prev_score:
+                rank += 1
+                prev_score = score
+            row["rank"] = rank
+
+        warnings: List[str] = []
+        shared_context: Dict[str, Any] = {
+            "corpus_snapshot_id": ResultHandler.get_corpus_snapshot_id(),
+        }
+        for field_name, values in ctx_fields.items():
+            present = {v for v in values if v is not None}
+            if len(present) <= 1:
+                shared_context[field_name] = next(iter(present), None)
+            else:
+                shared_context[field_name] = sorted(str(v) for v in present)
+                warnings.append(
+                    f"{field_name} differs across swept configs: {sorted(str(v) for v in present)}"
+                )
+        if warnings:
+            for w in warnings:
+                logger.warning("Leaderboard shared-context drift: %s", w)
+        shared_context["warnings"] = warnings
+
+        ResultHandler.leaderboard = {
+            "shared_context": shared_context,
+            "primary_metric": primary_metric,
+            "rows": rows,
+        }
+        return ResultHandler.leaderboard
 
 
 class Benchmarker:
@@ -665,7 +842,14 @@ class Benchmarker:
 
     def get_ragas_results(self, data, to_add):
         """WARNING: this method modifies the to_add dictionary to add the relevant scores to the relevant questions"""
-        
+        # Lazy import: ragas (and its transitive `datasets` dep) is benchmark-only
+        # and absent from the unit-test environment. See the module-header note.
+        from ragas import RunConfig, evaluate
+        from ragas.embeddings import LangchainEmbeddingsWrapper
+        from ragas.llms import LangchainLLMWrapper
+        from ragas.metrics import (answer_relevancy, context_precision,
+                                   context_recall, faithfulness)
+
         all_metrics_dict = {
                 'answer_relevancy': answer_relevancy, 
                 'faithfulness': faithfulness, 
@@ -842,6 +1026,7 @@ class Benchmarker:
             if "RAGAS" in modes_being_run:
                 # TODO this is likely broken now
                 logger.info(f"Starting to collect RAGAS results")
+                from datasets import Dataset  # lazy: benchmark-only dep (see module header)
                 data = Dataset.from_list(ragas_input)
                 # were modifying final_addition here to add ragas results by question
                 ragas_results = self.get_ragas_results(data, question_wise_results)
@@ -883,6 +1068,41 @@ class Benchmarker:
                     comp["aggregate"]["wins_a"],
                     comp["aggregate"]["wins_b"],
                     comp["aggregate"]["ties"],
+                )
+
+        # Prompt-sweep leaderboard: rank every config by mean RAGAS metric.
+        # Independent of the pairwise block above (reads per-config aggregates
+        # directly). Only meaningful with 2+ variants.
+        if len(ResultHandler.results) >= 2:
+            primary_metric = str(
+                self.config.get("services", {}).get("benchmarking", {}).get("primary_metric", "faithfulness")
+            )
+            leaderboard = ResultHandler.build_leaderboard(primary_metric)
+            logger.info("Prompt-sweep leaderboard (ranked by %s):", leaderboard["primary_metric"])
+            logger.info(
+                "  %-4s %-28s %-10s %-10s %-10s %-10s %-10s %s",
+                "rank", "name", "ans_rel", "faith", "ctx_prec", "ctx_rec", "n_q", "prompt",
+            )
+            for row in leaderboard["rows"]:
+                m = row["metrics"]
+                answered = row["query_count"]
+                scored = row.get("scored_counts", {})
+                # Annotate a metric with @<n> when its mean is over fewer than
+                # the answered questions (judge timeouts), so an under-sampled
+                # score can't masquerade as fully-backed.
+                def _fmt(metric_name: str) -> str:
+                    v = m[metric_name]
+                    if not isinstance(v, float):
+                        return "    n/a"
+                    n = scored.get(metric_name, answered)
+                    return f"{v:.4f}@{n}" if n < answered else f"{v:.4f}"
+                flag = "  (incomplete)" if row["incomplete"] else ""
+                logger.info(
+                    "  %-4d %-28s %-12s %-12s %-12s %-12s %-10d %s%s",
+                    row["rank"], row["name"][:28],
+                    _fmt("answer_relevancy"), _fmt("faithfulness"),
+                    _fmt("context_precision"), _fmt("context_recall"),
+                    answered, row["agent_md_file"], flag,
                 )
 
         # Push to Argilla when ARCHI_ARGILLA=1 in the benchmarks container env.
@@ -1093,7 +1313,9 @@ class Benchmarker:
 
 if __name__ == "__main__":
 
-    query_file = Path("QandA.txt") 
+    _init_runtime()
+
+    query_file = Path("QandA.txt")
     configs_folder = Path('configs')
 
     with open(Path(query_file), "r") as f:

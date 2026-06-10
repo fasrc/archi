@@ -1178,7 +1178,7 @@ class BaseReActAgent:
                     "Invalid context window (%s), skipping trimming.",
                     context_window,
                     )
-                    return {"messages": history_messages}
+                    return {"messages": self._inject_forced_retrieval(history_messages)}
 
                 safety_margin = int(context_window * 0.15)
                 max_prompt_tokens = context_window - safety_margin
@@ -1222,7 +1222,16 @@ class BaseReActAgent:
         except Exception as e:
             logger.debug("Token trimming skipped: %s", e)
 
-        return {"messages": history_messages}
+        return {"messages": self._inject_forced_retrieval(history_messages)}
+
+    def _inject_forced_retrieval(self, messages: List[BaseMessage]) -> List[BaseMessage]:
+        """Hook for subclasses to force a retrieval before the model's first turn.
+
+        Base implementation is a no-op; agents with a vector retriever override
+        this to prefill a completed ``search_vectorstore_hybrid`` tool round so
+        retrieval happens regardless of whether the model chooses to call it.
+        """
+        return messages
 
     def _metadata_from_agent_output(self, answer_output: Dict[str, Any]) -> Dict[str, Any]:
         """Hook for subclasses to enrich metadata returned to callers."""

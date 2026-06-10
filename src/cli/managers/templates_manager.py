@@ -17,6 +17,37 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _render_config_target_name(
+    single_mode: bool,
+    top_level_name: str,
+    benchmarking_name: Optional[str],
+    index: int,
+    used_names: set,
+) -> str:
+    """Pick the rendered-config filename for one config.
+
+    A single-config deployment renders to ``config.yaml`` (the path config-seed
+    and the chatbot expect). A multi-config run (e.g. a benchmarking sweep)
+    renders one distinct file per config so the benchmarker iterates every
+    variant instead of overwriting a single file. The per-variant
+    ``services.benchmarking.name`` is preferred for readability, falling back to
+    the top-level ``name``; collisions are disambiguated with the config index.
+    """
+    if single_mode:
+        return "config.yaml"
+    stem = str(benchmarking_name or top_level_name)
+    candidate = f"{stem}.yaml"
+    # Disambiguate against ALL previously-used names, not just once: keep
+    # bumping the suffix until the name is unique so a config can never
+    # silently overwrite an earlier rendered file.
+    suffix = index
+    while candidate in used_names:
+        candidate = f"{stem}_{suffix}.yaml"
+        suffix += 1
+    used_names.add(candidate)
+    return candidate
+
+
 # Template file constants
 BASE_CONFIG_TEMPLATE = "base-config.yaml"
 BASE_COMPOSE_TEMPLATE = "base-compose.yaml"
@@ -161,22 +192,38 @@ class TemplateManager:
         services_cfg = config.get("services", {}) or {}
 
         if context.benchmarking:
-            benchmark_cfg = services_cfg.get("benchmarking", {}) or {}
-            agent_md_file = benchmark_cfg.get("agent_md_file")
-            if not agent_md_file:
-                raise ValueError("Missing required services.benchmarking.agent_md_file in config.")
-            source_path = Path(str(agent_md_file)).expanduser()
-            config_path = Path(str(config.get("_config_path", ""))).expanduser()
-            if not source_path.is_absolute() and config_path:
-                candidate = (config_path.parent / source_path).resolve()
-                if candidate.exists():
-                    source_path = candidate
-            if not source_path.exists() or not source_path.is_file():
-                raise ValueError(f"Benchmark agent file not found: {source_path}")
-            if source_path.suffix.lower() != ".md":
-                raise ValueError(f"Benchmark agent file must be a .md file: {source_path}")
+            # A multi-config sweep names a distinct agent_md_file per config; stage
+            # every one so the benchmarker can load each variant (not just the first).
             dst_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source_path, dst_dir / source_path.name)
+            # Agent files are staged (and later referenced by the rendered config)
+            # by basename, so two configs whose agent_md_file share a basename
+            # would silently overwrite each other. Detect and reject that.
+            staged_by_basename: Dict[str, Path] = {}
+            for bench_config in context.config_manager.get_configs():
+                bench_services = bench_config.get("services", {}) or {}
+                benchmark_cfg = bench_services.get("benchmarking", {}) or {}
+                agent_md_file = benchmark_cfg.get("agent_md_file")
+                if not agent_md_file:
+                    raise ValueError("Missing required services.benchmarking.agent_md_file in config.")
+                source_path = Path(str(agent_md_file)).expanduser()
+                config_path = Path(str(bench_config.get("_config_path", ""))).expanduser()
+                if not source_path.is_absolute() and config_path:
+                    candidate = (config_path.parent / source_path).resolve()
+                    if candidate.exists():
+                        source_path = candidate
+                if not source_path.exists() or not source_path.is_file():
+                    raise ValueError(f"Benchmark agent file not found: {source_path}")
+                if source_path.suffix.lower() != ".md":
+                    raise ValueError(f"Benchmark agent file must be a .md file: {source_path}")
+                prior = staged_by_basename.get(source_path.name)
+                if prior is not None and prior != source_path:
+                    raise ValueError(
+                        "Two benchmark configs reference different agent files with the "
+                        f"same basename '{source_path.name}' ({prior} vs {source_path}); "
+                        "they would overwrite each other when staged. Rename one."
+                    )
+                staged_by_basename[source_path.name] = source_path
+                shutil.copyfile(source_path, dst_dir / source_path.name)
             return
 
         agents_dir = (services_cfg.get("chat_app") or {}).get("agents_dir")
@@ -329,7 +376,8 @@ class TemplateManager:
 
         archi_configs = context.config_manager.get_configs()
         single_mode = len(archi_configs) == 1
-        for archi_config in archi_configs:
+        used_names: set = set()
+        for index, archi_config in enumerate(archi_configs):
             name = archi_config["name"]
             updated_config = copy.deepcopy(archi_config)
 
@@ -354,7 +402,14 @@ class TemplateManager:
             config_template = self.env.get_template(BASE_CONFIG_TEMPLATE)
             config_rendered = config_template.render(verbosity=context.plan.verbosity, **updated_config)
 
-            target_name = "config.yaml" if single_mode else f"{name}.yaml"
+            benchmarking_name = None
+            if context.benchmarking:
+                benchmark_cfg = services_cfg.get("benchmarking")
+                if isinstance(benchmark_cfg, dict):
+                    benchmarking_name = benchmark_cfg.get("name")
+            target_name = _render_config_target_name(
+                single_mode, name, benchmarking_name, index, used_names
+            )
             with open(configs_path / target_name, "w") as f:
                 f.write(config_rendered)
             logger.info(f"Rendered configuration file {configs_path / target_name}")
