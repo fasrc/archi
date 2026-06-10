@@ -101,6 +101,26 @@ def test_invalid_budget_value_is_logged_and_skipped():
     assert agent._tool_budgets().get("search_vectorstore_hybrid") == 2
 
 
+@pytest.mark.parametrize("bad", [0, -1, -5])
+def test_non_positive_budget_is_ignored_not_unbounded(bad):
+    """0/negative would be treated as 'no budget' downstream (silently disabling the
+    cap); such values must be rejected so the default cap stands."""
+    agent = _TestableAgent(
+        config={"services": {"chat_app": {"tool_budgets": {"search_vectorstore_hybrid": bad}}}},
+    )
+    # Override rejected -> class default (2) preserved, cap NOT disabled.
+    assert agent._tool_budgets().get("search_vectorstore_hybrid") == 2
+
+
+def test_non_positive_pipeline_budget_is_ignored():
+    """Same positivity guard on the pipeline_config layer."""
+    agent = _TestableAgent(
+        config={},
+        pipeline_config={"tool_budgets": {"search_vectorstore_hybrid": 0}},
+    )
+    assert agent._tool_budgets().get("search_vectorstore_hybrid") == 2
+
+
 # --- 1.x + 2.x: _consume_tool_budget behavior ------------------------------
 
 

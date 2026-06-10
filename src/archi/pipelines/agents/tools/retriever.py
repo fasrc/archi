@@ -88,6 +88,13 @@ def create_retriever_tool(
         store_docs: Optional callback to store retrieved documents.
         required_permission: Optional RBAC permission required to use this tool.
             If None, no permission check is performed (allow all).
+        store_tool_input: Optional callback invoked with (tool_name, {"query": query})
+            to record the runtime input before retrieval (used to backfill streamed
+            tool-call args).
+        enforce_budget: Optional zero-arg callback checked at the start of every
+            call. If it returns a non-empty string, the tool short-circuits and
+            returns that string instead of retrieving (used to cap per-turn calls);
+            returning None allows the call to proceed.
     """
 
     tool_description = (

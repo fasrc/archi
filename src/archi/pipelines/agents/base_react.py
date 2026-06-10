@@ -1436,23 +1436,43 @@ class BaseReActAgent:
                     if isinstance(chat_budgets, dict):
                         for name, val in chat_budgets.items():
                             try:
-                                merged[str(name)] = int(val)
+                                parsed = int(val)
                             except (TypeError, ValueError):
                                 logger.warning(
                                     "Invalid services.chat_app.tool_budgets[%r]=%r for %s; ignored",
                                     name, val, self.__class__.__name__,
                                 )
+                                continue
+                            if parsed <= 0:
+                                logger.warning(
+                                    "Ignoring non-positive services.chat_app.tool_budgets[%r]=%r for %s; "
+                                    "a cap must be >= 1 (0/negative would silently disable the cap). "
+                                    "Keeping the default.",
+                                    name, val, self.__class__.__name__,
+                                )
+                                continue
+                            merged[str(name)] = parsed
         if isinstance(self.pipeline_config, dict):
             pipe_budgets = self.pipeline_config.get("tool_budgets")
             if isinstance(pipe_budgets, dict):
                 for name, val in pipe_budgets.items():
                     try:
-                        merged[str(name)] = int(val)
+                        parsed = int(val)
                     except (TypeError, ValueError):
                         logger.warning(
                             "Invalid pipeline_config.tool_budgets[%r]=%r for %s; ignored",
                             name, val, self.__class__.__name__,
                         )
+                        continue
+                    if parsed <= 0:
+                        logger.warning(
+                            "Ignoring non-positive pipeline_config.tool_budgets[%r]=%r for %s; "
+                            "a cap must be >= 1 (0/negative would silently disable the cap). "
+                            "Keeping the default.",
+                            name, val, self.__class__.__name__,
+                        )
+                        continue
+                    merged[str(name)] = parsed
         self._tool_budgets_cache = merged
         return merged
 
@@ -1479,8 +1499,8 @@ class BaseReActAgent:
             f"the maximum number of times for this turn (limit={cap}). "
             "The chunks retrieved by your earlier calls remain available in the "
             "conversation above — answer the user's question from those chunks, "
-            "or state that the FASRC documentation indexed here does not appear "
-            f"to cover this case. Do not call {tool_name} again on this turn."
+            "or state that the indexed documentation does not appear to cover "
+            f"this case. Do not call {tool_name} again on this turn."
         )
 
     def _last_user_message_content(self, messages: Sequence[BaseMessage]) -> Optional[str]:
