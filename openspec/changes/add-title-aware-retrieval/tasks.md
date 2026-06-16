@@ -1,12 +1,12 @@
 ## 1. Ingestion: title/source header injection
-- [ ] 1.1 In `src/data_manager/vectorstore/manager.py`, derive title (`display_name`,
+- [x] 1.1 In `src/data_manager/vectorstore/manager.py`, derive title (`display_name`,
       falling back to `Path(filename).stem`) and build a `Title: ...\nSource: ...\n\n`
       header
-- [ ] 1.2 Prepend the header to each chunk's text before embedding and before it is
+- [x] 1.2 Prepend the header to each chunk's text before embedding and before it is
       stored as `chunk_text`, for every chunk (not just the first)
-- [ ] 1.3 Gate header injection behind a new config flag
+- [x] 1.3 Gate header injection behind a new config flag
       (`data_manager.title_header.enabled`, default true)
-- [ ] 1.4 Ensure stemming, if enabled, is applied symmetrically to the header
+- [x] 1.4 Ensure stemming, if enabled, is applied symmetrically to the header
 
 ## 2. Schema: weighted full-text index
 - [ ] 2.1 Update `src/cli/templates/init.sql` so `chunk_tsv` is generated from a weighted
