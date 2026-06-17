@@ -19,7 +19,7 @@
 - [x] 3.1 In `src/data_manager/vectorstore/postgres_vectorstore.py` `hybrid_search`, add a
       configurable additive boost for `display_name` trigram/`ILIKE` matches using
       `idx_documents_name`
-- [ ] 3.2 Thread the boost weight through `HybridRetriever`
+- [x] 3.2 Thread the boost weight through `HybridRetriever`
       (`src/data_manager/vectorstore/retrievers/hybrid_retriever.py`)
 - [ ] 3.3 Add config knobs in `src/cli/templates/base-config.yaml`
       (`data_manager.retrievers.hybrid_retriever.title_weight`, `filename_boost`)
