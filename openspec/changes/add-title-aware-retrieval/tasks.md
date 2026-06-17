@@ -36,7 +36,7 @@
 
 ## 6. Tests & validation
 - [x] 6.1 Unit test: ingested chunks contain title/source tokens in searchable text
-- [ ] 6.4 Run `openspec validate add-title-aware-retrieval --strict --no-interactive`
+- [x] 6.4 Run `openspec validate add-title-aware-retrieval --strict --no-interactive`
 
 ## 7. Deferred — requires a live deployment (manual; do NOT attempt in the loop)
 These tasks need a running archi deployment (Postgres/pgvector, API secrets, and an
