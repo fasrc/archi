@@ -1,0 +1,38 @@
+[
+    {
+        "question": "Where can I find the Detector Alignment Procedure?",
+        "category": "title_only",
+        "sources": "Detector Alignment Procedure",
+        "source_match_field": "display_name"
+    },
+    {
+        "question": "Summarize the Safety Onboarding Checklist.",
+        "category": "title_only",
+        "sources": "Safety Onboarding Checklist",
+        "source_match_field": "display_name"
+    },
+    {
+        "question": "What is covered by the Grant Reporting Guidelines?",
+        "category": "title_only",
+        "sources": "Grant Reporting Guidelines",
+        "source_match_field": "display_name"
+    },
+    {
+        "question": "Show me the details for ticket CMSTRANSF-1078.",
+        "category": "filename_only",
+        "sources": "CMSTRANSF-1078.md",
+        "source_match_field": "file_name"
+    },
+    {
+        "question": "What does run_smoke_preview.sh do?",
+        "category": "filename_only",
+        "sources": "run_smoke_preview.sh",
+        "source_match_field": "file_name"
+    },
+    {
+        "question": "Find the settings in slurm_batch_config.yaml.",
+        "category": "filename_only",
+        "sources": "slurm_batch_config.yaml",
+        "source_match_field": "file_name"
+    }
+]

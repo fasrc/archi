@@ -30,7 +30,7 @@
 - [x] 4.3 Document rollback (revert generated column; disable header via config)
 
 ## 5. Benchmarking & docs
-- [ ] 5.1 Add a query set with title-only and filename-only keyword queries to the
+- [x] 5.1 Add a query set with title-only and filename-only keyword queries to the
       benchmark harness (`src/bin/service_benchmark.py`)
 - [ ] 5.2 Run before/after benchmark; record recall/precision deltas
 - [ ] 5.3 Tune title weight and filename boost from results
