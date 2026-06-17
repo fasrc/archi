@@ -301,11 +301,18 @@ BEGIN
             USING bm25(chunk_text) WITH (text_config=''english'')';
         RAISE NOTICE 'BM25 index created on document_chunks';
     ELSE
-        -- Fallback: create GIN index on tsvector for basic full-text search
-        EXECUTE 'ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS chunk_tsv tsvector 
-            GENERATED ALWAYS AS (to_tsvector(''english'', chunk_text)) STORED';
+        -- Fallback: create GIN index on a weighted tsvector for full-text search.
+        -- Title (display_name) and filename get weight 'A' so that title/filename
+        -- matches outrank body-only matches (weight 'B'). display_name/filename are
+        -- read from the chunk metadata JSONB propagated at ingestion time.
+        EXECUTE 'ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS chunk_tsv tsvector
+            GENERATED ALWAYS AS (
+                setweight(to_tsvector(''english'', coalesce(metadata->>''display_name'', '''')), ''A'') ||
+                setweight(to_tsvector(''english'', coalesce(metadata->>''filename'', '''')), ''A'') ||
+                setweight(to_tsvector(''english'', chunk_text), ''B'')
+            ) STORED';
         EXECUTE 'CREATE INDEX IF NOT EXISTS idx_chunks_fts ON document_chunks USING gin(chunk_tsv)';
-        RAISE NOTICE 'Fallback GIN tsvector index created (pg_textsearch not available)';
+        RAISE NOTICE 'Fallback weighted GIN tsvector index created (pg_textsearch not available)';
     END IF;
 END $$;
 
