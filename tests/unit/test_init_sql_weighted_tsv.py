@@ -82,3 +82,41 @@ def test_fts_gin_index_built_over_chunk_tsv():
         "CREATE INDEX IF NOT EXISTS idx_chunks_fts ON document_chunks USING gin(chunk_tsv)"
         in sql
     )
+
+
+def _chunk_search_text_definition(sql: str) -> str:
+    """Return the ``chunk_search_text`` generated-column DDL, quotes normalized.
+
+    Like ``_chunk_tsv_definition`` this fragment lives inside a PL/pgSQL
+    ``EXECUTE '...'`` literal, so doubled single quotes are collapsed.
+    """
+    match = re.search(
+        r"chunk_search_text TEXT\s+GENERATED ALWAYS AS \((.*?)\) STORED",
+        sql,
+        re.DOTALL,
+    )
+    assert match is not None, "chunk_search_text generated column not found in init.sql"
+    return match.group(1).replace("''", "'")
+
+
+def test_bm25_indexes_weighted_search_text_column():
+    # Task 2.2: the pg_textsearch BM25 index is rebuilt over the weighted
+    # chunk_search_text column rather than the bare chunk_text body.
+    sql = _render_init_sql()
+    assert "USING bm25(chunk_search_text)" in sql
+    assert "USING bm25(chunk_text)" not in sql
+
+
+def test_bm25_search_text_includes_title_and_filename():
+    fragment = _chunk_search_text_definition(_render_init_sql())
+    assert "coalesce(metadata->>'display_name', '')" in fragment
+    assert "coalesce(metadata->>'filename', '')" in fragment
+    assert "chunk_text" in fragment
+
+
+def test_bm25_search_text_repeats_title_filename_for_weight():
+    # BM25 has no per-field setweight, so title/filename are repeated to carry a
+    # higher term frequency (weight) than body-only mentions.
+    fragment = _chunk_search_text_definition(_render_init_sql())
+    assert fragment.count("metadata->>'display_name'") == 2
+    assert fragment.count("metadata->>'filename'") == 2

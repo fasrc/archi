@@ -297,9 +297,23 @@ CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON document_chunks
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_textsearch') THEN
-        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_chunks_bm25 ON document_chunks 
-            USING bm25(chunk_text) WITH (text_config=''english'')';
-        RAISE NOTICE 'BM25 index created on document_chunks';
+        -- BM25 indexes a single text field and has no per-field weight (no
+        -- setweight equivalent). To give title/filename a higher weight than the
+        -- body, surface them into the indexed text and repeat them so they carry
+        -- a higher term frequency than body-only mentions. display_name/filename
+        -- are read from the chunk metadata JSONB propagated at ingestion time, so
+        -- title/filename matches rank for existing rows without re-embedding.
+        EXECUTE 'ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS chunk_search_text TEXT
+            GENERATED ALWAYS AS (
+                coalesce(metadata->>''display_name'', '''') || '' '' ||
+                coalesce(metadata->>''filename'', '''') || '' '' ||
+                coalesce(metadata->>''display_name'', '''') || '' '' ||
+                coalesce(metadata->>''filename'', '''') || '' '' ||
+                chunk_text
+            ) STORED';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_chunks_bm25 ON document_chunks
+            USING bm25(chunk_search_text) WITH (text_config=''english'')';
+        RAISE NOTICE 'Weighted BM25 index created on document_chunks (title/filename emphasized)';
     ELSE
         -- Fallback: create GIN index on a weighted tsvector for full-text search.
         -- Title (display_name) and filename get weight 'A' so that title/filename

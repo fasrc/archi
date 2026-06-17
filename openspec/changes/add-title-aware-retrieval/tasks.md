@@ -11,7 +11,7 @@
 ## 2. Schema: weighted full-text index
 - [x] 2.1 Update `src/cli/templates/init.sql` so `chunk_tsv` is generated from a weighted
       tsvector (`display_name`/`filename` = `A`, `chunk_text` = `B`)
-- [ ] 2.2 Rebuild the `pg_textsearch` BM25 index (or GIN fallback) over the weighted
+- [x] 2.2 Rebuild the `pg_textsearch` BM25 index (or GIN fallback) over the weighted
       expression/column
 - [ ] 2.3 Add an idempotent migration to convert existing `document_chunks` tables
 
