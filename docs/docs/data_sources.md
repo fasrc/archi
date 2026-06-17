@@ -293,6 +293,60 @@ achieved per deployment by the standard ingestion run with `reset_collection: tr
 is no partial backfill that re-embeds only stale documents — re-embedding is all-or-nothing
 via `reset_collection`.
 
+### Rolling back title-aware search
+
+Title-aware retrieval is layered so it can be undone in two independent steps. Prior
+embeddings remain valid throughout — rolling back never requires re-embedding.
+
+1. **Disable header injection (config).** Stop prepending the `Title:`/`Source:` header to
+   newly ingested chunks:
+
+   ```yaml
+   data_manager:
+     title_header:
+       enabled: false
+   ```
+
+   Existing chunks keep whatever text they were embedded/stored with; only documents
+   ingested after this change revert to body-only searchable text. To strip the header from
+   already-ingested chunks as well, re-run the [backfill procedure](#backfill-procedure)
+   (re-embed with `reset_collection: true`) while `title_header.enabled` is `false`.
+
+2. **Disable the retrieval boost (config).** Neutralize the filename/title ranking boost by
+   zeroing the `hybrid_retriever` knobs (see
+   [Configuration](configuration.md)):
+
+   ```yaml
+   data_manager:
+     retrievers:
+       hybrid_retriever:
+         title_weight: 0.0
+         filename_boost: 0.0
+   ```
+
+3. **Revert the weighted full-text column (schema).** Restore the original unweighted
+   generated column and its index. This re-ranks the existing corpus immediately, without
+   re-embedding. Run the statement that matches your deployment:
+
+   ```sql
+   -- pg_textsearch (BM25) deployments:
+   ALTER TABLE document_chunks DROP COLUMN IF EXISTS chunk_search_text;
+
+   -- GIN tsvector deployments: revert to the unweighted definition.
+   ALTER TABLE document_chunks DROP COLUMN IF EXISTS chunk_tsv;
+   ALTER TABLE document_chunks ADD COLUMN chunk_tsv tsvector
+       GENERATED ALWAYS AS (to_tsvector('english', chunk_text)) STORED;
+   CREATE INDEX IF NOT EXISTS idx_chunks_fts ON document_chunks USING gin(chunk_tsv);
+   ```
+
+   Dropping a generated column also drops the index that depends on it
+   (`idx_chunks_bm25` / `idx_chunks_fts`), so recreate the index after re-adding the column.
+   On large tables this rewrites the column — run it during a maintenance window.
+
+> **Note:** Steps are independent. Disabling the config flags (1–2) reverts behavior for new
+> ingestion and ranking without touching the schema; reverting the column (3) is only needed
+> if you also want the full-text index to stop weighting title/filename matches.
+
 ---
 
 ## Data Viewer

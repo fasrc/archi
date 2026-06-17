@@ -27,7 +27,7 @@
 ## 4. Migration & re-ingestion
 - [x] 4.1 Document the re-ingest/backfill procedure to re-embed with injected headers
 - [x] 4.2 Verify fresh deployments via `init.sql` and existing deployments via migration
-- [ ] 4.3 Document rollback (revert generated column; disable header via config)
+- [x] 4.3 Document rollback (revert generated column; disable header via config)
 
 ## 5. Benchmarking & docs
 - [ ] 5.1 Add a query set with title-only and filename-only keyword queries to the
