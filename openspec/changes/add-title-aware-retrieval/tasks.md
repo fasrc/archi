@@ -21,7 +21,7 @@
       `idx_documents_name`
 - [x] 3.2 Thread the boost weight through `HybridRetriever`
       (`src/data_manager/vectorstore/retrievers/hybrid_retriever.py`)
-- [ ] 3.3 Add config knobs in `src/cli/templates/base-config.yaml`
+- [x] 3.3 Add config knobs in `src/cli/templates/base-config.yaml`
       (`data_manager.retrievers.hybrid_retriever.title_weight`, `filename_boost`)
 
 ## 4. Migration & re-ingestion

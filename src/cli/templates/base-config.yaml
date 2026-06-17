@@ -252,6 +252,8 @@ data_manager:
       num_documents_to_retrieve: {{ data_manager.retrievers.hybrid_retriever.num_documents_to_retrieve | default(5, true) }}
       bm25_weight: {{ data_manager.retrievers.hybrid_retriever.bm25_weight | default(0.6, true) }}
       semantic_weight: {{ data_manager.retrievers.hybrid_retriever.semantic_weight | default(0.4, true) }}
+      title_weight: {{ data_manager.retrievers.hybrid_retriever.title_weight | default(1.0, true) }}
+      filename_boost: {{ data_manager.retrievers.hybrid_retriever.filename_boost | default(0.2, true) }}
   sources:
     local_files:
       enabled: {{ data_manager.sources.local_files.enabled | default(true, true) }}
