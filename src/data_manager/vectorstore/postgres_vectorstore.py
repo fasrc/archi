@@ -379,6 +379,7 @@ class PostgresVectorStore(VectorStore):
         *,
         semantic_weight: float = 0.7,
         bm25_weight: float = 0.3,
+        filename_boost: float = 0.0,
         **kwargs: Any,
     ) -> List[Tuple[Document, float]]:
         """
@@ -389,6 +390,11 @@ class PostgresVectorStore(VectorStore):
             k: Number of results to return
             semantic_weight: Weight for semantic similarity (0-1)
             bm25_weight: Weight for BM25 score (0-1)
+            filename_boost: Additive score boost applied to documents whose
+                ``display_name`` (title/filename) trigram-matches the query,
+                reusing the ``idx_documents_name`` ``gin_trgm_ops`` index. A
+                value of ``0`` (default) disables the boost so results come
+                from semantic and BM25 scores only.
             **kwargs: Additional filters
 
         Returns:
@@ -447,9 +453,23 @@ class PostgresVectorStore(VectorStore):
                     f"c.chunk_search_text <@> to_bm25query(%s, '{bm25_index_name}')"
                 )
 
+                # Optional additive filename/title boost. Documents whose
+                # display_name trigram-matches the query (pg_trgm `%` operator,
+                # backed by idx_documents_name) receive a flat additive bump in
+                # the fusion score. Skipped entirely when filename_boost <= 0 so
+                # the scoring reduces to semantic + BM25.
+                filename_boost_sql = ""
+                boost_params: List[Any] = []
+                if filename_boost and filename_boost > 0:
+                    filename_boost_sql = (
+                        " + CASE WHEN display_name IS NOT NULL "
+                        "AND display_name %% %s THEN %s ELSE 0.0 END"
+                    )
+                    boost_params = [query, filename_boost]
+
                 query_sql = f"""
                     WITH scored AS (
-                        SELECT 
+                        SELECT
                             c.id,
                             c.chunk_text,
                             c.metadata,
@@ -463,17 +483,22 @@ class PostgresVectorStore(VectorStore):
                         LEFT JOIN documents d ON c.document_id = d.id
                         WHERE {where_sql}
                     )
-                    SELECT 
+                    SELECT
                         *,
-                        (semantic_score * %s + COALESCE(bm25_score, 0) * %s) AS combined_score
+                        (semantic_score * %s + COALESCE(bm25_score, 0) * %s{filename_boost_sql}) AS combined_score
                     FROM scored
                     ORDER BY combined_score DESC
                     LIMIT %s
                 """
 
-                # Params order: embedding, collection (+ any filters), query, semantic_weight, bm25_weight, k
+                # Params order: embedding, collection (+ any filters), query,
+                # semantic_weight, bm25_weight, [boost query, boost weight], k
                 all_params = (
-                    [embedding_str] + params + [query, semantic_weight, bm25_weight, k]
+                    [embedding_str]
+                    + params
+                    + [query, semantic_weight, bm25_weight]
+                    + boost_params
+                    + [k]
                 )
                 cursor.execute(query_sql, all_params)
                 rows = cursor.fetchall()
