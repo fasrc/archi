@@ -32,12 +32,19 @@
 ## 5. Benchmarking & docs
 - [x] 5.1 Add a query set with title-only and filename-only keyword queries to the
       benchmark harness (`src/bin/service_benchmark.py`)
-- [ ] 5.2 Run before/after benchmark; record recall/precision deltas
-- [ ] 5.3 Tune title weight and filename boost from results
-- [ ] 5.4 Update `docs/` (data sources / benchmarking / configuration) for the new knobs
+- [x] 5.4 Update `docs/` (data sources / benchmarking / configuration) for the new knobs
 
 ## 6. Tests & validation
 - [ ] 6.1 Unit test: ingested chunks contain title/source tokens in searchable text
+- [ ] 6.4 Run `openspec validate add-title-aware-retrieval --strict --no-interactive`
+
+## 7. Deferred — requires a live deployment (manual; do NOT attempt in the loop)
+These tasks need a running archi deployment (Postgres/pgvector, API secrets, and an
+ingested corpus) and cannot execute in the Ralph sandbox — see the escalation in
+`docs/questions.md`. A human must run them on a real deployment, or supply an
+offline fixture-backed path, before they can be checked off. The loop should treat
+this section as blocked and stop here once sections 1–6 above are complete.
+- [ ] 5.2 Run before/after benchmark; record recall/precision deltas
+- [ ] 5.3 Tune title weight and filename boost from results
 - [ ] 6.2 Test: title-only keyword query retrieves the document end-to-end
 - [ ] 6.3 Test: filename match boost surfaces a document with low body similarity
-- [ ] 6.4 Run `openspec validate add-title-aware-retrieval --strict --no-interactive`

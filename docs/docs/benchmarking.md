@@ -53,6 +53,39 @@ See `examples/benchmarking/queries.json` for a complete example.
 
 ---
 
+## Title-Aware Query Set
+
+To measure [title-aware retrieval](data_sources.md#re-ingesting-to-backfill-title-aware-search-text)
+(the `title_weight`, `filename_boost`, and `title_header` knobs), the harness appends a
+curated query set whose keyword appears **only** in the document title (`display_name`) or
+filename (`file_name`) — never in the chunk body. This lets a before/after run report the
+recall change for queries that body-only indexing would miss.
+
+The query set ships at `src/bin/benchmark_query_sets/title_aware_query_set.json` and is
+merged into your deployment's queries automatically. Each item carries:
+
+| Field | Description |
+|-------|-------------|
+| `question` | The title-only or filename-only keyword query |
+| `category` | `title_only` or `filename_only` |
+| `sources` | Source identifiers expected to be retrieved |
+| `source_match_field` | `display_name` for `title_only`, `file_name` for `filename_only` |
+
+The merge is controlled by the `BENCH_INCLUDE_TITLE_AWARE` environment variable
+(default `true`). Set it to `false` (or `0`/`no`/`off`) to benchmark your own query set
+only:
+
+```bash
+BENCH_INCLUDE_TITLE_AWARE=false archi evaluate -n benchmark -c config.yaml -e .secrets.env
+```
+
+To compare retrieval quality before and after enabling title-aware retrieval, run the
+benchmark with the feature off and on (toggling `title_header.enabled`, `title_weight`,
+and `filename_boost` in config) and compare the SOURCES-mode recall on the
+`title_only`/`filename_only` queries.
+
+---
+
 ## Configuration
 
 ```yaml

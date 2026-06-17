@@ -221,9 +221,14 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 | `retrievers.hybrid_retriever.num_documents_to_retrieve` | int | `5` | Top-k documents per query |
 | `retrievers.hybrid_retriever.bm25_weight` | float | `0.6` | BM25 keyword score weight |
 | `retrievers.hybrid_retriever.semantic_weight` | float | `0.4` | Semantic similarity weight |
-| `stemming.enabled` | bool | `false` | Enable Porter Stemmer for improved matching |
+| `retrievers.hybrid_retriever.title_weight` | float | `1.0` | Relative weight of title/filename tokens in the weighted full-text index. Title (`display_name`) and filename tokens are indexed at full-text weight class `A` and chunk body text at class `B`, so title/filename matches rank above body-only matches in BM25/full-text scoring. Provisional default; tune against the [benchmark](benchmarking.md). |
+| `retrievers.hybrid_retriever.filename_boost` | float | `0.2` | Additive score boost applied in hybrid search to documents whose `display_name` trigram-matches the query (reusing the `idx_documents_name` trigram index). Surfaces obvious filename hits even when body BM25 and semantic scores are low. Set to `0` to disable and produce results from BM25 and semantic scores only. |
+| `title_header.enabled` | bool | `true` | Inject a `Title: …\nSource: …` header into the searchable text of every chunk at ingestion time, so the chunk embedding and full-text index both contain title/filename tokens. Disable to preserve prior body-only indexing. See [Title-Aware Search Text](data_sources.md#re-ingesting-to-backfill-title-aware-search-text). |
+| `stemming.enabled` | bool | `false` | Enable Porter Stemmer for improved matching. When enabled, the injected title/source header is stemmed with the same tokenizer/stemmer as the body so query-time stemming matches symmetrically. |
 
 > **Note:** `use_hybrid_search` is a dynamic runtime setting (managed via the configuration API), not a YAML config key.
+
+> **Tip:** `title_weight` and `filename_boost` are title-aware retrieval knobs. After changing them — or after enabling `title_header` — re-run the [benchmark](benchmarking.md) to measure the recall/precision impact on title-only and filename-only queries before settling on production values.
 
 ### Sources
 

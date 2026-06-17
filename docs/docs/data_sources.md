@@ -227,6 +227,13 @@ searchable text of **every** chunk at ingestion time, so that both the embedding
 full-text index contain the document's title (`display_name`) and filename. This is
 controlled by `data_manager.title_header.enabled` (default `true`).
 
+The complementary retrieval-time knobs — `retrievers.hybrid_retriever.title_weight`
+(how strongly title/filename tokens are weighted in the full-text index) and
+`retrievers.hybrid_retriever.filename_boost` (an additive boost for filename trigram
+matches in hybrid search) — are documented in the
+[Configuration Reference](configuration.md#retrieval-settings), and their effect can be
+measured with the [title-aware benchmark query set](benchmarking.md#title-aware-query-set).
+
 Because the header is baked into a chunk's embedding when the chunk is embedded, the
 injected header only affects chunks that are ingested **after** the feature is enabled.
 Documents that were ingested before enabling it keep their body-only embeddings until they
