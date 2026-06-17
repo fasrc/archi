@@ -25,7 +25,7 @@
       (`data_manager.retrievers.hybrid_retriever.title_weight`, `filename_boost`)
 
 ## 4. Migration & re-ingestion
-- [ ] 4.1 Document the re-ingest/backfill procedure to re-embed with injected headers
+- [x] 4.1 Document the re-ingest/backfill procedure to re-embed with injected headers
 - [ ] 4.2 Verify fresh deployments via `init.sql` and existing deployments via migration
 - [ ] 4.3 Document rollback (revert generated column; disable header via config)
 

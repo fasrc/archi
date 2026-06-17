@@ -220,6 +220,81 @@ docker exec -it <container-id> mkdir /root/data/my_docs
 
 ---
 
+## Re-ingesting to Backfill Title-Aware Search Text
+
+Title- and filename-aware retrieval injects a `Title: …\nSource: …` header into the
+searchable text of **every** chunk at ingestion time, so that both the embedding and the
+full-text index contain the document's title (`display_name`) and filename. This is
+controlled by `data_manager.title_header.enabled` (default `true`).
+
+Because the header is baked into a chunk's embedding when the chunk is embedded, the
+injected header only affects chunks that are ingested **after** the feature is enabled.
+Documents that were ingested before enabling it keep their body-only embeddings until they
+are re-embedded. Re-ingesting (re-embedding) existing corpora is therefore required to get
+the full benefit for already-ingested content.
+
+> **Note:** The weighted full-text index re-ranks title/filename matches for the *existing*
+> corpus immediately, without re-embedding — applying the idempotent migration
+> (`src/cli/templates/migrations/0001_weighted_chunk_tsv.sql`) rebuilds the title/filename
+> weighting over the current rows. Re-embedding is only needed to add title/filename tokens
+> to the **semantic** (vector) representation.
+
+### Backfill procedure
+
+1. **Ensure header injection is enabled** in your configuration (it is on by default):
+
+   ```yaml
+   data_manager:
+     title_header:
+       enabled: true
+   ```
+
+2. **Force every document to be re-embedded.** Set `reset_collection: true` so the
+   data-manager truncates `document_chunks` and resets each document's ingestion status to
+   `pending` on startup, then re-embeds the full corpus from the persisted source content:
+
+   ```yaml
+   data_manager:
+     reset_collection: true
+   ```
+
+3. **Re-run the data-manager.** Re-deploy (or restart the `data-manager` service) so the
+   ingestion run picks up the new setting and re-embeds every document with the injected
+   header:
+
+   ```bash
+   archi create --config <config.yaml> --services data-manager
+   ```
+
+4. **Confirm the backfill.** Watch the data-manager logs and verify documents move back to
+   an indexed state:
+
+   ```bash
+   docker logs -f archi-<name>-data-manager
+   ```
+
+   You can also browse the [Data Viewer](#data-viewer) to confirm chunk counts and content
+   include the injected `Title:`/`Source:` header.
+
+5. **Turn `reset_collection` back off** once the backfill completes, so subsequent
+   deployments do not wipe and re-embed the collection again:
+
+   ```yaml
+   data_manager:
+     reset_collection: false
+   ```
+
+> **Cost:** Re-embedding the entire corpus calls the embedding model once per chunk, so the
+> backfill incurs the same cost as the original ingestion. For API-based embedding providers
+> this is a billable operation; run it during a maintenance window for large corpora.
+
+If you only want to re-embed without permanently wiping unrelated state, the same effect is
+achieved per deployment by the standard ingestion run with `reset_collection: true`; there
+is no partial backfill that re-embeds only stale documents — re-embedding is all-or-nothing
+via `reset_collection`.
+
+---
+
 ## Data Viewer
 
 The chat interface includes a built-in **Data Viewer** for browsing and managing ingested documents. Access it at `/data` on your chat app (e.g., `http://localhost:7861/data`).
