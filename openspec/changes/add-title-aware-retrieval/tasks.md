@@ -13,7 +13,7 @@
       tsvector (`display_name`/`filename` = `A`, `chunk_text` = `B`)
 - [x] 2.2 Rebuild the `pg_textsearch` BM25 index (or GIN fallback) over the weighted
       expression/column
-- [ ] 2.3 Add an idempotent migration to convert existing `document_chunks` tables
+- [x] 2.3 Add an idempotent migration to convert existing `document_chunks` tables
 
 ## 3. Retrieval: filename/title boost
 - [ ] 3.1 In `src/data_manager/vectorstore/postgres_vectorstore.py` `hybrid_search`, add a
