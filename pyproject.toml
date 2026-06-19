@@ -56,5 +56,11 @@ extraPaths = ["."]
 include = ["src", "tests"]
 exclude = ["**/__pycache__", "**/node_modules", "config", "openspec/changes"]
 
+[tool.isort]
+# Adopt black's import-wrapping style so `isort` and `black` agree. Without this
+# they disagree on multi-line import formatting and the two can never both pass
+# --check on the same file.
+profile = "black"
+
 [project.urls]
 "Homepage" = "https://github.com/archi-physics/archi"
