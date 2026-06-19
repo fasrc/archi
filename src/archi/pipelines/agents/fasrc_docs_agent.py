@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any, Callable, Dict, List
 
@@ -14,7 +13,6 @@ from src.archi.pipelines.agents.tools import (
     create_metadata_schema_tool,
     create_metadata_search_tool,
     create_retriever_tool,
-    initialize_mcp_client,
 )
 from src.data_manager.vectorstore.retrievers import HybridRetriever
 from src.utils.logging import get_logger
