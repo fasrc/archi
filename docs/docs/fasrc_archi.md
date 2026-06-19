@@ -115,7 +115,9 @@ filesystems; `TimeoutStartSec=600` allows for model warmup.
 
 ```bash
 # Stop any manually-launched instance first so the service can bind :8001.
-kill "$(pgrep -f vllm.entrypoints.openai.api_server)"
+# List the matching PID(s), then kill the specific one you intend to stop.
+pgrep -af vllm.entrypoints.openai.api_server
+kill <pid>   # replace <pid> with the PID printed above
 
 sudo install -m 644 \
   /home/a2rchi/archi-openai-compat/config/scripts/vllm-qwen36.service \
@@ -128,7 +130,9 @@ sudo systemctl enable --now vllm-qwen36.service     # enable = start on boot; --
 
 ```bash
 sudo systemctl status vllm-qwen36          # state
-sudo systemctl start|stop|restart vllm-qwen36
+sudo systemctl start vllm-qwen36           # start
+sudo systemctl stop vllm-qwen36            # stop
+sudo systemctl restart vllm-qwen36         # restart
 journalctl -u vllm-qwen36 -f               # follow logs (watch for "Application startup complete.")
 ```
 
