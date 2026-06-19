@@ -54,8 +54,9 @@ kill <pid>
 
 ### The metrics-middleware compat shim (required)
 
-`vllm_volta.sif` pairs `fastapi 0.137.2` with `prometheus_fastapi_instrumentator
-8.0.0`. FastAPI's newer `_IncludedRouter` route object has no `.path` attribute,
+`vllm_volta.sif` pairs `fastapi 0.137.2` with
+`prometheus_fastapi_instrumentator 8.0.0`. FastAPI's newer `_IncludedRouter`
+route object has no `.path` attribute,
 but the older instrumentator reads `route.path` on every request — so it raises
 `AttributeError` and returns **HTTP 500 on every request**, including
 `/v1/chat/completions`. The engine loads fine; only the metrics middleware
