@@ -1,22 +1,20 @@
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any, Callable, Dict, List
 
-from langchain_core.messages import (AIMessage, BaseMessage, HumanMessage,
-                                     ToolMessage)
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from src.archi.pipelines.agents.base_react import BaseReActAgent
 from src.archi.pipelines.agents.tools import (
-    MONITOpenSearchClient, RemoteCatalogClient, create_document_fetch_tool,
-    create_file_search_tool, create_metadata_schema_tool,
-    create_metadata_search_tool, create_monit_opensearch_aggregation_tool,
-    create_monit_opensearch_search_tool, create_retriever_tool,
-    initialize_mcp_client)
-from src.archi.pipelines.agents.utils.skill_utils import load_skill
+    RemoteCatalogClient,
+    create_document_fetch_tool,
+    create_file_search_tool,
+    create_metadata_schema_tool,
+    create_metadata_search_tool,
+    create_retriever_tool,
+)
 from src.data_manager.vectorstore.retrievers import HybridRetriever
-from src.utils.env import read_secret
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -25,12 +23,11 @@ logger = get_logger(__name__)
 class FASRCDocsAgent(BaseReActAgent):
     """FASRC documentation/RAG support agent.
 
-    v1 is a copy/rename of CMSCompOpsAgent with no behavioral changes other than
-    the class name. Deployed with the FASRC agent spec
-    (deploy/fasrc-dev/agents/fasrc-docs.md), it selects only document-retrieval
-    tools; the inherited MONIT/Rucio/HTCondor tooling stays dormant without
-    MONIT_GRAFANA_TOKEN + services.chat_app.tools.monit config (slated for removal
-    in v2).
+    A ReAct agent whose tool set is restricted to document retrieval over the
+    archi knowledge base (hybrid vectorstore search, file/metadata search,
+    catalog document fetch, and configured MCP tools). It carries no
+    compute-operations (MONIT/Rucio/HTCondor) tooling. Deployed with the FASRC
+    agent spec (deploy/fasrc-dev/agents/fasrc-docs.md).
     """
 
     def __init__(
@@ -48,13 +45,6 @@ class FASRCDocsAgent(BaseReActAgent):
             "search_vectorstore_hybrid" in self.selected_tool_names
         )
 
-        # Initialize MONIT clients (one per datasource proxy)
-        self._monit_client = None
-        self._rucio_events_skill = None
-        self._condor_client = None
-        self._condor_metric_skill = None
-        self._init_monit()
-
         self.rebuild_static_tools()
         self.rebuild_static_middleware()
         self.refresh_agent()
@@ -63,67 +53,6 @@ class FASRCDocsAgent(BaseReActAgent):
     def _chat_app_config(self) -> Dict[str, Any]:
         """Return the services.chat_app config section."""
         return self.config.get("services", {}).get("chat_app", {})
-
-    def _init_monit(self) -> None:
-        """Initialize MONIT OpenSearch clients if credentials and config are available.
-
-        Supports the following config layout for the MONIT URL(s)::
-
-            # Per-source URLs (rucio + condor, etc.)
-            tools:
-              monit:
-                rucio:
-                  url: "https://...proxy/9269/_msearch"
-                condor:
-                  url: "https://...proxy/8787/_msearch"
-        """
-        monit_token = read_secret("MONIT_GRAFANA_TOKEN")
-        if not monit_token:
-            logger.info(
-                "MONIT_GRAFANA_TOKEN not found; MONIT OpenSearch tools not available"
-            )
-            return
-
-        tools_cfg = self._chat_app_config.get("tools", {})
-        monit_cfg = tools_cfg.get("monit", {})
-
-        # Rucio source
-        rucio_url = monit_cfg.get("rucio", {}).get("url") or monit_cfg.get(
-            "url"
-        )  # backward compat
-        if rucio_url:
-            try:
-                self._monit_client = MONITOpenSearchClient(
-                    url=rucio_url, token=monit_token
-                )
-                self._rucio_events_skill = load_skill("rucio_events", self.config)
-                logger.info("MONIT rucio client initialized (proxy: %s)", rucio_url)
-            except Exception as e:
-                logger.warning("Failed to initialize MONIT rucio client: %s", e)
-        else:
-            logger.info(
-                "No MONIT rucio URL configured in services.chat_app.tools.monit; "
-                "rucio OpenSearch tools not available"
-            )
-
-        # Condor source
-        condor_url = tools_cfg.get("condor", {}).get("url") or monit_cfg.get(
-            "condor", {}
-        ).get("url")
-        if condor_url:
-            try:
-                self._condor_client = MONITOpenSearchClient(
-                    url=condor_url, token=monit_token
-                )
-                self._condor_metric_skill = load_skill("condor_raw_metric", self.config)
-                logger.info("MONIT condor client initialized (proxy: %s)", condor_url)
-            except Exception as e:
-                logger.warning("Failed to initialize MONIT condor client: %s", e)
-        else:
-            logger.info(
-                "No MONIT condor URL configured in services.chat_app.tools; "
-                "condor OpenSearch tools not available"
-            )
 
     def get_tool_registry(self) -> Dict[str, Callable[[], Any]]:
         return {
@@ -150,7 +79,7 @@ class FASRCDocsAgent(BaseReActAgent):
                 "builder": self._build_metadata_search_tool,
                 "description": (
                     "Query the files' metadata catalog (ticket IDs, source URLs, resource types, etc.). "
-                    "Supports key:value filters and OR (e.g., source_type:git OR url:https://... ticket_id:CMS-123). "
+                    "Supports key:value filters and OR (e.g., source_type:git OR url:https://... ticket_id:RC-123). "
                     "Returns matching files with metadata; use fetch_catalog_document to pull full text."
                 ),
             },
@@ -187,29 +116,6 @@ class FASRCDocsAgent(BaseReActAgent):
                 "description": "Access tools served via configured MCP servers.",
             },
         }
-
-        # Keep this safe for lightweight introspection paths that call
-        # get_tool_registry()/get_tool_descriptions() on an uninitialized
-        # instance (constructed via __new__).
-        if getattr(self, "_monit_client", None) is not None:
-            defs["monit_opensearch_search"] = {
-                "builder": self._build_monit_opensearch_search_tool,
-                "description": "Search MONIT OpenSearch for CMS Rucio events.",
-            }
-            defs["monit_opensearch_aggregation"] = {
-                "builder": self._build_monit_opensearch_aggregation_tool,
-                "description": "Run aggregation queries on MONIT OpenSearch for CMS Rucio events.",
-            }
-
-        if getattr(self, "_condor_client", None) is not None:
-            defs["condor_opensearch_search"] = {
-                "builder": self._build_condor_opensearch_search_tool,
-                "description": "Search MONIT OpenSearch for CMS HTCondor job metrics.",
-            }
-            defs["condor_opensearch_aggregation"] = {
-                "builder": self._build_condor_opensearch_aggregation_tool,
-                "description": "Run aggregation queries on MONIT OpenSearch for CMS HTCondor job metrics.",
-            }
 
         return defs
 
@@ -248,42 +154,6 @@ class FASRCDocsAgent(BaseReActAgent):
 
     def _build_vector_tool_placeholder(self) -> List[Callable]:
         return []
-
-    def _build_monit_opensearch_search_tool(self) -> Callable:
-        """Build the MONIT OpenSearch search tool for Rucio events."""
-        return create_monit_opensearch_search_tool(
-            self._monit_client,
-            tool_name="rucio_events_search",
-            index="monit_prod_cms_rucio_raw_events*",
-            skill=self._rucio_events_skill,
-        )
-
-    def _build_monit_opensearch_aggregation_tool(self) -> Callable:
-        """Build the MONIT OpenSearch aggregation tool for Rucio events."""
-        return create_monit_opensearch_aggregation_tool(
-            self._monit_client,
-            tool_name="rucio_events_aggregation",
-            index="monit_prod_cms_rucio_raw_events*",
-            skill=self._rucio_events_skill,
-        )
-
-    def _build_condor_opensearch_search_tool(self) -> Callable:
-        """Build the MONIT OpenSearch search tool for HTCondor job metrics."""
-        return create_monit_opensearch_search_tool(
-            self._condor_client,
-            tool_name="condor_metric_search",
-            index="monit_prod_condor_raw_metric*",
-            skill=self._condor_metric_skill,
-        )
-
-    def _build_condor_opensearch_aggregation_tool(self) -> Callable:
-        """Build the MONIT OpenSearch aggregation tool for HTCondor job metrics."""
-        return create_monit_opensearch_aggregation_tool(
-            self._condor_client,
-            tool_name="condor_metric_aggregation",
-            index="monit_prod_condor_raw_metric*",
-            skill=self._condor_metric_skill,
-        )
 
     # def _build_static_middleware(self) -> List[Callable]:
     #     """
