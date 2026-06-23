@@ -20,7 +20,7 @@
 
 ## 4. Integration (single seam)
 
-- [ ] 4.1 In `FASRCDocsAgent._update_vector_retrievers` (`fasrc_docs_agent.py:183/197`), construct the new retriever when enabled and pass it to `create_retriever_tool` unchanged (tool name stays `search_vectorstore_hybrid`). Do not modify the agent loop, prompts, or `create_retriever_tool`.
+- [x] 4.1 In `FASRCDocsAgent._update_vector_retrievers` (`fasrc_docs_agent.py:183/197`), construct the new retriever when enabled and pass it to `create_retriever_tool` unchanged (tool name stays `search_vectorstore_hybrid`). Do not modify the agent loop, prompts, or `create_retriever_tool`.
 
 ## 5. Tests
 
