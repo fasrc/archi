@@ -23,11 +23,6 @@ setup.sh
 configs/
 build/
 src/cli/utils/_repository_info.py
-openspec/specs/
-openspec/changes/
-openspec/*/spec
-openspec/*/tasks.md
-openspec/*/proposal.md
 node_modules/
 test-results/
 playwright-report/
@@ -44,3 +39,7 @@ websites/
 
 # Claude Code session state (worktrees, plans, memory, local settings).
 /.claude/
+
+# Ralph harness runtime state (machine-written; never committed)
+.ralph/
+/review-findings.md
