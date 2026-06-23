@@ -1,0 +1,33 @@
+# .github/workflows/ci.yml — run the SAME gate the loop enforces locally.
+#
+# The gate COMMAND is single-source (scripts/gate.sh); only the environment SETUP
+# differs between the loop container and a GitHub runner.
+#
+# NOTE: confirm this toolchain block stays in sync with the Containerfile — it is
+# the one part CI cannot fully infer.
+
+name: gate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- archi toolchain (mirror Containerfile) --------------------------------
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install gate toolchain
+        run: |
+          python -m pip install --upgrade pip
+          pip install black==24.10.0 isort==6.0.1 pytest pytest-cov
+          pip install -r requirements/requirements-base.txt
+      # --- end archi toolchain ---------------------------------------------------
+
+      - name: gate
+        run: bash scripts/gate.sh
