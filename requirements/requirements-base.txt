@@ -97,3 +97,11 @@ nltk==3.9.1
 sentence-transformers==5.1.2
 rank_bm25==0.2.2
 markitdown[pdf,pptx]==0.1.5
+# Hierarchical-rerank-retrieval (branch-scoped, additive). llama-index-core is
+# the lightweight core package (NOT the full `llama-index` meta-package) used
+# for structural parent-child node parsing at ingestion; flashrank is the
+# CPU/ONNX cross-encoder reranker. llama-index-core is pinned to 0.14.19 — the
+# last release that requires `nltk>3.8.1` rather than `nltk>=3.9.3`, so it stays
+# compatible with the existing `nltk==3.9.1` pin above without a forced bump.
+llama-index-core==0.14.19
+flashrank==0.2.10
