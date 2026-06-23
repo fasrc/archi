@@ -28,7 +28,7 @@
 - [x] 5.2 Unit: child embedding dimension assertion raises on mismatch; query and child use the same configured model.
 - [x] 5.3 Unit: `hybrid_search` results never include parent rows (parents not embedded / not in document_chunks).
 - [x] 5.4 Unit: retriever maps child→parent, dedupes parents, and returns ≤5 parent Documents after rerank; reranker reorders a known pool.
-- [ ] 5.5 Unit: with the feature disabled, retrieval falls back to `HybridRetriever`; agent still exposes `search_vectorstore_hybrid`.
+- [x] 5.5 Unit: with the feature disabled, retrieval falls back to `HybridRetriever`; agent still exposes `search_vectorstore_hybrid`.
 - [ ] 5.6 Run `pytest tests/unit/` (in-container) and `isort`/`black` on changed files.
 
 ## 6. Evaluate & verify (spike)
