@@ -9,10 +9,12 @@ import pytest
 from langchain_core.documents import Document
 
 from src.data_manager.vectorstore.node_parsing import (
+    CHILD_EMBEDDING_DIM,
     MARKDOWN_STRATEGY,
     SENTENCE_STRATEGY,
     HierarchicalNode,
     build_hierarchical_nodes,
+    embed_child_nodes,
 )
 
 
@@ -103,3 +105,56 @@ def test_unsupported_strategy_raises():
     doc = Document(page_content="some text here.", metadata={})
     with pytest.raises(ValueError, match="Unsupported hierarchical chunking strategy"):
         build_hierarchical_nodes(doc, strategy="character")
+
+
+class _FakeEmbedder:
+    """Stand-in for archi's LangChain ``Embeddings`` model.
+
+    Records the texts passed to ``embed_documents`` and returns vectors of a
+    fixed dimension so tests can force a dimension mismatch.
+    """
+
+    def __init__(self, dim: int = CHILD_EMBEDDING_DIM):
+        self.dim = dim
+        self.calls: list = []
+
+    def embed_documents(self, texts):
+        self.calls.append(list(texts))
+        return [[0.0] * self.dim for _ in texts]
+
+
+def test_embed_child_nodes_uses_archi_embedder():
+    """Children are embedded via the provided model's ``embed_documents``."""
+    embedder = _FakeEmbedder()
+    children = ["child one.", "child two.", "child three."]
+
+    embeddings = embed_child_nodes(embedder, children)
+
+    # The configured archi embedder was used, with exactly the child texts.
+    assert embedder.calls == [children]
+    assert len(embeddings) == len(children)
+    assert all(len(vec) == CHILD_EMBEDDING_DIM for vec in embeddings)
+
+
+def test_embed_child_nodes_empty_returns_empty_without_calling_model():
+    embedder = _FakeEmbedder()
+    assert embed_child_nodes(embedder, []) == []
+    assert embedder.calls == []
+
+
+def test_embed_child_nodes_raises_on_dimension_mismatch():
+    """A wrong-dimension embedding fails loudly rather than being stored."""
+    embedder = _FakeEmbedder(dim=CHILD_EMBEDDING_DIM + 1)
+    with pytest.raises(ValueError, match="expected 384"):
+        embed_child_nodes(embedder, ["a child sentence."])
+
+
+def test_embed_child_nodes_raises_on_count_mismatch():
+    """One vector per child is required; a short result fails loudly."""
+
+    class _ShortEmbedder:
+        def embed_documents(self, texts):
+            return [[0.0] * CHILD_EMBEDDING_DIM]  # one vector regardless of input
+
+    with pytest.raises(ValueError, match="expected exactly one embedding per child"):
+        embed_child_nodes(_ShortEmbedder(), ["first.", "second."])
