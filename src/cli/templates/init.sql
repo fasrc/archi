@@ -334,6 +334,15 @@ CREATE TABLE IF NOT EXISTS document_parent_nodes (
 
 CREATE INDEX IF NOT EXISTS idx_parent_nodes_document ON document_parent_nodes(document_id);
 
+-- Child -> parent link. Embedded child rows in document_chunks reference their
+-- parent context node via the `parent_id` key inside the EXISTING metadata JSONB
+-- column (-> document_parent_nodes.id). No new column is added to document_chunks,
+-- so its schema, constraints, and the shared hybrid_search path stay unchanged;
+-- rows ingested by the legacy (non-hierarchical) path simply leave parent_id NULL.
+-- This expression index supports child->parent lookup and parent dedupe.
+CREATE INDEX IF NOT EXISTS idx_chunks_parent_id
+    ON document_chunks ((metadata->>'parent_id'));
+
 -- ============================================================================
 -- 5. DOCUMENT SELECTIONS (3-Tier System)
 -- ============================================================================
