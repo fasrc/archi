@@ -340,6 +340,32 @@ def test_rerank_truncates_to_num_documents_to_retrieve(mock_vectorstore):
     assert [d.page_content for d in docs] == ["parent 0", "parent 1", "parent 2"]
 
 
+def test_default_returns_at_most_five_parents(mock_vectorstore):
+    """With defaults, a larger candidate pool is narrowed to at most 5 parents."""
+    # Eight distinct child hits -> eight distinct parents in the pool.
+    children = [_child(f"c{i}", parent_id=i) for i in range(8)]
+    mock_vectorstore.hybrid_search.return_value = children
+    mock_vectorstore._mock_cursor.fetchall.return_value = [
+        _parent_row(i, f"parent {i}") for i in range(8)
+    ]
+    # No num_documents_to_retrieve override -> spec default of 5.
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_IdentityRanker()
+    )
+    assert retriever.num_documents_to_retrieve == 5
+
+    docs = retriever.invoke("q")
+
+    assert len(docs) == 5
+    assert [d.page_content for d in docs] == [
+        "parent 0",
+        "parent 1",
+        "parent 2",
+        "parent 3",
+        "parent 4",
+    ]
+
+
 def test_rerank_dedupes_parents_before_truncating(mock_vectorstore):
     """Duplicate parents collapse to one before the top-N cut is applied."""
     mock_vectorstore.hybrid_search.return_value = [
