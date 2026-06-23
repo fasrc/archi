@@ -1,9 +1,14 @@
 """
-Unit tests for LlamaIndexHierarchicalRetriever (task 3.1).
+Unit tests for LlamaIndexHierarchicalRetriever (tasks 3.1 + 3.2).
 
-Covers candidate generation via hybrid_search, child->parent mapping by
-metadata.parent_id, and parent deduplication. Reranking / top-N truncation
-(task 3.2) and config gating (task 3.3) are tested separately.
+Covers candidate generation via hybrid_search, FlashRank cross-encoder
+reranking, child->parent mapping by metadata.parent_id, parent deduplication,
+and top-N truncation. Config gating / fallback (task 3.3) is tested separately.
+
+The FlashRank ranker is stubbed so tests neither download nor load the ONNX
+model. ``_IdentityRanker`` preserves candidate order (descending synthetic
+scores); ``_ReverseRanker`` inverts it to prove the retriever honours rerank
+order rather than hybrid-search order.
 """
 
 from unittest.mock import MagicMock
@@ -27,6 +32,29 @@ def _child(text, parent_id, score=1.0, **extra):
     metadata = {"parent_id": parent_id}
     metadata.update(extra)
     return (Document(page_content=text, metadata=metadata), score)
+
+
+class _IdentityRanker:
+    """Stub FlashRank ranker: preserves passage order, descending scores."""
+
+    def rerank(self, request):
+        n = len(request.passages)
+        return [
+            {"id": p["id"], "score": float(n - i), "text": p["text"]}
+            for i, p in enumerate(request.passages)
+        ]
+
+
+class _ReverseRanker:
+    """Stub FlashRank ranker: reverses passage order (best = last input)."""
+
+    def rerank(self, request):
+        passages = list(request.passages)
+        n = len(passages)
+        return [
+            {"id": p["id"], "score": float(i + 1), "text": p["text"]}
+            for i, p in enumerate(reversed(passages))
+        ]
 
 
 def _parent_row(pid, text, **doc_fields):
@@ -140,7 +168,9 @@ def test_child_hit_returns_parent_context(mock_vectorstore):
     mock_vectorstore._mock_cursor.fetchall.return_value = [
         _parent_row(1, "the full parent paragraph")
     ]
-    retriever = LlamaIndexHierarchicalRetriever(vectorstore=mock_vectorstore)
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_IdentityRanker()
+    )
 
     docs = retriever.invoke("q")
 
@@ -160,7 +190,9 @@ def test_duplicate_parents_are_merged(mock_vectorstore):
         _parent_row(1, "parent one"),
         _parent_row(2, "parent two"),
     ]
-    retriever = LlamaIndexHierarchicalRetriever(vectorstore=mock_vectorstore)
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_IdentityRanker()
+    )
 
     docs = retriever.invoke("q")
 
@@ -184,7 +216,9 @@ def test_parent_carries_document_source_metadata(mock_vectorstore):
             url="https://docs.example/account",
         )
     ]
-    retriever = LlamaIndexHierarchicalRetriever(vectorstore=mock_vectorstore)
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_IdentityRanker()
+    )
 
     doc = retriever.invoke("q")[0]
 
@@ -202,7 +236,9 @@ def test_candidate_without_parent_id_passes_through(mock_vectorstore):
         legacy,
     ]
     mock_vectorstore._mock_cursor.fetchall.return_value = [_parent_row(1, "parent one")]
-    retriever = LlamaIndexHierarchicalRetriever(vectorstore=mock_vectorstore)
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_IdentityRanker()
+    )
 
     docs = retriever.invoke("q")
 
@@ -216,9 +252,140 @@ def test_missing_parent_row_is_skipped(mock_vectorstore):
         _child("c2", parent_id=99),
     ]
     mock_vectorstore._mock_cursor.fetchall.return_value = [_parent_row(1, "parent one")]
-    retriever = LlamaIndexHierarchicalRetriever(vectorstore=mock_vectorstore)
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_IdentityRanker()
+    )
 
     docs = retriever.invoke("q")
 
     assert [d.page_content for d in docs] == ["parent one"]
     mock_vectorstore._close_connection.assert_called_once()
+
+
+# =============================================================================
+# Cross-encoder rerank + top-N truncation (task 3.2)
+# =============================================================================
+
+
+def test_rerank_passes_query_and_child_text_to_ranker(mock_vectorstore):
+    """Each child's page_content is handed to the cross-encoder with the query."""
+    mock_vectorstore.hybrid_search.return_value = [
+        _child("child alpha", parent_id=1),
+        _child("child beta", parent_id=2),
+    ]
+    mock_vectorstore._mock_cursor.fetchall.return_value = [
+        _parent_row(1, "parent one"),
+        _parent_row(2, "parent two"),
+    ]
+    ranker = MagicMock()
+    ranker.rerank.return_value = [
+        {"id": 0, "score": 9.0},
+        {"id": 1, "score": 1.0},
+    ]
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=ranker
+    )
+
+    retriever.invoke("how do I reset my password")
+
+    ranker.rerank.assert_called_once()
+    request = ranker.rerank.call_args[0][0]
+    assert request.query == "how do I reset my password"
+    assert [p["text"] for p in request.passages] == ["child alpha", "child beta"]
+    assert [p["id"] for p in request.passages] == [0, 1]
+
+
+def test_rerank_reorders_parents(mock_vectorstore):
+    """Parent order follows the cross-encoder ranking, not hybrid order."""
+    mock_vectorstore.hybrid_search.return_value = [
+        _child("c1", parent_id=1, score=0.9),
+        _child("c2", parent_id=2, score=0.8),
+        _child("c3", parent_id=3, score=0.7),
+    ]
+    mock_vectorstore._mock_cursor.fetchall.return_value = [
+        _parent_row(1, "parent one"),
+        _parent_row(2, "parent two"),
+        _parent_row(3, "parent three"),
+    ]
+    # _ReverseRanker makes the last hybrid candidate the top-ranked one.
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_ReverseRanker()
+    )
+
+    docs = retriever.invoke("q")
+
+    assert [d.page_content for d in docs] == [
+        "parent three",
+        "parent two",
+        "parent one",
+    ]
+
+
+def test_rerank_truncates_to_num_documents_to_retrieve(mock_vectorstore):
+    """At most num_documents_to_retrieve parents are returned after rerank."""
+    children = [_child(f"c{i}", parent_id=i) for i in range(8)]
+    mock_vectorstore.hybrid_search.return_value = children
+    mock_vectorstore._mock_cursor.fetchall.return_value = [
+        _parent_row(i, f"parent {i}") for i in range(8)
+    ]
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore,
+        num_documents_to_retrieve=3,
+        reranker=_IdentityRanker(),
+    )
+
+    docs = retriever.invoke("q")
+
+    assert len(docs) == 3
+    assert [d.page_content for d in docs] == ["parent 0", "parent 1", "parent 2"]
+
+
+def test_rerank_dedupes_parents_before_truncating(mock_vectorstore):
+    """Duplicate parents collapse to one before the top-N cut is applied."""
+    mock_vectorstore.hybrid_search.return_value = [
+        _child("c1", parent_id=1),
+        _child("c2", parent_id=1),
+        _child("c3", parent_id=2),
+        _child("c4", parent_id=3),
+    ]
+    mock_vectorstore._mock_cursor.fetchall.return_value = [
+        _parent_row(1, "parent one"),
+        _parent_row(2, "parent two"),
+        _parent_row(3, "parent three"),
+    ]
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore,
+        num_documents_to_retrieve=2,
+        reranker=_IdentityRanker(),
+    )
+
+    docs = retriever.invoke("q")
+
+    # Two distinct parents from the first three reranked children, then stop.
+    assert [d.page_content for d in docs] == ["parent one", "parent two"]
+
+
+def test_rerank_score_attached_to_results(mock_vectorstore):
+    """Each returned parent carries its cross-encoder score in metadata."""
+    mock_vectorstore.hybrid_search.return_value = [_child("c1", parent_id=1)]
+    mock_vectorstore._mock_cursor.fetchall.return_value = [_parent_row(1, "parent one")]
+    ranker = MagicMock()
+    ranker.rerank.return_value = [{"id": 0, "score": 4.2}]
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=ranker
+    )
+
+    doc = retriever.invoke("q")[0]
+
+    assert doc.metadata["rerank_score"] == 4.2
+
+
+def test_default_reranker_model_constant(mock_vectorstore):
+    """Retriever defaults to the configured FlashRank model."""
+    from src.data_manager.vectorstore.retrievers.hierarchical_retriever import (
+        DEFAULT_RERANKER_MODEL,
+    )
+
+    assert DEFAULT_RERANKER_MODEL == "ms-marco-MiniLM-L-12-v2"
+    retriever = LlamaIndexHierarchicalRetriever(vectorstore=mock_vectorstore)
+    assert retriever.reranker_model == DEFAULT_RERANKER_MODEL

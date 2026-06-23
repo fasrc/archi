@@ -2,14 +2,15 @@
 Hierarchical retriever: hybrid child-candidate generation + parent expansion.
 
 This retriever generates a pool of small embedded *child* candidates via the
-existing Postgres-native hybrid (BM25 + vector) search, then maps each child hit
-back to its larger *parent* context node in ``document_parent_nodes`` (linked via
+existing Postgres-native hybrid (BM25 + vector) search, reranks that pool with a
+CPU cross-encoder (FlashRank), then maps each child hit back to its larger
+*parent* context node in ``document_parent_nodes`` (linked via
 ``metadata.parent_id``), deduplicating parents so multiple child hits under one
-parent collapse to a single context document.
+parent collapse to a single context document, and returns the top-N parents.
 
 This module implements task 3.1 (candidate generation, parent lookup, parent
-dedupe). The cross-encoder rerank step and top-N truncation are layered on top in
-task 3.2; configuration gating / fallback to ``HybridRetriever`` lands in 3.3.
+dedupe) and task 3.2 (FlashRank cross-encoder rerank + top-N truncation).
+Configuration gating / fallback to ``HybridRetriever`` lands in 3.3.
 """
 
 import json
@@ -25,6 +26,26 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Default FlashRank ONNX cross-encoder (CPU). Mirrors the config default in
+# ``base-config.yaml`` (data_manager.retrievers.hierarchical_rerank.reranker.model).
+DEFAULT_RERANKER_MODEL = "ms-marco-MiniLM-L-12-v2"
+
+# Module-level cache of FlashRank rankers keyed by model name. Building a Ranker
+# downloads/loads the ONNX model, so we share one instance per model across
+# retriever instances rather than rebuilding it per query.
+_RANKER_CACHE: Dict[str, Any] = {}
+
+
+def _get_cached_ranker(model_name: str) -> Any:  # pragma: no cover - loads model
+    """Build (once) and return a FlashRank ``Ranker`` for ``model_name``."""
+    ranker = _RANKER_CACHE.get(model_name)
+    if ranker is None:
+        from flashrank import Ranker
+
+        ranker = Ranker(model_name=model_name)
+        _RANKER_CACHE[model_name] = ranker
+    return ranker
+
 
 class LlamaIndexHierarchicalRetriever(BaseRetriever):
     """
@@ -33,33 +54,46 @@ class LlamaIndexHierarchicalRetriever(BaseRetriever):
     Pipeline:
     1. Generate ``candidate_pool_size`` (~20) child candidates via the
        vectorstore's native ``hybrid_search`` (BM25 + vector).
-    2. Map each child hit to its parent node by ``metadata.parent_id`` and fetch
-       the parent rows from ``document_parent_nodes``.
-    3. Deduplicate parents (first-seen order preserved) and return them as
-       LangChain ``Document`` objects.
-
-    The reranking / top-N narrowing is added in a later task; for now the
-    retriever returns the full deduplicated parent set in candidate order.
+    2. Rerank the child candidate pool with a CPU cross-encoder (FlashRank),
+       scoring each child against the query.
+    3. In reranked order, map each child hit to its parent node by
+       ``metadata.parent_id`` and fetch the parent rows from
+       ``document_parent_nodes``, deduplicating parents (best-ranked first).
+    4. Return the top ``num_documents_to_retrieve`` (~5) parent nodes as
+       LangChain ``Document`` objects, each carrying its cross-encoder
+       ``rerank_score`` in metadata.
     """
 
     vectorstore: VectorStore
     candidate_pool_size: int = 20
+    num_documents_to_retrieve: int = 5
     bm25_weight: float = 0.5
     semantic_weight: float = 0.5
+    reranker_model: str = DEFAULT_RERANKER_MODEL
+    # Injectable FlashRank ranker; built lazily from ``reranker_model`` when None
+    # (kept out of construction so unit tests can supply a stub without loading
+    # the ONNX model).
+    reranker: Optional[Any] = None
 
     def __init__(
         self,
         vectorstore: VectorStore,
         candidate_pool_size: int = 20,
+        num_documents_to_retrieve: int = 5,
         bm25_weight: float = 0.5,
         semantic_weight: float = 0.5,
+        reranker_model: str = DEFAULT_RERANKER_MODEL,
+        reranker: Optional[Any] = None,
         **kwargs,
     ):
         super().__init__(
             vectorstore=vectorstore,
             candidate_pool_size=candidate_pool_size,
+            num_documents_to_retrieve=num_documents_to_retrieve,
             bm25_weight=bm25_weight,
             semantic_weight=semantic_weight,
+            reranker_model=reranker_model,
+            reranker=reranker,
             **kwargs,
         )
 
@@ -143,54 +177,88 @@ class LlamaIndexHierarchicalRetriever(BaseRetriever):
             )
         return parents
 
+    def _rerank(
+        self, query: str, candidates: List[Tuple[Document, float]]
+    ) -> List[Tuple[int, float]]:
+        """
+        Rerank the child candidate pool with the FlashRank cross-encoder.
+
+        Returns a list of ``(candidate_index, rerank_score)`` tuples ordered by
+        descending cross-encoder score. The indices refer back into
+        ``candidates`` so callers can recover the original child documents.
+        """
+        from flashrank import RerankRequest
+
+        ranker = self.reranker
+        if ranker is None:
+            ranker = _get_cached_ranker(self.reranker_model)
+
+        passages = [
+            {"id": index, "text": doc.page_content, "meta": {}}
+            for index, (doc, _score) in enumerate(candidates)
+        ]
+        ranked = ranker.rerank(RerankRequest(query=query, passages=passages))
+        return [(int(item["id"]), float(item["score"])) for item in ranked]
+
     def _get_relevant_documents(
         self,
         query: str,
         *,
         run_manager: Optional[CallbackManagerForRetrieverRun] = None,
     ) -> List[Document]:
-        """Return deduplicated parent-context documents for the query."""
+        """Return the top reranked, deduplicated parent-context documents."""
         candidates = self._generate_candidates(query)
         if not candidates:
             return []
 
-        # Preserve first-seen (hybrid-score) ordering while collecting the unique
-        # parent ids referenced by the child candidates. Candidates lacking a
-        # parent_id (e.g. legacy non-hierarchical rows) pass through as their own
-        # child document so recall is not silently dropped.
-        ordered_keys: List[Tuple[str, Any]] = []
+        # Cross-encoder reranks the child pool; we then walk children in
+        # reranked order. Mapping child -> parent and deduplicating in this order
+        # means each parent inherits its best-ranked child's position/score.
+        # Candidates lacking a parent_id (e.g. legacy non-hierarchical rows) pass
+        # through as their own child document so recall is not silently dropped.
+        ranked = self._rerank(query, candidates)
+
+        ordered: List[Tuple[Tuple[str, Any], float]] = []
         seen: set = set()
         parent_ids: List[Any] = []
         passthrough: Dict[Tuple[str, Any], Document] = {}
 
-        for position, (doc, _score) in enumerate(candidates):
+        for index, score in ranked:
+            doc, _hybrid_score = candidates[index]
             parent_id = doc.metadata.get("parent_id")
             if parent_id is not None:
                 key = ("parent", parent_id)
-                if key not in seen:
-                    seen.add(key)
-                    ordered_keys.append(key)
-                    parent_ids.append(parent_id)
-            else:
-                key = ("child", position)
+                if key in seen:
+                    continue
                 seen.add(key)
-                ordered_keys.append(key)
+                ordered.append((key, score))
+                parent_ids.append(parent_id)
+            else:
+                key = ("child", index)
+                seen.add(key)
+                ordered.append((key, score))
                 passthrough[key] = doc
 
         parents = self._fetch_parents(parent_ids)
 
         results: List[Document] = []
-        for kind, ref in ordered_keys:
+        for (kind, ref), score in ordered:
             if kind == "parent":
-                parent_doc = parents.get(ref)
-                if parent_doc is not None:
-                    results.append(parent_doc)
+                doc = parents.get(ref)
+                if doc is None:
+                    continue
             else:
-                results.append(passthrough[(kind, ref)])
+                doc = passthrough[(kind, ref)]
+            doc.metadata["rerank_score"] = score
+            results.append(doc)
+            if len(results) >= self.num_documents_to_retrieve:
+                break
 
         logger.debug(
-            "Hierarchical retrieval: %d candidates -> %d parent documents",
+            "Hierarchical retrieval: %d candidates -> %d parent documents "
+            "(top %d after rerank)",
             len(candidates),
             len(results),
+            self.num_documents_to_retrieve,
         )
         return results
