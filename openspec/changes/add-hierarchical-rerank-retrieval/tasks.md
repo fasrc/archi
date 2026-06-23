@@ -7,7 +7,7 @@
 
 ## 2. Ingestion: structural parent-child chunking
 
-- [ ] 2.1 Add a LlamaIndex node-parsing helper that converts a LangChain `Document` → LlamaIndex `Document` → hierarchical nodes (parents + children), defaulting to `SentenceSplitter`, with `MarkdownElementNodeParser` selected for markdown sources.
+- [x] 2.1 Add a LlamaIndex node-parsing helper that converts a LangChain `Document` → LlamaIndex `Document` → hierarchical nodes (parents + children), defaulting to `SentenceSplitter`, with `MarkdownElementNodeParser` selected for markdown sources.
 - [ ] 2.2 Force archi's embedder: embed child nodes with the existing `embedding_model` (do NOT use any LlamaIndex default embedder); assert each child embedding is 384-dim and fail loudly on mismatch.
 - [ ] 2.3 In `VectorStoreManager._add_to_postgres` (`vectorstore/manager.py`), when the structural strategy is enabled: persist parents to `document_parent_nodes`, persist children to `document_chunks` (existing insert path, embeddings + `metadata.parent_id`). Keep the `CharacterTextSplitter` path intact for fallback.
 - [ ] 2.4 Leave `PostgresVectorStore.add_texts` (LangChain-API write path) naive; add a comment noting it does not produce parent nodes.
