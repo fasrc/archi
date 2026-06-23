@@ -3,7 +3,7 @@
 - [x] 1.1 Add `llama-index-core` and `flashrank` to project dependencies (branch-scoped); record chatbot/data-manager image-size delta.
 - [x] 1.2 Add `document_parent_nodes` DDL to `src/cli/templates/init.sql` (additive, `CREATE TABLE IF NOT EXISTS`): `id`, `document_id` FK→documents ON DELETE CASCADE, `parent_index`, `parent_text`, `metadata JSONB`; no `embedding` column; index on `document_id`. Leave `document_chunks` untouched.
 - [x] 1.3 Add a child→parent link: store `parent_id` on the child row's existing `document_chunks.metadata` JSONB (no new column on document_chunks) referencing `document_parent_nodes.id`.
-- [ ] 1.4 Add config flags (default off): `data_manager.chunking.strategy` (`character`|`sentence`|`markdown`) and `data_manager.retrievers.hierarchical_rerank.enabled` + `reranker` settings (alongside the existing `data_manager.retrievers.*` entries).
+- [x] 1.4 Add config flags (default off): `data_manager.chunking.strategy` (`character`|`sentence`|`markdown`) and `data_manager.retrievers.hierarchical_rerank.enabled` + `reranker` settings (alongside the existing `data_manager.retrievers.*` entries).
 
 ## 2. Ingestion: structural parent-child chunking
 
