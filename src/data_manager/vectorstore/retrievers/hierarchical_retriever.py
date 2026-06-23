@@ -14,6 +14,7 @@ Configuration gating / fallback to ``HybridRetriever`` lands in 3.3.
 """
 
 import json
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2.extras
@@ -34,16 +35,24 @@ DEFAULT_RERANKER_MODEL = "ms-marco-MiniLM-L-12-v2"
 # downloads/loads the ONNX model, so we share one instance per model across
 # retriever instances rather than rebuilding it per query.
 _RANKER_CACHE: Dict[str, Any] = {}
+# Guards _RANKER_CACHE. A Flask chat service can call _get_cached_ranker from
+# multiple request threads concurrently, and building a Ranker downloads/loads the
+# ONNX model — double-checked locking ensures it loads once per model name rather
+# than racing into duplicate loads or a partially-initialized entry.
+_RANKER_CACHE_LOCK = threading.Lock()
 
 
 def _get_cached_ranker(model_name: str) -> Any:  # pragma: no cover - loads model
     """Build (once) and return a FlashRank ``Ranker`` for ``model_name``."""
     ranker = _RANKER_CACHE.get(model_name)
     if ranker is None:
-        from flashrank import Ranker
+        with _RANKER_CACHE_LOCK:
+            ranker = _RANKER_CACHE.get(model_name)
+            if ranker is None:
+                from flashrank import Ranker
 
-        ranker = Ranker(model_name=model_name)
-        _RANKER_CACHE[model_name] = ranker
+                ranker = Ranker(model_name=model_name)
+                _RANKER_CACHE[model_name] = ranker
     return ranker
 
 
@@ -97,10 +106,19 @@ class LlamaIndexHierarchicalRetriever(BaseRetriever):
             **kwargs,
         )
 
-        if not hasattr(vectorstore, "hybrid_search"):
+        # The retriever calls hybrid_search() for candidate generation and
+        # _get_connection()/_close_connection() for parent lookup — all
+        # PostgresVectorStore methods. Validate them at construction so an
+        # incompatible store fails fast here rather than with an AttributeError
+        # mid-query.
+        required = ("hybrid_search", "_get_connection", "_close_connection")
+        missing = [name for name in required if not hasattr(vectorstore, name)]
+        if missing:
             raise ValueError(
-                "LlamaIndexHierarchicalRetriever requires a vectorstore exposing "
-                "hybrid_search() (e.g. PostgresVectorStore)."
+                "LlamaIndexHierarchicalRetriever requires a Postgres-style "
+                "vectorstore exposing hybrid_search(), _get_connection(), and "
+                "_close_connection() (e.g. PostgresVectorStore); missing: "
+                + ", ".join(missing)
             )
 
     def _generate_candidates(self, query: str) -> List[Tuple[Document, float]]:

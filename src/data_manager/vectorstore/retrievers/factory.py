@@ -10,7 +10,7 @@ rerank -> top-N parent context); otherwise it falls back to the existing
 lives here rather than inside the agent.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.vectorstores.base import VectorStore
@@ -28,7 +28,7 @@ logger = get_logger(__name__)
 
 def build_vector_retriever(
     vectorstore: VectorStore,
-    retrievers_cfg: Dict[str, Any],
+    retrievers_cfg: Optional[Dict[str, Any]] = None,
 ) -> BaseRetriever:
     """
     Return the configured vectorstore retriever.

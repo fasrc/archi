@@ -22,12 +22,19 @@ from src.data_manager.vectorstore.retrievers import (
 
 
 class _FakeStore(VectorStore):
-    """Minimal real VectorStore exposing hybrid_search for both retrievers."""
+    """Minimal real VectorStore exposing the PostgresVectorStore surface the
+    hierarchical retriever requires (hybrid_search + connection accessors)."""
 
     def hybrid_search(
         self, query, k, semantic_weight, bm25_weight
     ):  # pragma: no cover - stub
         return []
+
+    def _get_connection(self):  # pragma: no cover - stub (Postgres parity)
+        return None
+
+    def _close_connection(self, conn):  # pragma: no cover - stub (Postgres parity)
+        return None
 
     def similarity_search(self, query, k=4, **kwargs):  # pragma: no cover - stub
         return []
