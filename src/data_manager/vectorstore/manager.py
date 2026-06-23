@@ -15,6 +15,12 @@ from src.utils.env import read_secret
 from src.utils.logging import get_logger
 
 from .loader_utils import select_loader
+from .node_parsing import (
+    MARKDOWN_STRATEGY,
+    SENTENCE_STRATEGY,
+    build_hierarchical_nodes,
+    embed_child_nodes,
+)
 from .postgres_vectorstore import PostgresVectorStore
 
 logger = get_logger(__name__)
@@ -82,6 +88,18 @@ class VectorStoreManager:
         self.text_splitter = CharacterTextSplitter(
             chunk_size=self._data_manager_config["chunk_size"],
             chunk_overlap=self._data_manager_config["chunk_overlap"],
+        )
+
+        # Structure-aware chunking strategy (data_manager.chunking.strategy).
+        # 'character' (default) keeps the CharacterTextSplitter path above;
+        # 'sentence'/'markdown' enable hierarchical parent-child node parsing,
+        # persisting parents to document_parent_nodes and embedded children to
+        # document_chunks (linked via metadata.parent_id).
+        chunking_cfg = self._data_manager_config.get("chunking", {}) or {}
+        self.chunking_strategy = chunking_cfg.get("strategy", "character")
+        self.hierarchical_chunking = self.chunking_strategy in (
+            SENTENCE_STRATEGY,
+            MARKDOWN_STRATEGY,
         )
 
         self.stemmer = None
@@ -313,6 +331,24 @@ class VectorStoreManager:
                 self._catalog.update_ingestion_status(filehash, "failed", str(exc))
                 return None
 
+            # Structural parent-child path: build hierarchical nodes instead of
+            # fixed-character chunks. The Indico chunk-prefix below is NOT applied
+            # here (it is a legacy CharacterTextSplitter-path enrichment); children
+            # carry the document metadata only.
+            if self.hierarchical_chunking:
+                parents = self._build_hierarchical_payload(
+                    docs, file_level_metadata, filename, filehash, apply_stemming
+                )
+                if not parents:
+                    logger.info(
+                        f"No hierarchical nodes generated for {filename}; skipping."
+                    )
+                    self._catalog.update_ingestion_status(
+                        filehash, "failed", "No text chunks could be extracted"
+                    )
+                    return None
+                return filename, parents
+
             split_docs = self.text_splitter.split_documents(docs)
 
             chunks: List[str] = []
@@ -431,6 +467,61 @@ class VectorStoreManager:
                     if not processed:
                         continue
 
+                    if self.hierarchical_chunking:
+                        filename, parents = processed
+                        child_count = sum(len(p["child_texts"]) for p in parents)
+                        logger.info(
+                            f"Embedding file {file_idx+1}/{total_files}: {filename} "
+                            f"({len(parents)} parents, {child_count} children)"
+                        )
+
+                        document_id = self._catalog.get_document_id(filehash)
+                        if document_id is None:
+                            logger.warning(
+                                f"No document record found for {filehash}, chunks will have NULL document_id"
+                            )
+
+                        savepoint_name = f"sp_embed_{file_idx}"
+                        cursor.execute(f"SAVEPOINT {savepoint_name}")
+                        try:
+                            inserted = self._insert_hierarchical_file(
+                                cursor, document_id, parents
+                            )
+                            cursor.execute(
+                                """UPDATE documents
+                                   SET ingested_at = NOW(), ingestion_status = 'embedded',
+                                       ingestion_error = NULL, indexed_at = NOW()
+                                   WHERE resource_hash = %s AND NOT is_deleted""",
+                                (filehash,),
+                            )
+                            cursor.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                            logger.debug(
+                                f"Added {inserted} child chunks for {filename} "
+                                f"(document_id={document_id})"
+                            )
+                        except Exception as exc:
+                            logger.error(
+                                f"Failed to store hierarchical vectors for {filename}: {exc}"
+                            )
+                            cursor.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
+                            cursor.execute(
+                                """UPDATE documents
+                                   SET ingestion_status = 'failed', ingestion_error = %s
+                                   WHERE resource_hash = %s AND NOT is_deleted""",
+                                (str(exc), filehash),
+                            )
+                            cursor.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+
+                        files_since_commit += 1
+                        if files_since_commit >= commit_batch_size:
+                            conn.commit()
+                            logger.info(
+                                "Committed embedding progress batch (%d files)",
+                                files_since_commit,
+                            )
+                            files_since_commit = 0
+                        continue
+
                     filename, chunks, metadatas = processed
                     logger.info(
                         f"Embedding file {file_idx+1}/{total_files}: {filename} ({len(chunks)} chunks)"
@@ -543,6 +634,134 @@ class VectorStoreManager:
             conn.close()
 
         logger.info("All files have been added to the vectorstore")
+
+    def _build_hierarchical_payload(
+        self,
+        docs,
+        file_level_metadata: Dict,
+        filename: str,
+        filehash: str,
+        apply_stemming: bool,
+    ) -> List[Dict[str, Any]]:
+        """Parse loaded documents into parent payloads for hierarchical storage.
+
+        Each returned entry describes one parent context node plus its embedded
+        child leaf texts. Parents are persisted to ``document_parent_nodes`` and
+        children to ``document_chunks`` (linked via ``metadata.parent_id``) by
+        :meth:`_insert_hierarchical_file`. Parents with no usable child text are
+        dropped; ``parent_index`` is assigned sequentially across the file.
+        """
+        if apply_stemming:
+            tokenize = nltk.tokenize.word_tokenize
+            stem = self.stemmer.stem
+
+        parents: List[Dict[str, Any]] = []
+        parent_index = 0
+        for doc in docs:
+            for node in build_hierarchical_nodes(doc, strategy=self.chunking_strategy):
+                child_texts: List[str] = []
+                for child in node.child_texts:
+                    child = (child or "").replace("\x00", "")
+                    if apply_stemming:
+                        words = tokenize(child)
+                        child = " ".join(stem(word) for word in words)
+                    if not child.strip():
+                        continue
+                    child_texts.append(child)
+
+                if not child_texts:
+                    continue
+
+                node_metadata = getattr(node, "metadata", {}) or {}
+                base_metadata = {**file_level_metadata, **node_metadata}
+                base_metadata["filename"] = filename
+                base_metadata["resource_hash"] = filehash
+                base_metadata["collection"] = self.collection_name
+
+                parent_metadata = dict(base_metadata)
+                parent_metadata["parent_index"] = parent_index
+
+                child_metadatas = [dict(base_metadata) for _ in child_texts]
+
+                parents.append(
+                    {
+                        "parent_index": parent_index,
+                        "parent_text": (node.parent_text or "").replace("\x00", ""),
+                        "parent_metadata": parent_metadata,
+                        "child_texts": child_texts,
+                        "child_metadatas": child_metadatas,
+                    }
+                )
+                parent_index += 1
+
+        return parents
+
+    def _insert_hierarchical_file(
+        self, cursor, document_id, parents: List[Dict[str, Any]]
+    ) -> int:
+        """Persist one file's parent nodes and their embedded children.
+
+        Parents are inserted into ``document_parent_nodes`` first so their
+        serial ``id`` can be stamped onto each child's ``metadata.parent_id``;
+        children are embedded with archi's configured model (dimension-guarded
+        by :func:`embed_child_nodes`) and inserted into ``document_chunks`` with
+        a unique ``chunk_index`` per document. Raises on any DB/embedding error
+        so the caller can roll the file back to its savepoint.
+        """
+        import json
+
+        child_texts: List[str] = []
+        child_metadatas: List[Dict] = []
+        for parent in parents:
+            parent_metadata_json = json.dumps(parent["parent_metadata"]).replace(
+                "\x00", ""
+            )
+            cursor.execute(
+                """
+                INSERT INTO document_parent_nodes
+                    (document_id, parent_index, parent_text, metadata)
+                VALUES (%s, %s, %s, %s::jsonb)
+                RETURNING id
+                """,
+                (
+                    document_id,
+                    parent["parent_index"],
+                    parent["parent_text"],
+                    parent_metadata_json,
+                ),
+            )
+            parent_db_id = cursor.fetchone()[0]
+
+            for text, metadata in zip(parent["child_texts"], parent["child_metadatas"]):
+                child_metadata = dict(metadata)
+                child_metadata["parent_id"] = parent_db_id
+                child_texts.append(text)
+                child_metadatas.append(child_metadata)
+
+        embeddings = embed_child_nodes(self.embedding_model, child_texts)
+
+        insert_data = []
+        for idx, (chunk, embedding, metadata) in enumerate(
+            zip(child_texts, embeddings, child_metadatas)
+        ):
+            clean_chunk = chunk.replace("\x00", "")
+            metadata = dict(metadata)
+            metadata["chunk_index"] = idx
+            clean_metadata_json = json.dumps(metadata).replace("\x00", "")
+            insert_data.append(
+                (document_id, idx, clean_chunk, embedding, clean_metadata_json)
+            )
+
+        psycopg2.extras.execute_values(
+            cursor,
+            """
+            INSERT INTO document_chunks (document_id, chunk_index, chunk_text, embedding, metadata)
+            VALUES %s
+            """,
+            insert_data,
+            template="(%s, %s, %s, %s::vector, %s::jsonb)",
+        )
+        return len(insert_data)
 
     def loader(self, file_path: str):
         """Return the document loader for a given path."""

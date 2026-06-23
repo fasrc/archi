@@ -27,13 +27,19 @@ if "langchain_core.vectorstores" not in sys.modules:
 
 if "nltk" not in sys.modules:
     nltk_module = types.ModuleType("nltk")
-    nltk_module.tokenize = types.SimpleNamespace(word_tokenize=lambda text: text.split())
-    nltk_module.stem = types.SimpleNamespace(PorterStemmer=lambda: types.SimpleNamespace(stem=lambda w: w))
+    nltk_module.tokenize = types.SimpleNamespace(
+        word_tokenize=lambda text: text.split()
+    )
+    nltk_module.stem = types.SimpleNamespace(
+        PorterStemmer=lambda: types.SimpleNamespace(stem=lambda w: w)
+    )
     nltk_module.download = lambda *_args, **_kwargs: None
     sys.modules["nltk"] = nltk_module
 
 if "langchain_text_splitters" not in sys.modules:
-    sys.modules["langchain_text_splitters"] = types.ModuleType("langchain_text_splitters")
+    sys.modules["langchain_text_splitters"] = types.ModuleType(
+        "langchain_text_splitters"
+    )
 
 if "langchain_text_splitters.character" not in sys.modules:
     character_module = types.ModuleType("langchain_text_splitters.character")
@@ -69,7 +75,9 @@ if "langchain_community.document_loaders" not in sys.modules:
 
 if "langchain_community.document_loaders.text" not in sys.modules:
     text_module = types.ModuleType("langchain_community.document_loaders.text")
-    text_module.TextLoader = sys.modules["langchain_community.document_loaders"].TextLoader
+    text_module.TextLoader = sys.modules[
+        "langchain_community.document_loaders"
+    ].TextLoader
     sys.modules["langchain_community.document_loaders.text"] = text_module
 
 from src.data_manager.vectorstore import manager as manager_module
@@ -112,6 +120,7 @@ def test_add_to_postgres_commits_every_25_files(monkeypatch):
     manager = VectorStoreManager.__new__(VectorStoreManager)
     manager.parallel_workers = 1
     manager.collection_name = "test_collection"
+    manager.hierarchical_chunking = False
     manager._data_manager_config = {"stemming": {"enabled": False}}
     manager._pg_config = {"host": "localhost"}
 
@@ -122,7 +131,9 @@ def test_add_to_postgres_commits_every_25_files(monkeypatch):
 
     split_doc = SimpleNamespace(page_content="hello world", metadata={})
     manager.text_splitter = SimpleNamespace(split_documents=lambda docs: [split_doc])
-    manager.embedding_model = SimpleNamespace(embed_documents=lambda chunks: [[0.1, 0.2, 0.3] for _ in chunks])
+    manager.embedding_model = SimpleNamespace(
+        embed_documents=lambda chunks: [[0.1, 0.2, 0.3] for _ in chunks]
+    )
     manager.loader = lambda _path: SimpleNamespace(load=lambda: [split_doc])
 
     fake_cursor = MagicMock()
@@ -131,7 +142,9 @@ def test_add_to_postgres_commits_every_25_files(monkeypatch):
     fake_conn.cursor.return_value.__exit__.return_value = False
 
     monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
-    monkeypatch.setattr(manager_module.psycopg2.extras, "execute_values", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", lambda *args, **kwargs: None
+    )
     monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
     monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
 
