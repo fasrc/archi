@@ -5,12 +5,12 @@
 # (hooks/pre-commit), and CI (.github/workflows/ci.yml) all invoke this one file —
 # the gate command lives here and nowhere else, so the three can never drift.
 #
-# Order mirrors CI: FORMAT (black, isort — writers), then TEST with scoped
-# COVERAGE. Coverage is scoped to src/data_manager/vectorstore — the package the
-# add-title-aware-retrieval feature touches — at a 60% floor: high enough to force
-# real tests on the feature's logic, low enough that the package's Postgres I/O
-# paths don't block every commit. The review gate backstops changes outside this
-# scoped path.
+# Order mirrors CI: FORMAT (black, isort — writers), then TEST with PATCH
+# COVERAGE. Coverage is gated on the lines this branch changes vs the base branch
+# (diff coverage via diff-cover), NOT a whole-package floor: a global floor on an
+# under-covered brownfield package (vectorstore baseline ~55%) blocks every commit,
+# even ones touching no vectorstore code. Diff coverage holds NEW code to standard
+# and lets unrelated commits through; the review gate backstops the rest.
 #
 # FORMAT SCOPE: archi's HEAD is not black-clean and CI runs black/isort as advisory
 # (continue-on-error), so formatting the WHOLE tree (`black .`) would rewrite ~150
@@ -36,4 +36,12 @@ if [ ${#changed[@]} -gt 0 ]; then
   isort "${changed[@]}"
 fi
 
-python -m pytest tests/unit/ --cov=src/data_manager/vectorstore --cov-report=term-missing --cov-fail-under=60
+# Full coverage report, then PATCH coverage against the base branch.
+BASE="${DIFF_COVER_BASE:-origin/dev}"
+python -m pytest tests/unit/ --cov=src --cov-report=xml --cov-report=term-missing
+
+if git rev-parse --verify --quiet "$BASE" >/dev/null; then
+  diff-cover coverage.xml --compare-branch="$BASE" --fail-under=80
+else
+  echo "gate: base ref '$BASE' not available — skipping patch-coverage check (set DIFF_COVER_BASE)" >&2
+fi

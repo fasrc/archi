@@ -61,6 +61,10 @@ pydantic==2.11.7
 pydantic-core==2.33.2
 anthropic==0.71.0
 scipy==1.13.1
+# Imported by src/bin/service_benchmark.py, which tests/unit/test_prompt_sweep_*.py
+# import at collection time. The gate (scripts/gate.sh) installs only
+# requirements-base, so pandas must live here for collection to succeed.
+pandas==2.3.2
 urllib3==2.3.0
 pulsar-client==3.5.0
 psycopg2-binary==2.9.10

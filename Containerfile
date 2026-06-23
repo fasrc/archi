@@ -37,6 +37,7 @@ RUN pip install --no-cache-dir --upgrade pip \
       isort==6.0.1 \
       pytest \
       pytest-cov \
+      diff-cover \
  && grep -ivE '^[[:space:]]*duckdb([=<>!~ ]|$)' /tmp/requirements-base.txt > /tmp/requirements-loop.txt \
  && pip install --no-cache-dir -r /tmp/requirements-loop.txt
 
