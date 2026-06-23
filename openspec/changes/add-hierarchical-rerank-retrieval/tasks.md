@@ -14,7 +14,7 @@
 
 ## 3. Retrieval: hierarchical retriever + rerank
 
-- [ ] 3.1 Implement `LlamaIndexHierarchicalRetriever(BaseRetriever)` in `src/data_manager/vectorstore/retrievers/`: generate ~20 child candidates via `PostgresVectorStore.hybrid_search`, look up parents by `metadata.parent_id` from `document_parent_nodes`, dedupe parents.
+- [x] 3.1 Implement `LlamaIndexHierarchicalRetriever(BaseRetriever)` in `src/data_manager/vectorstore/retrievers/`: generate ~20 child candidates via `PostgresVectorStore.hybrid_search`, look up parents by `metadata.parent_id` from `document_parent_nodes`, dedupe parents.
 - [ ] 3.2 Add a FlashRank cross-encoder rerank step over the candidate pool; return top 5 parent nodes as LangChain `Document`s (optionally `(Document, score)`).
 - [ ] 3.3 Export the retriever from `retrievers/__init__.py`; gate it behind `data_manager.retrievers.hierarchical_rerank.enabled` with fallback to `HybridRetriever`.
 
