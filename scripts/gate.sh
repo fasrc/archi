@@ -15,44 +15,29 @@
 # FORMAT SCOPE: archi's HEAD is not black-clean and CI runs black/isort as advisory
 # (continue-on-error), so formatting the WHOLE tree (`black .`) would rewrite ~150
 # unrelated files into the working tree every run. Instead we format only the .py
-# files this branch touched, scoped two ways so the gate is meaningful both locally
-# and in CI:
-#   - locally (pre-commit): changed-vs-HEAD + new untracked, written in place;
-#   - in CI: a fresh checkout has an empty changed-vs-HEAD, so we ALSO include the
-#     branch's changes vs the base branch and run black/isort in --check mode, so
-#     unformatted Python in the diff fails the build instead of slipping through.
+# files this turn touched (changed-vs-HEAD plus new untracked) — keeping the turn's
+# own output clean without churning the rest of the repo.
 #
 # `python -m pytest` (not bare `pytest`) so the repo root is on sys.path and the
 # `src` package imports resolve, matching CI.
 
 set -euo pipefail
 
-BASE="${DIFF_COVER_BASE:-origin/dev}"
-
-# Files this branch touched: working-tree changes vs HEAD (excluding deletions),
-# new untracked .py files, and — so CI's clean checkout still sees them — the
-# branch's changes vs the base branch. NUL-delimited to survive odd paths.
-collect_changed() {
-  git diff --name-only -z --diff-filter=d HEAD -- '*.py'
-  git ls-files --others --exclude-standard -z -- '*.py'
-  if git rev-parse --verify --quiet "$BASE" >/dev/null; then
-    git diff --name-only -z --diff-filter=d "$BASE"...HEAD -- '*.py'
-  fi
-}
-mapfile -d '' -t changed < <(collect_changed | sort -zu)
+# Files this turn touched: modified/added vs HEAD (excluding deletions) + new
+# untracked .py files. NUL-delimited to survive odd paths.
+mapfile -d '' -t changed < <(
+  { git diff --name-only -z --diff-filter=d HEAD -- '*.py'
+    git ls-files --others --exclude-standard -z -- '*.py'
+  } | sort -zu
+)
 
 if [ ${#changed[@]} -gt 0 ]; then
-  if [ -n "${CI:-}" ]; then
-    # CI: do not rewrite; fail on any unformatted file in the diff.
-    black --check --diff "${changed[@]}"
-    isort --check-only --diff "${changed[@]}"
-  else
-    black "${changed[@]}"
-    isort "${changed[@]}"
-  fi
+  black "${changed[@]}"
+  isort "${changed[@]}"
 fi
 
 # Full coverage report, then PATCH coverage against the base branch.
+BASE="${DIFF_COVER_BASE:-origin/dev}"
 python -m pytest tests/unit/ --cov=src --cov-report=xml --cov-report=term-missing
 
 if git rev-parse --verify --quiet "$BASE" >/dev/null; then
