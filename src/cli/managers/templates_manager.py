@@ -447,8 +447,15 @@ class TemplateManager:
         with open(grafana_dir / "archi-default-dashboard.json", "w") as f:
             f.write(dashboard)
 
+        grafana_anonymous_access = (
+            context.config_manager.config.get("services", {})
+            .get("grafana", {})
+            .get("anonymous_access", False)
+        )
         config_template = self.env.get_template(BASE_GRAFANA_CONFIG_TEMPLATE)
-        grafana_config = config_template.render()
+        grafana_config = config_template.render(
+            grafana_anonymous_access=grafana_anonymous_access,
+        )
         with open(grafana_dir / "grafana.ini", "w") as f:
             f.write(grafana_config)
 

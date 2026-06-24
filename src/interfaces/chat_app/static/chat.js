@@ -489,9 +489,25 @@ const Markdown = {
       const renderer = new marked.Renderer();
       const escapeAttr = (s) =>
         String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      // Allowlist URL schemes so untrusted markdown can't smuggle javascript:/
+      // data:/vbscript: links (XSS) through the unsanitized innerHTML render path.
+      const SAFE_SCHEMES = ['http:', 'https:', 'mailto:'];
+      const safeUrl = (href) => {
+        if (!href) return '#';
+        // Drop control chars/whitespace that can hide a scheme, e.g. "java\tscript:".
+        const cleaned = String(href).replace(/[\u0000-\u001F\u007F-\u009F\s]/g, '');
+        // Relative paths and in-page anchors are safe.
+        if (/^[/.#?]/.test(cleaned)) return href;
+        try {
+          const url = new URL(cleaned, window.location.href);
+          return SAFE_SCHEMES.includes(url.protocol) ? href : '#';
+        } catch (e) {
+          return '#';
+        }
+      };
       renderer.link = function(href, title, text) {
         const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
-        return `<a href="${escapeAttr(href)}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
+        return `<a href="${escapeAttr(safeUrl(href))}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
       };
       marked.setOptions({
         breaks: true,
