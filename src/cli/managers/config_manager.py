@@ -13,6 +13,21 @@ logger = get_logger(__name__)
 
 STATIC_FIELDS = ['global', 'services']
 
+
+def _comparable_static_field(static_field: str, value: Any) -> Any:
+    """Return the value used for cross-config consistency comparison.
+
+    `services.benchmarking` is the sweep axis for an ``archi evaluate
+    --config-dir`` run (the prompt under test and its name vary per config),
+    so it is exempted from the equality check. ``global`` and every other
+    ``services.*`` subsection are still compared as-is. ``archi create`` does
+    not consume ``services.benchmarking``, so this exemption cannot affect a
+    created deployment.
+    """
+    if static_field == 'services' and isinstance(value, dict):
+        return {k: v for k, v in value.items() if k != 'benchmarking'}
+    return value
+
 class ConfigurationManager:
     """Manages archi configuration loading and validation"""
     
@@ -64,7 +79,7 @@ class ConfigurationManager:
                     if not static_field in config.keys():
                         raise ValueError(f"The field {static_field} must be present in all configurations.")
 
-                    if previous_config[static_field] != config[static_field]:
+                    if _comparable_static_field(static_field, previous_config[static_field]) != _comparable_static_field(static_field, config[static_field]):
                         raise ValueError(f"The field {static_field} must be consistent across all configurations.")
 
             self.configs.append(config)

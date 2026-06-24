@@ -60,7 +60,11 @@ CREATE TABLE IF NOT EXISTS users (
     api_key_openrouter BYTEA,      -- Encrypted
     api_key_openai BYTEA,          -- Encrypted  
     api_key_anthropic BYTEA,       -- Encrypted
-    
+
+    -- API token for /v1 OpenAI-compatible endpoint (SHA-256 hash)
+    api_token_hash VARCHAR(64),
+    api_token_created_at TIMESTAMPTZ,
+
     -- Session tracking
     last_login_at TIMESTAMPTZ,
     login_count INTEGER NOT NULL DEFAULT 0,
@@ -72,6 +76,9 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_github_id ON users(github_id) WHERE github_id IS NOT NULL;
+-- UNIQUE: api_token_hash is a bearer credential looked up by hash, so a hash must
+-- map to at most one user. Partial so multiple NULLs (users without a token) coexist.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_token ON users(api_token_hash) WHERE api_token_hash IS NOT NULL;
 
 -- ============================================================================
 -- 1.1 SESSIONS
@@ -308,6 +315,36 @@ BEGIN
     END IF;
 END $$;
 
+-- Parent nodes for hierarchical (parent-child) chunking.
+-- Additive: holds the larger "parent" context nodes that embedded child rows in
+-- document_chunks reference via metadata.parent_id (-> document_parent_nodes.id).
+-- Parents are NOT embedded and NOT added to any vector/BM25 index, so the shared
+-- document_chunks hybrid_search path is unchanged and never returns parent rows.
+CREATE TABLE IF NOT EXISTS document_parent_nodes (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+    parent_index INTEGER NOT NULL,
+
+    -- Parent context content (no embedding column on purpose)
+    parent_text TEXT NOT NULL,
+
+    -- Original document metadata propagated to the parent node
+    metadata JSONB,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_parent_nodes_document ON document_parent_nodes(document_id);
+
+-- Child -> parent link. Embedded child rows in document_chunks reference their
+-- parent context node via the `parent_id` key inside the EXISTING metadata JSONB
+-- column (-> document_parent_nodes.id). No new column is added to document_chunks,
+-- so its schema, constraints, and the shared hybrid_search path stay unchanged;
+-- rows ingested by the legacy (non-hierarchical) path simply leave parent_id NULL.
+-- This expression index supports child->parent lookup and parent dedupe.
+CREATE INDEX IF NOT EXISTS idx_chunks_parent_id
+    ON document_chunks ((metadata->>'parent_id'));
+
 -- ============================================================================
 -- 5. DOCUMENT SELECTIONS (3-Tier System)
 -- ============================================================================
@@ -355,11 +392,25 @@ CREATE TABLE IF NOT EXISTS conversation_metadata (
     title TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    archi_version VARCHAR(50)
+    archi_version VARCHAR(50),
+    external_chat_id VARCHAR(200)
 );
 
 CREATE INDEX IF NOT EXISTS idx_conv_meta_user ON conversation_metadata(user_id);
 CREATE INDEX IF NOT EXISTS idx_conv_meta_client ON conversation_metadata(client_id);
+-- Composite to prevent cross-user collision on X-OpenWebUI-Chat-Id.
+-- Existing /v1-enabled deployments (where rows already have external_chat_id
+-- populated) must run, once:
+--   DROP INDEX idx_conv_meta_external_chat;
+--   CREATE UNIQUE INDEX idx_conv_meta_external_chat
+--     ON conversation_metadata(user_id, external_chat_id)
+--     WHERE external_chat_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_meta_external_chat ON conversation_metadata(user_id, external_chat_id) WHERE external_chat_id IS NOT NULL;
+-- Anonymous (user_id IS NULL) chats: Postgres treats NULLs as distinct in the
+-- composite index above, so anonymous OpenWebUI clients would never match it and
+-- a fresh conversation would be created on every request (history lost). This
+-- partial index keys anonymous chats on external_chat_id alone for continuity.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_meta_external_chat_anon ON conversation_metadata(external_chat_id) WHERE user_id IS NULL AND external_chat_id IS NOT NULL;
 
 -- Add FK to conversation_doc_overrides now that conversation_metadata exists
 DO $$
@@ -405,7 +456,7 @@ CREATE INDEX IF NOT EXISTS idx_conversations_model ON conversations(model_used);
 
 -- Feedback on messages
 CREATE TABLE IF NOT EXISTS feedback (
-    mid INTEGER NOT NULL REFERENCES conversations(message_id) ON DELETE CASCADE,
+    message_id INTEGER NOT NULL REFERENCES conversations(message_id) ON DELETE CASCADE,
     feedback_ts TIMESTAMPTZ NOT NULL,
     feedback TEXT NOT NULL,           -- 'like', 'dislike', 'comment'
     feedback_msg TEXT,                -- Optional text feedback/comment
@@ -413,14 +464,14 @@ CREATE TABLE IF NOT EXISTS feedback (
     unhelpful BOOLEAN,                -- Flag: response didn't help
     inappropriate BOOLEAN,            -- Flag: response was inappropriate
     
-    PRIMARY KEY (mid, feedback_ts)
+    PRIMARY KEY (message_id, feedback_ts)
 );
 
-CREATE INDEX IF NOT EXISTS idx_feedback_mid ON feedback(mid);
+CREATE INDEX IF NOT EXISTS idx_feedback_message_id ON feedback(message_id);
 
 -- Response timing metrics
 CREATE TABLE IF NOT EXISTS timing (
-    mid INTEGER PRIMARY KEY REFERENCES conversations(message_id) ON DELETE CASCADE,
+    message_id INTEGER PRIMARY KEY REFERENCES conversations(message_id) ON DELETE CASCADE,
     client_sent_msg_ts TIMESTAMPTZ NOT NULL,
     server_received_msg_ts TIMESTAMPTZ NOT NULL,
     lock_acquisition_ts TIMESTAMPTZ NOT NULL,
@@ -490,9 +541,9 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON agent_tool_calls(tool_name);
 CREATE TABLE IF NOT EXISTS ab_comparisons (
     comparison_id SERIAL PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES conversation_metadata(conversation_id) ON DELETE CASCADE,
-    user_prompt_mid INTEGER NOT NULL REFERENCES conversations(message_id) ON DELETE CASCADE,
-    response_a_mid INTEGER NOT NULL REFERENCES conversations(message_id) ON DELETE CASCADE,
-    response_b_mid INTEGER NOT NULL REFERENCES conversations(message_id) ON DELETE CASCADE,
+    user_prompt_message_id INTEGER NOT NULL REFERENCES conversations(message_id) ON DELETE CASCADE,
+    response_a_message_id INTEGER NOT NULL REFERENCES conversations(message_id) ON DELETE CASCADE,
+    response_b_message_id INTEGER NOT NULL REFERENCES conversations(message_id) ON DELETE CASCADE,
     
     -- Model/pipeline info (optional - can be derived from config_*_id if not set)
     model_a VARCHAR(200),

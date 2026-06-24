@@ -1,0 +1,113 @@
+# Argilla 2.x deployment for archi benchmark human-grading.
+#
+# This stack runs alongside (NOT inside) the archi docker-compose deployment
+# managed by `archi evaluate` / `archi create`. It owns its own ports, network,
+# and volumes; the only coupling to archi is at the data layer — `archi
+# evaluate --argilla` pushes records to this server's REST API at port 6900.
+#
+# Bring it up:
+#   docker compose -f argilla/docker-compose.yaml up -d
+#
+# Bring it down (data preserved):
+#   docker compose -f argilla/docker-compose.yaml down
+#
+# Bring it down AND wipe ES data (destructive):
+#   docker compose -f argilla/docker-compose.yaml down
+#   sudo rm -rf /scratch/docker/volumes/argilla-es
+#
+# Secrets are sourced from $HOME/.archi/argilla.env — generate it with:
+#   python scripts/bootstrap_argilla.py --generate-secrets
+#   python scripts/bootstrap_argilla.py --export-env
+# Argilla's start_argilla_server.sh reads raw USERNAME/PASSWORD/API_KEY env
+# vars (Docker's `_FILE` indirection is not supported), so we have to inline.
+
+services:
+  argilla:
+    image: argilla/argilla-server:v2.8.0
+    container_name: argilla-server
+    restart: unless-stopped
+    ports:
+      # TEMPORARY: host port 3080 instead of 6900. The FASRC perimeter
+      # firewall allows 3080 inbound from the admin VPN but not 6900.
+      # Network-change ticket is pending with FASRC to open tcp/6900
+      # inbound to this host from 10.255.13.96/27, mirroring the existing
+      # 7861 (archi-chatbot) allowance. Once that lands, switch back to
+      # "6900:6900" and drop the 3080 stopgap.
+      - "3080:6900"
+    env_file:
+      - ${HOME}/.archi/argilla.env
+    environment:
+      # Argilla server config (non-secret)
+      ARGILLA_HOME_PATH: /var/lib/argilla
+      ARGILLA_ELASTICSEARCH: http://elasticsearch:9200
+      ARGILLA_REDIS_URL: redis://redis:6379/0
+      ARGILLA_DATABASE_URL: sqlite:////var/lib/argilla/argilla.db
+    volumes:
+      - argilla-data:/var/lib/argilla
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - argilla-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:6900/api/_status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    container_name: argilla-redis
+    restart: unless-stopped
+    # No persistence needed — Argilla uses Redis only as a task-queue broker.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - argilla-net
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.4
+    container_name: argilla-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+      # Modest heap; tune via override if eval workload grows.
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      # Host-bind ES data so it survives container recreation and lives on the
+      # large /scratch filesystem rather than the small root partition.
+      - /scratch/docker/volumes/argilla-es:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks:
+      - argilla-net
+
+volumes:
+  argilla-data:
+    name: argilla-data
+
+networks:
+  argilla-net:
+    name: argilla-net
+    driver: bridge

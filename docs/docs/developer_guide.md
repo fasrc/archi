@@ -109,6 +109,32 @@ Agent specs are discovered via `list_agent_files()` and loaded via `load_agent_s
 2. Register it in the tool mapping within the agent's `_build_tools()` method.
 3. Add the tool name to agent spec YAML frontmatter `tools` list.
 
+## Dev Mode
+
+Use `--dev` with `archi create` to mount source code directly from the repo into containers. This eliminates the deploy-copy-rebuild cycle during development:
+
+```bash
+# Initial setup (builds images once)
+archi create -n my-archi --dev -f -c config.yaml -e .secrets.env \
+  --services chatbot --hostmode
+
+# After editing Python source or agent prompts:
+docker restart chatbot-my-archi
+# Changes are live — no redeploy needed
+```
+
+**What dev mode mounts:**
+
+| Host Path | Container Path | Purpose |
+|-----------|---------------|---------|
+| `repo/src/` | `/root/archi/src/` | Python source (shadows Dockerfile COPY) |
+| `repo/config/agents/` | `/root/archi/agents/` | Agent specs (replaces deploy-copied mount) |
+
+**When you still need a full redeploy:**
+
+- Config YAML changes (goes through Jinja2 template rendering)
+- Adding new Python dependencies (requires `pip install` in image rebuild)
+
 ## Contribution Workflow
 
 1. **Branch**: Create a feature branch from `main` (e.g., `dev/my-feature`).

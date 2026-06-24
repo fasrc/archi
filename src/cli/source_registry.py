@@ -74,6 +74,13 @@ class SourceRegistry:
                 ],
             )
         )
+        self.register(
+            SourceDefinition(
+                name="indico",
+                description="Indico event and meeting scraping",
+                depends_on=["links"],
+            )
+        )
 
     def register(self, source_def: SourceDefinition) -> None:
         self._sources[source_def.name] = source_def
@@ -108,12 +115,41 @@ class SourceRegistry:
     def names(self) -> List[str]:
         return sorted(self._sources.keys())
 
-    def required_secrets(self, enabled_sources: List[str]) -> List[str]:
+    def required_secrets(
+        self, enabled_sources: List[str], configs: List[Dict] = None
+    ) -> List[str]:
         secrets: List[str] = []
-        for source in self.resolve_dependencies(enabled_sources):
+        resolved = self.resolve_dependencies(enabled_sources)
+        for source in resolved:
             if source in self._sources:
                 secrets.extend(self._sources[source].required_secrets)
+        secrets.extend(self._conditional_secrets(resolved, configs or []))
         return sorted(set(secrets))
+
+    @staticmethod
+    def _conditional_secrets(
+        resolved_sources: List[str], configs: List[Dict]
+    ) -> List[str]:
+        """Secrets that depend on config, not just whether a source is enabled."""
+        extra: List[str] = []
+        # Indico defaults use_sso=True; protected events need SSO credentials at
+        # scrape time. Require them up front unless every config opts out, so the
+        # create step fails fast instead of silently skipping authed events later.
+        if "indico" in resolved_sources:
+            use_sso = True
+            for config in configs:
+                if not isinstance(config, dict):
+                    continue
+                indico_cfg = (
+                    config.get("data_manager", {})
+                    .get("sources", {})
+                    .get("indico", {})
+                )
+                if isinstance(indico_cfg, dict) and "use_sso" in indico_cfg:
+                    use_sso = bool(indico_cfg["use_sso"])
+            if use_sso:
+                extra.extend(["SSO_USERNAME", "SSO_PASSWORD"])
+        return extra
 
     def required_config_fields(self, enabled_sources: List[str]) -> List[str]:
         fields: List[str] = []

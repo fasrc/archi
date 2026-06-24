@@ -23,6 +23,8 @@ httpx==0.27.2
 humanfriendly==10.0
 croniter==2.0.5
 langgraph==1.0.2
+# See requirements/requirements-base.txt for the rationale on this pin.
+langgraph-prebuilt<1.0.9
 langchain-mcp-adapters==0.1.11
 langchain==1.0.3
 langchain_ollama==1.0.0
@@ -90,3 +92,10 @@ aiohttp==3.9.5
 nltk==3.9.1
 sentence-transformers==5.1.2
 rank_bm25==0.2.2
+# Hierarchical-rerank-retrieval (branch-scoped, additive). See
+# requirements/requirements-base.txt (source of truth) for the version-pin
+# rationale; llama-index-core 0.14.19 is the last release compatible with the
+# nltk==3.9.1 pin above. Generated files are normally produced by
+# scripts/dev/build_docker_images.sh from requirements/requirements-base.txt.
+llama-index-core==0.14.19
+flashrank==0.2.10

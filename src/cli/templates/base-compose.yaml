@@ -1,3 +1,26 @@
+{#-
+  dev-mode mount macros: bind-mount repo src/ and config/agents/ into
+  a service when dev_mode is set. Keeps the per-service blocks in sync.
+-#}
+{%- macro dev_src_mount() -%}
+{%- if dev_mode %}
+      - {{ repo_path }}/src:/root/archi/src
+{%- endif %}
+{%- endmacro -%}
+{%- macro dev_agents_mount(ro=true) -%}
+{%- if dev_mode %}
+      - {{ repo_path }}/src:/root/archi/src
+      - ./data/agents:/root/archi/agents{% if ro %}:ro{% endif %}
+{%- else %}
+      - ./data/agents:/root/archi/agents{% if ro %}:ro{% endif %}
+{%- endif %}
+{%- endmacro -%}
+{#- dev-only env vars: keep .pyc out of the bind-mounted host repo. -#}
+{%- macro dev_env() -%}
+{%- if dev_mode %}
+      PYTHONDONTWRITEBYTECODE: 1
+{%- endif %}
+{%- endmacro -%}
 services:
   {% if data_manager_enabled -%}
   data-manager:
@@ -22,6 +45,7 @@ services:
       PGUSER: archi
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -35,6 +59,7 @@ services:
       - {{ data_manager_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./weblists:/root/archi/weblists
+      {{ dev_src_mount() }}
     logging:
       options:
         max-size: 10m
@@ -134,6 +159,7 @@ services:
       VERBOSITY: {{ verbosity }}
       # Allow overriding Ollama host via env so containers can reach host daemon
       OLLAMA_HOST: ${OLLAMA_HOST:-}
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -160,7 +186,7 @@ services:
       - {{ data_manager_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
-      - ./data/agents:/root/archi/agents
+      {{ dev_agents_mount(ro=false) }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -250,6 +276,7 @@ services:
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
     environment:
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -283,7 +310,7 @@ services:
       - {{ grader_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
-      - ./data/agents:/root/archi/agents:ro
+      {{ dev_agents_mount() }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -335,6 +362,7 @@ services:
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
       PGUSER: archi
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -349,7 +377,7 @@ services:
       - {{ data_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
-      - ./data/agents:/root/archi/agents:ro
+      {{ dev_agents_mount() }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -386,6 +414,7 @@ services:
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
       PGUSER: archi
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -413,7 +442,7 @@ services:
       - {{ data_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
-      - ./data/agents:/root/archi/agents:ro
+      {{ dev_agents_mount() }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -461,6 +490,7 @@ services:
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
       PGUSER: archi
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -479,7 +509,7 @@ services:
       - {{ data_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
       - ./data/prompts:/root/archi/data/prompts:ro
-      - ./data/agents:/root/archi/agents:ro
+      {{ dev_agents_mount() }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -525,6 +555,7 @@ services:
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
       PGUSER: archi
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -542,7 +573,7 @@ services:
     volumes:
       - ./config.yaml:/root/archi/config.yaml
       - ./data/prompts:/root/archi/data/prompts:ro
-      - ./data/agents:/root/archi/agents:ro
+      {{ dev_agents_mount() }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
@@ -591,6 +622,7 @@ services:
       PGDATABASE: archi-db
       PGUSER: archi
       PG_PASSWORD: ${PG_PASSWORD}
+      {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
@@ -600,6 +632,10 @@ services:
       {% endif %}
       VERBOSITY: {{ verbosity }}
       container_name: {{ benchmarking_container_name }}
+      {% if argilla_enabled -%}
+      ARCHI_ARGILLA: "1"
+      ARGILLA_API_URL: {{ argilla_server | default('http://localhost:6900') }}
+      {% endif %}
     env_file:
       - .env
     {% if gpu_ids and not use_podman -%}
@@ -620,7 +656,7 @@ services:
       - ./queries.txt:/root/archi/QandA.txt
       - {{ benchmarking_dest }}:/root/archi/benchmarks
       - ./data/prompts:/root/archi/data/prompts:ro
-      - ./data/agents:/root/archi/agents:ro
+      {{ dev_agents_mount() }}
       - ./data/skills:/root/archi/skills:ro
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}

@@ -1,0 +1,40 @@
+## 1. Dependencies & storage (additive)
+
+- [x] 1.1 Add `llama-index-core` and `flashrank` to project dependencies (branch-scoped); record chatbot/data-manager image-size delta.
+- [x] 1.2 Add `document_parent_nodes` DDL to `src/cli/templates/init.sql` (additive, `CREATE TABLE IF NOT EXISTS`): `id`, `document_id` FK→documents ON DELETE CASCADE, `parent_index`, `parent_text`, `metadata JSONB`; no `embedding` column; index on `document_id`. Leave `document_chunks` untouched.
+- [x] 1.3 Add a child→parent link: store `parent_id` on the child row's existing `document_chunks.metadata` JSONB (no new column on document_chunks) referencing `document_parent_nodes.id`.
+- [x] 1.4 Add config flags (default off): `data_manager.chunking.strategy` (`character`|`sentence`|`markdown`) and `data_manager.retrievers.hierarchical_rerank.enabled` + `reranker` settings (alongside the existing `data_manager.retrievers.*` entries).
+- [x] 1.5 Ensure the hierarchical schema at runtime (Codex adversarial review): `init.sql` runs only on a fresh Postgres volume, so add an idempotent `CREATE TABLE IF NOT EXISTS document_parent_nodes` + `idx_parent_nodes_document` ensure step (mirroring the runtime `CREATE TABLE IF NOT EXISTS` pattern in `collectors/utils/index_utils.py`), invoked before the hierarchical path writes/reads the table, so an upgraded deployment on an existing volume does not fail with an undefined-table error. Test: the ensure step creates the table/index when absent and is a no-op when already present.
+
+## 2. Ingestion: structural parent-child chunking
+
+- [x] 2.1 Add a LlamaIndex node-parsing helper that converts a LangChain `Document` → LlamaIndex `Document` → hierarchical nodes (parents + children), defaulting to `SentenceSplitter`, with `MarkdownElementNodeParser` selected for markdown sources.
+- [x] 2.2 Force archi's embedder: embed child nodes with the existing `embedding_model` (do NOT use any LlamaIndex default embedder); assert each child embedding is 384-dim and fail loudly on mismatch.
+- [x] 2.3 In `VectorStoreManager._add_to_postgres` (`vectorstore/manager.py`), when the structural strategy is enabled: persist parents to `document_parent_nodes`, persist children to `document_chunks` (existing insert path, embeddings + `metadata.parent_id`). Keep the `CharacterTextSplitter` path intact for fallback.
+- [x] 2.4 Leave `PostgresVectorStore.add_texts` (LangChain-API write path) naive; add a comment noting it does not produce parent nodes.
+- [x] 2.5 Derive the child-embedding dimension guard in `embed_child_nodes` (`node_parsing.py`) from the deployment's configured `embedding_dimensions` (via `ConfigService`/`static_config`) instead of the hardcoded `384` (Codex adversarial review), so hierarchical ingestion works on non-MiniLM backends (e.g. the default `OpenAIEmbeddings`, 1536-dim) and stays matched to the `document_chunks.embedding vector(N)` column. Test: ingestion with a 1536-dim configured embedder passes the guard; a true dimension mismatch still raises.
+
+## 3. Retrieval: hierarchical retriever + rerank
+
+- [x] 3.1 Implement `LlamaIndexHierarchicalRetriever(BaseRetriever)` in `src/data_manager/vectorstore/retrievers/`: generate ~20 child candidates via `PostgresVectorStore.hybrid_search`, look up parents by `metadata.parent_id` from `document_parent_nodes`, dedupe parents.
+- [x] 3.2 Add a FlashRank cross-encoder rerank step over the candidate pool; return top 5 parent nodes as LangChain `Document`s (optionally `(Document, score)`).
+- [x] 3.3 Export the retriever from `retrievers/__init__.py`; gate it behind `data_manager.retrievers.hierarchical_rerank.enabled` with fallback to `HybridRetriever`.
+
+## 4. Integration (single seam)
+
+- [x] 4.1 In `FASRCDocsAgent._update_vector_retrievers` (`fasrc_docs_agent.py:183/197`), construct the new retriever when enabled and pass it to `create_retriever_tool` unchanged (tool name stays `search_vectorstore_hybrid`). Do not modify the agent loop, prompts, or `create_retriever_tool`.
+
+## 5. Tests
+
+- [x] 5.1 Unit: ingestion produces ≥1 child per parent and each child carries a valid `parent_id`.
+- [x] 5.2 Unit: child embedding dimension assertion raises on mismatch; query and child use the same configured model.
+- [x] 5.3 Unit: `hybrid_search` results never include parent rows (parents not embedded / not in document_chunks).
+- [x] 5.4 Unit: retriever maps child→parent, dedupes parents, and returns ≤5 parent Documents after rerank; reranker reorders a known pool.
+- [x] 5.5 Unit: with the feature disabled, retrieval falls back to `HybridRetriever`; agent still exposes `search_vectorstore_hybrid`.
+- [x] 5.6 Run `pytest tests/unit/` (in-container) and `isort`/`black` on changed files.
+
+## 6. Evaluate & verify (spike)
+
+- [x] 6.1 Recreate the dev volume, re-ingest the FASRC corpus with structural chunking, smoke-test a chat turn end-to-end (HTTP 200, sources populated, parent context returned). Verified on dev (Anthropic + MiniLM-384): structural ingest produced 374 parents / 1199 children (all child rows carry `metadata.parent_id`); task 1.5's runtime ensure created `document_parent_nodes` + `idx_parent_nodes_document` on the **pre-existing** `archi-pg-dev` volume; a chat turn returned HTTP 200 in ~45s with populated parent-context source links. Surfaced + fixed a deploy gap: feature deps must be in `pyproject.toml` (deployment images `pip install .`), not only `requirements-base.txt`.
+- [ ] 6.2 Measure retrieval quality on the FASRC question set (vs. `CharacterTextSplitter`+`HybridRetriever` baseline) and record latency + image-size deltas; note interaction with the open "cap search_vectorstore_hybrid calls" ticket. **Deferred to follow-up issue fasrc/archi#32** — evaluation only; implementation and correctness are complete and verified (6.1/6.3). Not blocking this change/PR.
+- [x] 6.3 Confirm `main`-compatibility: `document_chunks` schema unchanged and existing hybrid retrieval behavior intact with the feature disabled. Verified live: `document_chunks` columns unchanged (no `parent_id` column — it lives in `metadata` JSONB; only the separate `document_parent_nodes` table is added). With the feature disabled (`chunking.strategy: character`, `hierarchical_rerank.enabled: false`), re-ingest used `CharacterTextSplitter` (plain chunks, `chunks_with_parent_id=0`) and a chat turn returned HTTP 200 in ~8s via `HybridRetriever` with populated sources — clean fallback, no parent expansion.

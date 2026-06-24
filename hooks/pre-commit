@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# hooks/pre-commit — enforce the quality gate. Installed via `core.hooksPath hooks`
+# (see the Makefile `hooks` target), so it is tracked in the repo and active in the
+# loop container, where the project toolchain lives.
+#
+# Why this matters to the loop: ralph.sh treats "did HEAD advance?" as the progress
+# signal. By aborting a commit when the gate is red, this hook makes a red turn
+# produce NO commit — which the runner counts as a stall, halting the loop for human
+# review after RALPH_MAX_STALLS instead of compounding broken work.
+#
+# This is a QUALITY gate, not a security boundary: `git commit --no-verify` bypasses
+# it. PROMPT.md forbids that; the container is the actual security boundary.
+
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+
+if ! "$repo_root/scripts/gate.sh"; then
+  echo "pre-commit: gate FAILED — commit blocked. Fix the gate, then commit." >&2
+  echo "pre-commit: (do NOT bypass with --no-verify)" >&2
+  exit 1
+fi

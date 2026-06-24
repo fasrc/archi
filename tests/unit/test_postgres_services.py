@@ -107,6 +107,7 @@ class TestUserService:
                 "display_name": None,
                 "email": None,
                 "auth_provider": "anonymous",
+                "is_admin": False,
                 "theme": "system",
                 "preferred_model": None,
                 "preferred_temperature": None,
@@ -130,13 +131,14 @@ class TestUserService:
             "display_name": "Test User",
             "email": "test@example.com",
             "auth_provider": "basic",
+            "is_admin": False,
             "theme": "dark",
             "preferred_model": "gpt-4",
             "preferred_temperature": 0.7,
             "created_at": datetime.now(),
             "updated_at": datetime.now(),
         }
-        
+
         service = UserService(connection_pool=mock_pool, encryption_key="test-key")
         user = service.get_or_create_user("user123")
         
@@ -340,9 +342,9 @@ class TestConversationService:
         service = ConversationService(connection_pool=mock_pool)
         comparison_id = service.create_ab_comparison(
             conversation_id="conv123",
-            user_prompt_mid=1,
-            response_a_mid=2,
-            response_b_mid=3,
+            user_prompt_message_id=1,
+            response_a_message_id=2,
+            response_b_message_id=3,
             model_a="gpt-4",
             pipeline_a="QAPipeline",
             model_b="claude-3",
@@ -514,6 +516,41 @@ class TestDataclasses:
             user_default=False,
             conversation_override=True,
         )
-        
+
         assert ds.document_id == 1
         assert ds.enabled is True  # conversation_override takes precedence
+
+
+class TestABComparisonInsertContract:
+    """Guards against A/B insert placeholder/argument drift.
+
+    Regression: SQL_INSERT_AB_COMPARISON was migrated to model/pipeline columns
+    (9 placeholders) while a writer still passed 7 args, so every /api/ab/create
+    raised at execute time. These string-level checks need no database.
+    """
+
+    def test_insert_placeholder_and_column_counts_match(self):
+        from src.utils.sql import SQL_INSERT_AB_COMPARISON
+
+        # The VALUES(...) tuple and the column list must agree, and both = 9.
+        placeholders = SQL_INSERT_AB_COMPARISON.count("%s")
+        columns_block = SQL_INSERT_AB_COMPARISON.split("(", 1)[1].split(")", 1)[0]
+        column_count = len([c for c in columns_block.split(",") if c.strip()])
+
+        assert placeholders == 9
+        assert column_count == placeholders
+        # The model/pipeline columns must be present (stats group by them).
+        for col in ("model_a", "pipeline_a", "model_b", "pipeline_b"):
+            assert col in SQL_INSERT_AB_COMPARISON
+
+    def test_conversation_service_writer_passes_matching_arity(self):
+        import inspect
+
+        from src.utils.sql import SQL_INSERT_AB_COMPARISON
+        from src.utils.conversation_service import ConversationService
+
+        placeholders = SQL_INSERT_AB_COMPARISON.count("%s")
+        sig = inspect.signature(ConversationService.create_ab_comparison)
+        # params excluding `self`; is_config_a_first has a default but is still bound.
+        param_count = len(sig.parameters) - 1
+        assert param_count == placeholders

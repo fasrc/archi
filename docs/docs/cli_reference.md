@@ -48,6 +48,7 @@ archi create --name <name> --config <config.yaml> --env-file <secrets.env> --ser
 | `--verbosity`, `-v` | Logging verbosity level (0=quiet, 4=debug) | `3` |
 | `--force`, `-f` | Overwrite existing deployment if it exists | Off |
 | `--dry`, `--dry-run` | Validate and show what would be created without deploying | Off |
+| `--dev` | Enable dev mode: mount repo source and agents into containers for restart-only development | Off |
 
 **Examples:**
 
@@ -64,6 +65,10 @@ archi create -n prod-archi -c config.yaml -e .secrets.env \
 # Dry run to validate configuration
 archi create -n test -c config.yaml -e .secrets.env \
   --services chatbot --dry-run
+
+# Dev mode: code changes take effect on container restart
+archi create -n my-archi --dev -f -c config.yaml -e .secrets.env \
+  --services chatbot --hostmode
 ```
 
 **Notes:**
@@ -71,6 +76,7 @@ archi create -n test -c config.yaml -e .secrets.env \
 - The CLI checks that host ports are free before deploying. If a port is in use, adjust `services.*.external_port` in your config.
 - The first deployment builds container images from scratch (may take several minutes). Subsequent deployments reuse images.
 - Use `-v 4` for debug-level logging when troubleshooting.
+- **Dev mode** (`--dev`): Bind-mounts the repo's `src/` and `config/agents/` directly into containers. After the initial deploy, edit source code or agent prompts and just `docker restart <container>` — no redeploy or image rebuild needed. Config YAML changes still require a redeploy.
 
 ---
 

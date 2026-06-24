@@ -618,7 +618,7 @@ class ChatWrapper:
         """
         Insert feedback from user for specific message into feedback table.
         """
-        # construct insert_tup (mid, feedback_ts, feedback, feedback_msg, incorrect, unhelpful, inappropriate)
+        # construct insert_tup (message_id, feedback_ts, feedback, feedback_msg, incorrect, unhelpful, inappropriate)
         insert_tup = (
             feedback['message_id'],
             feedback['feedback_ts'],
@@ -677,25 +677,29 @@ class ChatWrapper:
     def create_ab_comparison(
         self,
         conversation_id: int,
-        user_prompt_mid: int,
-        response_a_mid: int,
-        response_b_mid: int,
-        config_a_id: int,
-        config_b_id: int,
+        user_prompt_message_id: int,
+        response_a_message_id: int,
+        response_b_message_id: int,
+        model_a: str,
+        pipeline_a: Optional[str],
+        model_b: str,
+        pipeline_b: Optional[str],
         is_config_a_first: bool,
     ) -> int:
         """
         Create an A/B comparison record linking two responses to the same user prompt.
-        
+
         Args:
             conversation_id: The conversation this comparison belongs to
-            user_prompt_mid: Message ID of the user's question
-            response_a_mid: Message ID of response A
-            response_b_mid: Message ID of response B
-            config_a_id: Config ID used for response A
-            config_b_id: Config ID used for response B
+            user_prompt_message_id: Message ID of the user's question
+            response_a_message_id: Message ID of response A
+            response_b_message_id: Message ID of response B
+            model_a: Model identifier used for response A
+            pipeline_a: Pipeline identifier used for response A (optional)
+            model_b: Model identifier used for response B
+            pipeline_b: Pipeline identifier used for response B (optional)
             is_config_a_first: True if config A was the "first" config before randomization
-            
+
         Returns:
             The comparison_id of the newly created record
         """
@@ -704,8 +708,8 @@ class ChatWrapper:
         try:
             cursor.execute(
                 SQL_INSERT_AB_COMPARISON,
-                (conversation_id, user_prompt_mid, response_a_mid, response_b_mid,
-                 config_a_id, config_b_id, is_config_a_first)
+                (conversation_id, user_prompt_message_id, response_a_message_id, response_b_message_id,
+                 model_a, pipeline_a, model_b, pipeline_b, is_config_a_first)
             )
             comparison_id = cursor.fetchone()[0]
             conn.commit()
@@ -756,15 +760,17 @@ class ChatWrapper:
             return {
                 'comparison_id': row[0],
                 'conversation_id': row[1],
-                'user_prompt_mid': row[2],
-                'response_a_mid': row[3],
-                'response_b_mid': row[4],
-                'config_a_id': row[5],
-                'config_b_id': row[6],
-                'is_config_a_first': row[7],
-                'preference': row[8],
-                'preference_ts': row[9].isoformat() if row[9] else None,
-                'created_at': row[10].isoformat() if row[10] else None,
+                'user_prompt_message_id': row[2],
+                'response_a_message_id': row[3],
+                'response_b_message_id': row[4],
+                'model_a': row[5],
+                'pipeline_a': row[6],
+                'model_b': row[7],
+                'pipeline_b': row[8],
+                'is_config_a_first': row[9],
+                'preference': row[10],
+                'preference_ts': row[11].isoformat() if row[11] else None,
+                'created_at': row[12].isoformat() if row[12] else None,
             }
         finally:
             cursor.close()
@@ -787,15 +793,17 @@ class ChatWrapper:
             return {
                 'comparison_id': row[0],
                 'conversation_id': row[1],
-                'user_prompt_mid': row[2],
-                'response_a_mid': row[3],
-                'response_b_mid': row[4],
-                'config_a_id': row[5],
-                'config_b_id': row[6],
-                'is_config_a_first': row[7],
-                'preference': row[8],
-                'preference_ts': row[9].isoformat() if row[9] else None,
-                'created_at': row[10].isoformat() if row[10] else None,
+                'user_prompt_message_id': row[2],
+                'response_a_message_id': row[3],
+                'response_b_message_id': row[4],
+                'model_a': row[5],
+                'pipeline_a': row[6],
+                'model_b': row[7],
+                'pipeline_b': row[8],
+                'is_config_a_first': row[9],
+                'preference': row[10],
+                'preference_ts': row[11].isoformat() if row[11] else None,
+                'created_at': row[12].isoformat() if row[12] else None,
             }
         finally:
             cursor.close()
@@ -837,15 +845,17 @@ class ChatWrapper:
                 {
                     'comparison_id': row[0],
                     'conversation_id': row[1],
-                    'user_prompt_mid': row[2],
-                    'response_a_mid': row[3],
-                    'response_b_mid': row[4],
-                    'config_a_id': row[5],
-                    'config_b_id': row[6],
-                    'is_config_a_first': row[7],
-                    'preference': row[8],
-                    'preference_ts': row[9].isoformat() if row[9] else None,
-                    'created_at': row[10].isoformat() if row[10] else None,
+                    'user_prompt_message_id': row[2],
+                    'response_a_message_id': row[3],
+                    'response_b_message_id': row[4],
+                    'model_a': row[5],
+                    'pipeline_a': row[6],
+                    'model_b': row[7],
+                    'pipeline_b': row[8],
+                    'is_config_a_first': row[9],
+                    'preference': row[10],
+                    'preference_ts': row[11].isoformat() if row[11] else None,
+                    'created_at': row[12].isoformat() if row[12] else None,
                 }
                 for row in rows
             ]
@@ -1344,12 +1354,17 @@ class ChatWrapper:
         client_timeout: float,
         timestamps: Dict[str, datetime],
         user_id: Optional[str] = None,
+        external_history: Optional[List] = None,
     ) -> tuple[Optional[ChatRequestContext], Optional[int]]:
         if not client_id:
             raise ValueError("client_id is required to process chat messages")
         sender, content = tuple(message[0])
 
-        if conversation_id is None:
+        if external_history is not None:
+            if conversation_id is None:
+                conversation_id = self.create_conversation(content, client_id, user_id)
+            history = external_history
+        elif conversation_id is None:
             conversation_id = self.create_conversation(content, client_id, user_id)
             history = []
         else:
@@ -1535,7 +1550,7 @@ class ChatWrapper:
 
         return output, message_ids
 
-    def __call__(self, message: List[str], conversation_id: int|None, client_id: str, is_refresh: bool, server_received_msg_ts: datetime,  client_sent_msg_ts: float, client_timeout: float, config_name: str, user_id: Optional[str] = None):
+    def __call__(self, message: List[str], conversation_id: int|None, client_id: str, is_refresh: bool, server_received_msg_ts: datetime,  client_sent_msg_ts: float, client_timeout: float, config_name: str, user_id: Optional[str] = None, external_history: Optional[List] = None):
         """
         Execute the chat functionality.
         """
@@ -1555,6 +1570,7 @@ class ChatWrapper:
                 client_timeout,
                 timestamps,
                 user_id=user_id,
+                external_history=external_history,
             )
             if error_code is not None:
                 return None, None, None, timestamps, error_code
@@ -1612,6 +1628,7 @@ class ChatWrapper:
         model: str = None,
         provider_api_key: str = None,
         user_id: Optional[str] = None,
+        external_history: Optional[List] = None,
     ) -> Iterator[Dict[str, Any]]:
         timestamps = self._init_timestamps()
         context = None
@@ -1671,6 +1688,7 @@ class ChatWrapper:
                 client_timeout,
                 timestamps,
                 user_id=user_id,
+                external_history=external_history,
             )
             if error_code is not None:
                 error_message = "server error; see chat logs for message"
@@ -2000,6 +2018,11 @@ class ChatWrapper:
             self.number_of_queries += 1
             logger.info(f"Number of queries is: {self.number_of_queries}")
 
+            # Extract source docs and scores before _finalize_result consumes them
+            # (needed by /v1 blueprint for citation formatting)
+            raw_source_documents = last_output.get("source_documents", []) if last_output else []
+            raw_retriever_scores = (last_output.get("metadata", {}) or {}).get("retriever_scores", []) if last_output else []
+
             output, message_ids = self._finalize_result(
                 last_output,
                 context=context,
@@ -2062,6 +2085,8 @@ class ChatWrapper:
                 "usage": usage,
                 "model": model,
                 "model_used": self.current_model_used,
+                "source_documents": raw_source_documents,
+                "retriever_scores": raw_retriever_scores,
             }
 
         except GeneratorExit:
@@ -2174,6 +2199,19 @@ class FlaskAppWrapper(object):
         self.chat = ChatWrapper()
         self.chat.update_config(config_name=self.config["name"])
 
+        # Conditionally register OpenAI-compatible /v1 blueprint
+        openai_compat_config = self.chat_app_config.get("openai_compat", {})
+        if openai_compat_config.get("enabled", False):
+            from src.interfaces.chat_app.openai_compat import register_openai_compat
+            user_service = UserService(pg_config=self.pg_config)
+            register_openai_compat(
+                self.app,
+                self.chat,
+                user_service=user_service,
+                auth_enabled=self.auth_enabled,
+                token_ttl_days=openai_compat_config.get("token_ttl_days", 90),
+            )
+
         # enable CORS:
         CORS(self.app)
 
@@ -2192,7 +2230,12 @@ class FlaskAppWrapper(object):
         # Public endpoints (no auth required)
         self.add_endpoint('/', 'landing', self.landing)
         self.add_endpoint('/api/health', 'health', self.health, methods=["GET"])
-        
+
+        # API token management (for /v1 bearer auth)
+        self.add_endpoint('/api/users/me/api-token', 'check_api_token', self.require_auth(self.check_api_token), methods=["GET"])
+        self.add_endpoint('/api/users/me/api-token', 'generate_api_token', self.require_auth(self.generate_api_token), methods=["POST"])
+        self.add_endpoint('/api/users/me/api-token', 'revoke_api_token', self.require_auth(self.revoke_api_token), methods=["DELETE"])
+
         # Protected endpoints (require auth when enabled)
         self.add_endpoint('/chat', 'index', self.require_auth(self.index))
         self.add_endpoint('/api/get_chat_response', 'get_chat_response', self.require_auth(self.get_chat_response), methods=["POST"])
@@ -2607,6 +2650,63 @@ class FlaskAppWrapper(object):
 
     def health(self):
         return jsonify({"status": "OK"}), 200
+
+    # -- API token management (for /v1 bearer auth) --------------------------
+
+    def _get_token_user_id(self) -> str:
+        """Resolve user ID from session or, when auth is disabled, X-Client-ID."""
+        user_id = session.get('user', {}).get('id')
+        if user_id:
+            return user_id
+        if not self.auth_enabled:
+            client_id = request.headers.get('X-Client-ID')
+            if client_id:
+                return client_id
+        return jsonify({'error': 'Could not determine user identity'}), 401
+
+    def check_api_token(self):
+        user_id = self._get_token_user_id()
+        if isinstance(user_id, tuple):
+            return user_id
+        try:
+            user_service = UserService(pg_config=self.pg_config)
+            has_token = user_service.has_api_token(user_id)
+            return jsonify({'has_token': has_token}), 200
+        except Exception as e:
+            logger.error(f"Error checking API token: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    def generate_api_token(self):
+        user_id = self._get_token_user_id()
+        if isinstance(user_id, tuple):
+            return user_id
+        try:
+            user_service = UserService(pg_config=self.pg_config)
+            user_service.get_or_create_user(user_id)
+            token = user_service.generate_api_token(user_id)
+            return jsonify({
+                'token': token,
+                'message': 'Save this token — it will not be shown again.',
+            }), 201
+        except Exception as e:
+            logger.error(f"Error generating API token: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    def revoke_api_token(self):
+        user_id = self._get_token_user_id()
+        if isinstance(user_id, tuple):
+            return user_id
+        try:
+            user_service = UserService(pg_config=self.pg_config)
+            revoked = user_service.revoke_api_token(user_id)
+            return jsonify({
+                'success': True,
+                'revoked': revoked,
+                'message': 'API token revoked' if revoked else 'No token to revoke',
+            }), 200
+        except Exception as e:
+            logger.error(f"Error revoking API token: {e}")
+            return jsonify({'error': str(e)}), 500
 
     def get_permissions(self):
         """API endpoint to get current user's permissions"""
@@ -3548,7 +3648,7 @@ class FlaskAppWrapper(object):
             'conversation_id': conversation_id,
             'archi_msg_id': message_ids[-1],
             'server_response_msg_ts': timestamps['server_response_msg_ts'].timestamp(),
-            'model_used': self.current_model_used,
+            'model_used': self.chat.current_model_used,
             'final_response_msg_ts': datetime.now(timezone.utc).timestamp(),
         }
 
@@ -4008,11 +4108,13 @@ class FlaskAppWrapper(object):
 
         POST body:
         - conversation_id: The conversation ID
-        - user_prompt_mid: Message ID of the user's question
-        - response_a_mid: Message ID of response A
-        - response_b_mid: Message ID of response B
-        - config_a_id: Config ID used for response A
-        - config_b_id: Config ID used for response B
+        - user_prompt_message_id: Message ID of the user's question
+        - response_a_message_id: Message ID of response A
+        - response_b_message_id: Message ID of response B
+        - model_a: Model identifier used for response A
+        - model_b: Model identifier used for response B
+        - pipeline_a: Pipeline identifier used for response A (optional)
+        - pipeline_b: Pipeline identifier used for response B (optional)
         - is_config_a_first: True if config A was the "first" config before randomization
         - client_id: Client ID for authorization
 
@@ -4022,11 +4124,13 @@ class FlaskAppWrapper(object):
         try:
             data = request.json
             conversation_id = data.get('conversation_id')
-            user_prompt_mid = data.get('user_prompt_mid')
-            response_a_mid = data.get('response_a_mid')
-            response_b_mid = data.get('response_b_mid')
-            config_a_id = data.get('config_a_id')
-            config_b_id = data.get('config_b_id')
+            user_prompt_message_id = data.get('user_prompt_message_id')
+            response_a_message_id = data.get('response_a_message_id')
+            response_b_message_id = data.get('response_b_message_id')
+            model_a = data.get('model_a')
+            model_b = data.get('model_b')
+            pipeline_a = data.get('pipeline_a')
+            pipeline_b = data.get('pipeline_b')
             is_config_a_first = data.get('is_config_a_first', True)
             client_id = data.get('client_id')
 
@@ -4034,16 +4138,16 @@ class FlaskAppWrapper(object):
             missing = []
             if not conversation_id:
                 missing.append('conversation_id')
-            if not user_prompt_mid:
-                missing.append('user_prompt_mid')
-            if not response_a_mid:
-                missing.append('response_a_mid')
-            if not response_b_mid:
-                missing.append('response_b_mid')
-            if not config_a_id:
-                missing.append('config_a_id')
-            if not config_b_id:
-                missing.append('config_b_id')
+            if not user_prompt_message_id:
+                missing.append('user_prompt_message_id')
+            if not response_a_message_id:
+                missing.append('response_a_message_id')
+            if not response_b_message_id:
+                missing.append('response_b_message_id')
+            if not model_a:
+                missing.append('model_a')
+            if not model_b:
+                missing.append('model_b')
             if not client_id:
                 missing.append('client_id')
 
@@ -4053,11 +4157,13 @@ class FlaskAppWrapper(object):
             # Create the comparison
             comparison_id = self.chat.create_ab_comparison(
                 conversation_id=conversation_id,
-                user_prompt_mid=user_prompt_mid,
-                response_a_mid=response_a_mid,
-                response_b_mid=response_b_mid,
-                config_a_id=config_a_id,
-                config_b_id=config_b_id,
+                user_prompt_message_id=user_prompt_message_id,
+                response_a_message_id=response_a_message_id,
+                response_b_message_id=response_b_message_id,
+                model_a=model_a,
+                pipeline_a=pipeline_a,
+                model_b=model_b,
+                pipeline_b=pipeline_b,
                 is_config_a_first=is_config_a_first,
             )
 

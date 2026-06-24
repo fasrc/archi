@@ -20,6 +20,7 @@ BASE_IMAGE_MAP = {
 SOURCE_PREFIXES = {
     "localhost": "localhost/a2rchi/",
     "dockerhub": "docker.io/a2rchi/",
+    "ghcr": "ghcr.io/fasrc/",
 }
 
 

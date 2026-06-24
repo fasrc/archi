@@ -31,6 +31,7 @@ class BaseReActAgent:
     process user queries using configurable language models and prompts.
     """
     DEFAULT_RECURSION_LIMIT = 50
+    DEFAULT_TOOL_BUDGETS: Dict[str, int] = {"search_vectorstore_hybrid": 2}
 
     def __init__(
         self,
@@ -53,6 +54,7 @@ class BaseReActAgent:
         if agent_spec is not None:
             self.selected_tool_names = list(getattr(agent_spec, "tools", []) or [])
         self._active_memory: Optional[RunMemory] = None
+        self._tool_budgets_cache: Optional[Dict[str, int]] = None
         self._static_tools: Optional[List[Callable]] = None
         self._mcp_tools: Optional[List[Callable]] = None
         self._active_tools: List[Callable] = []
@@ -879,7 +881,7 @@ class BaseReActAgent:
         if not cfg:
             return {}
 
-        extra = {}
+        extra = dict(cfg.get("extra_kwargs", {}) or {})
         try:
             provider_type = ProviderType(provider_key)
             if provider_type == ProviderType.LOCAL and cfg.get("mode"):
@@ -1176,7 +1178,7 @@ class BaseReActAgent:
                     "Invalid context window (%s), skipping trimming.",
                     context_window,
                     )
-                    return {"messages": history_messages}
+                    return {"messages": self._inject_forced_retrieval(history_messages)}
 
                 safety_margin = int(context_window * 0.15)
                 max_prompt_tokens = context_window - safety_margin
@@ -1220,7 +1222,16 @@ class BaseReActAgent:
         except Exception as e:
             logger.debug("Token trimming skipped: %s", e)
 
-        return {"messages": history_messages}
+        return {"messages": self._inject_forced_retrieval(history_messages)}
+
+    def _inject_forced_retrieval(self, messages: List[BaseMessage]) -> List[BaseMessage]:
+        """Hook for subclasses to force a retrieval before the model's first turn.
+
+        Base implementation is a no-op; agents with a vector retriever override
+        this to prefill a completed ``search_vectorstore_hybrid`` tool round so
+        retrieval happens regardless of whether the model chooses to call it.
+        """
+        return messages
 
     def _metadata_from_agent_output(self, answer_output: Dict[str, Any]) -> Dict[str, Any]:
         """Hook for subclasses to enrich metadata returned to callers."""
@@ -1413,6 +1424,93 @@ class BaseReActAgent:
                 self.DEFAULT_RECURSION_LIMIT,
             )
             return self.DEFAULT_RECURSION_LIMIT
+
+    def _tool_budgets(self) -> Dict[str, int]:
+        """Read and merge per-tool call budgets from config, falling back to class default.
+
+        Lookup order (highest priority last so it overrides):
+            DEFAULT_TOOL_BUDGETS -> services.chat_app.tool_budgets -> pipeline_config.tool_budgets
+
+        Cached on first call.
+        """
+        if self._tool_budgets_cache is not None:
+            return self._tool_budgets_cache
+        merged: Dict[str, int] = dict(self.DEFAULT_TOOL_BUDGETS)
+        if isinstance(self.config, dict):
+            services_cfg = self.config.get("services", {})
+            if isinstance(services_cfg, dict):
+                chat_cfg = services_cfg.get("chat_app", {})
+                if isinstance(chat_cfg, dict):
+                    chat_budgets = chat_cfg.get("tool_budgets")
+                    if isinstance(chat_budgets, dict):
+                        for name, val in chat_budgets.items():
+                            try:
+                                parsed = int(val)
+                            except (TypeError, ValueError):
+                                logger.warning(
+                                    "Invalid services.chat_app.tool_budgets[%r]=%r for %s; ignored",
+                                    name, val, self.__class__.__name__,
+                                )
+                                continue
+                            if parsed <= 0:
+                                logger.warning(
+                                    "Ignoring non-positive services.chat_app.tool_budgets[%r]=%r for %s; "
+                                    "a cap must be >= 1 (0/negative would silently disable the cap). "
+                                    "Keeping the default.",
+                                    name, val, self.__class__.__name__,
+                                )
+                                continue
+                            merged[str(name)] = parsed
+        if isinstance(self.pipeline_config, dict):
+            pipe_budgets = self.pipeline_config.get("tool_budgets")
+            if isinstance(pipe_budgets, dict):
+                for name, val in pipe_budgets.items():
+                    try:
+                        parsed = int(val)
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "Invalid pipeline_config.tool_budgets[%r]=%r for %s; ignored",
+                            name, val, self.__class__.__name__,
+                        )
+                        continue
+                    if parsed <= 0:
+                        logger.warning(
+                            "Ignoring non-positive pipeline_config.tool_budgets[%r]=%r for %s; "
+                            "a cap must be >= 1 (0/negative would silently disable the cap). "
+                            "Keeping the default.",
+                            name, val, self.__class__.__name__,
+                        )
+                        continue
+                    merged[str(name)] = parsed
+        self._tool_budgets_cache = merged
+        return merged
+
+    def _consume_tool_budget(self, tool_name: str) -> Optional[str]:
+        """Bump the per-turn counter for tool_name; return synthetic over-budget string if at/over cap.
+
+        Returns None to allow the call (still within budget, or no budget configured, or no
+        active memory). Returns a string to short-circuit the tool with an over-budget message.
+
+        Fails open when self.active_memory is None (between turns / non-agent contexts).
+        """
+        memory = self.active_memory
+        if memory is None:
+            return None
+        budgets = self._tool_budgets()
+        cap = budgets.get(tool_name)
+        if cap is None or cap <= 0:
+            return None
+        new_count = memory.bump_tool_call_count(tool_name)
+        if new_count <= cap:
+            return None
+        return (
+            f"Search budget exhausted: you have already called {tool_name} "
+            f"the maximum number of times for this turn (limit={cap}). "
+            "The chunks retrieved by your earlier calls remain available in the "
+            "conversation above — answer the user's question from those chunks, "
+            "or state that the indexed documentation does not appear to cover "
+            f"this case. Do not call {tool_name} again on this turn."
+        )
 
     def _last_user_message_content(self, messages: Sequence[BaseMessage]) -> Optional[str]:
         """Extract content of the most recent user/human message."""

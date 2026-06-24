@@ -486,10 +486,34 @@ const API = {
 const Markdown = {
   init() {
     if (typeof marked !== 'undefined') {
+      const renderer = new marked.Renderer();
+      const escapeAttr = (s) =>
+        String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      // Allowlist URL schemes so untrusted markdown can't smuggle javascript:/
+      // data:/vbscript: links (XSS) through the unsanitized innerHTML render path.
+      const SAFE_SCHEMES = ['http:', 'https:', 'mailto:'];
+      const safeUrl = (href) => {
+        if (!href) return '#';
+        // Drop control chars/whitespace that can hide a scheme, e.g. "java\tscript:".
+        const cleaned = String(href).replace(/[\u0000-\u001F\u007F-\u009F\s]/g, '');
+        // Relative paths and in-page anchors are safe.
+        if (/^[/.#?]/.test(cleaned)) return href;
+        try {
+          const url = new URL(cleaned, window.location.href);
+          return SAFE_SCHEMES.includes(url.protocol) ? href : '#';
+        } catch (e) {
+          return '#';
+        }
+      };
+      renderer.link = function(href, title, text) {
+        const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
+        return `<a href="${escapeAttr(safeUrl(href))}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
+      };
       marked.setOptions({
         breaks: true,
         gfm: true,
         highlight: (code, lang) => this.highlightCode(code, lang),
+        renderer: renderer,
       });
     }
   },
@@ -1825,7 +1849,7 @@ const UI = {
         <div class="messages-empty">
           <img class="messages-empty-logo" src="/static/images/archi-logo.png" alt="archi logo">
           <h2 class="messages-empty-title">How can I help you today?</h2>
-          <p class="messages-empty-subtitle">Ask me anything about CMS Computing Operations. I'm here to assist you.</p>
+          <p class="messages-empty-subtitle">Ask me anything about FASRC research computing. I'm here to assist you.</p>
         </div>`;
       return;
     }
@@ -3544,18 +3568,19 @@ const Chat = {
         return;
       }
 
-      // Get config IDs
+      // Get config IDs (retained for client-side state/labels)
       const configAId = this.getConfigId(actualConfigA);
       const configBId = this.getConfigId(actualConfigB);
 
-      // Create A/B comparison record
+      // Create A/B comparison record. The server stores model/pipeline (used by
+      // the model-comparison stats), so send the models that produced each side.
       const response = await API.createABComparison({
         conversation_id: this.state.conversationId,
-        user_prompt_mid: results.a.userPromptMid || results.b.userPromptMid,
-        response_a_mid: results.a.messageId,
-        response_b_mid: results.b.messageId,
-        config_a_id: configAId,
-        config_b_id: configBId,
+        user_prompt_message_id: results.a.userPromptMid || results.b.userPromptMid,
+        response_a_message_id: results.a.messageId,
+        response_b_message_id: results.b.messageId,
+        model_a: selectedA.model,
+        model_b: selectedB.model,
         is_config_a_first: !shuffled,
       });
 

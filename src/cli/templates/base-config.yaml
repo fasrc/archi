@@ -33,7 +33,7 @@ services:
     mode_settings:
       sources_settings:
         default_match_field: {{ services.benchmarking.mode_settings.sources_settings.default_match_field | default("file_name", true) }} # metadata field to check for source matching
-      ragas_settings: 
+      ragas_settings:
         enabled_metrics:
           {%- for metric in services.benchmarking.ragas_settings.enabled_metrics | default(["answer_relevancy", "faithfulness", "context_precision", "context_recall"]) %}
           - {{ metric }}
@@ -41,6 +41,12 @@ services:
         embedding_model: {{ services.benchmarking.mode_settings.ragas_settings.embedding_model | default("OpenAI", true) }}
         timeout: {{ services.benchmarking.mode_settings.ragas_settings.timeout | default(180, true) }}
         batch_size: {{ services.benchmarking.mode_settings.ragas_settings.batch_size | default(false, true) }}
+        # Judge/SUT split: when these are set, the RAGAS judge LLM is constructed
+        # independent of the SUT (services.benchmarking.provider/model). Falls back
+        # to SUT provider/model when unset. Empty string is treated as unset.
+        evaluator_provider: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_provider | default("", true) }}
+        evaluator_model: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_model | default("", true) }}
+        evaluator_ollama_url: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_ollama_url | default("", true) }}
 
 
   piazza:
@@ -101,11 +107,16 @@ services:
     {% if services.chat_app.auth.auth_roles is defined %}
       auth_roles: {{ services.chat_app.auth.auth_roles | tojson }}
     {% endif %}
+    openai_compat:
+      # Before enabling on an existing deployment, run the conversation_metadata
+      # composite-unique migration noted in init.sql (drops & recreates
+      # idx_conv_meta_external_chat as (user_id, external_chat_id)).
+      enabled: {{ services.chat_app.openai_compat.enabled | default(false, true) }}
     alerts:
       managers:
         {%- for manager in services.chat_app.alerts.managers | default([], true) %}
         - {{ manager }}
-        {%- endfor %} 
+        {%- endfor %}
   data_manager:
     auth:
       enabled: {{ services.data_manager.auth.enabled | default(false) }}
@@ -164,6 +175,11 @@ data_manager:
       query_embedding_instructions: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.query_embedding_instructions | default("null", true) }}
   chunk_size: {{ data_manager.chunk_size | default(1000, true) }}
   chunk_overlap: {{ data_manager.chunk_overlap | default(0, true) }}
+  chunking:
+    # Structure-aware chunking strategy. 'character' (default) preserves the
+    # existing CharacterTextSplitter behavior; 'sentence'/'markdown' enable
+    # hierarchical parent-child node parsing for the rerank retriever.
+    strategy: {{ data_manager.chunking.strategy | default('character', true) }}
   parallel_workers: {{ data_manager.parallel_workers | default(32, true) }}
   reset_collection: {{ data_manager.reset_collection | default(true, true) }}
   stemming:
@@ -178,6 +194,17 @@ data_manager:
       num_documents_to_retrieve: {{ data_manager.retrievers.hybrid_retriever.num_documents_to_retrieve | default(5, true) }}
       bm25_weight: {{ data_manager.retrievers.hybrid_retriever.bm25_weight | default(0.6, true) }}
       semantic_weight: {{ data_manager.retrievers.hybrid_retriever.semantic_weight | default(0.4, true) }}
+    hierarchical_rerank:
+      # Hierarchical retriever with CPU cross-encoder reranking. Disabled by
+      # default: when off, retrieval falls back to the hybrid_retriever above.
+      enabled: {{ data_manager.retrievers.hierarchical_rerank.enabled | default(false, true) }}
+      # Number of child candidates fetched from hybrid_search before reranking.
+      candidate_pool_size: {{ data_manager.retrievers.hierarchical_rerank.candidate_pool_size | default(20, true) }}
+      # Number of (deduplicated) parent nodes returned after reranking.
+      num_documents_to_retrieve: {{ data_manager.retrievers.hierarchical_rerank.num_documents_to_retrieve | default(5, true) }}
+      reranker:
+        # FlashRank ONNX cross-encoder (CPU). See flashrank model_file_map.
+        model: {{ data_manager.retrievers.hierarchical_rerank.reranker.model | default('ms-marco-MiniLM-L-12-v2', true) }}
   sources:
     local_files:
       enabled: {{ data_manager.sources.local_files.enabled | default(true, true) }}
@@ -222,6 +249,40 @@ data_manager:
       enabled: {{ data_manager.sources.sso.enabled | default(true, true) }}
       visible: {{ data_manager.sources.sso.visible | default(true, true) }}
       schedule: '{{ data_manager.sources.sso.schedule | default("", true) }}'
+    indico:
+      enabled: {{ data_manager.sources.indico.enabled | default(false, true) }}
+      visible: {{ data_manager.sources.indico.visible | default(true, true) }}
+      schedule: '{{ data_manager.sources.indico.schedule | default("", true) }}'
+      base_url: {{ data_manager.sources.indico.base_url | default('https://indico.cern.ch', true) }}
+      use_sso: {{ data_manager.sources.indico.use_sso | default(true) }}
+      # Day filtering (all optional - if none set, scrapes all days)
+      {%- if data_manager.sources.indico.max_days is defined %}
+      max_days: {{ data_manager.sources.indico.max_days }}
+      {%- endif %}
+      {%- if data_manager.sources.indico.only_first_day is defined %}
+      only_first_day: {{ data_manager.sources.indico.only_first_day }}
+      {%- endif %}
+      {%- if data_manager.sources.indico.days is defined %}
+      days: {{ data_manager.sources.indico.days | tojson }}
+      {%- endif %}
+      {%- if data_manager.sources.indico.date_range is defined %}
+      date_range: {{ data_manager.sources.indico.date_range | tojson }}
+      {%- endif %}
+      sso_kwargs:
+        headless: {{ data_manager.sources.indico.sso_kwargs.headless | default(true, true) }}
+        site_type: {{ data_manager.sources.indico.sso_kwargs.site_type | default('generic', true) }}
+      slide_conversion:
+        enabled: {{ data_manager.sources.indico.slide_conversion.enabled | default(true) }}
+        store_originals: {{ data_manager.sources.indico.slide_conversion.store_originals | default(false, true) }}
+        formats:
+          {%- set indico_formats = data_manager.sources.indico.slide_conversion.formats | default(['pdf', 'pptx', 'ppt', 'odp'], true) %}
+          {%- for format in indico_formats %}
+          - {{ format }}
+          {%- endfor %}
+        llm_enabled: {{ data_manager.sources.indico.slide_conversion.llm_enabled | default(false, true) }}
+        llm_model: {{ data_manager.sources.indico.slide_conversion.llm_model | default('', true) }}
+      plot_extraction:
+        enabled: {{ data_manager.sources.indico.plot_extraction.enabled | default(false, true) }}
     jira:
       enabled: {{ data_manager.sources.jira.enabled | default(true, true) }}
       url: {{ data_manager.sources.jira.url | default('', true) }}
@@ -244,6 +305,13 @@ data_manager:
       visible: {{ data_manager.sources.redmine.visible | default(false, true) }}
       schedule: '{{ data_manager.sources.redmine.schedule | default("", true) }}'
       anonymize_data: {{ data_manager.sources.redmine.anonymize_data | default(true, true) }}
+    elog:
+      enabled: {{ data_manager.sources.elog.enabled | default(false, true) }}
+      visible: {{ data_manager.sources.elog.visible | default(false, true) }}
+      url: '{{ data_manager.sources.elog.url | default('', true) }}'
+      max_entries: {{ data_manager.sources.elog.max_entries | default(null, true) }}
+      verify_ssl: {{ data_manager.sources.elog.verify_ssl | default(true, true) }}
+      schedule: '{{ data_manager.sources.elog.schedule | default("", true) }}'
   utils:
     anonymizer:
         nlp_model: {{ data_manager.utils.anonymizer.nlp_model | default('en_core_web_sm', true) }}
