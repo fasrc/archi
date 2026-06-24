@@ -27,7 +27,14 @@ dependencies = [
     "isort==6.0.1",
     "pre-commit>=4",
     "psycopg2-binary==2.9.10",
-    "markitdown[pdf,pptx]==0.1.5"
+    "markitdown[pdf,pptx]==0.1.5",
+    # hierarchical-rerank-retrieval: the deployment images install deps via
+    # `pip install .` (Dockerfile-chat / Dockerfile-data-manager) on top of the
+    # published a2rchi base image, so feature deps MUST be declared here — not only
+    # in requirements/requirements-base.txt (which the gate/CI and base-image build
+    # use). Versions match requirements-base.txt.
+    "llama-index-core==0.14.19",
+    "flashrank==0.2.10"
 ]
 
 [project.scripts]

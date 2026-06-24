@@ -1,11 +1,21 @@
 """Smoke-test that archi create --dev --dry runs and prints the dev warning."""
 
+import shutil
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from src.cli.utils import service_builder
+
+# `archi create` aborts early ("Docker is not available") without a container
+# runtime, so these smoke tests can only run where docker/podman is on PATH. The
+# unit gate runs inside the loop container (no nested runtime), so skip there; CI
+# (ubuntu-latest, Docker preinstalled) still exercises them.
+pytestmark = pytest.mark.skipif(
+    shutil.which("docker") is None and shutil.which("podman") is None,
+    reason="archi create requires a container runtime (docker/podman) on PATH",
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -37,14 +47,22 @@ def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
     from src.cli.cli_main import create
 
     runner = CliRunner()
-    result = runner.invoke(create, [
-        "--dev", "--dry",
-        "-n", "smoke",
-        "-c", str(EXAMPLE_CONFIG),
-        "-e", str(env_file),
-        "--services", "chatbot",
-        "--hostmode",
-    ])
+    result = runner.invoke(
+        create,
+        [
+            "--dev",
+            "--dry",
+            "-n",
+            "smoke",
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
 
     assert "DEV MODE" in result.output, (
         f"expected DEV MODE warning. exit_code={result.exit_code}\n"
@@ -64,14 +82,21 @@ def test_no_dev_flag_no_warning(env_file, tmp_path, monkeypatch):
     from src.cli.cli_main import create
 
     runner = CliRunner()
-    result = runner.invoke(create, [
-        "--dry",
-        "-n", "smoke",
-        "-c", str(EXAMPLE_CONFIG),
-        "-e", str(env_file),
-        "--services", "chatbot",
-        "--hostmode",
-    ])
-    assert "DEV MODE" not in result.output, (
-        f"DEV MODE should not appear without --dev. output:\n{result.output}\n"
+    result = runner.invoke(
+        create,
+        [
+            "--dry",
+            "-n",
+            "smoke",
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
     )
+    assert (
+        "DEV MODE" not in result.output
+    ), f"DEV MODE should not appear without --dev. output:\n{result.output}\n"

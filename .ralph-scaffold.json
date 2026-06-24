@@ -1,0 +1,7 @@
+{
+  "template_version": "0.8.2",
+  "files": {
+    "hooks/pre-commit": "19f25bfb9259079648ed499c3449551e9e973112101de25198e4cef046fae403",
+    "docs/operator-checklist.md": "75ac29657761ebe213b561bfef34797555520f15b9e32b608039bd268ee01d16"
+  }
+}

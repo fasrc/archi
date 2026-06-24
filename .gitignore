@@ -43,3 +43,5 @@ websites/
 # Ralph harness runtime state (machine-written; never committed)
 .ralph/
 /review-findings.md
+.coverage
+coverage.xml

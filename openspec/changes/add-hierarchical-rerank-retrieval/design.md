@@ -66,3 +66,38 @@ Implement `LlamaIndexHierarchicalRetriever(BaseRetriever)` returning `List[Docum
 - Optimal parent/child sizes for MkDocs-derived content (tune during eval).
 - Whether to keep BM25 weight as-is for candidate gen once the cross-encoder is in front (eval may favor higher recall / lower bm25_weight).
 - FlashRank model choice (e.g., `ms-marco-MiniLM-L-12-v2` vs smaller) — pick on the quality/latency curve during eval.
+
+## Review-driven hardening (Codex adversarial review)
+
+A branch-level adversarial review surfaced two correctness gaps in the initial
+implementation, addressed by tasks 1.5 and 2.5:
+
+- **Schema lifecycle (task 1.5).** `init.sql` runs only when Postgres initializes a
+  *fresh* data directory, and archi has no migration runner — so a deployment that
+  enables the feature on an existing volume would hit an undefined-table error when
+  ingestion/retrieval touch `document_parent_nodes`. archi already uses runtime
+  `CREATE TABLE IF NOT EXISTS` ensures (`collectors/utils/index_utils.py`); the
+  feature follows that pattern to ensure its table/index before use. `init.sql`
+  keeps the DDL for fresh volumes; the runtime ensure covers upgrades.
+- **Embedding dimension coupling (task 2.5).** The chunk vector column is
+  deploy-time configurable (`init.sql` `embedding vector({{ embedding_dimensions }})`,
+  backed by `static_config.embedding_dimensions`), and the default `embedding_name`
+  is `OpenAIEmbeddings` (1536-dim). The first cut hardcoded a 384-dim child guard,
+  which would fail every file on a non-MiniLM deployment. The guard must derive the
+  expected dimension from the configured `embedding_dimensions` so it matches the
+  column for any backend.
+
+## Spike findings (task 6.1, live deploy)
+
+Running the feature on the dev deployment surfaced a dependency-wiring gap not
+caught by the gate:
+
+- **Feature deps must be in `pyproject.toml`.** The deployment images install via
+  `pip install .` (`Dockerfile-chat`, `Dockerfile-data-manager`) on top of the
+  published `a2rchi-*-base` image. Adding `llama-index-core`/`flashrank` only to
+  `requirements/requirements-base.txt` covers the gate/CI and the (separately
+  rebuilt) base image, but **not** `pip install .` — so the deployed data-manager
+  crashed with `ModuleNotFoundError: No module named 'llama_index'`. Fix: declare
+  the deps in `pyproject.toml` too (versions matched to `requirements-base.txt`).
+  Note the gate blind spot: it installs `requirements-base.txt`, so it cannot catch
+  a dep missing from the deployment's `pip install .` path.

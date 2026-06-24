@@ -14,7 +14,7 @@ from src.archi.pipelines.agents.tools import (
     create_metadata_search_tool,
     create_retriever_tool,
 )
-from src.data_manager.vectorstore.retrievers import HybridRetriever
+from src.data_manager.vectorstore.retrievers import build_vector_retriever
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -168,34 +168,32 @@ class FASRCDocsAgent(BaseReActAgent):
     #     return [todolist_middleware, llmtoolselector_middleware]
 
     def _update_vector_retrievers(self, vectorstore: Any) -> None:
-        """Instantiate or refresh the vectorstore retriever tool using hybrid retrieval."""
+        """Instantiate or refresh the vectorstore retriever tool.
+
+        Retriever selection is delegated to ``build_vector_retriever`` (the
+        single config seam): when
+        ``data_manager.retrievers.hierarchical_rerank.enabled`` is true it
+        returns the ``LlamaIndexHierarchicalRetriever``; otherwise it falls back
+        to ``HybridRetriever``. Either way the retriever is wired into the same
+        ``search_vectorstore_hybrid`` tool with an unchanged name/contract.
+        """
         if not self.enable_vector_tools:
             self._vector_retrievers = None
             self._vector_tools = None
             return
         retrievers_cfg = self.dm_config.get("retrievers", {})
-        hybrid_cfg = retrievers_cfg.get("hybrid_retriever", {})
 
-        k = hybrid_cfg.get("num_documents_to_retrieve", 5)
-        bm25_weight = hybrid_cfg.get("bm25_weight", 0.6)
-        semantic_weight = hybrid_cfg.get("semantic_weight", 0.4)
-
-        hybrid_retriever = HybridRetriever(
-            vectorstore=vectorstore,
-            k=k,
-            bm25_weight=bm25_weight,
-            semantic_weight=semantic_weight,
-        )
+        retriever = build_vector_retriever(vectorstore, retrievers_cfg)
 
         hybrid_description = self._tool_definitions()["search_vectorstore_hybrid"][
             "description"
         ]
 
-        self._vector_retrievers = [hybrid_retriever]
+        self._vector_retrievers = [retriever]
         self._vector_tools = []
         self._vector_tools.append(
             create_retriever_tool(
-                hybrid_retriever,
+                retriever,
                 name="search_vectorstore_hybrid",
                 description=hybrid_description,
                 store_docs=self._store_documents,

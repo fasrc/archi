@@ -1,0 +1,45 @@
+# .github/workflows/ci.yml — run the SAME gate the loop enforces locally.
+#
+# The gate COMMAND is single-source (scripts/gate.sh); only the environment SETUP
+# differs between the loop container and a GitHub runner.
+#
+# NOTE: confirm this toolchain block stays in sync with the Containerfile — it is
+# the one part CI cannot fully infer.
+
+name: gate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so diff-cover can compare against the base branch
+
+      # Make the base branch available as a remote-tracking ref for diff-cover's
+      # --compare-branch. On pull_request the base is github.base_ref; on push we
+      # fall back to dev.
+      - name: Fetch base branch for diff coverage
+        env:
+          BASE_REF: ${{ github.base_ref || 'dev' }}
+        run: git fetch --no-tags origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
+
+      # --- archi toolchain (mirror Containerfile) --------------------------------
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install gate toolchain
+        run: |
+          python -m pip install --upgrade pip
+          pip install black==24.10.0 isort==6.0.1 pytest pytest-cov diff-cover
+          pip install -r requirements/requirements-base.txt
+      # --- end archi toolchain ---------------------------------------------------
+
+      - name: gate
+        env:
+          DIFF_COVER_BASE: origin/${{ github.base_ref || 'dev' }}
+        run: bash scripts/gate.sh

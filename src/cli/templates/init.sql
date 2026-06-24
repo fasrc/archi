@@ -313,6 +313,36 @@ BEGIN
     END IF;
 END $$;
 
+-- Parent nodes for hierarchical (parent-child) chunking.
+-- Additive: holds the larger "parent" context nodes that embedded child rows in
+-- document_chunks reference via metadata.parent_id (-> document_parent_nodes.id).
+-- Parents are NOT embedded and NOT added to any vector/BM25 index, so the shared
+-- document_chunks hybrid_search path is unchanged and never returns parent rows.
+CREATE TABLE IF NOT EXISTS document_parent_nodes (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+    parent_index INTEGER NOT NULL,
+
+    -- Parent context content (no embedding column on purpose)
+    parent_text TEXT NOT NULL,
+
+    -- Original document metadata propagated to the parent node
+    metadata JSONB,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_parent_nodes_document ON document_parent_nodes(document_id);
+
+-- Child -> parent link. Embedded child rows in document_chunks reference their
+-- parent context node via the `parent_id` key inside the EXISTING metadata JSONB
+-- column (-> document_parent_nodes.id). No new column is added to document_chunks,
+-- so its schema, constraints, and the shared hybrid_search path stay unchanged;
+-- rows ingested by the legacy (non-hierarchical) path simply leave parent_id NULL.
+-- This expression index supports child->parent lookup and parent dedupe.
+CREATE INDEX IF NOT EXISTS idx_chunks_parent_id
+    ON document_chunks ((metadata->>'parent_id'));
+
 -- ============================================================================
 -- 5. DOCUMENT SELECTIONS (3-Tier System)
 -- ============================================================================
