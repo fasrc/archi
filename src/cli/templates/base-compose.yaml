@@ -10,7 +10,7 @@
 {%- macro dev_agents_mount(ro=true) -%}
 {%- if dev_mode %}
       - {{ repo_path }}/src:/root/archi/src
-      - {{ repo_path }}/config/agents:/root/archi/agents{% if ro %}:ro{% endif %}
+      - ./data/agents:/root/archi/agents{% if ro %}:ro{% endif %}
 {%- else %}
       - ./data/agents:/root/archi/agents{% if ro %}:ro{% endif %}
 {%- endif %}
