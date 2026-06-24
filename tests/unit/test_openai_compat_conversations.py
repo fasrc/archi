@@ -201,3 +201,27 @@ class TestGetOrCreateConversationSQL:
 
         assert result is None
         mock_conn.close.assert_called_once()
+
+    def _executed_sql(self, mock_connect, user_id):
+        compat = self._setup_module_globals(mock_connect)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connect.return_value = mock_conn
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_cursor.fetchone.return_value = (7,)
+        compat._get_or_create_conversation("ext-1", user_id, "client-1")
+        return mock_cursor.execute.call_args[0][0]
+
+    @patch("psycopg2.connect")
+    def test_anonymous_uses_external_chat_id_only_conflict_target(self, mock_connect):
+        """Anonymous (user_id NULL) chats must conflict on external_chat_id alone;
+        the composite target never fires for NULL user_id (NULLs are distinct)."""
+        sql = self._executed_sql(mock_connect, None)
+        assert "ON CONFLICT (external_chat_id)" in sql
+        assert "WHERE user_id IS NULL AND external_chat_id IS NOT NULL" in sql
+
+    @patch("psycopg2.connect")
+    def test_authenticated_uses_composite_conflict_target(self, mock_connect):
+        sql = self._executed_sql(mock_connect, "user1")
+        assert "ON CONFLICT (user_id, external_chat_id)" in sql
