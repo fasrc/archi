@@ -149,6 +149,20 @@ def test_embed_child_nodes_raises_on_dimension_mismatch():
         embed_child_nodes(embedder, ["a child sentence."])
 
 
+def test_embed_child_nodes_accepts_configured_non_minilm_dim():
+    """A 1536-dim backend passes when ``expected_dim`` matches the config."""
+    embedder = _FakeEmbedder(dim=1536)
+    embeddings = embed_child_nodes(embedder, ["a child."], expected_dim=1536)
+    assert [len(vec) for vec in embeddings] == [1536]
+
+
+def test_embed_child_nodes_raises_when_dim_differs_from_configured():
+    """A vector that differs from the configured dimension fails loudly."""
+    embedder = _FakeEmbedder(dim=CHILD_EMBEDDING_DIM)
+    with pytest.raises(ValueError, match="expected 1536"):
+        embed_child_nodes(embedder, ["a child."], expected_dim=1536)
+
+
 def test_embed_child_nodes_raises_on_count_mismatch():
     """One vector per child is required; a short result fails loudly."""
 

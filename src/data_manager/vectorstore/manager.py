@@ -16,6 +16,7 @@ from src.utils.logging import get_logger
 
 from .loader_utils import select_loader
 from .node_parsing import (
+    CHILD_EMBEDDING_DIM,
     MARKDOWN_STRATEGY,
     SENTENCE_STRATEGY,
     build_hierarchical_nodes,
@@ -85,6 +86,20 @@ class VectorStoreManager:
         embedding_class = embedding_entry["class"]
         embedding_kwargs = embedding_entry.get("kwargs", {})
         self.embedding_model = embedding_class(**embedding_kwargs)
+
+        # Dimension of the configured embedder, used to guard hierarchical child
+        # embeddings against the document_chunks.embedding vector(N) column. Mirror
+        # the resolution in ConfigService: prefer an explicit per-embedder
+        # ``dimensions``, else a known default, else the MiniLM default.
+        default_dimensions = {
+            "all-MiniLM-L6-v2": 384,
+            "OpenAIEmbeddings": 1536,
+            "HuggingFaceEmbeddings": 384,
+        }
+        self.embedding_dimensions = embedding_entry.get(
+            "dimensions",
+            default_dimensions.get(embedding_name, CHILD_EMBEDDING_DIM),
+        )
 
         self.text_splitter = CharacterTextSplitter(
             chunk_size=self._data_manager_config["chunk_size"],
@@ -747,7 +762,11 @@ class VectorStoreManager:
                 child_texts.append(text)
                 child_metadatas.append(child_metadata)
 
-        embeddings = embed_child_nodes(self.embedding_model, child_texts)
+        embeddings = embed_child_nodes(
+            self.embedding_model,
+            child_texts,
+            expected_dim=self.embedding_dimensions,
+        )
 
         insert_data = []
         for idx, (chunk, embedding, metadata) in enumerate(

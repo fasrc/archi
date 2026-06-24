@@ -44,9 +44,13 @@ DEFAULT_CHILD_CHUNK_SIZE = 512
 SENTENCE_STRATEGY = "sentence"
 MARKDOWN_STRATEGY = "markdown"
 
-# Dimension of archi's configured embedder (``sentence-transformers/
-# all-MiniLM-L6-v2``) and of the ``document_chunks.embedding`` vector column.
-# Child vectors of any other size must never reach the database.
+# Default dimension of archi's stock embedder (``sentence-transformers/
+# all-MiniLM-L6-v2``). Used only as a fallback when no configured
+# ``embedding_dimensions`` is supplied to :func:`embed_child_nodes`; the guard
+# itself follows the deployment's configured dimension so non-MiniLM backends
+# (e.g. 1536-dim OpenAI) ingest correctly. Child vectors whose dimension does
+# not match the ``document_chunks.embedding`` column must never reach the
+# database.
 CHILD_EMBEDDING_DIM = 384
 
 
@@ -114,7 +118,12 @@ def build_hierarchical_nodes(
     ]
 
 
-def embed_child_nodes(embedding_model, child_texts: List[str]) -> List[List[float]]:
+def embed_child_nodes(
+    embedding_model,
+    child_texts: List[str],
+    *,
+    expected_dim: int = CHILD_EMBEDDING_DIM,
+) -> List[List[float]]:
     """Embed child leaf texts with archi's configured embedding model.
 
     The hierarchical ingestion path MUST embed children with archi's own
@@ -123,21 +132,27 @@ def embed_child_nodes(embedding_model, child_texts: List[str]) -> List[List[floa
     never a LlamaIndex default embedder, so child vectors stay consistent with
     the query embeddings and the ``document_chunks.embedding`` column.
 
-    Each returned vector is asserted to have :data:`CHILD_EMBEDDING_DIM`
-    dimensions; a mismatch raises :class:`ValueError` (fail loudly) rather than
-    letting a wrong-dimension vector reach the database.
+    Each returned vector is asserted to have ``expected_dim`` dimensions; a
+    mismatch raises :class:`ValueError` (fail loudly) rather than letting a
+    wrong-dimension vector reach the database. ``expected_dim`` follows the
+    deployment's configured ``embedding_dimensions`` so the guard matches the
+    actual ``document_chunks.embedding vector(N)`` column for any backend (e.g.
+    1536-dim OpenAI), not only 384-dim MiniLM. It defaults to
+    :data:`CHILD_EMBEDDING_DIM` only when no configured dimension is supplied.
 
     Args:
         embedding_model: archi's embedder, exposing ``embed_documents``.
         child_texts: child leaf texts to embed.
+        expected_dim: the configured embedding dimension every child vector must
+            match; defaults to :data:`CHILD_EMBEDDING_DIM`.
 
     Returns:
-        One embedding vector per input text, each :data:`CHILD_EMBEDDING_DIM`-
-        dimensional. An empty input yields an empty list.
+        One embedding vector per input text, each ``expected_dim``-dimensional.
+        An empty input yields an empty list.
 
     Raises:
         ValueError: if the embedder returns the wrong number of vectors, or any
-            vector does not have :data:`CHILD_EMBEDDING_DIM` dimensions.
+            vector does not have ``expected_dim`` dimensions.
     """
     texts = list(child_texts)
     if not texts:
@@ -153,10 +168,10 @@ def embed_child_nodes(embedding_model, child_texts: List[str]) -> List[List[floa
 
     for index, embedding in enumerate(embeddings):
         dim = len(embedding)
-        if dim != CHILD_EMBEDDING_DIM:
+        if dim != expected_dim:
             raise ValueError(
                 f"Child embedding {index} has dimension {dim}, expected "
-                f"{CHILD_EMBEDDING_DIM} to match the document_chunks.embedding "
+                f"{expected_dim} to match the document_chunks.embedding "
                 "column. Refusing to store a wrong-dimension vector."
             )
 

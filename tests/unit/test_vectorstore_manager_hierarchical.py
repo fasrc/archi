@@ -167,6 +167,7 @@ def _make_manager():
     manager.hierarchical_chunking = True
     manager._data_manager_config = {"stemming": {"enabled": False}}
     manager._pg_config = {"host": "localhost"}
+    manager.embedding_dimensions = EMBED_DIM
     manager.embedding_model = SimpleNamespace(
         embed_documents=lambda texts: [[0.0] * EMBED_DIM for _ in texts]
     )
@@ -330,6 +331,69 @@ def test_insert_hierarchical_file_raises_on_embedding_dim_mismatch():
     ]
 
     with pytest.raises(ValueError):
+        manager._insert_hierarchical_file(_FakeCursor(), document_id=1, parents=parents)
+
+
+def test_insert_hierarchical_file_accepts_configured_non_minilm_dimension(monkeypatch):
+    """The dim guard follows the deployment's configured embedding_dimensions.
+
+    A 1536-dim backend (e.g. OpenAIEmbeddings) ingests cleanly when the manager's
+    configured ``embedding_dimensions`` matches, rather than being rejected
+    against a hardcoded 384.
+    """
+    manager = _make_manager()
+    manager.embedding_dimensions = 1536
+    manager.embedding_model = SimpleNamespace(
+        embed_documents=lambda texts: [[0.0] * 1536 for _ in texts]
+    )
+
+    captured = {}
+
+    def _capture_execute_values(cursor, sql, data, template=None):
+        captured["data"] = data
+
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", _capture_execute_values
+    )
+
+    parents = [
+        {
+            "parent_index": 0,
+            "parent_text": "Parent.",
+            "parent_metadata": {"parent_index": 0},
+            "child_texts": ["c0"],
+            "child_metadatas": [{}],
+        }
+    ]
+
+    inserted = manager._insert_hierarchical_file(
+        _FakeCursor(), document_id=1, parents=parents
+    )
+
+    assert inserted == 1
+    assert all(len(row[3]) == 1536 for row in captured["data"])
+
+
+def test_insert_hierarchical_file_raises_when_dim_differs_from_configured():
+    """A vector whose dimension differs from the configured one still fails loudly."""
+    manager = _make_manager()
+    manager.embedding_dimensions = 1536
+    # Embedder yields 384-dim vectors against a 1536-dim configured column.
+    manager.embedding_model = SimpleNamespace(
+        embed_documents=lambda texts: [[0.0] * 384 for _ in texts]
+    )
+
+    parents = [
+        {
+            "parent_index": 0,
+            "parent_text": "Parent.",
+            "parent_metadata": {"parent_index": 0},
+            "child_texts": ["c0"],
+            "child_metadatas": [{}],
+        }
+    ]
+
+    with pytest.raises(ValueError, match="expected 1536"):
         manager._insert_hierarchical_file(_FakeCursor(), document_id=1, parents=parents)
 
 
