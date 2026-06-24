@@ -23,9 +23,16 @@ jobs:
       # Make the base branch available as a remote-tracking ref for diff-cover's
       # --compare-branch. On pull_request the base is github.base_ref; on push we
       # fall back to dev.
+      #
+      # RELEASE PRs (base == main): diff against origin/dev, not origin/main.
+      # diff-cover is built for incremental feature→dev branches; on a dev→main
+      # release PR, comparing vs main re-measures the WHOLE accumulated release
+      # surface (incl. never-covered legacy modules), which can't fairly hit 80%.
+      # Comparing vs dev measures only what dev added since the last release. The
+      # gate step also marks patch coverage ADVISORY on release PRs (see below).
       - name: Fetch base branch for diff coverage
         env:
-          BASE_REF: ${{ github.base_ref || 'dev' }}
+          BASE_REF: ${{ github.base_ref == 'main' && 'dev' || (github.base_ref || 'dev') }}
         run: git fetch --no-tags origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
 
       # --- archi toolchain (mirror Containerfile) --------------------------------
@@ -41,5 +48,10 @@ jobs:
 
       - name: gate
         env:
-          DIFF_COVER_BASE: origin/${{ github.base_ref || 'dev' }}
+          # Keep this base in lockstep with BASE_REF above (release PRs → dev).
+          DIFF_COVER_BASE: origin/${{ github.base_ref == 'main' && 'dev' || (github.base_ref || 'dev') }}
+          # Option 1: on release PRs (→ main) patch coverage is reported but does
+          # NOT fail the build — dev was already gated commit-by-commit on the way
+          # in, so a release merge must never be re-blocked by diff coverage.
+          GATE_COVERAGE_ADVISORY: ${{ github.base_ref == 'main' && '1' || '' }}
         run: bash scripts/gate.sh
