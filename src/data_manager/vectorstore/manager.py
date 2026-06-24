@@ -22,6 +22,7 @@ from .node_parsing import (
     embed_child_nodes,
 )
 from .postgres_vectorstore import PostgresVectorStore
+from .schema import ensure_hierarchical_schema
 
 logger = get_logger(__name__)
 
@@ -459,6 +460,14 @@ class VectorStoreManager:
         try:
             with conn.cursor() as cursor:
                 import json
+
+                # init.sql only runs on a fresh Postgres volume; ensure the
+                # hierarchical table/index exist before writing so an upgraded
+                # deployment on a pre-existing volume does not fail with an
+                # undefined-table error. Idempotent (CREATE ... IF NOT EXISTS).
+                if self.hierarchical_chunking:
+                    ensure_hierarchical_schema(cursor)
+                    conn.commit()
 
                 total_files = len(files_to_add_items)
                 files_since_commit = 0

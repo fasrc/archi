@@ -399,3 +399,103 @@ def test_add_to_postgres_hierarchical_persists_parents_and_children(monkeypatch)
         if "ingestion_status = 'embedded'" in sql
     ]
     assert status_updates, "document should be marked embedded"
+
+
+def test_add_to_postgres_hierarchical_ensures_schema_before_writes(monkeypatch):
+    """The hierarchical write path runs the idempotent schema-ensure step before
+    inserting parents, so an upgraded deployment on a pre-existing volume does not
+    fail with an undefined-table error (task 1.5)."""
+    manager = _make_manager()
+
+    catalog = MagicMock()
+    catalog.get_document_id.return_value = 42
+    catalog.get_metadata_for_hash.return_value = {}
+    manager._catalog = catalog
+
+    doc = SimpleNamespace(page_content="some text", metadata={})
+    manager.loader = lambda _path: SimpleNamespace(load=lambda: [doc])
+
+    monkeypatch.setattr(
+        manager_module,
+        "build_hierarchical_nodes",
+        lambda document, strategy="sentence": [
+            HierarchicalNode(
+                parent_index=0,
+                parent_text="Parent context.",
+                child_texts=["child one."],
+                metadata={},
+            )
+        ],
+    )
+
+    def _capture_execute_values(cursor, sql, data, template=None):
+        pass
+
+    fake_cursor = _FakeCursor()
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_conn.cursor.return_value.__exit__.return_value = False
+
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", _capture_execute_values
+    )
+    monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
+    monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
+
+    manager._add_to_postgres({"hash-1": "/tmp/doc.html"})
+
+    statements = [" ".join(sql.split()) for sql, _ in fake_cursor.executed]
+    ensure_idx = next(
+        i
+        for i, sql in enumerate(statements)
+        if "CREATE TABLE IF NOT EXISTS document_parent_nodes" in sql
+    )
+    insert_idx = next(
+        i
+        for i, sql in enumerate(statements)
+        if "INSERT INTO document_parent_nodes" in sql
+    )
+    # Ensure step precedes the first parent-node insert.
+    assert ensure_idx < insert_idx
+    assert any(
+        "CREATE INDEX IF NOT EXISTS idx_parent_nodes_document" in sql
+        for sql in statements
+    )
+
+
+def test_add_to_postgres_skips_schema_ensure_when_not_hierarchical(monkeypatch):
+    """The legacy CharacterTextSplitter path must not touch document_parent_nodes."""
+    manager = _make_manager()
+    manager.chunking_strategy = "character"
+    manager.hierarchical_chunking = False
+
+    catalog = MagicMock()
+    catalog.get_document_id.return_value = 42
+    catalog.get_metadata_for_hash.return_value = {}
+    manager._catalog = catalog
+
+    doc = SimpleNamespace(page_content="some text", metadata={})
+    manager.loader = lambda _path: SimpleNamespace(load=lambda: [doc])
+    manager.text_splitter = SimpleNamespace(split_documents=lambda docs: docs)
+
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras,
+        "execute_values",
+        lambda *a, **k: None,
+    )
+
+    fake_cursor = _FakeCursor()
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_conn.cursor.return_value.__exit__.return_value = False
+
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+    monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
+    monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
+
+    manager._add_to_postgres({"hash-1": "/tmp/doc.html"})
+
+    assert not any(
+        "document_parent_nodes" in sql for sql, _ in fake_cursor.executed
+    ), "non-hierarchical path must not reference the parent-node table"

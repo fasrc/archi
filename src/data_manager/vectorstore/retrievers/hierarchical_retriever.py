@@ -23,6 +23,7 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.vectorstores.base import VectorStore
 
+from src.data_manager.vectorstore.schema import ensure_hierarchical_schema
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -150,6 +151,12 @@ class LlamaIndexHierarchicalRetriever(BaseRetriever):
         conn = self.vectorstore._get_connection()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                # init.sql only runs on a fresh Postgres volume; ensure the
+                # parent-node table/index exist before reading so retrieval on an
+                # upgraded deployment over a pre-existing volume does not fail
+                # with an undefined-table error. Idempotent and a no-op once the
+                # table exists.
+                ensure_hierarchical_schema(cursor)
                 cursor.execute(
                     """
                     SELECT

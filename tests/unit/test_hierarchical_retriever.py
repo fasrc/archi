@@ -415,3 +415,36 @@ def test_default_reranker_model_constant(mock_vectorstore):
     assert DEFAULT_RERANKER_MODEL == "ms-marco-MiniLM-L-12-v2"
     retriever = LlamaIndexHierarchicalRetriever(vectorstore=mock_vectorstore)
     assert retriever.reranker_model == DEFAULT_RERANKER_MODEL
+
+
+def test_fetch_parents_ensures_schema_before_select(mock_vectorstore):
+    """The read path runs the idempotent schema-ensure step before selecting
+    parents, so retrieval on an upgraded deployment over a pre-existing volume
+    does not fail with an undefined-table error (task 1.5)."""
+    mock_vectorstore.hybrid_search.return_value = [_child("child snippet", parent_id=1)]
+    mock_vectorstore._mock_cursor.fetchall.return_value = [
+        _parent_row(1, "the full parent paragraph")
+    ]
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_IdentityRanker()
+    )
+
+    retriever.invoke("q")
+
+    statements = [
+        " ".join(call.args[0].split())
+        for call in mock_vectorstore._mock_cursor.execute.call_args_list
+    ]
+    ensure_idx = next(
+        i
+        for i, sql in enumerate(statements)
+        if "CREATE TABLE IF NOT EXISTS document_parent_nodes" in sql
+    )
+    select_idx = next(
+        i for i, sql in enumerate(statements) if "FROM document_parent_nodes" in sql
+    )
+    assert ensure_idx < select_idx
+    assert any(
+        "CREATE INDEX IF NOT EXISTS idx_parent_nodes_document" in sql
+        for sql in statements
+    )
