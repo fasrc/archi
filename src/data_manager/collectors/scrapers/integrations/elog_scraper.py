@@ -115,7 +115,10 @@ class ElogScraper:
     def _parse_entry(self, html: str, url: str) -> Tuple[str, Dict]:
         """Parse an ELOG entry page into clean text and structured metadata."""
         soup = BeautifulSoup(html, "html.parser")
-        meta: dict = {"url": url, "elog_entry": True}
+        # "scraper" marker lets scheduled refresh find ELOG rows: entries are stored
+        # with source_type="web" (shared with link/indico scrapers), so the scheduler
+        # filters on this string marker instead (mirrors the indico scraper).
+        meta: dict = {"url": url, "elog_entry": True, "scraper": "elog"}
 
         # Extract entry ID from URL
         entry_id = url.rstrip("/").rsplit("/", 1)[-1]

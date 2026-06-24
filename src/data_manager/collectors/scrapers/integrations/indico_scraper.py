@@ -51,8 +51,12 @@ class IndicoScraper:
         # Slide conversion config
         slide_config = self.config.get("slide_conversion", {})
         self.conversion_enabled = slide_config.get("enabled", True)
-        self.supported_formats = set(
-            slide_config.get("formats", ["pdf", "pptx", "ppt", "odp"])
+        # Keep an ordered, de-duplicated list: the configured order is the
+        # format-priority used when the same slides exist in multiple formats.
+        # A set would discard that order, making the chosen attachment
+        # nondeterministic. Membership tests on a short list are fine.
+        self.supported_formats = list(
+            dict.fromkeys(slide_config.get("formats", ["pdf", "pptx", "ppt", "odp"]))
         )
 
         # Initialize slide converter
@@ -598,12 +602,23 @@ class IndicoScraper:
         try:
             soup = BeautifulSoup(html_content, "html.parser")
 
-            # Look for contribution links (most reliable pattern)
-            contrib_links = soup.select('a[href*="/contribution/"]')
+            # Look for contribution links (most reliable pattern). Indico's
+            # canonical URLs are plural (/contributions/{id}/) — what this scraper
+            # itself builds elsewhere — so match that; accept the singular form too.
+            contrib_links = soup.select(
+                'a[href*="/contributions/"], a[href*="/contribution/"]'
+            )
             for link in contrib_links:
                 href = link.get("href", "")
-                if "/contribution/" in href:
-                    parts = href.split("/contribution/")
+                delimiter = (
+                    "/contributions/"
+                    if "/contributions/" in href
+                    else "/contribution/"
+                    if "/contribution/" in href
+                    else None
+                )
+                if delimiter:
+                    parts = href.split(delimiter)
                     if len(parts) > 1:
                         contrib_id = parts[1].split("/")[0].split("?")[0]
                         if contrib_id and contrib_id.isdigit():
@@ -720,9 +735,7 @@ class IndicoScraper:
         # formats (e.g. PDF + PPTX), keep only the first match in the
         # configured format-priority order to avoid duplicate chunks.
         folders = contribution.get("folders", [])
-        format_priority = list(
-            self.supported_formats
-        )  # e.g. ["pdf", "pptx", "ppt", "odp"]
+        format_priority = self.supported_formats  # ordered, e.g. ["pdf", "pptx", "ppt", "odp"]
 
         all_attachments: List[Dict] = []
         for folder in folders:

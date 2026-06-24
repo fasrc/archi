@@ -61,9 +61,12 @@ def seed(config: dict, cs: ConfigService):
     embedding_class_map = dm.get("embedding_class_map", {})
     embedding_dimensions = embedding_class_map.get(embedding_name, {}).get("dimensions", 384)
 
-    agent_class = services.get("chat_app", {}).get("agent_class")
-    provider = services.get("chat_app", {}).get("provider")
-    model = services.get("chat_app", {}).get("model")
+    chat_app_cfg = services.get("chat_app", {})
+    agent_class = chat_app_cfg.get("agent_class")
+    # Rendered chat configs use default_provider/default_model; fall back to the
+    # legacy provider/model keys for older hand-written configs.
+    provider = chat_app_cfg.get("default_provider") or chat_app_cfg.get("provider")
+    model = chat_app_cfg.get("default_model") or chat_app_cfg.get("model")
     available_pipelines = [agent_class] if agent_class else []
     available_models = [f"{provider}/{model}"] if provider and model else []
     available_providers = [provider] if provider else []

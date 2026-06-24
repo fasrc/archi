@@ -79,6 +79,8 @@ def main() -> None:
         "sso": lambda last_run=None: data_manager.scraper_manager.schedule_collect_sso(data_manager.persistence, last_run=last_run),
         "jira": lambda last_run=None: data_manager.ticket_manager.schedule_collect_jira(data_manager.persistence, last_run=last_run),
         "redmine": lambda last_run=None: data_manager.ticket_manager.schedule_collect_redmine(data_manager.persistence, last_run=last_run),
+        "indico": lambda last_run=None: data_manager.scraper_manager.schedule_collect_indico(data_manager.persistence, last_run=last_run),
+        "elog": lambda last_run=None: data_manager.scraper_manager.schedule_collect_elog(data_manager.persistence, last_run=last_run),
     }
 
     scheduler = CronScheduler()

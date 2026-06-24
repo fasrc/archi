@@ -80,7 +80,11 @@ class ScraperManager:
             sources_config.get("elog", {}) if isinstance(sources_config, dict) else {}
         )
         self.elog_config = elog_config if isinstance(elog_config, dict) else {}
-        self.elog_enabled = bool(self.elog_config.get("url"))
+        # Gate on the explicit `enabled` flag (like git/indico/jira/redmine), not just
+        # URL presence, so disabling ELOG while leaving the URL set stops collection.
+        self.elog_enabled = bool(self.elog_config.get("enabled", False)) and bool(
+            self.elog_config.get("url")
+        )
 
         self.data_path = Path(global_config["DATA_PATH"])
         self.input_lists = links_config.get("input_lists", [])
@@ -237,8 +241,10 @@ class ScraperManager:
     def schedule_collect_elog(
         self, persistence: PersistenceService, last_run: Optional[str] = None
     ) -> None:
+        # ELOG entries are stored with source_type="web", so match the metadata-level
+        # "scraper" marker instead (mirrors schedule_collect_indico).
         metadata = persistence.catalog.get_metadata_by_filter(
-            "source_type", source_type="elog", metadata_keys=["url"]
+            "scraper", scraper="elog", metadata_keys=["url"]
         )
         catalog_urls = [m[1].get("url", "") for m in metadata]
         self.collect_elog(persistence, extra_urls=catalog_urls)

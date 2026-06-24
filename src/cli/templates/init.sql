@@ -406,6 +406,11 @@ CREATE INDEX IF NOT EXISTS idx_conv_meta_client ON conversation_metadata(client_
 --     ON conversation_metadata(user_id, external_chat_id)
 --     WHERE external_chat_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_meta_external_chat ON conversation_metadata(user_id, external_chat_id) WHERE external_chat_id IS NOT NULL;
+-- Anonymous (user_id IS NULL) chats: Postgres treats NULLs as distinct in the
+-- composite index above, so anonymous OpenWebUI clients would never match it and
+-- a fresh conversation would be created on every request (history lost). This
+-- partial index keys anonymous chats on external_chat_id alone for continuity.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_meta_external_chat_anon ON conversation_metadata(external_chat_id) WHERE user_id IS NULL AND external_chat_id IS NOT NULL;
 
 -- Add FK to conversation_doc_overrides now that conversation_metadata exists
 DO $$

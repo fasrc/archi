@@ -43,3 +43,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_token
 -- Prevent cross-user collision on X-OpenWebUI-Chat-Id (matches init.sql).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_meta_external_chat
     ON conversation_metadata(user_id, external_chat_id) WHERE external_chat_id IS NOT NULL;
+
+-- Anonymous chats (user_id IS NULL) need continuity keyed on external_chat_id
+-- alone, since NULL user_id never matches the composite index above.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_meta_external_chat_anon
+    ON conversation_metadata(external_chat_id) WHERE user_id IS NULL AND external_chat_id IS NOT NULL;

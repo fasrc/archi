@@ -67,7 +67,8 @@ class SecretsManager:
     def get_required_secrets_for_sources(self, sources: Set[str]) -> Set[str]:
         if not sources:
             return set()
-        return set(source_registry.required_secrets(list(sources)))
+        configs = self.config_manager.get_configs() if self.config_manager else None
+        return set(source_registry.required_secrets(list(sources), configs=configs))
 
     def _get_model_based_secrets(self) -> Set[str]:
         """Extract required secrets based on models being used for selected pipeline"""

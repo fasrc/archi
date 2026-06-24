@@ -433,15 +433,29 @@ def _get_or_create_conversation(external_chat_id, user_id, client_id):
     if not _chat_wrapper:
         return None
 
+    # Pick the conflict target that matches the partial unique index for this
+    # auth state. Anonymous rows have user_id NULL, which Postgres treats as
+    # distinct in the composite index, so they key on external_chat_id alone.
+    if user_id is None:
+        conflict_clause = (
+            "ON CONFLICT (external_chat_id) "
+            "WHERE user_id IS NULL AND external_chat_id IS NOT NULL"
+        )
+    else:
+        conflict_clause = (
+            "ON CONFLICT (user_id, external_chat_id) "
+            "WHERE external_chat_id IS NOT NULL"
+        )
+
     try:
         conn = psycopg2.connect(**_chat_wrapper.pg_config)
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    """
+                    f"""
                     INSERT INTO conversation_metadata (user_id, client_id, title, external_chat_id)
                     VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (user_id, external_chat_id) WHERE external_chat_id IS NOT NULL
+                    {conflict_clause}
                     DO UPDATE SET last_message_at = NOW()
                     RETURNING conversation_id
                     """,
