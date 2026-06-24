@@ -52,6 +52,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
                 </li>
               </ul>
@@ -123,6 +127,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
                 </li>
               </ul>
               <ul>
@@ -257,6 +265,11 @@
 <td>Validate and show what would be created without deploying</td>
 <td>Off</td>
 </tr>
+<tr>
+<td><code>--dev</code></td>
+<td>Enable dev mode: mount repo source and agents into containers for restart-only development</td>
+<td>Off</td>
+</tr>
 </tbody>
 </table>
 <p><strong>Examples:</strong></p>
@@ -272,12 +285,17 @@ archi create -n prod-archi -c config.yaml -e .secrets.env \
 # Dry run to validate configuration
 archi create -n test -c config.yaml -e .secrets.env \
   --services chatbot --dry-run
+
+# Dev mode: code changes take effect on container restart
+archi create -n my-archi --dev -f -c config.yaml -e .secrets.env \
+  --services chatbot --hostmode
 </code></pre>
 <p><strong>Notes:</strong></p>
 <ul>
 <li>The CLI checks that host ports are free before deploying. If a port is in use, adjust <code>services.*.external_port</code> in your config.</li>
 <li>The first deployment builds container images from scratch (may take several minutes). Subsequent deployments reuse images.</li>
 <li>Use <code>-v 4</code> for debug-level logging when troubleshooting.</li>
+<li><strong>Dev mode</strong> (<code>--dev</code>): Bind-mounts the repo's <code>src/</code> and <code>config/agents/</code> directly into containers. After the initial deploy, edit source code or agent prompts and just <code>docker restart &lt;container&gt;</code> — no redeploy or image rebuild needed. Config YAML changes still require a redeploy.</li>
 </ul>
 <hr />
 <h3 id="archi-delete"><code>archi delete</code></h3>

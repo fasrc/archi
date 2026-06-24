@@ -70,6 +70,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
                 </li>
               </ul>
@@ -107,6 +111,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
                 </li>
               </ul>
               <ul>
@@ -260,7 +268,7 @@ data_manager:
 <li><code>GOOGLE_API_KEY</code>: Google Gemini API key.</li>
 <li><code>HUGGINGFACEHUB_API_TOKEN</code>: HuggingFace access token (for private models or embeddings).</li>
 </ul>
-<p>Other services may require additional secrets; see the <a href="../user_guide/">User Guide</a> for details.</p>
+<p>Other services may require additional secrets; see the <a href="../secrets/">Secrets Management</a> guide for a complete reference.</p>
 <h2 id="creating-an-archi-deployment-with-ollama">Creating an Archi Deployment with Ollama</h2>
 <p>Create your deployment with the CLI. A deployment with a local Ollama model (make sure you specify in the <code>config.yaml</code> the URL of your Ollama instance):</p>
 <pre><code class="language-bash">archi create --name my-archi \
@@ -367,7 +375,7 @@ Services running: chatbot, postgres
           </div><footer>
     <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
         <a href="../install/" class="btn btn-neutral float-left" title="Install"><span class="icon icon-circle-arrow-left"></span> Previous</a>
-        <a href="../user_guide/" class="btn btn-neutral float-right" title="User Guide">Next <span class="icon icon-circle-arrow-right"></span></a>
+        <a href="../secrets/" class="btn btn-neutral float-right" title="Secrets">Next <span class="icon icon-circle-arrow-right"></span></a>
     </div>
 
   <hr/>
@@ -397,7 +405,7 @@ Services running: chatbot, postgres
       <span><a href="../install/" style="color: #fcfcfc">&laquo; Previous</a></span>
     
     
-      <span><a href="../user_guide/" style="color: #fcfcfc">Next &raquo;</a></span>
+      <span><a href="../secrets/" style="color: #fcfcfc">Next &raquo;</a></span>
     
   </span>
 </div>

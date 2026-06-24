@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>/v1 API Reference - Archi Docs</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "/v1 API Reference";
+        var mkdocs_page_input_path = "api-reference-v1.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">/v1 API Reference</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/api-reference-v1.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="v1-api-reference">/v1 API Reference</h1>
+<p>archi's OpenAI-compatible API. Enabled via <code>services.chat_app.openai_compat.enabled: true</code>.</p>
+<h2 id="authentication">Authentication</h2>
+<p>When archi authentication is enabled, all <code>/v1</code> endpoints require a bearer token:</p>
+<pre><code>Authorization: Bearer archi_&lt;token&gt;
+</code></pre>
+<p>Generate tokens via <code>POST /api/users/me/api-token</code>.</p>
+<p>When authentication is disabled, no token is required.</p>
+<h2 id="endpoints">Endpoints</h2>
+<h3 id="get-v1models">GET /v1/models</h3>
+<p>List available archi configurations as OpenAI model objects.</p>
+<p><strong>Response:</strong></p>
+<pre><code class="language-json">{
+  &quot;object&quot;: &quot;list&quot;,
+  &quot;data&quot;: [
+    {
+      &quot;id&quot;: &quot;my_archi&quot;,
+      &quot;object&quot;: &quot;model&quot;,
+      &quot;created&quot;: 1700000000,
+      &quot;owned_by&quot;: &quot;archi&quot;
+    }
+  ]
+}
+</code></pre>
+<h3 id="post-v1chatcompletions">POST /v1/chat/completions</h3>
+<p>Send a chat completion request. Supports both streaming and non-streaming modes.</p>
+<p><strong>Request body:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model</code></td>
+<td>string</td>
+<td>Yes</td>
+<td>Config name from <code>/v1/models</code></td>
+</tr>
+<tr>
+<td><code>messages</code></td>
+<td>array</td>
+<td>Yes</td>
+<td>Array of <code>{role, content}</code> objects</td>
+</tr>
+<tr>
+<td><code>stream</code></td>
+<td>boolean</td>
+<td>No</td>
+<td>Enable SSE streaming (default: <code>false</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Example request:</strong></p>
+<pre><code class="language-json">{
+  &quot;model&quot;: &quot;my_archi&quot;,
+  &quot;messages&quot;: [
+    {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;What is RAG?&quot;}
+  ],
+  &quot;stream&quot;: true
+}
+</code></pre>
+<p><strong>Non-streaming response:</strong></p>
+<pre><code class="language-json">{
+  &quot;id&quot;: &quot;chatcmpl-abc123&quot;,
+  &quot;object&quot;: &quot;chat.completion&quot;,
+  &quot;created&quot;: 1700000000,
+  &quot;model&quot;: &quot;my_archi&quot;,
+  &quot;choices&quot;: [
+    {
+      &quot;index&quot;: 0,
+      &quot;message&quot;: {
+        &quot;role&quot;: &quot;assistant&quot;,
+        &quot;content&quot;: &quot;RAG stands for...&quot;
+      },
+      &quot;finish_reason&quot;: &quot;stop&quot;
+    }
+  ],
+  &quot;usage&quot;: {
+    &quot;prompt_tokens&quot;: 0,
+    &quot;completion_tokens&quot;: 0,
+    &quot;total_tokens&quot;: 0
+  }
+}
+</code></pre>
+<p><strong>Streaming response:</strong></p>
+<p>Each event is an SSE line:</p>
+<pre><code>data: {&quot;id&quot;:&quot;chatcmpl-abc123&quot;,&quot;object&quot;:&quot;chat.completion.chunk&quot;,&quot;created&quot;:1700000000,&quot;model&quot;:&quot;my_archi&quot;,&quot;choices&quot;:[{&quot;index&quot;:0,&quot;delta&quot;:{&quot;content&quot;:&quot;RAG&quot;},&quot;finish_reason&quot;:null}]}
+
+data: {&quot;id&quot;:&quot;chatcmpl-abc123&quot;,&quot;object&quot;:&quot;chat.completion.chunk&quot;,&quot;created&quot;:1700000000,&quot;model&quot;:&quot;my_archi&quot;,&quot;choices&quot;:[{&quot;index&quot;:0,&quot;delta&quot;:{&quot;content&quot;:&quot; stands&quot;},&quot;finish_reason&quot;:null}]}
+
+data: {&quot;id&quot;:&quot;chatcmpl-abc123&quot;,&quot;object&quot;:&quot;chat.completion.chunk&quot;,&quot;created&quot;:1700000000,&quot;model&quot;:&quot;my_archi&quot;,&quot;choices&quot;:[{&quot;index&quot;:0,&quot;delta&quot;:{},&quot;finish_reason&quot;:&quot;stop&quot;}]}
+
+data: [DONE]
+</code></pre>
+<p><strong>Headers:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>X-OpenWebUI-Chat-Id</code></td>
+<td>Optional. Maps to an archi conversation for persistence across requests.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="error-format">Error Format</h2>
+<p>All errors use the OpenAI error format:</p>
+<pre><code class="language-json">{
+  &quot;error&quot;: {
+    &quot;message&quot;: &quot;Model 'unknown' not found. Available: my_archi&quot;,
+    &quot;type&quot;: &quot;invalid_request_error&quot;
+  }
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Type</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>401</td>
+<td><code>invalid_request_error</code></td>
+<td>Missing or invalid token</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>invalid_request_error</code></td>
+<td>User lacks <code>chat:query</code> permission</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>invalid_request_error</code></td>
+<td>Unknown model</td>
+</tr>
+<tr>
+<td>500</td>
+<td><code>server_error</code></td>
+<td>Pipeline execution error</td>
+</tr>
+</tbody>
+</table>
+<h2 id="event-translation">Event Translation</h2>
+<p>archi's native streaming events are translated to OpenAI format:</p>
+<table>
+<thead>
+<tr>
+<th>archi event</th>
+<th>OpenAI SSE</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>chunk</code></td>
+<td><code>delta.content</code></td>
+<td>Text content</td>
+</tr>
+<tr>
+<td><code>final</code></td>
+<td>Citations + <code>finish_reason: "stop"</code></td>
+<td>Sources appended as markdown</td>
+</tr>
+<tr>
+<td><code>tool_start</code></td>
+<td><em>(dropped)</em></td>
+<td>No OpenAI equivalent</td>
+</tr>
+<tr>
+<td><code>thinking_start</code></td>
+<td><em>(dropped)</em></td>
+<td>No OpenAI equivalent</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td><code>delta.content: "[Error: ...]"</code></td>
+<td>Mid-stream errors</td>
+</tr>
+</tbody>
+</table>
+<h2 id="source-citations">Source Citations</h2>
+<p>When the pipeline returns source documents, a citation block is appended to the response:</p>
+<pre><code class="language-markdown">---
+**Sources:**
+- `document.md` (relevance: 0.85)
+- `guide.md` [collection-name] (relevance: 0.92)
+</code></pre>
+<p>Collection labels appear only when sources span multiple collections.</p>
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

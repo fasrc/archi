@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>FASRC Archi — Deployment Notes - Archi Docs</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "FASRC Archi \u2014 Deployment Notes";
+        var mkdocs_page_input_path = "fasrc_archi.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">FASRC Archi — Deployment Notes</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/fasrc_archi.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="fasrc-archi-deployment-notes">FASRC Archi — Deployment Notes</h1>
+<p>Operational notes specific to the Harvard <strong>FASRC</strong> deployment of archi (the
+<code>fasrc/archi</code> fork). These cover host- and environment-specific details that do
+not belong in the upstream docs — primarily the self-hosted vLLM model server
+that backs the chat app.</p>
+<p>Host: <code>archi.rc.fas.harvard.edu</code> (DNS alias for <code>holygpu7c0717.rc.fas.harvard.edu</code>),
+4× Tesla V100-PCIE-32GB.</p>
+<hr />
+<h2 id="model-server-vllm-qwen-36">Model server (vLLM / Qwen 3.6)</h2>
+<p>The chat app does <strong>not</strong> ship the LLM — it calls an OpenAI-compatible vLLM
+server that runs separately on the GPU host.</p>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Model</td>
+<td><code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code></td>
+</tr>
+<tr>
+<td>Endpoint</td>
+<td><code>http://localhost:8001/v1</code></td>
+</tr>
+<tr>
+<td>GPUs</td>
+<td>2,3 (<code>--tensor-parallel-size 2</code>)</td>
+</tr>
+<tr>
+<td>Container image</td>
+<td><code>/scratch/a2rchi/sifs/vllm_volta.sif</code> (custom Volta build)</td>
+</tr>
+<tr>
+<td>Runtime</td>
+<td>Singularity / Apptainer (<code>singularity exec</code>)</td>
+</tr>
+<tr>
+<td>Log (manual launch)</td>
+<td><code>/scratch/a2rchi/vllm_instance2.log</code></td>
+</tr>
+</tbody>
+</table>
+<p>The chat app's pointer to this endpoint is the authoritative <strong>running config in
+Postgres</strong> (<code>static_config.services_config</code>, database <code>archi-db</code>), seeded at
+<code>archi create</code> from <code>config/environments/dev.yaml</code>. Editing a <code>config.yaml</code> on
+disk and restarting is a no-op; re-run the deploy (<code>g.sh</code>) to reseed.</p>
+<blockquote>
+<p>The server is <strong>not</strong> part of the docker-compose stack and is not started by
+<code>archi create</code>. It is launched independently as described below.</p>
+</blockquote>
+<hr />
+<h2 id="starting-the-model-server-manually">Starting the model server manually</h2>
+<pre><code class="language-bash">bash config/scripts/singularity_vllm_qwen36_volta.sh
+</code></pre>
+<p>This backgrounds the process and writes to <code>/scratch/a2rchi/vllm_instance2.log</code>.
+Engine warmup takes ~50–60 s; it is ready when the log shows
+<code>Application startup complete.</code> and <code>GET /v1/models</code> returns HTTP 200.</p>
+<p>To stop it, target the specific PID — <strong>never</strong> a broad <code>pkill -f</code>, which on a
+shared GPU cluster could hit other users' instances:</p>
+<pre><code class="language-bash">pgrep -f vllm.entrypoints.openai.api_server   # find the PID
+kill &lt;pid&gt;
+</code></pre>
+<h3 id="the-metrics-middleware-compat-shim-required">The metrics-middleware compat shim (required)</h3>
+<p><code>vllm_volta.sif</code> pairs <code>fastapi 0.137.2</code> with
+<code>prometheus_fastapi_instrumentator 8.0.0</code>. FastAPI's newer <code>_IncludedRouter</code>
+route object has no <code>.path</code> attribute,
+but the older instrumentator reads <code>route.path</code> on every request — so it raises
+<code>AttributeError</code> and returns <strong>HTTP 500 on every request</strong>, including
+<code>/v1/chat/completions</code>. The engine loads fine; only the metrics middleware
+breaks, and there is no vLLM flag to disable it.</p>
+<p>Fix: <code>config/scripts/vllm_patch/sitecustomize.py</code> wraps <code>get_route_name</code> to
+return <code>None</code> on <code>AttributeError</code> (the instrumentator then falls back to the raw
+URL path). It is injected via <code>SINGULARITYENV_PYTHONPATH=/opt/vllm_patch</code> and a
+bind mount, so Python auto-imports it at interpreter startup. <strong>Do not</strong> wrap the
+entrypoint with a <code>runpy</code> launcher instead — that breaks vLLM's multiprocessing
+<code>spawn</code> workers (<code>freeze_support()</code> RuntimeError); vLLM must stay the <code>__main__</code>
+module. Both launch scripts already wire the shim in.</p>
+<hr />
+<h2 id="auto-start-on-reboot-systemd">Auto-start on reboot (systemd)</h2>
+<p>The user crontab is blocked by PAM on this host, so <code>@reboot</code> cron is not an
+option. The host runs systemd, and we have <code>sudo</code>, so a <strong>system-level systemd
+service</strong> is used. It also restarts the server on crash and logs to journald.</p>
+<p>systemd needs a <strong>foreground</strong> process, so the service uses a foreground variant
+of the launcher (no backgrounding, no log redirect):
+<code>config/scripts/vllm_qwen36_volta_serve.sh</code>.</p>
+<h3 id="unit-file">Unit file</h3>
+<p>Source of truth: <code>config/scripts/vllm-qwen36.service</code>.</p>
+<pre><code class="language-ini">[Unit]
+Description=archi Qwen3.6 vLLM server (V100, port 8001)
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/scratch/a2rchi /home/a2rchi
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=a2rchi
+Group=a2rchi
+Environment=HOME=/home/a2rchi
+TimeoutStartSec=600
+ExecStart=/home/a2rchi/archi-openai-compat/config/scripts/vllm_qwen36_volta_serve.sh
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+<p><code>RequiresMountsFor</code> makes the unit wait for the <code>/scratch</code> and <code>/home</code>
+filesystems; <code>TimeoutStartSec=600</code> allows for model warmup.</p>
+<h3 id="install">Install</h3>
+<pre><code class="language-bash"># Stop any manually-launched instance first so the service can bind :8001.
+# List the matching PID(s), then kill the specific one you intend to stop.
+pgrep -af vllm.entrypoints.openai.api_server
+kill &lt;pid&gt;   # replace &lt;pid&gt; with the PID printed above
+
+sudo install -m 644 \
+  /home/a2rchi/archi-openai-compat/config/scripts/vllm-qwen36.service \
+  /etc/systemd/system/vllm-qwen36.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now vllm-qwen36.service     # enable = start on boot; --now starts it immediately
+</code></pre>
+<h3 id="operate">Operate</h3>
+<pre><code class="language-bash">sudo systemctl status vllm-qwen36          # state
+sudo systemctl start vllm-qwen36           # start
+sudo systemctl stop vllm-qwen36            # stop
+sudo systemctl restart vllm-qwen36         # restart
+journalctl -u vllm-qwen36 -f               # follow logs (watch for &quot;Application startup complete.&quot;)
+</code></pre>
+<h3 id="caveats">Caveats</h3>
+<ul>
+<li>The service <strong>claims GPUs 2,3 on every boot</strong>. This is correct only while the
+  box is dedicated to archi; if those GPUs are ever SLURM-managed or shared,
+  auto-claiming them on boot will collide.</li>
+<li>Run <strong>exactly one</strong> instance. Once the service is enabled, start/stop it with
+  <code>systemctl</code> — do not also run <code>singularity_vllm_qwen36_volta.sh</code>, or the two
+  servers will fight over port 8001 and the GPUs.</li>
+</ul>
+<hr />
+<h2 id="file-reference">File reference</h2>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>config/scripts/singularity_vllm_qwen36_volta.sh</code></td>
+<td>Manual launcher (backgrounds, logs to file)</td>
+</tr>
+<tr>
+<td><code>config/scripts/vllm_qwen36_volta_serve.sh</code></td>
+<td>Foreground launcher used by systemd</td>
+</tr>
+<tr>
+<td><code>config/scripts/vllm_patch/sitecustomize.py</code></td>
+<td>prometheus/fastapi 500 compat shim</td>
+</tr>
+<tr>
+<td><code>config/scripts/vllm-qwen36.service</code></td>
+<td>systemd unit (install to <code>/etc/systemd/system/</code>)</td>
+</tr>
+<tr>
+<td><code>config/scripts/g.sh</code> / <code>g.sh</code></td>
+<td><code>archi create</code> redeploy of chatbot + grafana</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><code>config/</code> is intentionally untracked in this repo (local deployment state), so
+these scripts live outside version control — keep this doc in sync by hand when
+they change.</p>
+</blockquote>
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

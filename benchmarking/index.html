@@ -52,6 +52,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
                 </li>
               </ul>
@@ -106,11 +110,51 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#results">Results</a>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#prompt-sweep">Prompt sweep</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#1-write-a-manifest">1. Write a manifest</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#2-generate-the-per-prompt-configs">2. Generate the per-prompt configs</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#3-run-the-sweep">3. Run the sweep</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#reading-the-leaderboard">Reading the leaderboard</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#human-grading-via-argilla">Human grading via Argilla</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#operator-loop">Operator loop</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#cli-flags">CLI flags</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#judgesut-split">Judge/SUT split</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#argilla-configuration">Argilla configuration</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#scientific-rigor-conventions">Scientific-rigor conventions</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#pre-registration">Pre-registration</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#anchor-questions">Anchor questions</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#annotation-rubric-and-calibration">Annotation rubric and calibration</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#inter-rater-reliability">Inter-rater reliability</a>
+    </li>
+        </ul>
+    </li>
     </ul>
                 </li>
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
                 </li>
               </ul>
               <ul>
@@ -328,7 +372,132 @@ archi evaluate -n benchmark -c config.yaml -e .secrets.env --gpu-ids all
 <ul>
 <li>Plotting functions</li>
 <li>An IPython notebook with usage examples (<code>benchmark_handler.ipynb</code>)</li>
+<li><code>analyze_grades.ipynb</code> — for runs that pushed human grades to Argilla (see below)</li>
 </ul>
+<hr />
+<h2 id="prompt-sweep">Prompt sweep</h2>
+<p>A <em>prompt sweep</em> runs N agent prompts through the RAGAS harness with everything
+but the prompt held fixed — model, queries, retriever, and the RAGAS judge all
+come from one base config — and ranks the prompts on a <strong>leaderboard</strong> by mean
+RAGAS metric. It generalizes a 2-way A/B to the whole prompt field, which is how
+we settle "which support prompt do we ship?" with data rather than by eyeballing
+one pair at a time (the open question Q5 / Decision 3 in
+<code>docs/docs/notes_response_tuning.md</code>).</p>
+<p>Only <code>services.benchmarking.agent_md_file</code> varies across variants. The model and
+RAGAS judge are deliberately held fixed; the leaderboard's <code>shared_context</code>
+cross-checks this and flags any drift.</p>
+<h3 id="1-write-a-manifest">1. Write a manifest</h3>
+<p>A manifest names one base config and the prompts to sweep. See
+<code>config/benchmarking/prompt_sweep.yaml</code> for a worked example:</p>
+<pre><code class="language-yaml">base_config: config/benchmarking/ragas.yaml   # supplies model/queries/judge/retriever
+out_dir: bench_out/sweep_configs              # optional (this is the default)
+primary_metric: faithfulness                  # leaderboard sort key (optional)
+prompts:
+  - config/agents/fasrc-cannon-v1-strict.md
+  - config/agents/fasrc-cannon-v2-lean.md
+  - config/agents/fasrc-cannon-v3-cited.md
+  - config/agents/fasrc-cannon-v4-linked.md
+</code></pre>
+<p><code>primary_metric</code> is one of <code>answer_relevancy</code>, <code>faithfulness</code>,
+<code>context_precision</code>, <code>context_recall</code> (default <code>faithfulness</code> — grounding is the
+load-bearing property for a "never guess" support bot). All four metrics are
+reported per variant regardless; this only sets the ranking key.</p>
+<h3 id="2-generate-the-per-prompt-configs">2. Generate the per-prompt configs</h3>
+<pre><code class="language-bash">python scripts/benchmarking/generate_prompt_sweep.py -m config/benchmarking/prompt_sweep.yaml
+</code></pre>
+<p>This writes one config per prompt into the sweep directory, each identical to
+the base except <code>services.benchmarking.agent_md_file</code> (the prompt) and <code>.name</code>
+(the prompt's filename stem). It refuses to write anything if a prompt path is
+missing, so a bad manifest never leaves a partial set behind.</p>
+<h3 id="3-run-the-sweep">3. Run the sweep</h3>
+<pre><code class="language-bash">archi evaluate --config-dir bench_out/sweep_configs --hostmode
+</code></pre>
+<p>The harness runs each config in turn (the existing <code>--config-dir</code> path) and,
+because 2+ configs ran, emits a <code>leaderboard</code> block in the dump JSON.</p>
+<h3 id="reading-the-leaderboard">Reading the leaderboard</h3>
+<p>The dump JSON gains a <code>leaderboard</code> key:</p>
+<ul>
+<li><code>rows</code> — one per variant: <code>name</code>, <code>agent_md_file</code>, the four mean RAGAS
+  <code>metrics</code>, <code>primary_score</code>, <code>rank</code>, <code>query_count</code>, and <code>incomplete</code>. Rows are
+  ranked best-first by <code>primary_metric</code>; ties share a rank. A variant that
+  failed to produce a metric (missing/NaN) has <code>None</code> for it, is marked
+  <code>incomplete: true</code>, and sorts after all complete variants — it is never
+  treated as a zero.</li>
+<li><code>shared_context</code> — the model, provider, judge <code>evaluator_model</code>,
+  <code>queries_path</code>, and <code>corpus_snapshot_id</code> shared by all variants. If any of
+  these differ across the swept configs, the discrepancy is recorded in
+  <code>shared_context.warnings</code> (the sweep is no longer apples-to-apples).</li>
+</ul>
+<p>The pairwise <code>ab_comparisons</code> are still produced alongside the leaderboard; the
+leaderboard is computed independently from each config's aggregates.</p>
+<hr />
+<h2 id="human-grading-via-argilla">Human grading via Argilla</h2>
+<p><code>archi evaluate --argilla</code> pushes benchmark results to a self-hosted <a href="https://argilla.io/">Argilla</a> instance for independent human grading. This is the platform we use to answer the question "is config A better than config B for FASRC users?" with data we trust — RAGAS scores alone can't decide prompt or model choices because the judge LLM has its own biases.</p>
+<h3 id="operator-loop">Operator loop</h3>
+<pre><code>1. Edit questions in   config/benchmarking/queries.json          (or a per-round bank)
+2. Run                 archi evaluate --argilla -cd configs/     (sweeps all configs in one snapshot)
+3. Email evaluators    https://archi.rc.fas.harvard.edu:3080/    (the Argilla URL)
+4. After grading       archi grade --export -o grades.json
+5. Analyze             scripts/benchmarking/analyze_grades.ipynb
+</code></pre>
+<p>Steps 1, 2, 4, 5 are run by the benchmark operator. Step 3 is the evaluator-facing surface — they grade in the Argilla UI, no CLI access needed.</p>
+<h3 id="cli-flags">CLI flags</h3>
+<pre><code class="language-bash"># Run with Argilla push
+archi evaluate -n bench-round-N -cd configs/ -e ~/.archi/.env.benchmark --argilla
+
+# Custom Argilla URL (default http://localhost:6900)
+archi evaluate ... --argilla --argilla-server http://my-argilla:6900
+
+# Pull grades back to JSON
+archi grade --export -o grades.json
+
+# Open the Argilla UI in your browser
+archi grade --serve
+</code></pre>
+<p><code>archi grade --export</code> reads the last-run dataset name from <code>~/.archi/.last-benchmark</code> if <code>--dataset</code> isn't specified.</p>
+<h3 id="judgesut-split">Judge/SUT split</h3>
+<p>The RAGAS judge LLM and the system under test (SUT) are decoupled. By default the same model judges itself; this is a known bias problem (a model rates its own style higher). Set <code>mode_settings.ragas_settings.evaluator_*</code> to break the symmetry — typically run local Qwen as the SUT and HUIT Bedrock Claude as the judge:</p>
+<pre><code class="language-yaml">services:
+  benchmarking:
+    # SUT
+    provider: local
+    model: qwen3:32b
+    ollama_url: http://host.containers.internal:7870
+    mode_settings:
+      ragas_settings:
+        # Independent judge — Anthropic Claude via Harvard HUIT's Bedrock proxy
+        evaluator_provider: huit_bedrock
+        evaluator_model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+</code></pre>
+<p>The <code>huit_bedrock</code> provider is Harvard's Anthropic-compatible Bedrock proxy. Pinning Sonnet 4.5 (rather than the rolling-alias 4.6) makes scores reproducible across rounds. Requires <code>HUIT_API_KEY</code> in <code>~/.archi/.env.benchmark</code>.</p>
+<h3 id="argilla-configuration">Argilla configuration</h3>
+<pre><code class="language-yaml">services:
+  benchmarking:
+    argilla:
+      # Number of distinct evaluators that must grade each record before it is
+      # marked complete. Drives inter-rater reliability sample size.
+      # Default 2; bump to 3 for high-stakes adoption decisions.
+      min_submitted: 2
+</code></pre>
+<p>See <code>argilla/README.md</code> for the self-hosted Argilla setup, including secret generation, workspace bootstrap, and user account creation.</p>
+<hr />
+<h2 id="scientific-rigor-conventions">Scientific-rigor conventions</h2>
+<p>These exist to make eval rounds trustworthy as an adoption signal, not just a vibes check.</p>
+<h3 id="pre-registration">Pre-registration</h3>
+<p>Before each eval round, write a pre-reg using the template at <code>docs/eval/preregs/_template.md</code>. Capture: primary hypothesis, the metric that decides, the decision rule (incl. what would make us NOT adopt the change), and any planned secondary analyses. <strong>Lock the pre-reg before running the eval</strong> — committing it on the benchmarking branch is the time-stamp.</p>
+<p>The pre-reg defends against running the eval, seeing the results, and then post-hoc choosing whichever metric makes the preferred config look best.</p>
+<h3 id="anchor-questions">Anchor questions</h3>
+<p><code>examples/benchmarking/anchor_questions.json</code> holds 3-5 questions of three types that are run on <strong>every</strong> round:</p>
+<ul>
+<li><strong>Easy-retrieve:</strong> specific FASRC fact like a partition name or a quota. Should always score high; if it regresses, the retrieval pipeline broke.</li>
+<li><strong>Reasoning:</strong> a multi-step troubleshooting question that needs synthesis across multiple docs. Best signal for prompt/model changes.</li>
+<li><strong>Should-refuse:</strong> an out-of-scope question (e.g. about a non-FASRC system). The right answer is "I don't know" or a referral, not a hallucination.</li>
+</ul>
+<p>Anchors detect cross-round regressions and ground the comparison. They should NOT be in the main question bank — that's a separate per-round set.</p>
+<h3 id="annotation-rubric-and-calibration">Annotation rubric and calibration</h3>
+<p>See <code>docs/eval/rubric.md</code> for the four-widget annotation rubric (winner / quality / failure-mode tags / notes), the binary-vs-Likert rationale, and the calibration-round protocol (group-grade the first 10 records, discuss, then go independent).</p>
+<h3 id="inter-rater-reliability">Inter-rater reliability</h3>
+<p>The analysis notebook computes pairwise Cohen's kappa (per pair of graders), Fleiss' kappa (overall), and per-grader bias distribution. Aim for κ ≥ 0.4 ("moderate agreement") before treating round-N's winner as decisive.</p>
               
             </div>
           </div><footer>

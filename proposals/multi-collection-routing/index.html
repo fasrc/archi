@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>Multi-Collection Routing - Archi Docs</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Multi-Collection Routing";
+        var mkdocs_page_input_path = "proposals/multi-collection-routing.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../.." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Multi-Collection Routing</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/proposals/multi-collection-routing.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="multi-collection-routing">Multi-Collection Routing</h1>
+<p><strong>Author:</strong> Austin Swinney, FASRC — Harvard University
+<strong>Date:</strong> March 2026
+<strong>Status:</strong> Proposal
+<strong>Companion:</strong> <a href="../openwebui-compat/">OpenWebUI Compatibility Mode</a> (independent, works well together)</p>
+<hr />
+<h2 id="tldr">TL;DR</h2>
+<p>Enable a single archi deployment to serve <strong>multiple isolated document collections</strong> — e.g., public cluster docs for everyone and privileged runbooks for superusers. archi's pgvector vectorstore already supports per-collection filtering; the gap is routing requests to the right collection, ingesting sources into named collections, and enforcing access. This proposal adds collection config, a connector pool, collection groups for cross-collection queries, collection-level auth, and standardized inline source citations.</p>
+<p><strong>Scope:</strong> 13 tasks. The vectorstore collection filtering infrastructure already exists — the work is routing, ingestion tagging, auth, and citations.</p>
+<hr />
+<h2 id="motivation">Motivation</h2>
+<p>A cluster operator needs to serve different document sets to different audiences from the same archi deployment:</p>
+<ul>
+<li><strong>Public users</strong> query cluster documentation (job submission, software modules, storage)</li>
+<li><strong>Superusers</strong> query internal runbooks (failover procedures, incident response, capacity planning)</li>
+</ul>
+<p>Today, archi boots with one vectorstore collection. All users search all documents. There's no way to isolate document sets or restrict access by role.</p>
+<hr />
+<h2 id="what-already-exists">What Already Exists</h2>
+<p>archi's pgvector vectorstore already supports per-collection filtering. This is not new work.</p>
+<pre><code class="language-mermaid">graph LR
+    subgraph existing[&quot;Already Implemented&quot;]
+        direction TB
+        E1[&quot;collection_name param&lt;br/&gt;&lt;i&gt;PostgresVectorStore.__init__()&lt;/i&gt;&quot;]:::done
+        E2[&quot;Chunks tagged on ingest&lt;br/&gt;&lt;i&gt;metadata['collection'] = name&lt;/i&gt;&quot;]:::done
+        E3[&quot;Queries filtered at SQL level&lt;br/&gt;&lt;i&gt;WHERE metadata→'collection' = %s&lt;/i&gt;&quot;]:::done
+        E4[&quot;Config-driven naming&lt;br/&gt;&lt;i&gt;base-config.yaml:147&lt;/i&gt;&quot;]:::done
+        E5[&quot;config_name routing&lt;br/&gt;&lt;i&gt;swaps agent/pipeline per request&lt;/i&gt;&quot;]:::done
+        E6[&quot;RBAC permission system&lt;br/&gt;&lt;i&gt;8 categories, 20+ permissions&lt;/i&gt;&quot;]:::done
+    end
+
+    style existing fill:none,stroke:#6b8e23
+
+    classDef done fill:#6b8e23,stroke:#333,color:#000
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>File</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PostgresVectorStore(collection_name=...)</code></td>
+<td><code>postgres_vectorstore.py:51</code></td>
+<td>Accepts collection name at init</td>
+</tr>
+<tr>
+<td><code>metadata["collection"] = self._collection_name</code></td>
+<td><code>postgres_vectorstore.py:139</code></td>
+<td>Tags every chunk with its collection</td>
+</tr>
+<tr>
+<td><code>WHERE metadata-&gt;&gt;'collection' = %s</code></td>
+<td><code>postgres_vectorstore.py:296</code></td>
+<td>Filters all queries by collection</td>
+</tr>
+<tr>
+<td><code>collection_name</code> in config YAML</td>
+<td><code>base-config.yaml:147</code></td>
+<td>Deployment config sets the collection name</td>
+</tr>
+<tr>
+<td><code>VectorstoreConnector</code></td>
+<td><code>vectorstore_connector.py:36</code></td>
+<td>Builds <code>{collection_name}_with_{embedding_name}</code></td>
+</tr>
+<tr>
+<td><code>config_name</code> request routing</td>
+<td><code>app.py:1300</code></td>
+<td>Swaps agent/pipeline per request</td>
+</tr>
+<tr>
+<td>RBAC permissions</td>
+<td><code>rbac/permission_enum.py</code></td>
+<td>Feature-level gating (<code>chat:query</code>, etc.)</td>
+</tr>
+</tbody>
+</table>
+<p>Multiple collections can coexist in the same <code>document_chunks</code> table today. Each query is already scoped to its collection.</p>
+<hr />
+<h2 id="the-gap">The Gap</h2>
+<pre><code class="language-mermaid">graph LR
+    subgraph gap[&quot;What's Missing&quot;]
+        direction TB
+        G1[&quot;Multi-collection routing&lt;br/&gt;&lt;i&gt;one connector per archi instance&lt;/i&gt;&quot;]:::todo
+        G2[&quot;Per-source collection tagging&lt;br/&gt;&lt;i&gt;all sources → one collection&lt;/i&gt;&quot;]:::todo
+        G3[&quot;config_name → collection mapping&lt;br/&gt;&lt;i&gt;config_name swaps agents, not collections&lt;/i&gt;&quot;]:::todo
+        G4[&quot;Collection groups&lt;br/&gt;&lt;i&gt;cross-collection queries&lt;/i&gt;&quot;]:::todo
+        G5[&quot;Collection-level auth&lt;br/&gt;&lt;i&gt;RBAC is feature-level only&lt;/i&gt;&quot;]:::todo
+        G6[&quot;Inline citation formatter&lt;br/&gt;&lt;i&gt;sources exist but formatting is inconsistent&lt;/i&gt;&quot;]:::todo
+    end
+
+    style gap fill:none,stroke:#c0392b
+
+    classDef todo fill:#c0392b,stroke:#333,color:#000
+</code></pre>
+<p><strong>The core limitation:</strong> archi boots with one <code>VectorstoreConnector</code> bound to one <code>collection_name</code> for the lifetime of the process. To serve multiple collections, each request needs to resolve to the correct collection — but <code>VectorstoreConnector</code> is initialized once in <code>archi.__init__()</code> and reused for every call.</p>
+<hr />
+<h2 id="design">Design</h2>
+<h3 id="how-it-works-today-single-collection">How It Works Today (Single Collection)</h3>
+<pre><code class="language-mermaid">graph LR
+    REQ[&quot;Request&quot;]:::req --&gt; ARCHI[&quot;archi()&quot;]:::component
+    ARCHI --&gt;|&quot;_prepare_call_kwargs()&quot;| VSC[&quot;VectorstoreConnector&lt;br/&gt;&lt;i&gt;(one instance, one collection)&lt;/i&gt;&quot;]:::component
+    VSC --&gt;|&quot;get_vectorstore()&quot;| PVS[&quot;PostgresVectorStore&lt;br/&gt;collection = 'default_with_bge'&quot;]:::db
+    PVS --&gt; CHUNKS[(&quot;document_chunks&lt;br/&gt;WHERE collection = 'default_with_bge'&quot;)]:::db
+
+    style REQ fill:none,stroke:#999
+
+    classDef component fill:#6b8e23,stroke:#333,color:#000
+    classDef db fill:#d4a017,stroke:#333,color:#000
+    classDef req fill:none,stroke:#999,color:#e0e0e0
+</code></pre>
+<h3 id="how-it-would-work-multi-collection">How It Would Work (Multi-Collection)</h3>
+<pre><code class="language-mermaid">graph LR
+    REQ[&quot;Request&lt;br/&gt;config_name = runbooks&quot;]:::req --&gt; ARCHI[&quot;archi()&quot;]:::component
+    ARCHI --&gt;|&quot;resolve config_name&lt;br/&gt;→ collection&quot;| POOL[&quot;ConnectorPool&lt;br/&gt;&lt;i&gt;(one per collection)&lt;/i&gt;&quot;]:::component
+    POOL --&gt;|&quot;get('runbooks')&quot;| PVS[&quot;PostgresVectorStore&lt;br/&gt;collection = 'runbooks_with_bge'&quot;]:::db
+    PVS --&gt; CHUNKS[(&quot;document_chunks&lt;br/&gt;WHERE collection = 'runbooks_with_bge'&quot;)]:::db
+
+    style REQ fill:none,stroke:#999
+
+    classDef component fill:#6b8e23,stroke:#333,color:#000
+    classDef db fill:#d4a017,stroke:#333,color:#000
+    classDef req fill:none,stroke:#999,color:#e0e0e0
+</code></pre>
+<p>The change is in <code>archi._prepare_call_kwargs()</code>: instead of always using <code>self.vs_connector</code>, it resolves the collection from the request's <code>config_name</code> and picks (or creates) the right <code>VectorstoreConnector</code> from a pool.</p>
+<h3 id="configuration">Configuration</h3>
+<pre><code class="language-yaml"># archi deployment config
+collections:
+  cluster-docs:
+    description: &quot;Public cluster documentation&quot;
+    sources:
+      - type: web
+        url: https://docs.rc.fas.harvard.edu
+      - type: git
+        repo: https://github.com/fasrc/docs
+    pipeline: QAPipeline
+    model: vllm/meta-llama/Llama-3.1-70B
+
+  runbooks:
+    description: &quot;Internal operations runbooks&quot;
+    sources:
+      - type: local_files
+        path: /data/runbooks
+      - type: git
+        repo: https://github.com/fasrc/runbooks
+        branch: main
+    pipeline: QAPipeline
+    model: vllm/meta-llama/Llama-3.1-70B
+
+# Named groups that span multiple collections.
+collection_groups:
+  all-ops:
+    description: &quot;All operations documentation&quot;
+    collections: [cluster-docs, runbooks]
+</code></pre>
+<h3 id="collection-groups">Collection Groups</h3>
+<p>A single query can search across multiple collections using named <strong>collection groups</strong>. Each group resolves to a set of collections at query time.</p>
+<pre><code class="language-mermaid">graph LR
+    REQ[&quot;config_name = all-ops&quot;]:::req --&gt; RESOLVE[&quot;Resolve group&lt;br/&gt;all-ops → [cluster-docs, runbooks]&quot;]:::component
+    RESOLVE --&gt; Q1[&quot;Query&lt;br/&gt;cluster-docs&quot;]:::store_public
+    RESOLVE --&gt; Q2[&quot;Query&lt;br/&gt;runbooks&quot;]:::store_private
+    Q1 --&gt; MERGE[&quot;Merge + re-rank&lt;br/&gt;by score&quot;]:::component
+    Q2 --&gt; MERGE
+    MERGE --&gt; RES[&quot;Top-k results&lt;br/&gt;across both&quot;]:::component
+
+    classDef req fill:none,stroke:#999,color:#e0e0e0
+    classDef component fill:#6b8e23,stroke:#333,color:#000
+    classDef store_public fill:#d4a017,stroke:#333,color:#000
+    classDef store_private fill:#c0392b,stroke:#333,color:#000
+</code></pre>
+<p>At the SQL level, this is a single query with an <code>ANY</code> filter — not two separate queries:</p>
+<pre><code class="language-sql">-- Single collection:
+WHERE metadata-&gt;&gt;'collection' = 'runbooks_with_bge'
+
+-- Collection group (all-ops):
+WHERE metadata-&gt;&gt;'collection' = ANY(ARRAY['cluster-docs_with_bge', 'runbooks_with_bge'])
+</code></pre>
+<p>Collection groups inherit the pipeline and model config from their first collection, or can override:</p>
+<pre><code class="language-yaml">collection_groups:
+  all-ops:
+    collections: [cluster-docs, runbooks]
+    pipeline: QAPipeline              # optional override
+    model: vllm/meta-llama/Llama-3.1-70B  # optional override
+</code></pre>
+<p>Access control: a user must have access to <strong>all</strong> collections in a group to use it.</p>
+<h3 id="collection-level-auth">Collection-Level Auth</h3>
+<p>archi already has session-based auth (anonymous, basic, SSO via OIDC) and an RBAC system that gates features via permissions like <code>chat:query</code>, <code>documents:view</code>, <code>config:modify</code>. The extension adds collection-level authorization:</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Current</th>
+<th>New</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RBAC permissions</td>
+<td>Feature-level (<code>chat:query</code>)</td>
+<td>+ Collection-level (<code>collections:runbooks:query</code>)</td>
+</tr>
+<tr>
+<td>Access table</td>
+<td>None for collections</td>
+<td><code>user_collection_access(user_id, collection_name)</code></td>
+</tr>
+</tbody>
+</table>
+<p>This enforces access regardless of which frontend is in use — archi's native UI, Open WebUI, or direct API access.</p>
+<h3 id="inline-source-citations">Inline Source Citations</h3>
+<p>Citations are critical. archi's <code>PipelineOutput.source_documents</code> carries retrieved sources, but formatting into the final answer is inconsistent. This proposal standardizes a shared inline citation formatter used by all response paths (native UI, <code>/v1</code> compat, any future interface).</p>
+<pre><code>The failover procedure involves three steps. First, verify the
+standby node is healthy. Then initiate the switchover via the
+management console. Finally, update DNS records.
+
+---
+**Sources:**
+- `runbooks/failover-guide.md` (relevance: 0.92)
+- `runbooks/disaster-recovery.md` (relevance: 0.87)
+</code></pre>
+<p>Edge cases:
+- <strong>No sources retrieved</strong> — no citation block appended
+- <strong>Duplicate sources</strong> (same document, different chunks) — deduplicated by filename
+- <strong>Collection groups</strong> — sources labeled with their collection of origin:</p>
+<pre><code>---
+**Sources:**
+- `runbooks/failover-guide.md` [runbooks] (relevance: 0.92)
+- `cluster-docs/ha-overview.md` [cluster-docs] (relevance: 0.85)
+</code></pre>
+<hr />
+<h2 id="implementation-summary">Implementation Summary</h2>
+<h3 id="multi-collection-routing-7-tasks">Multi-Collection Routing (7 tasks)</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Task</th>
+<th>Touches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Add <code>collections</code> + <code>collection_groups</code> config sections</td>
+<td><code>base-config.yaml</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>Map <code>config_name</code> → <code>collection_name</code> in request path</td>
+<td><code>archi.py</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td>Pool <code>VectorstoreConnector</code> instances by collection</td>
+<td><code>vectorstore_connector.py</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td>Per-source collection tagging in data-manager</td>
+<td><code>data_manager.py</code>, <code>manager.py</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td>Add <code>collection</code> column to <code>documents</code> table</td>
+<td><code>init.sql</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td>Support <code>ANY(ARRAY[...])</code> filter for collection groups</td>
+<td><code>postgres_vectorstore.py</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td>Merge + re-rank results from multi-collection queries</td>
+<td><code>semantic_retriever.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="collection-level-auth-3-tasks">Collection-Level Auth (3 tasks)</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Task</th>
+<th>Touches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>8</td>
+<td>Add <code>user_collection_access</code> table</td>
+<td><code>init.sql</code></td>
+</tr>
+<tr>
+<td>9</td>
+<td>Add <code>collections:&lt;name&gt;:query</code> to RBAC permission enum</td>
+<td><code>permission_enum.py</code>, <code>registry.py</code></td>
+</tr>
+<tr>
+<td>10</td>
+<td>Enforce collection access check in request path</td>
+<td><code>archi.py</code> or middleware</td>
+</tr>
+</tbody>
+</table>
+<h3 id="inline-citations-1-task">Inline Citations (1 task)</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Task</th>
+<th>Touches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>11</td>
+<td>Build inline citation formatter (shared utility)</td>
+<td>New module in <code>src/archi/utils/</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="documentation-2-tasks">Documentation (2 tasks)</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Task</th>
+<th>Touches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>12</td>
+<td>Document collection + collection group configuration</td>
+<td><code>docs/</code></td>
+</tr>
+<tr>
+<td>13</td>
+<td>Document collection-level access control setup</td>
+<td><code>docs/</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="design-decisions">Design Decisions</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Question</th>
+<th>Decision</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Should archi enforce collection-level auth?</td>
+<td><strong>Yes — defense in depth.</strong> archi checks <code>user_collection_access</code> on every request regardless of frontend.</td>
+<td>archi may be exposed directly without a frontend ACL layer. Network topology should not be the only access control.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>How should multi-collection queries work?</td>
+<td><strong>Named collection groups</strong> defined in config. Each group resolves to <code>WHERE collection = ANY(...)</code> at query time.</td>
+<td>Cleaner than comma-separated names. Configurable by operators. Access requires permission on all member collections.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Citation format?</td>
+<td><strong>Inline citations</strong> appended to every response. Shared formatter used by all response paths.</td>
+<td>Citations are critical and currently deficient. Inline is visible without client-side parsing.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="references">References</h2>
+<ul>
+<li>archi source: <code>src/data_manager/vectorstore/postgres_vectorstore.py</code> — existing collection filtering</li>
+<li>archi source: <code>src/archi/utils/vectorstore_connector.py</code> — single-collection connector</li>
+<li>archi source: <code>src/archi/archi.py</code> — orchestrator with <code>_prepare_call_kwargs()</code></li>
+<li>archi source: <code>src/interfaces/chat_app/app.py</code> — config_name routing</li>
+<li>archi source: <code>src/utils/rbac/</code> — existing permission framework</li>
+</ul>
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

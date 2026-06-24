@@ -1,0 +1,1292 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>OpenAI-Compatible API for archi - Archi Docs</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "OpenAI-Compatible API for archi";
+        var mkdocs_page_input_path = "proposals/openwebui-compat.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../.." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">OpenAI-Compatible API for archi</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/proposals/openwebui-compat.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="openai-compatible-api-for-archi">OpenAI-Compatible API for archi</h1>
+<p><strong>Author:</strong> Austin Swinney, FASRC — Harvard University
+<strong>Date:</strong> March 2026
+<strong>Status:</strong> Proposal
+<strong>Companion:</strong> <a href="../multi-collection-routing/">Multi-Collection Routing</a> (independent, works well together)</p>
+<hr />
+<h2 id="tldr">TL;DR</h2>
+<ul>
+<li>
+<p><strong>Goal:</strong> Add an OpenAI-compatible <code>/v1</code> API to archi so it can serve as a headless RAG backend for any OpenAI-compatible client — Open WebUI, LibreChat, LiteLLM, Continue.dev, or custom scripts using the OpenAI Python SDK.</p>
+</li>
+<li>
+<p><strong>Why:</strong> archi's native chat UI is one of many possible frontends. Rather than rebuilding polished multi-user UX, SSO, and group management in archi, expose archi as a standard backend and let deployers choose the frontend that fits their organization.</p>
+</li>
+<li>
+<p><strong>What already exists:</strong> NDJSON streaming, PipelineOutput dataclass, config-based routing, conversation persistence, auth + SSO, and RBAC are all implemented — the work is a thin translation layer, not new RAG logic.</p>
+</li>
+<li>
+<p><strong>What's needed:</strong> Two new endpoints (<code>GET /v1/models</code>, <code>POST /v1/chat/completions</code>), a NDJSON→SSE stream translator, bearer token auth, and conversation persistence on the <code>/v1</code> path. ~10 tasks total (7 code, 3 docs).</p>
+</li>
+<li>
+<p><strong>Additive, not destructive:</strong> archi's native chat UI, all pipelines, data ingestion, BYOK, A/B testing — everything keeps working. <code>/v1</code> is a new blueprint alongside existing routes.</p>
+</li>
+<li>
+<p><strong>What users lose via <code>/v1</code>:</strong> Paired A/B testing, agent step visibility, trace inspector, and feedback flowing back to archi — all due to OpenAI protocol limitations, not removal. Native UI still has everything.</p>
+</li>
+<li>
+<p><strong>Conversation mapping:</strong> Frontends that forward a conversation/chat ID header (Open WebUI, LibreChat) get multi-turn conversation continuity. Clients without the header get one conversation per request.</p>
+</li>
+<li>
+<p><strong>Companion proposal:</strong> Works well with <a href="../multi-collection-routing/">Multi-Collection Routing</a> — archi collections appear as "models" in the frontend's model selector with group-based access control.</p>
+</li>
+<li>
+<p><strong>Validated frontends:</strong> This proposal evaluates <a href="#open-webui">Open WebUI</a> and <a href="#librechat">LibreChat</a> in depth. Both consume the same <code>/v1</code> API — the archi-side implementation does not change.</p>
+</li>
+</ul>
+<hr />
+<h2 id="motivation">Motivation</h2>
+<p>Archi is a powerful RAG framework — pipelines, agents, data ingestion from diverse sources, BYOK, A/B testing — but its native chat UI is one of many possible frontends. Open-source chat interfaces like <a href="https://github.com/open-webui/open-webui">Open WebUI</a> and <a href="https://github.com/danny-avila/LibreChat">LibreChat</a> offer polished multi-user UX, SSO, and group management out of the box. Rather than rebuilding these capabilities in archi, we can expose archi as an <strong>OpenAI-compatible backend</strong> and let deployers choose the frontend that fits their organization.</p>
+<p>This also frees archi developer resources from maintaining a frontend — the native chat UI continues to work, but organizations that want a more polished user experience can use a dedicated frontend instead.</p>
+<hr />
+<h2 id="what-already-exists">What Already Exists</h2>
+<pre><code class="language-mermaid">graph LR
+    subgraph existing[&quot;Already Implemented&quot;]
+        direction TB
+        E1[&quot;NDJSON streaming endpoint&lt;br/&gt;&lt;i&gt;app.py — 11+ event types (chunk, tool, thinking, usage, final, ...)&lt;/i&gt;&quot;]:::done
+        E2[&quot;PipelineOutput dataclass&lt;br/&gt;&lt;i&gt;answer + sources + metadata + final flag&lt;/i&gt;&quot;]:::done
+        E3[&quot;config_name routing&lt;br/&gt;&lt;i&gt;swaps agent/pipeline per request&lt;/i&gt;&quot;]:::done
+        E4[&quot;Conversation persistence&lt;br/&gt;&lt;i&gt;message storage + conversation CRUD in Postgres&lt;/i&gt;&quot;]:::done
+        E5[&quot;User auth + SSO&lt;br/&gt;&lt;i&gt;session, basic auth, generic OIDC&lt;/i&gt;&quot;]:::done
+        E6[&quot;RBAC permission system&lt;br/&gt;&lt;i&gt;decorators, registry, permission enum&lt;/i&gt;&quot;]:::done
+    end
+
+    style existing fill:none,stroke:#6b8e23
+
+    classDef done fill:#6b8e23,stroke:#333,color:#000
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>File</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NDJSON streaming</td>
+<td><code>app.py:1597</code> (stream), <code>app.py:3560</code> (endpoint)</td>
+<td>11+ event types: <code>meta</code>, <code>chunk</code>, <code>tool_start</code>, <code>tool_output</code>, <code>tool_end</code>, <code>thinking_start</code>, <code>thinking_end</code>, <code>usage</code>, <code>error</code>, <code>warning</code>, <code>step</code>, <code>final</code></td>
+</tr>
+<tr>
+<td>PipelineOutput</td>
+<td><code>output_dataclass.py</code></td>
+<td>Standardized <code>answer</code>, <code>source_documents</code>, <code>messages</code>, <code>metadata</code>, <code>final</code></td>
+</tr>
+<tr>
+<td><code>config_name</code> routing</td>
+<td><code>app.py:1300</code></td>
+<td><code>_resolve_config_name()</code> selects agent/pipeline per request</td>
+</tr>
+<tr>
+<td>Conversation persistence</td>
+<td><code>conversation_service.py</code>, <code>app.py</code></td>
+<td><code>ConversationService</code> handles message storage; conversation CRUD (create, load, list, delete) in <code>app.py</code> via direct SQL</td>
+</tr>
+<tr>
+<td>Auth + SSO</td>
+<td><code>app.py:2327</code></td>
+<td>Session-based auth with basic auth and generic OIDC</td>
+</tr>
+<tr>
+<td>RBAC</td>
+<td><code>src/utils/rbac/</code></td>
+<td>Permission enum, registry, <code>@require_permission()</code> and <code>@require_any_permission()</code> decorators</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="the-gap">The Gap</h2>
+<pre><code class="language-mermaid">graph LR
+    subgraph gap[&quot;What's Missing&quot;]
+        direction TB
+        G1[&quot;/v1/models endpoint&quot;]:::todo
+        G2[&quot;/v1/chat/completions endpoint&quot;]:::todo
+        G3[&quot;PipelineOutput → OpenAI SSE&lt;br/&gt;stream translator&quot;]:::todo
+        G4[&quot;Bearer token auth on /v1&quot;]:::todo
+        G5[&quot;Conversation persistence on /v1&quot;]:::todo
+    end
+
+    style gap fill:none,stroke:#c0392b
+
+    classDef todo fill:#c0392b,stroke:#333,color:#000
+</code></pre>
+<p>archi has no OpenAI-compatible endpoint. Clients must use archi's native <code>/api/get_chat_response_stream</code> with its custom NDJSON format. The gap is a thin translation layer — not new RAG or pipeline logic.</p>
+<hr />
+<h2 id="design">Design</h2>
+<h3 id="how-clients-connect">How Clients Connect</h3>
+<p>Any OpenAI-compatible client connects to archi's <code>/v1</code> endpoint using the standard <a href="https://platform.openai.com/docs/api-reference/chat">OpenAI Chat Completions API</a>. Two endpoints are required:</p>
+<pre><code class="language-mermaid">sequenceDiagram
+    participant C as Client
+    participant A as archi /v1
+
+    Note over C,A: On startup / model refresh
+    C-&gt;&gt;A: GET /v1/models
+    A--&gt;&gt;C: {&quot;data&quot;: [{&quot;id&quot;: &quot;default&quot;, &quot;object&quot;: &quot;model&quot;, &quot;created&quot;: 1711929600, &quot;owned_by&quot;: &quot;archi&quot;}]}
+
+    Note over C,A: User sends a message
+    C-&gt;&gt;A: POST /v1/chat/completions&lt;br/&gt;{&quot;model&quot;: &quot;default&quot;, &quot;messages&quot;: [...], &quot;stream&quot;: true}
+    A--&gt;&gt;C: data: {&quot;choices&quot;: [{&quot;delta&quot;: {&quot;content&quot;: &quot;The...&quot;}}]}
+    A--&gt;&gt;C: data: {&quot;choices&quot;: [{&quot;delta&quot;: {&quot;content&quot;: &quot; answer is...&quot;}}]}
+    A--&gt;&gt;C: data: [DONE]
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Purpose</th>
+<th>Maps to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /v1/models</code></td>
+<td>List available configurations</td>
+<td>archi agent configs / collections</td>
+</tr>
+<tr>
+<td><code>POST /v1/chat/completions</code></td>
+<td>Chat with RAG</td>
+<td><code>ChatWrapper.stream(message=..., config_name=...)</code></td>
+</tr>
+</tbody>
+</table>
+<p>When combined with <a href="../multi-collection-routing/">Multi-Collection Routing</a>, collections and collection groups also appear in the <code>/v1/models</code> list.</p>
+<h3 id="request-translation">Request Translation</h3>
+<pre><code>OpenAI Request                          archi Call
+─────────────────                       ──────────────
+model: &quot;default&quot;                →       config_name: &quot;default&quot;
+messages[-1].content            →       message (last user message)
+messages[:-1]                   →       loaded from conversation history in Postgres
+stream: true                    →       ChatWrapper.stream(...)
+temperature: 0.7                →       NEW: per-request LLM parameter override
+max_tokens: 4096                →       NEW: per-request LLM parameter override
+</code></pre>
+<p><strong>Note:</strong> archi currently uses <code>config_name</code> to select a pipeline/agent and <code>provider</code> + <code>model</code> to override the LLM within that pipeline. The <code>/v1</code> endpoint maps the OpenAI <code>model</code> field to archi's <code>config_name</code>. Per-request <code>temperature</code> and <code>max_tokens</code> overrides do not exist today — they are new work in this proposal.</p>
+<h3 id="response-translation">Response Translation</h3>
+<p>archi's <code>ChatWrapper.stream()</code> yields 11+ NDJSON event types. The <code>/v1</code> blueprint translates the ones that map to OpenAI's SSE format and silently consumes the rest:</p>
+<table>
+<thead>
+<tr>
+<th>archi NDJSON Event</th>
+<th>OpenAI SSE Chunk</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{"type": "meta", "event": "stream_started"}</code></td>
+<td><em>(consumed — not forwarded)</em></td>
+<td>Initializes stream; includes 2KB padding for HTTP flush</td>
+</tr>
+<tr>
+<td><code>{"type": "chunk", "content": "The..."}</code></td>
+<td><code>data: {"choices": [{"delta": {"content": "The..."}}]}</code></td>
+<td>Core text streaming</td>
+</tr>
+<tr>
+<td><code>{"type": "tool_start", "tool_name": "...", "tool_args": {...}}</code></td>
+<td><em>(omitted or mapped to <code>delta.tool_calls</code>)</em></td>
+<td>Tool invocation beginning</td>
+</tr>
+<tr>
+<td><code>{"type": "tool_output", "output": "...", "truncated": bool}</code></td>
+<td><em>(omitted)</em></td>
+<td>Tool execution result — no OpenAI equivalent</td>
+</tr>
+<tr>
+<td><code>{"type": "tool_end", "status": "...", "duration_ms": N}</code></td>
+<td><em>(omitted)</em></td>
+<td>Tool completion with timing</td>
+</tr>
+<tr>
+<td><code>{"type": "thinking_start", "step_id": "..."}</code></td>
+<td><em>(omitted)</em></td>
+<td>Agent reasoning phase — no OpenAI equivalent</td>
+</tr>
+<tr>
+<td><code>{"type": "thinking_end", "thinking_content": "...", "duration_ms": N}</code></td>
+<td><em>(omitted)</em></td>
+<td>Reasoning completion</td>
+</tr>
+<tr>
+<td><code>{"type": "step", "step_type": "tool_call\|tool_result\|agent"}</code></td>
+<td><em>(omitted)</em></td>
+<td>Legacy pipeline events</td>
+</tr>
+<tr>
+<td><code>{"type": "usage", "prompt_tokens": N, "completion_tokens": N}</code></td>
+<td>Included in final chunk's <code>usage</code> field</td>
+<td>Token accounting</td>
+</tr>
+<tr>
+<td><code>{"type": "error", "status": N, "message": "..."}</code></td>
+<td><code>data: {"error": {"message": "...", "code": N}}</code></td>
+<td>Error conditions</td>
+</tr>
+<tr>
+<td><code>{"type": "warning", "message": "..."}</code></td>
+<td><em>(omitted)</em></td>
+<td>Non-fatal warnings</td>
+</tr>
+<tr>
+<td><code>{"type": "final", "response": "...", "trace_id": "..."}</code></td>
+<td><code>data: {"choices": [{"finish_reason": "stop"}]}</code></td>
+<td>Terminal event — <code>response</code> already contains inline citations</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Important:</strong> The <code>final</code> event's <code>response</code> field is a pre-formatted string that already includes inline source citations (appended by <code>format_links_markdown()</code> during pipeline execution). The <code>/v1</code> translator does not need to extract or re-append sources — they're baked into the response text.</p>
+<h3 id="bearer-token-auth">Bearer Token Auth</h3>
+<p>The <code>/v1</code> endpoint authenticates via <code>Authorization: Bearer &lt;token&gt;</code> headers, standard for OpenAI-compatible APIs. The token resolves to an archi user, which determines:</p>
+<ul>
+<li>Whether the request is allowed at all (RBAC <code>chat:query</code> permission)</li>
+<li>Which collections/configs the user can access (when combined with <a href="../multi-collection-routing/">Multi-Collection Routing</a>)</li>
+</ul>
+<p>Without the multi-collection companion, all authenticated users can access the single default collection.</p>
+<h3 id="conversation-persistence">Conversation Persistence</h3>
+<p>archi always persists its own conversation history regardless of frontend. The <code>/v1</code> endpoint creates conversations (via direct SQL in <code>app.py</code>) and persists messages (via <code>ConversationService.insert_message()</code>):</p>
+<pre><code class="language-mermaid">graph LR
+    subgraph frontend[&quot;Frontend (any)&quot;]
+        FE_HIST[(&quot;Frontend DB&lt;br/&gt;&lt;i&gt;its own conversation copy&lt;/i&gt;&quot;)]:::fe_comp
+    end
+
+    subgraph archi[&quot;archi /v1 endpoint&quot;]
+        V1[&quot;/v1/chat/completions&quot;]:::api
+        CS[&quot;ConversationService&quot;]:::api
+    end
+
+    subgraph pg[&quot;PostgreSQL&quot;]
+        CONV[(&quot;conversation_metadata&lt;br/&gt;conversation_messages&quot;)]:::db
+    end
+
+    V1 --&gt; CS
+    CS --&gt; CONV
+
+    style frontend fill:#1a1a2e,stroke:#4a90d9,color:#e0e0e0
+    style archi fill:#1a1a2e,stroke:#6b8e23,color:#e0e0e0
+    style pg fill:none,stroke:#d4a017
+
+    classDef fe_comp fill:#2d3a6e,stroke:#4a90d9,color:#e0e0e0
+    classDef api fill:#3d5a1e,stroke:#6b8e23,color:#e0e0e0
+    classDef db fill:#d4a017,stroke:#333,color:#000
+</code></pre>
+<p>The two stores are independent — no sync required. The frontend keeps its own copy for its UI; archi keeps its own for debugging, evaluation, and A/B testing.</p>
+<h3 id="conversation-mapping-via-external-chat-id">Conversation Mapping via External Chat ID</h3>
+<p>Frontends that forward a conversation or chat ID header allow archi to map multiple messages to a single conversation. On first sight of an external chat ID, archi creates a new conversation and stores the mapping. On subsequent requests with the same ID, it resumes the existing conversation.</p>
+<pre><code class="language-mermaid">sequenceDiagram
+    participant C as Client
+    participant A as archi /v1
+
+    C-&gt;&gt;A: POST /v1/chat/completions&lt;br/&gt;X-External-Chat-Id: abc-123&lt;br/&gt;(message 1)
+    A-&gt;&gt;A: No mapping for abc-123&lt;br/&gt;→ create conversation #42&lt;br/&gt;→ store mapping
+    A--&gt;&gt;C: response
+
+    C-&gt;&gt;A: POST /v1/chat/completions&lt;br/&gt;X-External-Chat-Id: abc-123&lt;br/&gt;(message 2)
+    A-&gt;&gt;A: Lookup abc-123&lt;br/&gt;→ resume conversation #42
+    A--&gt;&gt;C: response
+
+    C-&gt;&gt;A: POST /v1/chat/completions&lt;br/&gt;X-External-Chat-Id: def-456&lt;br/&gt;(new chat)
+    A-&gt;&gt;A: No mapping for def-456&lt;br/&gt;→ create conversation #43
+    A--&gt;&gt;C: response
+</code></pre>
+<p><strong>Fallback:</strong> Clients that don't send the header (curl, LiteLLM, custom scripts) get one conversation per request — acceptable for ad-hoc usage.</p>
+<p><strong>Schema change:</strong> Add an <code>external_chat_id</code> column to <code>conversation_metadata</code> with a unique index for fast lookups.</p>
+<p>The header name is configurable. Known frontends:</p>
+<table>
+<thead>
+<tr>
+<th>Frontend</th>
+<th>Header</th>
+<th>How to enable</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Open WebUI</td>
+<td><code>X-OpenWebUI-Chat-Id</code></td>
+<td>Set <code>ENABLE_FORWARD_USER_INFO_HEADERS=true</code></td>
+</tr>
+<tr>
+<td>LibreChat</td>
+<td>Custom (e.g. <code>X-LibreChat-Conversation-Id</code>)</td>
+<td>Configure in <code>librechat.yaml</code> headers with <code>{{LIBRECHAT_BODY_CONVERSATIONID}}</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="what-archi-keeps">What archi Keeps</h2>
+<p>This compatibility mode is <strong>additive</strong>. Nothing is removed:</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Native chat UI (<code>:7861</code>)</td>
+<td>Still works — <code>/v1</code> is a new blueprint alongside existing routes</td>
+</tr>
+<tr>
+<td>All pipelines (QA, Grading, ReAct, Agents)</td>
+<td>Intact — exposed as "models" via <code>/v1</code> or via native API</td>
+</tr>
+<tr>
+<td>Data ingestion (web, git, Jira, uploads)</td>
+<td>Unchanged</td>
+</tr>
+<tr>
+<td>BYOK (bring your own key)</td>
+<td>Works via native UI</td>
+</tr>
+<tr>
+<td>A/B testing</td>
+<td>Works via native UI</td>
+</tr>
+<tr>
+<td>Conversation history</td>
+<td>archi always persists its own (debugging + evaluation)</td>
+</tr>
+<tr>
+<td>RBAC</td>
+<td>Intact for native UI; extended with bearer token auth for <code>/v1</code></td>
+</tr>
+<tr>
+<td>Streaming</td>
+<td>Translated from NDJSON to SSE for <code>/v1</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="what-you-lose-through-v1">What You Lose Through <code>/v1</code></h2>
+<p>The OpenAI Chat Completions protocol (<code>/v1/chat/completions</code>) is a narrow interface: send messages, receive text. archi's native API is much richer. When users interact through any <code>/v1</code> client instead of archi's native UI, the following features are <strong>not accessible</strong> — not because they're broken, but because the OpenAI protocol has no way to express them.</p>
+<p>archi's native UI remains available on <code>:7861</code> for any feature that requires it.</p>
+<pre><code class="language-mermaid">graph TD
+    subgraph protocol[&quot;Protocol Limitation&quot;]
+        direction TB
+        P[&quot;OpenAI SSE has no\nsideband metadata&quot;]:::barrier
+        P --- L1[&quot;A/B Testing\n&lt;i&gt;(paired)&lt;/i&gt;&quot;]:::lost
+        P --- L2[&quot;Agent Steps&quot;]:::lost
+        P --- L6[&quot;Trace Inspector&quot;]:::lost
+    end
+
+    subgraph feedback[&quot;Feedback Gap&quot;]
+        direction TB
+        F[&quot;No feedback endpoint\nin OpenAI spec&quot;]:::barrier
+        F --- L3[&quot;Thumbs Up/Down&quot;]:::lost
+    end
+
+    subgraph scope[&quot;Out of Scope for /v1&quot;]
+        direction TB
+        S[&quot;Admin / operator\nworkflows&quot;]:::barrier
+        S --- L4[&quot;Doc Management&quot;]:::lost
+        S --- L5[&quot;Uploads&quot;]:::lost
+        S --- L7[&quot;Agent Config&quot;]:::lost
+        S --- L8[&quot;BYOK&quot;]:::lost
+        S --- L9[&quot;Grading&quot;]:::lost
+    end
+
+    style protocol fill:none,stroke:#c0392b
+    style feedback fill:none,stroke:#c0392b
+    style scope fill:none,stroke:#c0392b
+
+    classDef lost fill:#c0392b,stroke:#333,color:#000
+    classDef barrier fill:#555,stroke:#333,color:#e0e0e0
+</code></pre>
+<h3 id="protocol-barriers">Protocol Barriers</h3>
+<p>These features are lost because the OpenAI SSE protocol has no mechanism to carry the required data:</p>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>What it does in native UI</th>
+<th>Why <code>/v1</code> can't express it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A/B Testing</strong> (paired side-by-side)</td>
+<td>Sends the same query to two models/configs, presents both responses side-by-side, collects user preference (<code>/api/ab/create</code>, <code>/api/ab/preference</code>)</td>
+<td>OpenAI protocol returns one response per request. No concept of paired responses or preference collection.</td>
+</tr>
+<tr>
+<td><strong>Agent Step Visibility</strong></td>
+<td>Streams <code>tool_start</code>, <code>tool_output</code>, <code>tool_end</code>, <code>thinking_start</code>, <code>thinking_end</code> events showing the agent's reasoning and tool use in real time</td>
+<td>OpenAI SSE only supports <code>delta.content</code> (text) and <code>delta.tool_calls</code> (structured tool invocations). archi's richer event types (thinking, tool output content, step durations) have no equivalent. The <code>/v1</code> translator omits these or flattens them to text.</td>
+</tr>
+<tr>
+<td><strong>Trace / Debug Inspector</strong></td>
+<td>Per-message trace view showing full pipeline execution: tool calls, durations, intermediate steps, cancellation info (<code>/api/trace/&lt;trace_id&gt;</code>)</td>
+<td>OpenAI responses have no trace ID or link to execution details. archi still records traces internally, but <code>/v1</code> clients have no way to view them.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="feedback-barriers">Feedback Barriers</h3>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>What it does in native UI</th>
+<th>Why <code>/v1</code> can't express it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Response Feedback</strong></td>
+<td>Thumbs up/down with structured categories (incorrect, unhelpful, inappropriate) and free-text feedback (<code>/api/like</code>, <code>/api/dislike</code>, <code>/api/text_feedback</code>)</td>
+<td>OpenAI protocol has no feedback mechanism. Frontends may have their own feedback UI, but that data stays in the frontend's database — it doesn't flow back to archi for evaluation.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="scope-barriers">Scope Barriers</h3>
+<p>These features are administrative or orthogonal to chat. They're not lost because of a protocol limitation — they simply aren't chat completions:</p>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>What it does in native UI</th>
+<th>Why it's out of scope for <code>/v1</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Document Management</strong></td>
+<td>Browse, search, enable/disable documents per user or conversation, view chunks, bulk operations (<code>/data</code>, <code>/api/data/*</code>)</td>
+<td>Document management is an admin/operator concern, not a chat request. Use archi's native UI or data-manager API directly.</td>
+</tr>
+<tr>
+<td><strong>Data Upload + Ingestion</strong></td>
+<td>Upload files, add URLs, connect git repos, add Jira sources, trigger embedding, monitor ingestion status (<code>/upload</code>, <code>/api/upload/*</code>)</td>
+<td>Ingestion is handled by archi's data-manager service. This is an operator workflow, not a user chat workflow.</td>
+</tr>
+<tr>
+<td><strong>Agent Configuration</strong></td>
+<td>List, create, edit, delete agent specs (markdown-based); set active agent; get agent template with available tools (<code>/api/agents/*</code>)</td>
+<td>Agent management is admin configuration. The frontend's "model" selector maps to archi configs, but creating/editing agent specs requires archi's native UI or direct file editing.</td>
+</tr>
+<tr>
+<td><strong>BYOK Key Management</strong></td>
+<td>Users store their own API keys per provider, which are encrypted in Postgres and used for their requests (<code>/api/providers/keys/*</code>)</td>
+<td>For archi's <code>/v1</code> backend, BYOK doesn't apply — archi uses its own configured provider keys.</td>
+</tr>
+<tr>
+<td><strong>Grading Pipeline</strong></td>
+<td>Dedicated grading service with its own UI on <code>:7862</code> for automated assessment</td>
+<td>Grading is a separate archi service (<code>grader</code>), not exposed through the chatbot endpoint at all.</td>
+</tr>
+<tr>
+<td><strong>Dynamic Config Switching</strong></td>
+<td>Users switch active pipeline, model, temperature, prompt templates at runtime (<code>/api/update_config</code>, <code>/api/config/dynamic</code>)</td>
+<td><code>/v1</code> maps <code>model</code> to a config name and supports basic <code>temperature</code>/<code>max_tokens</code> overrides, but the full config surface (prompt selection, hybrid search weights, retrieval parameters, provider/model LLM overrides) isn't expressible in the OpenAI request schema.</td>
+</tr>
+<tr>
+<td><strong>Database Admin</strong></td>
+<td>Browse tables, run read-only queries (<code>/admin/database/*</code>)</td>
+<td>Admin tooling, requires archi's native UI.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="summary">Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Features lost</th>
+<th>Workaround</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Protocol</strong></td>
+<td>A/B testing (paired), agent steps, trace inspector</td>
+<td>Use archi native UI. Some frontends offer their own evaluation (e.g. Open WebUI Arena Mode)</td>
+</tr>
+<tr>
+<td><strong>Feedback</strong></td>
+<td>Thumbs up/down flowing to archi</td>
+<td>Frontends collect their own; archi's native UI for archi-tracked feedback</td>
+</tr>
+<tr>
+<td><strong>Scope</strong></td>
+<td>Document mgmt, uploads, agent config, BYOK, grading, dynamic config, DB admin</td>
+<td>Use archi's native UI or data-manager API directly</td>
+</tr>
+</tbody>
+</table>
+<p>None of these features are broken or removed. They continue to work through archi's native interface. The <code>/v1</code> endpoint is a <strong>chat-focused projection</strong> of archi's capabilities — it surfaces RAG Q&amp;A through a standard protocol, but the full feature set lives behind archi's native API.</p>
+<hr />
+<h2 id="implementation-summary">Implementation Summary</h2>
+<h3 id="openai-compatible-api-7-tasks">OpenAI-Compatible API (7 tasks)</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Task</th>
+<th>Touches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Create <code>/v1/models</code> endpoint (return <code>id</code>, <code>object</code>, <code>created</code>, <code>owned_by</code> per model)</td>
+<td>New blueprint</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Create <code>/v1/chat/completions</code> with SSE streaming</td>
+<td>New blueprint</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Build <code>PipelineOutput</code> → OpenAI response translator</td>
+<td>New module</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Build NDJSON → SSE stream adapter</td>
+<td>New module</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Map OpenAI params (<code>temperature</code>, <code>max_tokens</code>) — <strong>new per-request override support</strong></td>
+<td>Translator + pipeline kwargs</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Persist conversations via <code>ConversationService</code> on <code>/v1</code></td>
+<td>New blueprint</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Bearer token auth on <code>/v1</code> endpoints</td>
+<td>New blueprint</td>
+</tr>
+</tbody>
+</table>
+<h3 id="documentation-3-tasks">Documentation (3 tasks)</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Task</th>
+<th>Touches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>8</td>
+<td>Write frontend integration guides (Open WebUI, LibreChat)</td>
+<td><code>docs/</code></td>
+</tr>
+<tr>
+<td>9</td>
+<td>Add example Docker Compose configs per frontend</td>
+<td><code>examples/deployments/</code></td>
+</tr>
+<tr>
+<td>10</td>
+<td>Document <code>/v1</code> API endpoint reference</td>
+<td><code>docs/</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="design-decisions">Design Decisions</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Question</th>
+<th>Decision</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Conversation history ownership?</td>
+<td><strong>archi always persists its own copy</strong> (conversation CRUD via <code>app.py</code>, message storage via <code>ConversationService</code>), regardless of frontend. Frontends keep their own independently.</td>
+<td>archi's conversation history is needed for debugging and evaluation. The two stores are independent — no sync required.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Citation format?</td>
+<td><strong>Inline citations</strong> appended to every response. Shared formatter (built in <a href="../multi-collection-routing/">Multi-Collection Routing</a> companion).</td>
+<td>Citations are critical and currently deficient. Inline works well with markdown rendering in all frontends.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Auth mechanism for <code>/v1</code>?</td>
+<td><strong>Bearer token</strong> in <code>Authorization</code> header, standard for OpenAI-compatible APIs.</td>
+<td>Matches what all OpenAI-compatible clients expect. Maps to archi user for RBAC checks.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="validated-frontends">Validated Frontends</h2>
+<p>The <code>/v1</code> API works with any OpenAI-compatible client. The following frontends have been evaluated in depth.</p>
+<h3 id="open-webui">Open WebUI</h3>
+<p><a href="https://github.com/open-webui/open-webui">Open WebUI</a> is a polished, multi-user chat interface with built-in group management, SSO (LDAP, SCIM 2.0, OAuth), and role-based access control.</p>
+<h4 id="deployment">Deployment</h4>
+<pre><code class="language-mermaid">graph TB
+    subgraph external[&quot;External — User Facing&quot;]
+        OW[&quot;Open WebUI&lt;br/&gt;:3000&quot;]:::owui
+    end
+
+    subgraph archi_stack[&quot;archi Stack&quot;]
+        CB[&quot;archi chatbot&lt;br/&gt;:7861&lt;br/&gt;&lt;i&gt;native + /v1 compat&lt;/i&gt;&quot;]:::archi
+        DM[&quot;data-manager&lt;br/&gt;:7871&quot;]:::archi
+        PG[(&quot;PostgreSQL&lt;br/&gt;:5432&quot;)]:::db
+    end
+
+    subgraph ai[&quot;AI Backends&quot;]
+        VLLM[&quot;vLLM&lt;br/&gt;:8000&quot;]:::llm
+    end
+
+    OW --&gt;|&quot;OPENAI_API_BASE_URL&lt;br/&gt;=http://chatbot:7861/v1&quot;| CB
+    CB --&gt; PG
+    DM --&gt; PG
+    CB --&gt; VLLM
+
+    style external fill:none,stroke:#4a90d9
+    style archi_stack fill:none,stroke:#6b8e23
+    style ai fill:none,stroke:#7b68ee
+
+    classDef owui fill:#4a90d9,stroke:#333,color:#000
+    classDef archi fill:#6b8e23,stroke:#333,color:#000
+    classDef db fill:#d4a017,stroke:#333,color:#000
+    classDef llm fill:#7b68ee,stroke:#333,color:#000
+</code></pre>
+<h4 id="docker-compose">Docker Compose</h4>
+<pre><code class="language-yaml">services:
+  # ── Open WebUI (frontend) ─────────────────────────
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    ports:
+      - &quot;3000:8080&quot;
+    environment:
+      # Point at archi's OpenAI-compat endpoint
+      OPENAI_API_BASE_URL: http://chatbot:7861/v1
+      OPENAI_API_KEY: &quot;not-needed&quot;
+
+      # Bypass Open WebUI's own embedding/retrieval (archi handles RAG)
+      # Note: there is no ENABLE_RAG flag; this is the correct mechanism
+      BYPASS_EMBEDDING_AND_RETRIEVAL: &quot;true&quot;
+
+      # Forward conversation + user metadata to archi (required for conversation mapping)
+      ENABLE_FORWARD_USER_INFO_HEADERS: &quot;true&quot;
+
+      # Auth
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}
+      ENABLE_SIGNUP: &quot;true&quot;
+      DEFAULT_USER_ROLE: &quot;user&quot;
+    volumes:
+      - open-webui-data:/app/backend/data
+    depends_on:
+      - chatbot
+
+  # ── archi (RAG backend) ───────────────────────────
+  chatbot:
+    image: archi-chatbot:latest
+    ports:
+      - &quot;7861:7861&quot;
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      # ... standard archi env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  data-manager:
+    image: archi-data-manager:latest
+    environment:
+      PGHOST: postgres
+      # ... standard archi env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: archi-postgres:latest
+    ports:
+      - &quot;5432:5432&quot;
+    volumes:
+      - archi-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: [&quot;CMD&quot;, &quot;pg_isready&quot;]
+
+  # ── vLLM (external, managed separately) ───────────
+  # Connect via: vllm.base_url: http://vllm-host:8000/v1
+</code></pre>
+<h4 id="key-configuration">Key Configuration</h4>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Value</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OPENAI_API_BASE_URL</code></td>
+<td><code>http://chatbot:7861/v1</code></td>
+<td>Points Open WebUI at archi's <code>/v1</code></td>
+</tr>
+<tr>
+<td><code>BYPASS_EMBEDDING_AND_RETRIEVAL</code></td>
+<td><code>"true"</code></td>
+<td>Disables Open WebUI's built-in RAG so it doesn't interfere with archi's retrieval</td>
+</tr>
+<tr>
+<td><code>ENABLE_FORWARD_USER_INFO_HEADERS</code></td>
+<td><code>"true"</code></td>
+<td>Forwards <code>X-OpenWebUI-Chat-Id</code>, <code>X-OpenWebUI-User-*</code> headers for conversation mapping</td>
+</tr>
+</tbody>
+</table>
+<h4 id="conversation-mapping">Conversation Mapping</h4>
+<p>Open WebUI sends <code>X-OpenWebUI-Chat-Id</code> when <code>ENABLE_FORWARD_USER_INFO_HEADERS=true</code>. All header names are customizable via environment variables (e.g., <code>FORWARD_SESSION_INFO_HEADER_CHAT_ID</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Value</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>X-OpenWebUI-Chat-Id</code></td>
+<td>Conversation ID</td>
+<td><code>metadata.chat_id</code> from request payload</td>
+</tr>
+<tr>
+<td><code>X-OpenWebUI-User-Id</code></td>
+<td>User ID</td>
+<td>Authenticated user</td>
+</tr>
+<tr>
+<td><code>X-OpenWebUI-User-Name</code></td>
+<td>Display name</td>
+<td>Authenticated user</td>
+</tr>
+<tr>
+<td><code>X-OpenWebUI-User-Email</code></td>
+<td>Email</td>
+<td>Authenticated user</td>
+</tr>
+<tr>
+<td><code>X-OpenWebUI-User-Role</code></td>
+<td>Role (admin/user)</td>
+<td>Authenticated user</td>
+</tr>
+</tbody>
+</table>
+<h4 id="sse-handling">SSE Handling</h4>
+<p>Open WebUI detects streaming by checking for <code>Content-Type: text/event-stream</code> in the response headers, then <strong>passes the raw SSE stream through to the client without parsing it</strong>. It does not interpret <code>data:</code> lines or handle <code>data: [DONE]</code> specially. This simplifies our translator — we just need to emit well-formed SSE with the correct content type.</p>
+<h4 id="model-access-control">Model Access Control</h4>
+<p>Open WebUI has group-based model filtering — admins can restrict which users/groups see which models. This requires a one-time registration step:</p>
+<ol>
+<li>Admin navigates to Open WebUI settings</li>
+<li>"Creates" each archi collection/config as a model (registers it in Open WebUI's DB)</li>
+<li>Assigns access grants (groups/users) to each model</li>
+</ol>
+<p>Models not registered in Open WebUI's DB are <strong>silently excluded</strong> from non-admin views.</p>
+<pre><code class="language-mermaid">graph LR
+    A[&quot;archi GET /v1/models&lt;br/&gt;returns: cluster-docs, runbooks&quot;]:::archi
+    B[&quot;Open WebUI model table&lt;br/&gt;&lt;i&gt;admin registers each model&lt;/i&gt;&quot;]:::owui
+    C[&quot;access_grant table&lt;br/&gt;&lt;i&gt;admin assigns groups&lt;/i&gt;&quot;]:::owui
+    D[&quot;User sees filtered&lt;br/&gt;model list&quot;]:::person
+
+    A --&gt; B
+    B --&gt; C
+    C --&gt; D
+
+    classDef archi fill:#6b8e23,stroke:#333,color:#000
+    classDef owui fill:#4a90d9,stroke:#333,color:#000
+    classDef person fill:#d4a017,stroke:#333,color:#000
+</code></pre>
+<h4 id="access-control-with-multi-collection-routing">Access Control with Multi-Collection Routing</h4>
+<p>When combined with the <a href="../multi-collection-routing/">Multi-Collection Routing</a> companion proposal, the deployment gains role-based collection access:</p>
+<pre><code class="language-mermaid">sequenceDiagram
+    actor PU as Public User
+    actor SU as Superuser
+    participant OW as Open WebUI
+    participant A as archi /v1
+
+    Note over OW: Admin creates groups:&lt;br/&gt;&quot;everyone&quot; and &quot;ops-team&quot;
+
+    Note over OW: Admin assigns models:&lt;br/&gt;&quot;cluster-docs&quot; → everyone&lt;br/&gt;&quot;runbooks&quot; → ops-team only
+
+    PU-&gt;&gt;OW: Login (SSO)
+    OW-&gt;&gt;OW: Model selector shows:&lt;br/&gt;cluster-docs only
+
+    PU-&gt;&gt;OW: &quot;How do I submit a job?&quot;
+    OW-&gt;&gt;A: POST /v1/chat/completions&lt;br/&gt;model=cluster-docs&lt;br/&gt;Authorization: Bearer token
+    A-&gt;&gt;A: Verify token + collection access ✓
+    A--&gt;&gt;OW: &quot;Use sbatch to submit...&quot;
+    OW--&gt;&gt;PU: Display answer
+
+    SU-&gt;&gt;OW: Login (SSO)
+    OW-&gt;&gt;OW: Model selector shows:&lt;br/&gt;cluster-docs + runbooks + all-ops
+
+    SU-&gt;&gt;OW: &quot;What's the failover procedure?&quot;
+    OW-&gt;&gt;A: POST /v1/chat/completions&lt;br/&gt;model=all-ops&lt;br/&gt;Authorization: Bearer token
+    A-&gt;&gt;A: Resolve group → [cluster-docs, runbooks]
+    A--&gt;&gt;OW: &quot;The failover procedure is...&quot;
+    OW--&gt;&gt;SU: Display answer
+
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Responsibility</th>
+<th>Owner</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>User authentication (SSO, LDAP)</td>
+<td>Open WebUI (frontend) and/or archi (direct access)</td>
+</tr>
+<tr>
+<td>Group membership + model visibility</td>
+<td>Open WebUI</td>
+</tr>
+<tr>
+<td>Collection access enforcement</td>
+<td>archi (defense in depth)</td>
+</tr>
+<tr>
+<td>Document ingestion and embedding</td>
+<td>archi data-manager</td>
+</tr>
+<tr>
+<td>RAG retrieval</td>
+<td>archi pipelines</td>
+</tr>
+<tr>
+<td>Conversation history</td>
+<td>archi (always) + Open WebUI (its own copy)</td>
+</tr>
+<tr>
+<td>LLM inference</td>
+<td>vLLM / Ollama / API</td>
+</tr>
+</tbody>
+</table>
+<h4 id="arena-mode-partial-ab-mitigation">Arena Mode (Partial A/B Mitigation)</h4>
+<p>archi's paired side-by-side A/B testing can't pass through <code>/v1</code>, but Open WebUI has its own blind evaluation system called <strong>Arena Mode</strong> (<code>ENABLE_EVALUATION_ARENA_MODELS</code>). It works at the Open WebUI layer and is compatible with any backend model — including archi collections.</p>
+<p><strong>How it works:</strong></p>
+<ol>
+<li>An admin creates an "Arena Model" in Open WebUI's settings with a pool of <code>model_ids</code> (e.g., <code>[cluster-docs, runbooks]</code> or different archi pipeline configs)</li>
+<li>When a user selects the arena model, Open WebUI <strong>randomly picks</strong> one from the pool and routes the request to it</li>
+<li>The user doesn't know which model answered — they rate the response</li>
+<li>Open WebUI computes <strong>Elo ratings</strong> from feedback, with optional topic-weighted leaderboards via semantic similarity</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>archi A/B Testing</th>
+<th>Open WebUI Arena</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Presentation</td>
+<td>Side-by-side, both responses visible</td>
+<td>Blind — user sees one response, doesn't know which model</td>
+</tr>
+<tr>
+<td>Selection</td>
+<td>Explicit: "compare config A vs B"</td>
+<td>Random from a pool</td>
+</tr>
+<tr>
+<td>Feedback storage</td>
+<td>archi's PostgreSQL</td>
+<td>Open WebUI's database (Elo-rated leaderboard)</td>
+</tr>
+<tr>
+<td>Scope</td>
+<td>Per-conversation</td>
+<td>Global leaderboard across all users</td>
+</tr>
+<tr>
+<td>Works via <code>/v1</code></td>
+<td>No</td>
+<td><strong>Yes</strong></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="librechat">LibreChat</h3>
+<p><a href="https://github.com/danny-avila/LibreChat">LibreChat</a> is an open-source chat interface with its own agent framework, MCP support, and highly configurable backend integration.</p>
+<h4 id="deployment_1">Deployment</h4>
+<p>LibreChat defines backends via <code>librechat.yaml</code> using its <a href="https://www.librechat.ai/docs/quick_start/custom_endpoints">Custom Endpoints</a> feature:</p>
+<pre><code class="language-yaml"># librechat.yaml
+endpoints:
+  custom:
+    - name: 'archi'
+      apiKey: '${ARCHI_API_KEY}'
+      baseURL: 'http://chatbot:7861/v1'
+      models:
+        fetch: true              # Calls GET /v1/models on startup
+      titleConvo: true
+      titleModel: 'default'
+      modelDisplayLabel: 'archi'
+      headers:
+        X-LibreChat-User-Id: '{{LIBRECHAT_USER_ID}}'
+        X-LibreChat-User-Email: '{{LIBRECHAT_USER_EMAIL}}'
+        X-LibreChat-Conversation-Id: '{{LIBRECHAT_BODY_CONVERSATIONID}}'
+        X-LibreChat-Message-Id: '{{LIBRECHAT_BODY_MESSAGEID}}'
+</code></pre>
+<h4 id="docker-compose_1">Docker Compose</h4>
+<pre><code class="language-yaml">services:
+  librechat:
+    image: ghcr.io/danny-avila/librechat-dev:latest
+    ports:
+      - &quot;3080:3080&quot;
+    volumes:
+      - ./librechat.yaml:/app/librechat.yaml
+    environment:
+      MONGO_URI: mongodb://mongo:27017/LibreChat
+      ARCHI_API_KEY: ${ARCHI_API_KEY}
+      # No BYPASS_EMBEDDING_AND_RETRIEVAL needed
+      # No ENABLE_FORWARD_USER_INFO_HEADERS needed
+      # Header forwarding configured in librechat.yaml
+    depends_on:
+      - mongo
+      - chatbot
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo_data:/data/db
+
+  # ── archi (RAG backend) ───────────────────────────
+  chatbot:
+    image: archi-chatbot:latest
+    ports:
+      - &quot;7861:7861&quot;
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  data-manager:
+    image: archi-data-manager:latest
+    environment:
+      PGHOST: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: archi-postgres:latest
+    ports:
+      - &quot;5432:5432&quot;
+    volumes:
+      - archi-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: [&quot;CMD&quot;, &quot;pg_isready&quot;]
+</code></pre>
+<h4 id="conversation-mapping_1">Conversation Mapping</h4>
+<p>LibreChat forwards <code>{{LIBRECHAT_BODY_CONVERSATIONID}}</code> via custom headers configured in <code>librechat.yaml</code>. archi's <code>/v1</code> handler uses the same <code>external_chat_id</code> mapping mechanism — it just reads from a different header name.</p>
+<h4 id="header-forwarding">Header Forwarding</h4>
+<p>LibreChat's header system is more flexible than Open WebUI's — all placeholders are configurable per-endpoint in YAML:</p>
+<table>
+<thead>
+<tr>
+<th>Placeholder</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{{LIBRECHAT_USER_ID}}</code></td>
+<td>User ID</td>
+</tr>
+<tr>
+<td><code>{{LIBRECHAT_USER_EMAIL}}</code></td>
+<td>Email</td>
+</tr>
+<tr>
+<td><code>{{LIBRECHAT_USER_NAME}}</code></td>
+<td>Display name</td>
+</tr>
+<tr>
+<td><code>{{LIBRECHAT_USER_USERNAME}}</code></td>
+<td>Username</td>
+</tr>
+<tr>
+<td><code>{{LIBRECHAT_USER_ROLE}}</code></td>
+<td>Role (USER, ADMIN)</td>
+</tr>
+<tr>
+<td><code>{{LIBRECHAT_USER_PROVIDER}}</code></td>
+<td>Auth provider (google, github, etc.)</td>
+</tr>
+<tr>
+<td><code>{{LIBRECHAT_BODY_CONVERSATIONID}}</code></td>
+<td>Conversation ID</td>
+</tr>
+<tr>
+<td><code>{{LIBRECHAT_BODY_MESSAGEID}}</code></td>
+<td>Message ID</td>
+</tr>
+<tr>
+<td><code>{{LIBRECHAT_BODY_PARENTMESSAGEID}}</code></td>
+<td>Parent message ID</td>
+</tr>
+</tbody>
+</table>
+<h4 id="key-differences-from-open-webui">Key Differences from Open WebUI</h4>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Open WebUI</th>
+<th>LibreChat</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>RAG interference</strong></td>
+<td>Must disable with <code>BYPASS_EMBEDDING_AND_RETRIEVAL=true</code></td>
+<td>No built-in RAG — if <code>RAG_API_URL</code> is unset, retrieval is simply not active</td>
+</tr>
+<tr>
+<td><strong>Model access control</strong></td>
+<td>Group-based model filtering via <code>access_grant</code> table</td>
+<td><strong>Not available.</strong> All users see all configured models</td>
+</tr>
+<tr>
+<td><strong>A/B testing</strong></td>
+<td>Arena Mode (blind Elo-rated evaluation)</td>
+<td>No equivalent</td>
+</tr>
+<tr>
+<td><strong>Database</strong></td>
+<td>SQLite (default) or PostgreSQL</td>
+<td>MongoDB (required)</td>
+</tr>
+<tr>
+<td><strong>Agent framework</strong></td>
+<td>None — relies on backend</td>
+<td>LibreChat Agents with MCP, tool calling, code execution, file search</td>
+</tr>
+<tr>
+<td><strong>SSO</strong></td>
+<td>LDAP, SCIM 2.0, OAuth</td>
+<td>GitHub, Google, Discord, OpenID, Facebook, Apple, SAML</td>
+</tr>
+<tr>
+<td><strong>Model presets</strong></td>
+<td>N/A</td>
+<td><code>modelSpecs</code> — named presets with custom instructions, grouping, and icons</td>
+</tr>
+</tbody>
+</table>
+<h4 id="recommendation">Recommendation</h4>
+<p>For deployments where <strong>per-user collection access control</strong> is important, <strong>Open WebUI</strong> is the stronger choice today — its group-based model filtering provides defense in depth alongside archi's RBAC.</p>
+<p>For deployments where <strong>flexible header forwarding</strong>, <strong>no RAG interference</strong>, and <strong>built-in agents</strong> matter more than model-level access control, <strong>LibreChat</strong> is a compelling alternative.</p>
+<p>Both consume the same <code>/v1</code> API. The archi-side implementation does not change.</p>
+<hr />
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/open-webui/open-webui">Open WebUI GitHub</a></li>
+<li><a href="https://github.com/open-webui/pipelines">Open WebUI Pipelines</a></li>
+<li><a href="https://github.com/danny-avila/LibreChat">LibreChat GitHub</a></li>
+<li><a href="https://www.librechat.ai/docs/quick_start/custom_endpoints">LibreChat Custom Endpoints Docs</a></li>
+<li><a href="https://platform.openai.com/docs/api-reference/chat">OpenAI Chat Completions API</a></li>
+<li>archi source: <code>src/interfaces/chat_app/app.py</code> — native NDJSON streaming</li>
+<li>archi source: <code>src/archi/utils/output_dataclass.py</code> — PipelineOutput dataclass</li>
+<li>archi source: <code>src/utils/rbac/</code> — existing permission framework</li>
+<li>archi source: <code>src/utils/conversation_service.py</code> — message persistence and A/B comparison tracking</li>
+</ul>
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

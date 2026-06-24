@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Open WebUI Integration - Archi Docs</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Open WebUI Integration";
+        var mkdocs_page_input_path = "openwebui-integration.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Open WebUI Integration</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/openwebui-integration.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="open-webui-integration">Open WebUI Integration</h1>
+<p>archi can serve as an OpenAI-compatible backend for <a href="https://github.com/open-webui/open-webui">Open WebUI</a>, exposing its RAG pipelines via <code>/v1/models</code> and <code>/v1/chat/completions</code> endpoints.</p>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+<li>A running archi deployment (Docker/Podman)</li>
+<li>Open WebUI instance</li>
+</ul>
+<h2 id="setup">Setup</h2>
+<h3 id="1-enable-the-openai-compatible-api">1. Enable the OpenAI-compatible API</h3>
+<p>In your archi <code>config.yaml</code>:</p>
+<pre><code class="language-yaml">services:
+  chat_app:
+    openai_compat:
+      enabled: true
+</code></pre>
+<p>Redeploy to apply: <code>archi deploy &lt;name&gt;</code>.</p>
+<h3 id="2-generate-an-api-token">2. Generate an API token</h3>
+<p>If authentication is enabled, generate a token via archi's API:</p>
+<pre><code class="language-bash">curl -X POST http://localhost:7861/api/users/me/api-token \
+  -H &quot;Cookie: session=&lt;your-session-cookie&gt;&quot;
+</code></pre>
+<p>Save the returned <code>archi_...</code> token. It's shown once and cannot be retrieved later.</p>
+<h3 id="3-configure-open-webui">3. Configure Open WebUI</h3>
+<p>Set these environment variables in your Open WebUI deployment:</p>
+<pre><code class="language-yaml">environment:
+  OPENAI_API_BASE_URL: &quot;http://chatbot:7861/v1&quot;
+  OPENAI_API_KEYS: &quot;archi_&lt;your-token&gt;&quot;
+  BYPASS_EMBEDDING_AND_RETRIEVAL: &quot;true&quot;
+  ENABLE_FORWARD_USER_INFO_HEADERS: &quot;true&quot;
+</code></pre>
+<p>Key settings:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OPENAI_API_BASE_URL</code></td>
+<td>Points Open WebUI at archi's <code>/v1</code> endpoint</td>
+</tr>
+<tr>
+<td><code>OPENAI_API_KEYS</code></td>
+<td>Bearer token for authentication</td>
+</tr>
+<tr>
+<td><code>BYPASS_EMBEDDING_AND_RETRIEVAL</code></td>
+<td>Disables Open WebUI's built-in RAG (archi handles retrieval)</td>
+</tr>
+<tr>
+<td><code>ENABLE_FORWARD_USER_INFO_HEADERS</code></td>
+<td>Forwards <code>X-OpenWebUI-Chat-Id</code> header for conversation mapping</td>
+</tr>
+</tbody>
+</table>
+<h3 id="4-register-models-in-open-webui">4. Register models in Open WebUI</h3>
+<p>After starting Open WebUI, archi's config will appear in the model dropdown. For group-based access control:</p>
+<ol>
+<li>Go to <strong>Admin Panel &gt; Models</strong> in Open WebUI</li>
+<li>Register each archi config as a model</li>
+<li>Assign group permissions as needed</li>
+</ol>
+<h2 id="docker-compose-example">Docker Compose Example</h2>
+<p>See <code>examples/deployments/openwebui/</code> for a complete example deployment with archi + Open WebUI + vLLM.</p>
+<h2 id="architecture">Architecture</h2>
+<pre><code>                          +-----------------+
+                          |   Open WebUI    |
+                          |   (Frontend)    |
+                          +--------+--------+
+                                   |
+                     Authorization: Bearer archi_...
+                     X-OpenWebUI-Chat-Id: abc-123
+                                   |
+                          +--------v--------+
+                          |  archi /v1 API  |
+                          |  (Blueprint)    |
+                          +--------+--------+
+                                   |
+                    +--------------+--------------+
+                    |              |               |
+              ChatWrapper    ConversationService  UserService
+              .stream()      (persistence)        (auth)
+                    |
+              RAG Pipeline
+              (retrieval + LLM)
+</code></pre>
+<h2 id="conversation-tracking">Conversation Tracking</h2>
+<p>When <code>ENABLE_FORWARD_USER_INFO_HEADERS</code> is enabled, Open WebUI sends its conversation ID in the <code>X-OpenWebUI-Chat-Id</code> header. archi maps this to an internal conversation, so a multi-turn chat in Open WebUI stays as one conversation in archi's database.</p>
+<p>Without the header (e.g., using curl), each request creates a separate conversation.</p>
+<h2 id="what-you-lose">What You Lose</h2>
+<p>The <code>/v1</code> endpoint provides the core chat experience but omits some archi-native features:</p>
+<ul>
+<li><strong>Agent reasoning steps</strong> — tool calls and thinking events are not visible via the OpenAI protocol</li>
+<li><strong>A/B testing</strong> — requires archi's native UI</li>
+<li><strong>Document selection</strong> — per-conversation document overrides are not available</li>
+</ul>
+<p>Users who need these features should use archi's native chat interface.</p>
+<h2 id="token-management">Token Management</h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Endpoint</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Generate token</td>
+<td><code>POST /api/users/me/api-token</code></td>
+</tr>
+<tr>
+<td>Check if token exists</td>
+<td><code>GET /api/users/me/api-token</code></td>
+</tr>
+<tr>
+<td>Revoke token</td>
+<td><code>DELETE /api/users/me/api-token</code></td>
+</tr>
+</tbody>
+</table>
+<p>Tokens are prefixed with <code>archi_</code> and stored as SHA-256 hashes. Revoking a token invalidates it immediately.</p>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<p><strong>Models not appearing in Open WebUI</strong>
+- Verify <code>OPENAI_API_BASE_URL</code> points to archi's host and port
+- Check that <code>openai_compat.enabled: true</code> is set in config
+- Test directly: <code>curl http://localhost:7861/v1/models -H "Authorization: Bearer archi_..."</code></p>
+<p><strong>401 Unauthorized</strong>
+- Ensure the token is valid and hasn't been revoked
+- If auth is disabled on archi, no token is needed</p>
+<p><strong>Responses don't include sources</strong>
+- Sources appear as a markdown block at the end of responses
+- If the pipeline returns no source documents, no citation block is appended</p>
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

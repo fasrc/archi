@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Archi RAG Architecture — Dev-Spike Handoff - Archi Docs</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Archi RAG Architecture \u2014 Dev-Spike Handoff";
+        var mkdocs_page_input_path = "rag_architecture.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Archi RAG Architecture — Dev-Spike Handoff</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/rag_architecture.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="archi-rag-architecture-dev-spike-handoff">Archi RAG Architecture — Dev-Spike Handoff</h1>
+<p>A brief, opinionated map of archi's retrieval-augmented-generation pipeline,
+written to orient someone prototyping <strong>new RAG approaches</strong>. It emphasizes the
+extension seams and the current defaults you'd vary in a spike. Paths are
+relative to the repo root; cite the listed files for ground truth.</p>
+<h2 id="pipeline-at-a-glance">Pipeline at a glance</h2>
+<pre><code>                 ingest                  index                    serve
+ sources ──► collectors ──► chunk ──► embed ──► Postgres ──► retriever ──► agent ──► LLM
+ (web/git/    (data_manager  (Character  (HF/OpenAI  (pgvector +   (hybrid:     (LangGraph   (vLLM:
+  files/...)   collectors)   TextSplit)  embeddings) BM25 index)   vec+BM25)    ReAct loop)  Qwen 3.6)
+</code></pre>
+<p>Two processes: a <strong>data-manager</strong> (ingest → embed → store) and a <strong>chat_app</strong>
+(retriever + agent + generation). They share one Postgres DB. Config is seeded
+into Postgres at <code>archi create</code>; editing YAML + restarting is a no-op (re-run
+the deploy). Code changes need a redeploy too — the app imports a baked copy of
+<code>src/</code>, not the bind mount (dev mode is the exception).</p>
+<h2 id="stages">Stages</h2>
+<p><strong>1. Ingestion</strong> — <code>src/data_manager/collectors/</code>. Sources: web links
+(<code>scrapers/scraper_manager.py</code>), local files, git, Jira/Redmine tickets, Indico,
+SSO. Web crawl depth defaults to <strong>1</strong> (<code>base_source_depth</code>), so the page→page
+<strong>link graph is extracted but discarded</strong> — only visited within a crawl session,
+never persisted (<code>scrapers/scraper.py</code>). HTML is flattened to text via
+<code>BSHTMLLoader</code> (<code>loader_utils.py</code>); structure (headings, breadcrumbs, link
+anchors) is lost. Per-doc metadata → <code>documents</code> table + a JSONB <code>extra_json</code>
+catch-all (<code>src/cli/templates/init.sql</code>).</p>
+<p><strong>2. Chunking &amp; embedding</strong> — <code>data_manager/manager.py</code>. Always
+<code>CharacterTextSplitter</code>, <code>chunk_size=1000</code>, <code>chunk_overlap=0</code> (config defaults).
+No semantic/markdown-aware splitting. Embeddings: HF
+<code>sentence-transformers/all-MiniLM-L6-v2</code> (384-d) or OpenAI <code>text-embedding-3-small</code>
+(1536-d). <strong>Embedding dimension is fixed at deploy time</strong> (<code>static_config</code>) — you
+can't swap to a different-dim model without re-ingest.</p>
+<p><strong>3. Storage</strong> — Postgres + pgvector. <code>documents</code> (file-level) and
+<code>document_chunks</code> (<code>chunk_text</code>, <code>embedding</code>, JSONB <code>metadata</code>). Chunk metadata
+carries <code>filename</code>, <code>resource_hash</code>, <code>collection</code>, <code>chunk_index</code>, plus all parent
+<code>extra_json</code> fields. Vector index: HNSW (m=16, ef=64). Full-text: pg_textsearch
+BM25 index on <code>chunk_text</code> (GIN tsvector fallback). Distance: cosine
+(<code>postgres_vectorstore.py</code>).</p>
+<p><strong>4. Retrieval</strong> — <code>data_manager/vectorstore/retrievers/</code>. Production default is
+<strong>HybridRetriever</strong>: <code>semantic_weight=0.4</code>, <code>bm25_weight=0.6</code>, <code>k=5</code>. Score =
+<code>(1 − cosine_distance)·0.4 + bm25·0.6</code> (<code>postgres_vectorstore.hybrid_search</code>).
+<code>hybrid_search</code> <strong>already accepts a <code>filter</code> dict</strong> over any JSONB metadata key —
+so metadata-scoped retrieval (e.g. by category/source_type) needs no schema
+change, just a populated key + a caller that passes the filter. BM25-empty falls
+back to semantic-only. No re-ranking stage exists.</p>
+<p><strong>5. Agent &amp; generation</strong> — <code>src/archi/pipelines/agents/</code>. LangGraph ReAct loop
+(<code>base_react.py</code>); production agent <code>CMSCompOpsAgent</code> (<code>cms_comp_ops_agent.py</code>).
+Tools: <code>search_vectorstore_hybrid</code>, <code>search_metadata_index</code>,
+<code>list_metadata_schema</code>, <code>search_local_files</code>, <code>fetch_catalog_document</code> (+ optional
+MCP/MONIT). Two behaviors matter for RAG experiments:
+- <strong>Forced initial retrieval</strong> (<code>force_initial_retrieval</code>, default on): a
+  <code>search_vectorstore_hybrid</code> round is prefilled before the model's first turn,
+  so retrieval always happens even if the model wouldn't call it. Toggle for
+  prompt-only vs retrieval A/B.
+- <strong>Per-turn search budget</strong> (default <code>search_vectorstore_hybrid: 2</code>): caps
+  searches/turn; over-budget returns a synthetic "reuse prior results" message.</p>
+<p>LLM: vLLM serving <code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code> at <code>localhost:8001/v1</code>.
+Agent behavior (tool list, citation rules, first-action) is declared in a
+<strong>markdown spec</strong> with YAML frontmatter under <code>config/agents/*.md</code>, live
+bind-mounted; the active one is <code>dynamic_config.active_agent_name</code> (runtime
+mutable). See <code>fasrc_archi.md</code> for the model-server ops.</p>
+<h2 id="knobs-youd-vary-in-a-spike">Knobs you'd vary in a spike</h2>
+<table>
+<thead>
+<tr>
+<th>Knob</th>
+<th>Where</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>chunk size / overlap</td>
+<td><code>data_manager.chunk_size/chunk_overlap</code></td>
+<td>1000 / 0</td>
+</tr>
+<tr>
+<td>splitter</td>
+<td><code>manager.py</code> (hardcoded <code>CharacterTextSplitter</code>)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>embedding model</td>
+<td><code>data_manager.embedding_name</code> (dim fixed at deploy)</td>
+<td>MiniLM-L6 384-d</td>
+</tr>
+<tr>
+<td>hybrid weights</td>
+<td><code>data_manager.retrievers.hybrid_retriever</code></td>
+<td>0.4 / 0.6</td>
+</tr>
+<tr>
+<td>top-k</td>
+<td>retriever / agent</td>
+<td>5 (tool returns 4, 800 chars each)</td>
+</tr>
+<tr>
+<td>metadata filter</td>
+<td><code>hybrid_search(filter=...)</code></td>
+<td>unused by default</td>
+</tr>
+<tr>
+<td>forced retrieval</td>
+<td><code>services.chat_app.force_initial_retrieval</code></td>
+<td>on</td>
+</tr>
+<tr>
+<td>search budget</td>
+<td><code>tool_budgets.search_vectorstore_hybrid</code></td>
+<td>2/turn</td>
+</tr>
+</tbody>
+</table>
+<h2 id="extension-seams-for-new-approaches">Extension seams (for new approaches)</h2>
+<ul>
+<li><strong>New retriever</strong>: subclass LangChain <code>BaseRetriever</code>, implement
+  <code>_get_relevant_documents</code>, wrap with <code>create_retriever_tool()</code>
+  (<code>tools/retriever.py</code>), register in <code>CMSCompOpsAgent._tool_definitions()</code>.
+  <code>SemanticRetriever</code>/<code>GradingRetriever</code> are existing examples. A re-ranker or
+  query-rewrite stage slots in here.</li>
+<li><strong>New tool</strong> (e.g. graph hop, category filter, multi-query): <code>@tool</code> callable
+  returning a formatted string; register in <code>_tool_definitions()</code>; add to the
+  agent's markdown <code>tools:</code> frontmatter to enable.</li>
+<li><strong>New metadata</strong> (e.g. category/taxonomy for steered retrieval): enrich
+  <code>file_level_metadata</code> during ingest (<code>manager.py</code>) → lands in chunk JSONB →
+  filterable via the existing <code>hybrid_search(filter=...)</code>. No schema change.</li>
+<li><strong>New data source</strong>: implement the Collector protocol
+  (<code>collectors/base.py</code>), persist via <code>persist_resource()</code>.</li>
+<li><strong>Capture the link graph</strong> (currently discarded): the scrape point in
+  <code>scrapers/scraper.py</code> already parses anchors; persisting them (JSONB or a
+  relations table) is the seam for link-graph / GraphRAG experiments.</li>
+</ul>
+<p><strong>Hardcoded (would need real changes):</strong> Postgres-only vector backend; pgvector
+metrics only; single <code>CharacterTextSplitter</code>; ReAct loop shape; BM25 via
+pg_textsearch only.</p>
+<h2 id="known-gaps-opportunities">Known gaps / opportunities</h2>
+<ul>
+<li>Link graph and HTML structure are thrown away at ingest → no structural or
+  multi-hop retrieval today.</li>
+<li>No re-ranking; hybrid scores are a fixed linear blend.</li>
+<li>Category/taxonomy metadata exists as a concept but isn't populated or used to
+  steer retrieval, even though the filter plumbing is ready.</li>
+<li><code>chunk_overlap=0</code> and char-based splitting can sever context mid-thought.</li>
+</ul>
+<h2 id="how-to-evaluate-a-change">How to evaluate a change</h2>
+<p>RAGAS leaderboard sweep: <code>archi evaluate --config-dir &lt;dir&gt;</code> ranks variants on
+faithfulness / context-precision / relevance (judge = Harvard HUIT Bedrock
+Claude; see <code>docs/docs/benchmarking.md</code>). <strong>Caveat:</strong> the benchmark question set
+is currently ~9 queries — too few to measure retrieval deltas with confidence.
+<strong>Expanding the question set (to ~40–60, incl. multi-hop and
+category-confusable items) is a prerequisite</strong> for trusting any RAG-change
+numbers. Corpus is on the order of a few hundred docs / a few thousand chunks
+(query <code>document_chunks</code> for the exact live count) — at this scale the problem is
+usually precision/steering, not recall, which is worth keeping in mind when
+choosing what to prototype.</p>
+<h2 id="key-files">Key files</h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Scraping / link graph</td>
+<td><code>src/data_manager/collectors/scrapers/scraper.py</code></td>
+</tr>
+<tr>
+<td>Chunk + embed</td>
+<td><code>src/data_manager/manager.py</code></td>
+</tr>
+<tr>
+<td>Schema</td>
+<td><code>src/cli/templates/init.sql</code></td>
+</tr>
+<tr>
+<td>Vector store + hybrid search</td>
+<td><code>src/data_manager/vectorstore/postgres_vectorstore.py</code></td>
+</tr>
+<tr>
+<td>Retrievers</td>
+<td><code>src/data_manager/vectorstore/retrievers/</code></td>
+</tr>
+<tr>
+<td>Retriever tool factory</td>
+<td><code>src/archi/pipelines/agents/tools/retriever.py</code></td>
+</tr>
+<tr>
+<td>Agent base (ReAct, budgets)</td>
+<td><code>src/archi/pipelines/agents/base_react.py</code></td>
+</tr>
+<tr>
+<td>Production agent (forced retrieval, tools)</td>
+<td><code>src/archi/pipelines/agents/cms_comp_ops_agent.py</code></td>
+</tr>
+<tr>
+<td>Agent specs</td>
+<td><code>config/agents/*.md</code></td>
+</tr>
+<tr>
+<td>Config template</td>
+<td><code>src/cli/templates/base-config.yaml</code></td>
+</tr>
+<tr>
+<td>Benchmarking</td>
+<td><code>docs/docs/benchmarking.md</code></td>
+</tr>
+</tbody>
+</table>
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

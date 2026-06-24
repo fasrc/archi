@@ -52,6 +52,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
                 </li>
               </ul>
@@ -91,6 +95,10 @@
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
               <ul class="current">
                 <li class="toctree-l1 current"><a class="reference internal current" href="#">Developer Guide</a>
     <ul class="current">
@@ -109,6 +117,8 @@
     <li class="toctree-l3"><a class="reference internal" href="#adding-a-new-tool">Adding a New Tool</a>
     </li>
         </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#dev-mode">Dev Mode</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#contribution-workflow">Contribution Workflow</a>
     </li>
@@ -334,6 +344,43 @@ class AgentSpec:
 <li>Register it in the tool mapping within the agent's <code>_build_tools()</code> method.</li>
 <li>Add the tool name to agent spec YAML frontmatter <code>tools</code> list.</li>
 </ol>
+<h2 id="dev-mode">Dev Mode</h2>
+<p>Use <code>--dev</code> with <code>archi create</code> to mount source code directly from the repo into containers. This eliminates the deploy-copy-rebuild cycle during development:</p>
+<pre><code class="language-bash"># Initial setup (builds images once)
+archi create -n my-archi --dev -f -c config.yaml -e .secrets.env \
+  --services chatbot --hostmode
+
+# After editing Python source or agent prompts:
+docker restart chatbot-my-archi
+# Changes are live — no redeploy needed
+</code></pre>
+<p><strong>What dev mode mounts:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Host Path</th>
+<th>Container Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>repo/src/</code></td>
+<td><code>/root/archi/src/</code></td>
+<td>Python source (shadows Dockerfile COPY)</td>
+</tr>
+<tr>
+<td><code>repo/config/agents/</code></td>
+<td><code>/root/archi/agents/</code></td>
+<td>Agent specs (replaces deploy-copied mount)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>When you still need a full redeploy:</strong></p>
+<ul>
+<li>Config YAML changes (goes through Jinja2 template rendering)</li>
+<li>Adding new Python dependencies (requires <code>pip install</code> in image rebuild)</li>
+</ul>
 <h2 id="contribution-workflow">Contribution Workflow</h2>
 <ol>
 <li><strong>Branch</strong>: Create a feature branch from <code>main</code> (e.g., <code>dev/my-feature</code>).</li>
@@ -545,7 +592,7 @@ Finally, the <code>VectorStoreManager</code> reads these files, splits them into
             </div>
           </div><footer>
     <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
-        <a href="../advanced_setup_deploy/" class="btn btn-neutral float-left" title="Advanced Setup"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../adding_providers/" class="btn btn-neutral float-left" title="Adding Providers"><span class="icon icon-circle-arrow-left"></span> Previous</a>
         <a href="../troubleshooting/" class="btn btn-neutral float-right" title="Troubleshooting">Next <span class="icon icon-circle-arrow-right"></span></a>
     </div>
 
@@ -573,7 +620,7 @@ Finally, the <code>VectorStoreManager</code> reads these files, splits them into
         </span>
     
     
-      <span><a href="../advanced_setup_deploy/" style="color: #fcfcfc">&laquo; Previous</a></span>
+      <span><a href="../adding_providers/" style="color: #fcfcfc">&laquo; Previous</a></span>
     
     
       <span><a href="../troubleshooting/" style="color: #fcfcfc">Next &raquo;</a></span>
