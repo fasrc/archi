@@ -219,6 +219,7 @@ class ConfigService:
                     ADD COLUMN IF NOT EXISTS services_config JSONB DEFAULT '{}'::jsonb,
                     ADD COLUMN IF NOT EXISTS data_manager_config JSONB DEFAULT '{}'::jsonb,
                     ADD COLUMN IF NOT EXISTS archi_config JSONB DEFAULT '{}'::jsonb,
+                    ADD COLUMN IF NOT EXISTS mcp_servers_config JSONB DEFAULT '{}'::jsonb,
                     ADD COLUMN IF NOT EXISTS global_config JSONB DEFAULT '{}'::jsonb
                     """
                 )
