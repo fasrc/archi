@@ -4,6 +4,7 @@
 - [x] 1.2 Add `document_parent_nodes` DDL to `src/cli/templates/init.sql` (additive, `CREATE TABLE IF NOT EXISTS`): `id`, `document_id` FK→documents ON DELETE CASCADE, `parent_index`, `parent_text`, `metadata JSONB`; no `embedding` column; index on `document_id`. Leave `document_chunks` untouched.
 - [x] 1.3 Add a child→parent link: store `parent_id` on the child row's existing `document_chunks.metadata` JSONB (no new column on document_chunks) referencing `document_parent_nodes.id`.
 - [x] 1.4 Add config flags (default off): `data_manager.chunking.strategy` (`character`|`sentence`|`markdown`) and `data_manager.retrievers.hierarchical_rerank.enabled` + `reranker` settings (alongside the existing `data_manager.retrievers.*` entries).
+- [ ] 1.5 Ensure the hierarchical schema at runtime (Codex adversarial review): `init.sql` runs only on a fresh Postgres volume, so add an idempotent `CREATE TABLE IF NOT EXISTS document_parent_nodes` + `idx_parent_nodes_document` ensure step (mirroring the runtime `CREATE TABLE IF NOT EXISTS` pattern in `collectors/utils/index_utils.py`), invoked before the hierarchical path writes/reads the table, so an upgraded deployment on an existing volume does not fail with an undefined-table error. Test: the ensure step creates the table/index when absent and is a no-op when already present.
 
 ## 2. Ingestion: structural parent-child chunking
 
@@ -11,6 +12,7 @@
 - [x] 2.2 Force archi's embedder: embed child nodes with the existing `embedding_model` (do NOT use any LlamaIndex default embedder); assert each child embedding is 384-dim and fail loudly on mismatch.
 - [x] 2.3 In `VectorStoreManager._add_to_postgres` (`vectorstore/manager.py`), when the structural strategy is enabled: persist parents to `document_parent_nodes`, persist children to `document_chunks` (existing insert path, embeddings + `metadata.parent_id`). Keep the `CharacterTextSplitter` path intact for fallback.
 - [x] 2.4 Leave `PostgresVectorStore.add_texts` (LangChain-API write path) naive; add a comment noting it does not produce parent nodes.
+- [ ] 2.5 Derive the child-embedding dimension guard in `embed_child_nodes` (`node_parsing.py`) from the deployment's configured `embedding_dimensions` (via `ConfigService`/`static_config`) instead of the hardcoded `384` (Codex adversarial review), so hierarchical ingestion works on non-MiniLM backends (e.g. the default `OpenAIEmbeddings`, 1536-dim) and stays matched to the `document_chunks.embedding vector(N)` column. Test: ingestion with a 1536-dim configured embedder passes the guard; a true dimension mismatch still raises.
 
 ## 3. Retrieval: hierarchical retriever + rerank
 

@@ -74,3 +74,44 @@ The reranking retriever SHALL be a `langchain_core` `BaseRetriever` returning `D
 
 - **WHEN** the reranking/hierarchical retrieval feature is disabled via configuration
 - **THEN** retrieval falls back to the existing hybrid retriever behavior
+
+### Requirement: Hierarchical schema is ensured on existing deployments
+
+The feature SHALL NOT rely solely on `init.sql` (which runs only when Postgres
+initializes a fresh data directory) to create `document_parent_nodes`. An
+idempotent runtime schema-ensure step SHALL create the table and its index if
+absent before the hierarchical path writes or reads them, so a deployment upgraded
+on an existing volume does not fail with an undefined-table error.
+
+#### Scenario: Enabling the feature on a pre-existing database
+
+- **WHEN** hierarchical chunking/retrieval is enabled on a deployment whose Postgres
+  volume predates `document_parent_nodes`
+- **THEN** the schema-ensure step creates the table and index, and ingestion and
+  retrieval proceed without an undefined-table error
+
+#### Scenario: Ensure step is idempotent
+
+- **WHEN** the schema-ensure step runs against a database that already has
+  `document_parent_nodes`
+- **THEN** it is a no-op that neither errors nor alters existing rows
+
+### Requirement: Child-embedding dimension follows the configured embedder
+
+The child-embedding dimension guard SHALL derive its expected dimension from the
+deployment's configured `embedding_dimensions` (the value backing the
+`document_chunks.embedding vector(N)` column), not a hardcoded constant, so the
+hierarchical path works for any embedding backend (e.g. 1536-dim OpenAI), not only
+384-dim MiniLM.
+
+#### Scenario: Non-384 embedding backend
+
+- **WHEN** hierarchical ingestion runs on a deployment configured for a 1536-dim
+  embedder
+- **THEN** child embeddings of dimension 1536 pass the guard and are stored
+
+#### Scenario: True dimension mismatch still fails loudly
+
+- **WHEN** the embedder returns a vector whose dimension differs from the configured
+  `embedding_dimensions`
+- **THEN** the guard raises rather than storing a wrong-dimension vector
