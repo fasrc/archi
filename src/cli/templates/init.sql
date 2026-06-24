@@ -76,7 +76,9 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_github_id ON users(github_id) WHERE github_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_users_api_token ON users(api_token_hash) WHERE api_token_hash IS NOT NULL;
+-- UNIQUE: api_token_hash is a bearer credential looked up by hash, so a hash must
+-- map to at most one user. Partial so multiple NULLs (users without a token) coexist.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_token ON users(api_token_hash) WHERE api_token_hash IS NOT NULL;
 
 -- ============================================================================
 -- 1.1 SESSIONS

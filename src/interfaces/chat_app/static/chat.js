@@ -3552,18 +3552,19 @@ const Chat = {
         return;
       }
 
-      // Get config IDs
+      // Get config IDs (retained for client-side state/labels)
       const configAId = this.getConfigId(actualConfigA);
       const configBId = this.getConfigId(actualConfigB);
 
-      // Create A/B comparison record
+      // Create A/B comparison record. The server stores model/pipeline (used by
+      // the model-comparison stats), so send the models that produced each side.
       const response = await API.createABComparison({
         conversation_id: this.state.conversationId,
         user_prompt_message_id: results.a.userPromptMid || results.b.userPromptMid,
         response_a_message_id: results.a.messageId,
         response_b_message_id: results.b.messageId,
-        config_a_id: configAId,
-        config_b_id: configBId,
+        model_a: selectedA.model,
+        model_b: selectedB.model,
         is_config_a_first: !shuffled,
       });
 

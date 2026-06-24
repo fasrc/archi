@@ -680,22 +680,26 @@ class ChatWrapper:
         user_prompt_message_id: int,
         response_a_message_id: int,
         response_b_message_id: int,
-        config_a_id: int,
-        config_b_id: int,
+        model_a: str,
+        pipeline_a: Optional[str],
+        model_b: str,
+        pipeline_b: Optional[str],
         is_config_a_first: bool,
     ) -> int:
         """
         Create an A/B comparison record linking two responses to the same user prompt.
-        
+
         Args:
             conversation_id: The conversation this comparison belongs to
             user_prompt_message_id: Message ID of the user's question
             response_a_message_id: Message ID of response A
             response_b_message_id: Message ID of response B
-            config_a_id: Config ID used for response A
-            config_b_id: Config ID used for response B
+            model_a: Model identifier used for response A
+            pipeline_a: Pipeline identifier used for response A (optional)
+            model_b: Model identifier used for response B
+            pipeline_b: Pipeline identifier used for response B (optional)
             is_config_a_first: True if config A was the "first" config before randomization
-            
+
         Returns:
             The comparison_id of the newly created record
         """
@@ -705,7 +709,7 @@ class ChatWrapper:
             cursor.execute(
                 SQL_INSERT_AB_COMPARISON,
                 (conversation_id, user_prompt_message_id, response_a_message_id, response_b_message_id,
-                 config_a_id, config_b_id, is_config_a_first)
+                 model_a, pipeline_a, model_b, pipeline_b, is_config_a_first)
             )
             comparison_id = cursor.fetchone()[0]
             conn.commit()
@@ -759,12 +763,14 @@ class ChatWrapper:
                 'user_prompt_message_id': row[2],
                 'response_a_message_id': row[3],
                 'response_b_message_id': row[4],
-                'config_a_id': row[5],
-                'config_b_id': row[6],
-                'is_config_a_first': row[7],
-                'preference': row[8],
-                'preference_ts': row[9].isoformat() if row[9] else None,
-                'created_at': row[10].isoformat() if row[10] else None,
+                'model_a': row[5],
+                'pipeline_a': row[6],
+                'model_b': row[7],
+                'pipeline_b': row[8],
+                'is_config_a_first': row[9],
+                'preference': row[10],
+                'preference_ts': row[11].isoformat() if row[11] else None,
+                'created_at': row[12].isoformat() if row[12] else None,
             }
         finally:
             cursor.close()
@@ -790,12 +796,14 @@ class ChatWrapper:
                 'user_prompt_message_id': row[2],
                 'response_a_message_id': row[3],
                 'response_b_message_id': row[4],
-                'config_a_id': row[5],
-                'config_b_id': row[6],
-                'is_config_a_first': row[7],
-                'preference': row[8],
-                'preference_ts': row[9].isoformat() if row[9] else None,
-                'created_at': row[10].isoformat() if row[10] else None,
+                'model_a': row[5],
+                'pipeline_a': row[6],
+                'model_b': row[7],
+                'pipeline_b': row[8],
+                'is_config_a_first': row[9],
+                'preference': row[10],
+                'preference_ts': row[11].isoformat() if row[11] else None,
+                'created_at': row[12].isoformat() if row[12] else None,
             }
         finally:
             cursor.close()
@@ -840,12 +848,14 @@ class ChatWrapper:
                     'user_prompt_message_id': row[2],
                     'response_a_message_id': row[3],
                     'response_b_message_id': row[4],
-                    'config_a_id': row[5],
-                    'config_b_id': row[6],
-                    'is_config_a_first': row[7],
-                    'preference': row[8],
-                    'preference_ts': row[9].isoformat() if row[9] else None,
-                    'created_at': row[10].isoformat() if row[10] else None,
+                    'model_a': row[5],
+                    'pipeline_a': row[6],
+                    'model_b': row[7],
+                    'pipeline_b': row[8],
+                    'is_config_a_first': row[9],
+                    'preference': row[10],
+                    'preference_ts': row[11].isoformat() if row[11] else None,
+                    'created_at': row[12].isoformat() if row[12] else None,
                 }
                 for row in rows
             ]
@@ -4101,8 +4111,10 @@ class FlaskAppWrapper(object):
         - user_prompt_message_id: Message ID of the user's question
         - response_a_message_id: Message ID of response A
         - response_b_message_id: Message ID of response B
-        - config_a_id: Config ID used for response A
-        - config_b_id: Config ID used for response B
+        - model_a: Model identifier used for response A
+        - model_b: Model identifier used for response B
+        - pipeline_a: Pipeline identifier used for response A (optional)
+        - pipeline_b: Pipeline identifier used for response B (optional)
         - is_config_a_first: True if config A was the "first" config before randomization
         - client_id: Client ID for authorization
 
@@ -4115,8 +4127,10 @@ class FlaskAppWrapper(object):
             user_prompt_message_id = data.get('user_prompt_message_id')
             response_a_message_id = data.get('response_a_message_id')
             response_b_message_id = data.get('response_b_message_id')
-            config_a_id = data.get('config_a_id')
-            config_b_id = data.get('config_b_id')
+            model_a = data.get('model_a')
+            model_b = data.get('model_b')
+            pipeline_a = data.get('pipeline_a')
+            pipeline_b = data.get('pipeline_b')
             is_config_a_first = data.get('is_config_a_first', True)
             client_id = data.get('client_id')
 
@@ -4130,10 +4144,10 @@ class FlaskAppWrapper(object):
                 missing.append('response_a_message_id')
             if not response_b_message_id:
                 missing.append('response_b_message_id')
-            if not config_a_id:
-                missing.append('config_a_id')
-            if not config_b_id:
-                missing.append('config_b_id')
+            if not model_a:
+                missing.append('model_a')
+            if not model_b:
+                missing.append('model_b')
             if not client_id:
                 missing.append('client_id')
 
@@ -4146,8 +4160,10 @@ class FlaskAppWrapper(object):
                 user_prompt_message_id=user_prompt_message_id,
                 response_a_message_id=response_a_message_id,
                 response_b_message_id=response_b_message_id,
-                config_a_id=config_a_id,
-                config_b_id=config_b_id,
+                model_a=model_a,
+                pipeline_a=pipeline_a,
+                model_b=model_b,
+                pipeline_b=pipeline_b,
                 is_config_a_first=is_config_a_first,
             )
 
