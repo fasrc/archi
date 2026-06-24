@@ -35,6 +35,6 @@
 
 ## 6. Evaluate & verify (spike)
 
-- [ ] 6.1 Recreate the dev volume, re-ingest the FASRC corpus with structural chunking, smoke-test a chat turn end-to-end (HTTP 200, sources populated, parent context returned).
+- [x] 6.1 Recreate the dev volume, re-ingest the FASRC corpus with structural chunking, smoke-test a chat turn end-to-end (HTTP 200, sources populated, parent context returned). Verified on dev (Anthropic + MiniLM-384): structural ingest produced 374 parents / 1199 children (all child rows carry `metadata.parent_id`); task 1.5's runtime ensure created `document_parent_nodes` + `idx_parent_nodes_document` on the **pre-existing** `archi-pg-dev` volume; a chat turn returned HTTP 200 in ~45s with populated parent-context source links. Surfaced + fixed a deploy gap: feature deps must be in `pyproject.toml` (deployment images `pip install .`), not only `requirements-base.txt`.
 - [ ] 6.2 Measure retrieval quality on the FASRC question set (vs. `CharacterTextSplitter`+`HybridRetriever` baseline) and record latency + image-size deltas; note interaction with the open "cap search_vectorstore_hybrid calls" ticket.
 - [ ] 6.3 Confirm `main`-compatibility: `document_chunks` schema unchanged and existing hybrid retrieval behavior intact with the feature disabled.

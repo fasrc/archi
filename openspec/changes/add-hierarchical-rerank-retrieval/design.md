@@ -86,3 +86,18 @@ implementation, addressed by tasks 1.5 and 2.5:
   which would fail every file on a non-MiniLM deployment. The guard must derive the
   expected dimension from the configured `embedding_dimensions` so it matches the
   column for any backend.
+
+## Spike findings (task 6.1, live deploy)
+
+Running the feature on the dev deployment surfaced a dependency-wiring gap not
+caught by the gate:
+
+- **Feature deps must be in `pyproject.toml`.** The deployment images install via
+  `pip install .` (`Dockerfile-chat`, `Dockerfile-data-manager`) on top of the
+  published `a2rchi-*-base` image. Adding `llama-index-core`/`flashrank` only to
+  `requirements/requirements-base.txt` covers the gate/CI and the (separately
+  rebuilt) base image, but **not** `pip install .` — so the deployed data-manager
+  crashed with `ModuleNotFoundError: No module named 'llama_index'`. Fix: declare
+  the deps in `pyproject.toml` too (versions matched to `requirements-base.txt`).
+  Note the gate blind spot: it installs `requirements-base.txt`, so it cannot catch
+  a dep missing from the deployment's `pip install .` path.
