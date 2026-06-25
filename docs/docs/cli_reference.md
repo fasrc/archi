@@ -188,6 +188,65 @@ See [Benchmarking](benchmarking.md) for full details on query format and evaluat
 
 ---
 
+### `archi sources build`
+
+Regenerate a web `sources.list` from a typed YAML **manifest** of seeds, and
+optionally trigger a re-ingest. This replaces the manual workflow of downloading
+sitemaps, extracting `<loc>` URLs by hand, and concatenating per-site `.list`
+files.
+
+```bash
+archi sources build <manifest> [OPTIONS]
+```
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `<manifest>` | Path to the YAML manifest of seed entries (positional, required) | — |
+| `--config`, `-c` | Deployment config; resolves the default `--output` and feeds `--import` | — |
+| `--output`, `-o` | Target `sources.list` path (overrides the config-derived default) | — |
+| `--name`, `-n` | Deployment name to refresh when `--import` is set | — |
+| `--services`, `-s` | Services for the `--import` refresh (must be non-empty) | `chatbot` |
+| `--env-file`, `-e` | Secrets `.env` forwarded to the `--import` refresh | — |
+| `--import` | Re-ingest after writing (requires `--name` and `-c/--config`; not with `--dry-run`) | Off |
+| `--dry-run` | Print a unified diff against the existing list and write nothing | Off |
+
+**Output path resolution.** With `--output` the given path is the target. Without
+it, the path is read from the config's `data_manager.sources.links.input_lists`,
+which is a list: the default is resolved **only when the config declares exactly
+one** `input_lists` entry. With zero or several entries the command exits
+non-zero and asks you to pass `--output`.
+
+**Behavior.** The list is regenerated wholesale: one URL per line, every URL
+normalized (fragment dropped, scheme/host lowercased, a single trailing path
+slash collapsed) and deduplicated preserving first-seen order. If a
+`manual-extras.list` sits beside the output, its non-comment entries are appended
+verbatim — preserving `git-`/`sso-`/`elog-`/`indico-` prefixes — with the
+generated block winning position (an extras line duplicating a generated URL
+appears once). Any fetch failure (non-200, timeout, malformed XML/HTML) aborts
+the whole build and leaves the existing list untouched.
+
+**Examples:**
+
+```bash
+# Preview the diff before writing anything
+archi sources build sources.manifest.yaml -c config.yaml --dry-run
+
+# Write the resolved single input_lists target
+archi sources build sources.manifest.yaml -c config.yaml
+
+# Write to an explicit path
+archi sources build sources.manifest.yaml -o ./weblists/sources.list
+
+# Write and re-ingest the `dev` deployment
+archi sources build sources.manifest.yaml -c config.yaml \
+  --name dev --env-file .secrets.env --import
+```
+
+See [Data Sources](data_sources.md#building-a-sourceslist-from-a-manifest) for
+the manifest format.
+
+---
+
 ## Environment Variables
 
 | Variable | Description |

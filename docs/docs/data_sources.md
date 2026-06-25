@@ -83,6 +83,78 @@ Link scraping is controlled by your config (`data_manager.sources.links.enabled`
 
 ---
 
+## Building a `sources.list` from a manifest
+
+Instead of curating a web link list by hand, you can generate it from a typed
+**manifest** with [`archi sources build`](cli_reference.md#archi-sources-build).
+The manifest declares *where the URLs come from*; the command fetches and expands
+them into the same one-URL-per-line `sources.list` the scraper already consumes.
+
+### Manifest format
+
+The manifest is a YAML list of seed entries. Every entry has a `type` and a
+`url`:
+
+```yaml
+# sources.manifest.yaml
+- type: sitemap          # fetch the sitemap XML and emit every <loc>
+  url: https://docs.rc.fas.harvard.edu/kb/epkb_post_type_1-sitemap.xml
+  include: ["*/kb/*"]    # optional URL globs (fnmatch); keep only matches
+  exclude: ["*/author/*"]# optional URL globs; drop matches
+
+- type: crawl            # fetch an index page and extract its same-host links
+  url: https://slurm.schedmd.com/archive/slurm-25.11.5/
+  depth: 1               # optional, default 1
+  include: []
+  exclude: []
+
+- type: literal          # emit a URL verbatim, never fetched or crawled
+  url: https://en.wikipedia.org/wiki/Annie_Jump_Cannon
+```
+
+| Type | Behavior |
+|------|----------|
+| `sitemap` | Fetches the sitemap XML and emits every `<loc>`. Follows **one** level of `<sitemapindex>` nesting (each child sitemap is fetched once); a child that is itself an index is not followed. An empty sitemap is valid and contributes nothing. Honors `include`/`exclude` globs. |
+| `crawl` | Fetches the index page, extracts anchor links, resolves relative links against the seed URL, and keeps only **same-host** links. Honors an optional `depth` (default 1) and `include`/`exclude` globs. Output is sorted for deterministic diffs. |
+| `literal` | Emits the URL verbatim — never fetched, crawled, or glob-filtered. The URL is still normalized like every other entry (see below). |
+
+An unknown `type`, a missing `url`, or invalid YAML makes the command exit
+non-zero without writing anything.
+
+### Output, normalization, and manual extras
+
+The target list is regenerated **wholesale** every run. Every URL is normalized
+(fragment dropped, scheme/host lowercased, a single trailing path slash
+collapsed) and deduplicated preserving first-seen order, so `--dry-run` diffs
+stay small and meaningful.
+
+To keep hand-added entries — including prefixed lines like `git-…`, `sso-…`,
+`elog-…`, `indico-…` — put them in a `manual-extras.list` beside the output.
+Its non-comment, non-blank entries are appended verbatim after the generated
+block. The generated block wins position: an extras line that duplicates a
+generated URL is dropped so the URL appears exactly once.
+
+### Build → import workflow
+
+```bash
+# 1. Preview the diff against the current list
+archi sources build sources.manifest.yaml -c config.yaml --dry-run
+
+# 2. Write the regenerated list (resolves the single input_lists entry)
+archi sources build sources.manifest.yaml -c config.yaml
+
+# 3. Write and re-ingest the deployment in one step
+archi sources build sources.manifest.yaml -c config.yaml \
+  --name dev --env-file .secrets.env --import
+```
+
+With `--import`, the command shells out to
+`archi create --name <deployment> --config <config> --services <services> --force`
+after a successful write (services default to `chatbot`). See the
+[CLI Reference](cli_reference.md#archi-sources-build) for every flag.
+
+---
+
 ## Git Scraping
 
 Ingest content from MkDocs-based git repositories using the `GitScraper` class, which extracts Markdown content directly instead of scraping rendered HTML.
