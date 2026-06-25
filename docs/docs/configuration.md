@@ -226,6 +226,65 @@ data_manager:
 
 The `visible` flag on any source (`sources.<name>.visible`) controls whether content appears in chat citations (default: `true`).
 
+### Processing (HTML → Markdown & categorization)
+
+A per-document processing stage runs at the persistence seam — *after* a resource is
+collected (scraped/uploaded/fetched) and *before* it is written to disk. It is built
+once from `data_manager.processing` and applied uniformly across **both** scheduled
+ingest and the uploader UI, so the two never produce an inconsistent corpus.
+
+Data flow per document: **collect → convert (HTML→Markdown) → categorize (optional LLM) → persist**.
+
+```yaml
+data_manager:
+  processing:
+    html_to_markdown:
+      enabled: true            # default: true (cheap, local)
+    categorization:
+      enabled: false           # default: false (one LLM call per document)
+      provider: local          # provider key under services.chat_app.providers
+      model: qwen3             # model id for that provider
+      max_chars: 4000          # content is truncated to this many chars before the call
+      categories:              # the closed set of labels the model must choose from
+        - compute
+        - storage
+        - software
+        - policy
+```
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `html_to_markdown.enabled` | `true` | Convert string HTML content (suffix `html`/`htm`) to ATX Markdown via `markdownify`, flip the suffix and path fields to `.md`, and record `metadata.converted_from = "html"`. The `.md` file then loads through `TextLoader` instead of `BSHTMLLoader`, so headings, lists, tables, and links survive into chunks. |
+| `categorization.enabled` | `false` | Assign one label from `categories` to each document via an LLM and store it under `metadata.llm_category`. |
+| `categorization.provider` / `model` | — | Which chat model to use. `provider` is a key under `services.chat_app.providers`; that block (base_url / mode / models / extra_kwargs) supplies the model's `provider_config`, so a custom local/vLLM endpoint is honored. |
+| `categorization.max_chars` | `4000` | Document content is truncated to this length before the model call (bounds cost/latency). |
+| `categorization.categories` | `[]` | The closed label set. An empty list (or any error / out-of-list / model-not-configured) yields `metadata.llm_category = "uncategorized"`. |
+
+**Behavior and caveats:**
+
+- **No-op when disabled.** A **missing** `processing` block means conversion on,
+  categorization off (the shipped default). An explicitly all-disabled block makes
+  the persistence service behave byte-for-byte identically to the unwrapped service.
+- **Never blocks ingest.** A conversion that raises, or that yields blank/whitespace
+  Markdown (e.g. a script-only page), keeps the original resource. A categorization
+  error never raises and defaults to `uncategorized`.
+- **`llm_category` is distinct from `category`.** A source-provided
+  `metadata.category` (e.g. the Indico scraper's event category) is **never**
+  overwritten; the LLM label is written to `metadata.llm_category`. Both propagate to
+  `documents.extra_json` and onward to `document_chunks.metadata`.
+- **Cost.** Categorization issues one LLM call per document — expensive on large
+  crawls, hence off by default.
+- **Local `.html` uploads are not converted.** Uploaded local files arrive as `bytes`
+  (not string content), so the conversion guard skips them; scraped/web HTML is the
+  target. (A decode-on-`html` path is future work.)
+- **Re-ingest refreshes chunks.** Hashes are identity-based (URL/path), so converting
+  an already-ingested HTML document keeps its hash. On re-ingest the vectorstore
+  detects that the persisted filename changed (`page.html` → `page.md`) and refreshes
+  that document's chunks, so retrieval never serves stale HTML-flattened content.
+- **Out of scope:** retrieval-time filtering by `llm_category` (retrievers do not read
+  metadata filters yet), and retroactive conversion of already-ingested documents that
+  are never re-ingested.
+
 ### Embedding Configuration
 
 ```yaml

@@ -1,7 +1,7 @@
 import os
 from typing import Callable, Optional
 
-from src.data_manager.collectors.persistence import PersistenceService
+from src.data_manager.collectors.processing import build_persistence
 from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
 from src.data_manager.collectors.tickets.ticket_manager import TicketManager
 from src.data_manager.collectors.localfile_manager import LocalFileManager
@@ -28,7 +28,7 @@ class DataManager():
             "password": read_secret("PG_PASSWORD"),
             **self.config["services"]["postgres"],
         }
-        self.persistence = PersistenceService(self.data_path, pg_config=self.pg_config)
+        self.persistence = build_persistence(self.config, self.data_path, self.pg_config)
         self.config_service = factory.config_service if factory else ConfigService(pg_config=self.pg_config)
         static_config = self.config_service.get_static_config()
         if not static_config or static_config.sources_config is None:

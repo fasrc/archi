@@ -237,17 +237,34 @@ class VectorStoreManager:
             f"Files in catalog: {len(hashes_in_data)}, Files in vectorstore: {len(hashes_in_vstore)}"
         )
 
-        if hashes_in_data == hashes_in_vstore:
+        # Hashes are identity-based (URL/path), so an HTML->Markdown rewrite (or any
+        # content change) keeps the same hash. Comparing only hash sets would leave a
+        # re-ingested doc's stale chunks in place. Detect hashes whose persisted
+        # filename changed since they were embedded and refresh them: delete their old
+        # chunks and re-embed the new content.
+        stale_hashes = self._collect_stale_hashes(files_in_data, hashes_in_vstore)
+
+        if hashes_in_data == hashes_in_vstore and not stale_hashes:
             logger.info("Vectorstore is up to date")
         else:
             logger.info("Vectorstore needs to be updated")
 
             hashes_to_remove = list(hashes_in_vstore - hashes_in_data)
+            if stale_hashes:
+                logger.info(
+                    f"Refreshing {len(stale_hashes)} documents with changed content "
+                    "under an unchanged hash"
+                )
+                # Remove their stale chunks so the re-embed below replaces them.
+                hashes_to_remove.extend(stale_hashes)
             if hashes_to_remove:
                 logger.info(f"Removing {len(hashes_to_remove)} stale documents")
                 self._remove_from_postgres(hashes_to_remove)
 
-            hashes_to_add = hashes_in_data - hashes_in_vstore
+            # New hashes plus the refreshed (stale) ones get (re-)embedded.
+            hashes_to_add = (hashes_in_data - hashes_in_vstore) | (
+                stale_hashes & hashes_in_data
+            )
             files_to_add = {
                 hash_value: files_in_data[hash_value] for hash_value in hashes_to_add
             }
@@ -278,6 +295,75 @@ class VectorStoreManager:
                 return {row[0] for row in cursor.fetchall()}
         finally:
             conn.close()
+
+    def _collect_embedded_filenames(self) -> Dict[str, str]:
+        """Map resource hash -> the filename recorded on its embedded chunks.
+
+        Used to detect content that changed under an unchanged hash: if the persisted
+        file's basename now differs from what was embedded (e.g. ``page.html`` ->
+        ``page.md`` after HTML->Markdown conversion), the document's chunks are stale.
+        """
+        conn = psycopg2.connect(**self._pg_config)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT DISTINCT metadata->>'resource_hash' AS hash,
+                                    metadata->>'filename' AS filename
+                    FROM document_chunks
+                    WHERE (metadata->>'collection' = %s OR metadata->>'collection' IS NULL)
+                      AND metadata->>'resource_hash' IS NOT NULL
+                    """,
+                    (self.collection_name,),
+                )
+                result: Dict[str, str] = {}
+                for resource_hash, filename in cursor.fetchall():
+                    if resource_hash is None or filename is None:
+                        continue
+                    # If a hash somehow has multiple filenames, keep the first seen;
+                    # any mismatch with the catalog will still flag it as stale.
+                    result.setdefault(resource_hash, filename)
+                return result
+        finally:
+            conn.close()
+
+    def _collect_stale_hashes(
+        self, files_in_data: Dict[str, str], hashes_in_vstore: set
+    ) -> set:
+        """Return hashes whose persisted filename changed since they were embedded.
+
+        Only considers hashes present in BOTH the catalog and the vectorstore (a
+        re-ingest of an already-embedded document). A differing basename means the
+        on-disk content was rewritten under the same hash and the old chunks are stale.
+        """
+        candidates = set(files_in_data.keys()) & set(hashes_in_vstore)
+        if not candidates:
+            return set()
+
+        try:
+            embedded_filenames = self._collect_embedded_filenames()
+        except Exception as exc:
+            logger.warning(
+                "Could not load embedded filenames to detect stale chunks: %s", exc
+            )
+            return set()
+
+        stale: set = set()
+        for resource_hash in candidates:
+            embedded = embedded_filenames.get(resource_hash)
+            if not embedded:
+                continue
+            current = Path(files_in_data[resource_hash]).name
+            if embedded != current:
+                logger.info(
+                    "Detected changed content under unchanged hash %s: embedded as "
+                    "'%s', now '%s'; refreshing chunks.",
+                    resource_hash,
+                    embedded,
+                    current,
+                )
+                stale.add(resource_hash)
+        return stale
 
     def _remove_from_postgres(self, hashes_to_remove: List[str]) -> None:
         """Remove chunks by resource hash from PostgreSQL."""

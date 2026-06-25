@@ -38,3 +38,18 @@ class BaseResource(ABC):
     def get_metadata(self):
         """Return a metadata object describing this resource, if available."""
         return None
+
+    def set_metadata_field(self, key: str, value: str) -> None:
+        """Attach a metadata field that surfaces in ``get_metadata()``.
+
+        Processors (HTML->Markdown conversion, categorization) use this to attach
+        ``converted_from``/``llm_category`` uniformly across resource types. The
+        default implementation writes into a mutable ``metadata`` dict on the
+        resource; subclasses without one (or with read-only metadata) must provide
+        a compatible ``metadata`` attribute.
+        """
+        metadata = getattr(self, "metadata", None)
+        if metadata is None or not isinstance(metadata, dict):
+            metadata = {}
+            setattr(self, "metadata", metadata)
+        metadata[key] = value

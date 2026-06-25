@@ -12,7 +12,7 @@ import re
 from flask import Flask, jsonify, redirect, render_template, request, url_for, session, flash
 from flask_cors import CORS
 
-from src.data_manager.collectors.persistence import PersistenceService
+from src.data_manager.collectors.processing import build_persistence
 from src.data_manager.collectors.localfile_manager import LocalFileManager
 from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
 from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogService
@@ -47,7 +47,7 @@ class FlaskAppWrapper:
             "password": read_secret("PG_PASSWORD"),
             **self.services_config["postgres"],
         }
-        self.persistence = PersistenceService(self.data_path, pg_config=self.pg_config)
+        self.persistence = build_persistence(self.config, self.data_path, self.pg_config)
         self.catalog = PostgresCatalogService(self.data_path, pg_config=self.pg_config)
         self.status_file = status_file or (Path(self.data_path) / "ingestion_status.json")
 

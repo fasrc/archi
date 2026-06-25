@@ -34,7 +34,11 @@ dependencies = [
     # in requirements/requirements-base.txt (which the gate/CI and base-image build
     # use). Versions match requirements-base.txt.
     "llama-index-core==0.14.19",
-    "flashrank==0.2.10"
+    "flashrank==0.2.10",
+    # html-markdown-categorize-ingest: HTML->Markdown conversion at the persist
+    # seam. Built on the already-present beautifulsoup4. Pin matches
+    # requirements/requirements-base.txt.
+    "markdownify==1.2.2"
 ]
 
 [project.scripts]
