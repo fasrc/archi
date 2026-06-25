@@ -1,7 +1,7 @@
 ## 1. Dependency (both files)
 
-- [ ] 1.1 Add `markdownify==<pin>` to `pyproject.toml` `dependencies` AND `requirements/requirements-base.txt` (next to `beautifulsoup4`), matching pins; resolve latest stable at apply time.
-- [ ] 1.2 `pip install -e .`; confirm `import markdownify` works.
+- [x] 1.1 Add `markdownify==<pin>` to `pyproject.toml` `dependencies` AND `requirements/requirements-base.txt` (next to `beautifulsoup4`), matching pins; resolve latest stable at apply time. (Pinned `markdownify==1.2.2`.)
+- [x] 1.2 `pip install -e .`; confirm `import markdownify` works.
 
 ## 2. Resource metadata attachment (test-first)
 
@@ -45,5 +45,5 @@
 
 ## 10. Validate & gate
 
-- [ ] 10.1 `openspec validate add-html-markdown-categorize-ingest --strict` passes.
-- [ ] 10.2 `bash scripts/gate.sh`: tests pass; diff-cover ≥ 80% on changed lines (cover success and error branches); `isort src/`, `black --check` on touched files.
+- [x] 10.1 `openspec validate add-html-markdown-categorize-ingest --strict` passes.
+- [x] 10.2 `bash scripts/gate.sh`: tests pass; diff-cover ≥ 80% on changed lines (cover success and error branches); `isort src/`, `black --check` on touched files. (CI gate green on PR #38: 422 unit tests pass, 92% diff coverage.)
