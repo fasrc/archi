@@ -108,15 +108,25 @@ appears exactly once, in its generated position.** (Prefixed extras like `git-�
 have no generated counterpart, so they always survive.) This is the single rule the
 spec and tasks both reference.
 
-**D5 — `--import` shells out.** Because `create()` needs a single `--config` **and a
-non-empty `--services`** (`validate_services_selection`, `cli_main.py:93`), `--import`
-(requires `--name` and `-c/--config`, forbids `--dry-run`) runs a subprocess
-equivalent to `archi create --name <deployment> --config <config> --services
-<services> --force` (forwarding `--env-file` when given), via the existing
-`CommandRunner.run_simple` (`command_runner.py:16-34`). `--services` defaults to
-`chatbot` (a non-empty set so the refresh passes validation) and is overridable. The
-same `-c/--config` resolves the default `--output` and feeds the import, so the two
-stay consistent. A non-zero refresh exit propagates.
+**D5 — `--import` is advisory (prints a redeploy command, executes nothing).**
+Originally `--import` shelled out to `archi create … --force` via
+`CommandRunner.run_simple`. Code review rejected auto-execution as too destructive:
+a forced recreate **rmtree's the deployment directory** and re-renders compose for
+**only the named services** (`handle_existing_deployment` + the per-service render),
+so any service not re-listed (grafana, uploader, grader) is dropped; it also ignores
+the deployment's `--podman`/`--hostmode`/`--gpu-ids`/`--tag`; and an `--output` that
+the config does not stage into `weblists/` would be written but never ingested. So
+`--import` (requires `--name`, forbids `--dry-run`) now, after a successful write,
+**prints** a copy-pasteable hint — `archi create --name <deployment> [--config
+<config>] [--env-file <env>] --force` (built with `shlex.quote`) — plus a one-line
+note telling the operator to append their usual flags (`--services …`, `--podman`,
+host/gpu/tag), because a forced recreate rebuilds the deployment and the hint
+deliberately does **not** infer them. Nothing is executed; there is no subprocess and
+no `--services` default. If an explicit `--output` is not one of the config's
+`data_manager.sources.links.input_lists` (matched by absolute path or basename, since
+the runtime stages by basename), the command prints a warning that the redeploy will
+not ingest that file. This removes the destructive-execution class of failures
+entirely while still tying regeneration to a clear, reviewable redeploy step.
 
 **D6 — Determinism & normalization (applies to ALL emitted URLs, including
 `literal`).** URLs are normalized before dedupe by stripping URL fragments and

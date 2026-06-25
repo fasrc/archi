@@ -133,21 +133,21 @@ every seed has expanded successfully.
 - **WHEN** a `sitemap` seed's URL returns HTTP 503
 - **THEN** the command exits non-zero and the existing output file is not modified
 
-### Requirement: Optional import trigger
-With `--import` the command SHALL require both `--name <deployment>` and `-c/--config`, SHALL be incompatible with `--dry-run`, and after a successful write SHALL trigger a deployment refresh equivalent to `archi create --name <deployment> --config <config> --services <services> --force` (forwarding `--env-file` when given), exiting non-zero if that refresh fails. The refresh SHALL pass a non-empty `--services` (default `chatbot`, overridable via `--services`) because `archi create` rejects an empty service selection, so omitting it would abort the refresh before it runs.
+### Requirement: Advisory import hint
+With `--import` the command SHALL require `--name <deployment>`, SHALL be incompatible with `--dry-run`, and after a successful write SHALL PRINT (to stdout) a copy-pasteable redeploy command of the form `archi create --name <deployment> [--config <config>] [--env-file <env>] --force` together with a note instructing the operator to append their usual flags (`--services …`, `--podman`, host/gpu/tag). The command SHALL execute nothing — it triggers no subprocess and no deployment refresh — because a forced recreate is destructive (it removes the deployment directory and re-renders compose for only the named services, dropping others, while ignoring runtime flags). When `--import` is combined with an explicit `--output` that is not one of the resolved config's `data_manager.sources.links.input_lists`, the command SHALL print a warning that the regenerated file is not referenced by that config and will not be ingested by the printed redeploy.
 
-#### Scenario: Import after write
+#### Scenario: Import prints a redeploy command and runs nothing
 - **WHEN** `--import --name dev -c <config>` is passed and the write succeeds
-- **THEN** the refresh command is invoked once for deployment `dev` with a non-empty `--services`
+- **THEN** a redeploy command naming deployment `dev` is printed to stdout and no subprocess is executed
 
 #### Scenario: Import requires a name
 - **WHEN** `--import` is passed without `--name`
-- **THEN** the command exits non-zero before writing or refreshing
-
-#### Scenario: Import requires a config
-- **WHEN** `--import` is passed without `-c/--config`
-- **THEN** the command exits non-zero before writing or refreshing
+- **THEN** the command exits non-zero before writing
 
 #### Scenario: No import on dry-run
 - **WHEN** both `--import` and `--dry-run` are passed
-- **THEN** the command exits non-zero and no refresh is invoked
+- **THEN** the command exits non-zero and nothing is written or printed as a redeploy command
+
+#### Scenario: Out-of-config output warns
+- **WHEN** `--import` is passed with an explicit `--output` that is not in the config's `input_lists`
+- **THEN** the build succeeds and a warning is printed that the file will not be ingested by the printed redeploy
