@@ -157,8 +157,9 @@ here (the `a2rchi` user is not in `systemd-journal`).
 > socket's PID to the **owning** user, so a `swinney` shell trying to find the
 > manual instance's PID on `:8001` gets nothing and won't kill it — then
 > `systemctl start` launches a second server that collides on the port/GPUs. Stop
-> the manual instance as `a2rchi` (or by reading the PID from `nvidia-smi
-> --query-compute-apps`) **before** starting the service.
+> the manual instance as `a2rchi` (or read the PID from
+> `nvidia-smi --query-compute-apps=pid,process_name,used_gpu_memory --format=csv,noheader`)
+> **before** starting the service.
 
 ### Caveats
 
@@ -223,11 +224,15 @@ returns `""`.) The parser only matters when thinking is *on*; with thinking off 
 is pure harm, so it is omitted from both launch scripts. Tool-calling is
 unaffected — `--tool-call-parser qwen3_coder` is independent.
 
-To change this end-to-end: edit the config + reseed (`g.sh`), or confirm Postgres
-already has it, then **(1)** `sudo systemctl restart vllm-qwen36` (server picks up
-any flag change), then **(2)** `docker restart chatbot-archi-openai-compat` (app
-reloads config from Postgres). Server first, app second — the reverse order
-briefly serves empty answers.
+To change this end-to-end, restart the **server first**: `g.sh` (the reseed/redeploy
+below) recreates the chatbot, so reseeding before the server is corrected brings a
+fresh chatbot up against the **old** vLLM and serves empty answers in the window.
+Order: **(1)** edit the launch script + `sudo systemctl restart vllm-qwen36` (server
+picks up the flag change — wait for `GET /v1/models` HTTP 200), then **(2)** edit
+`config/environments/dev.yaml` + re-run `g.sh` to reseed Postgres and redeploy the
+chatbot (or, if only the server changed and Postgres already has the right config,
+just `docker restart chatbot-archi-openai-compat`). Server first, app second — the
+reverse order briefly serves empty answers.
 
 ---
 
@@ -237,9 +242,12 @@ Two layers:
 
 - **Source file (edit this):** `config/environments/dev.yaml`. The active deploy
   is the **repo-root** `./g.sh`:
-  `archi create --name archi-openai-compat --dev --config ./config/environments/dev.yaml --services chatbot,grafana --hostmode`.
-  (A *separate* `config/scripts/g.sh` deploys an unrelated `main-gpu-agent` from
-  `config/vllm-config.yaml` — not the chat app described here.)
+  `archi create --name archi-openai-compat --dev --config ./config/environments/dev.yaml --services chatbot,grafana --hostmode --force`.
+  The `--force` (`-f`) is **required** on a reseed: `archi create` aborts with
+  `Deployment '...' already exists` otherwise (it overwrites the existing
+  deployment dir; volumes are preserved). A *separate* `config/scripts/g.sh`
+  deploys an unrelated `main-gpu-agent` from `config/vllm-config.yaml` — not the
+  chat app described here.
 - **Authoritative running config (what archi reads):** Postgres
   `static_config.services_config` (db `archi-db`, container
   `postgres-archi-openai-compat`), seeded from `dev.yaml` at `archi create`.
