@@ -21,11 +21,7 @@ valid YAML or that contains an entry with a missing/unknown `type` or a missing
 - **THEN** the command exits non-zero and writes nothing
 
 ### Requirement: Sitemap expansion with one level of sitemapindex nesting
-For a `sitemap` seed the command SHALL fetch the sitemap XML and emit every `<loc>`
-URL. When the fetched document is a `<sitemapindex>`, the command SHALL fetch each
-referenced child sitemap exactly once and emit their `<loc>` URLs, and SHALL NOT
-follow index nesting beyond one level. An otherwise-valid sitemap containing zero
-`<loc>` entries SHALL contribute no URLs and SHALL NOT be treated as an error.
+For a `sitemap` seed the command SHALL emit page URLs only from `<urlset>` documents, fetching one level of `<sitemapindex>` nesting. When the fetched document is a `<urlset>`, the command SHALL emit every `<loc>`. When it is a `<sitemapindex>`, the command SHALL fetch each referenced child sitemap exactly once and emit the `<loc>` URLs of children that are `<urlset>` documents. A child that is itself a `<sitemapindex>` SHALL NOT be followed and SHALL contribute no URLs (its `<loc>` values are sitemap documents, not pages). An otherwise-valid sitemap containing zero `<loc>` entries SHALL contribute no URLs and SHALL NOT be treated as an error.
 
 #### Scenario: Flat urlset
 - **WHEN** the fetched sitemap is a `<urlset>` with three `<loc>` entries
@@ -33,8 +29,11 @@ follow index nesting beyond one level. An otherwise-valid sitemap containing zer
 
 #### Scenario: One-level index
 - **WHEN** the fetched document is a `<sitemapindex>` referencing two child sitemaps
-- **THEN** each child is fetched once and their `<loc>` URLs are collected, and a
-  `<sitemapindex>` nested inside a child is not followed
+- **THEN** each child is fetched once and the `<loc>` URLs from its `<urlset>` are collected
+
+#### Scenario: Nested index contributes no page URLs
+- **WHEN** a fetched child sitemap is itself a `<sitemapindex>`
+- **THEN** it is not followed and none of its `<loc>` values are emitted as page URLs
 
 #### Scenario: Empty sitemap
 - **WHEN** a fetched `<urlset>` contains no `<loc>` entries
@@ -74,39 +73,41 @@ identical order across repeated runs on identical input.
 - **THEN** the emitted URL order is identical
 
 ### Requirement: Literal passthrough
-For a `literal` seed the command SHALL emit the given URL verbatim without fetching,
-crawling, or glob-filtering it, and SHALL NOT issue any HTTP request for it.
+For a `literal` seed the command SHALL emit the given URL without fetching, crawling, or glob-filtering it, and SHALL NOT issue any HTTP request for it. The URL SHALL still be normalized and deduplicated on the same terms as every other emitted URL (drop fragment, lowercase scheme/host, collapse a single trailing path slash); "literal" governs that the URL is not fetched/crawled/filtered, not that its bytes are preserved.
 
-#### Scenario: Literal emitted as-is
+#### Scenario: Literal not fetched
 - **WHEN** a `literal` seed lists a single URL
-- **THEN** that exact URL appears in the output and no HTTP request is made for it
+- **THEN** the URL appears in the output and no HTTP request is made for it
+
+#### Scenario: Literal is normalized
+- **WHEN** a `literal` seed's URL has an uppercase host, a fragment, or a trailing slash
+- **THEN** the emitted URL is the normalized form (lowercased host, no fragment, no trailing slash)
 
 ### Requirement: Wholesale list regeneration with deterministic dedupe
-The command SHALL regenerate the target list wholesale, writing one URL per line.
-The default output path SHALL be resolved by loading the deployment config supplied
-with `-c/--config` and reading where `data_manager.sources.links.input_lists`
-points; `--output` SHALL override it. URLs SHALL be normalized (drop fragment,
-lowercase scheme/host, collapse a single trailing path slash) and deduplicated,
-preserving first-seen order across seeds.
+The command SHALL regenerate the target list wholesale, writing one URL per line, with every URL normalized (drop fragment, lowercase scheme/host, collapse a single trailing path slash) and deduplicated preserving first-seen order across seeds. When `--output` is given it SHALL be the target. When `--output` is omitted, the target SHALL be resolved from the `-c/--config` deployment config's `data_manager.sources.links.input_lists`, which is a **list**; the command SHALL use it as the default output **only when it contains exactly one entry**, and SHALL exit non-zero (requiring `--output`) when the config declares zero or more than one `input_lists` entry.
 
-#### Scenario: Default output resolution
-- **WHEN** `--output` is omitted and `-c/--config` points at a deployment config
-- **THEN** the command writes to the path that config's `input_lists` resolves to
+#### Scenario: Default output resolution with a single input list
+- **WHEN** `--output` is omitted and `-c/--config` points at a config whose `input_lists` has exactly one entry
+- **THEN** the command writes to that single resolved path
+
+#### Scenario: Ambiguous default output rejected
+- **WHEN** `--output` is omitted and the config's `input_lists` has zero or two-or-more entries
+- **THEN** the command exits non-zero, writes nothing, and the message instructs the operator to pass `--output`
 
 #### Scenario: Cross-seed dedupe
 - **WHEN** two seeds yield the same URL (modulo trailing slash / fragment)
 - **THEN** it appears exactly once in the output, in first-seen position
 
 ### Requirement: Manual-extras append with prefix preservation
-The command SHALL append a sibling `manual-extras.list`, when present, to the
-regenerated list verbatim — preserving its non-comment, non-blank entries including
-lines bearing `git-`, `sso-`, `elog-`, or `indico-` prefixes — and SHALL NOT fetch
-or crawl those entries. An extras entry that duplicates a generated URL SHALL appear
-exactly once.
+The command SHALL append a sibling `manual-extras.list`, when present, after the generated block — preserving its non-comment, non-blank entries verbatim, including lines bearing `git-`, `sso-`, `elog-`, or `indico-` prefixes — and SHALL NOT fetch or crawl those entries. The generated block SHALL take position precedence: an extras entry whose value duplicates an already-emitted generated URL SHALL be dropped from the extras section so the URL appears exactly once in its generated position; a prefixed extras line, which has no generated counterpart, SHALL always be retained.
 
 #### Scenario: Prefixed extras preserved
 - **WHEN** `manual-extras.list` contains a `git-…` line and an `sso-…` line
 - **THEN** both appear unchanged in the regenerated list
+
+#### Scenario: Duplicate extras dropped in favor of generated
+- **WHEN** a `manual-extras.list` entry duplicates a URL already emitted by a seed
+- **THEN** the URL appears exactly once, in its generated position, and not again in the extras section
 
 #### Scenario: No extras file
 - **WHEN** no `manual-extras.list` exists beside the output
@@ -133,18 +134,18 @@ every seed has expanded successfully.
 - **THEN** the command exits non-zero and the existing output file is not modified
 
 ### Requirement: Optional import trigger
-With `--import` the command SHALL require `--name <deployment>` and SHALL be
-incompatible with `--dry-run`. After a successful write, it SHALL trigger a
-deployment refresh equivalent to `archi create --name <deployment> --config
-<config> --force` (forwarding `--env-file` when given) and SHALL exit non-zero if
-that refresh fails.
+With `--import` the command SHALL require both `--name <deployment>` and `-c/--config`, SHALL be incompatible with `--dry-run`, and after a successful write SHALL trigger a deployment refresh equivalent to `archi create --name <deployment> --config <config> --services <services> --force` (forwarding `--env-file` when given), exiting non-zero if that refresh fails. The refresh SHALL pass a non-empty `--services` (default `chatbot`, overridable via `--services`) because `archi create` rejects an empty service selection, so omitting it would abort the refresh before it runs.
 
 #### Scenario: Import after write
 - **WHEN** `--import --name dev -c <config>` is passed and the write succeeds
-- **THEN** the refresh command is invoked once for deployment `dev`
+- **THEN** the refresh command is invoked once for deployment `dev` with a non-empty `--services`
 
 #### Scenario: Import requires a name
 - **WHEN** `--import` is passed without `--name`
+- **THEN** the command exits non-zero before writing or refreshing
+
+#### Scenario: Import requires a config
+- **WHEN** `--import` is passed without `-c/--config`
 - **THEN** the command exits non-zero before writing or refreshing
 
 #### Scenario: No import on dry-run
