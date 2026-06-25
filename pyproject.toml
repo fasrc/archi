@@ -38,7 +38,13 @@ dependencies = [
     # html-markdown-categorize-ingest: HTML->Markdown conversion at the persist
     # seam. Built on the already-present beautifulsoup4. Pin matches
     # requirements/requirements-base.txt.
-    "markdownify==1.2.2"
+    "markdownify==1.2.2",
+    # add-sources-build-command: the `archi sources build` crawl path imports
+    # bs4. beautifulsoup4 was declared only in requirements/requirements-base.txt,
+    # so a fresh `pip install .`/editable install and the deployment images would
+    # lack it and the crawl path would ImportError. Version matches
+    # requirements-base.txt.
+    "beautifulsoup4==4.12.3"
 ]
 
 [project.scripts]

@@ -13,7 +13,7 @@ makes that workflow a first-class, repeatable command.
 
 - Add a new CLI command group `sources` with a `build` subcommand:
   `archi sources build <manifest> [-c/--config PATH] [--output PATH]
-  [--name DEPLOYMENT] [--services SVCS] [--env-file PATH] [--import] [--dry-run]`.
+  [--name DEPLOYMENT] [--env-file PATH] [--import] [--dry-run]`.
 - Read a typed YAML **manifest** of seed entries, each with a `type`:
   - `sitemap` — fetch the sitemap XML and emit every `<loc>`; follow one level
     of `<sitemapindex>` nesting; apply optional include/exclude URL globs.
@@ -30,14 +30,17 @@ makes that workflow a first-class, repeatable command.
   If a sibling `manual-extras.list` exists, append its entries so hand-added /
   prefixed lines (`git-`, `sso-`, `elog-`, `indico-`) are preserved verbatim.
 - `--dry-run` prints the diff against the existing list instead of writing.
-- `--import` (requires `--name <deployment>` and `-c/--config`, and not
-  `--dry-run`) re-ingests after the write by invoking the existing deployment
-  refresh — a shell-out equivalent to `archi create --name <deployment> --config
-  <config> --services <services> --force`. The in-process `create()` requires a
-  single `--config` *and* a non-empty `--services` (it calls
-  `validate_services_selection()` which rejects an empty list), so import passes the
-  same `-c/--config`, forwards `--env-file`, and supplies the deployment's services
-  (default `chatbot`, overridable via `--services`).
+- `--import` (requires `--name <deployment>`, and not `--dry-run`) is
+  **advisory**: after a successful write it PRINTS a copy-pasteable redeploy
+  command — `archi create --name <deployment> [--config <config>] [--env-file
+  <env>] --force` — plus a note to append the operator's usual flags
+  (`--services …`, `--podman`, host/gpu/tag). It **executes nothing**. Auto-running
+  `archi create --force` was rejected as too dangerous: a forced recreate removes
+  the deployment directory and re-renders compose for only the named services
+  (dropping grafana/uploader/grader) while ignoring podman/host/gpu/tag, and an
+  `--output` not staged by the config would silently not be ingested. If `--import`
+  is combined with an explicit `--output` that is not one of the config's
+  `input_lists`, the command warns that a redeploy will not ingest the file.
 - Update `docs/` to document the command and manifest format (project convention:
   CLI/behavior changes ship with docs).
 
@@ -50,7 +53,7 @@ not modify the data-manager, the scraper runtime, or the config schema.
 - `sources-build`: generating an importable web `sources.list` from a typed
   manifest of seeds (sitemap expansion, deterministic same-host crawl, literal
   passthrough), with wholesale regeneration plus preserved manual extras, a
-  dry-run diff mode, and an optional post-write import trigger.
+  dry-run diff mode, and an optional advisory post-write redeploy hint.
 
 ### Modified Capabilities
 <!-- None. The command emits the existing input_lists artifact and does not change

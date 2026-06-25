@@ -26,6 +26,7 @@ from src.cli.utils.helpers import (
 from src.cli.utils.service_builder import ServiceBuilder
 from src.utils.logging import get_logger, setup_cli_logging
 from src.cli.tools.config_seed import seed_entry
+from src.cli.tools import sources_builder
 import subprocess
 
 # DEFINITIONS
@@ -646,6 +647,47 @@ def grade(dataset: Optional[str], do_export: bool, output: Optional[str], do_ser
             raise click.ClickException(str(e))
 
 
+@click.group()
+def sources():
+    """Manage archi web source lists (build, import)."""
+    pass
+
+
+@sources.command("build")
+@click.argument('manifest', type=str)
+@click.option('--config', '-c', 'config', type=str, default=None,
+              help="Path to .yaml archi config (resolves the default --output and feeds --import)")
+@click.option('--output', '-o', type=str, default=None,
+              help="Target sources.list path (overrides config-derived default)")
+@click.option('--name', '-n', type=str, default=None,
+              help="Deployment name for the --import redeploy hint (required with --import)")
+@click.option('--env-file', '-e', type=str, default=None,
+              help="Path to .env file included in the --import redeploy hint")
+@click.option('--import', 'do_import', is_flag=True,
+              help="After writing, PRINT a redeploy command to ingest the list (advisory; runs nothing). Requires --name; not with --dry-run")
+@click.option('--dry-run', 'dry_run', is_flag=True,
+              help="Print a unified diff against the existing list and write nothing")
+def sources_build(manifest, config, output, name, env_file, do_import, dry_run):
+    """Build a sources.list from a typed YAML MANIFEST of seeds.
+
+    The MANIFEST is a YAML list of seed entries, each with a ``type`` of
+    ``sitemap`` (fetch XML, emit ``<loc>`` URLs, follow one level of
+    ``<sitemapindex>``), ``crawl`` (fetch an index page and extract same-host
+    links), or ``literal`` (emit a URL verbatim, never fetched). ``sitemap`` and
+    ``crawl`` seeds accept optional ``include``/``exclude`` URL globs; ``crawl``
+    accepts an optional ``depth`` (default 1).
+    """
+    sources_builder.sources_build_entry(
+        manifest=manifest,
+        config=config,
+        output=output,
+        name=name,
+        env_file=env_file,
+        do_import=do_import,
+        dry_run=dry_run,
+    )
+
+
 def main():
     """
     Entrypoint for archi cli tool implemented using Click.
@@ -658,4 +700,5 @@ def main():
     cli.add_command(list_deployments)
     cli.add_command(evaluate)
     cli.add_command(grade)
+    cli.add_command(sources)
     cli()
