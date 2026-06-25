@@ -312,6 +312,28 @@ data_manager:
       max_entries: {{ data_manager.sources.elog.max_entries | default(null, true) }}
       verify_ssl: {{ data_manager.sources.elog.verify_ssl | default(true, true) }}
       schedule: '{{ data_manager.sources.elog.schedule | default("", true) }}'
+  # Per-document processing stage applied at the persistence seam (before a resource
+  # is written to disk), shared across scheduled ingest and the uploader UI.
+  processing:
+    # HTML->Markdown conversion. ON by default (cheap, local): scraped/web HTML
+    # string content with an html/htm suffix is converted to Markdown so headings,
+    # lists, tables, and links survive into chunks, and the persisted file becomes
+    # .md (loaded via TextLoader instead of BSHTMLLoader).
+    html_to_markdown:
+      enabled: {{ data_manager.processing.html_to_markdown.enabled | default(true, true) }}
+    # Optional LLM categorization. OFF by default (one LLM call per document). When
+    # enabled, each document is tagged with one label from `categories`, stored under
+    # metadata.llm_category (a key distinct from any source-provided `category`). The
+    # chat model's provider_config is sourced from services.chat_app.providers.<provider>.
+    categorization:
+      enabled: {{ data_manager.processing.categorization.enabled | default(false, true) }}
+      provider: {{ data_manager.processing.categorization.provider | default('', true) }}
+      model: {{ data_manager.processing.categorization.model | default('', true) }}
+      max_chars: {{ data_manager.processing.categorization.max_chars | default(4000, true) }}
+      categories:
+        {%- for category in data_manager.processing.categorization.categories | default([], true) %}
+        - {{ category }}
+        {%- endfor %}
   utils:
     anonymizer:
         nlp_model: {{ data_manager.utils.anonymizer.nlp_model | default('en_core_web_sm', true) }}

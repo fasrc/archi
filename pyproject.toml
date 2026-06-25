@@ -35,6 +35,10 @@ dependencies = [
     # use). Versions match requirements-base.txt.
     "llama-index-core==0.14.19",
     "flashrank==0.2.10",
+    # html-markdown-categorize-ingest: HTML->Markdown conversion at the persist
+    # seam. Built on the already-present beautifulsoup4. Pin matches
+    # requirements/requirements-base.txt.
+    "markdownify==1.2.2",
     # add-sources-build-command: the `archi sources build` crawl path imports
     # bs4. beautifulsoup4 was declared only in requirements/requirements-base.txt,
     # so a fresh `pip install .`/editable install and the deployment images would

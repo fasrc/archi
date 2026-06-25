@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from src.data_manager.collectors.resource_base import BaseResource
 from src.data_manager.collectors.utils.metadata import ResourceMetadata
@@ -19,6 +19,7 @@ class LocalFileResource(BaseResource):
     content: bytes
     source_type: str = "local_files"
     base_dir: Optional[Path] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def get_hash(self) -> str:
         """Stable hash based on the path so updates overwrite in-place."""
@@ -42,7 +43,9 @@ class LocalFileResource(BaseResource):
             "original_path": str(self.source_path.resolve()),
             "suffix": self.source_path.suffix or "",
             "size_bytes": str(stats.st_size),
-            "modified_at": datetime.fromtimestamp(stats.st_mtime, tz=timezone.utc).isoformat(),
+            "modified_at": datetime.fromtimestamp(
+                stats.st_mtime, tz=timezone.utc
+            ).isoformat(),
         }
 
         if relative_path:
@@ -52,6 +55,13 @@ class LocalFileResource(BaseResource):
 
         if display_name:
             extra["display_name"] = display_name
+
+        # Processor-attached fields (e.g. converted_from, llm_category) live in the
+        # mutable ``metadata`` dict; surface them so they reach the catalog.
+        for key, value in (self.metadata or {}).items():
+            if value is None:
+                continue
+            extra[str(key)] = str(value)
 
         return ResourceMetadata(file_name=self.get_filename(), extra=extra)
 
