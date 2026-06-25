@@ -281,6 +281,15 @@ data_manager:
   an already-ingested HTML document keeps its hash. On re-ingest the vectorstore
   detects that the persisted filename changed (`page.html` → `page.md`) and refreshes
   that document's chunks, so retrieval never serves stale HTML-flattened content.
+  Note this detection keys off the persisted **filename**, not the content: it catches
+  the HTML→Markdown case (the extension always flips) but a content-only change that
+  keeps the **same filename** under an unchanged hash is not detected and would retain
+  its old chunks until the hash changes or the document is removed and re-added.
+- **Missing categorization provider fails loud, not silent.** If `categorization.enabled`
+  is true but its `provider` is absent from `services.chat_app.providers`, the
+  categorizer is **not** built (a prominent warning is logged and no `llm_category` is
+  written) rather than falling back to a default endpoint and mislabeling every
+  document. Conversion and ingest proceed normally.
 - **Out of scope:** retrieval-time filtering by `llm_category` (retrievers do not read
   metadata filters yet), and retroactive conversion of already-ingested documents that
   are never re-ingested.

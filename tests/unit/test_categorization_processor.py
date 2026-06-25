@@ -43,10 +43,11 @@ def _make(
 ):
     if provider_config is None:
         provider_config = {"base_url": "http://vllm:8001"}
-    factory_calls = {}
+    factory_calls = {"count": 0}
 
     def factory(p, m, cfg):
         factory_calls["args"] = (p, m, cfg)
+        factory_calls["count"] += 1
         if model is None:
             raise RuntimeError("no model configured")
         return model
@@ -87,6 +88,16 @@ def test_missing_model_defaults_uncategorized():
     proc, _ = _make(model=None)  # factory raises
     out = proc.process(_resource())
     assert out.get_metadata().as_dict()["llm_category"] == "uncategorized"
+
+
+def test_no_provider_or_model_defaults_uncategorized_without_factory_call():
+    """A categorizer built with no provider/model never calls the factory and
+    yields uncategorized — the model is not constructed."""
+    model = _FakeChatModel(reply="compute")
+    proc, calls = _make(model=model, provider=None, model_name=None)
+    out = proc.process(_resource())
+    assert out.get_metadata().as_dict()["llm_category"] == "uncategorized"
+    assert calls["count"] == 0
 
 
 def test_empty_category_list_defaults_uncategorized_without_model_call():
@@ -131,3 +142,27 @@ def test_provider_config_passed_to_factory():
     assert p == "local"
     assert m == "qwen"
     assert passed_cfg == cfg
+
+
+def test_chat_model_is_built_once_across_documents():
+    """The chat model is built lazily and reused — NOT rebuilt per document. This
+    protects the per-document cost guarantee on large crawls."""
+    model = _FakeChatModel(reply="compute")
+    proc, calls = _make(model=model)
+
+    for _ in range(5):
+        proc.process(_resource())
+
+    assert calls["count"] == 1
+
+
+def test_chat_model_build_failure_is_not_retried_per_document():
+    """A model that fails to build is recorded as failed and not rebuilt on every
+    subsequent document (avoids hammering a broken endpoint per doc)."""
+    proc, calls = _make(model=None)  # factory raises -> build fails
+
+    for _ in range(4):
+        out = proc.process(_resource())
+        assert out.get_metadata().as_dict()["llm_category"] == "uncategorized"
+
+    assert calls["count"] == 1

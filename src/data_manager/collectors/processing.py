@@ -144,8 +144,14 @@ def _default_model_factory(
 ) -> Any:
     """Build a chat model via the provider layer.
 
-    Imported lazily so this module stays importable (and the conversion-only path
-    works) without langchain installed.
+    ``get_model`` is imported lazily (inside this function, not at module top) on
+    purpose: ``src.archi.providers`` pulls ``langchain_core`` at import time, which
+    is NOT a hard runtime dependency of the ingest/persistence path. Importing it at
+    module load would make ``processing.py`` — and therefore the cheap, local
+    HTML->Markdown conversion path and the whole persistence seam — unimportable
+    wherever langchain is absent (e.g. the unit-test/CI environment). Deferring the
+    import keeps the conversion-only path dependency-free; langchain is required only
+    when categorization is actually enabled and the model is first built.
     """
     from src.archi.providers import get_model
 
@@ -293,12 +299,19 @@ class ProcessingPersistenceService:
 
 def _resolve_provider_config(
     provider: Optional[str], providers_config: Dict[str, Any]
-) -> Dict[str, Any]:
+) -> Optional[Dict[str, Any]]:
     """Build provider_config from ``services.chat_app.providers.<provider>``.
 
     Mirrors ``base_react.py``'s ``_build_provider_config`` so a custom local/vLLM
     endpoint (base_url/mode/models/extra_kwargs) is honored rather than defaulting
     to the wrong server.
+
+    Returns ``None`` (NOT ``{}``) when the named provider is missing or empty under
+    ``services.chat_app.providers``. The caller MUST treat ``None`` as "provider not
+    configured" and refuse to build the categorizer rather than fall through to an
+    empty config — an empty config makes e.g. the LOCAL provider default to its
+    built-in Ollama endpoint (``http://localhost:11434``), silently categorizing
+    every document against the wrong server.
     """
     provider_key = provider.lower() if isinstance(provider, str) else str(provider)
     cfg = (
@@ -307,7 +320,7 @@ def _resolve_provider_config(
         else {}
     )
     if not isinstance(cfg, dict) or not cfg:
-        return {}
+        return None
 
     extra = dict(cfg.get("extra_kwargs", {}) or {})
     mode = cfg.get("mode")
@@ -374,16 +387,32 @@ def build_persistence(
         )
         provider = cat_cfg.get("provider")
         provider_config = _resolve_provider_config(provider, providers_config)
-        processors.append(
-            CategorizationProcessor(
-                categories=cat_cfg.get("categories", []) or [],
-                provider=provider,
-                model=cat_cfg.get("model"),
-                provider_config=provider_config,
-                max_chars=int(cat_cfg.get("max_chars", 4000) or 4000),
-                model_factory=model_factory,
+        if provider_config is None:
+            # Fail loud, not silent: categorization is enabled but the configured
+            # provider is absent from services.chat_app.providers. Building the
+            # categorizer with an empty config would make the provider fall back to
+            # its built-in default endpoint (e.g. local -> http://localhost:11434),
+            # silently marking every document "uncategorized" against the wrong
+            # server. Skip the categorizer so conversion still runs and ingest
+            # proceeds, but make the misconfiguration impossible to miss in logs.
+            logger.warning(
+                "data_manager.processing.categorization is ENABLED but its provider "
+                "%r is not configured under services.chat_app.providers — skipping "
+                "categorization (no llm_category will be written). Add the provider "
+                "block (base_url/mode/models) to enable it.",
+                provider,
             )
-        )
+        else:
+            processors.append(
+                CategorizationProcessor(
+                    categories=cat_cfg.get("categories", []) or [],
+                    provider=provider,
+                    model=cat_cfg.get("model"),
+                    provider_config=provider_config,
+                    max_chars=int(cat_cfg.get("max_chars", 4000) or 4000),
+                    model_factory=model_factory,
+                )
+            )
 
     if not processors:
         return inner

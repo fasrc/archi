@@ -335,6 +335,15 @@ class VectorStoreManager:
         Only considers hashes present in BOTH the catalog and the vectorstore (a
         re-ingest of an already-embedded document). A differing basename means the
         on-disk content was rewritten under the same hash and the old chunks are stale.
+
+        LIMITATION: detection keys off the persisted *filename* (basename), not the
+        content itself. It reliably catches the HTML->Markdown case this change
+        targets — conversion always flips the extension (``page.html`` -> ``page.md``)
+        — but a content-only change that keeps the SAME filename under an unchanged
+        hash is NOT detected here and would retain its old chunks until the hash
+        changes or the document is removed and re-added. A content-hash signal would
+        close that gap; the cheaper filename signal is sufficient for the conversion
+        case and avoids re-hashing every document on every ingest.
         """
         candidates = set(files_in_data.keys()) & set(hashes_in_vstore)
         if not candidates:

@@ -92,3 +92,48 @@ def test_set_metadata_field_creates_dict_when_absent():
     resource.set_metadata_field("llm_category", "compute")
 
     assert resource.metadata == {"llm_category": "compute"}
+
+
+def test_localfile_label_reaches_inner_persist_via_pipeline(tmp_path):
+    """End-to-end (B4 contract): a label attached to a LocalFileResource by a
+    processor surfaces all the way to persistence. Run the resource through a
+    ProcessingPersistenceService whose pipeline categorizes it, with a MOCK inner
+    persist_resource, and assert the inner receives a resource whose get_metadata()
+    carries the attached llm_category."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from src.data_manager.collectors.processing import (
+        CategorizationProcessor,
+        ProcessingPersistenceService,
+        ResourcePipeline,
+    )
+
+    source = tmp_path / "doc.txt"
+    source.write_text("some body about compute clusters")
+    resource = LocalFileResource(
+        file_name="doc.txt",
+        source_path=source,
+        content=b"some body about compute clusters",
+    )
+
+    fake_model = SimpleNamespace(
+        invoke=lambda messages: SimpleNamespace(content="compute")
+    )
+    categorizer = CategorizationProcessor(
+        categories=["compute", "storage"],
+        provider="local",
+        model="qwen",
+        provider_config={"base_url": "http://vllm:8001"},
+        model_factory=lambda p, m, cfg: fake_model,
+    )
+
+    inner = MagicMock()
+    wrapper = ProcessingPersistenceService(inner, ResourcePipeline([categorizer]))
+
+    wrapper.persist_resource(resource, tmp_path / "local_files", False)
+
+    inner.persist_resource.assert_called_once()
+    persisted_resource = inner.persist_resource.call_args[0][0]
+    metadata = persisted_resource.get_metadata().as_dict()
+    assert metadata["llm_category"] == "compute"

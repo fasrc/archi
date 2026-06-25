@@ -68,7 +68,11 @@ def test_categorization_enabled_adds_processor():
         providers={
             "local": {
                 "base_url": "http://vllm:8001",
-                "mode": "vllm",
+                # openai_compat is the value the local provider routes a vLLM
+                # endpoint on (see local_provider.py); it is what
+                # deploy/fasrc-dev/config.yaml uses. 'vllm' is NOT a routing value
+                # and would silently fall back to the Ollama default.
+                "mode": "openai_compat",
                 "models": ["qwen"],
                 "extra_kwargs": {"temperature": 0},
             }
@@ -86,7 +90,50 @@ def test_categorization_enabled_adds_processor():
     assert processor.max_chars == 2000
     # provider_config is sourced from services.chat_app.providers.<provider>
     assert processor.provider_config["base_url"] == "http://vllm:8001"
-    assert processor.provider_config["extra_kwargs"]["local_mode"] == "vllm"
+    assert processor.provider_config["extra_kwargs"]["local_mode"] == "openai_compat"
+
+
+def test_categorization_enabled_but_provider_missing_skips_categorizer():
+    """Fail loud, not silent: when the configured provider is absent from
+    services.chat_app.providers, the categorizer is NOT built (an empty config
+    would default the local provider to localhost:11434 and mislabel every doc).
+    Conversion still runs so ingest proceeds."""
+    service = _build(
+        processing={
+            "html_to_markdown": {"enabled": True},
+            "categorization": {
+                "enabled": True,
+                "provider": "local",  # not present in providers below
+                "model": "qwen",
+                "categories": ["compute"],
+            },
+        },
+        providers={},  # no 'local' provider configured
+    )
+    # Still wrapped (conversion runs), but no categorizer.
+    assert isinstance(service, ProcessingPersistenceService)
+    processors = service._pipeline.processors
+    assert any(isinstance(p, HtmlToMarkdownProcessor) for p in processors)
+    assert not any(isinstance(p, CategorizationProcessor) for p in processors)
+
+
+def test_categorization_missing_provider_with_conversion_off_yields_bare_service():
+    """If conversion is also off and the provider is missing, nothing is added and
+    the bare (unwrapped) service is returned — a true no-op."""
+    service = _build(
+        processing={
+            "html_to_markdown": {"enabled": False},
+            "categorization": {
+                "enabled": True,
+                "provider": "local",
+                "model": "qwen",
+                "categories": ["compute"],
+            },
+        },
+        providers={},
+    )
+    assert isinstance(service, _FakePersistence)
+    assert not isinstance(service, ProcessingPersistenceService)
 
 
 def test_conversion_only_when_categorization_disabled():
