@@ -4,6 +4,13 @@ from types import SimpleNamespace
 
 import pytest
 
+# Import the real langchain message classes at module load so they are pinned in
+# sys.modules before sibling test modules (e.g. the vectorstore tests) install bare
+# langchain_core stubs that would otherwise shadow langchain_core.messages. This keeps
+# CategorizationProcessor._build_messages on the real-message-object path under the
+# full suite, exactly as in production.
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from src.data_manager.collectors.processing import CategorizationProcessor
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 
@@ -114,10 +121,23 @@ def test_content_truncated_to_max_chars():
     model = _FakeChatModel(reply="compute")
     proc, _ = _make(model=model, max_chars=10)
     proc.process(_resource(content="x" * 500))
-    # Messages are (role, content) tuples; the document content is in the human turn.
-    sent = "".join(content for _role, content in model.last_messages)
+    # Messages are langchain message objects; the document content is in the human turn.
+    sent = "".join(str(m.content) for m in model.last_messages)
     assert "x" * 10 in sent
     assert "x" * 11 not in sent
+
+
+def test_messages_are_langchain_message_objects():
+    """The model is invoked with SystemMessage/HumanMessage objects (matching
+    base_react.py), not role/content tuples that some chat models don't honor."""
+    model = _FakeChatModel(reply="compute")
+    proc, _ = _make(model=model)
+    proc.process(_resource(content="body"))
+
+    messages = model.last_messages
+    assert isinstance(messages[0], SystemMessage)
+    assert isinstance(messages[-1], HumanMessage)
+    assert "body" in str(messages[-1].content)
 
 
 def test_source_category_never_overwritten():

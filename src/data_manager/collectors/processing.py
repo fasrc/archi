@@ -267,7 +267,20 @@ class CategorizationProcessor:
             f"{category_list}. Respond with only the category name, nothing else."
         )
         human = f"Document:\n{content}\n\nCategory:"
-        return [("system", system), ("human", human)]
+
+        # Build real langchain message objects (matching base_react.py) rather than
+        # ("system", ...)/("human", ...) role/content tuples: tuple auto-conversion is
+        # not honored by every BaseChatModel. Imported lazily here — never at module
+        # top — for the same reason as get_model: langchain is only required on the
+        # categorization path, not the conversion-only/persistence path. If the import
+        # is somehow unavailable (e.g. a test that stubs langchain_core), fall back to
+        # role/content tuples so categorization never raises.
+        try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            return [SystemMessage(content=system), HumanMessage(content=human)]
+        except Exception:  # pragma: no cover - exercised only without real langchain
+            return [("system", system), ("human", human)]
 
 
 class ProcessingPersistenceService:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import nltk
 import psycopg2
@@ -237,11 +237,14 @@ class VectorStoreManager:
             f"Files in catalog: {len(hashes_in_data)}, Files in vectorstore: {len(hashes_in_vstore)}"
         )
 
-        # Hashes are identity-based (URL/path), so an HTML->Markdown rewrite (or any
-        # content change) keeps the same hash. Comparing only hash sets would leave a
-        # re-ingested doc's stale chunks in place. Detect hashes whose persisted
-        # filename changed since they were embedded and refresh them: delete their old
-        # chunks and re-embed the new content.
+        # Hashes are identity-based (URL/path), so an HTML->Markdown rewrite keeps the
+        # same hash while the persisted file's basename flips (page.html -> page.md).
+        # Comparing only hash sets would leave a re-ingested doc's stale chunks in
+        # place. Detect hashes whose embedded filename(s) no longer match the current
+        # on-disk basename (i.e. the conversion extension flip) and refresh them:
+        # delete their old chunks and re-embed the new content. (This filename-based
+        # signal catches the conversion case; a same-name content rewrite is not
+        # detected here — see _collect_stale_hashes.)
         stale_hashes = self._collect_stale_hashes(files_in_data, hashes_in_vstore)
 
         if hashes_in_data == hashes_in_vstore and not stale_hashes:
@@ -296,12 +299,16 @@ class VectorStoreManager:
         finally:
             conn.close()
 
-    def _collect_embedded_filenames(self) -> Dict[str, str]:
-        """Map resource hash -> the filename recorded on its embedded chunks.
+    def _collect_embedded_filenames(self) -> Dict[str, Set[str]]:
+        """Map resource hash -> the set of ALL distinct filenames on its embedded chunks.
 
         Used to detect content that changed under an unchanged hash: if the persisted
         file's basename now differs from what was embedded (e.g. ``page.html`` ->
         ``page.md`` after HTML->Markdown conversion), the document's chunks are stale.
+
+        Returns every distinct filename per hash (not just the first): a hash carrying
+        more than one filename is itself evidence of a prior rewrite/conversion that
+        left chunks under multiple names, which the caller treats as stale.
         """
         conn = psycopg2.connect(**self._pg_config)
         try:
@@ -316,13 +323,11 @@ class VectorStoreManager:
                     """,
                     (self.collection_name,),
                 )
-                result: Dict[str, str] = {}
+                result: Dict[str, Set[str]] = {}
                 for resource_hash, filename in cursor.fetchall():
                     if resource_hash is None or filename is None:
                         continue
-                    # If a hash somehow has multiple filenames, keep the first seen;
-                    # any mismatch with the catalog will still flag it as stale.
-                    result.setdefault(resource_hash, filename)
+                    result.setdefault(resource_hash, set()).add(filename)
                 return result
         finally:
             conn.close()
@@ -362,13 +367,23 @@ class VectorStoreManager:
             embedded = embedded_filenames.get(resource_hash)
             if not embedded:
                 continue
+            # More than one distinct embedded filename for a single hash means a prior
+            # rewrite/conversion already left chunks under multiple names -> stale.
+            if len(embedded) > 1:
+                logger.info(
+                    "Hash %s has chunks under multiple filenames %s; refreshing chunks.",
+                    resource_hash,
+                    sorted(embedded),
+                )
+                stale.add(resource_hash)
+                continue
             current = Path(files_in_data[resource_hash]).name
-            if embedded != current:
+            if current not in embedded:
                 logger.info(
                     "Detected changed content under unchanged hash %s: embedded as "
-                    "'%s', now '%s'; refreshing chunks.",
+                    "%s, now '%s'; refreshing chunks.",
                     resource_hash,
-                    embedded,
+                    sorted(embedded),
                     current,
                 )
                 stale.add(resource_hash)

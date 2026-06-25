@@ -6,6 +6,7 @@ re-ingested-then-converted doc would keep its old HTML-flattened chunks. The man
 must detect changed content under an unchanged hash and refresh those chunks.
 """
 
+import importlib.util
 import sys
 import types
 from types import SimpleNamespace
@@ -13,22 +14,40 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Minimal stubs so the module imports without langchain/nltk installed (CI parity).
-for name in ("langchain_core",):
-    sys.modules.setdefault(name, types.ModuleType(name))
-if "langchain_core.documents" not in sys.modules:
-    m = types.ModuleType("langchain_core.documents")
-    m.Document = object
-    sys.modules["langchain_core.documents"] = m
-if "langchain_core.embeddings" not in sys.modules:
-    m = types.ModuleType("langchain_core.embeddings")
-    m.Embeddings = object
-    sys.modules["langchain_core.embeddings"] = m
-if "langchain_core.vectorstores" not in sys.modules:
-    m = types.ModuleType("langchain_core.vectorstores")
-    m.VectorStore = object
-    sys.modules["langchain_core.vectorstores"] = m
-if "nltk" not in sys.modules:
+
+def _missing(module_name: str) -> bool:
+    """True if a module is genuinely not installed (so a stub is safe).
+
+    Guarding on real availability keeps these stubs NON-DESTRUCTIVE: when langchain
+    is actually present (as in CI, via requirements-base), we never shadow the real
+    package — otherwise a bare ``langchain_core`` stub here would break a sibling
+    test's ``from langchain_core.messages import ...`` regardless of collection order.
+    """
+    if module_name in sys.modules:
+        return False
+    try:
+        return importlib.util.find_spec(module_name) is None
+    except (ImportError, ValueError):
+        return True
+
+
+# Minimal stubs so the module imports without langchain/nltk installed (CI parity),
+# applied ONLY when the real package is absent.
+if _missing("langchain_core"):
+    sys.modules.setdefault("langchain_core", types.ModuleType("langchain_core"))
+    if "langchain_core.documents" not in sys.modules:
+        m = types.ModuleType("langchain_core.documents")
+        m.Document = object
+        sys.modules["langchain_core.documents"] = m
+    if "langchain_core.embeddings" not in sys.modules:
+        m = types.ModuleType("langchain_core.embeddings")
+        m.Embeddings = object
+        sys.modules["langchain_core.embeddings"] = m
+    if "langchain_core.vectorstores" not in sys.modules:
+        m = types.ModuleType("langchain_core.vectorstores")
+        m.VectorStore = object
+        sys.modules["langchain_core.vectorstores"] = m
+if _missing("nltk"):
     nltk_module = types.ModuleType("nltk")
     nltk_module.tokenize = SimpleNamespace(word_tokenize=lambda text: text.split())
     nltk_module.stem = SimpleNamespace(
@@ -36,41 +55,46 @@ if "nltk" not in sys.modules:
     )
     nltk_module.download = lambda *_a, **_k: None
     sys.modules["nltk"] = nltk_module
-sys.modules.setdefault(
-    "langchain_text_splitters", types.ModuleType("langchain_text_splitters")
-)
-if "langchain_text_splitters.character" not in sys.modules:
-    character_module = types.ModuleType("langchain_text_splitters.character")
+if _missing("langchain_text_splitters"):
+    sys.modules.setdefault(
+        "langchain_text_splitters", types.ModuleType("langchain_text_splitters")
+    )
+    if "langchain_text_splitters.character" not in sys.modules:
+        character_module = types.ModuleType("langchain_text_splitters.character")
 
-    class _DummyCharacterTextSplitter:
-        def __init__(self, *a, **k):
-            pass
+        class _DummyCharacterTextSplitter:
+            def __init__(self, *a, **k):
+                pass
 
-        def split_documents(self, docs):
-            return docs
+            def split_documents(self, docs):
+                return docs
 
-    character_module.CharacterTextSplitter = _DummyCharacterTextSplitter
-    sys.modules["langchain_text_splitters.character"] = character_module
-sys.modules.setdefault("langchain_community", types.ModuleType("langchain_community"))
-if "langchain_community.document_loaders" not in sys.modules:
-    loaders_module = types.ModuleType("langchain_community.document_loaders")
+        character_module.CharacterTextSplitter = _DummyCharacterTextSplitter
+        sys.modules["langchain_text_splitters.character"] = character_module
+if _missing("langchain_community"):
+    sys.modules.setdefault(
+        "langchain_community", types.ModuleType("langchain_community")
+    )
+if _missing("langchain_community.document_loaders"):
+    if "langchain_community.document_loaders" not in sys.modules:
+        loaders_module = types.ModuleType("langchain_community.document_loaders")
 
-    class _DummyLoader:
-        def __init__(self, *_a, **_k):
-            pass
+        class _DummyLoader:
+            def __init__(self, *_a, **_k):
+                pass
 
-        def load(self):
-            return []
+            def load(self):
+                return []
 
-    for attr in ("BSHTMLLoader", "PyPDFLoader", "PythonLoader", "TextLoader"):
-        setattr(loaders_module, attr, _DummyLoader)
-    sys.modules["langchain_community.document_loaders"] = loaders_module
-if "langchain_community.document_loaders.text" not in sys.modules:
-    text_module = types.ModuleType("langchain_community.document_loaders.text")
-    text_module.TextLoader = sys.modules[
-        "langchain_community.document_loaders"
-    ].TextLoader
-    sys.modules["langchain_community.document_loaders.text"] = text_module
+        for attr in ("BSHTMLLoader", "PyPDFLoader", "PythonLoader", "TextLoader"):
+            setattr(loaders_module, attr, _DummyLoader)
+        sys.modules["langchain_community.document_loaders"] = loaders_module
+    if "langchain_community.document_loaders.text" not in sys.modules:
+        text_module = types.ModuleType("langchain_community.document_loaders.text")
+        text_module.TextLoader = sys.modules[
+            "langchain_community.document_loaders"
+        ].TextLoader
+        sys.modules["langchain_community.document_loaders.text"] = text_module
 
 from src.data_manager.vectorstore.manager import VectorStoreManager
 
@@ -105,7 +129,7 @@ def test_stale_hash_is_removed_and_re_added(monkeypatch):
     monkeypatch.setattr(
         mgr,
         "_collect_embedded_filenames",
-        lambda: {"h1": "page.html", "h2": "other.md"},
+        lambda: {"h1": {"page.html"}, "h2": {"other.md"}},
     )
 
     removed = MagicMock()
@@ -139,7 +163,7 @@ def test_unchanged_corpus_does_not_refresh(monkeypatch):
         mgr, "_collect_indexed_documents", lambda sources: files_in_data
     )
     monkeypatch.setattr(mgr, "_collect_postgres_hashes", lambda: {"h1"})
-    monkeypatch.setattr(mgr, "_collect_embedded_filenames", lambda: {"h1": "page.md"})
+    monkeypatch.setattr(mgr, "_collect_embedded_filenames", lambda: {"h1": {"page.md"}})
 
     removed = MagicMock()
     added = MagicMock()
@@ -153,8 +177,8 @@ def test_unchanged_corpus_does_not_refresh(monkeypatch):
 
 
 def test_collect_embedded_filenames_queries_document_chunks(monkeypatch):
-    """The SQL body maps resource_hash -> embedded filename, skipping null rows
-    and keeping the first filename seen per hash."""
+    """The SQL body maps resource_hash -> the SET of all distinct embedded filenames,
+    skipping null rows."""
     import src.data_manager.vectorstore.manager as manager_module
 
     mgr = _manager()
@@ -162,7 +186,7 @@ def test_collect_embedded_filenames_queries_document_chunks(monkeypatch):
     fake_cursor = MagicMock()
     fake_cursor.fetchall.return_value = [
         ("h1", "page.html"),
-        ("h1", "page-dupe.html"),  # duplicate hash -> first wins
+        ("h1", "page.md"),  # same hash, two filenames -> both retained
         ("h2", "other.md"),
         (None, "orphan.md"),  # null hash -> skipped
         ("h3", None),  # null filename -> skipped
@@ -174,7 +198,7 @@ def test_collect_embedded_filenames_queries_document_chunks(monkeypatch):
 
     result = mgr._collect_embedded_filenames()
 
-    assert result == {"h1": "page.html", "h2": "other.md"}
+    assert result == {"h1": {"page.html", "page.md"}, "h2": {"other.md"}}
     fake_conn.close.assert_called_once()
 
 
@@ -198,7 +222,7 @@ def test_collect_stale_hashes_detects_only_changed_filenames(monkeypatch):
     monkeypatch.setattr(
         mgr,
         "_collect_embedded_filenames",
-        lambda: {"h1": "page.html", "h2": "same.md"},
+        lambda: {"h1": {"page.html"}, "h2": {"same.md"}},
     )
     files_in_data = {
         "h1": "/data/web/page.md",  # changed (html -> md) => stale
@@ -206,6 +230,25 @@ def test_collect_stale_hashes_detects_only_changed_filenames(monkeypatch):
         "h3": "/data/web/new.md",  # not embedded => ignored
     }
     stale = mgr._collect_stale_hashes(files_in_data, {"h1", "h2", "h3"})
+    assert stale == {"h1"}
+
+
+def test_collect_stale_hashes_multiple_filenames_is_stale(monkeypatch):
+    """A hash whose chunks live under >1 distinct filename indicates a prior
+    rewrite/conversion that left duplicate chunks -> always stale, even if the
+    current on-disk basename is one of them."""
+    mgr = _manager()
+    monkeypatch.setattr(
+        mgr,
+        "_collect_embedded_filenames",
+        # h1 has chunks under both names; current on-disk is page.md (one of them).
+        lambda: {"h1": {"page.html", "page.md"}, "h2": {"clean.md"}},
+    )
+    files_in_data = {
+        "h1": "/data/web/page.md",  # matches one embedded name, but >1 => stale
+        "h2": "/data/web/clean.md",  # single matching name => not stale
+    }
+    stale = mgr._collect_stale_hashes(files_in_data, {"h1", "h2"})
     assert stale == {"h1"}
 
 
