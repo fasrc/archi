@@ -72,16 +72,59 @@ plan's wrong API).** The plan named `get_provider_by_name(...).get_chat_model(..
 which bypasses `provider_config` (base_url/extra_kwargs/models). The correct current API
 is `get_model(provider_type, model_name, provider_config, **kwargs) -> BaseChatModel`
 (`providers/__init__.py:239`); invoke with a message list. The model is built **lazily**
-so disabled categorization costs nothing and needs no provider configured.
+so disabled categorization costs nothing and needs no provider configured. **`provider_config`
+is sourced from `services.chat_app.providers.<provider>`** (base_url/mode/models/extra_kwargs),
+mirroring `base_react.py`'s `_build_provider_config` (`base_react.py:839-843,877-897`) —
+NOT from `data_manager.processing`. Without this, a custom local/vLLM endpoint would be
+ignored and categorization would hit the wrong default server and mark every document
+`uncategorized`.
 
 **D5 — html_to_markdown ON by default; categorization OPT-IN.** Conversion is
 cheap/local and strictly improves chunk quality. Categorization is one LLM call per
-document — expensive on large crawls — so it defaults off.
+document — expensive on large crawls — so it defaults off. A **missing** `processing`
+block means conversion on / categorization off (the shipped default); an explicitly
+all-disabled block yields the bare service ("no-op when disabled").
 
 **D6 — Dependency in both files.** `markdownify` goes in `pyproject.toml`
 (`dependencies`) **and** `requirements/requirements-base.txt` with a matching pin —
 deployment images `pip install .` and read only `pyproject.toml`; a requirements-only
 dep crash-loops the container.
+
+**D7 — Rewrite path fields, not just suffix (review finding).** `ScrapedResource.get_file_path()`
+prefers `relative_path` and `get_filename()` prefers `file_name` over `suffix`
+(`scraped_resource.py:34-44`); `GitScraper._harvest_code` sets both with the original
+extension (`git_scraper.py:226-239`), and `select_loader` keys off the actual on-disk
+path's suffix (`loader_utils.py:18-32`). So conversion MUST rewrite `relative_path`/`file_name`
+to `.md` too, or a git-harvested `.html` resource would be written to a `.html` path and
+still route through `BSHTMLLoader`.
+
+**D8 — Distinct `llm_category` key (review finding).** The Indico scraper already writes
+`metadata["category"]` from the event's source category (`indico_scraper.py:987,1056`).
+Writing the LLM label to the same key would overwrite source truth (and a failure →
+`uncategorized` would clobber it). Categorization writes **`metadata["llm_category"]`**
+and never touches a source-provided `category`.
+
+**D9 — Metadata attachment across resource types (review finding).** `BaseResource`
+exposes only `get_metadata()` with no setter, and `LocalFileResource` has no mutable
+`metadata` dict (`resource_base.py:38-40`, `localfile_resource.py:13-21`) — so
+`resource.metadata["llm_category"]=...` would `AttributeError` for local files. Add a
+mutable `metadata` dict to `LocalFileResource` and a `set_metadata_field()` helper on
+`BaseResource`, and have processors attach labels through it uniformly.
+
+**D10 — Blank-output guard (review finding).** `markdownify` of script-only / empty HTML
+can yield an empty string; `PersistenceService._write_content` raises
+`ValueError("Refusing to persist empty textual content")` (`persistence.py:164-166`),
+which would block ingest. `HtmlToMarkdownProcessor` treats blank/whitespace output the
+same as a conversion failure and keeps the original resource.
+
+**D11 — Refresh chunks on content change under unchanged hash (review finding).** Hashes
+are identity-based (URL/path), so an HTML→Markdown rewrite keeps the same hash. But
+`VectorStoreManager.update_vectorstore()` compares only hash *sets* (`manager.py:240-257`)
+and re-embeds only new hashes, so a re-ingested-then-converted doc would keep its old
+HTML-flattened chunks in `document_chunks`. The implementation must detect changed
+content under an unchanged hash (e.g. `documents.size_bytes`/`file_modified_at`, or a
+content hash) and refresh/delete that doc's chunks before re-embedding. (Retroactive
+conversion of never-re-ingested docs remains out of scope.)
 
 ## Risks / Trade-offs
 
@@ -105,10 +148,14 @@ re-ingested documents only; already-ingested HTML is unchanged until re-ingested
 
 ## Open Questions
 
-- **Uploader scope:** route `uploader_app/app.py:50` through the shared factory now (D2,
-  recommended), or descope UI uploads in v1 with a documented gap + follow-up issue?
-- **`provider_config` source at the categorization call site:** mirror `base_react.py`'s
-  `providers_cfg[provider]` read — confirm the key path resolves in the DataManager
-  config tree during apply.
-- **Idempotency:** processing an already-`md` resource should be a no-op (don't
-  double-tag `converted_from`) — confirm + test.
+Resolved during PR review (now decisions, not open):
+- ~~Uploader scope~~ → **mandatory** (D2): the uploader is wired through the shared
+  factory; descoping is not permitted (spec requires UI uploads not bypass processing).
+- ~~`provider_config` source~~ → **decided** (D4): sourced from
+  `services.chat_app.providers.<provider>`, mirroring `base_react.py`.
+
+Still open:
+- **Idempotency:** processing an already-`md` resource must be a no-op (don't
+  re-tag `converted_from`) — confirm + test during apply.
+- **Chunk-refresh mechanism (D11):** detect changed content via `size_bytes`/`mtime`
+  vs. a stored content hash — pick the cheaper reliable signal at apply time.

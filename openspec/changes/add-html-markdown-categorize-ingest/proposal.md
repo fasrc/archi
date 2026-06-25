@@ -16,14 +16,20 @@ future-queryable axis, without rewriting any connector.
   and a `ProcessingPersistenceService` that wraps `PersistenceService` with a
   `convert → categorize → delegate` pipeline.
 - **HTML→Markdown at persist time**: when a resource's content is a string with an
-  `html`/`htm` suffix, convert it (`markdownify`, ATX headings), flip the suffix to
-  `md`, and record `metadata["converted_from"]="html"`. The `.md` file then loads
-  via `TextLoader` instead of `BSHTMLLoader`, preserving structure. Conversion
-  failures return the resource unchanged — ingest is never blocked.
+  `html`/`htm` suffix, convert it (`markdownify`, ATX headings), set the suffix to
+  `md` **and rewrite the path-bearing fields** (`relative_path`/`file_name`) so the
+  persisted file is genuinely `.md`, and record `metadata["converted_from"]="html"`.
+  The `.md` file then loads via `TextLoader` instead of `BSHTMLLoader`, preserving
+  structure. Conversion that raises **or yields blank Markdown** returns the resource
+  unchanged — ingest is never blocked (blank output would otherwise trip
+  persistence's empty-content guard).
 - **Optional LLM categorization**: assign a label from a configured list using the
   provider layer (`get_model(provider, model, provider_config)` →
-  `BaseChatModel.invoke([...])`), stored as `metadata["category"]`. Any error,
-  out-of-list label, missing model, or empty category list yields
+  `BaseChatModel.invoke([...])`), stored under `metadata["llm_category"]` — a key
+  distinct from any source-provided `category` (e.g. the Indico scraper's), which is
+  never overwritten. `provider_config` is sourced from
+  `services.chat_app.providers.<provider>` (so custom local/vLLM endpoints work). Any
+  error, out-of-list label, missing model, or empty category list yields
   `"uncategorized"` — never blocking ingest.
 - **Shared persistence factory** so the pipeline is applied at **both** ingest
   construction sites: `DataManager.__init__` (scheduled/startup ingest) **and** the
@@ -43,8 +49,9 @@ identically to today.
 ### New Capabilities
 - `ingest-processing`: a configurable per-document processing stage at the
   persistence seam — HTML→Markdown conversion plus optional LLM categorization —
-  applied uniformly across ingest entry points, that defaults to a no-op and never
-  blocks ingest on failure.
+  applied uniformly across ingest entry points, that is a **no-op when disabled**
+  (shipped default: conversion on, categorization off) and never blocks ingest on
+  failure.
 
 ### Modified Capabilities
 <!-- None. The stage wraps the existing persist seam and does not change persistence,
@@ -53,7 +60,10 @@ identically to today.
 ## Impact
 
 - **New code:** `processing.py`; a shared `build_persistence(...)` factory; wiring at
-  `data_manager.py:31` and `uploader_app/app.py:50`.
+  `data_manager.py:31` and `uploader_app/app.py:50` (uploader wiring is required, not
+  optional); a metadata-attachment helper so `LocalFileResource` (no mutable metadata
+  today) can carry labels; chunk-refresh handling so a content change under an
+  unchanged hash does not leave stale `document_chunks`.
 - **Reads/uses (unchanged):** the provider layer `get_model(provider, model,
   provider_config)` (`providers/__init__.py:239`); loader routing
   (`loader_utils.py:27/31`); identity-based hashing (URL/path — dedup survives the
