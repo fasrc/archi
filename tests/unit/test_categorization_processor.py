@@ -84,6 +84,52 @@ def test_out_of_list_label_defaults_uncategorized():
     assert out.get_metadata().as_dict()["llm_category"] == "uncategorized"
 
 
+def test_reasoning_model_trailing_label_is_extracted():
+    """A reasoning model that thinks out loud and ends with the bare category on
+    the final non-empty line is still categorized correctly. The exact-match-on-
+    whole-content check would mark this 'uncategorized' even though the model
+    answered correctly."""
+    reply = (
+        "The user wants me to classify this document.\n"
+        "It discusses disk quotas and Lustre filesystems, so it is about storage.\n"
+        "I will output only the category name.\n\n"
+        "storage"
+    )
+    model = _FakeChatModel(reply=reply)
+    proc, _ = _make(model=model)
+    out = proc.process(_resource())
+    assert out.get_metadata().as_dict()["llm_category"] == "storage"
+
+
+def test_reasoning_model_prefixed_final_line_is_extracted():
+    """A final line like 'Category: policy' (label preceded by a prefix word)
+    resolves to the category token it contains."""
+    reply = "Let me reason about this.\nThis is governance text.\nCategory: policy"
+    model = _FakeChatModel(reply=reply)
+    proc, _ = _make(model=model)
+    out = proc.process(_resource())
+    assert out.get_metadata().as_dict()["llm_category"] == "policy"
+
+
+def test_label_match_is_case_insensitive_returns_canonical():
+    """Reasoning models often capitalize ('Storage'); match case-insensitively but
+    write the canonical category as configured."""
+    model = _FakeChatModel(reply="Storage")
+    proc, _ = _make(model=model)
+    out = proc.process(_resource())
+    assert out.get_metadata().as_dict()["llm_category"] == "storage"
+
+
+def test_reasoning_without_any_valid_category_stays_uncategorized():
+    """Tail parsing must not invent a label: reasoning whose final answer is not in
+    the list still yields uncategorized (no false positives)."""
+    reply = "I think this document is about cooking recipes.\nFinal answer: cooking"
+    model = _FakeChatModel(reply=reply)
+    proc, _ = _make(model=model)
+    out = proc.process(_resource())
+    assert out.get_metadata().as_dict()["llm_category"] == "uncategorized"
+
+
 def test_model_raises_defaults_uncategorized():
     model = _FakeChatModel(raises=True)
     proc, _ = _make(model=model)

@@ -15,6 +15,7 @@ all processors are disabled the wrapper behaves identically to the bare service.
 
 from __future__ import annotations
 
+import re
 from typing import (
     Any,
     Callable,
@@ -226,14 +227,14 @@ class CategorizationProcessor:
             )
             return UNCATEGORIZED
 
-        label = _extract_label(response)
-        if label in self.categories:
+        label = _select_category(response, self.categories)
+        if label:
             return label
         logger.debug(
-            "Categorization model returned out-of-list label %r for %s; marking "
-            "uncategorized.",
-            label,
+            "Categorization model returned no in-list category for %s (raw=%r); "
+            "marking uncategorized.",
             _resource_label(resource),
+            getattr(response, "content", response),
         )
         return UNCATEGORIZED
 
@@ -442,8 +443,47 @@ def _coerce_text(content: Any) -> str:
     return ""
 
 
-def _extract_label(response: Any) -> str:
+def _select_category(response: Any, categories: Sequence[str]) -> str:
+    """Resolve the chosen category from a model response, tolerant of reasoning
+    models that "think out loud" before answering.
+
+    A reasoning model (e.g. Qwen3) emits its chain-of-thought in ``content`` ahead
+    of the answer, so an exact ``content in categories`` check marks every document
+    "uncategorized" even when the model reasoned to the right label. The model's
+    FINAL answer is the reliable signal, so resolution is:
+
+    1. Exact match on the whole cleaned response — the bare single-token reply from
+       a non-reasoning model (unchanged behavior).
+    2. Otherwise scan non-empty lines bottom-up and, within the lowest line that
+       mentions any category, return the LAST-occurring category token. This
+       recovers a bare trailing label (``"storage"``), a prefixed final line
+       (``"Category: storage"``), and a negated reasoning line
+       (``"not software, it's job-scheduling"`` -> ``job-scheduling``).
+
+    Matching is case-insensitive and word-boundaried (so ``compute`` never matches
+    inside ``computer``); the canonical category as configured is returned. Returns
+    ``""`` when no category is found, so the caller maps it to ``uncategorized``
+    rather than inventing a label.
+    """
     raw = getattr(response, "content", response)
     if not isinstance(raw, str):
         raw = str(raw)
-    return raw.strip().strip(".").strip()
+
+    canon = {c.lower(): c for c in categories}
+    if not canon:
+        return ""
+
+    cleaned = raw.strip().strip(".").strip()
+    if cleaned.lower() in canon:
+        return canon[cleaned.lower()]
+
+    for line in reversed([ln for ln in raw.splitlines() if ln.strip()]):
+        low = line.lower()
+        best: Optional[tuple] = None  # (position, canonical) — last token in line wins
+        for cat_low, cat in canon.items():
+            for match in re.finditer(rf"(?<![\w-]){re.escape(cat_low)}(?![\w-])", low):
+                if best is None or match.start() > best[0]:
+                    best = (match.start(), cat)
+        if best is not None:
+            return best[1]
+    return ""
