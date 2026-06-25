@@ -19,12 +19,27 @@ from src.cli.tools import sources_builder as sb
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
-def _resp(text: str, status: int = 200):
-    """Build a fake ``requests`` Response."""
+def _resp(text, status=200, url="https://example.com/", content_type="text/html"):
+    """Build a fake streaming ``requests`` Response.
+
+    Supports the streaming API the code now uses: ``iter_content`` (chunked),
+    ``headers`` (Content-Type), ``encoding``/``apparent_encoding``, the
+    post-redirect ``url``, and ``close()``. ``text`` may be a ``str`` or
+    ``bytes``; bytes let a test exercise the decode path.
+    """
+    raw = text.encode("utf-8") if isinstance(text, str) else text
     resp = MagicMock()
     resp.status_code = status
-    resp.text = text
-    resp.content = text.encode("utf-8")
+    resp.url = url
+    resp.headers = {"Content-Type": content_type}
+    resp.encoding = "utf-8"
+    resp.apparent_encoding = "utf-8"
+    resp.content = raw
+    resp.text = raw.decode("utf-8", errors="replace")
+    resp.iter_content = lambda chunk_size=65536: (
+        raw[i : i + chunk_size] for i in range(0, len(raw), chunk_size)
+    )
+    resp.close = lambda: None
     return resp
 
 
@@ -103,6 +118,120 @@ class TestManifestSchema:
         with pytest.raises(sb.ManifestError) as exc:
             sb.load_manifest(str(manifest))
         assert "mapping" in str(exc.value)
+
+    def test_valid_list_globs_passthrough(self, tmp_path):
+        manifest = _write(
+            tmp_path,
+            "m.yaml",
+            yaml.safe_dump(
+                [
+                    {
+                        "type": "sitemap",
+                        "url": "https://x.test/s.xml",
+                        "include": ["*/a/*", "*/b/*"],
+                        "exclude": ["*/c/*"],
+                    }
+                ]
+            ),
+        )
+        seeds = sb.load_manifest(str(manifest))
+        assert seeds[0]["include"] == ["*/a/*", "*/b/*"]
+        assert seeds[0]["exclude"] == ["*/c/*"]
+
+    def test_scalar_include_coerced_to_list(self, tmp_path):
+        manifest = _write(
+            tmp_path,
+            "m.yaml",
+            yaml.safe_dump(
+                [
+                    {
+                        "type": "sitemap",
+                        "url": "https://x.test/s.xml",
+                        "include": "*/docs/*",  # YAML scalar string
+                        "exclude": "*/author/*",
+                    }
+                ]
+            ),
+        )
+        seeds = sb.load_manifest(str(manifest))
+        # coerced to one-item lists so fnmatch doesn't iterate char-by-char
+        assert seeds[0]["include"] == ["*/docs/*"]
+        assert seeds[0]["exclude"] == ["*/author/*"]
+
+    def test_non_string_include_rejected(self, tmp_path):
+        manifest = _write(
+            tmp_path,
+            "m.yaml",
+            yaml.safe_dump(
+                [{"type": "sitemap", "url": "https://x.test/s.xml", "include": 7}]
+            ),
+        )
+        with pytest.raises(sb.ManifestError) as exc:
+            sb.load_manifest(str(manifest))
+        assert "include" in str(exc.value)
+
+    def test_include_list_with_non_string_rejected(self, tmp_path):
+        manifest = _write(
+            tmp_path,
+            "m.yaml",
+            yaml.safe_dump(
+                [
+                    {
+                        "type": "crawl",
+                        "url": "https://x.test/i/",
+                        "exclude": ["*/ok/*", 3],
+                    }
+                ]
+            ),
+        )
+        with pytest.raises(sb.ManifestError) as exc:
+            sb.load_manifest(str(manifest))
+        assert "exclude" in str(exc.value)
+
+    def test_depth_numeric_string_coerced(self, tmp_path):
+        manifest = _write(
+            tmp_path,
+            "m.yaml",
+            yaml.safe_dump(
+                [{"type": "crawl", "url": "https://x.test/i/", "depth": "2"}]
+            ),
+        )
+        seeds = sb.load_manifest(str(manifest))
+        assert seeds[0]["depth"] == 2
+
+    def test_depth_non_int_rejected(self, tmp_path):
+        manifest = _write(
+            tmp_path,
+            "m.yaml",
+            yaml.safe_dump(
+                [{"type": "crawl", "url": "https://x.test/i/", "depth": "deep"}]
+            ),
+        )
+        with pytest.raises(sb.ManifestError) as exc:
+            sb.load_manifest(str(manifest))
+        assert "depth" in str(exc.value)
+
+    def test_depth_zero_rejected(self, tmp_path):
+        manifest = _write(
+            tmp_path,
+            "m.yaml",
+            yaml.safe_dump([{"type": "crawl", "url": "https://x.test/i/", "depth": 0}]),
+        )
+        with pytest.raises(sb.ManifestError) as exc:
+            sb.load_manifest(str(manifest))
+        assert "depth" in str(exc.value)
+
+    def test_depth_bool_rejected(self, tmp_path):
+        manifest = _write(
+            tmp_path,
+            "m.yaml",
+            yaml.safe_dump(
+                [{"type": "crawl", "url": "https://x.test/i/", "depth": True}]
+            ),
+        )
+        with pytest.raises(sb.ManifestError) as exc:
+            sb.load_manifest(str(manifest))
+        assert "depth" in str(exc.value)
 
 
 # --------------------------------------------------------------------------- #
@@ -272,6 +401,20 @@ class TestSitemapExpansion:
                 sb.expand_sitemap("https://example.com/s.xml")
         assert "cap" in str(exc.value).lower()
 
+    def test_mid_read_connection_drop_aborts(self):
+        # A connection that drops partway through streaming the body aborts.
+        resp = _resp("")
+
+        def boom(chunk_size=65536):
+            raise requests.exceptions.ChunkedEncodingError("dropped")
+
+        resp.iter_content = boom
+        with patch("src.cli.tools.sources_builder.requests.get") as get:
+            get.return_value = resp
+            with pytest.raises(sb.FetchError) as exc:
+                sb.expand_sitemap("https://example.com/s.xml")
+        assert "read" in str(exc.value).lower()
+
 
 # --------------------------------------------------------------------------- #
 # 3. Glob filtering
@@ -315,47 +458,130 @@ CRAWL_HTML = """
 
 
 class TestCrawl:
+    # The crawl normalizes the seed into the frontier (trailing slash collapsed)
+    # and resolves relatives against the FINAL (post-redirect) url. A real server
+    # redirects ``…/archive`` -> ``…/archive/``; the fake models that by setting
+    # resp.url to the trailing-slash form so relatives resolve correctly.
+    SEED = "https://slurm.test/archive/"
+    SEED_FINAL = "https://slurm.test/archive/"
+
     def test_off_host_dropped_and_same_host_kept(self):
         with patch("src.cli.tools.sources_builder.requests.get") as get:
-            get.return_value = _resp(CRAWL_HTML)
-            urls = sb.crawl_same_host(
-                "https://slurm.test/archive/", depth=1, include=[], exclude=[]
-            )
+            get.return_value = _resp(CRAWL_HTML, url=self.SEED_FINAL)
+            urls = sb.crawl_same_host(self.SEED, depth=1, include=[], exclude=[])
         assert "https://other.test/away.html" not in urls
         assert "https://slurm.test/archive/srun.html" in urls
 
     def test_relative_link_resolved(self):
         with patch("src.cli.tools.sources_builder.requests.get") as get:
-            get.return_value = _resp(CRAWL_HTML)
-            urls = sb.crawl_same_host(
-                "https://slurm.test/archive/", depth=1, include=[], exclude=[]
-            )
+            get.return_value = _resp(CRAWL_HTML, url=self.SEED_FINAL)
+            urls = sb.crawl_same_host(self.SEED, depth=1, include=[], exclude=[])
         assert "https://slurm.test/archive/man/sbatch.html" in urls
 
     def test_deterministic_order(self):
         with patch("src.cli.tools.sources_builder.requests.get") as get:
-            get.return_value = _resp(CRAWL_HTML)
-            first = sb.crawl_same_host(
-                "https://slurm.test/archive/", depth=1, include=[], exclude=[]
-            )
+            get.return_value = _resp(CRAWL_HTML, url=self.SEED_FINAL)
+            first = sb.crawl_same_host(self.SEED, depth=1, include=[], exclude=[])
         with patch("src.cli.tools.sources_builder.requests.get") as get:
-            get.return_value = _resp(CRAWL_HTML)
-            second = sb.crawl_same_host(
-                "https://slurm.test/archive/", depth=1, include=[], exclude=[]
-            )
+            get.return_value = _resp(CRAWL_HTML, url=self.SEED_FINAL)
+            second = sb.crawl_same_host(self.SEED, depth=1, include=[], exclude=[])
         assert first == second
         assert first == sorted(first)
 
     def test_globs_applied_to_crawl(self):
         with patch("src.cli.tools.sources_builder.requests.get") as get:
-            get.return_value = _resp(CRAWL_HTML)
+            get.return_value = _resp(CRAWL_HTML, url=self.SEED_FINAL)
             urls = sb.crawl_same_host(
-                "https://slurm.test/archive/",
-                depth=1,
-                include=["*srun*"],
-                exclude=[],
+                self.SEED, depth=1, include=["*srun*"], exclude=[]
             )
         assert urls == ["https://slurm.test/archive/srun.html"]
+
+    def test_base_after_redirect_resolves_relative(self):
+        # The seed is slashless; the server redirects to the trailing-slash
+        # form. The relative href must resolve against the FINAL url, not the
+        # requested (slashless) one.
+        html = '<html><body><a href="man/srun.html">srun</a></body></html>'
+        with patch("src.cli.tools.sources_builder.requests.get") as get:
+            get.return_value = _resp(html, url="https://slurm.test/archive/")
+            urls = sb.crawl_same_host(
+                "https://slurm.test/archive", depth=1, include=[], exclude=[]
+            )
+        assert urls == ["https://slurm.test/archive/man/srun.html"]
+
+    def test_same_host_default_port_matches(self):
+        # host vs host:443 must be treated as the same host (compare by hostname).
+        html = (
+            '<html><body><a href="https://slurm.test:443/archive/x.html">x</a>'
+            "</body></html>"
+        )
+        with patch("src.cli.tools.sources_builder.requests.get") as get:
+            get.return_value = _resp(html, url=self.SEED_FINAL)
+            urls = sb.crawl_same_host(self.SEED, depth=1, include=[], exclude=[])
+        assert "https://slurm.test:443/archive/x.html" in urls
+
+    def test_excluded_child_never_fetched(self):
+        # An excluded link must not be added to the frontier, so a 500 from it
+        # can never abort the build even at depth > 1.
+        index = (
+            "<html><body>"
+            '<a href="https://slurm.test/keep/p.html">keep</a>'
+            '<a href="https://slurm.test/drop/bad.html">drop</a>'
+            "</body></html>"
+        )
+        bodies = {
+            "https://slurm.test/": index,
+            "https://slurm.test/keep/p.html": "<html><body></body></html>",
+        }
+        fetched = []
+
+        def fake_get(url, *a, **k):
+            fetched.append(url)
+            if url == "https://slurm.test/drop/bad.html":
+                return _resp("boom", status=500, url=url)
+            return _resp(bodies[url], url=url)
+
+        with patch("src.cli.tools.sources_builder.requests.get", side_effect=fake_get):
+            urls = sb.crawl_same_host(
+                "https://slurm.test/",
+                depth=3,
+                include=[],
+                exclude=["*/drop/*"],
+            )
+        assert urls == ["https://slurm.test/keep/p.html"]
+        # the excluded child was never fetched (so its 500 couldn't abort)
+        assert "https://slurm.test/drop/bad.html" not in fetched
+
+    def test_non_html_crawl_aborts(self):
+        # A 200 with a non-HTML Content-Type must abort (BeautifulSoup would
+        # otherwise silently contribute zero links).
+        with patch("src.cli.tools.sources_builder.requests.get") as get:
+            get.return_value = _resp(
+                "%PDF-1.4 ...", url=self.SEED_FINAL, content_type="application/pdf"
+            )
+            with pytest.raises(sb.FetchError) as exc:
+                sb.crawl_same_host(self.SEED, depth=1, include=[], exclude=[])
+        assert "non-html" in str(exc.value).lower()
+
+    def test_fragment_only_href_not_refetched(self):
+        # A '#section' href resolves to the page itself; it must be skipped, not
+        # re-fetched as a distinct page.
+        index = (
+            '<html><body><a href="#section">frag</a>'
+            '<a href="https://slurm.test/p.html">p</a></body></html>'
+        )
+        counts = {}
+
+        def fake_get(url, *a, **k):
+            counts[url] = counts.get(url, 0) + 1
+            return _resp(index, url=url)
+
+        with patch("src.cli.tools.sources_builder.requests.get", side_effect=fake_get):
+            urls = sb.crawl_same_host(
+                "https://slurm.test/", depth=3, include=[], exclude=[]
+            )
+        assert all(c == 1 for c in counts.values()), counts
+        assert "https://slurm.test/p.html" in urls
+        assert "https://slurm.test/" not in urls  # the page itself isn't emitted
 
     def test_depth_two_follows_same_host_children(self):
         index = '<html><body><a href="https://slurm.test/a/">a</a></body></html>'
@@ -363,13 +589,16 @@ class TestCrawl:
             '<html><body><a href="https://slurm.test/a/leaf.html">leaf</a>'
             "</body></html>"
         )
+        # The frontier re-fetches the NORMALIZED url (slash collapsed), so model
+        # both spellings of page-a returning the same body.
         bodies = {
             "https://slurm.test/": index,
+            "https://slurm.test/a": page_a,
             "https://slurm.test/a/": page_a,
         }
 
         def fake_get(url, *a, **k):
-            return _resp(bodies[url])
+            return _resp(bodies[url], url=url)
 
         with patch("src.cli.tools.sources_builder.requests.get", side_effect=fake_get):
             urls = sb.crawl_same_host(
@@ -400,7 +629,7 @@ class TestCrawl:
 
         def fake_get(url, *a, **k):
             counts[url] = counts.get(url, 0) + 1
-            return _resp(bodies[url])
+            return _resp(bodies[url], url=url)
 
         with patch("src.cli.tools.sources_builder.requests.get", side_effect=fake_get):
             urls = sb.crawl_same_host(
@@ -459,12 +688,33 @@ class TestLiteralAndDispatch:
 
     def test_dispatch_crawl(self):
         with patch("src.cli.tools.sources_builder.requests.get") as get:
-            get.return_value = _resp(CRAWL_HTML)
+            get.return_value = _resp(CRAWL_HTML, url="https://slurm.test/archive/")
             urls = sb.expand_seed(
                 {"type": "crawl", "url": "https://slurm.test/archive/"}
             )
         assert "https://slurm.test/archive/srun.html" in urls
         assert "https://other.test/away.html" not in urls
+
+    def test_sitemap_glob_runs_on_normalized_form(self):
+        # The raw <loc> has an uppercase host and a trailing slash; an exclude
+        # glob written against the normalized form must still match (globs run
+        # AFTER normalization). Under the old order (glob on raw loc) this
+        # author URL would slip through.
+        body = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://EXAMPLE.com/author/jane/</loc></url>
+  <url><loc>https://example.com/kb/page</loc></url>
+</urlset>"""
+        with patch("src.cli.tools.sources_builder.requests.get") as get:
+            get.return_value = _resp(body)
+            urls = sb.expand_seed(
+                {
+                    "type": "sitemap",
+                    "url": "https://example.com/s.xml",
+                    "exclude": ["*/author/*"],
+                }
+            )
+        assert urls == ["https://example.com/kb/page"]
 
 
 # --------------------------------------------------------------------------- #
@@ -541,6 +791,40 @@ class TestManualExtras:
         out = tmp_path / "sources.list"
         lines = sb.append_manual_extras(["https://x.test/a"], str(out))
         assert lines == ["https://x.test/a"]
+
+    def test_unprefixed_extras_normalized_dedupe(self, tmp_path):
+        # An extras line that differs from a generated URL only by host case /
+        # trailing slash / fragment is a duplicate and must be dropped (the
+        # comparison is on the normalized form, not the exact string).
+        out = tmp_path / "sources.list"
+        extras = tmp_path / "manual-extras.list"
+        extras.write_text("https://X.test/A/#frag\nhttps://x.test/unique\n")
+        lines = sb.append_manual_extras(["https://x.test/A"], str(out))
+        # the case/slash/fragment variant of the generated URL is dropped
+        assert lines.count("https://x.test/A") == 1
+        assert "https://X.test/A/#frag" not in lines
+        # a genuinely new extras URL is kept, written verbatim
+        assert "https://x.test/unique" in lines
+
+    def test_prefixed_extras_always_kept_even_if_url_matches(self, tmp_path):
+        # A prefixed line is never normalized and always retained, even when its
+        # embedded URL matches a generated URL (git- has no generated counterpart).
+        out = tmp_path / "sources.list"
+        extras = tmp_path / "manual-extras.list"
+        extras.write_text("git-https://x.test/a\n")
+        lines = sb.append_manual_extras(["https://x.test/a"], str(out))
+        assert "https://x.test/a" in lines
+        assert "git-https://x.test/a" in lines
+
+    def test_unprefixed_extra_written_verbatim_not_normalized(self, tmp_path):
+        # A non-duplicate unprefixed extras line is written EXACTLY as authored
+        # (its own trailing slash is preserved in the file — only dedupe uses
+        # the normalized key).
+        out = tmp_path / "sources.list"
+        extras = tmp_path / "manual-extras.list"
+        extras.write_text("https://x.test/kept/\n")
+        lines = sb.append_manual_extras(["https://x.test/gen"], str(out))
+        assert "https://x.test/kept/" in lines  # verbatim, slash preserved
 
 
 # --------------------------------------------------------------------------- #

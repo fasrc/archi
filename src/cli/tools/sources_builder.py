@@ -100,8 +100,64 @@ def load_manifest(path: str) -> List[Dict]:
                 f"Manifest entry #{index + 1} ({seed_type}) is missing a "
                 f"'url' field: {entry!r}"
             )
+        # Normalize the optional glob lists: a YAML scalar string is coerced to
+        # a one-item list (otherwise fnmatch would iterate it char-by-char);
+        # anything that is neither a string nor a list of strings is rejected.
+        for field in ("include", "exclude"):
+            if field in entry:
+                entry[field] = _coerce_glob_list(index, seed_type, field, entry[field])
+        # Validate the optional crawl depth as a positive int.
+        if "depth" in entry:
+            entry["depth"] = _coerce_depth(index, seed_type, entry["depth"])
         seeds.append(entry)
     return seeds
+
+
+def _coerce_glob_list(index: int, seed_type, field: str, value) -> List[str]:
+    """Coerce a manifest glob field to a list of strings or raise ManifestError."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        if all(isinstance(item, str) for item in value):
+            return value
+        raise ManifestError(
+            f"Manifest entry #{index + 1} ({seed_type}) '{field}' must be a "
+            f"string or a list of strings: {value!r}"
+        )
+    raise ManifestError(
+        f"Manifest entry #{index + 1} ({seed_type}) '{field}' must be a string "
+        f"or a list of strings, got {type(value).__name__}: {value!r}"
+    )
+
+
+def _coerce_depth(index: int, seed_type, value) -> int:
+    """Coerce a manifest ``depth`` to a positive int or raise ManifestError.
+
+    A bool is rejected (``True``/``False`` are ints in Python but never a valid
+    depth); a numeric string like ``"2"`` is accepted and coerced.
+    """
+    if isinstance(value, bool):
+        raise ManifestError(
+            f"Manifest entry #{index + 1} ({seed_type}) 'depth' must be a "
+            f"positive integer, got bool: {value!r}"
+        )
+    if isinstance(value, int):
+        depth = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        depth = int(value.strip())
+    else:
+        raise ManifestError(
+            f"Manifest entry #{index + 1} ({seed_type}) 'depth' must be a "
+            f"positive integer, got {type(value).__name__}: {value!r}"
+        )
+    if depth < 1:
+        raise ManifestError(
+            f"Manifest entry #{index + 1} ({seed_type}) 'depth' must be >= 1, "
+            f"got {depth}"
+        )
+    return depth
 
 
 # --------------------------------------------------------------------------- #
@@ -112,25 +168,54 @@ def _local_tag(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-def _fetch_text(url: str) -> str:
-    """GET ``url`` and return the body text, raising :class:`FetchError` on any
-    non-200, connection, timeout, or over-size failure.
+def _fetch_text(url: str, require_html: bool = False) -> "tuple[str, str]":
+    """GET ``url`` and return ``(body_text, final_url)``.
 
-    The response body is capped at :data:`_MAX_FETCH_BYTES` to bound memory and
-    blunt oversize/decompression abuse from a hostile or misconfigured host.
+    Raises :class:`FetchError` on any non-200, connection, timeout, over-size,
+    or (when ``require_html``) non-HTML response. The body is streamed and the
+    read aborts as soon as :data:`_MAX_FETCH_BYTES` is exceeded, so a hostile or
+    misconfigured host cannot force the whole payload into memory first.
+
+    ``final_url`` is the post-redirect URL (``resp.url``); the crawl uses it as
+    the ``urljoin`` base so relative links resolve correctly when a seed/child
+    redirects (e.g. slashless → trailing slash).
     """
     try:
-        resp = requests.get(url, timeout=_SITEMAP_TIMEOUT)
+        resp = requests.get(url, timeout=_SITEMAP_TIMEOUT, stream=True)
     except requests.exceptions.RequestException as exc:
         raise FetchError(f"Failed to fetch {url}: {exc}")
-    if resp.status_code != 200:
-        raise FetchError(f"Fetch of {url} returned HTTP {resp.status_code}")
-    if len(resp.content) > _MAX_FETCH_BYTES:
-        raise FetchError(
-            f"Body from {url} exceeds the {_MAX_FETCH_BYTES}-byte cap "
-            f"({len(resp.content)} bytes)"
-        )
-    return resp.text
+    try:
+        if resp.status_code != 200:
+            raise FetchError(f"Fetch of {url} returned HTTP {resp.status_code}")
+        if require_html:
+            content_type = resp.headers.get("Content-Type", "")
+            # BeautifulSoup does not raise on non-HTML (it would silently yield
+            # zero links and quietly shrink the regenerated list), so a crawl
+            # seed must reject a non-HTML 200 explicitly.
+            ctype_main = content_type.split(";", 1)[0].strip().lower()
+            if ctype_main and ctype_main not in ("text/html", "application/xhtml+xml"):
+                raise FetchError(
+                    f"Crawl seed {url} returned non-HTML Content-Type "
+                    f"{content_type!r}"
+                )
+        chunks = []
+        total = 0
+        for chunk in resp.iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > _MAX_FETCH_BYTES:
+                raise FetchError(
+                    f"Body from {url} exceeds the {_MAX_FETCH_BYTES}-byte cap"
+                )
+            chunks.append(chunk)
+    except requests.exceptions.RequestException as exc:
+        raise FetchError(f"Failed to read {url}: {exc}")
+    finally:
+        resp.close()
+    encoding = resp.encoding or resp.apparent_encoding or "utf-8"
+    text = b"".join(chunks).decode(encoding, errors="replace")
+    return text, resp.url
 
 
 def _parse_xml(url: str, text: str) -> "ElementTree.Element":
@@ -189,14 +274,16 @@ def expand_sitemap(url: str) -> List[str]:
 
     Raises :class:`FetchError` on any fetch/parse failure (D7).
     """
-    root = _parse_xml(url, _fetch_text(url))
+    text, _ = _fetch_text(url)
+    root = _parse_xml(url, text)
     if _local_tag(root.tag) == "urlset":
         return _locs(root, "url")
 
     if _local_tag(root.tag) == "sitemapindex":
         pages: List[str] = []
         for child_url in _locs(root, "sitemap"):
-            child_root = _parse_xml(child_url, _fetch_text(child_url))
+            child_text, _ = _fetch_text(child_url)
+            child_root = _parse_xml(child_url, child_text)
             # Only a child <urlset> yields page URLs; a nested <sitemapindex>
             # is not followed and contributes nothing.
             if _local_tag(child_root.tag) == "urlset":
@@ -262,8 +349,9 @@ def _extract_links(base_url: str, html: str) -> List[str]:
     """Extract absolute anchor hrefs from ``html`` resolved against ``base_url``.
 
     Relative links are resolved with :func:`urllib.parse.urljoin`. Anchors
-    without an ``href`` are skipped. Raises :class:`FetchError` if the body is
-    not parseable as HTML.
+    without an ``href``, and fragment-only hrefs (``#section``) that resolve to
+    the page itself, are skipped. Raises :class:`FetchError` if the body is not
+    parseable as HTML.
     """
     try:
         from bs4 import BeautifulSoup
@@ -280,6 +368,10 @@ def _extract_links(base_url: str, html: str) -> List[str]:
         href = anchor.get("href")
         if not href:
             continue
+        # A fragment-only href (e.g. ``#section``) points back at the current
+        # page; skip it so it isn't normalized into a duplicate of the page.
+        if href.strip().startswith("#"):
+            continue
         links.append(urljoin(base_url, href))
     return links
 
@@ -292,22 +384,33 @@ def crawl_same_host(
 ) -> List[str]:
     """Crawl an index page and return its same-host links, normalized + sorted.
 
-    Fetches ``url``, extracts anchors, resolves relatives, and keeps only links
-    whose host matches the seed host. Honors ``depth`` (BFS over same-host
-    pages; default one level) and the seed's include/exclude globs. Output is
-    sorted for deterministic ordering. Raises :class:`FetchError` on any
-    fetch/parse failure (D7).
+    Fetches ``url``, extracts anchors, resolves relatives against the FINAL
+    (post-redirect) URL, and keeps only links whose host matches the seed host
+    (compared by ``hostname`` so ``host`` and ``host:443`` match). Honors
+    ``depth`` (BFS over same-host pages; default one level) and the seed's
+    include/exclude globs — globs are applied as links are discovered, so an
+    excluded child is never fetched. Output is sorted for deterministic
+    ordering. Raises :class:`FetchError` on any fetch/parse failure (D7).
     """
-    seed_host = urlparse(url).netloc.lower()
+    seed_host = (urlparse(url).hostname or "").lower()
     depth = depth if depth and depth > 0 else 1
+    include = include or []
+    exclude = exclude or []
+
+    def _keep(candidate: str) -> bool:
+        if include and not any(fnmatch.fnmatch(candidate, p) for p in include):
+            return False
+        if any(fnmatch.fnmatch(candidate, p) for p in exclude):
+            return False
+        return True
 
     discovered: List[str] = []
     seen = set()
-    # Frontier holds the ORIGINAL (un-normalized) page URLs so relative links
-    # resolve correctly via urljoin — collapsing a trailing slash on the base
-    # would change relative resolution. Normalization is applied only to the
-    # discovered links (for host compare, dedupe, and output).
-    frontier = [url]
+    # The frontier holds NORMALIZED page URLs, used both as the visited key and
+    # (when re-fetched) the request target. visited_pages dedupes by the
+    # normalized form so ``#section`` / trailing-slash variants aren't fetched
+    # as distinct pages. The urljoin base is the FINAL (post-redirect) URL.
+    frontier = [normalize_url(url)]
     visited_pages = set()
 
     for _ in range(depth):
@@ -316,19 +419,21 @@ def crawl_same_host(
             if page in visited_pages:
                 continue
             visited_pages.add(page)
-            html = _fetch_text(page)
-            for link in _extract_links(page, html):
+            html, final_url = _fetch_text(page, require_html=True)
+            for link in _extract_links(final_url, html):
                 norm = normalize_url(link)
-                if urlparse(norm).netloc.lower() != seed_host:
+                if (urlparse(norm).hostname or "").lower() != seed_host:
+                    continue
+                if not _keep(norm):
+                    # Excluded by globs — do not emit and do not fetch it.
                     continue
                 if norm not in seen:
                     seen.add(norm)
                     discovered.append(norm)
-                    next_frontier.append(link)
+                    next_frontier.append(norm)
         frontier = next_frontier
 
-    filtered = apply_globs(discovered, include, exclude)
-    return sorted(filtered)
+    return sorted(discovered)
 
 
 # --------------------------------------------------------------------------- #
@@ -337,7 +442,8 @@ def crawl_same_host(
 def expand_seed(seed: Dict) -> List[str]:
     """Expand a single validated seed into a list of normalized page URLs.
 
-    - ``sitemap``: fetch + expand, then apply globs, then normalize.
+    - ``sitemap``: fetch + expand, NORMALIZE, then apply globs (so globs match
+      the same normalized form that is emitted, consistent with crawl).
     - ``crawl``: crawl same-host (already normalized + glob-filtered + sorted).
     - ``literal``: emit the URL verbatim — never fetched/crawled/glob-filtered —
       but still normalized (D6).
@@ -352,8 +458,11 @@ def expand_seed(seed: Dict) -> List[str]:
 
     if seed_type == "sitemap":
         raw = expand_sitemap(url)
-        filtered = apply_globs(raw, include, exclude)
-        return [normalize_url(u) for u in filtered]
+        # Normalize BEFORE glob filtering so an include/exclude pattern matches
+        # the same normalized URL that is emitted (e.g. a host-case or
+        # trailing-slash difference can't make the glob miss).
+        normalized = [normalize_url(u) for u in raw]
+        return apply_globs(normalized, include, exclude)
 
     if seed_type == "crawl":
         depth = seed.get("depth", 1)
@@ -371,13 +480,19 @@ def append_manual_extras(generated_urls: List[str], output_path: str) -> List[st
     sibling ``manual-extras.list`` (if present), appended verbatim.
 
     Extras rules (D4): comment (``#``) and blank lines are skipped; non-comment
-    entries are kept verbatim — preserving ``git-``/``sso-``/``elog-``/``indico-``
-    prefixes — and are never fetched/crawled. The generated block wins position:
-    an extras line whose value duplicates an already-emitted generated URL is
-    dropped so the URL appears exactly once, in its generated position. A
-    prefixed extras line has no generated counterpart and is always retained.
+    entries are written verbatim and are never fetched/crawled. The generated
+    block wins position. Dedupe is prefix-aware:
+
+    - A PREFIXED extras line (``git-``/``sso-``/``elog-``/``indico-``) has no
+      generated counterpart (the generated block holds bare URLs), so it is
+      never normalized and is always retained.
+    - An UNPREFIXED extras line is a URL: it is compared in NORMALIZED form
+      against the generated URLs (which are themselves normalized), so a
+      same-URL duplicate that merely differs by case / trailing slash / fragment
+      is dropped — but the ORIGINAL line is written when it is kept.
     """
-    # Dedupe the generated block first (first-seen order).
+    # Dedupe the generated block first (first-seen order). Generated URLs are
+    # already normalized by expand_seed, so this set is the normalized key set.
     lines: List[str] = []
     seen = set()
     for url in generated_urls:
@@ -393,11 +508,17 @@ def append_manual_extras(generated_urls: List[str], output_path: str) -> List[st
         entry = raw.strip()
         if not entry or entry.startswith("#"):
             continue
-        if entry in seen:
-            # Duplicates a generated URL — generated block wins position.
+        if entry.startswith(_EXTRA_PREFIXES):
+            # Prefixed: not a bare URL, never normalized, always retained.
+            lines.append(entry)
             continue
-        seen.add(entry)
-        lines.append(entry)
+        key = normalize_url(entry)
+        if key in seen:
+            # Duplicates a generated URL (modulo case/slash/fragment) — the
+            # generated block wins position.
+            continue
+        seen.add(key)
+        lines.append(entry)  # write the original line, not the normalized key
     return lines
 
 
