@@ -134,7 +134,7 @@ Its non-comment, non-blank entries are appended verbatim after the generated
 block. The generated block wins position: an extras line that duplicates a
 generated URL is dropped so the URL appears exactly once.
 
-### Build → import workflow
+### Build → redeploy workflow
 
 ```bash
 # 1. Preview the diff against the current list
@@ -143,14 +143,20 @@ archi sources build sources.manifest.yaml -c config.yaml --dry-run
 # 2. Write the regenerated list (resolves the single input_lists entry)
 archi sources build sources.manifest.yaml -c config.yaml
 
-# 3. Write and re-ingest the deployment in one step
+# 3. Write, then print the redeploy command to ingest it
 archi sources build sources.manifest.yaml -c config.yaml \
   --name dev --env-file .secrets.env --import
 ```
 
-With `--import`, the command shells out to
-`archi create --name <deployment> --config <config> --services <services> --force`
-after a successful write (services default to `chatbot`). See the
+`--import` is **advisory**: after a successful write it prints a copy-pasteable
+redeploy command — `archi create --name <deployment> [--config <config>]
+[--env-file <env>] --force` — and reminds you to append your usual flags
+(`--services …`, `--podman`, host/gpu/tag). It **runs nothing**: auto-executing a
+forced recreate is unsafe because it removes the deployment directory and
+re-renders compose for only the named services (dropping others) while ignoring
+the deployment's runtime flags, so you run the redeploy yourself after reviewing
+the regenerated list. If `--output` points outside the config's `input_lists`,
+the command warns that the redeploy will not ingest that file. See the
 [CLI Reference](cli_reference.md#archi-sources-build) for every flag.
 
 ---

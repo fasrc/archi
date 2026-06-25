@@ -1081,8 +1081,12 @@ class TestCliWiring:
 # --------------------------------------------------------------------------- #
 # 10. Import trigger
 # --------------------------------------------------------------------------- #
-class TestImportTrigger:
-    def test_import_shells_create_once(self, tmp_path):
+class TestImportAdvisory:
+    """`--import` is ADVISORY: it prints a copy-pasteable redeploy command and
+    executes nothing. These assert the printed command and that NO subprocess
+    shell-out happens."""
+
+    def test_import_prints_command_and_runs_nothing(self, tmp_path):
         out = tmp_path / "the-list.list"
         cfg = _config_with_input_lists(tmp_path, [str(out)])
         manifest = _sitemap_manifest(tmp_path)
@@ -1090,9 +1094,8 @@ class TestImportTrigger:
         with (
             patch("src.cli.tools.sources_builder.requests.get") as get,
             patch(
-                "src.cli.utils.command_runner.CommandRunner.run_simple",
-                return_value=("ok", "", 0),
-            ) as run,
+                "src.cli.utils.command_runner.CommandRunner.run_simple"
+            ) as run_simple,
         ):
             get.return_value = _resp(URLSET)
             result = runner.invoke(
@@ -1109,27 +1112,27 @@ class TestImportTrigger:
                 ],
             )
         assert result.exit_code == 0, result.output
-        assert run.call_count == 1
-        command = run.call_args[0][0]
-        assert "archi create" in command
-        assert "--name dev" in command
-        assert "--force" in command
-        # a non-empty --services must be passed (default chatbot)
-        assert "--services chatbot" in command
+        # NOTHING is executed.
+        run_simple.assert_not_called()
+        # A copy-pasteable redeploy command is printed.
+        assert "archi create" in result.output
+        assert "--name dev" in result.output
+        assert "--force" in result.output
+        assert str(cfg) in result.output
+        # No --services is inferred; operator is told to add their own flags.
+        assert (
+            "--services"
+            not in result.output.split("archi create", 1)[1].split("\n", 1)[0]
+        )
+        assert "Add your usual flags" in result.output
 
-    def test_import_forwards_env_file(self, tmp_path):
+    def test_import_command_includes_env_file(self, tmp_path):
         out = tmp_path / "the-list.list"
         cfg = _config_with_input_lists(tmp_path, [str(out)])
         manifest = _sitemap_manifest(tmp_path)
         env = _write(tmp_path, "secrets.env", "X=1\n")
         runner = CliRunner()
-        with (
-            patch("src.cli.tools.sources_builder.requests.get") as get,
-            patch(
-                "src.cli.utils.command_runner.CommandRunner.run_simple",
-                return_value=("ok", "", 0),
-            ) as run,
-        ):
+        with patch("src.cli.tools.sources_builder.requests.get") as get:
             get.return_value = _resp(URLSET)
             result = runner.invoke(
                 _cli(),
@@ -1147,36 +1150,52 @@ class TestImportTrigger:
                 ],
             )
         assert result.exit_code == 0, result.output
-        command = run.call_args[0][0]
-        assert "--env-file" in command
-        assert str(env) in command
+        assert "--env-file" in result.output
+        assert str(env) in result.output
 
     def test_import_without_name_nonzero_before_write(self, tmp_path):
         out = tmp_path / "the-list.list"
         cfg = _config_with_input_lists(tmp_path, [str(out)])
         manifest = _sitemap_manifest(tmp_path)
         runner = CliRunner()
-        with patch("src.cli.utils.command_runner.CommandRunner.run_simple") as run:
-            result = runner.invoke(
-                _cli(),
-                [
-                    "sources",
-                    "build",
-                    str(manifest),
-                    "-c",
-                    str(cfg),
-                    "--import",
-                ],
-            )
+        result = runner.invoke(
+            _cli(),
+            ["sources", "build", str(manifest), "-c", str(cfg), "--import"],
+        )
         assert result.exit_code != 0
-        run.assert_not_called()
+        # error before writing
         assert not out.exists()
 
-    def test_import_without_config_nonzero_before_write(self, tmp_path):
+    def test_import_with_dry_run_nonzero(self, tmp_path):
+        out = tmp_path / "the-list.list"
+        cfg = _config_with_input_lists(tmp_path, [str(out)])
+        manifest = _sitemap_manifest(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            _cli(),
+            [
+                "sources",
+                "build",
+                str(manifest),
+                "-c",
+                str(cfg),
+                "--name",
+                "dev",
+                "--import",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_import_without_config_still_prints_command(self, tmp_path):
+        # Advisory import does NOT require --config; the printed command simply
+        # omits --config when none was given.
         manifest = _sitemap_manifest(tmp_path)
         out = tmp_path / "the-list.list"
         runner = CliRunner()
-        with patch("src.cli.utils.command_runner.CommandRunner.run_simple") as run:
+        with patch("src.cli.tools.sources_builder.requests.get") as get:
+            get.return_value = _resp(URLSET)
             result = runner.invoke(
                 _cli(),
                 [
@@ -1190,44 +1209,19 @@ class TestImportTrigger:
                     "--import",
                 ],
             )
-        assert result.exit_code != 0
-        run.assert_not_called()
+        assert result.exit_code == 0, result.output
+        assert out.exists()
+        assert "archi create --name dev --force" in result.output
+        assert "--config" not in result.output
 
-    def test_import_with_dry_run_nonzero_no_refresh(self, tmp_path):
-        out = tmp_path / "the-list.list"
-        cfg = _config_with_input_lists(tmp_path, [str(out)])
+    def test_import_out_of_config_output_warns(self, tmp_path):
+        # --output is NOT one of the config's input_lists → warn that a redeploy
+        # will not ingest it. The build still succeeds (advisory, not fatal).
+        cfg = _config_with_input_lists(tmp_path, ["weblists/configured.list"])
+        out = tmp_path / "unrelated.list"
         manifest = _sitemap_manifest(tmp_path)
         runner = CliRunner()
-        with patch("src.cli.utils.command_runner.CommandRunner.run_simple") as run:
-            result = runner.invoke(
-                _cli(),
-                [
-                    "sources",
-                    "build",
-                    str(manifest),
-                    "-c",
-                    str(cfg),
-                    "--name",
-                    "dev",
-                    "--import",
-                    "--dry-run",
-                ],
-            )
-        assert result.exit_code != 0
-        run.assert_not_called()
-
-    def test_import_refresh_failure_nonzero(self, tmp_path):
-        out = tmp_path / "the-list.list"
-        cfg = _config_with_input_lists(tmp_path, [str(out)])
-        manifest = _sitemap_manifest(tmp_path)
-        runner = CliRunner()
-        with (
-            patch("src.cli.tools.sources_builder.requests.get") as get,
-            patch(
-                "src.cli.utils.command_runner.CommandRunner.run_simple",
-                return_value=("", "boom", 1),
-            ),
-        ):
+        with patch("src.cli.tools.sources_builder.requests.get") as get:
             get.return_value = _resp(URLSET)
             result = runner.invoke(
                 _cli(),
@@ -1237,11 +1231,59 @@ class TestImportTrigger:
                     str(manifest),
                     "-c",
                     str(cfg),
+                    "--output",
+                    str(out),
                     "--name",
                     "dev",
                     "--import",
                 ],
             )
-        assert result.exit_code != 0
-        # the list was still written before the refresh failed
+        assert result.exit_code == 0, result.output
         assert out.exists()
+        assert "WARNING" in result.output
+        assert "input_lists" in result.output
+
+    def test_import_in_config_output_no_warning(self, tmp_path):
+        # --output that matches a configured input_list (by basename) → no warn.
+        out = tmp_path / "sources.list"
+        cfg = _config_with_input_lists(tmp_path, ["weblists/sources.list"])
+        manifest = _sitemap_manifest(tmp_path)
+        runner = CliRunner()
+        with patch("src.cli.tools.sources_builder.requests.get") as get:
+            get.return_value = _resp(URLSET)
+            result = runner.invoke(
+                _cli(),
+                [
+                    "sources",
+                    "build",
+                    str(manifest),
+                    "-c",
+                    str(cfg),
+                    "--output",
+                    str(out),
+                    "--name",
+                    "dev",
+                    "--import",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        assert "WARNING" not in result.output
+
+
+class TestBuildRedeployCommand:
+    def test_includes_config_and_env_file(self):
+        cmd = sb.build_redeploy_command(
+            "dev", "/etc/archi/config.yaml", "/etc/archi/.env"
+        )
+        assert cmd == (
+            "archi create --name dev --config /etc/archi/config.yaml "
+            "--env-file /etc/archi/.env --force"
+        )
+
+    def test_omits_optional_parts(self):
+        cmd = sb.build_redeploy_command("dev", None, None)
+        assert cmd == "archi create --name dev --force"
+
+    def test_shell_quotes_spaces(self):
+        cmd = sb.build_redeploy_command("dev", "/path with space/c.yaml", None)
+        assert "'/path with space/c.yaml'" in cmd

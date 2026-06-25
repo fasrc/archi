@@ -41,12 +41,12 @@
 ## 9. CLI wiring
 
 - [x] 9.1 Tests (`click.testing.CliRunner`): `archi sources build <manifest> -c <config>` happy path writes the list; `--dry-run` writes nothing; malformed manifest → non-zero exit.
-- [x] 9.2 Add `@click.group() sources()` + nested `@click.command() build()` (`@click.argument('manifest')`, `--config/-c`, `--output`, `--name`, `--services` (default `chatbot`), `--env-file`, `--import`, `--dry-run`) in `src/cli/cli_main.py`; register via `cli.add_command(sources)` beside the others (`~:654-660`); delegate to `sources_builder.sources_build_entry(...)`.
+- [x] 9.2 Add `@click.group() sources()` + nested `@click.command() build()` (`@click.argument('manifest')`, `--config/-c`, `--output`, `--name`, `--env-file`, `--import`, `--dry-run`) in `src/cli/cli_main.py`; register via `cli.add_command(sources)` beside the others (`~:654-660`); delegate to `sources_builder.sources_build_entry(...)`.
 
-## 10. Import trigger
+## 10. Import (advisory redeploy hint)
 
-- [x] 10.1 Tests: `--import --name dev -c <config>` shells `archi create --name dev --config <config> --services chatbot --force` exactly once (mock `CommandRunner.run_simple`); assert a non-empty `--services` is in the argv (so the refresh passes `validate_services_selection`); `--import` without `--name` → non-zero before write; `--import` without `-c/--config` → non-zero before write; `--import` + `--dry-run` → non-zero, no refresh; refresh failure → non-zero exit.
-- [x] 10.2 Implement the shell-out via `src/cli/utils/command_runner.py` (`CommandRunner.run_simple`), including a non-empty `--services` (default `chatbot`) and forwarding `--env-file` when present.
+- [x] 10.1 Tests: `--import --name dev -c <config>` PRINTS `archi create --name dev --config <config> --force` and runs NOTHING (mock `CommandRunner.run_simple`, assert not called); `--import` without `--name` → non-zero before write; `--import` + `--dry-run` → non-zero; `--import` with an out-of-config `--output` → build succeeds with a warning; in-config `--output` → no warning. (Advisory rework: auto-`create --force` was rejected as destructive.)
+- [x] 10.2 Implement `build_redeploy_command()` (prints `archi create … --force` via `shlex.quote`, omitting absent `--config`/`--env-file`) and the out-of-config `--output` warning; no subprocess, no `--services` inference.
 
 ## 11. Dependency declaration
 

@@ -190,10 +190,9 @@ See [Benchmarking](benchmarking.md) for full details on query format and evaluat
 
 ### `archi sources build`
 
-Regenerate a web `sources.list` from a typed YAML **manifest** of seeds, and
-optionally trigger a re-ingest. This replaces the manual workflow of downloading
-sitemaps, extracting `<loc>` URLs by hand, and concatenating per-site `.list`
-files.
+Regenerate a web `sources.list` from a typed YAML **manifest** of seeds. This
+replaces the manual workflow of downloading sitemaps, extracting `<loc>` URLs by
+hand, and concatenating per-site `.list` files.
 
 ```bash
 archi sources build <manifest> [OPTIONS]
@@ -202,12 +201,11 @@ archi sources build <manifest> [OPTIONS]
 | Option | Description | Default |
 |--------|-------------|---------|
 | `<manifest>` | Path to the YAML manifest of seed entries (positional, required) | — |
-| `--config`, `-c` | Deployment config; resolves the default `--output` and feeds `--import` | — |
+| `--config`, `-c` | Deployment config; resolves the default `--output` and the `--import` hint | — |
 | `--output`, `-o` | Target `sources.list` path (overrides the config-derived default) | — |
-| `--name`, `-n` | Deployment name to refresh when `--import` is set | — |
-| `--services`, `-s` | Services for the `--import` refresh (must be non-empty) | `chatbot` |
-| `--env-file`, `-e` | Secrets `.env` forwarded to the `--import` refresh | — |
-| `--import` | Re-ingest after writing (requires `--name` and `-c/--config`; not with `--dry-run`) | Off |
+| `--name`, `-n` | Deployment name for the `--import` redeploy hint (required with `--import`) | — |
+| `--env-file`, `-e` | Secrets `.env` included in the `--import` redeploy hint | — |
+| `--import` | After writing, **print** a redeploy command to ingest the list (advisory; runs nothing). Requires `--name`; not with `--dry-run` | Off |
 | `--dry-run` | Print a unified diff against the existing list and write nothing | Off |
 
 **Output path resolution.** With `--output` the given path is the target. Without
@@ -225,6 +223,16 @@ generated block winning position (an extras line duplicating a generated URL
 appears once). Any fetch failure (non-200, timeout, malformed XML/HTML) aborts
 the whole build and leaves the existing list untouched.
 
+**`--import` is advisory.** It does **not** run anything. After a successful
+write it prints a copy-pasteable redeploy command —
+`archi create --name <deployment> [--config <config>] [--env-file <env>] --force`
+— and reminds you to append your usual flags (`--services …`, `--podman`,
+`--hostmode`, `--gpu-ids`, `--tag`). Auto-running a forced recreate is unsafe: it
+removes the deployment directory and re-renders compose for only the named
+services (dropping others) while ignoring the runtime flags, so you run the
+redeploy yourself. If `--output` is not one of the config's `input_lists`, the
+command warns that a redeploy will not ingest the file.
+
 **Examples:**
 
 ```bash
@@ -237,7 +245,7 @@ archi sources build sources.manifest.yaml -c config.yaml
 # Write to an explicit path
 archi sources build sources.manifest.yaml -o ./weblists/sources.list
 
-# Write and re-ingest the `dev` deployment
+# Write, then print a redeploy command for the `dev` deployment
 archi sources build sources.manifest.yaml -c config.yaml \
   --name dev --env-file .secrets.env --import
 ```

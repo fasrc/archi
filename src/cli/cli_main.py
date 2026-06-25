@@ -660,16 +660,14 @@ def sources():
 @click.option('--output', '-o', type=str, default=None,
               help="Target sources.list path (overrides config-derived default)")
 @click.option('--name', '-n', type=str, default=None,
-              help="Deployment name to refresh with --import")
-@click.option('--services', '-s', type=str, default="chatbot",
-              help="Services for the --import refresh (must be non-empty; default: chatbot)")
+              help="Deployment name for the --import redeploy hint (required with --import)")
 @click.option('--env-file', '-e', type=str, default=None,
-              help="Path to .env file forwarded to the --import refresh")
+              help="Path to .env file included in the --import redeploy hint")
 @click.option('--import', 'do_import', is_flag=True,
-              help="Re-ingest after writing (requires --name and -c/--config; not with --dry-run)")
+              help="After writing, PRINT a redeploy command to ingest the list (advisory; runs nothing). Requires --name; not with --dry-run")
 @click.option('--dry-run', 'dry_run', is_flag=True,
               help="Print a unified diff against the existing list and write nothing")
-def sources_build(manifest, config, output, name, services, env_file, do_import, dry_run):
+def sources_build(manifest, config, output, name, env_file, do_import, dry_run):
     """Build a sources.list from a typed YAML MANIFEST of seeds.
 
     The MANIFEST is a YAML list of seed entries, each with a ``type`` of
@@ -684,7 +682,6 @@ def sources_build(manifest, config, output, name, services, env_file, do_import,
         config=config,
         output=output,
         name=name,
-        services=services,
         env_file=env_file,
         do_import=do_import,
         dry_run=dry_run,

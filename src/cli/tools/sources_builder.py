@@ -22,6 +22,7 @@ that wins position over ``manual-extras.list``.
 
 import difflib
 import fnmatch
+import os
 import shlex
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -554,6 +555,24 @@ def _collect_input_lists(config_path: str) -> List[str]:
     return out
 
 
+def _output_in_input_lists(output: str, input_lists: List[str]) -> bool:
+    """Return True if ``output`` refers to one of the configured ``input_lists``.
+
+    Matches on resolved absolute path OR on basename — the runtime stages each
+    configured list into the deployment as ``weblists/<basename>`` and reads it
+    by basename, so two paths with the same basename refer to the same staged
+    list even if the directories differ.
+    """
+    out_abs = os.path.abspath(output)
+    out_base = os.path.basename(output)
+    for entry in input_lists:
+        if os.path.abspath(entry) == out_abs:
+            return True
+        if os.path.basename(entry) == out_base:
+            return True
+    return False
+
+
 def resolve_output_path(output: Optional[str], config: Optional[str]) -> str:
     """Resolve the target list path.
 
@@ -603,45 +622,30 @@ def compute_diff(final_lines: List[str], output_path: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# 10. Import trigger (shell out to `archi create … --force`)
+# 10. Import advisory (PRINT a redeploy command — execute nothing)
 # --------------------------------------------------------------------------- #
-def trigger_import(
+def build_redeploy_command(
     name: str,
-    config: str,
-    services: str,
+    config: Optional[str],
     env_file: Optional[str],
-) -> None:
-    """Trigger a deployment refresh equivalent to ``archi create … --force``.
+) -> str:
+    """Return a copy-pasteable ``archi create … --force`` redeploy command.
 
-    ``archi create`` requires a single ``--config`` AND a non-empty
-    ``--services`` (it calls ``validate_services_selection``), so ``services``
-    must be non-empty (default ``chatbot``). ``--env-file`` is forwarded when
-    given. Raises :class:`click.ClickException` on a non-zero refresh exit.
+    This is ADVISORY ONLY: ``--import`` prints this string and executes nothing.
+    Auto-running ``archi create --force`` is destructive — a forced recreate
+    rmtree's the deployment dir and re-renders compose for only the named
+    services (dropping grafana/uploader/grader) while ignoring podman/host/gpu/
+    tag — so the operator must run it themselves, adding their usual flags. The
+    command deliberately does NOT include ``--services`` or runtime flags; the
+    caller's accompanying note instructs the operator to append them.
     """
-    parts = [
-        "archi",
-        "create",
-        "--name",
-        name,
-        "--config",
-        config,
-        "--services",
-        services,
-    ]
+    parts = ["archi", "create", "--name", name]
+    if config:
+        parts += ["--config", config]
     if env_file:
         parts += ["--env-file", env_file]
     parts.append("--force")
-    command = " ".join(shlex.quote(p) for p in parts)
-
-    # Imported lazily: CommandRunner pulls in src.utils (flask/rbac), which the
-    # pure-function paths of this module must not require to import.
-    from src.cli.utils.command_runner import CommandRunner
-
-    stdout, stderr, exit_code = CommandRunner.run_simple(command)
-    if exit_code != 0:
-        raise click.ClickException(
-            f"Import refresh failed (exit {exit_code}): {stderr or stdout}"
-        )
+    return " ".join(shlex.quote(p) for p in parts)
 
 
 # --------------------------------------------------------------------------- #
@@ -652,7 +656,6 @@ def sources_build_entry(
     config: Optional[str],
     output: Optional[str],
     name: Optional[str],
-    services: str,
     env_file: Optional[str],
     do_import: bool,
     dry_run: bool,
@@ -661,13 +664,13 @@ def sources_build_entry(
     optional import. Raises :class:`click.ClickException` on any user-facing
     error so the CLI exits non-zero without writing a partial list.
     """
-    # --import / --dry-run are mutually exclusive; --import needs name + config.
+    # --import is ADVISORY (prints a redeploy command, runs nothing). It is
+    # mutually exclusive with --dry-run and still requires --name so the printed
+    # command names a deployment.
     if do_import and dry_run:
         raise click.ClickException("--import is incompatible with --dry-run.")
     if do_import and not name:
         raise click.ClickException("--import requires --name <deployment>.")
-    if do_import and not config:
-        raise click.ClickException("--import requires -c/--config.")
 
     # Resolve the target path BEFORE any network work so an ambiguous output
     # fails fast and writes nothing.
@@ -706,5 +709,29 @@ def sources_build_entry(
     click.echo(f"Wrote {len(final_lines)} URLs to {target}")
 
     if do_import:
-        trigger_import(name, config, services, env_file)
-        click.echo(f"Triggered import refresh for deployment '{name}'")
+        # If an explicit --output is not one of the config's input_lists, the
+        # regenerated file is not referenced by that config and a redeploy will
+        # NOT ingest it. Warn rather than fail (the operator may have a reason).
+        if output and config:
+            configured = _collect_input_lists(config)
+            if not _output_in_input_lists(output, configured):
+                click.echo(
+                    click.style(
+                        f"WARNING: --output {output} is not listed in "
+                        f"{config}'s data_manager.sources.links.input_lists, so "
+                        f"the redeploy below will NOT ingest it. Add it to the "
+                        f"config's input_lists (or use the config-resolved "
+                        f"default) if you want it ingested.",
+                        fg="yellow",
+                    ),
+                    err=True,
+                )
+        # Advisory only: print a copy-pasteable redeploy command; run nothing.
+        command = build_redeploy_command(name, config, env_file)
+        click.echo("To ingest the regenerated list, redeploy the deployment yourself:")
+        click.echo(f"  {command}")
+        click.echo(
+            "Add your usual flags (e.g. --services chatbot,grafana,uploader, "
+            "--podman, --hostmode, --gpu-ids, --tag) — a forced recreate "
+            "rebuilds the deployment and this command does NOT infer them."
+        )
