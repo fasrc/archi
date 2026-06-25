@@ -208,6 +208,70 @@ class TestSitemapExpansion:
             with pytest.raises(sb.FetchError):
                 sb.expand_sitemap("https://example.com/s.xml")
 
+    def test_inline_nested_index_buried_loc_not_emitted_or_fetched(self):
+        # A top-level <sitemapindex> whose <sitemap> contains an INLINE nested
+        # <sitemapindex><sitemap><loc>buried.xml</loc></sitemap></sitemapindex>.
+        # Only the direct <sitemap> child's own <loc> (child.xml) is a fetch
+        # target; the buried <loc> must never be emitted or fetched (D8).
+        index = """<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap>
+    <loc>https://example.com/child.xml</loc>
+    <sitemapindex>
+      <sitemap><loc>https://example.com/buried.xml</loc></sitemap>
+    </sitemapindex>
+  </sitemap>
+</sitemapindex>"""
+        child = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/page</loc></url>
+</urlset>"""
+        bodies = {
+            "https://example.com/index.xml": index,
+            "https://example.com/child.xml": child,
+        }
+        fetched = []
+
+        def fake_get(url, *a, **k):
+            fetched.append(url)
+            return _resp(bodies[url])
+
+        with patch("src.cli.tools.sources_builder.requests.get", side_effect=fake_get):
+            urls = sb.expand_sitemap("https://example.com/index.xml")
+        assert "https://example.com/buried.xml" not in fetched
+        assert urls == ["https://example.com/page"]
+
+    def test_unexpected_root_aborts(self):
+        with patch("src.cli.tools.sources_builder.requests.get") as get:
+            get.return_value = _resp('<?xml version="1.0"?><rss><channel/></rss>')
+            with pytest.raises(sb.FetchError) as exc:
+                sb.expand_sitemap("https://example.com/feed.xml")
+        assert "rss" in str(exc.value).lower()
+
+    def test_doctype_entity_rejected(self):
+        # billion-laughs-style payload: a DTD with an <!ENTITY> declaration.
+        evil = """<?xml version="1.0"?>
+<!DOCTYPE urlset [
+  <!ENTITY lol "lol">
+  <!ENTITY lol2 "&lol;&lol;&lol;">
+]>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/&lol2;</loc></url>
+</urlset>"""
+        with patch("src.cli.tools.sources_builder.requests.get") as get:
+            get.return_value = _resp(evil)
+            with pytest.raises(sb.FetchError) as exc:
+                sb.expand_sitemap("https://example.com/s.xml")
+        assert "entity" in str(exc.value).lower()
+
+    def test_oversize_body_rejected(self):
+        big = "x" * (sb._MAX_FETCH_BYTES + 1)
+        with patch("src.cli.tools.sources_builder.requests.get") as get:
+            get.return_value = _resp(big)
+            with pytest.raises(sb.FetchError) as exc:
+                sb.expand_sitemap("https://example.com/s.xml")
+        assert "cap" in str(exc.value).lower()
+
 
 # --------------------------------------------------------------------------- #
 # 3. Glob filtering
@@ -229,6 +293,10 @@ class TestGlobFiltering:
     def test_exclude_only(self):
         urls = ["https://x.test/a", "https://x.test/skip"]
         assert sb.apply_globs(urls, [], ["*/skip"]) == ["https://x.test/a"]
+
+    def test_include_with_no_matches_drops_all(self):
+        urls = ["https://x.test/a", "https://x.test/b"]
+        assert sb.apply_globs(urls, ["*/docs/*"], []) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -319,6 +387,29 @@ class TestCrawl:
                     "https://slurm.test/", depth=1, include=[], exclude=[]
                 )
 
+    def test_cycle_each_page_fetched_once(self):
+        # A -> B and B -> A. Even with depth deep enough to revisit, the
+        # visited-page guard fetches each page exactly once (no infinite loop).
+        page_a = '<html><body><a href="https://slurm.test/b">b</a></body></html>'
+        page_b = '<html><body><a href="https://slurm.test/">a</a></body></html>'
+        bodies = {
+            "https://slurm.test/": page_a,
+            "https://slurm.test/b": page_b,
+        }
+        counts = {}
+
+        def fake_get(url, *a, **k):
+            counts[url] = counts.get(url, 0) + 1
+            return _resp(bodies[url])
+
+        with patch("src.cli.tools.sources_builder.requests.get", side_effect=fake_get):
+            urls = sb.crawl_same_host(
+                "https://slurm.test/", depth=5, include=[], exclude=[]
+            )
+        # Each page fetched at most once despite the A<->B cycle.
+        assert all(c == 1 for c in counts.values()), counts
+        assert "https://slurm.test/b" in urls
+
 
 # --------------------------------------------------------------------------- #
 # 5. Literal passthrough + the seed dispatcher
@@ -398,23 +489,27 @@ class TestNormalize:
             == "https://x.test/CaseSensitive"
         )
 
+    def test_query_preserved(self):
+        # The query string is part of resource identity and must survive
+        # normalization (only the fragment is dropped).
+        assert (
+            sb.normalize_url("HTTPS://X.test/p?id=7&q=A#frag")
+            == "https://x.test/p?id=7&q=A"
+        )
 
-class TestRenderList:
-    def test_cross_seed_dedupe_first_seen_order(self):
-        seed_urls = [
-            "https://x.test/b",
-            "https://x.test/a",
-            "https://x.test/b",  # dup
-        ]
-        rendered = sb.render_list(seed_urls)
-        assert rendered.splitlines() == [
-            "https://x.test/b",
-            "https://x.test/a",
-        ]
 
-    def test_render_trailing_newline(self):
-        rendered = sb.render_list(["https://x.test/a"])
-        assert rendered.endswith("\n")
+class TestRenderDedupe:
+    def test_cross_seed_dedupe_first_seen_order(self, tmp_path):
+        out = tmp_path / "sources.list"  # no manual-extras sibling
+        lines = sb.append_manual_extras(
+            [
+                "https://x.test/b",
+                "https://x.test/a",
+                "https://x.test/b",  # dup
+            ],
+            str(out),
+        )
+        assert lines == ["https://x.test/b", "https://x.test/a"]
 
 
 class TestManualExtras:
@@ -708,10 +803,13 @@ class TestImportTrigger:
         cfg = _config_with_input_lists(tmp_path, [str(out)])
         manifest = _sitemap_manifest(tmp_path)
         runner = CliRunner()
-        with patch("src.cli.tools.sources_builder.requests.get") as get, patch(
-            "src.cli.utils.command_runner.CommandRunner.run_simple",
-            return_value=("ok", "", 0),
-        ) as run:
+        with (
+            patch("src.cli.tools.sources_builder.requests.get") as get,
+            patch(
+                "src.cli.utils.command_runner.CommandRunner.run_simple",
+                return_value=("ok", "", 0),
+            ) as run,
+        ):
             get.return_value = _resp(URLSET)
             result = runner.invoke(
                 _cli(),
@@ -741,10 +839,13 @@ class TestImportTrigger:
         manifest = _sitemap_manifest(tmp_path)
         env = _write(tmp_path, "secrets.env", "X=1\n")
         runner = CliRunner()
-        with patch("src.cli.tools.sources_builder.requests.get") as get, patch(
-            "src.cli.utils.command_runner.CommandRunner.run_simple",
-            return_value=("ok", "", 0),
-        ) as run:
+        with (
+            patch("src.cli.tools.sources_builder.requests.get") as get,
+            patch(
+                "src.cli.utils.command_runner.CommandRunner.run_simple",
+                return_value=("ok", "", 0),
+            ) as run,
+        ):
             get.return_value = _resp(URLSET)
             result = runner.invoke(
                 _cli(),
@@ -836,9 +937,12 @@ class TestImportTrigger:
         cfg = _config_with_input_lists(tmp_path, [str(out)])
         manifest = _sitemap_manifest(tmp_path)
         runner = CliRunner()
-        with patch("src.cli.tools.sources_builder.requests.get") as get, patch(
-            "src.cli.utils.command_runner.CommandRunner.run_simple",
-            return_value=("", "boom", 1),
+        with (
+            patch("src.cli.tools.sources_builder.requests.get") as get,
+            patch(
+                "src.cli.utils.command_runner.CommandRunner.run_simple",
+                return_value=("", "boom", 1),
+            ),
         ):
             get.return_value = _resp(URLSET)
             result = runner.invoke(

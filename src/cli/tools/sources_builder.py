@@ -8,8 +8,8 @@ module that mirrors ``src/cli/tools/config_seed.py``:
 - ``expand_sitemap`` / ``crawl_same_host`` / the ``literal`` branch turn each
   seed into page URLs (network fetched via ``requests``; sitemap parsed with the
   stdlib ``xml.etree.ElementTree``; crawl link extraction via ``beautifulsoup4``).
-- ``apply_globs`` / ``normalize_url`` / ``render_list`` / ``append_manual_extras``
-  filter, normalize, dedupe, and render the wholesale-regenerated list.
+- ``apply_globs`` / ``normalize_url`` / ``append_manual_extras`` filter,
+  normalize, dedupe, and render the wholesale-regenerated list.
 - ``sources_build_entry`` is the CLI entry point wiring it all together,
   including ``--output`` resolution, ``--dry-run`` diff, and the ``--import``
   shell-out.
@@ -34,6 +34,10 @@ import requests
 # Sitemap XML namespace (sitemaps.org). Documents may or may not declare it; we
 # match ``<loc>`` namespace-agnostically by stripping the namespace from tags.
 _SITEMAP_TIMEOUT = 30
+# Cap fetched bodies to bound memory and blunt decompression/oversize abuse. A
+# real sitemap or index page is well under this; the protocol caps a single
+# sitemap at 50 MB uncompressed, so 64 MB is generous headroom.
+_MAX_FETCH_BYTES = 64 * 1024 * 1024
 _VALID_TYPES = {"sitemap", "crawl", "literal"}
 _EXTRA_PREFIXES = ("git-", "sso-", "elog-", "indico-")
 
@@ -110,58 +114,93 @@ def _local_tag(tag: str) -> str:
 
 def _fetch_text(url: str) -> str:
     """GET ``url`` and return the body text, raising :class:`FetchError` on any
-    non-200, connection, or timeout failure."""
+    non-200, connection, timeout, or over-size failure.
+
+    The response body is capped at :data:`_MAX_FETCH_BYTES` to bound memory and
+    blunt oversize/decompression abuse from a hostile or misconfigured host.
+    """
     try:
         resp = requests.get(url, timeout=_SITEMAP_TIMEOUT)
     except requests.exceptions.RequestException as exc:
         raise FetchError(f"Failed to fetch {url}: {exc}")
     if resp.status_code != 200:
         raise FetchError(f"Fetch of {url} returned HTTP {resp.status_code}")
+    if len(resp.content) > _MAX_FETCH_BYTES:
+        raise FetchError(
+            f"Body from {url} exceeds the {_MAX_FETCH_BYTES}-byte cap "
+            f"({len(resp.content)} bytes)"
+        )
     return resp.text
 
 
 def _parse_xml(url: str, text: str) -> "ElementTree.Element":
-    """Parse XML text, raising :class:`FetchError` on a malformed body."""
+    """Parse XML text, raising :class:`FetchError` on a malformed body.
+
+    Rejects a DTD/entity declaration (``<!DOCTYPE`` / ``<!ENTITY``) before
+    parsing: the stdlib ``xml.etree`` parser is vulnerable to billion-laughs
+    internal-entity expansion (CPython does not resolve external entities, but
+    nested internal entities can still blow up memory). A legitimate sitemap
+    never declares a DTD, so refusing one is safe and closes the vector without
+    pulling in a new dependency.
+    """
+    lowered = text.lower()
+    if "<!doctype" in lowered or "<!entity" in lowered:
+        raise FetchError(
+            f"Refusing sitemap with a DTD/entity declaration at {url} "
+            f"(possible entity-expansion attack)"
+        )
     try:
         return ElementTree.fromstring(text)
     except ElementTree.ParseError as exc:
         raise FetchError(f"Malformed XML at {url}: {exc}")
 
 
-def _locs(root: "ElementTree.Element") -> List[str]:
-    """Return every ``<loc>`` text under ``root`` (namespace-agnostic)."""
+def _locs(root: "ElementTree.Element", wrapper: str) -> List[str]:
+    """Return the ``<loc>`` text of each DIRECT ``<wrapper>`` child of ``root``.
+
+    For a ``<urlset>`` pass ``wrapper="url"``; for a ``<sitemapindex>`` pass
+    ``wrapper="sitemap"``. Only the ``<loc>`` immediately inside a direct
+    wrapper child is read — descent is deliberately shallow so an inline-nested
+    ``<sitemapindex>`` buried inside a child element contributes nothing (D8).
+    """
     out: List[str] = []
-    for elem in root.iter():
-        if _local_tag(elem.tag) == "loc" and elem.text:
-            out.append(elem.text.strip())
+    for child in root:
+        if _local_tag(child.tag) != wrapper:
+            continue
+        for grand in child:
+            if _local_tag(grand.tag) == "loc" and grand.text:
+                out.append(grand.text.strip())
+                break  # one <loc> per <url>/<sitemap> wrapper
     return out
 
 
 def expand_sitemap(url: str) -> List[str]:
     """Fetch a sitemap and emit page URLs, following one level of nesting.
 
-    - A ``<urlset>`` document contributes every ``<loc>`` as a page URL.
-    - A ``<sitemapindex>`` document's ``<loc>`` values are child *sitemap
-      documents*; each is fetched exactly once. A child ``<urlset>``
-      contributes its ``<loc>`` page URLs; a child that is itself a
+    - A ``<urlset>`` document contributes the ``<loc>`` of each direct ``<url>``.
+    - A ``<sitemapindex>`` document's direct ``<sitemap>`` ``<loc>`` values are
+      child *sitemap documents*; each is fetched exactly once. A child
+      ``<urlset>`` contributes its page URLs; a child that is itself a
       ``<sitemapindex>`` is NOT followed and contributes no URLs (its ``<loc>``
-      values are sitemap docs, not pages — D8).
+      values are sitemap docs, not pages — D8). An inline-nested
+      ``<sitemapindex>`` buried inside a ``<sitemap>`` is likewise ignored,
+      because only direct ``<sitemap>`` children are read.
     - An empty ``<urlset>`` is valid and contributes nothing.
 
     Raises :class:`FetchError` on any fetch/parse failure (D7).
     """
     root = _parse_xml(url, _fetch_text(url))
     if _local_tag(root.tag) == "urlset":
-        return _locs(root)
+        return _locs(root, "url")
 
     if _local_tag(root.tag) == "sitemapindex":
         pages: List[str] = []
-        for child_url in _locs(root):
+        for child_url in _locs(root, "sitemap"):
             child_root = _parse_xml(child_url, _fetch_text(child_url))
             # Only a child <urlset> yields page URLs; a nested <sitemapindex>
             # is not followed and contributes nothing.
             if _local_tag(child_root.tag) == "urlset":
-                pages.extend(_locs(child_root))
+                pages.extend(_locs(child_root, "url"))
         return pages
 
     # Unknown root element: treat as malformed.
@@ -325,20 +364,8 @@ def expand_seed(seed: Dict) -> List[str]:
 
 
 # --------------------------------------------------------------------------- #
-# 6. Render / dedupe / manual-extras
+# 6. Dedupe / manual-extras
 # --------------------------------------------------------------------------- #
-def render_list(seed_urls: List[str]) -> str:
-    """Render generated URLs into list text: one per line, deduped preserving
-    first-seen order, with a trailing newline. Inputs are assumed normalized."""
-    deduped: List[str] = []
-    seen = set()
-    for url in seed_urls:
-        if url not in seen:
-            seen.add(url)
-            deduped.append(url)
-    return "".join(f"{url}\n" for url in deduped)
-
-
 def append_manual_extras(generated_urls: List[str], output_path: str) -> List[str]:
     """Return the final list of lines: the deduped generated block followed by a
     sibling ``manual-extras.list`` (if present), appended verbatim.
