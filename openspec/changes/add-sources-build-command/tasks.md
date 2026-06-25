@@ -60,5 +60,5 @@
 
 ## 13. Validate & gate
 
-- [ ] 13.1 `openspec validate add-sources-build-command --strict` passes.
-- [ ] 13.2 Run `scripts/gate.sh` locally; confirm tests pass and diff-cover ≥ 80% on changed lines (network paths covered via mocks; note hard-to-cover lines).
+- [x] 13.1 `openspec validate add-sources-build-command --strict` passes.
+- [x] 13.2 CI `gate` is the verification oracle (no full local conda toolchain): PR #37 `gate` is GREEN — full unit suite passes and diff-cover reports 89% on changed lines (sources_builder.py 97.6%), above the 80% floor. Remaining uncovered lines are defensive guards (unexpected sitemap root, malformed-HTML guard, visited-page short-circuit, unreachable dispatcher branch, non-list input_lists).
