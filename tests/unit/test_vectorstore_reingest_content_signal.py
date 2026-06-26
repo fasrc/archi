@@ -14,6 +14,7 @@ will start passing once ``_collect_stale_hashes`` consults the content signal, a
 which point the strict marker fails the gate and must be removed in the GREEN phase.
 """
 
+import hashlib
 import importlib.util
 import sys
 import types
@@ -152,3 +153,39 @@ def test_collect_stale_hashes_detects_changed_content_same_filename(
     stale = mgr._collect_stale_hashes(files_in_data, {"h1"})
 
     assert stale == {"h1"}
+
+
+def test_collect_stale_hashes_unchanged_content_is_not_stale(monkeypatch, tmp_path):
+    """The no-change fast path is preserved: identical content + filename + hash
+    yields an EMPTY stale set, so nothing is removed or re-embedded.
+
+    This passes TODAY (filename-only detection sees an unchanged basename) and MUST
+    keep passing once the content signal is consulted: the signal recorded at the
+    previous ingest equals the signal freshly computed from the unchanged on-disk
+    bytes, so the content check also reports "not stale". An empty stale set is the
+    precondition for the ``hashes_in_data == hashes_in_vstore and not stale_hashes``
+    short-circuit in ``update_vectorstore`` that skips all removal/re-embed work.
+    """
+    mgr = _manager()
+
+    # On-disk file is UNCHANGED since the previous ingest.
+    page = tmp_path / "page.md"
+    page.write_text("the original body text, byte-for-byte unchanged")
+    files_in_data = {"h1": str(page)}
+
+    # Filename is UNCHANGED -> the #38 basename heuristic says "not stale".
+    monkeypatch.setattr(mgr, "_collect_embedded_filenames", lambda: {"h1": {"page.md"}})
+    # Content signal persisted at the previous ingest MATCHES the current on-disk
+    # bytes. The GREEN content-signal computation (tasks 2-3) MUST hash the file
+    # bytes the same way for an unchanged document to compare equal.
+    embedded_signal = hashlib.md5(page.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        mgr,
+        "_collect_embedded_content_signals",
+        lambda: {"h1": {embedded_signal}},
+        raising=False,
+    )
+
+    stale = mgr._collect_stale_hashes(files_in_data, {"h1"})
+
+    assert stale == set()

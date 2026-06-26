@@ -1,1 +1,1 @@
-openspec/changes/add-hierarchical-rerank-retrieval/tasks.md
+openspec/changes/fix-issue-39-content-hash-staleness/tasks.md
