@@ -230,11 +230,16 @@ class CategorizationProcessor:
         label = _select_category(response, self.categories)
         if label:
             return label
+        raw_response = getattr(response, "content", response)
+        raw_len = len(
+            raw_response if isinstance(raw_response, str) else str(raw_response)
+        )
         logger.debug(
-            "Categorization model returned no in-list category for %s (raw=%r); "
-            "marking uncategorized.",
+            "Categorization model returned no in-list category for %s "
+            "(response_len=%d, tail=%r); marking uncategorized.",
             _resource_label(resource),
-            getattr(response, "content", response),
+            raw_len,
+            _truncate_for_log(raw_response),
         )
         return UNCATEGORIZED
 
@@ -443,6 +448,38 @@ def _coerce_text(content: Any) -> str:
     return ""
 
 
+_LOG_TAIL_CHARS = 200
+
+
+def _truncate_for_log(value: Any, limit: int = _LOG_TAIL_CHARS) -> str:
+    """Return at most ``limit`` trailing characters of ``value`` (stringified), so a
+    debug log never dumps a full, possibly very large, reasoning-model response. The
+    tail is kept because the model's answer is at the end of its output."""
+    text = value if isinstance(value, str) else str(value)
+    if len(text) <= limit:
+        return text
+    return "…" + text[-limit:]
+
+
+# How many non-empty trailing lines of a response to treat as the model's "answer".
+# Bounding the scan stops a category token that appears only in earlier chain-of-thought
+# from being returned when the final answer names no category.
+_ANSWER_LOOKBACK_LINES = 3
+
+# A *blanket* refusal in the final answer (all named labels fall under a negation, e.g.
+# "None of compute, storage, or policy applies") must map to uncategorized rather than
+# the last label it happens to mention. Plain negation ("not storage, it is compute") is
+# deliberately NOT matched here, so an assertion that negates one label and names another
+# still resolves to the asserted label.
+_REFUSAL_RE = re.compile(
+    r"\b(?:none of|neither|not applicable|n/?a\b"
+    r"|no (?:matching |valid |suitable )?categor"
+    r"|does not (?:apply|fit|match)|cannot (?:be )?categor"
+    r"|unable to (?:categor|classif))",
+    re.IGNORECASE,
+)
+
+
 def _select_category(response: Any, categories: Sequence[str]) -> str:
     """Resolve the chosen category from a model response, tolerant of reasoning
     models that "think out loud" before answering.
@@ -454,11 +491,14 @@ def _select_category(response: Any, categories: Sequence[str]) -> str:
 
     1. Exact match on the whole cleaned response — the bare single-token reply from
        a non-reasoning model (unchanged behavior).
-    2. Otherwise scan non-empty lines bottom-up and, within the lowest line that
-       mentions any category, return the LAST-occurring category token. This
-       recovers a bare trailing label (``"storage"``), a prefixed final line
-       (``"Category: storage"``), and a negated reasoning line
-       (``"not software, it's job-scheduling"`` -> ``job-scheduling``).
+    2. Otherwise scan only the last ``_ANSWER_LOOKBACK_LINES`` non-empty lines (the
+       model's answer) bottom-up and, within the lowest line that mentions any
+       category, return the LAST-occurring category token. This recovers a bare
+       trailing label (``"storage"``), a prefixed final line (``"Category: storage"``),
+       and a negated-then-asserted line (``"not storage, it is compute"`` ->
+       ``compute``). A category named only in earlier reasoning is NOT consulted, and a
+       blanket refusal (``"None of compute, storage, or policy applies"``) yields
+       ``uncategorized`` instead of its last-mentioned label.
 
     Matching is case-insensitive and word-boundaried (so ``compute`` never matches
     inside ``computer``); the canonical category as configured is returned. Returns
@@ -477,7 +517,12 @@ def _select_category(response: Any, categories: Sequence[str]) -> str:
     if cleaned.lower() in canon:
         return canon[cleaned.lower()]
 
-    for line in reversed([ln for ln in raw.splitlines() if ln.strip()]):
+    lines = [ln for ln in raw.splitlines() if ln.strip()]
+    for line in reversed(lines[-_ANSWER_LOOKBACK_LINES:]):
+        if _REFUSAL_RE.search(line):
+            # A blanket refusal in the model's final answer must not be mined for a
+            # category; the model explicitly declined, so map it to uncategorized.
+            return ""
         low = line.lower()
         best: Optional[tuple] = None  # (position, canonical) — last token in line wins
         for cat_low, cat in canon.items():
