@@ -15,6 +15,26 @@ The tool registry is introspected on an uninitialized instance built via
 import src.archi.pipelines as pipelines
 from src.archi.pipelines.agents.base_react import BaseReActAgent
 
+
+def _agent_with_selected(tool_names):
+    """An uninitialized FASRCDocsAgent with just enough wired to BUILD its static
+    tools. The tool factories only capture ``catalog_service`` (they call it at tool
+    *invocation*, not at build), so a stub object suffices and no live deployment is
+    needed."""
+    agent = pipelines.FASRCDocsAgent.__new__(pipelines.FASRCDocsAgent)
+    agent.catalog_service = object()
+    agent._store_documents = None
+    agent._store_tool_input = None
+    agent.enable_vector_tools = False
+    agent.selected_tool_names = list(tool_names)
+    agent._static_tools = None
+    return agent
+
+
+def _built_tool_names(agent):
+    return {getattr(t, "name", None) for t in agent.rebuild_static_tools()}
+
+
 RETRIEVAL_TOOLS = {
     "search_vectorstore_hybrid",
     "search_local_files",
@@ -94,6 +114,45 @@ def test_registry_has_no_cms_tools_even_with_monit_secret(monkeypatch):
 def test_no_cms_builder_methods_on_class():
     for name in CMS_BUILDERS:
         assert not hasattr(pipelines.FASRCDocsAgent, name), name
+
+
+def test_catalog_search_auto_includes_fetch_companion():
+    """A spec that enables a catalog *search* tool (which returns only hashes) but
+    omits its companion *read* tool must still build `fetch_catalog_document`, so the
+    agent can read the documents it finds (issue #45)."""
+    agent = _agent_with_selected(["search_local_files", "search_metadata_index"])
+    assert "fetch_catalog_document" in _built_tool_names(agent)
+
+
+def test_built_tool_descriptions_reference_only_present_tools():
+    """No built tool description may instruct the model to use a tool that is not in
+    the built set — the machine-checkable form of 'never told to use a tool it does
+    not have' (issue #45)."""
+    agent = _agent_with_selected(["search_local_files", "search_metadata_index"])
+    built = agent.rebuild_static_tools()
+    built_names = {getattr(t, "name", None) for t in built}
+    all_tool_names = set(_agent_with_selected([]).get_tool_registry())
+    for tool in built:
+        desc = getattr(tool, "description", "") or ""
+        for other in all_tool_names:
+            if other in desc:
+                assert (
+                    other in built_names
+                ), f"{getattr(tool, 'name', '?')} description names absent tool {other}"
+
+
+def test_fetch_companion_not_added_without_a_catalog_search_tool():
+    """The companion is a dependency of the catalog *search* tools only — it is not
+    force-added when no catalog search tool is selected."""
+    agent = _agent_with_selected(["search_vectorstore_hybrid"])
+    assert "fetch_catalog_document" not in _built_tool_names(agent)
+
+
+def test_explicit_fetch_is_not_duplicated():
+    """When the spec already lists the companion, it appears exactly once."""
+    agent = _agent_with_selected(["search_local_files", "fetch_catalog_document"])
+    names = [getattr(t, "name", None) for t in agent.rebuild_static_tools()]
+    assert names.count("fetch_catalog_document") == 1
 
 
 def test_cms_agent_retains_its_builders():
