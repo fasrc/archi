@@ -1,6 +1,6 @@
 ## 1. Failing test (RED)
 
-- [ ] 1.1 Add a unit test in `tests/unit/test_vectorstore_reingest_chunk_refresh.py` (or a sibling `test_vectorstore_reingest_content_signal.py` mirroring its style) asserting that a document re-ingested with CHANGED CONTENT but the SAME filename and SAME identity hash is returned by `_collect_stale_hashes()` (old chunks removed, content re-embedded). Confirm it FAILS on the current code (filename-only detection).
+- [x] 1.1 Add a unit test in `tests/unit/test_vectorstore_reingest_chunk_refresh.py` (or a sibling `test_vectorstore_reingest_content_signal.py` mirroring its style) asserting that a document re-ingested with CHANGED CONTENT but the SAME filename and SAME identity hash is returned by `_collect_stale_hashes()` (old chunks removed, content re-embedded). Confirm it FAILS on the current code (filename-only detection).
 - [ ] 1.2 Add a test case asserting the no-change fast path is preserved: identical content + filename + hash yields an empty stale set and no removal/re-embed. Confirm it passes today and must keep passing.
 - [ ] 1.3 Add a test case asserting graceful fallback: a candidate hash whose embedded chunks carry NO content signal does not raise and falls back to filename detection.
 
