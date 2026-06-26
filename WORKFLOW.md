@@ -28,7 +28,7 @@ conventions you must know first, then the two spec-driven development loops.
 
 5. **Gitignored dev-only files** — do not touch in PRs:
    `deploy/fasrc-dev/config.yaml`, `deploy/fasrc-dev/agents/*.md`. Secrets live in
-   `/home/austin/.secrets/archi-claw-secrets.env`.
+   `/home/austin/.secrets/archi-secrets.env`.
 
 6. **Deployment reality.** The container runs a **non-editable** install
    (`pip install .`), importing from `site-packages/src`, not the repo tree.
