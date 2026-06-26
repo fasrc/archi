@@ -131,6 +131,33 @@ def test_blank_output_keeps_original(monkeypatch):
     assert "converted_from" not in out.get_metadata().as_dict()
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Issue #40 RED: deep nesting triggers RecursionError -> raw-HTML "
+    "fallback. Remove this marker when the segfault-safe conversion (task 2.1) "
+    "lands; strict mode flags the resulting xpass so the marker cannot be left "
+    "behind.",
+)
+def test_deeply_nested_html_is_converted_not_recursion_fallback():
+    """A pathologically deep HTML tree (~2000 nested <div>s) must still CONVERT.
+
+    On the current code markdownify recurses per nesting level and hits
+    RecursionError, which the broad ``except Exception`` swallows into the
+    raw-HTML fallback (suffix stays ``html``). Issue #40: such pages should be
+    converted to Markdown like any other, not silently kept as raw HTML.
+    """
+    depth = 2000
+    html = "<div>" * depth + "deep" + "</div>" * depth
+
+    out = HtmlToMarkdownProcessor().process(_html_resource(content=html))
+
+    assert out.suffix == "md"
+    assert out.get_metadata().as_dict()["converted_from"] == "html"
+    markdown = out.get_content()
+    assert markdown and markdown.strip()
+    assert "deep" in markdown
+
+
 def test_pipeline_runs_processors_in_order():
     pipeline = ResourcePipeline([HtmlToMarkdownProcessor()])
     out = pipeline.run(_html_resource(content="<h1>Title</h1>"))

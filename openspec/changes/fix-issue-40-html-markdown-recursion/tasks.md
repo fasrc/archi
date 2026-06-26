@@ -1,6 +1,6 @@
 ## 1. Reproduce (RED)
 
-- [ ] 1.1 In `tests/unit/test_html_to_markdown_processor.py`, add a failing test that builds
+- [x] 1.1 In `tests/unit/test_html_to_markdown_processor.py`, add a failing test that builds
   a deeply-nested HTML string (~2000 nested `<div>`s), wraps it as
   `ScrapedResource(suffix="html")`, runs it through `HtmlToMarkdownProcessor().process(...)`,
   and asserts the result is CONVERTED (suffix becomes `md`, `metadata["converted_from"] ==
