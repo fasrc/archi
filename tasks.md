@@ -1,1 +1,1 @@
-openspec/changes/fix-issue-40-html-markdown-recursion/tasks.md
+openspec/changes/add-hierarchical-rerank-retrieval/tasks.md
