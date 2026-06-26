@@ -1,8 +1,7 @@
 """Tests for HtmlToMarkdownProcessor (HTML->Markdown conversion at persist time)."""
 
+import sys
 from pathlib import Path
-
-import pytest
 
 from src.data_manager.collectors.localfile_resource import LocalFileResource
 from src.data_manager.collectors.processing import (
@@ -129,6 +128,76 @@ def test_blank_output_keeps_original(monkeypatch):
     assert out.content == "<script>noop()</script>"
     assert out.suffix == "html"
     assert "converted_from" not in out.get_metadata().as_dict()
+
+
+def test_deeply_nested_html_is_converted_not_recursion_fallback():
+    """A pathologically deep HTML tree (~2000 nested <div>s) must still CONVERT.
+
+    Before issue #40's fix, markdownify recursed per nesting level and hit
+    RecursionError, which the broad ``except Exception`` swallowed into the
+    raw-HTML fallback (suffix stayed ``html``). Such pages should be converted to
+    Markdown like any other, not silently kept as raw HTML.
+    """
+    depth = 2000
+    html = "<div>" * depth + "deep" + "</div>" * depth
+
+    out = HtmlToMarkdownProcessor().process(_html_resource(content=html))
+
+    assert out.suffix == "md"
+    assert out.get_metadata().as_dict()["converted_from"] == "html"
+    markdown = out.get_content()
+    assert markdown and markdown.strip()
+    assert "deep" in markdown
+
+
+def test_no_recursion_limit_raise_when_enlarged_stack_unavailable(monkeypatch):
+    """Segfault-safety (#48 review, Copilot): if the enlarged thread stack cannot be
+    set, the process-wide recursion limit must NOT be raised — a deep recursion on the
+    default C stack would overflow it and crash the process. The conversion should fall
+    back gracefully instead."""
+    import src.data_manager.collectors.processing as proc
+
+    def _stack_fails(*_a, **_k):
+        raise RuntimeError("stack size unsupported on this platform")
+
+    monkeypatch.setattr(proc.threading, "stack_size", _stack_fails)
+
+    baseline = sys.getrecursionlimit()
+    raised_to = []
+    real_set = sys.setrecursionlimit
+
+    def _spy(n):
+        raised_to.append(n)
+        return real_set(n)
+
+    monkeypatch.setattr(proc.sys, "setrecursionlimit", _spy)
+    try:
+        proc._markdownify_deep_safe("<p>hi</p>")
+    except RecursionError:
+        pass  # acceptable: failing safely is the point
+    assert all(
+        n <= baseline for n in raised_to
+    ), f"recursion limit raised to {raised_to} without an enlarged stack (segfault risk)"
+
+
+def test_recursion_limit_restored_after_conversion():
+    """Invariant (#48 review, Codex): the process-global recursion limit is always
+    restored, so a conversion never leaks a raised limit to the rest of the process."""
+    import src.data_manager.collectors.processing as proc
+
+    before = sys.getrecursionlimit()
+    proc._markdownify_deep_safe("<div>" * 1500 + "x" + "</div>" * 1500)
+    assert sys.getrecursionlimit() == before
+
+
+def test_conversion_limits_are_bounded():
+    """#48 review (Copilot): the stack size and recursion limit must be sized for the
+    real ~2000-depth pages, not pathologically large (256 MiB / 100k risks thread-
+    creation failure and is far past need)."""
+    import src.data_manager.collectors.processing as proc
+
+    assert proc._CONVERSION_RECURSION_LIMIT <= 20_000
+    assert proc._CONVERSION_STACK_SIZE <= 128 * 1024 * 1024
 
 
 def test_pipeline_runs_processors_in_order():
