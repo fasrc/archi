@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from src.data_manager.collectors.localfile_resource import LocalFileResource
 from src.data_manager.collectors.processing import (
     HtmlToMarkdownProcessor,
@@ -131,13 +129,6 @@ def test_blank_output_keeps_original(monkeypatch):
     assert "converted_from" not in out.get_metadata().as_dict()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Issue #40 RED: deep nesting triggers RecursionError -> raw-HTML "
-    "fallback. Remove this marker when the segfault-safe conversion (task 2.1) "
-    "lands; strict mode flags the resulting xpass so the marker cannot be left "
-    "behind.",
-)
 def test_deeply_nested_html_is_converted_not_recursion_fallback():
     """A pathologically deep HTML tree (~2000 nested <div>s) must still CONVERT.
 

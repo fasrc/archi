@@ -16,6 +16,8 @@ all processors are disabled the wrapper behaves identically to the bare service.
 from __future__ import annotations
 
 import re
+import sys
+import threading
 from typing import (
     Any,
     Callable,
@@ -36,6 +38,15 @@ logger = get_logger(__name__)
 
 _HTML_SUFFIXES = {"html", "htm"}
 UNCATEGORIZED = "uncategorized"
+
+# Headroom for converting pathologically deep HTML (issue #40). markdownify parses
+# with BeautifulSoup and converts recursively, so a tree nested thousands of levels
+# deep overflows the default 1000-frame recursion limit. Merely raising the limit is
+# not enough: deep Python recursion can overflow the C stack and segfault, so the
+# conversion runs in a dedicated worker thread created with an enlarged stack while
+# the (process-global) recursion limit is temporarily raised and then restored.
+_CONVERSION_RECURSION_LIMIT = 100_000
+_CONVERSION_STACK_SIZE = 256 * 1024 * 1024  # 256 MiB
 
 ModelFactory = Callable[[str, str, Dict[str, Any]], Any]
 
@@ -95,7 +106,7 @@ class HtmlToMarkdownProcessor:
             return resource
 
         try:
-            markdown = markdownify(content, heading_style="ATX")
+            markdown = _markdownify_deep_safe(content)
         except Exception as exc:
             logger.warning(
                 "HTML->Markdown conversion failed for %s; keeping original HTML: %s",
@@ -118,6 +129,48 @@ class HtmlToMarkdownProcessor:
         _rewrite_path_field(resource, "relative_path")
         resource.set_metadata_field("converted_from", "html")
         return resource
+
+
+def _markdownify_deep_safe(content: str) -> str:
+    """Convert HTML to Markdown with headroom for deeply-nested input.
+
+    Runs ``markdownify`` inside a worker thread created with an enlarged stack and
+    a temporarily raised recursion limit, so a pathologically deep HTML tree
+    (issue #40) is converted rather than overflowing the recursion limit / C stack.
+    The process-global recursion limit and the thread stack size are restored in a
+    ``finally`` block regardless of outcome. Any exception raised inside the worker
+    is re-raised to the caller, which keeps the existing raise->fallback behavior.
+    """
+    result: Dict[str, Any] = {}
+
+    def _worker() -> None:
+        try:
+            result["value"] = markdownify(content, heading_style="ATX")
+        except BaseException as exc:  # noqa: BLE001 - re-raised to caller below
+            result["error"] = exc
+
+    previous_limit = sys.getrecursionlimit()
+    previous_stack: Optional[int] = None
+    try:
+        try:
+            previous_stack = threading.stack_size(_CONVERSION_STACK_SIZE)
+        except (ValueError, RuntimeError):  # pragma: no cover - platform-dependent
+            previous_stack = None
+        sys.setrecursionlimit(max(previous_limit, _CONVERSION_RECURSION_LIMIT))
+        worker = threading.Thread(target=_worker)
+        worker.start()
+        worker.join()
+    finally:
+        sys.setrecursionlimit(previous_limit)
+        if previous_stack is not None:
+            try:
+                threading.stack_size(previous_stack)
+            except (ValueError, RuntimeError):  # pragma: no cover - platform-dependent
+                pass
+
+    if "error" in result:
+        raise result["error"]
+    return result["value"]
 
 
 def _rewrite_path_field(resource: BaseResource, field_name: str) -> None:
