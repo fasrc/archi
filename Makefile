@@ -23,6 +23,7 @@ RUN_FLAGS := \
   --userns=keep-id \
   -e RALPH_MODEL \
   -e GH_TOKEN \
+  -e GH_REPO=fasrc/archi \
   -v $(WORKSPACE):/workspace \
   -v $(CLAUDE_DIR):/home/claude/.claude
 
