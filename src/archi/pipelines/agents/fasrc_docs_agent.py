@@ -30,6 +30,13 @@ class FASRCDocsAgent(BaseReActAgent):
     agent spec (deploy/fasrc-dev/agents/fasrc-docs.md).
     """
 
+    # Catalog search tools return matched lines + resource *hashes* only; reading a
+    # document's full text requires fetch_catalog_document, and their tool descriptions
+    # instruct the model to call it. So the companion is a hard dependency of the search
+    # tools — selecting either pulls it in even if the agent spec omitted it (issue #45).
+    _CATALOG_SEARCH_TOOLS = ("search_local_files", "search_metadata_index")
+    _CATALOG_COMPANION_TOOL = "fetch_catalog_document"
+
     def __init__(
         self,
         config: Dict[str, Any],
@@ -154,6 +161,28 @@ class FASRCDocsAgent(BaseReActAgent):
 
     def _build_vector_tool_placeholder(self) -> List[Callable]:
         return []
+
+    def _build_static_tools(self) -> List[Callable]:
+        """Build static tools, auto-including the catalog companion read tool.
+
+        Overrides the base to enforce a dependency: a spec that enables a catalog
+        *search* tool but omits ``fetch_catalog_document`` would otherwise build an
+        agent whose own tool descriptions tell the model to call a tool it does not
+        have (issue #45). Selecting either catalog search tool pulls the companion in.
+        """
+        selected = list(self.selected_tool_names or [])
+        if (
+            any(name in selected for name in self._CATALOG_SEARCH_TOOLS)
+            and self._CATALOG_COMPANION_TOOL not in selected
+        ):
+            logger.info(
+                "Auto-including %s: a catalog search tool is selected but the agent "
+                "spec did not list its companion read tool.",
+                self._CATALOG_COMPANION_TOOL,
+            )
+            selected.append(self._CATALOG_COMPANION_TOOL)
+        static_names = [name for name in selected if name != "mcp"]
+        return self._select_tools_from_registry(static_names)
 
     # def _build_static_middleware(self) -> List[Callable]:
     #     """
