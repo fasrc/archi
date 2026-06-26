@@ -45,8 +45,14 @@ UNCATEGORIZED = "uncategorized"
 # not enough: deep Python recursion can overflow the C stack and segfault, so the
 # conversion runs in a dedicated worker thread created with an enlarged stack while
 # the (process-global) recursion limit is temporarily raised and then restored.
-_CONVERSION_RECURSION_LIMIT = 100_000
-_CONVERSION_STACK_SIZE = 256 * 1024 * 1024  # 256 MiB
+# Sized for the real worst case (~2000-deep KB pages, a few stack frames per level),
+# with headroom — not pathologically large (a 256 MiB/thread stack can fail to allocate).
+_CONVERSION_RECURSION_LIMIT = 16_000
+_CONVERSION_STACK_SIZE = 64 * 1024 * 1024  # 64 MiB
+# `sys.setrecursionlimit` and `threading.stack_size` are process-global; serialize the
+# block that mutates+restores them so concurrent conversions (e.g. multiple uploader
+# handlers) cannot interleave and leak/clobber each other's interpreter-wide settings.
+_CONVERSION_LOCK = threading.Lock()
 
 ModelFactory = Callable[[str, str, Dict[str, Any]], Any]
 
@@ -149,24 +155,33 @@ def _markdownify_deep_safe(content: str) -> str:
         except BaseException as exc:  # noqa: BLE001 - re-raised to caller below
             result["error"] = exc
 
-    previous_limit = sys.getrecursionlimit()
-    previous_stack: Optional[int] = None
-    try:
+    # Serialize: these settings are interpreter-wide, so concurrent conversions must not
+    # interleave their mutate/restore of the recursion limit and thread stack size.
+    with _CONVERSION_LOCK:
+        previous_limit = sys.getrecursionlimit()
+        previous_stack: Optional[int] = None
         try:
-            previous_stack = threading.stack_size(_CONVERSION_STACK_SIZE)
-        except (ValueError, RuntimeError):  # pragma: no cover - platform-dependent
-            previous_stack = None
-        sys.setrecursionlimit(max(previous_limit, _CONVERSION_RECURSION_LIMIT))
-        worker = threading.Thread(target=_worker)
-        worker.start()
-        worker.join()
-    finally:
-        sys.setrecursionlimit(previous_limit)
-        if previous_stack is not None:
             try:
-                threading.stack_size(previous_stack)
+                previous_stack = threading.stack_size(_CONVERSION_STACK_SIZE)
             except (ValueError, RuntimeError):  # pragma: no cover - platform-dependent
-                pass
+                previous_stack = None
+            # Only raise the recursion limit if the enlarged stack was actually set;
+            # raising it on the default C stack would overflow it and crash the process.
+            if previous_stack is not None:
+                sys.setrecursionlimit(max(previous_limit, _CONVERSION_RECURSION_LIMIT))
+            worker = threading.Thread(target=_worker)
+            worker.start()
+            worker.join()
+        finally:
+            sys.setrecursionlimit(previous_limit)
+            if previous_stack is not None:
+                try:
+                    threading.stack_size(previous_stack)
+                except (
+                    ValueError,
+                    RuntimeError,
+                ):  # pragma: no cover - platform-dependent
+                    pass
 
     if "error" in result:
         raise result["error"]
