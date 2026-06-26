@@ -11,7 +11,10 @@ import pytest
 # full suite, exactly as in production.
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from src.data_manager.collectors.processing import CategorizationProcessor
+from src.data_manager.collectors.processing import (
+    CategorizationProcessor,
+    _truncate_for_log,
+)
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 
 
@@ -82,6 +85,108 @@ def test_out_of_list_label_defaults_uncategorized():
     proc, _ = _make(model=model)
     out = proc.process(_resource())
     assert out.get_metadata().as_dict()["llm_category"] == "uncategorized"
+
+
+def test_reasoning_model_trailing_label_is_extracted():
+    """A reasoning model that thinks out loud and ends with the bare category on
+    the final non-empty line is still categorized correctly. The exact-match-on-
+    whole-content check would mark this 'uncategorized' even though the model
+    answered correctly."""
+    reply = (
+        "The user wants me to classify this document.\n"
+        "It discusses disk quotas and Lustre filesystems, so it is about storage.\n"
+        "I will output only the category name.\n\n"
+        "storage"
+    )
+    model = _FakeChatModel(reply=reply)
+    proc, _ = _make(model=model)
+    out = proc.process(_resource())
+    assert out.get_metadata().as_dict()["llm_category"] == "storage"
+
+
+def test_reasoning_model_prefixed_final_line_is_extracted():
+    """A final line like 'Category: policy' (label preceded by a prefix word)
+    resolves to the category token it contains."""
+    reply = "Let me reason about this.\nThis is governance text.\nCategory: policy"
+    model = _FakeChatModel(reply=reply)
+    proc, _ = _make(model=model)
+    out = proc.process(_resource())
+    assert out.get_metadata().as_dict()["llm_category"] == "policy"
+
+
+def test_label_match_is_case_insensitive_returns_canonical():
+    """Reasoning models often capitalize ('Storage'); match case-insensitively but
+    write the canonical category as configured."""
+    model = _FakeChatModel(reply="Storage")
+    proc, _ = _make(model=model)
+    out = proc.process(_resource())
+    assert out.get_metadata().as_dict()["llm_category"] == "storage"
+
+
+def test_reasoning_without_any_valid_category_stays_uncategorized():
+    """Tail parsing must not invent a label: reasoning whose final answer is not in
+    the list still yields uncategorized (no false positives)."""
+    reply = "I think this document is about cooking recipes.\nFinal answer: cooking"
+    model = _FakeChatModel(reply=reply)
+    proc, _ = _make(model=model)
+    out = proc.process(_resource())
+    assert out.get_metadata().as_dict()["llm_category"] == "uncategorized"
+
+
+def test_refusal_listing_categories_stays_uncategorized():
+    """A blanket refusal that names the configured labels (e.g. 'None of compute,
+    storage, or policy applies') must map to uncategorized, not the last label it
+    mentions. Regression guard for the Codex P2 finding on PR #44: a refusal was
+    being persisted as the last-mentioned category."""
+    reply = (
+        "Let me consider the options.\n"
+        "None of compute, storage, or policy applies to this document."
+    )
+    model = _FakeChatModel(reply=reply)
+    proc, _ = _make(model=model)
+    out = proc.process(_resource())
+    assert out.get_metadata().as_dict()["llm_category"] == "uncategorized"
+
+
+def test_category_only_in_early_reasoning_is_not_returned():
+    """A category named only in early chain-of-thought, when the final answer names
+    no category, must not be back-filled from the reasoning. Guard for the Copilot
+    finding on PR #44: the unbounded bottom-up scan reached deep reasoning lines."""
+    reply = (
+        "First, note this could be a compute topic.\n"
+        "Second thought.\n"
+        "Third thought.\n"
+        "Fourth thought.\n"
+        "Conclusion: this is about cafeteria lunch menus."
+    )
+    model = _FakeChatModel(reply=reply)
+    proc, _ = _make(model=model)
+    out = proc.process(_resource())
+    assert out.get_metadata().as_dict()["llm_category"] == "uncategorized"
+
+
+def test_asserted_label_after_negation_still_resolves():
+    """A line that negates one label and asserts another ('not storage, it is
+    compute') must still resolve to the asserted label — plain negation is not a
+    blanket refusal, so the documented recovery is preserved."""
+    reply = "Reasoning...\nThis is not storage, it is compute."
+    model = _FakeChatModel(reply=reply)
+    proc, _ = _make(model=model)
+    out = proc.process(_resource())
+    assert out.get_metadata().as_dict()["llm_category"] == "compute"
+
+
+def test_truncate_for_log_caps_long_response():
+    """A long reasoning-model response is truncated to a bounded tail so the debug
+    log never dumps the full blob. Guard for the Copilot log-hygiene finding on #44."""
+    long = "x" * 5000
+    out = _truncate_for_log(long, limit=200)
+    assert len(out) <= 201  # 200 tail chars + the ellipsis marker
+    assert out.endswith("x" * 50)  # the tail (where the answer is) is preserved
+
+
+def test_truncate_for_log_passes_short_response_unchanged():
+    assert _truncate_for_log("storage", limit=200) == "storage"
 
 
 def test_model_raises_defaults_uncategorized():
