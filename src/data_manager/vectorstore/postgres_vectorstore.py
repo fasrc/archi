@@ -19,6 +19,43 @@ from langchain_core.vectorstores import VectorStore
 
 from src.utils.logging import get_logger
 
+
+def _merge_row_metadata(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge a retrieved chunk's metadata with its document-level fields.
+
+    The base is the chunk's own ``c.metadata`` (what it was embedded with).
+    Document columns (``resource_hash``/``display_name``/``source_type``/``url``)
+    are overlaid, and ``title`` is overlaid from the catalog ``extra_json`` — so a
+    title backfilled onto the document surfaces at retrieval even for chunks
+    embedded before the title existed and not since re-embedded.
+    """
+    metadata = row["metadata"] or {}
+    if isinstance(metadata, str):
+        metadata = json.loads(metadata)
+
+    if row.get("resource_hash"):
+        metadata["resource_hash"] = row["resource_hash"]
+    if row.get("display_name"):
+        metadata["display_name"] = row["display_name"]
+    if row.get("source_type"):
+        metadata["source_type"] = row["source_type"]
+    if row.get("url"):
+        metadata["url"] = row["url"]
+
+    extra = row.get("extra_json")
+    if isinstance(extra, str):
+        try:
+            extra = json.loads(extra)
+        except (ValueError, TypeError):
+            extra = None
+    if isinstance(extra, dict):
+        title = extra.get("title")
+        if isinstance(title, str) and title.strip():
+            metadata["title"] = title
+
+    return metadata
+
+
 logger = get_logger(__name__)
 
 
@@ -334,7 +371,8 @@ class PostgresVectorStore(VectorStore):
                         d.resource_hash,
                         d.display_name,
                         d.source_type,
-                        d.url
+                        d.url,
+                        d.extra_json
                     FROM document_chunks c
                     LEFT JOIN documents d ON c.document_id = d.id
                     WHERE {where_sql}
@@ -349,20 +387,7 @@ class PostgresVectorStore(VectorStore):
 
         results: List[Tuple[Document, float]] = []
         for row in rows:
-            # Merge chunk metadata with document metadata
-            metadata = row["metadata"] or {}
-            if isinstance(metadata, str):
-                metadata = json.loads(metadata)
-
-            # Add document-level metadata
-            if row["resource_hash"]:
-                metadata["resource_hash"] = row["resource_hash"]
-            if row["display_name"]:
-                metadata["display_name"] = row["display_name"]
-            if row["source_type"]:
-                metadata["source_type"] = row["source_type"]
-            if row["url"]:
-                metadata["url"] = row["url"]
+            metadata = _merge_row_metadata(row)
 
             doc = Document(
                 page_content=row["chunk_text"],
@@ -462,7 +487,8 @@ class PostgresVectorStore(VectorStore):
                             d.resource_hash,
                             d.display_name,
                             d.source_type,
-                            d.url
+                            d.url,
+                            d.extra_json
                         FROM document_chunks c
                         LEFT JOIN documents d ON c.document_id = d.id
                         WHERE {where_sql}
@@ -490,18 +516,7 @@ class PostgresVectorStore(VectorStore):
             return self.similarity_search_with_score(query, k=k, **kwargs)
 
         for row in rows:
-            metadata = row["metadata"] or {}
-            if isinstance(metadata, str):
-                metadata = json.loads(metadata)
-
-            if row["resource_hash"]:
-                metadata["resource_hash"] = row["resource_hash"]
-            if row["display_name"]:
-                metadata["display_name"] = row["display_name"]
-            if row["source_type"]:
-                metadata["source_type"] = row["source_type"]
-            if row["url"]:
-                metadata["url"] = row["url"]
+            metadata = _merge_row_metadata(row)
 
             doc = Document(
                 page_content=row["chunk_text"],
