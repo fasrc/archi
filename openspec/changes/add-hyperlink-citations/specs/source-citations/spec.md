@@ -41,17 +41,23 @@ NOT fabricate a URL, and when a source has no URL it SHALL name the source in pl
 
 ### Requirement: HTML ingestion captures the document title
 
-The plain-HTTP scraping path SHALL extract the page title (`<title>`, falling back to `<h1>`
-then `og:title`) into the resource metadata, so HTML documents carry a clean title for
-citation — matching the title already captured for PDFs and selenium-rendered pages.
+The HTML ingestion path SHALL extract the page title (`<title>`, falling back to `<h1>`
+then `og:title`) into the resource metadata before HTML-to-Markdown conversion, so HTML
+documents carry a clean title for citation — matching the title already captured for PDFs
+and selenium-rendered pages. It SHALL NOT overwrite a non-empty title already present.
 
-#### Scenario: A scraped HTML page persists a title
+#### Scenario: An ingested HTML page persists a title
 
-- **WHEN** an HTML page is collected via the plain-HTTP scraper and has a `<title>` element
+- **WHEN** an HTML resource is processed at persist time and has a `<title>` element
 - **THEN** the persisted document's metadata `title` is the trimmed title text (not empty)
+
+#### Scenario: An existing title is preserved
+
+- **WHEN** an HTML resource already carries a non-empty `title` (selenium/SSO or PDF path)
+- **THEN** title extraction leaves it unchanged (no clobbering)
 
 #### Scenario: Titleless HTML never blocks ingest
 
-- **WHEN** a scraped page has no `<title>`/`<h1>`/`og:title`
+- **WHEN** an HTML resource has no `<title>`/`<h1>`/`og:title`
 - **THEN** the document is still ingested with an empty title (citation falls back to
   `display_name`), and no error is raised
