@@ -29,6 +29,7 @@ from typing import (
     runtime_checkable,
 )
 
+from bs4 import BeautifulSoup
 from markdownify import markdownify
 
 from src.data_manager.collectors.resource_base import BaseResource
@@ -87,6 +88,55 @@ class ResourcePipeline:
                     type(processor).__name__,
                     exc,
                 )
+        return resource
+
+
+def _extract_html_title(html: str) -> str:
+    """Best-available page title for citation text: <title> -> <h1> -> og:title.
+
+    Returns a trimmed string, or "" when none is present. Never raises — a missing
+    title must not block ingest (citation falls back to display_name downstream).
+    """
+    try:
+        soup = BeautifulSoup(html or "", "html.parser")
+        if soup.title and soup.title.string and soup.title.string.strip():
+            return soup.title.string.strip()
+        h1 = soup.find("h1")
+        if h1 and h1.get_text(strip=True):
+            return h1.get_text(strip=True)
+        og = soup.find("meta", attrs={"property": "og:title"})
+        if og and og.get("content"):
+            return og["content"].strip()
+    except Exception:
+        logger.debug("Failed to extract HTML title", exc_info=True)
+    return ""
+
+
+class HtmlTitleProcessor:
+    """Capture a clean ``metadata["title"]`` from HTML before Markdown conversion.
+
+    Guards on ``isinstance(content, str)`` and an ``html``/``htm`` suffix so only
+    scraped/web HTML is touched. Must run BEFORE ``HtmlToMarkdownProcessor`` (which
+    rewrites content to Markdown, stripping ``<title>``). Never overwrites a
+    non-empty title already set by the selenium/SSO path or the PDF loader.
+    """
+
+    def process(self, resource: BaseResource) -> BaseResource:
+        content = getattr(resource, "content", None)
+        if not isinstance(content, str):
+            return resource
+
+        suffix = getattr(resource, "suffix", "")
+        if not isinstance(suffix, str):
+            return resource
+        if suffix.lstrip(".").lower() not in _HTML_SUFFIXES:
+            return resource
+
+        existing = resource.get_metadata().as_dict().get("title")
+        if isinstance(existing, str) and existing.strip():
+            return resource
+
+        resource.set_metadata_field("title", _extract_html_title(content))
         return resource
 
 
@@ -462,6 +512,8 @@ def build_persistence(
     processors: List[ResourceProcessor] = []
 
     if bool(html_cfg.get("enabled", True)):
+        # Title capture must precede markdown conversion (which strips <title>).
+        processors.append(HtmlTitleProcessor())
         processors.append(HtmlToMarkdownProcessor())
 
     if bool(cat_cfg.get("enabled", False)):

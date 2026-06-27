@@ -35,11 +35,20 @@ Replace the numeric-index citation guidance with:
 - "Do not emit bare `[1]`/`[2]` indices in the final answer. Never fabricate a URL; if a
   result has no url, name the source in plain text instead."
 
-### Layer 1 — scraper `<title>` capture (link-text quality)
-In `scraper.py`'s plain-HTTP branch (`else` at ~line 83), parse the response body with
-BeautifulSoup (already used for link extraction) and set `metadata["title"]` from `<title>`
-(fallback `<h1>`, then `og:title`), trimmed. The selenium/SSO path and PDF loader already set
-a title; this closes the HTML gap. A re-ingest backfills existing docs.
+### Layer 1 — HTML `<title>` capture at the processing seam (link-text quality)
+Implemented as a new `HtmlTitleProcessor` in `src/data_manager/collectors/processing.py`,
+prepended **before** `HtmlToMarkdownProcessor` in `build_persistence()` (markdown conversion
+strips `<title>`, so title capture must run first). It parses `resource.content` with
+BeautifulSoup and sets `metadata["title"]` from `<title>` → `<h1>` → `og:title`, trimmed;
+it never overwrites a non-empty title already set by the selenium/SSO or PDF paths. A
+re-ingest backfills existing docs.
+
+> Seam note (changed during implementation): the original plan put this in `scraper.py`'s
+> plain-HTTP branch. Moved to the processing pipeline — the same well-factored seam that
+> already attaches content-derived metadata (`converted_from`, `llm_category`) — because it
+> is unit-testable in isolation and avoids reformatting the large, not-black-clean
+> `scraper.py` (which would drag untested `crawl_iter` lines into the diff and fail the
+> patch-coverage gate). Same metadata outcome, cleaner change.
 
 ## Goals / Non-goals
 - **Goal:** inline `[title](url)` citations rendered as clickable links, clean title text.

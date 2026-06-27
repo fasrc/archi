@@ -448,3 +448,69 @@ def test_fetch_parents_ensures_schema_before_select(mock_vectorstore):
         "CREATE INDEX IF NOT EXISTS idx_parent_nodes_document" in sql
         for sql in statements
     )
+
+
+# =============================================================================
+# Title overlay on parent context (hyperlink citations)
+# =============================================================================
+
+
+def test_parent_carries_backfilled_title_from_extra_json(mock_vectorstore):
+    # hierarchical_rerank is enabled on dev, so parent docs are what the LLM
+    # cites. The backfilled HTML title lives in documents.extra_json and must be
+    # overlaid here, exactly as PostgresVectorStore does for direct results.
+    mock_vectorstore.hybrid_search.return_value = [_child("child snippet", parent_id=1)]
+    mock_vectorstore._mock_cursor.fetchall.return_value = [
+        _parent_row(
+            1,
+            "the full parent paragraph",
+            url="https://docs.rc.fas.harvard.edu/kb/vscode-remote/",
+            extra_json={"title": "VSCode Remote Development via SSH and Tunnel"},
+        )
+    ]
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_IdentityRanker()
+    )
+
+    docs = retriever.invoke("q")
+
+    assert docs[0].metadata["title"] == "VSCode Remote Development via SSH and Tunnel"
+    assert (
+        docs[0].metadata["url"] == "https://docs.rc.fas.harvard.edu/kb/vscode-remote/"
+    )
+    # parent_id must survive the shared-overlay refactor.
+    assert docs[0].metadata["parent_id"] == 1
+
+
+def test_parent_without_extra_json_title_has_no_title(mock_vectorstore):
+    mock_vectorstore.hybrid_search.return_value = [_child("child snippet", parent_id=2)]
+    mock_vectorstore._mock_cursor.fetchall.return_value = [
+        _parent_row(2, "parent paragraph", extra_json={})
+    ]
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_IdentityRanker()
+    )
+
+    docs = retriever.invoke("q")
+
+    assert "title" not in docs[0].metadata
+    assert docs[0].metadata["parent_id"] == 2
+
+
+def test_fetch_parents_select_includes_extra_json(mock_vectorstore):
+    # Guard the SELECT so a future refactor can't reuse the overlay helper while
+    # forgetting to pull the column it reads.
+    mock_vectorstore.hybrid_search.return_value = [_child("c", parent_id=1)]
+    mock_vectorstore._mock_cursor.fetchall.return_value = [_parent_row(1, "p")]
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_IdentityRanker()
+    )
+
+    retriever.invoke("q")
+
+    statements = [
+        " ".join(call.args[0].split())
+        for call in mock_vectorstore._mock_cursor.execute.call_args_list
+    ]
+    select_sql = next(sql for sql in statements if "FROM document_parent_nodes" in sql)
+    assert "extra_json" in select_sql
