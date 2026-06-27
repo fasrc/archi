@@ -33,6 +33,10 @@
   using the title and url shown for the result, placed where a number would go; no bare
   indices in the answer; never fabricate a URL." Include one worked example.
   (Gitignored dev config — not in the PR diff; note the change in the PR body.)
+  - FOLLOW-UP (out of scope): this guidance lives only in the gitignored per-deployment
+    prompt, so fresh/new deployments inherit no committed citation-style baseline. Add a
+    tracked default — refresh `examples/agents/*` (drop the stale "numbered result indices"
+    wording) and/or a tracked base-prompt snippet — in a separate change. (Codex PR #53.)
 
 ## 4. Verify
 
