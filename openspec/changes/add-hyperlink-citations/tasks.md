@@ -10,6 +10,23 @@
   (`src/archi/pipelines/agents/tools/retriever.py`) to surface
   `title = title or display_name or filename` and the `url`, retaining `hash`.
 
+## 1b. Retrieval overlay — surface title at query time across ALL paths (review-driven, TDD)
+
+> Codex review: the formatter can only cite what retrieval puts in `doc.metadata`. `title`
+> lives in `documents.extra_json`, so every path that builds a Document from a `documents`
+> row must overlay it (like `url`), else backfilled titles never reach the model.
+
+- [x] 1b.1 `postgres_vectorstore.py`: extract `_merge_row_metadata` (chunk metadata + the
+  `resource_hash/display_name/source_type/url` overlays + `title` from `extra_json`); SELECT
+  `d.extra_json` in both `similarity_search_by_vector_with_score` and `hybrid_search`.
+  Tests: `tests/unit/test_postgres_vectorstore_title_overlay.py`.
+- [x] 1b.2 `hierarchical_retriever.py` `_fetch_parents`: SELECT `d.extra_json` and reuse
+  `_merge_row_metadata` (then re-apply `parent_id`), so parent-context docs carry title.
+  Required: dev runs `hierarchical_rerank.enabled: true`, so parent docs are what the LLM
+  cites — without this, the feature is silently bypassed on the live consumer. Tests added to
+  `tests/unit/test_hierarchical_retriever.py`. (Adversarial-review [medium], confirmed via an
+  exhaustive sweep as the ONLY remaining title-dropping retrieval path.)
+
 ## 2. Layer 1 — HTML `<title>` capture at the processing seam (TDD)
 
 > Seam changed during implementation: a new `HtmlTitleProcessor` in
