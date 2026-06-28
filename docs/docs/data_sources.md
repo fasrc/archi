@@ -90,6 +90,21 @@ Instead of curating a web link list by hand, you can generate it from a typed
 The manifest declares *where the URLs come from*; the command fetches and expands
 them into the same one-URL-per-line `sources.list` the scraper already consumes.
 
+### Where the manifest lives
+
+The manifest is just a file path you pass to `archi sources build <manifest>` — there
+is **no fixed or default location** and no auto-discovery. Keep it wherever suits you:
+
+- **Alongside the deployment it describes** (recommended) — e.g.
+  `deploy/<name>/sources.manifest.yaml`, so the manifest travels with that deployment's
+  config. The FASRC dev deployment uses `deploy/fasrc-dev/sources.manifest.yaml`.
+- **Version-controlled in the repo** if you want it reviewable and reproducible — the
+  shipped template is [`examples/sources.manifest.yaml`](https://github.com/fasrc/archi/blob/dev/examples/sources.manifest.yaml).
+
+Don't confuse the two files: the **manifest** is the *input* (operator-chosen location);
+the generated **`sources.list`** is the *output*, whose location is resolved from the
+config's `data_manager.sources.links.input_lists` (see [Build → redeploy workflow](#build--redeploy-workflow)).
+
 ### Manifest format
 
 The manifest is a YAML list of seed entries. Every entry has a `type` and a
