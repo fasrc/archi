@@ -39,7 +39,11 @@ websites/
 /config/
 
 # Claude Code session state (worktrees, plans, memory, local settings).
-/.claude/
+# Ignore everything under .claude/ EXCEPT project-authored agents — shared,
+# archi-specific subagents are institutional knowledge worth versioning. The
+# worktrees (full repo checkouts), settings.local.json, and runtime locks stay out.
+/.claude/*
+!/.claude/agents/
 
 # Ralph harness runtime state (machine-written; never committed)
 .ralph/
