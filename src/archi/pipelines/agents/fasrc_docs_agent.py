@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from src.archi.pipelines.agents.base_react import BaseReActAgent
+from src.archi.pipelines.agents.message_content import MessageContentMixin
 from src.archi.pipelines.agents.tools import (
     RemoteCatalogClient,
     create_document_fetch_tool,
@@ -20,7 +21,7 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-class FASRCDocsAgent(BaseReActAgent):
+class FASRCDocsAgent(MessageContentMixin, BaseReActAgent):
     """FASRC documentation/RAG support agent.
 
     A ReAct agent whose tool set is restricted to document retrieval over the
