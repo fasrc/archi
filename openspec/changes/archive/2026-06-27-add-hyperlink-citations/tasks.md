@@ -58,7 +58,7 @@
 ## 4. Verify
 
 - [x] 4.1 `bash scripts/gate.sh` green (diff-cover ≥ 80% on changed lines); no new dependency.
-- [ ] 4.2 Redeploy fasrc-dev + re-ingest (one pass) so existing HTML docs get titles; confirm
+- [x] 4.2 Redeploy fasrc-dev + re-ingest (one pass) so existing HTML docs get titles; confirm
   `metadata.title` non-empty coverage rises well above the current ~7% (PDF-only) baseline.
-- [ ] 4.3 Live check: ask the dev chat a question whose answer cites a doc; confirm the answer
+- [x] 4.3 Live check: ask the dev chat a question whose answer cites a doc; confirm the answer
   contains an inline `[title](url)` Markdown link (clickable) and no bare `[n]` index.
