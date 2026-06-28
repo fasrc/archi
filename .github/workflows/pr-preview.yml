@@ -24,13 +24,13 @@ jobs:
       - name: Install formatting tools
         run: pip install black==24.10.0 isort==6.0.1
 
+      # Scope == the dirs normalized in #69 and enforced by scripts/gate.sh (src/ incl
+      # src/bin, tests/, scripts/). Keep these three in lockstep so they never drift.
       - name: Check formatting with Black
-        continue-on-error: true
-        run: black --check .
+        run: black --check src tests scripts
 
       - name: Check import ordering with isort
-        continue-on-error: true
-        run: isort --check .
+        run: isort --check-only src tests scripts
 
   unit-tests:
     runs-on: ubuntu-latest

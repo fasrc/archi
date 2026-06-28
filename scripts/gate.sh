@@ -18,28 +18,62 @@
 # (incl. never-covered legacy code) and can't fairly hit 80%; dev was already
 # gated per-commit on the way in.
 #
-# FORMAT SCOPE: archi's HEAD is not black-clean and CI runs black/isort as advisory
-# (continue-on-error), so formatting the WHOLE tree (`black .`) would rewrite ~150
-# unrelated files into the working tree every run. Instead we format only the .py
-# files this turn touched (changed-vs-HEAD plus new untracked) — keeping the turn's
-# own output clean without churning the rest of the repo.
+# FORMAT SCOPE + ENFORCEMENT: the tree was normalized black/isort-clean (#69), so
+# formatting is now ENFORCED, not advisory. In CI (`$CI` set) the gate runs black/isort
+# in --check mode and FAILS on any misformat; local pre-commit keeps WRITER mode (formats
+# in place) so the loop's output stays clean with no manual format step. The file set is
+# the .py this turn touched — changed-vs-HEAD + new untracked + changed-vs-base
+# (`"$BASE"...HEAD`). That last source matters in CI: on a fresh checkout HEAD already ==
+# the PR tip, so changed-vs-HEAD is empty — without the base diff the check would be a
+# no-op (the original bug, #34). A companion whole-tree check lives in the pr-preview
+# `lint` job; this one is diff-scoped and is the single source the loop also runs.
 #
 # `python -m pytest` (not bare `pytest`) so the repo root is on sys.path and the
 # `src` package imports resolve, matching CI.
 
 set -euo pipefail
 
-# Files this turn touched: modified/added vs HEAD (excluding deletions) + new
-# untracked .py files. NUL-delimited to survive odd paths.
-mapfile -d '' -t changed < <(
-  { git diff --name-only -z --diff-filter=d HEAD -- '*.py'
-    git ls-files --others --exclude-standard -z -- '*.py'
-  } | sort -zu
-)
+BASE="${DIFF_COVER_BASE:-origin/dev}"
 
+# Enforcement scope: the dirs normalized black/isort-clean in #69 — src/ (incl src/bin),
+# tests/, scripts/. Kept identical to the pr-preview `lint` job's check scope and to #34's
+# PR A, so "what gets normalized", "what the gate enforces", and "what the lint job checks"
+# can never drift. setup.py and other out-of-scope tracked .py are intentionally excluded
+# (they were not normalized, and enforcing them would block edits on legacy dirt — the very
+# problem #34 fixes). git pathspec `src/*.py` matches .py at any depth under src/.
+_FMT_SCOPE=('src/*.py' 'tests/*.py' 'scripts/*.py')
+
+# The .py files this run is responsible for: modified/added vs HEAD (excluding deletions,
+# the local pre-commit idiom) + new untracked + changed-vs-base (`"$BASE"...HEAD`, so a
+# fresh CI checkout — where HEAD already == the PR tip — still sees the PR's files instead
+# of an empty set). NUL-delimited to survive odd paths.
+_changed_py() {
+  { git diff --name-only -z --diff-filter=d HEAD -- "${_FMT_SCOPE[@]}"
+    git ls-files --others --exclude-standard -z -- "${_FMT_SCOPE[@]}"
+    if git rev-parse --verify --quiet "$BASE" >/dev/null; then
+      git diff --name-only -z --diff-filter=d "$BASE"...HEAD -- "${_FMT_SCOPE[@]}"
+    fi
+  } | sort -zu
+}
+
+# Format step. CI (`$CI` set): CHECK ONLY and FAIL on any misformat — formatting is
+# enforced, not silently rewritten. Local pre-commit: rewrite in place (writer), keeping
+# the loop's output clean. isort/black are pinned (see ci.yml) so the two modes agree
+# byte-for-byte.
+_format_step() {
+  [ "$#" -eq 0 ] && return 0
+  # `&&` so a black failure propagates as this function's own return code (don't let a
+  # passing isort mask it); under the script's set -e a non-zero return aborts the gate.
+  if [ -n "${CI:-}" ]; then
+    black --check "$@" && isort --check-only "$@"
+  else
+    black "$@" && isort "$@"
+  fi
+}
+
+mapfile -d '' -t changed < <(_changed_py)
 if [ ${#changed[@]} -gt 0 ]; then
-  black "${changed[@]}"
-  isort "${changed[@]}"
+  _format_step "${changed[@]}"
 fi
 
 # A change is "formatting-only" (for patch-coverage purposes) when the ENTIRE diff
@@ -82,8 +116,7 @@ _diff_is_formatting_only() {
   return 0
 }
 
-# Full coverage report, then PATCH coverage against the base branch.
-BASE="${DIFF_COVER_BASE:-origin/dev}"
+# Full coverage report, then PATCH coverage against the base branch ($BASE, set above).
 python -m pytest tests/unit/ --cov=src --cov-report=xml --cov-report=term-missing
 
 if git rev-parse --verify --quiet "$BASE" >/dev/null; then
