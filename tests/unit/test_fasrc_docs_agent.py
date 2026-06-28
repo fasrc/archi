@@ -78,6 +78,20 @@ def test_fasrc_docs_agent_is_react_subclass():
     assert issubclass(pipelines.FASRCDocsAgent, BaseReActAgent)
 
 
+def test_fasrc_docs_agent_normalises_content_via_mixin():
+    # issue #41: on the Anthropic provider, message .content is a list of
+    # content-block dicts. The agent must mix in MessageContentMixin so its
+    # _message_content flattens to prose (not a dict literal), winning MRO over
+    # the base implementation.
+    from src.archi.pipelines.agents.message_content import MessageContentMixin
+
+    assert issubclass(pipelines.FASRCDocsAgent, MessageContentMixin)
+    assert (
+        pipelines.FASRCDocsAgent._message_content
+        is MessageContentMixin._message_content
+    )
+
+
 def test_fasrc_docs_agent_distinct_from_cms():
     assert pipelines.FASRCDocsAgent is not pipelines.CMSCompOpsAgent
     # The original is untouched and still exported.
