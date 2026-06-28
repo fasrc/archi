@@ -42,29 +42,43 @@ if [ ${#changed[@]} -gt 0 ]; then
   isort "${changed[@]}"
 fi
 
-# A change is "formatting-only" (for patch-coverage purposes) when every .py file
-# that differs from the base branch is EXACTLY what `isort` then `black` produce
-# from that file's base-branch version — i.e. the diff is pure reformatting that
-# introduces no new or altered logic. Such a diff cannot meaningfully meet a
-# coverage bar (it adds no testable code), so patch coverage is reported but not
-# enforced, mirroring the GATE_COVERAGE_ADVISORY release path. Any real content
-# change, a brand-new file, or an untracked .py makes the run NON-formatting-only.
-# This is what lets a one-shot `black`/`isort` tree normalization land without the
-# reformatted (mostly uncovered) legacy lines failing diff coverage.
+# A change is "formatting-only" (for patch-coverage purposes) when the ENTIRE diff
+# vs the base branch is pure reformatting: every changed path is a MODIFIED .py file
+# whose working-tree content already equals what `isort` then `black` produce from
+# that file's base version — no added/deleted .py, no non-.py path (workflow, shell,
+# template), and no untracked .py. Such a diff cannot meaningfully meet a coverage bar
+# (it adds no testable code), so patch coverage is reported but not enforced, mirroring
+# the GATE_COVERAGE_ADVISORY release path. This is what lets a one-shot `black`/`isort`
+# tree normalization land without its reformatted (mostly uncovered) legacy lines
+# failing diff coverage; anything else falls through to enforced coverage.
+#
+# Three correctness anchors (Codex review on #68):
+#   - WHOLE diff: scan every changed path and status, not just modified .py files, so a
+#     bundled deletion or non-.py edit cannot ride the advisory escape.
+#   - MERGE BASE: compare from the fork point (`git merge-base`), exactly as diff-cover's
+#     `...` range does, so a branch behind origin/dev is not judged against files that
+#     only moved on origin/dev (which would wrongly block a formatting-only branch).
+#   - REPO ROOT: run every git query with `git -C "$root"` so a call from a subdirectory
+#     (a manual run; git already runs the pre-commit hook and CI from the root) still
+#     scans the whole tree instead of a cwd-relative slice.
 _diff_is_formatting_only() {
-  local base="$1" f base_blob reformatted
+  local base="$1" root mb status path base_blob reformatted current saw=0
+  root=$(git rev-parse --show-toplevel) || return 1
   # Untracked .py = new, untested code -> never formatting-only.
-  [ -n "$(git ls-files --others --exclude-standard -- '*.py')" ] && return 1
-  local -a py
-  mapfile -t py < <(git diff --name-only --diff-filter=d "$base" -- '*.py' | sort -u)
-  [ ${#py[@]} -eq 0 ] && return 1
-  for f in "${py[@]}"; do
-    [ -f "$f" ] || return 1
-    base_blob=$(git show "$base:$f" 2>/dev/null) || return 1  # absent in base -> new file
+  [ -n "$(git -C "$root" ls-files --others --exclude-standard -- '*.py')" ] && return 1
+  mb=$(git -C "$root" merge-base "$base" HEAD) || return 1
+  while IFS=$'\t' read -r status path; do
+    [ -z "$status" ] && continue
+    saw=1
+    [ "$status" = "M" ] || return 1                    # added/deleted/renamed/etc.
+    case "$path" in *.py) ;; *) return 1 ;; esac       # any non-.py path disqualifies
+    base_blob=$(git -C "$root" show "$mb:$path" 2>/dev/null) || return 1
     reformatted=$(printf '%s' "$base_blob" | isort --profile black -q - 2>/dev/null \
                   | black -q - 2>/dev/null) || return 1
-    [ "$reformatted" = "$(cat "$f")" ] || return 1
-  done
+    current=$(cat -- "$root/$path") || return 1
+    [ "$reformatted" = "$current" ] || return 1
+  done < <(git -C "$root" diff --name-status "$mb")
+  [ "$saw" -eq 1 ] || return 1                          # empty diff is not formatting-only
   return 0
 }
 
