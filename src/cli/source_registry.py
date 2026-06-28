@@ -141,9 +141,7 @@ class SourceRegistry:
                 if not isinstance(config, dict):
                     continue
                 indico_cfg = (
-                    config.get("data_manager", {})
-                    .get("sources", {})
-                    .get("indico", {})
+                    config.get("data_manager", {}).get("sources", {}).get("indico", {})
                 )
                 if isinstance(indico_cfg, dict) and "use_sso" in indico_cfg:
                     use_sso = bool(indico_cfg["use_sso"])

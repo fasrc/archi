@@ -54,9 +54,7 @@ def format_citations(source_documents: List, scores: List) -> str:
 
     # Show collection labels only when sources span multiple collections
     collections = {
-        entry["collection"]
-        for entry in best_by_name.values()
-        if entry["collection"]
+        entry["collection"] for entry in best_by_name.values() if entry["collection"]
     }
     show_collection = len(collections) > 1
 

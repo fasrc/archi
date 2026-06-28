@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from src.archi.pipelines.classic_pipelines.utils.chain_wrappers import ChainWrapper
-from src.archi.pipelines.classic_pipelines.chains import ImageLLMChain
 from src.archi.pipelines.classic_pipelines.base import BasePipeline
+from src.archi.pipelines.classic_pipelines.chains import ImageLLMChain
+from src.archi.pipelines.classic_pipelines.utils.chain_wrappers import ChainWrapper
 from src.archi.utils.output_dataclass import PipelineOutput
 from src.utils.logging import get_logger
 
@@ -25,13 +25,13 @@ class ImageProcessingPipeline(BasePipeline):
         super().__init__(config, *args, **kwargs)
 
         self._image_llm_chain = ImageLLMChain(
-            llm=self.llms['image_processing_model'],
-            prompt=self.prompts['image_processing_prompt'],
+            llm=self.llms["image_processing_model"],
+            prompt=self.prompts["image_processing_prompt"],
         )
         self.image_processing_chain = ChainWrapper(
             chain=self._image_llm_chain,
-            llm=self.llms['image_processing_model'],
-            prompt=self.prompts['image_processing_prompt'],
+            llm=self.llms["image_processing_model"],
+            prompt=self.prompts["image_processing_prompt"],
             required_input_variables=[],
             **kwargs,
         )
@@ -43,8 +43,16 @@ class ImageProcessingPipeline(BasePipeline):
     ) -> PipelineOutput:
         logger.info("Processing %s images.", len(images))
         text_from_image = self.image_processing_chain.invoke(inputs={"images": images})
-        answer = text_from_image.get("answer") if isinstance(text_from_image, dict) else text_from_image
-        metadata = {} if not isinstance(text_from_image, dict) else {k: v for k, v in text_from_image.items() if k != "answer"}
+        answer = (
+            text_from_image.get("answer")
+            if isinstance(text_from_image, dict)
+            else text_from_image
+        )
+        metadata = (
+            {}
+            if not isinstance(text_from_image, dict)
+            else {k: v for k, v in text_from_image.items() if k != "answer"}
+        )
         return PipelineOutput(
             answer=answer or "",
             source_documents=[],

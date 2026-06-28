@@ -1,12 +1,13 @@
 """Tests for RBACRegistry — permission resolution, config validation, filtering, and properties."""
 
 import pytest
-from src.utils.rbac.registry import RBACRegistry, RBACConfigError
 
+from src.utils.rbac.registry import RBACConfigError, RBACRegistry
 
 # ---------------------------------------------------------------------------
 # Fixtures: inline config dicts
 # ---------------------------------------------------------------------------
+
 
 def _make_config(
     roles,
@@ -150,5 +151,7 @@ class TestRegistryProperties:
         assert reg.app_name == "my-app"
 
     def test_app_name_override_via_constructor(self):
-        reg = RBACRegistry(_make_config(BASIC_ROLES, app_name="config-app"), app_name="override-app")
+        reg = RBACRegistry(
+            _make_config(BASIC_ROLES, app_name="config-app"), app_name="override-app"
+        )
         assert reg.app_name == "override-app"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Dict, Union
 
 from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogService
 from src.utils.logging import get_logger
@@ -21,19 +21,23 @@ class PersistenceService:
 
         self.catalog = PostgresCatalogService(self.data_path, pg_config=self.pg_config)
 
-    def persist_resource(self, resource: "BaseResource", target_dir: Path, overwrite:bool = False) -> Path:
+    def persist_resource(
+        self, resource: "BaseResource", target_dir: Path, overwrite: bool = False
+    ) -> Path:
         """
         Write a resource and its metadata to disk,
         updating the catalog with the unique hash of the file and its metadata.
         """
         target_dir.mkdir(parents=True, exist_ok=True)
         file_path = resource.get_file_path(target_dir)
-        
+
         # Check if file already exists
         file_existed = file_path.exists()
-        
+
         if file_existed and not overwrite:
-            logger.debug("Skipping existing resource %s -> %s", resource.get_hash(), file_path)
+            logger.debug(
+                "Skipping existing resource %s -> %s", resource.get_hash(), file_path
+            )
         else:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             content = resource.get_content()
@@ -53,7 +57,9 @@ class PersistenceService:
         try:
             metadata_dict["size_bytes"] = str(file_path.stat().st_size)
         except OSError as exc:
-            logger.warning("Could not stat resource file %s for size_bytes: %s", file_path, exc)
+            logger.warning(
+                "Could not stat resource file %s for size_bytes: %s", file_path, exc
+            )
 
         try:
             relative_path = file_path.relative_to(self.data_path).as_posix()
@@ -65,8 +71,8 @@ class PersistenceService:
         self.catalog.upsert_resource(resource_hash, relative_path, metadata_dict)
 
         return file_path
-    
-    def delete_resource(self, resource_hash:str, flush: bool = True) -> Path:
+
+    def delete_resource(self, resource_hash: str, flush: bool = True) -> Path:
         """
         Delete a resource and its metadata from disk,
         updating the catalog accordingly.
@@ -86,9 +92,9 @@ class PersistenceService:
         if flush:
             self.flush_index()
 
-        logger.debug(f"Deleted resource {resource_hash} -> {file_path}")  
+        logger.debug(f"Deleted resource {resource_hash} -> {file_path}")
         return file_path
-    
+
     def delete_by_metadata_filter(self, key: str, value: str) -> None:
         """
         Remove any resource matching the given metadata key-value pair.
@@ -172,7 +178,7 @@ class PersistenceService:
             "resources must return str or bytes"
         )
 
-    def _delete_content(self,file_path: Path) -> None:
+    def _delete_content(self, file_path: Path) -> None:
         file_path.unlink()
 
     @staticmethod

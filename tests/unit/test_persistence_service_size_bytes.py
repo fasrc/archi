@@ -35,10 +35,22 @@ if "langchain_community.document_loaders" not in sys.modules:
 
 if "langchain_community.document_loaders.text" not in sys.modules:
     text_module = types.ModuleType("langchain_community.document_loaders.text")
-    text_module.TextLoader = sys.modules["langchain_community.document_loaders"].TextLoader if hasattr(sys.modules["langchain_community.document_loaders"], "TextLoader") else type("TextLoader", (), {"__init__": lambda self, *_a, **_k: None, "load": lambda self: []})
+    text_module.TextLoader = (
+        sys.modules["langchain_community.document_loaders"].TextLoader
+        if hasattr(sys.modules["langchain_community.document_loaders"], "TextLoader")
+        else type(
+            "TextLoader",
+            (),
+            {"__init__": lambda self, *_a, **_k: None, "load": lambda self: []},
+        )
+    )
     # Ensure TextLoader exists on both modules for imports.
     if not hasattr(sys.modules["langchain_community.document_loaders"], "TextLoader"):
-        setattr(sys.modules["langchain_community.document_loaders"], "TextLoader", text_module.TextLoader)
+        setattr(
+            sys.modules["langchain_community.document_loaders"],
+            "TextLoader",
+            text_module.TextLoader,
+        )
     sys.modules["langchain_community.document_loaders.text"] = text_module
 
 from src.data_manager.collectors.persistence import PersistenceService
@@ -61,7 +73,9 @@ class _FakeResource:
 
     def get_metadata(self):
         # No size_bytes provided by resource metadata on purpose.
-        return SimpleNamespace(as_dict=lambda: {"source_type": "ticket", "display_name": "Test Doc"})
+        return SimpleNamespace(
+            as_dict=lambda: {"source_type": "ticket", "display_name": "Test Doc"}
+        )
 
 
 def test_persist_resource_sets_size_bytes_from_written_file():

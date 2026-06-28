@@ -16,12 +16,16 @@ from functools import wraps
 from typing import Any
 
 import psycopg2
-from flask import Blueprint, Response, jsonify, request, g
+from flask import Blueprint, Response, g, jsonify, request
 
 from src.archi.utils.citation_formatter import format_citations
 from src.utils.logging import get_logger
-from src.utils.rbac import Permission, has_permission, get_registry
-from src.utils.rbac.audit import log_authentication_event, log_role_assignment, log_permission_check
+from src.utils.rbac import Permission, get_registry, has_permission
+from src.utils.rbac.audit import (
+    log_authentication_event,
+    log_permission_check,
+    log_role_assignment,
+)
 
 logger = get_logger(__name__)
 
@@ -35,7 +39,14 @@ _token_ttl_days: int = 90
 _boot_timestamp = int(time.time())
 
 
-def register_openai_compat(app, chat_wrapper, *, user_service=None, auth_enabled=False, token_ttl_days: int = 90):
+def register_openai_compat(
+    app,
+    chat_wrapper,
+    *,
+    user_service=None,
+    auth_enabled=False,
+    token_ttl_days: int = 90,
+):
     """
     Register the OpenAI-compatible blueprint with a Flask app.
 
@@ -59,6 +70,7 @@ def register_openai_compat(app, chat_wrapper, *, user_service=None, auth_enabled
 # Auth middleware
 # ---------------------------------------------------------------------------
 
+
 def _openai_error(message, error_type="invalid_request_error", status=400):
     """Return an OpenAI-format error response."""
     return jsonify({"error": {"message": message, "type": error_type}}), status
@@ -66,6 +78,7 @@ def _openai_error(message, error_type="invalid_request_error", status=400):
 
 def require_bearer_auth(f):
     """Decorator for /v1 routes that enforces bearer token auth when enabled."""
+
     @wraps(f)
     def decorated(*args, **kwargs):
         if not _auth_enabled:
@@ -75,48 +88,89 @@ def require_bearer_auth(f):
         auth_header = request.headers.get("Authorization", "")
         token = None
         if auth_header.startswith("Bearer "):
-            token = auth_header[len("Bearer "):] or None
+            token = auth_header[len("Bearer ") :] or None
 
         if not token:
             # No valid token — check if anonymous access is allowed
             registry = get_registry()
             if registry.allow_anonymous:
-                log_authentication_event("anonymous", "api_anonymous_access", success=True, method="anonymous")
+                log_authentication_event(
+                    "anonymous",
+                    "api_anonymous_access",
+                    success=True,
+                    method="anonymous",
+                )
                 g.v1_user = None
                 roles = [registry.default_role]
-                endpoint = request.endpoint or '/v1'
+                endpoint = request.endpoint or "/v1"
                 granted = has_permission(Permission.Chat.QUERY, roles)
-                log_permission_check("anonymous", str(Permission.Chat.QUERY), granted=granted, endpoint=endpoint, roles=roles)
+                log_permission_check(
+                    "anonymous",
+                    str(Permission.Chat.QUERY),
+                    granted=granted,
+                    endpoint=endpoint,
+                    roles=roles,
+                )
                 if not granted:
                     return _openai_error("Permission denied", status=403)
                 g.v1_roles = roles
                 return f(*args, **kwargs)
             else:
-                log_authentication_event("unknown", "api_token_auth", success=False, method="bearer_token", details="No token provided")
+                log_authentication_event(
+                    "unknown",
+                    "api_token_auth",
+                    success=False,
+                    method="bearer_token",
+                    details="No token provided",
+                )
                 return _openai_error("Authentication required", status=401)
 
         # Token was provided — validate it
         if _user_service is None:
             logger.error("UserService not available for /v1 auth")
-            log_authentication_event("unknown", "token_auth", success=False, method="bearer", details="UserService unavailable")
-            return _openai_error("Authentication service unavailable", "server_error", 500)
+            log_authentication_event(
+                "unknown",
+                "token_auth",
+                success=False,
+                method="bearer",
+                details="UserService unavailable",
+            )
+            return _openai_error(
+                "Authentication service unavailable", "server_error", 500
+            )
 
-        user = _user_service.get_user_by_api_token(token, token_ttl_days=_token_ttl_days)
+        user = _user_service.get_user_by_api_token(
+            token, token_ttl_days=_token_ttl_days
+        )
         if user is None:
-            log_authentication_event("unknown", "token_auth", success=False, method="bearer", details="Invalid or expired token")
+            log_authentication_event(
+                "unknown",
+                "token_auth",
+                success=False,
+                method="bearer",
+                details="Invalid or expired token",
+            )
             return _openai_error("Invalid or expired token", status=401)
 
-        user_id = getattr(user, 'email', None) or getattr(user, 'id', 'unknown')
+        user_id = getattr(user, "email", None) or getattr(user, "id", "unknown")
         log_authentication_event(user_id, "token_auth", success=True, method="bearer")
 
         registry = get_registry()
-        roles = ["admin"] if getattr(user, "is_admin", False) else [registry.default_role]
+        roles = (
+            ["admin"] if getattr(user, "is_admin", False) else [registry.default_role]
+        )
         is_default = not getattr(user, "is_admin", False)
         log_role_assignment(user_id, roles, source="token_auth", is_default=is_default)
 
-        endpoint = request.endpoint or '/v1'
+        endpoint = request.endpoint or "/v1"
         granted = has_permission(Permission.Chat.QUERY, roles)
-        log_permission_check(user_id, str(Permission.Chat.QUERY), granted=granted, endpoint=endpoint, roles=roles)
+        log_permission_check(
+            user_id,
+            str(Permission.Chat.QUERY),
+            granted=granted,
+            endpoint=endpoint,
+            roles=roles,
+        )
         if not granted:
             return _openai_error("Permission denied", status=403)
 
@@ -129,6 +183,7 @@ def require_bearer_auth(f):
 # ---------------------------------------------------------------------------
 # GET /v1/models
 # ---------------------------------------------------------------------------
+
 
 @openai_compat.route("/models", methods=["GET"])
 @require_bearer_auth
@@ -155,6 +210,7 @@ def list_models():
 # POST /v1/chat/completions
 # ---------------------------------------------------------------------------
 
+
 @openai_compat.route("/chat/completions", methods=["POST"])
 @require_bearer_auth
 def chat_completions():
@@ -171,6 +227,7 @@ def chat_completions():
         return _openai_error("'messages' must be a non-empty array")
 
     from src.utils.config_access import get_full_config
+
     config = get_full_config()
     available_config = config.get("name", "default")
     if model != available_config:
@@ -235,13 +292,14 @@ def chat_completions():
 # Chunk accumulation helper
 # ---------------------------------------------------------------------------
 
+
 def _extract_delta(content, accumulated):
     """Extract the new delta from a chunk that may be cumulative or incremental.
 
     Returns (delta, new_accumulated). delta is None if the chunk is a duplicate.
     """
     if content.startswith(accumulated) and len(content) > len(accumulated):
-        return content[len(accumulated):], content
+        return content[len(accumulated) :], content
     if accumulated.endswith(content):
         return None, accumulated
     return content, accumulated + content
@@ -250,6 +308,7 @@ def _extract_delta(content, accumulated):
 # ---------------------------------------------------------------------------
 # Streaming response
 # ---------------------------------------------------------------------------
+
 
 def _streaming_response(request_id, model, stream_kwargs):
     """Return an SSE streaming response."""
@@ -289,7 +348,9 @@ def _streaming_response(request_id, model, stream_kwargs):
 
                 elif event_type == "error":
                     error_msg = event.get("message", "Unknown error")
-                    yield _sse_chunk(request_id, model, content=f"\n\n[Error: {error_msg}]")
+                    yield _sse_chunk(
+                        request_id, model, content=f"\n\n[Error: {error_msg}]"
+                    )
                     yield _sse_chunk(request_id, model, finish_reason="stop")
                     yield "data: [DONE]\n\n"
 
@@ -301,7 +362,11 @@ def _streaming_response(request_id, model, stream_kwargs):
 
         except Exception as exc:
             logger.error(f"/v1 streaming error: {exc}", exc_info=True)
-            yield _sse_chunk(request_id, model, content="\n\n[Error: server error; see chat logs for message]")
+            yield _sse_chunk(
+                request_id,
+                model,
+                content="\n\n[Error: server error; see chat logs for message]",
+            )
             yield _sse_chunk(request_id, model, finish_reason="stop")
             yield "data: [DONE]\n\n"
 
@@ -318,6 +383,7 @@ def _streaming_response(request_id, model, stream_kwargs):
 # ---------------------------------------------------------------------------
 # Non-streaming response
 # ---------------------------------------------------------------------------
+
 
 def _non_streaming_response(request_id, model, stream_kwargs):
     """Accumulate from stream() and return a complete JSON response."""
@@ -347,38 +413,43 @@ def _non_streaming_response(request_id, model, stream_kwargs):
 
     except Exception as exc:
         logger.error(f"/v1 non-streaming error: {exc}", exc_info=True)
-        return _openai_error("server error; see chat logs for message", "server_error", 500)
+        return _openai_error(
+            "server error; see chat logs for message", "server_error", 500
+        )
 
     citation_text = format_citations(source_documents, source_scores)
     if citation_text:
         final_content += citation_text
 
-    return jsonify({
-        "id": request_id,
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": model,
-        "choices": [
-            {
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": final_content,
-                },
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-        },
-    })
+    return jsonify(
+        {
+            "id": request_id,
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": final_content,
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            },
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # SSE helpers
 # ---------------------------------------------------------------------------
+
 
 def _sse_chunk(request_id, model, content=None, finish_reason=None):
     """Build a single SSE data line in OpenAI format."""
@@ -428,6 +499,7 @@ def _messages_to_history(messages):
 # Conversation persistence
 # ---------------------------------------------------------------------------
 
+
 def _get_or_create_conversation(external_chat_id, user_id, client_id):
     """Look up or create an archi conversation for an external chat ID."""
     if not _chat_wrapper:
@@ -459,7 +531,7 @@ def _get_or_create_conversation(external_chat_id, user_id, client_id):
                     DO UPDATE SET last_message_at = NOW()
                     RETURNING conversation_id
                     """,
-                    (user_id, client_id, "Open WebUI Chat", external_chat_id)
+                    (user_id, client_id, "Open WebUI Chat", external_chat_id),
                 )
                 conv_id = cursor.fetchone()[0]
                 conn.commit()
@@ -470,4 +542,3 @@ def _get_or_create_conversation(external_chat_id, user_id, client_id):
     except Exception as exc:
         logger.error(f"Failed to get/create conversation for {external_chat_id}: {exc}")
         return None
-

@@ -4,13 +4,13 @@ from unittest.mock import patch
 
 import pytest
 from flask import Flask
-from src.utils.rbac.registry import RBACRegistry
-from src.utils.rbac.decorators import (
-    require_permission,
-    require_any_permission,
-    check_sso_required,
-)
 
+from src.utils.rbac.decorators import (
+    check_sso_required,
+    require_any_permission,
+    require_permission,
+)
+from src.utils.rbac.registry import RBACRegistry
 
 # ---------------------------------------------------------------------------
 # Shared config
@@ -160,7 +160,9 @@ class TestCheckSsoRequired:
         """When allow_anonymous is True, unauthenticated requests pass through."""
         anon_registry = RBACRegistry(ANON_CONFIG)
         app = _create_app(anon_registry)
-        with patch("src.utils.rbac.decorators.get_registry", return_value=anon_registry):
+        with patch(
+            "src.utils.rbac.decorators.get_registry", return_value=anon_registry
+        ):
             with app.test_client() as c:
                 resp = c.get("/sso-gate")
                 assert resp.status_code == 200

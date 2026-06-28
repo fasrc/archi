@@ -56,7 +56,9 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
     with open(path, "r") as f:
         data = yaml.safe_load(f)
     if not isinstance(data, dict):
-        raise ValueError(f"Expected a YAML mapping at {path}, got {type(data).__name__}")
+        raise ValueError(
+            f"Expected a YAML mapping at {path}, got {type(data).__name__}"
+        )
     return data
 
 
@@ -74,7 +76,9 @@ def generate_sweep_configs(manifest_path: Path) -> List[Path]:
         raise ValueError("Manifest missing required key 'base_config'.")
     prompts_raw = manifest.get("prompts")
     if not isinstance(prompts_raw, list) or not prompts_raw:
-        raise ValueError("Manifest 'prompts' must be a non-empty list of prompt file paths.")
+        raise ValueError(
+            "Manifest 'prompts' must be a non-empty list of prompt file paths."
+        )
 
     primary_metric = str(manifest.get("primary_metric", DEFAULT_PRIMARY_METRIC))
     if primary_metric not in KNOWN_METRICS:
@@ -100,13 +104,17 @@ def generate_sweep_configs(manifest_path: Path) -> List[Path]:
     missing = [str(p) for p in prompt_paths if not p.is_file()]
     if missing:
         # Atomic: refuse before writing any config.
-        raise ValueError(f"Prompt file(s) not found, aborting (no configs written): {missing}")
+        raise ValueError(
+            f"Prompt file(s) not found, aborting (no configs written): {missing}"
+        )
 
     out_dir = _resolve(str(manifest.get("out_dir", DEFAULT_OUT_DIR)))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     base_config = _load_yaml(base_config_path)
-    if "services" not in base_config or "benchmarking" not in base_config.get("services", {}):
+    if "services" not in base_config or "benchmarking" not in base_config.get(
+        "services", {}
+    ):
         raise ValueError(
             f"base_config '{base_config_path}' has no services.benchmarking section to sweep."
         )
@@ -129,9 +137,13 @@ def generate_sweep_configs(manifest_path: Path) -> List[Path]:
 
 
 def main(argv: List[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
-        "--manifest", "-m", required=True,
+        "--manifest",
+        "-m",
+        required=True,
         help="Path to a sweep manifest YAML (base_config + prompts).",
     )
     args = parser.parse_args(argv)
@@ -155,8 +167,7 @@ def main(argv: List[str] | None = None) -> int:
     for p in written:
         print(f"  - {p.name}")
     print()
-    print("Next: run the sweep (leaderboard ranks by "
-          f"'{primary_metric}'):")
+    print("Next: run the sweep (leaderboard ranks by " f"'{primary_metric}'):")
     print(f"  archi evaluate --config-dir {out_dir} --hostmode")
     return 0
 

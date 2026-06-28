@@ -8,25 +8,31 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 SUPPORTED_INPUT_VARIABLES = [
-    "full_history", # full history between user and agent
-    "history", # history trimmed of the last user message
-    "question", # last user message
-    "retriever_output", # output of retriever from the vectorstore
-    "condensed_output" # output of condensing step
+    "full_history",  # full history between user and agent
+    "history",  # history trimmed of the last user message
+    "question",  # last user message
+    "retriever_output",  # output of retriever from the vectorstore
+    "condensed_output",  # output of condensing step
     # TODO should support any given chain's output
 ]
+
 
 class ValidatedPromptTemplate(PromptTemplate):
     """
     A PromptTemplate that validates the template string.
-    
+
     Args:
         name (str): The name of the prompt.
         prompt_template (str): The prompt template string.
         input_variables (Optional[List[str]]): List of input variable names.
     """
 
-    def __init__(self, name: str, prompt_template: str, input_variables: Optional[List[str]] = None):
+    def __init__(
+        self,
+        name: str,
+        prompt_template: str,
+        input_variables: Optional[List[str]] = None,
+    ):
 
         # if input_variables is passed, we check that they exist as {placeholders} in the prompt
         # else, we automatically find what the input variables are by reading the prompt {placeholders}
@@ -49,7 +55,9 @@ class ValidatedPromptTemplate(PromptTemplate):
         template_vars = [f"{{{var}}}" for var in input_variables]
         for template_var in template_vars:
             if template_var not in prompt_template:
-                raise ValueError(f"Input variable '{template_var}' not found in the main prompt template.")
+                raise ValueError(
+                    f"Input variable '{template_var}' not found in the main prompt template."
+                )
         logger.info(f"Prompt validated to use input variables: {input_variables}")
 
     def _find_input_variables(self, prompt_template: str) -> list[str]:

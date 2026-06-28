@@ -3,9 +3,9 @@
 from unittest.mock import patch
 
 import pytest
-from src.utils.rbac.registry import RBACRegistry
-from src.utils.rbac.permissions import has_permission, is_admin, is_expert
 
+from src.utils.rbac.permissions import has_permission, is_admin, is_expert
+from src.utils.rbac.registry import RBACRegistry
 
 # ---------------------------------------------------------------------------
 # Shared config + mock registry

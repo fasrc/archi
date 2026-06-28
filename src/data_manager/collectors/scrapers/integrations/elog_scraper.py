@@ -11,10 +11,10 @@ Config (under data_manager.sources.elog):
 """
 
 import re
-import requests
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
+import requests
 from bs4 import BeautifulSoup
 
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
@@ -29,12 +29,13 @@ class ElogScraper:
     """Crawls an ELOG logbook index (walking pages sequentially) and yields each entry."""
 
     def __init__(self, config: dict) -> None:
-        self.base_url   = config.get("url", "").rstrip("/") + "/"
+        self.base_url = config.get("url", "").rstrip("/") + "/"
         self.max_entries: Optional[int] = config.get("max_entries")
         self.verify_ssl = config.get("verify_ssl", True)
-        self._session   = requests.Session()
+        self._session = requests.Session()
         if not self.verify_ssl:
             import urllib3
+
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     # ------------------------------------------------------------------
@@ -61,19 +62,23 @@ class ElogScraper:
 
     def _discover_entry_urls(self) -> List[str]:
         """Return entry URLs newest-first by walking index pages sequentially until max_entries is reached."""
-        seen:   Set[str]  = set()
+        seen: Set[str] = set()
         result: List[str] = []
         page = 1
 
         while True:
             page_url = self.base_url if page == 1 else f"{self.base_url}page{page}"
-            new_urls = [u for u in self._get_entry_urls_from_page(page_url) if u not in seen]
+            new_urls = [
+                u for u in self._get_entry_urls_from_page(page_url) if u not in seen
+            ]
             if not new_urls:
                 logger.info(f"ElogScraper: no new entries on {page_url}, stopping.")
                 break
             seen.update(new_urls)
             result.extend(new_urls)
-            logger.debug(f"ElogScraper: page {page} added {len(new_urls)} entries ({len(result)} total)")
+            logger.debug(
+                f"ElogScraper: page {page} added {len(new_urls)} entries ({len(result)} total)"
+            )
             if self.max_entries is not None and len(result) >= self.max_entries:
                 break
             page += 1
@@ -87,7 +92,7 @@ class ElogScraper:
         html = self._fetch_html(page_url)
         if html is None:
             return []
-        soup  = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(html, "html.parser")
         base_host = urlparse(self.base_url).netloc
         entries: Set[str] = set()
         for a in soup.find_all("a", href=True):

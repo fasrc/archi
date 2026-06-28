@@ -99,14 +99,18 @@ def _convert_messages(messages: List[BaseMessage]) -> tuple[str, List[Dict[str, 
         elif isinstance(msg, AIMessage):
             converted.append({"role": "assistant", "content": str(msg.content)})
         elif isinstance(msg, ToolMessage):
-            converted.append({
-                "role": "user",
-                "content": [{
-                    "type": "tool_result",
-                    "tool_use_id": getattr(msg, "tool_call_id", "unknown"),
-                    "content": str(msg.content),
-                }],
-            })
+            converted.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": getattr(msg, "tool_call_id", "unknown"),
+                            "content": str(msg.content),
+                        }
+                    ],
+                }
+            )
         else:
             converted.append({"role": "user", "content": str(msg.content)})
 
@@ -187,14 +191,17 @@ class HuitBedrockChat(BaseChatModel):
         payload = response.json()
         content_blocks = payload.get("content", [])
         text = "".join(
-            block.get("text", "") for block in content_blocks if block.get("type") == "text"
+            block.get("text", "")
+            for block in content_blocks
+            if block.get("type") == "text"
         )
 
         usage = payload.get("usage", {}) or {}
         usage_metadata = {
             "input_tokens": int(usage.get("input_tokens", 0) or 0),
             "output_tokens": int(usage.get("output_tokens", 0) or 0),
-            "total_tokens": int(usage.get("input_tokens", 0) or 0) + int(usage.get("output_tokens", 0) or 0),
+            "total_tokens": int(usage.get("input_tokens", 0) or 0)
+            + int(usage.get("output_tokens", 0) or 0),
         }
 
         ai_message = AIMessage(content=text, usage_metadata=usage_metadata)  # type: ignore[arg-type]
@@ -227,7 +234,12 @@ class HuitBedrockProvider(BaseProvider):
             "base_url": base_url,
             "api_key": self._api_key or "",
         }
-        for key in ("max_tokens", "temperature", "anthropic_version", "request_timeout"):
+        for key in (
+            "max_tokens",
+            "temperature",
+            "anthropic_version",
+            "request_timeout",
+        ):
             if key in self.config.extra_kwargs:
                 chat_kwargs[key] = self.config.extra_kwargs[key]
             if key in kwargs:

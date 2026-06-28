@@ -2,9 +2,10 @@
 Unit tests for the citation formatter utility.
 """
 
-import pytest
 from dataclasses import dataclass, field
 from typing import Dict
+
+import pytest
 
 from src.archi.utils.citation_formatter import format_citations
 
@@ -12,6 +13,7 @@ from src.archi.utils.citation_formatter import format_citations
 @dataclass
 class FakeDocument:
     """Minimal stand-in for a LangChain Document."""
+
     page_content: str = ""
     metadata: Dict = field(default_factory=dict)
 
@@ -110,7 +112,9 @@ class TestFormatCitationsCollectionLabels:
 
     def test_multi_collection_shows_labels(self):
         docs = [
-            FakeDocument(metadata={"display_name": "failover.md", "collection": "runbooks"}),
+            FakeDocument(
+                metadata={"display_name": "failover.md", "collection": "runbooks"}
+            ),
             FakeDocument(metadata={"display_name": "setup.md", "collection": "guides"}),
         ]
         result = format_citations(docs, [0.92, 0.87])
@@ -146,6 +150,7 @@ class TestFormatCitationsMissingMetadata:
     def test_document_without_metadata_attr(self):
         class BareDoc:
             page_content = "text"
+
         result = format_citations([BareDoc()], [0.5])
         assert result == ""
 

@@ -3,17 +3,17 @@ import os
 import time
 
 from src.interfaces.redmine_mailer_integration import redmine
+from src.utils.config_access import get_services_config
 from src.utils.env import read_secret
 from src.utils.logging import setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
-from src.utils.config_access import get_services_config
 
 # set basicConfig for logging
 setup_logging()
 
 # set openai
-os.environ['OPENAI_API_KEY'] = read_secret("OPENAI_API_KEY")
-os.environ['HUGGING_FACE_HUB_TOKEN'] = read_secret("HUGGING_FACE_HUB_TOKEN")
+os.environ["OPENAI_API_KEY"] = read_secret("OPENAI_API_KEY")
+os.environ["HUGGING_FACE_HUB_TOKEN"] = read_secret("HUGGING_FACE_HUB_TOKEN")
 
 # temporary hack to prevent redmine, mailbox, and chat services from all
 # starting DataManager at the same time; eventually replace this with
@@ -25,7 +25,7 @@ factory = PostgresServiceFactory.from_env(password_override=read_secret("PG_PASS
 PostgresServiceFactory.set_instance(factory)
 
 redmine_config = get_services_config().get("redmine_mailbox", {})
-redmine = redmine.Redmine('Redmine_Helpdesk')
+redmine = redmine.Redmine("Redmine_Helpdesk")
 
 while True:
     redmine.load()

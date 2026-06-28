@@ -1,23 +1,23 @@
-import requests
 import re
-
 from typing import Dict, Iterator, List, Optional
-from bs4 import BeautifulSoup
-from urllib.parse import urlparse, urljoin, urldefrag
+from urllib.parse import urldefrag, urljoin, urlparse
 
-from src.data_manager.collectors.scrapers.scraped_resource import \
-    ScrapedResource
+import requests
+from bs4 import BeautifulSoup
+
+from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
 
 class LinkScraper:
     """
     Single scraper for all our link needs that handles Selenium and requests.
     This class explicitly handles requests, but if selenium scraping is enabled for a link
-    everything is passed through to the driver including how the page data is collected and 
-    how the next level of links are found. This class DOESNT own the selenium driver, that is 
-    owned by the scraper manager class. 
+    everything is passed through to the driver including how the page data is collected and
+    how the next level of links are found. This class DOESNT own the selenium driver, that is
+    owned by the scraper manager class.
     """
 
     def __init__(self, verify_urls: bool = True, enable_warnings: bool = True) -> None:
@@ -26,26 +26,41 @@ class LinkScraper:
         # seen_urls tracks anything queued/visited; visited_urls tracks pages actually crawled.
         self.visited_urls = set()
         self.seen_urls = set()
-    
+
     def _is_image_url(self, url: str) -> bool:
         """Check if URL points to an image file."""
-        image_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.ico', '.webp')
+        image_extensions = (
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".bmp",
+            ".svg",
+            ".ico",
+            ".webp",
+        )
         parsed_url = urlparse(url)
         path = parsed_url.path.lower()
         return any(path.endswith(ext) for ext in image_extensions)
 
-    def reap(self, response, current_url: str, selenium_scrape: bool = False, authenticator = None):
+    def reap(
+        self,
+        response,
+        current_url: str,
+        selenium_scrape: bool = False,
+        authenticator=None,
+    ):
         """
         probably the most complicated method here and most volatile in terms of maybe later needing a rewrite
 
-        this method is here to deal with any result that it gets back. for a selenium resource it expects results as a 
-        BrowserIntermediaryResult, otherwhise it will handle it as a normal http response. it handles getting the next set 
+        this method is here to deal with any result that it gets back. for a selenium resource it expects results as a
+        BrowserIntermediaryResult, otherwhise it will handle it as a normal http response. it handles getting the next set
         of links and updating the page data gathered
 
-        Args: 
+        Args:
             response (BrowserIntermediaryResult | requests.response): whatever has been collected for the current_url by the scraper
             selenium_scrape (bool): whether or not selenium was used to scrape this content
-            authenticator (SSOAuthenticator | None): client being used to crawl websites or just for auth 
+            authenticator (SSOAuthenticator | None): client being used to crawl websites or just for auth
 
         Return (tuple[list[str], list[ScrapedResource]]): next links to crawl and resources collected
         """
@@ -54,21 +69,23 @@ class LinkScraper:
         self._mark_visited(current_url)
 
         source_type = "web" if (authenticator is None) else "sso"
-        
+
         resources = []
 
-        if selenium_scrape: # deals with a selenium response (should work for both non authenitcated and authenticated sites in principle)
-            assert(authenticator is not None) ## this shouldnt be tripped
-            
+        if (
+            selenium_scrape
+        ):  # deals with a selenium response (should work for both non authenitcated and authenticated sites in principle)
+            assert authenticator is not None  ## this shouldnt be tripped
+
             # For selenium scraping, we expect a simple dict from extract_page_data
             # containing url, title, content, suffix
             content = response.get("content", "")
             title = response.get("title", "")
             suffix = response.get("suffix", "html")
-            
+
             resource = ScrapedResource(
                 url=current_url,
-                content=content, 
+                content=content,
                 suffix=suffix,
                 source_type=source_type,
                 metadata={
@@ -79,8 +96,8 @@ class LinkScraper:
             )
             res = authenticator.get_links_with_same_hostname(current_url)
             resources.append(resource)
-                
-        else: # deals with http response
+
+        else:  # deals with http response
             content_type = response.headers.get("Content-type")
 
             if current_url.lower().endswith(".pdf"):
@@ -105,13 +122,12 @@ class LinkScraper:
             res = self.get_links_with_same_hostname(current_url, resource)
             resources.append(resource)
 
-        return res, resources # either collected via http or via authenticators method
-
+        return res, resources  # either collected via http or via authenticators method
 
     def crawl(
         self,
         start_url: str,
-        browserclient = None,
+        browserclient=None,
         max_depth: int = 1,
         selenium_scrape: bool = False,
         max_pages: Optional[int] = None,
@@ -119,7 +135,7 @@ class LinkScraper:
         """
         crawl pages from a given starting url up to a given depth either using basic http or a provided browser client
 
-        Args : 
+        Args :
             start_url (str): Url to start crawling from
             authenticator (SSOAuthenticator): class used for handling authenticatoin for web resources
             max_depth (int): max depth of links to descend from the start url
@@ -144,7 +160,7 @@ class LinkScraper:
     def crawl_iter(
         self,
         start_url: str,
-        browserclient = None,
+        browserclient=None,
         max_depth: int = 1,
         selenium_scrape: bool = False,
         max_pages: Optional[int] = None,
@@ -153,7 +169,7 @@ class LinkScraper:
         """
         crawl pages from a given starting url up to a given depth either using basic http or a provided browser client
 
-        Args : 
+        Args :
             start_url (str): Url to start crawling from
             authenticator (SSOAuthenticator): class used for handling authenticatoin for web resources
             max_depth (int): max depth of links to descend from the start url
@@ -167,9 +183,10 @@ class LinkScraper:
 
         if not self.enable_warnings:
             import urllib3
+
             urllib3.disable_warnings()
-            
-        depth = 0 
+
+        depth = 0
         self.visited_urls = set()
         self.seen_urls = set()
         self.page_data = []
@@ -188,26 +205,32 @@ class LinkScraper:
         # session either stays none or becomes a requests.Session object if not selenium scraping
         session = None
 
-        if selenium_scrape: # scrape page with pure selenium
-            if browserclient is None: 
-                logger.error(f"Failed to crawl: {start_url}, auth is needed but no browser clilent was passed through")
-                return [] 
+        if selenium_scrape:  # scrape page with pure selenium
+            if browserclient is None:
+                logger.error(
+                    f"Failed to crawl: {start_url}, auth is needed but no browser clilent was passed through"
+                )
+                return []
             browserclient.authenticate_and_navigate(normalized_start_url)
 
-        elif not selenium_scrape and browserclient is not None: # use browser client for auth but scrape with http request
+        elif (
+            not selenium_scrape and browserclient is not None
+        ):  # use browser client for auth but scrape with http request
             session = requests.Session()
             cookies = browserclient.authenticate(normalized_start_url)
             if cookies is not None:
                 for cookie_args in cookies:
-                    cookie = requests.cookies.create_cookie(name=cookie_args['name'],
-                                                            value=cookie_args['value'],
-                                                            domain=cookie_args.get('domain'),
-                                                            path=cookie_args.get('path', '/'),
-                                                            expires=cookie_args.get('expires'),
-                                                            secure=cookie_args.get('secure', False))
+                    cookie = requests.cookies.create_cookie(
+                        name=cookie_args["name"],
+                        value=cookie_args["value"],
+                        domain=cookie_args.get("domain"),
+                        path=cookie_args.get("path", "/"),
+                        expires=cookie_args.get("expires"),
+                        secure=cookie_args.get("secure", False),
+                    )
                     session.cookies.set_cookie(cookie)
 
-        else: # pure html no browser client needed
+        else:  # pure html no browser client needed
             session = requests.Session()
 
         while to_visit and depth < max_depth:
@@ -215,11 +238,11 @@ class LinkScraper:
                 logger.info(f"Reached max_pages={max_pages}; stopping crawl early.")
                 break
             current_url = to_visit.pop(0)
-            
+
             # Skip if we've already visited this URL
             if current_url in self.visited_urls:
                 continue
-            
+
             # Skip image files
             if self._is_image_url(current_url):
                 logger.debug(f"Skipping image URL: {current_url}")
@@ -230,44 +253,49 @@ class LinkScraper:
 
             try:
 
-                # grab the page content 
-                if not selenium_scrape: 
-                    assert (session is not None) # REMOVELATER
-                    response = session.get(current_url, verify = self.verify_urls)
+                # grab the page content
+                if not selenium_scrape:
+                    assert session is not None  # REMOVELATER
+                    response = session.get(current_url, verify=self.verify_urls)
                     response.raise_for_status()
-                else: 
-                    assert (browserclient is not None) # REMOVELATER
-                    browserclient.navigate_to(current_url, wait_time = 2)
-                    response = browserclient.extract_page_data(current_url) # see the BrowserIntermediaryResult class to see what comes back here
-                            
-                
+                else:
+                    assert browserclient is not None  # REMOVELATER
+                    browserclient.navigate_to(current_url, wait_time=2)
+                    response = browserclient.extract_page_data(
+                        current_url
+                    )  # see the BrowserIntermediaryResult class to see what comes back here
+
                 # Mark as visited and store content
                 pages_visited += 1
-                new_links, resources = self.reap(response, current_url, selenium_scrape, browserclient)
+                new_links, resources = self.reap(
+                    response, current_url, selenium_scrape, browserclient
+                )
                 for resource in resources:
                     if collect_page_data:
                         self.page_data.append(resource)
                     yield resource
-                        
+
                 for link in new_links:
                     normalized_link = self._normalize_url(link)
                     if not normalized_link:
                         continue
                     if normalized_link in self.seen_urls:
                         continue
-                    logger.info(f"Found new link: {normalized_link} (nv: {pages_visited})")
+                    logger.info(
+                        f"Found new link: {normalized_link} (nv: {pages_visited})"
+                    )
                     self.seen_urls.add(normalized_link)
                     level_links.append(normalized_link)
 
             except Exception as e:
                 logger.info(f"Error crawling {current_url}: {e}")
-                self._mark_visited(current_url)  # Mark as visited to avoid retrying           
+                self._mark_visited(current_url)  # Mark as visited to avoid retrying
 
             if not to_visit:
                 to_visit.extend(level_links)
                 level_links = []
                 depth += 1
-            
+
         logger.info(f"Crawling complete. Visited {pages_visited} pages.")
         return
 
@@ -298,10 +326,10 @@ class LinkScraper:
         base_hostname = urlparse(base_url).netloc
         links = set()
         a_tags = []
-        
-        if (page_data.suffix == "html"):
+
+        if page_data.suffix == "html":
             soup = BeautifulSoup(page_data.content, "html.parser")
-            a_tags = soup.find_all("a", href=True) 
+            a_tags = soup.find_all("a", href=True)
 
         # how many  links found on the first level
         for tag in a_tags:

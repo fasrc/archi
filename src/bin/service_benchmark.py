@@ -14,22 +14,27 @@ from urllib import request as url_request
 
 import pandas as pd
 import yaml
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+from src.archi.archi import archi
+from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
+from src.archi.providers import get_model
+from src.utils.env import read_secret
+from src.utils.generate_benchmark_report import (
+    format_html_output,
+    parse_benchmark_results,
+)
+from src.utils.logging import get_logger, setup_logging
+from src.utils.postgres_service_factory import PostgresServiceFactory
+
 # NOTE: `datasets` and `ragas` are heavy, benchmark-only deps that live in the
 # benchmarking Docker image but NOT the lean unit-test environment. They are
 # imported lazily inside the methods that use them (get_ragas_results, run)
 # so that importing this module for its pure helpers (e.g. ResultHandler.
 # build_leaderboard / dump, exercised by unit tests) does not require them.
 
-from src.archi.archi import archi
-from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
-from src.archi.providers import get_model
-from src.utils.env import read_secret
-from src.utils.logging import get_logger, setup_logging
-from src.utils.generate_benchmark_report import parse_benchmark_results, format_html_output
-from src.utils.postgres_service_factory import PostgresServiceFactory
 
 CONFIG_PATH = "/root/archi/config.yaml"
 OUTPUT_PATH = "/root/archi/benchmarks"
@@ -48,18 +53,21 @@ def _init_runtime() -> None:
     build_leaderboard, exercised by unit tests) must not require live secrets or
     a reachable database.
     """
-    os.environ['OPENAI_API_KEY'] = read_secret("OPENAI_API_KEY")
-    os.environ['ANTHROPIC_API_KEY'] = read_secret("ANTHROPIC_API_KEY")
-    os.environ['HUGGING_FACE_HUB_TOKEN'] = read_secret("HUGGING_FACE_HUB_TOKEN")
-    os.environ['HUIT_API_KEY'] = read_secret("HUIT_API_KEY")
+    os.environ["OPENAI_API_KEY"] = read_secret("OPENAI_API_KEY")
+    os.environ["ANTHROPIC_API_KEY"] = read_secret("ANTHROPIC_API_KEY")
+    os.environ["HUGGING_FACE_HUB_TOKEN"] = read_secret("HUGGING_FACE_HUB_TOKEN")
+    os.environ["HUIT_API_KEY"] = read_secret("HUIT_API_KEY")
 
-    factory = PostgresServiceFactory.from_env(password_override=os.environ.get("PG_PASSWORD"))
+    factory = PostgresServiceFactory.from_env(
+        password_override=os.environ.get("PG_PASSWORD")
+    )
     PostgresServiceFactory.set_instance(factory)
 
 
 @dataclass
 class ABResult:
     """Paired A/B comparison result for a single question."""
+
     question: str
     reference_answer: str
     answer_a: str
@@ -81,9 +89,15 @@ class ABResult:
 class ResultHandler:
     results = []  # store the results for each config
     metadata = {}  # store the metadata about the benchmark run
-    ab_comparison: Dict[str, Any] = {}  # single-pair compat (populated only in ab_mode with 2 configs)
-    ab_comparisons: List[Dict[str, Any]] = []  # multi-pair: list of pair comparison dicts
-    leaderboard: Dict[str, Any] = {}  # prompt-sweep leaderboard (populated only when 2+ configs run)
+    ab_comparison: Dict[str, Any] = (
+        {}
+    )  # single-pair compat (populated only in ab_mode with 2 configs)
+    ab_comparisons: List[Dict[str, Any]] = (
+        []
+    )  # multi-pair: list of pair comparison dicts
+    leaderboard: Dict[str, Any] = (
+        {}
+    )  # prompt-sweep leaderboard (populated only when 2+ configs run)
     # Per-invocation identifier shared by every config in this archi-evaluate run.
     # Stamped onto Argilla records as metadata so the analysis notebook can refuse
     # to compute primary-outcome statistics across configs that were NOT run
@@ -119,19 +133,18 @@ class ResultHandler:
                     prompt_str = f.read()
                 section[prompt_name] = prompt_str
 
-
     @staticmethod
     def handle_results(config_path: Path, results: Dict, total_results: Dict):
-        with open(config_path, "r") as f: 
+        with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
 
         ResultHandler.map_prompts(config)
 
-        current_results = { 
-            "single_question_results": results, 
-            "total_results": total_results, 
+        current_results = {
+            "single_question_results": results,
+            "total_results": total_results,
             "configuration_file": str(config_path),
-            "configuration": config, 
+            "configuration": config,
         }
 
         ResultHandler.results.append(current_results)
@@ -149,27 +162,28 @@ class ResultHandler:
 
         ResultHandler.metadata.update(meta_data)
 
-
-    @staticmethod 
+    @staticmethod
     def dump_html(benchmark_name: Path):
 
-        config_data, config_name, timestamp, questions, total_results = parse_benchmark_results(ResultHandler.results, ResultHandler.metadata)
+        config_data, config_name, timestamp, questions, total_results = (
+            parse_benchmark_results(ResultHandler.results, ResultHandler.metadata)
+        )
 
         logger.info(config_data)
 
-        html_content = format_html_output(config_data, config_name, timestamp,questions, total_results)
+        html_content = format_html_output(
+            config_data, config_name, timestamp, questions, total_results
+        )
 
         filename = f"{benchmark_name}-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_report.html"
         file_path = OUTPUT_DIR / filename
 
         logger.info(f"Dumping results to {file_path}")
 
-        with open(file_path, 'w') as f:
+        with open(file_path, "w") as f:
             f.write(html_content)
 
         logger.info(f"✅ HTML report generated: {file_path}")
-
-            
 
     @staticmethod
     def dump(benchmark_name: Path):
@@ -202,16 +216,25 @@ class ResultHandler:
         results_a = ResultHandler.results[idx_a]["single_question_results"]
         results_b = ResultHandler.results[idx_b]["single_question_results"]
 
-        ragas_metrics = ["answer_relevancy", "faithfulness", "context_precision", "context_recall"]
+        ragas_metrics = [
+            "answer_relevancy",
+            "faithfulness",
+            "context_precision",
+            "context_recall",
+        ]
 
         paired: List[ABResult] = []
         all_keys = list(results_a.keys()) + [k for k in results_b if k not in results_a]
         for key in all_keys:
             if key not in results_a:
-                logger.warning("Question key %s not found in config A results, skipping.", key)
+                logger.warning(
+                    "Question key %s not found in config A results, skipping.", key
+                )
                 continue
             if key not in results_b:
-                logger.warning("Question key %s not found in config B results, skipping.", key)
+                logger.warning(
+                    "Question key %s not found in config B results, skipping.", key
+                )
                 continue
             qa = results_a[key]
             qb = results_b[key]
@@ -231,23 +254,33 @@ class ResultHandler:
                 else:
                     winner_by_metric[m] = "b"
 
-            paired.append(ABResult(
-                question=qa["question"],
-                reference_answer=qa.get("reference_answer", ""),
-                answer_a=qa.get("answer", ""),
-                answer_b=qb.get("answer", ""),
-                time_a=qa.get("time_elapsed", 0.0),
-                time_b=qb.get("time_elapsed", 0.0),
-                ragas_a=ragas_a,
-                ragas_b=ragas_b,
-                sources_a=qa.get("sources_metadata", []),
-                sources_b=qb.get("sources_metadata", []),
-                messages_a=qa.get("messages", []),
-                messages_b=qb.get("messages", []),
-                winner_by_metric=winner_by_metric,
-                llm_judge_a={k.replace("llm_judge_", ""): v for k, v in qa.items() if k.startswith("llm_judge_")},
-                llm_judge_b={k.replace("llm_judge_", ""): v for k, v in qb.items() if k.startswith("llm_judge_")},
-            ))
+            paired.append(
+                ABResult(
+                    question=qa["question"],
+                    reference_answer=qa.get("reference_answer", ""),
+                    answer_a=qa.get("answer", ""),
+                    answer_b=qb.get("answer", ""),
+                    time_a=qa.get("time_elapsed", 0.0),
+                    time_b=qb.get("time_elapsed", 0.0),
+                    ragas_a=ragas_a,
+                    ragas_b=ragas_b,
+                    sources_a=qa.get("sources_metadata", []),
+                    sources_b=qb.get("sources_metadata", []),
+                    messages_a=qa.get("messages", []),
+                    messages_b=qb.get("messages", []),
+                    winner_by_metric=winner_by_metric,
+                    llm_judge_a={
+                        k.replace("llm_judge_", ""): v
+                        for k, v in qa.items()
+                        if k.startswith("llm_judge_")
+                    },
+                    llm_judge_b={
+                        k.replace("llm_judge_", ""): v
+                        for k, v in qb.items()
+                        if k.startswith("llm_judge_")
+                    },
+                )
+            )
 
         return paired
 
@@ -295,8 +328,18 @@ class ResultHandler:
         mean_scores_a: Dict[str, float] = {}
         mean_scores_b: Dict[str, float] = {}
         for m in all_metrics:
-            vals_a = [r.ragas_a[m] for r in paired if r.ragas_a.get(m) is not None and not math.isnan(r.ragas_a.get(m, float("nan")))]
-            vals_b = [r.ragas_b[m] for r in paired if r.ragas_b.get(m) is not None and not math.isnan(r.ragas_b.get(m, float("nan")))]
+            vals_a = [
+                r.ragas_a[m]
+                for r in paired
+                if r.ragas_a.get(m) is not None
+                and not math.isnan(r.ragas_a.get(m, float("nan")))
+            ]
+            vals_b = [
+                r.ragas_b[m]
+                for r in paired
+                if r.ragas_b.get(m) is not None
+                and not math.isnan(r.ragas_b.get(m, float("nan")))
+            ]
             mean_scores_a[m] = sum(vals_a) / len(vals_a) if vals_a else 0.0
             mean_scores_b[m] = sum(vals_b) / len(vals_b) if vals_b else 0.0
 
@@ -358,7 +401,8 @@ class ResultHandler:
             logger.warning(
                 "Leaderboard primary_metric '%s' is not a known RAGAS metric %s; "
                 "falling back to 'faithfulness'.",
-                primary_metric, metric_names,
+                primary_metric,
+                metric_names,
             )
             primary_metric = "faithfulness"
 
@@ -372,8 +416,10 @@ class ResultHandler:
         rows: List[Dict[str, Any]] = []
         # Accumulate shared-context candidates to detect drift across configs.
         ctx_fields: Dict[str, set] = {
-            "model": set(), "provider": set(),
-            "evaluator_model": set(), "queries_path": set(),
+            "model": set(),
+            "provider": set(),
+            "evaluator_model": set(),
+            "queries_path": set(),
         }
 
         for record in ResultHandler.results:
@@ -381,7 +427,9 @@ class ResultHandler:
             total = record.get("total_results", {}) or {}
 
             agent_md_file = bench.get("agent_md_file", "") or ""
-            name = bench.get("name") or (Path(agent_md_file).stem if agent_md_file else "")
+            name = bench.get("name") or (
+                Path(agent_md_file).stem if agent_md_file else ""
+            )
 
             metrics: Dict[str, Optional[float]] = {}
             incomplete = False
@@ -415,7 +463,8 @@ class ResultHandler:
             if incomplete:
                 logger.warning(
                     "Leaderboard: variant '%s' (%s) is incomplete — missing/NaN metrics: %s",
-                    name, agent_md_file,
+                    name,
+                    agent_md_file,
                     [m for m in metric_names if metrics[m] is None],
                 )
             # Surface under-sampling even when the aggregate is a valid float.
@@ -429,30 +478,39 @@ class ResultHandler:
                 logger.warning(
                     "Leaderboard: variant '%s' (%s) has under-sampled metrics "
                     "(mean over fewer than %d answered questions): %s",
-                    name, agent_md_file, answered, undersampled,
+                    name,
+                    agent_md_file,
+                    answered,
+                    undersampled,
                 )
 
-            rows.append({
-                "name": name,
-                "agent_md_file": agent_md_file,
-                "metrics": metrics,
-                "primary_score": metrics[primary_metric],
-                "incomplete": incomplete,
-                "query_count": answered,
-                "scored_counts": scored_counts,
-            })
+            rows.append(
+                {
+                    "name": name,
+                    "agent_md_file": agent_md_file,
+                    "metrics": metrics,
+                    "primary_score": metrics[primary_metric],
+                    "incomplete": incomplete,
+                    "query_count": answered,
+                    "scored_counts": scored_counts,
+                }
+            )
 
-            ragas_settings = (bench.get("mode_settings", {}) or {}).get("ragas_settings", {}) or {}
+            ragas_settings = (bench.get("mode_settings", {}) or {}).get(
+                "ragas_settings", {}
+            ) or {}
             ctx_fields["model"].add(bench.get("model"))
             ctx_fields["provider"].add(bench.get("provider"))
             ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
             ctx_fields["queries_path"].add(bench.get("queries_path"))
 
         # Complete rows first, then by descending primary score; incomplete last.
-        rows.sort(key=lambda r: (
-            1 if r["incomplete"] else 0,
-            -(r["primary_score"] if r["primary_score"] is not None else 0.0),
-        ))
+        rows.sort(
+            key=lambda r: (
+                1 if r["incomplete"] else 0,
+                -(r["primary_score"] if r["primary_score"] is not None else 0.0),
+            )
+        )
 
         # Dense ranking: equal primary scores share a rank.
         rank = 0
@@ -493,58 +551,67 @@ class ResultHandler:
 class Benchmarker:
 
     def __init__(self, configs: Path, q_to_a: dict[str, str]):
-        self.queries_to_answers = q_to_a 
-        self.required_fields = ['question']
-        self.benchmark_name = os.environ['container_name']
+        self.queries_to_answers = q_to_a
+        self.required_fields = ["question"]
+        self.benchmark_name = os.environ["container_name"]
         self.all_config_files = self.get_all_configs(configs)
-        self.all_config_files.append('FINISHED')
+        self.all_config_files.append("FINISHED")
         self.previous_input_list = []
-        self.chain = None 
-        self.config = None 
-        self.current_config = None 
+        self.chain = None
+        self.config = None
+        self.current_config = None
 
         self.load_new_configuration()
         self.data_path = self.config["global"]["DATA_PATH"]
-    
+
     def get_all_configs(self, configs_dir):
         all_paths = []
         for root, _, filenames in os.walk(configs_dir):
-            for file in filenames: 
+            for file in filenames:
                 full_path = os.path.join(root, file)
                 all_paths.append(full_path)
         return all_paths
 
     def load_new_configuration(self):
         self.current_config = self.all_config_files.pop(0)
-        if self.current_config == 'FINISHED': return
+        if self.current_config == "FINISHED":
+            return
         with open(self.current_config, "r") as f:
             config = yaml.safe_load(f)
 
-        with open(CONFIG_PATH, 'w') as f: 
+        with open(CONFIG_PATH, "w") as f:
             yaml.dump(config, stream=f)
 
         del self.chain
-        self.config = config 
-        self.benchmarking_configs = config['services']['benchmarking']
-        if 'SOURCES' in self.benchmarking_configs:
-            self.required_fields += ['sources']
-        elif 'RAGAS' in self.benchmarking_configs:
-            self.required_fields += ['answer']
+        self.config = config
+        self.benchmarking_configs = config["services"]["benchmarking"]
+        if "SOURCES" in self.benchmarking_configs:
+            self.required_fields += ["sources"]
+        elif "RAGAS" in self.benchmarking_configs:
+            self.required_fields += ["answer"]
 
         # for now it only uses one pipeline (the first one) but maybe later we make this work for mulitple
         logger.info(f"loaded new configuration: {self.current_config}")
-        benchmark_cfg = config.get("services", {}).get("benchmarking", {}) if isinstance(config, dict) else {}
+        benchmark_cfg = (
+            config.get("services", {}).get("benchmarking", {})
+            if isinstance(config, dict)
+            else {}
+        )
         pipeline = benchmark_cfg.get("agent_class")
         provider = benchmark_cfg.get("provider")
         model = benchmark_cfg.get("model")
         agent_md_file = benchmark_cfg.get("agent_md_file")
         ollama_url = benchmark_cfg.get("ollama_url")
-        missing = [k for k, v in {
-            "agent_class": pipeline,
-            "provider": provider,
-            "model": model,
-            "agent_md_file": agent_md_file,
-        }.items() if not v]
+        missing = [
+            k
+            for k, v in {
+                "agent_class": pipeline,
+                "provider": provider,
+                "model": model,
+                "agent_md_file": agent_md_file,
+            }.items()
+            if not v
+        ]
         if missing:
             raise ValueError(
                 f"Missing required benchmarking runtime fields in services.benchmarking: {', '.join(missing)}"
@@ -560,7 +627,9 @@ class Benchmarker:
         try:
             agent_spec = load_agent_spec(Path(str(agent_md_file)))
         except AgentSpecError as exc:
-            raise ValueError(f"Failed to load benchmark agent spec '{agent_md_file}': {exc}") from exc
+            raise ValueError(
+                f"Failed to load benchmark agent spec '{agent_md_file}': {exc}"
+            ) from exc
 
         self._chain_kwargs = dict(
             pipeline=pipeline,
@@ -597,18 +666,27 @@ class Benchmarker:
         chains = [self.chain]
         kw = self._chain_kwargs
         for _ in range(n_workers - 1):
-            chains.append(archi(
-                kw["pipeline"],
-                agent_spec=kw["agent_spec"],
-                default_provider=kw["default_provider"],
-                default_model=kw["default_model"],
-                prompt_overrides=kw["prompt_overrides"],
-            ))
-        logger.info("Created pool of %d chain instances for parallel execution.", n_workers)
+            chains.append(
+                archi(
+                    kw["pipeline"],
+                    agent_spec=kw["agent_spec"],
+                    default_provider=kw["default_provider"],
+                    default_model=kw["default_model"],
+                    prompt_overrides=kw["prompt_overrides"],
+                )
+            )
+        logger.info(
+            "Created pool of %d chain instances for parallel execution.", n_workers
+        )
         return chains
 
     def _prefetch_questions_parallel(
-        self, n_workers, config_num, total_configs, total_questions, run_start,
+        self,
+        n_workers,
+        config_num,
+        total_configs,
+        total_questions,
+        run_start,
     ):
         """Run all questions in parallel using a pool of independent chain instances.
 
@@ -620,7 +698,11 @@ class Benchmarker:
                 f"only n_workers=1 is safe today (see _create_chain_pool comment)."
             )
         chains = self._create_chain_pool(n_workers)
-        logger.info("Prefetching %d questions with %d parallel workers...", total_questions, n_workers)
+        logger.info(
+            "Prefetching %d questions with %d parallel workers...",
+            total_questions,
+            n_workers,
+        )
 
         def _ask(chain, question_id, question_text):
             formatted = [("User", question_text)]
@@ -629,7 +711,11 @@ class Benchmarker:
             elapsed = time.perf_counter() - start
             logger.info(
                 "[Config %d/%d] Question %d/%d finished (%.2fs)",
-                config_num, total_configs, question_id, total_questions, elapsed,
+                config_num,
+                total_configs,
+                question_id,
+                total_questions,
+                elapsed,
             )
             return question_id, result, elapsed
 
@@ -658,48 +744,75 @@ class Benchmarker:
         mins, secs = divmod(int(wall_elapsed), 60)
         logger.info(
             "Parallel prefetch complete: %d/%d questions in %dm%02ds wall time.",
-            len(results), total_questions, mins, secs,
+            len(results),
+            total_questions,
+            mins,
+            secs,
         )
         return results
 
-
     def get_ragas_llm_evaluator(self):
-        ragas_configs = self.config['services']['benchmarking']['mode_settings']['ragas_settings']
+        ragas_configs = self.config["services"]["benchmarking"]["mode_settings"][
+            "ragas_settings"
+        ]
         benchmark_cfg = self.config.get("services", {}).get("benchmarking", {})
         # Judge/SUT config split: when ragas_settings.evaluator_* is set, the RAGAS judge
         # uses an independent model from the system under test. Falls back to the SUT
         # provider/model when the evaluator_* keys are absent.
-        provider = ragas_configs.get("evaluator_provider") or benchmark_cfg.get("provider")
+        provider = ragas_configs.get("evaluator_provider") or benchmark_cfg.get(
+            "provider"
+        )
         model_name = ragas_configs.get("evaluator_model") or benchmark_cfg.get("model")
-        ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get("ollama_url")
+        ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get(
+            "ollama_url"
+        )
 
         match str(provider).lower():
             case "openai":
                 return ChatOpenAI(model=model_name)
             case "ollama":
                 from langchain_ollama import ChatOllama
+
                 base_url = ollama_url
-                return ChatOllama(model=model_name, base_url=base_url,num_predict=-2,model_kwargs={'format': 'json'})
+                return ChatOllama(
+                    model=model_name,
+                    base_url=base_url,
+                    num_predict=-2,
+                    model_kwargs={"format": "json"},
+                )
             case "local":
                 from langchain_ollama import ChatOllama
+
                 base_url = ollama_url
-                return ChatOllama(model=model_name, base_url=base_url,num_predict=-2,model_kwargs={'format': 'json'})
+                return ChatOllama(
+                    model=model_name,
+                    base_url=base_url,
+                    num_predict=-2,
+                    model_kwargs={"format": "json"},
+                )
             case "huggingface":
                 base_url = ollama_url or "http://localhost:8000/v1"
-                return get_model("local", model_name, base_url=base_url, local_mode="openai_compat")
+                return get_model(
+                    "local", model_name, base_url=base_url, local_mode="openai_compat"
+                )
             case "anthropic":
                 from langchain_anthropic import ChatAnthropic
+
                 return ChatAnthropic(model=model_name)
             case "huit_bedrock":
-                base_url = benchmark_cfg.get("base_url") or "https://go.apis.huit.harvard.edu/ais-bedrock-llm/v2"
+                base_url = (
+                    benchmark_cfg.get("base_url")
+                    or "https://go.apis.huit.harvard.edu/ais-bedrock-llm/v2"
+                )
                 return get_model("huit_bedrock", model_name, {"base_url": base_url})
             case _:
                 return ChatOpenAI(model=model_name)
 
-
     def get_ragas_embedding_model(self):
-        ragas_configs = self.config['services']['benchmarking']['mode_settings']['ragas_settings']
-        embedding_model = ragas_configs['embedding_model']
+        ragas_configs = self.config["services"]["benchmarking"]["mode_settings"][
+            "ragas_settings"
+        ]
+        embedding_model = ragas_configs["embedding_model"]
 
         match embedding_model.lower():
             case "openai":
@@ -708,23 +821,24 @@ class Benchmarker:
                 return HuggingFaceEmbeddings()
             case _:
                 return OpenAIEmbeddings()
-            
 
     def prepare_match_fields(self, question_item):
 
         # either grab the match field(s) from the question item or use the default
-        match_fields = question_item.get('source_match_field')
+        match_fields = question_item.get("source_match_field")
         if not match_fields:
-            match_fields = self.benchmarking_configs['mode_settings']['sources_settings']['default_match_field']
+            match_fields = self.benchmarking_configs["mode_settings"][
+                "sources_settings"
+            ]["default_match_field"]
 
         # make it to a list if it's passed as a string
         if isinstance(match_fields, str):
             match_fields = [match_fields] if match_fields else []
 
-        n_sources = len(question_item.get('sources', []))
+        n_sources = len(question_item.get("sources", []))
         if not match_fields:
             # hardcode a default if nothing is provided
-            match_fields = ['file_name'] * n_sources
+            match_fields = ["file_name"] * n_sources
         elif len(match_fields) == 1 and n_sources > 1:
             # expand single field to all sources
             match_fields = match_fields * n_sources
@@ -734,10 +848,11 @@ class Benchmarker:
                 len(match_fields),
                 n_sources,
             )
-            raise ValueError("Mismatch between number of match fields and reference sources.")
-        
-        return match_fields
+            raise ValueError(
+                "Mismatch between number of match fields and reference sources."
+            )
 
+        return match_fields
 
     def prepare_reference_sources(self, reference_sources, match_fields):
 
@@ -745,10 +860,10 @@ class Benchmarker:
         raw_references: List[str] = []
         if isinstance(reference_sources, str):
             cleaned = reference_sources.strip()
-            if cleaned and cleaned != 'N/A':
+            if cleaned and cleaned != "N/A":
                 raw_references = [reference_sources]
         elif isinstance(reference_sources, list):
-            raw_references = [ref for ref in reference_sources if ref not in (None, '')]
+            raw_references = [ref for ref in reference_sources if ref not in (None, "")]
         elif reference_sources is None:
             raw_references = []
         else:
@@ -756,7 +871,7 @@ class Benchmarker:
         reference_sources_list: List[str] = []
         for ref in raw_references:
             ref_str = str(ref).strip()
-            if ref_str and ref_str != 'N/A':
+            if ref_str and ref_str != "N/A":
                 reference_sources_list.append(ref_str)
 
         formatted_reference_sources = []
@@ -765,7 +880,6 @@ class Benchmarker:
 
         return formatted_reference_sources
 
-
     def prepare_messages(self, raw_messages):
         """Format the langchain Messages into something we can store and view later."""
         formatted_messages = []
@@ -773,20 +887,30 @@ class Benchmarker:
             if type(msg) is AIMessage:
                 # there are two types of AI messages, content and tool calls
                 # e.g. tool_calls=[{'name': 'search_vectorstore', 'args': {'query': 'CMSTRANSF-1078'}, 'id': '4a73724f-db40-41eb-9843-7f325df76f58', 'type': 'tool_call'}]
-                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tool_call in msg.tool_calls:
-                        formatted_messages.append({
-                            'type': 'tool_call',
-                            'tool_name': tool_call.get('name'),
-                            'tool_args': tool_call.get('args',{}).get('query', 'No query found.'),
-                            'total_duration': getattr(msg, 'response_metadata', {}).get('total_duration', None),
-                        })
-                elif hasattr(msg, 'content'):
-                    formatted_messages.append({
-                        'type': 'ai_message',
-                        'content': msg.content,
-                        'total_duration': getattr(msg, 'response_metadata', {}).get('total_duration', None),
-                    })
+                        formatted_messages.append(
+                            {
+                                "type": "tool_call",
+                                "tool_name": tool_call.get("name"),
+                                "tool_args": tool_call.get("args", {}).get(
+                                    "query", "No query found."
+                                ),
+                                "total_duration": getattr(
+                                    msg, "response_metadata", {}
+                                ).get("total_duration", None),
+                            }
+                        )
+                elif hasattr(msg, "content"):
+                    formatted_messages.append(
+                        {
+                            "type": "ai_message",
+                            "content": msg.content,
+                            "total_duration": getattr(msg, "response_metadata", {}).get(
+                                "total_duration", None
+                            ),
+                        }
+                    )
             elif type(msg) is HumanMessage:
                 # we don't store these...
                 pass
@@ -798,27 +922,28 @@ class Benchmarker:
                 logger.warning(f"Unexpected message type: {type(msg)}")
         return formatted_messages
 
-
     def get_source_results(
-            self,
-            result: Dict,
-            formatted_reference_sources: List[Dict[str, str]],
-        ) -> List[bool]:
+        self,
+        result: Dict,
+        formatted_reference_sources: List[Dict[str, str]],
+    ) -> List[bool]:
         """
         For each reference source, check the specified metadata field in the retrieved documents.
         The reference sources and match fields are paired one-to-one; a single string field is
         expanded to cover all provided sources. Returns summary information and whether all
         reference sources were found.
         """
-        sources = result.get('source_documents', [])
+        sources = result.get("source_documents", [])
         logger.info("Agent found %s sources.", len(sources))
-        
+
         matches: List[bool] = []
         for source in formatted_reference_sources:
             field, reference = list(source.items())[0]
-            logger.debug("Checking for reference source '%s' in field '%s'", reference, field)
+            logger.debug(
+                "Checking for reference source '%s' in field '%s'", reference, field
+            )
             for document in sources:
-                metadata = getattr(document, 'metadata', {}) or {}
+                metadata = getattr(document, "metadata", {}) or {}
                 value = metadata.get(field)
                 if value is None:
                     continue
@@ -827,9 +952,16 @@ class Benchmarker:
                 else:
                     values = [str(value).strip()]
                 logger.info("Returned source '%s': %s", field, values)
-                logger.debug("Checking reference '%s' against document metadata field '%s': %s", reference, field, values)
+                logger.debug(
+                    "Checking reference '%s' against document metadata field '%s': %s",
+                    reference,
+                    field,
+                    values,
+                )
                 if reference in values:
-                    logger.debug("Matched reference source '%s' in document metadata.", reference)
+                    logger.debug(
+                        "Matched reference source '%s' in document metadata.", reference
+                    )
                     matches.append(True)
                     break
             else:
@@ -839,7 +971,6 @@ class Benchmarker:
         logger.info("Source matching result: %s", matches)
         return matches
 
-
     def get_ragas_results(self, data, to_add):
         """WARNING: this method modifies the to_add dictionary to add the relevant scores to the relevant questions"""
         # Lazy import: ragas (and its transitive `datasets` dep) is benchmark-only
@@ -847,41 +978,52 @@ class Benchmarker:
         from ragas import RunConfig, evaluate
         from ragas.embeddings import LangchainEmbeddingsWrapper
         from ragas.llms import LangchainLLMWrapper
-        from ragas.metrics import (answer_relevancy, context_precision,
-                                   context_recall, faithfulness)
+        from ragas.metrics import (
+            answer_relevancy,
+            context_precision,
+            context_recall,
+            faithfulness,
+        )
 
         all_metrics_dict = {
-                'answer_relevancy': answer_relevancy, 
-                'faithfulness': faithfulness, 
-                'context_precision': context_precision, 
-                'context_recall': context_recall
-                }
+            "answer_relevancy": answer_relevancy,
+            "faithfulness": faithfulness,
+            "context_precision": context_precision,
+            "context_recall": context_recall,
+        }
 
-        enabled_metrics = self.benchmarking_configs['mode_settings']['ragas_settings']['enabled_metrics']
+        enabled_metrics = self.benchmarking_configs["mode_settings"]["ragas_settings"][
+            "enabled_metrics"
+        ]
 
-        metrics_dict = {k: v for k, v in all_metrics_dict.items() if k in enabled_metrics}
-                       
+        metrics_dict = {
+            k: v for k, v in all_metrics_dict.items() if k in enabled_metrics
+        }
+
         res = pd.DataFrame()
 
-        ragas_settings = self.config['services']['benchmarking']['mode_settings']['ragas_settings']
+        ragas_settings = self.config["services"]["benchmarking"]["mode_settings"][
+            "ragas_settings"
+        ]
         # The archi config-render pipeline can strip global.verbosity; tolerate
         # missing key (verbosity 4 enables tenacity retry logging in ragas).
-        log_tenacity = self.config.get('global', {}).get('verbosity', 0) >= 4
-        timeout = ragas_settings['timeout']
-        batch_settings = ragas_settings['batch_size']
-        if not batch_settings: 
+        log_tenacity = self.config.get("global", {}).get("verbosity", 0) >= 4
+        timeout = ragas_settings["timeout"]
+        batch_settings = ragas_settings["batch_size"]
+        if not batch_settings:
             batch_settings = None
-        
+
         runconfig = RunConfig(timeout=timeout, log_tenacity=log_tenacity)
-        # going one metric at a time prevents errors 
+        # going one metric at a time prevents errors
         for metric_name, metric in metrics_dict.items():
-            evaluation_results = evaluate(data, 
-                                          metrics=[metric],
-                                          llm=LangchainLLMWrapper(self.get_ragas_llm_evaluator()),
-                                          embeddings=LangchainEmbeddingsWrapper(self.get_ragas_embedding_model()),
-                                          run_config=runconfig,
-                                          batch_size=batch_settings
-                                          )
+            evaluation_results = evaluate(
+                data,
+                metrics=[metric],
+                llm=LangchainLLMWrapper(self.get_ragas_llm_evaluator()),
+                embeddings=LangchainEmbeddingsWrapper(self.get_ragas_embedding_model()),
+                run_config=runconfig,
+                batch_size=batch_settings,
+            )
 
             metric_results = evaluation_results.to_pandas()
             res[metric_name] = metric_results[metric_name]
@@ -892,11 +1034,10 @@ class Benchmarker:
 
         return res
 
-
     def run(self):
         self.wait_for_ingestion_completion()
 
-        modes_being_run = set(self.benchmarking_configs['modes'])
+        modes_being_run = set(self.benchmarking_configs["modes"])
 
         # Merge anchor questions, if any. Anchors live in a separate JSON so
         # they can be versioned independently of the per-round query bank.
@@ -909,10 +1050,12 @@ class Benchmarker:
         logger.info("")
         logger.info("====== Starting benchmark: %s ======", self.benchmark_name)
         logger.info("Modes being run: %s", modes_being_run)
-        logger.info(f"Processing {len(self.queries_to_answers)} questions and {len(self.all_config_files)} configuration(s).")
+        logger.info(
+            f"Processing {len(self.queries_to_answers)} questions and {len(self.all_config_files)} configuration(s)."
+        )
         logger.info("")
 
-        while self.all_config_files: 
+        while self.all_config_files:
 
             question_id = 0
 
@@ -926,7 +1069,7 @@ class Benchmarker:
             ragas_input = []
 
             # SOUCES mode: sources accuracy
-            relative_source_accuracy = 0.0 
+            relative_source_accuracy = 0.0
             source_accuracy = 0.0
 
             for question_item in self.queries_to_answers:
@@ -936,116 +1079,149 @@ class Benchmarker:
                 logger.info(f"Answering question: {question_id + 1}")
 
                 if type(question_item) is not dict:
-                    logger.error(f"Each item in the question to answer list must be a dictionary, but got {type(question_item)}")
+                    logger.error(
+                        f"Each item in the question to answer list must be a dictionary, but got {type(question_item)}"
+                    )
                     continue
                 if not all(field in question_item for field in self.required_fields):
-                    logger.error(f"Each item in the question to answer list must contain the following fields: {self.required_fields}, but got {question_item.keys()}")
+                    logger.error(
+                        f"Each item in the question to answer list must contain the following fields: {self.required_fields}, but got {question_item.keys()}"
+                    )
                     continue
 
-                question = question_item['question']
-                reference_answer = question_item.get('answer', 'N/A')
-                reference_sources = question_item.get('sources', 'N/A')
+                question = question_item["question"]
+                reference_answer = question_item.get("answer", "N/A")
+                reference_sources = question_item.get("sources", "N/A")
 
                 logger.info(f"Question: {question}")
                 logger.info(f"Reference Answer: {reference_answer}")
                 logger.info(f"Reference Sources: {reference_sources}")
 
-                question_id +=1
+                question_id += 1
                 formatted_question = [("User", question)]
                 start = time.perf_counter()
                 result = self.chain(history=formatted_question)
                 end = time.perf_counter()
-                logger.info(f"Finished answering question: {question_id} ({end - start:.2f}s)")
+                logger.info(
+                    f"Finished answering question: {question_id} ({end - start:.2f}s)"
+                )
                 q_results = {}
 
                 # prepare info to store for this question
                 q_results["time_elapsed"] = end - start
                 q_results["question"] = question
                 q_results["reference_answer"] = reference_answer
-                q_results["answer"] = result['answer']
+                q_results["answer"] = result["answer"]
 
                 # format the messages
-                q_results['messages'] = self.prepare_messages(result.get("messages", []))
+                q_results["messages"] = self.prepare_messages(
+                    result.get("messages", [])
+                )
 
                 # format the reference sources
                 match_fields_list = self.prepare_match_fields(question_item)
-                formatted_reference_sources = self.prepare_reference_sources(reference_sources, match_fields_list)
+                formatted_reference_sources = self.prepare_reference_sources(
+                    reference_sources, match_fields_list
+                )
                 q_results["reference_sources_match_fields"] = match_fields_list
                 q_results["reference_sources_metadata"] = formatted_reference_sources
 
                 if "RAGAS" in modes_being_run:
                     # we collect the necessary info for ragas evaluation
                     # TODO this is likely broken now
-                    contexts = [s.page_content for s in result['source_documents']]
+                    contexts = [s.page_content for s in result["source_documents"]]
                     dataset_result = {
-                            "question": question,
-                            "contexts": contexts,
-                            "answer": result['answer'],
-                            "ground_truth": reference_answer,
-                            }
+                        "question": question,
+                        "contexts": contexts,
+                        "answer": result["answer"],
+                        "ground_truth": reference_answer,
+                    }
                     ragas_input.append(dataset_result)
 
-                if "SOURCES" in modes_being_run: 
-                    # sources evaluation is done on the fly -- check if each of the given sources was found                  
+                if "SOURCES" in modes_being_run:
+                    # sources evaluation is done on the fly -- check if each of the given sources was found
                     matches = self.get_source_results(
                         result,
                         formatted_reference_sources,
                     )
                     # we count accuracy via any of the sources matching
-                    if any(matches): 
+                    if any(matches):
                         relative_source_accuracy += 1.0
-                    if len(matches) == len(formatted_reference_sources) and all(matches):
+                    if len(matches) == len(formatted_reference_sources) and all(
+                        matches
+                    ):
                         source_accuracy += 1.0
                     # but we still store the match of each reference source in its metadata
-                    for idx, source in enumerate(q_results["reference_sources_metadata"]):
-                        source['matched'] = matches[idx]
-                    logger.info(f"Current relative accuracy: {relative_source_accuracy / question_id if question_id > 0 else 0.0}")
-                    logger.info(f"Current strict accuracy: {source_accuracy / question_id if question_id > 0 else 0.0}")
+                    for idx, source in enumerate(
+                        q_results["reference_sources_metadata"]
+                    ):
+                        source["matched"] = matches[idx]
+                    logger.info(
+                        f"Current relative accuracy: {relative_source_accuracy / question_id if question_id > 0 else 0.0}"
+                    )
+                    logger.info(
+                        f"Current strict accuracy: {source_accuracy / question_id if question_id > 0 else 0.0}"
+                    )
 
                 # store the sources metadata and truncated content
                 sources_metadata: List[Dict[str, Any]] = []
                 sources_trunc_content: List[str] = []
-                for document in result['source_documents']:
-                    metadata = getattr(document, 'metadata', {}) or {}
+                for document in result["source_documents"]:
+                    metadata = getattr(document, "metadata", {}) or {}
                     sources_metadata.append(metadata)
-                    sources_trunc_content.append(getattr(document, 'page_content', '')[:300])  # first 300 chars
-                q_results['sources_metadata'] = sources_metadata
-                q_results['sources_trunc_content'] = sources_trunc_content
+                    sources_trunc_content.append(
+                        getattr(document, "page_content", "")[:300]
+                    )  # first 300 chars
+                q_results["sources_metadata"] = sources_metadata
+                q_results["sources_trunc_content"] = sources_trunc_content
                 # Forward the anchor marker so the Argilla push can stamp it
                 # onto record metadata. Empty string means "not an anchor"
                 # (Argilla TermsMetadataProperty accepts any string).
-                q_results['anchor_type'] = question_item.get('anchor_type', '') if isinstance(question_item, dict) else ''
+                q_results["anchor_type"] = (
+                    question_item.get("anchor_type", "")
+                    if isinstance(question_item, dict)
+                    else ""
+                )
                 logger.debug("Sources returned: %s", sources_metadata)
 
                 # store the results for this question
                 question_wise_results[f"question_{question_id}"] = q_results
-                
+
                 logger.info("====================================")
                 logger.info("")
 
             if "RAGAS" in modes_being_run:
                 # TODO this is likely broken now
                 logger.info(f"Starting to collect RAGAS results")
-                from datasets import Dataset  # lazy: benchmark-only dep (see module header)
+                from datasets import (
+                    Dataset,  # lazy: benchmark-only dep (see module header)
+                )
+
                 data = Dataset.from_list(ragas_input)
                 # were modifying final_addition here to add ragas results by question
                 ragas_results = self.get_ragas_results(data, question_wise_results)
 
-                answer_relevancy = ragas_results['answer_relevancy'].mean()
-                faithfulness = ragas_results['faithfulness'].mean()
-                context_precision = ragas_results['context_precision'].mean()
-                context_recall = ragas_results['context_recall'].mean()
+                answer_relevancy = ragas_results["answer_relevancy"].mean()
+                faithfulness = ragas_results["faithfulness"].mean()
+                context_precision = ragas_results["context_precision"].mean()
+                context_recall = ragas_results["context_recall"].mean()
 
-                total_results['aggregate_answer_relevancy'] = answer_relevancy
-                total_results['aggregate_faithfulness'] = faithfulness
-                total_results['aggregate_context_precision'] = context_precision
-                total_results['aggregate_context_recall'] = context_recall
+                total_results["aggregate_answer_relevancy"] = answer_relevancy
+                total_results["aggregate_faithfulness"] = faithfulness
+                total_results["aggregate_context_precision"] = context_precision
+                total_results["aggregate_context_recall"] = context_recall
 
             if "SOURCES" in modes_being_run:
-                total_results['relative_source_accuracy'] = relative_source_accuracy / len(self.queries_to_answers)
-                total_results['source_accuracy'] = source_accuracy / len(self.queries_to_answers)
+                total_results["relative_source_accuracy"] = (
+                    relative_source_accuracy / len(self.queries_to_answers)
+                )
+                total_results["source_accuracy"] = source_accuracy / len(
+                    self.queries_to_answers
+                )
 
-            ResultHandler.handle_results(Path(self.current_config), question_wise_results, total_results)
+            ResultHandler.handle_results(
+                Path(self.current_config), question_wise_results, total_results
+            )
             self.load_new_configuration()
 
         ResultHandler.add_metadata()
@@ -1054,7 +1230,9 @@ class Benchmarker:
         # Auto-enabled — no explicit flag — because there's no useful "skip
         # pairing" case when the user gave us multiple configs.
         if len(ResultHandler.results) >= 2:
-            pairs = ResultHandler.generate_pairwise_combinations(len(ResultHandler.results))
+            pairs = ResultHandler.generate_pairwise_combinations(
+                len(ResultHandler.results)
+            )
             logger.info("Generating %d pairwise A/B comparisons...", len(pairs))
             for idx_a, idx_b in pairs:
                 paired = ResultHandler.pair_ab_results(idx_a, idx_b)
@@ -1064,7 +1242,9 @@ class Benchmarker:
                 name_b = comp["config_b"].get("name", f"config_{idx_b}")
                 logger.info(
                     "  %s vs %s: %d questions. Wins A=%d, B=%d, Ties=%d",
-                    name_a, name_b, len(paired),
+                    name_a,
+                    name_b,
+                    len(paired),
                     comp["aggregate"]["wins_a"],
                     comp["aggregate"]["wins_b"],
                     comp["aggregate"]["ties"],
@@ -1075,18 +1255,31 @@ class Benchmarker:
         # directly). Only meaningful with 2+ variants.
         if len(ResultHandler.results) >= 2:
             primary_metric = str(
-                self.config.get("services", {}).get("benchmarking", {}).get("primary_metric", "faithfulness")
+                self.config.get("services", {})
+                .get("benchmarking", {})
+                .get("primary_metric", "faithfulness")
             )
             leaderboard = ResultHandler.build_leaderboard(primary_metric)
-            logger.info("Prompt-sweep leaderboard (ranked by %s):", leaderboard["primary_metric"])
+            logger.info(
+                "Prompt-sweep leaderboard (ranked by %s):",
+                leaderboard["primary_metric"],
+            )
             logger.info(
                 "  %-4s %-28s %-10s %-10s %-10s %-10s %-10s %s",
-                "rank", "name", "ans_rel", "faith", "ctx_prec", "ctx_rec", "n_q", "prompt",
+                "rank",
+                "name",
+                "ans_rel",
+                "faith",
+                "ctx_prec",
+                "ctx_rec",
+                "n_q",
+                "prompt",
             )
             for row in leaderboard["rows"]:
                 m = row["metrics"]
                 answered = row["query_count"]
                 scored = row.get("scored_counts", {})
+
                 # Annotate a metric with @<n> when its mean is over fewer than
                 # the answered questions (judge timeouts), so an under-sampled
                 # score can't masquerade as fully-backed.
@@ -1096,34 +1289,52 @@ class Benchmarker:
                         return "    n/a"
                     n = scored.get(metric_name, answered)
                     return f"{v:.4f}@{n}" if n < answered else f"{v:.4f}"
+
                 flag = "  (incomplete)" if row["incomplete"] else ""
                 logger.info(
                     "  %-4d %-28s %-12s %-12s %-12s %-12s %-10d %s%s",
-                    row["rank"], row["name"][:28],
-                    _fmt("answer_relevancy"), _fmt("faithfulness"),
-                    _fmt("context_precision"), _fmt("context_recall"),
-                    answered, row["agent_md_file"], flag,
+                    row["rank"],
+                    row["name"][:28],
+                    _fmt("answer_relevancy"),
+                    _fmt("faithfulness"),
+                    _fmt("context_precision"),
+                    _fmt("context_recall"),
+                    answered,
+                    row["agent_md_file"],
+                    flag,
                 )
 
         # Push to Argilla when ARCHI_ARGILLA=1 in the benchmarks container env.
         # The CLI flag --argilla on `archi evaluate` sets this (see Task 2.5).
-        argilla_enabled = os.environ.get("ARCHI_ARGILLA", "").strip().lower() in ("1", "true", "yes")
+        argilla_enabled = os.environ.get("ARCHI_ARGILLA", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         if argilla_enabled:
             try:
                 from src.utils.benchmark_argilla import (
                     generate_dataset_name,
                     push_ab_results_to_argilla,
-                    push_single_results_to_argilla,
                     push_multi_ab_results_to_argilla,
+                    push_single_results_to_argilla,
                     write_state_file,
                 )
 
                 corpus_id = ResultHandler.get_corpus_snapshot_id()
                 # services.benchmarking.argilla.min_submitted (default 2) drives
                 # inter-rater reliability sample size by configuring rg.TaskDistribution.
-                argilla_cfg = self.config.get("services", {}).get("benchmarking", {}).get("argilla", {}) or {}
+                argilla_cfg = (
+                    self.config.get("services", {})
+                    .get("benchmarking", {})
+                    .get("argilla", {})
+                    or {}
+                )
                 min_submitted = int(argilla_cfg.get("min_submitted", 2))
-                if ResultHandler.ab_comparisons and len(ResultHandler.ab_comparisons) > 1:
+                if (
+                    ResultHandler.ab_comparisons
+                    and len(ResultHandler.ab_comparisons) > 1
+                ):
                     dataset_names = push_multi_ab_results_to_argilla(
                         ResultHandler.ab_comparisons,
                         self.benchmark_name,
@@ -1138,7 +1349,8 @@ class Benchmarker:
                     logger.info(
                         "Argilla export complete. %d datasets created (corpus_snapshot_id=%s). "
                         "Open Argilla to grade: archi grade --serve",
-                        len(dataset_names), corpus_id,
+                        len(dataset_names),
+                        corpus_id,
                     )
                 elif ResultHandler.ab_comparison:
                     argilla_dataset_name = generate_dataset_name(self.benchmark_name)
@@ -1157,7 +1369,8 @@ class Benchmarker:
                     logger.info(
                         "Argilla export complete. Dataset: '%s' (corpus_snapshot_id=%s). "
                         "Open Argilla to grade: archi grade --serve",
-                        argilla_dataset_name, corpus_id,
+                        argilla_dataset_name,
+                        corpus_id,
                     )
                 else:
                     argilla_dataset_name = generate_dataset_name(self.benchmark_name)
@@ -1175,10 +1388,13 @@ class Benchmarker:
                     logger.info(
                         "Argilla export complete. Dataset: '%s' (corpus_snapshot_id=%s). "
                         "Open Argilla to grade: archi grade --serve",
-                        argilla_dataset_name, corpus_id,
+                        argilla_dataset_name,
+                        corpus_id,
                     )
             except Exception:
-                logger.exception("Argilla push failed — results were still dumped to disk.")
+                logger.exception(
+                    "Argilla push failed — results were still dumped to disk."
+                )
 
         ResultHandler.dump(self.benchmark_name)
         ResultHandler.dump_html(self.benchmark_name)
@@ -1207,7 +1423,9 @@ class Benchmarker:
             logger.info("Anchor merging disabled by config; skipping.")
             return
 
-        path_str = anchor_cfg.get("path") or "examples/benchmarking/anchor_questions.json"
+        path_str = (
+            anchor_cfg.get("path") or "examples/benchmarking/anchor_questions.json"
+        )
         anchor_path = Path(path_str)
         if not anchor_path.is_absolute():
             # Resolve relative to the data path (matches how queries_path is read).
@@ -1232,7 +1450,8 @@ class Benchmarker:
             return
 
         existing_questions = {
-            q.get("question") for q in self.queries_to_answers
+            q.get("question")
+            for q in self.queries_to_answers
             if isinstance(q, dict) and q.get("question")
         }
         merged = list(self.queries_to_answers)
@@ -1247,7 +1466,9 @@ class Benchmarker:
         self.queries_to_answers = merged
         logger.info(
             "Merged %d anchor questions from %s (%d total questions).",
-            added, anchor_path, len(merged),
+            added,
+            anchor_path,
+            len(merged),
         )
 
     def wait_for_ingestion_completion(self):
@@ -1273,7 +1494,9 @@ class Benchmarker:
         start_time = time.monotonic()
         attempt = 0
 
-        logger.info("Waiting for data-manager ingestion to complete before benchmarking...")
+        logger.info(
+            "Waiting for data-manager ingestion to complete before benchmarking..."
+        )
         while True:
             attempt += 1
             last_error = None
@@ -1292,12 +1515,21 @@ class Benchmarker:
                         step,
                     )
                     if state == "completed":
-                        logger.info("Data-manager ingestion completed; starting benchmark.")
+                        logger.info(
+                            "Data-manager ingestion completed; starting benchmark."
+                        )
                         return
                     if state == "error":
-                        raise RuntimeError(f"Data-manager ingestion failed at step '{step}': {err}")
+                        raise RuntimeError(
+                            f"Data-manager ingestion failed at step '{step}': {err}"
+                        )
                     break
-                except (url_error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+                except (
+                    url_error.URLError,
+                    TimeoutError,
+                    ValueError,
+                    json.JSONDecodeError,
+                ) as exc:
                     last_error = exc
                     continue
 
@@ -1307,16 +1539,19 @@ class Benchmarker:
                     raise TimeoutError(
                         f"Timed out after {timeout_seconds}s waiting for ingestion status endpoint. Last error: {last_error}"
                     )
-                raise TimeoutError(f"Timed out after {timeout_seconds}s waiting for ingestion completion.")
+                raise TimeoutError(
+                    f"Timed out after {timeout_seconds}s waiting for ingestion completion."
+                )
 
             time.sleep(poll_interval_seconds)
+
 
 if __name__ == "__main__":
 
     _init_runtime()
 
     query_file = Path("QandA.txt")
-    configs_folder = Path('configs')
+    configs_folder = Path("configs")
 
     with open(Path(query_file), "r") as f:
         question_to_answer = json.load(f)

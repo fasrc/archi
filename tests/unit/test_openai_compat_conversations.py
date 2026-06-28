@@ -19,10 +19,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # In-memory DB mock for conversation_metadata and conversations tables
 # ---------------------------------------------------------------------------
+
 
 class FakeDB:
     """Simulates conversation_metadata and conversations tables in memory."""
@@ -55,6 +55,7 @@ def fake_db():
 # ---------------------------------------------------------------------------
 # Tests for _get_or_create_conversation logic
 # ---------------------------------------------------------------------------
+
 
 class TestConversationMapping:
 
@@ -128,9 +129,11 @@ class TestMessagePersistence:
 # Tests for the actual _get_or_create_conversation function via mocked psycopg2
 # ---------------------------------------------------------------------------
 
+
 def _has_psycopg2():
     try:
         import psycopg2
+
         return True
     except ImportError:
         return False
@@ -143,6 +146,7 @@ class TestGetOrCreateConversationSQL:
     def _setup_module_globals(self, mock_connect):
         """Import and configure the module with mocked dependencies."""
         import src.interfaces.chat_app.openai_compat as compat
+
         mock_wrapper = MagicMock()
         mock_wrapper.pg_config = {"host": "localhost", "dbname": "test"}
         compat._chat_wrapper = mock_wrapper

@@ -60,7 +60,9 @@ def load_skill(skill_name: str, config: Dict[str, Any]) -> Optional[str]:
 
     try:
         content = skill_path.read_text(encoding="utf-8")
-        logger.info("Loaded skill '%s' from %s (%d chars)", skill_name, skill_path, len(content))
+        logger.info(
+            "Loaded skill '%s' from %s (%d chars)", skill_name, skill_path, len(content)
+        )
         return content
     except Exception as e:
         logger.error("Failed to read skill file %s: %s", skill_path, e)

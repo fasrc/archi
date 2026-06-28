@@ -21,6 +21,7 @@ import math
 import os
 import sys
 
+
 # Late imports so the file can be imported in environments without ragas
 # (e.g. pyright in the local dev env) without crashing.
 def main() -> int:
@@ -30,10 +31,16 @@ def main() -> int:
 
     try:
         from datasets import Dataset
-        from langchain_huggingface import HuggingFaceEmbeddings  # pyright: ignore[reportMissingImports]
+        from langchain_huggingface import (
+            HuggingFaceEmbeddings,  # pyright: ignore[reportMissingImports]
+        )
         from ragas import evaluate  # pyright: ignore[reportMissingImports]
-        from ragas.embeddings import LangchainEmbeddingsWrapper  # pyright: ignore[reportMissingImports]
-        from ragas.llms import LangchainLLMWrapper  # pyright: ignore[reportMissingImports]
+        from ragas.embeddings import (
+            LangchainEmbeddingsWrapper,  # pyright: ignore[reportMissingImports]
+        )
+        from ragas.llms import (
+            LangchainLLMWrapper,  # pyright: ignore[reportMissingImports]
+        )
         from ragas.metrics import (  # pyright: ignore[reportMissingImports]
             answer_relevancy,
             context_precision,
@@ -63,28 +70,34 @@ def main() -> int:
         HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     )
 
-    ds = Dataset.from_dict({
-        "question": [
-            "What partition do I use for GPU jobs on FASRC Cannon?",
-            "How do I check my fairshare on Cannon?",
-            "Where should I store large datasets that don't need long-term backup?",
-        ],
-        "answer": [
-            "Use the `gpu` partition. Request GPUs with `--gres=gpu:N` in your SLURM submit script.",
-            "Run `sshare -U $USER` to see your fairshare value.",
-            "Use `/n/holyscratch01/<lab>/` — fast, no backups, periodically purged.",
-        ],
-        "contexts": [
-            ["FASRC Cannon has a `gpu` partition for GPU-bound jobs. Request GPUs via --gres=gpu:N."],
-            ["Use sshare -U $USER to see your fairshare value on Cannon."],
-            ["holyscratch01 is the fast scratch filesystem; no backups; auto-purged."],
-        ],
-        "ground_truth": [
-            "Use the gpu partition with --gres=gpu:N.",
-            "Run sshare -U $USER.",
-            "Use /n/holyscratch01/.",
-        ],
-    })
+    ds = Dataset.from_dict(
+        {
+            "question": [
+                "What partition do I use for GPU jobs on FASRC Cannon?",
+                "How do I check my fairshare on Cannon?",
+                "Where should I store large datasets that don't need long-term backup?",
+            ],
+            "answer": [
+                "Use the `gpu` partition. Request GPUs with `--gres=gpu:N` in your SLURM submit script.",
+                "Run `sshare -U $USER` to see your fairshare value.",
+                "Use `/n/holyscratch01/<lab>/` — fast, no backups, periodically purged.",
+            ],
+            "contexts": [
+                [
+                    "FASRC Cannon has a `gpu` partition for GPU-bound jobs. Request GPUs via --gres=gpu:N."
+                ],
+                ["Use sshare -U $USER to see your fairshare value on Cannon."],
+                [
+                    "holyscratch01 is the fast scratch filesystem; no backups; auto-purged."
+                ],
+            ],
+            "ground_truth": [
+                "Use the gpu partition with --gres=gpu:N.",
+                "Run sshare -U $USER.",
+                "Use /n/holyscratch01/.",
+            ],
+        }
+    )
 
     metrics = [answer_relevancy, faithfulness, context_precision, context_recall]
     print(f"Running RAGAS eval on {len(ds)} questions with HUIT Bedrock judge...")

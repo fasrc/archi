@@ -72,11 +72,18 @@ def _reset_result_handler():
 
 # -- 4.2 one row per config --------------------------------------------------
 
+
 def test_one_row_per_config():
     ResultHandler.results = [
-        _make_record("v1-strict", "config/agents/fasrc-cannon-v1-strict.md", faithfulness=0.7),
-        _make_record("v2-lean", "config/agents/fasrc-cannon-v2-lean.md", faithfulness=0.9),
-        _make_record("v3-cited", "config/agents/fasrc-cannon-v3-cited.md", faithfulness=0.8),
+        _make_record(
+            "v1-strict", "config/agents/fasrc-cannon-v1-strict.md", faithfulness=0.7
+        ),
+        _make_record(
+            "v2-lean", "config/agents/fasrc-cannon-v2-lean.md", faithfulness=0.9
+        ),
+        _make_record(
+            "v3-cited", "config/agents/fasrc-cannon-v3-cited.md", faithfulness=0.8
+        ),
     ]
     lb = ResultHandler.build_leaderboard()
     assert len(lb["rows"]) == 3
@@ -85,12 +92,16 @@ def test_one_row_per_config():
     row = by_name["v2-lean"]
     assert row["agent_md_file"] == "config/agents/fasrc-cannon-v2-lean.md"
     assert set(row["metrics"]) == {
-        "answer_relevancy", "faithfulness", "context_precision", "context_recall",
+        "answer_relevancy",
+        "faithfulness",
+        "context_precision",
+        "context_recall",
     }
     assert row["metrics"]["faithfulness"] == pytest.approx(0.9)
 
 
 # -- 4.3 default + configured ranking ----------------------------------------
+
 
 def test_default_ranking_by_faithfulness():
     ResultHandler.results = [
@@ -115,7 +126,10 @@ def test_configured_primary_metric_reranks():
     assert lb["rows"][0]["name"] == "b"
     # all four metric values still present regardless of primary
     assert set(lb["rows"][0]["metrics"]) == {
-        "answer_relevancy", "faithfulness", "context_precision", "context_recall",
+        "answer_relevancy",
+        "faithfulness",
+        "context_precision",
+        "context_recall",
     }
 
 
@@ -131,6 +145,7 @@ def test_unknown_primary_metric_falls_back_to_faithfulness():
 
 # -- 4.4 tie handling --------------------------------------------------------
 
+
 def test_ties_share_a_rank():
     ResultHandler.results = [
         _make_record("a", "p/a.md", faithfulness=0.8),
@@ -144,6 +159,7 @@ def test_ties_share_a_rank():
 
 
 # -- 4.5 incomplete handling -------------------------------------------------
+
 
 def test_missing_metric_marks_incomplete_and_sorts_last():
     ResultHandler.results = [
@@ -175,11 +191,14 @@ def test_nan_metric_marks_incomplete():
 
 # -- scored_counts: per-metric sample size behind each mean ------------------
 
+
 def test_scored_counts_reflect_non_nan_per_question():
     """A judge timeout shrinks a metric's sample without making the aggregate
     NaN; scored_counts must report the real (non-NaN) per-metric count while
     query_count stays the answered count."""
-    rec = _make_record("v", "p/v.md", faithfulness=0.6, context_precision=0.5, n_questions=3)
+    rec = _make_record(
+        "v", "p/v.md", faithfulness=0.6, context_precision=0.5, n_questions=3
+    )
     qs = list(rec["single_question_results"].values())
     for q in qs:  # all three fully scored on three metrics
         q["faithfulness"] = 0.6
@@ -204,12 +223,18 @@ def test_scored_counts_reflect_non_nan_per_question():
 
 # -- 4.6 name fallback -------------------------------------------------------
 
+
 def test_name_falls_back_to_prompt_stem():
     ResultHandler.results = [
-        _make_record("ignored", "config/agents/fasrc-cannon-v4-linked.md",
-                     faithfulness=0.7, include_name=False),
-        _make_record("named", "config/agents/fasrc-cannon-v1-strict.md",
-                     faithfulness=0.6),
+        _make_record(
+            "ignored",
+            "config/agents/fasrc-cannon-v4-linked.md",
+            faithfulness=0.7,
+            include_name=False,
+        ),
+        _make_record(
+            "named", "config/agents/fasrc-cannon-v1-strict.md", faithfulness=0.6
+        ),
     ]
     lb = ResultHandler.build_leaderboard()
     names = {r["name"] for r in lb["rows"]}
@@ -218,6 +243,7 @@ def test_name_falls_back_to_prompt_stem():
 
 
 # -- 4.7 shared context ------------------------------------------------------
+
 
 def test_shared_context_uniform_sweep():
     ResultHandler.results = [

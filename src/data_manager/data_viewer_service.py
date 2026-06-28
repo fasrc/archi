@@ -29,7 +29,9 @@ class DataViewerService:
         """
         self.data_path = Path(data_path)
         self.pg_config = pg_config
-        self.catalog = PostgresCatalogService(data_path=self.data_path, pg_config=self.pg_config)
+        self.catalog = PostgresCatalogService(
+            data_path=self.data_path, pg_config=self.pg_config
+        )
         logger.info(f"DataViewerService initialized with data_path: {self.data_path}")
 
     def list_documents(
@@ -38,7 +40,9 @@ class DataViewerService:
         source_type: Optional[str] = None,
         search: Optional[str] = None,
         enabled_filter: Optional[str] = None,
-        limit: Optional[int] = 100, # chat passes None (all docs); default 100 in case called in other contexts to prevent document overload...
+        limit: Optional[
+            int
+        ] = 100,  # chat passes None (all docs); default 100 in case called in other contexts to prevent document overload...
         offset: int = 0,
     ) -> Dict[str, Any]:
         """
@@ -82,7 +86,9 @@ class DataViewerService:
         """
         return self.catalog.get_document_content(document_hash, max_size)
 
-    def enable_document(self, conversation_id: str, document_hash: str) -> Dict[str, Any]:
+    def enable_document(
+        self, conversation_id: str, document_hash: str
+    ) -> Dict[str, Any]:
         """
         Enable a document for a conversation.
 
@@ -100,7 +106,9 @@ class DataViewerService:
             "enabled": True,
         }
 
-    def disable_document(self, conversation_id: str, document_hash: str) -> Dict[str, Any]:
+    def disable_document(
+        self, conversation_id: str, document_hash: str
+    ) -> Dict[str, Any]:
         """
         Disable a document for a conversation.
 
@@ -133,7 +141,9 @@ class DataViewerService:
         Returns:
             Dict with success, enabled_count
         """
-        count = self.catalog.bulk_set_enabled(conversation_id, document_hashes, enabled=True)
+        count = self.catalog.bulk_set_enabled(
+            conversation_id, document_hashes, enabled=True
+        )
         return {
             "success": True,
             "enabled_count": count,
@@ -154,7 +164,9 @@ class DataViewerService:
         Returns:
             Dict with success, disabled_count
         """
-        count = self.catalog.bulk_set_enabled(conversation_id, document_hashes, enabled=False)
+        count = self.catalog.bulk_set_enabled(
+            conversation_id, document_hashes, enabled=False
+        )
         return {
             "success": True,
             "disabled_count": count,
@@ -203,10 +215,10 @@ class DataViewerService:
     def get_document_chunks(self, document_hash: str) -> List[Dict[str, Any]]:
         """
         Get all chunks for a document with their boundaries.
-        
+
         Args:
             document_hash: The document's resource_hash
-            
+
         Returns:
             List of chunk dicts with index, text, start_char, end_char
         """

@@ -1,15 +1,17 @@
-from typing import Any, Dict, List, Optional
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from src.data_manager.collectors.persistence import PersistenceService
 from src.data_manager.collectors.tickets.integrations.jira import JiraClient
-from src.data_manager.collectors.tickets.integrations.redmine_tickets import \
-    RedmineClient
+from src.data_manager.collectors.tickets.integrations.redmine_tickets import (
+    RedmineClient,
+)
 from src.data_manager.collectors.tickets.ticket_resource import TicketResource
 from src.utils.config_access import get_global_config
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
 
 class TicketManager:
     """Coordinates ticket integrations and delegates persistence."""
@@ -17,19 +19,25 @@ class TicketManager:
     def __init__(self, dm_config: Optional[Dict[str, Any]] = None) -> None:
         global_config = get_global_config()
         self.data_path = Path(global_config["DATA_PATH"])
-        raw_sources = (dm_config or {}).get('sources', {}) if isinstance(dm_config, dict) else {}
+        raw_sources = (
+            (dm_config or {}).get("sources", {}) if isinstance(dm_config, dict) else {}
+        )
         sources_config = dict(raw_sources) if isinstance(raw_sources, dict) else {}
 
-        self.jira_config = sources_config['jira']
-        self.redmine_config = sources_config['redmine']
+        self.jira_config = sources_config["jira"]
+        self.redmine_config = sources_config["redmine"]
 
         self.jira_client = None
-        if self.jira_config['enabled']:
-            self.jira_client = self._init_client(lambda: JiraClient(self.jira_config), "JIRA")
+        if self.jira_config["enabled"]:
+            self.jira_client = self._init_client(
+                lambda: JiraClient(self.jira_config), "JIRA"
+            )
 
         self.redmine_client = None
-        if self.redmine_config['enabled']:
-            self.redmine_client = self._init_client(lambda: RedmineClient(self.redmine_config), "Redmine")
+        if self.redmine_config["enabled"]:
+            self.redmine_client = self._init_client(
+                lambda: RedmineClient(self.redmine_config), "Redmine"
+            )
 
         # cache the projects we have collected
         self.jira_projects = set()
@@ -60,25 +68,24 @@ class TicketManager:
         kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._collect_from_client(
-            self.jira_client, "JIRA",
+            self.jira_client,
+            "JIRA",
             persistence=persistence,
             projects=projects or [],
             overwrite=False,
-            **(kwargs or {})
+            **(kwargs or {}),
         )
 
     def collect_redmine(
-        self,
-        persistence: PersistenceService,
-        projects: List[str],
-        **kwargs
+        self, persistence: PersistenceService, projects: List[str], **kwargs
     ) -> None:
         self._collect_from_client(
-            self.redmine_client, "Redmine",
+            self.redmine_client,
+            "Redmine",
             persistence=persistence,
             projects=projects or [],
             overwrite=False,
-            **kwargs
+            **kwargs,
         )
 
     def schedule_collect_jira(
@@ -91,11 +98,12 @@ class TicketManager:
         """
 
         self._collect_from_client(
-            self.jira_client, "JIRA",
+            self.jira_client,
+            "JIRA",
             persistence=persistence,
             projects=self.jira_projects,
             overwrite=True,
-            since_iso=last_run
+            since_iso=last_run,
         )
 
     def schedule_collect_redmine(
@@ -108,7 +116,8 @@ class TicketManager:
         """
 
         self._collect_from_client(
-            self.redmine_client, "Redmine",
+            self.redmine_client,
+            "Redmine",
             persistence=persistence,
             projects=self.redmine_projects,
             overwrite=True,
@@ -142,4 +151,4 @@ class TicketManager:
             return
 
         for resource in resources:
-            persistence.persist_resource(resource, outdir,overwrite)
+            persistence.persist_resource(resource, outdir, overwrite)

@@ -37,15 +37,21 @@ def main() -> int:
         description="Delete all submitted annotations from an Argilla dataset (records preserved).",
     )
     parser.add_argument(
-        "--dataset", "-d", required=True,
+        "--dataset",
+        "-d",
+        required=True,
         help="Argilla dataset name (e.g. bench-dryrun-20260603-015649)",
     )
     parser.add_argument(
-        "--workspace", "-w", default="archi",
+        "--workspace",
+        "-w",
+        default="archi",
         help="Argilla workspace (default: archi)",
     )
     parser.add_argument(
-        "--yes", "-y", action="store_true",
+        "--yes",
+        "-y",
+        action="store_true",
         help="Skip the confirmation prompt",
     )
     args = parser.parse_args()
@@ -162,12 +168,17 @@ def main() -> int:
     deleted = 0
     failed = 0
     for rid in response_ids:
-        r = requests.delete(f"{api_url}/api/v1/responses/{rid}", headers=headers, timeout=10)
+        r = requests.delete(
+            f"{api_url}/api/v1/responses/{rid}", headers=headers, timeout=10
+        )
         if r.ok:
             deleted += 1
         else:
             failed += 1
-            print(f"  failed: {rid} -> HTTP {r.status_code}: {r.text[:120]}", file=sys.stderr)
+            print(
+                f"  failed: {rid} -> HTTP {r.status_code}: {r.text[:120]}",
+                file=sys.stderr,
+            )
 
     print(f"Deleted {deleted}/{len(response_ids)} responses ({failed} failed).")
     return 0 if failed == 0 else 1
