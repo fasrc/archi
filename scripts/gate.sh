@@ -42,16 +42,63 @@ if [ ${#changed[@]} -gt 0 ]; then
   isort "${changed[@]}"
 fi
 
+# A change is "formatting-only" (for patch-coverage purposes) when the ENTIRE diff
+# vs the base branch is pure reformatting: every changed path is a MODIFIED .py file
+# whose working-tree content already equals what `isort` then `black` produce from
+# that file's base version — no added/deleted .py, no non-.py path (workflow, shell,
+# template), and no untracked .py. Such a diff cannot meaningfully meet a coverage bar
+# (it adds no testable code), so patch coverage is reported but not enforced, mirroring
+# the GATE_COVERAGE_ADVISORY release path. This is what lets a one-shot `black`/`isort`
+# tree normalization land without its reformatted (mostly uncovered) legacy lines
+# failing diff coverage; anything else falls through to enforced coverage.
+#
+# Three correctness anchors (Codex review on #68):
+#   - WHOLE diff: scan every changed path and status, not just modified .py files, so a
+#     bundled deletion or non-.py edit cannot ride the advisory escape.
+#   - MERGE BASE: compare from the fork point (`git merge-base`), exactly as diff-cover's
+#     `...` range does, so a branch behind origin/dev is not judged against files that
+#     only moved on origin/dev (which would wrongly block a formatting-only branch).
+#   - REPO ROOT: run every git query with `git -C "$root"` so a call from a subdirectory
+#     (a manual run; git already runs the pre-commit hook and CI from the root) still
+#     scans the whole tree instead of a cwd-relative slice.
+_diff_is_formatting_only() {
+  local base="$1" root mb status path base_blob reformatted current saw=0
+  root=$(git rev-parse --show-toplevel) || return 1
+  # Untracked .py = new, untested code -> never formatting-only.
+  [ -n "$(git -C "$root" ls-files --others --exclude-standard -- '*.py')" ] && return 1
+  mb=$(git -C "$root" merge-base "$base" HEAD) || return 1
+  while IFS=$'\t' read -r status path; do
+    [ -z "$status" ] && continue
+    saw=1
+    [ "$status" = "M" ] || return 1                    # added/deleted/renamed/etc.
+    case "$path" in *.py) ;; *) return 1 ;; esac       # any non-.py path disqualifies
+    base_blob=$(git -C "$root" show "$mb:$path" 2>/dev/null) || return 1
+    reformatted=$(printf '%s' "$base_blob" | isort --profile black -q - 2>/dev/null \
+                  | black -q - 2>/dev/null) || return 1
+    current=$(cat -- "$root/$path") || return 1
+    [ "$reformatted" = "$current" ] || return 1
+  done < <(git -C "$root" diff --name-status "$mb")
+  [ "$saw" -eq 1 ] || return 1                          # empty diff is not formatting-only
+  return 0
+}
+
 # Full coverage report, then PATCH coverage against the base branch.
 BASE="${DIFF_COVER_BASE:-origin/dev}"
 python -m pytest tests/unit/ --cov=src --cov-report=xml --cov-report=term-missing
 
 if git rev-parse --verify --quiet "$BASE" >/dev/null; then
-  if [ "${GATE_COVERAGE_ADVISORY:-}" = "1" ]; then
-    # Release PRs (dev→main): report patch coverage vs the base but never fail on
-    # it. CI sets this flag when github.base_ref == main; dev is already gated
-    # per-commit, so a release merge must not be re-blocked by diff coverage.
-    echo "gate: patch coverage is ADVISORY for this run (release PR) — reporting vs '$BASE', not failing" >&2
+  advisory="${GATE_COVERAGE_ADVISORY:-}"
+  advisory_reason="release PR"
+  # Release PRs (dev→main): CI sets GATE_COVERAGE_ADVISORY=1 because re-measuring the
+  # whole accumulated release vs main can't fairly hit 80%; dev was gated per-commit.
+  # A formatting-only diff gets the same treatment for the same reason: there is no
+  # new logic to cover. Detect it only when not already advisory (saves the work).
+  if [ "$advisory" != "1" ] && _diff_is_formatting_only "$BASE"; then
+    advisory="1"
+    advisory_reason="formatting-only diff (every changed .py equals isort+black of its base version)"
+  fi
+  if [ "$advisory" = "1" ]; then
+    echo "gate: patch coverage is ADVISORY for this run (${advisory_reason}) — reporting vs '$BASE', not failing" >&2
     diff-cover coverage.xml --compare-branch="$BASE" || true
   else
     diff-cover coverage.xml --compare-branch="$BASE" --fail-under=80
