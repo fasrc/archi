@@ -21,12 +21,14 @@ still says "results are numbered `[1]`/`[2]`… result indices".
 ## What Changes
 
 1. **Tracked default (code):** add a committed `DEFAULT_CITATION_GUIDANCE` string and append it
-   to the system prompt in `base_react._build_system_prompt()` **for agents wired with a
-   catalog/vectorstore retrieval tool** (detected via `self.selected_tool_names` ∩ a defined
-   set: `search_knowledge_base`, `search_vectorstore_hybrid`, `search_local_files`,
-   `search_metadata_index`). Non-retrieval agents are unaffected. The guidance: cite inline as
-   `[title](url)` using the title and url shown for each search result; never emit bare `[n]`
-   indices; never fabricate a URL (name the source in plain text if it has none).
+   to the system prompt in `base_react._build_system_prompt()` **for agents wired with the
+   vectorstore retriever tool** (detected via `self.selected_tool_names` ∩
+   `{search_knowledge_base, search_vectorstore_hybrid}` — the tool whose output presents
+   `[i] <title> <url>` for citation). Other search tools (`search_local_files`,
+   `search_metadata_index`) are NOT triggers — their output isn't a clean url+title citation
+   surface — and non-retrieval agents are unaffected. The guidance: cite inline as `[title](url)`
+   using the title and url shown for each search result; never emit bare `[n]` indices; never
+   fabricate a URL (name the source in plain text if it has none).
 2. **Refresh tracked examples:** update `examples/agents/cms-comp-ops.md` (and any sibling) to
    model the `[title](url)` style and drop the "numbered result indices" wording.
 

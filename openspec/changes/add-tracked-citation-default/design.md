@@ -29,13 +29,23 @@ parts.append(get_role_context())
 return "\n\n".join(p for p in parts if p)
 ```
 
-### Targeting — only agents with a catalog/vectorstore retrieval tool
+### Targeting — only agents with the vectorstore retriever tool
 `base_react` already resolves `self.selected_tool_names`. Define a module constant
-`RETRIEVAL_TOOL_NAMES = frozenset({"search_knowledge_base", "search_vectorstore_hybrid",
-"search_local_files", "search_metadata_index"})` — the tools whose results carry `url`/`title`.
+`RETRIEVAL_TOOL_NAMES = frozenset({"search_knowledge_base", "search_vectorstore_hybrid"})` — the
+vectorstore retriever whose model-facing output is purpose-built to present `[i] <title> <url>`
+for citation (`retriever._format_documents_for_llm`).
 `_has_retrieval_tool()` = `bool(set(self.selected_tool_names or []) & RETRIEVAL_TOOL_NAMES)`.
-This keeps the guidance off agents that don't retrieve citable docs (e.g. image-processing,
-`search_opensearch` monit agents whose hits aren't url/title docs).
+
+**Why not the other search tools** (`search_local_files`, `search_metadata_index`): their
+model-facing output is not a clean `url`+`title` citation surface. `search_local_files` renders
+url only in *content* mode (a metadata-dump preview) and **not** in grep mode
+(`_format_grep_hits` emits only `source_type`/`display_name`); `search_metadata_index` surfaces
+url as one filterable metadata line, not as a primary citation field. Triggering on them would
+attach hyperlink guidance to local-file-only agents whose results may carry no url. They are
+excluded from the trigger; the guidance's plain-text fallback ("if a result has no url, name the
+source in plain text") covers any source those tools surface in a retriever-bearing agent. This
+keeps the guidance off agents that don't primarily retrieve citable url/title docs (image
+processing, `search_opensearch` monit agents).
 
 ### The guidance text (single source of truth)
 A short, deployment-neutral block: cite inline as a Markdown link `[title](url)` using the
