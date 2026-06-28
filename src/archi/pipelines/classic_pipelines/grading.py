@@ -6,8 +6,8 @@ from typing import Any, Dict
 
 from langchain_core.output_parsers import StrOutputParser
 
-from src.archi.pipelines.classic_pipelines.utils.chain_wrappers import ChainWrapper
 from src.archi.pipelines.classic_pipelines.base import BasePipeline
+from src.archi.pipelines.classic_pipelines.utils.chain_wrappers import ChainWrapper
 from src.archi.utils.output_dataclass import PipelineOutput
 from src.data_manager.vectorstore.retrievers import SemanticRetriever
 from src.utils.logging import get_logger
@@ -32,34 +32,34 @@ class GradingPipeline(BasePipeline):
         self._init_chains()
 
     def _init_chains(self) -> None:
-        if 'summary_prompt' in self.prompts:
+        if "summary_prompt" in self.prompts:
             self.summary_chain = ChainWrapper(
-                chain=self.prompts['summary_prompt']
-                | self.llms['final_grade_model']
+                chain=self.prompts["summary_prompt"]
+                | self.llms["final_grade_model"]
                 | StrOutputParser(),
-                llm=self.llms['final_grade_model'],
-                prompt=self.prompts['summary_prompt'],
-                required_input_variables=['submission_text'],
-                max_tokens=self.pipeline_config.get('max_tokens', 7000),
+                llm=self.llms["final_grade_model"],
+                prompt=self.prompts["summary_prompt"],
+                required_input_variables=["submission_text"],
+                max_tokens=self.pipeline_config.get("max_tokens", 7000),
             )
-        if 'analysis_prompt' in self.prompts:
+        if "analysis_prompt" in self.prompts:
             self.analysis_chain = ChainWrapper(
-                chain=self.prompts['analysis_prompt']
-                | self.llms['analysis_model']
+                chain=self.prompts["analysis_prompt"]
+                | self.llms["analysis_model"]
                 | StrOutputParser(),
-                llm=self.llms['analysis_model'],
-                prompt=self.prompts['analysis_prompt'],
-                required_input_variables=['submission_text', 'rubric_text', 'summary'],
-                max_tokens=self.pipeline_config.get('max_tokens', 7000),
+                llm=self.llms["analysis_model"],
+                prompt=self.prompts["analysis_prompt"],
+                required_input_variables=["submission_text", "rubric_text", "summary"],
+                max_tokens=self.pipeline_config.get("max_tokens", 7000),
             )
         self.final_grade_chain = ChainWrapper(
-            chain=self.prompts['final_grade_prompt']
-            | self.llms['final_grade_model']
+            chain=self.prompts["final_grade_prompt"]
+            | self.llms["final_grade_model"]
             | StrOutputParser(),
-            llm=self.llms['final_grade_model'],
-            prompt=self.prompts['final_grade_prompt'],
-            required_input_variables=['rubric_text', 'submission_text', 'analysis'],
-            max_tokens=self.pipeline_config.get('max_tokens', 7000),
+            llm=self.llms["final_grade_model"],
+            prompt=self.prompts["final_grade_prompt"],
+            required_input_variables=["rubric_text", "submission_text", "analysis"],
+            max_tokens=self.pipeline_config.get("max_tokens", 7000),
         )
 
     def update_retriever(self, vectorstore):
@@ -80,7 +80,7 @@ class GradingPipeline(BasePipeline):
         additional_comments: str,
     ) -> int:
         reserved_tokens = 300
-        llm = self.llms['final_grade_model']
+        llm = self.llms["final_grade_model"]
         reserved_tokens += llm.get_num_tokens(submission_text)
         reserved_tokens += llm.get_num_tokens(rubric_text)
         reserved_tokens += llm.get_num_tokens(summary)
@@ -101,9 +101,11 @@ class GradingPipeline(BasePipeline):
 
         summary = "No solution summary."
         if self.summary_chain:
-            summary = self.summary_chain.invoke({
-                "submission_text": submission_text,
-            })['answer']
+            summary = self.summary_chain.invoke(
+                {
+                    "submission_text": submission_text,
+                }
+            )["answer"]
 
         retrieved_docs = []
         if self.retriever:
@@ -115,18 +117,34 @@ class GradingPipeline(BasePipeline):
 
         analysis = "No preliminary analysis step."
         if self.analysis_chain:
-            analysis = self.analysis_chain.invoke({
-                "submission_text": submission_text,
-                "rubric_text": rubric_text,
-                "summary": summary if self.summary_chain else "No solution summary provided. Complete the analysis without it.",
-            })['answer']
+            analysis = self.analysis_chain.invoke(
+                {
+                    "submission_text": submission_text,
+                    "rubric_text": rubric_text,
+                    "summary": (
+                        summary
+                        if self.summary_chain
+                        else "No solution summary provided. Complete the analysis without it."
+                    ),
+                }
+            )["answer"]
 
-        final_grade = self.final_grade_chain.invoke({
-            "rubric_text": rubric_text,
-            "submission_text": submission_text,
-            "analysis": analysis if self.analysis_chain else "No analysis summary, complete the final grading without it.",
-            "additional_comments": additional_comments,
-        })['answer'] if self.final_grade_chain else "No final grade chain defined."
+        final_grade = (
+            self.final_grade_chain.invoke(
+                {
+                    "rubric_text": rubric_text,
+                    "submission_text": submission_text,
+                    "analysis": (
+                        analysis
+                        if self.analysis_chain
+                        else "No analysis summary, complete the final grading without it."
+                    ),
+                    "additional_comments": additional_comments,
+                }
+            )["answer"]
+            if self.final_grade_chain
+            else "No final grade chain defined."
+        )
 
         documents = list(retrieved_docs) if retrieved_docs else []
         intermediate_steps = []

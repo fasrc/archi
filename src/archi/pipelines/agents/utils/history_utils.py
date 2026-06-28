@@ -4,6 +4,7 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+
 def infer_speaker(speaker: str) -> type[BaseMessage]:
     """Infer the speaker type and return the appropriate message class."""
     if speaker.lower() in ["user", "human"]:

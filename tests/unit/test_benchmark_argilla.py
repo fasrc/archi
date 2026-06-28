@@ -12,9 +12,9 @@ import pytest
 
 from src.utils.benchmark_argilla import (
     _collapsible,
+    _format_trace_html,
     _get_client,
     _get_workspace,
-    _format_trace_html,
     _html_escape,
     assert_single_sweep,
     generate_dataset_name,
@@ -27,7 +27,6 @@ from src.utils.benchmark_argilla import (
     read_state_file_full,
     write_state_file,
 )
-
 
 # -- Fixtures -----------------------------------------------------------------
 
@@ -46,11 +45,25 @@ SAMPLE_AB_DATA = {
                 "ragas_a": {"answer_relevancy": 0.85, "faithfulness": 0.9},
                 "ragas_b": {"answer_relevancy": 0.95, "faithfulness": 0.88},
                 "messages_a": [
-                    {"type": "tool_call", "tool_name": "search", "tool_args": {"query": "what is X"}, "tool_output": "Found: X is a letter.", "total_duration": 500000000},
-                    {"type": "ai_message", "content": "X is a letter.", "total_duration": 200000000},
+                    {
+                        "type": "tool_call",
+                        "tool_name": "search",
+                        "tool_args": {"query": "what is X"},
+                        "tool_output": "Found: X is a letter.",
+                        "total_duration": 500000000,
+                    },
+                    {
+                        "type": "ai_message",
+                        "content": "X is a letter.",
+                        "total_duration": 200000000,
+                    },
                 ],
                 "messages_b": [
-                    {"type": "ai_message", "content": "X is a variable.", "total_duration": 300000000},
+                    {
+                        "type": "ai_message",
+                        "content": "X is a variable.",
+                        "total_duration": 300000000,
+                    },
                 ],
             },
             {
@@ -80,7 +93,13 @@ SAMPLE_SINGLE_DATA = {
                     "faithfulness": 0.9,
                     "time_elapsed": 1.2,
                     "messages": [
-                        {"type": "tool_call", "tool_name": "search", "tool_args": {"query": "X variable"}, "tool_output": "Doc about X.", "total_duration": 100000000},
+                        {
+                            "type": "tool_call",
+                            "tool_name": "search",
+                            "tool_args": {"query": "X variable"},
+                            "tool_output": "Doc about X.",
+                            "total_duration": 100000000,
+                        },
                     ],
                 },
                 "question_1": {
@@ -100,7 +119,9 @@ SAMPLE_SINGLE_DATA = {
 # -- _get_client tests --------------------------------------------------------
 
 
-@patch.dict(os.environ, {"ARGILLA_API_URL": "http://test:6900", "ARGILLA_API_KEY": "test-key"})
+@patch.dict(
+    os.environ, {"ARGILLA_API_URL": "http://test:6900", "ARGILLA_API_KEY": "test-key"}
+)
 @patch("src.utils.benchmark_argilla.rg", create=True)
 def test_get_client_uses_env_vars(mock_rg):
     """Client is initialised with env var values."""
@@ -108,7 +129,9 @@ def test_get_client_uses_env_vars(mock_rg):
     with patch.dict("sys.modules", {"argilla": mock_rg}):
         mock_rg.Argilla.return_value = MagicMock()
         client = _get_client()
-        mock_rg.Argilla.assert_called_once_with(api_url="http://test:6900", api_key="test-key")
+        mock_rg.Argilla.assert_called_once_with(
+            api_url="http://test:6900", api_key="test-key"
+        )
 
 
 @patch.dict(os.environ, {}, clear=True)
@@ -358,15 +381,26 @@ def test_pull_grades_returns_annotated_records(mock_client, mock_ws):
     record1 = SimpleNamespace(
         fields={"question": "What is X?"},
         responses=[
-            SimpleNamespace(status="submitted", user_id="user1", question_name="winner", value="A"),
-            SimpleNamespace(status="submitted", user_id="user1", question_name="quality", value=4),
-            SimpleNamespace(status="submitted", user_id="user1", question_name="notes", value="Good answer"),
+            SimpleNamespace(
+                status="submitted", user_id="user1", question_name="winner", value="A"
+            ),
+            SimpleNamespace(
+                status="submitted", user_id="user1", question_name="quality", value=4
+            ),
+            SimpleNamespace(
+                status="submitted",
+                user_id="user1",
+                question_name="notes",
+                value="Good answer",
+            ),
         ],
     )
     record2 = SimpleNamespace(
         fields={"question": "What is Y?"},
         responses=[
-            SimpleNamespace(status="draft", user_id="user2", question_name="winner", value="B"),
+            SimpleNamespace(
+                status="draft", user_id="user2", question_name="winner", value="B"
+            ),
         ],
     )
 
@@ -415,7 +449,9 @@ def test_pull_grades_writes_output_file(mock_client, mock_ws, tmp_path):
     record = SimpleNamespace(
         fields={"question": "Q1"},
         responses=[
-            SimpleNamespace(status="submitted", user_id="user1", question_name="quality", value=3),
+            SimpleNamespace(
+                status="submitted", user_id="user1", question_name="quality", value=3
+            ),
         ],
     )
     mock_ds.records.return_value = [record]
@@ -439,10 +475,18 @@ def test_pull_grades_multiple_annotators(mock_client, mock_ws):
     record = SimpleNamespace(
         fields={"question": "Q1"},
         responses=[
-            SimpleNamespace(status="submitted", user_id="user1", question_name="winner", value="A"),
-            SimpleNamespace(status="submitted", user_id="user1", question_name="quality", value=5),
-            SimpleNamespace(status="submitted", user_id="user2", question_name="winner", value="B"),
-            SimpleNamespace(status="submitted", user_id="user2", question_name="quality", value=3),
+            SimpleNamespace(
+                status="submitted", user_id="user1", question_name="winner", value="A"
+            ),
+            SimpleNamespace(
+                status="submitted", user_id="user1", question_name="quality", value=5
+            ),
+            SimpleNamespace(
+                status="submitted", user_id="user2", question_name="winner", value="B"
+            ),
+            SimpleNamespace(
+                status="submitted", user_id="user2", question_name="quality", value=3
+            ),
         ],
     )
     mock_ds.records.return_value = [record]
@@ -515,7 +559,12 @@ def test_format_trace_html_empty_messages():
 def test_format_trace_html_tool_call():
     """Tool call messages render with green border, collapsible input."""
     messages = [
-        {"type": "tool_call", "tool_name": "search_docs", "tool_args": {"query": "what is X"}, "total_duration": 500000000},
+        {
+            "type": "tool_call",
+            "tool_name": "search_docs",
+            "tool_args": {"query": "what is X"},
+            "total_duration": 500000000,
+        },
     ]
     html = _format_trace_html(messages)
     assert "#4CAF50" in html
@@ -530,7 +579,11 @@ def test_format_trace_html_tool_call():
 def test_format_trace_html_ai_message():
     """AI messages render with blue border."""
     messages = [
-        {"type": "ai_message", "content": "The answer is 42.", "total_duration": 1000000000},
+        {
+            "type": "ai_message",
+            "content": "The answer is 42.",
+            "total_duration": 1000000000,
+        },
     ]
     html = _format_trace_html(messages)
     assert "#2196F3" in html
@@ -552,7 +605,11 @@ def test_format_trace_html_truncates_long_content():
 def test_format_trace_html_multiple_steps():
     """Multiple steps render in order."""
     messages = [
-        {"type": "tool_call", "tool_name": "search", "tool_args": {"query": "test query"}},
+        {
+            "type": "tool_call",
+            "tool_name": "search",
+            "tool_args": {"query": "test query"},
+        },
         {"type": "ai_message", "content": "result"},
     ]
     html = _format_trace_html(messages)
@@ -562,7 +619,12 @@ def test_format_trace_html_multiple_steps():
 def test_format_trace_html_tool_output():
     """Tool output renders as a collapsible block."""
     messages = [
-        {"type": "tool_call", "tool_name": "search", "tool_args": {"query": "q"}, "tool_output": "Found 3 results."},
+        {
+            "type": "tool_call",
+            "tool_name": "search",
+            "tool_args": {"query": "q"},
+            "tool_output": "Found 3 results.",
+        },
     ]
     html = _format_trace_html(messages)
     assert "Output" in html
@@ -572,7 +634,11 @@ def test_format_trace_html_tool_output():
 def test_format_trace_html_thinking():
     """Thinking content renders as a purple-bordered collapsible step."""
     messages = [
-        {"type": "ai_message", "content": "The answer.", "thinking": "Let me reason about this..."},
+        {
+            "type": "ai_message",
+            "content": "The answer.",
+            "thinking": "Let me reason about this...",
+        },
     ]
     html = _format_trace_html(messages)
     assert "#9C27B0" in html
@@ -586,7 +652,11 @@ def test_format_trace_html_thinking():
 def test_format_trace_html_dict_args():
     """Dict tool_args are JSON-formatted in the collapsible."""
     messages = [
-        {"type": "tool_call", "tool_name": "search", "tool_args": {"query": "test", "limit": 5}},
+        {
+            "type": "tool_call",
+            "tool_name": "search",
+            "tool_args": {"query": "test", "limit": 5},
+        },
     ]
     html = _format_trace_html(messages)
     assert "&quot;query&quot;" in html
@@ -613,11 +683,15 @@ def test_format_trace_html_custom_label():
 
 def test_html_escape_special_chars():
     """HTML special characters are escaped."""
-    assert _html_escape('<script>alert("xss")</script>') == '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;'
+    assert (
+        _html_escape('<script>alert("xss")</script>')
+        == "&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;"
+    )
     assert _html_escape("a & b") == "a &amp; b"
 
 
 # -- generate_dataset_name with suffix tests ----------------------------------
+
 
 def test_generate_dataset_name_with_suffix():
     """Suffix is included in the generated name."""
@@ -627,10 +701,13 @@ def test_generate_dataset_name_with_suffix():
 
 # -- push_multi_ab_results_to_argilla tests -----------------------------------
 
+
 @patch("src.utils.benchmark_argilla.push_ab_results_to_argilla")
 def test_push_multi_ab_creates_datasets(mock_push):
     """Creates one dataset per comparison pair."""
-    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None, min_submitted=2: name
+    mock_push.side_effect = (
+        lambda data, name, corpus_snapshot_id=None, min_submitted=2: name
+    )
 
     comparisons = [
         {
@@ -678,7 +755,9 @@ def test_push_multi_ab_empty_list(mock_push):
 @patch("src.utils.benchmark_argilla.push_ab_results_to_argilla")
 def test_push_multi_ab_default_names(mock_push):
     """Falls back to config_a/config_b when names are missing."""
-    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None, min_submitted=2: name
+    mock_push.side_effect = (
+        lambda data, name, corpus_snapshot_id=None, min_submitted=2: name
+    )
 
     comparisons = [
         {"config_a": {}, "config_b": {}, "per_question": []},
@@ -691,13 +770,17 @@ def test_push_multi_ab_default_names(mock_push):
 @patch("src.utils.benchmark_argilla.push_ab_results_to_argilla")
 def test_push_multi_ab_forwards_corpus_snapshot_id(mock_push):
     """corpus_snapshot_id reaches every per-pair push call (spec: same-sweep guarantee)."""
-    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None, min_submitted=2: name
+    mock_push.side_effect = (
+        lambda data, name, corpus_snapshot_id=None, min_submitted=2: name
+    )
 
     comparisons = [
         {"config_a": {"name": "a"}, "config_b": {"name": "b"}, "per_question": []},
         {"config_a": {"name": "a"}, "config_b": {"name": "c"}, "per_question": []},
     ]
-    push_multi_ab_results_to_argilla(comparisons, "bench", corpus_snapshot_id="snap-xyz")
+    push_multi_ab_results_to_argilla(
+        comparisons, "bench", corpus_snapshot_id="snap-xyz"
+    )
 
     assert mock_push.call_count == 2
     for call in mock_push.call_args_list:
@@ -707,7 +790,9 @@ def test_push_multi_ab_forwards_corpus_snapshot_id(mock_push):
 @patch("src.utils.benchmark_argilla.push_ab_results_to_argilla")
 def test_push_multi_ab_forwards_min_submitted(mock_push):
     """min_submitted reaches every per-pair push call (spec: 2-grader minimum)."""
-    mock_push.side_effect = lambda data, name, corpus_snapshot_id=None, min_submitted=2: name
+    mock_push.side_effect = (
+        lambda data, name, corpus_snapshot_id=None, min_submitted=2: name
+    )
 
     comparisons = [
         {"config_a": {"name": "a"}, "config_b": {"name": "b"}, "per_question": []},
@@ -719,6 +804,7 @@ def test_push_multi_ab_forwards_min_submitted(mock_push):
 
 
 # -- pull_multi_grades_from_argilla tests -------------------------------------
+
 
 @patch("src.utils.benchmark_argilla.pull_grades_from_argilla")
 def test_pull_multi_grades_merges_datasets(mock_pull):
@@ -758,6 +844,7 @@ def test_pull_multi_grades_writes_output(mock_pull, tmp_path):
 
 # -- write_state_file with dataset_names tests --------------------------------
 
+
 def test_write_state_file_with_dataset_names(tmp_path):
     """State file stores multiple dataset names."""
     with patch.dict(os.environ, {"ARCHI_DIR": str(tmp_path)}):
@@ -778,6 +865,7 @@ def test_write_state_file_dataset_names_preserved_on_merge(tmp_path):
 
 
 # -- assert_single_sweep (cross-sweep guard) tests ----------------------------
+
 
 def test_assert_single_sweep_passes_when_all_same():
     """All records share one id -> returns it."""

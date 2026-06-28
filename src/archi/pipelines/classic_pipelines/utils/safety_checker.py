@@ -23,15 +23,16 @@ There are two ways to solve this:
     - reformat your question so that it does not prompt an unsafe response.
 """
 
-def check_safety(text: str, safety_checkers:list, text_type:str) -> Tuple[bool, str]:
+
+def check_safety(text: str, safety_checkers: list, text_type: str) -> Tuple[bool, str]:
     """
     Inputs:
     text: text to check the safety of
     safety_checkers: list of safety checks to use (e.g. SalesforceSafetyChecker)
-    text_type: whether it's the input, output, etc. 
+    text_type: whether it's the input, output, etc.
 
     Returns:
-    Tuple of 
+    Tuple of
     flag: is given text safe or not
     str: warning message, if any
     """
@@ -46,9 +47,9 @@ def check_safety(text: str, safety_checkers:list, text_type:str) -> Tuple[bool, 
                 logger.warning(method)
                 logger.warning(report)
 
-        if text_type == 'prompt':
+        if text_type == "prompt":
             return False, UNSAFE_PROMPT_WARNING
-        elif text_type == 'output':
+        elif text_type == "output":
             return False, UNSAFE_OUTPUT_WARNING
         else:
             return False, "Given text deemed unsafe."

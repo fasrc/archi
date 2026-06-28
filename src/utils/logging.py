@@ -1,7 +1,6 @@
 import logging
 import os
 
-
 # ignore debug logs from these modules, too verbose :)
 ignore_debug_modules = [
     "urllib3.connectionpool",
@@ -9,7 +8,7 @@ ignore_debug_modules = [
     "httpcore",
     "openai._base_client",
     "unstructured.trace",
-    "chardet.charsetprober"
+    "chardet.charsetprober",
 ]
 
 logging_verboseLevel = [
@@ -20,20 +19,17 @@ logging_verboseLevel = [
     logging.DEBUG,
 ]
 
+
 def setup_logging():
     verbosity = int(os.getenv("VERBOSITY", 3))
 
-    format_str = '(%(asctime)s) [%(name)s] %(levelname)s: %(message)s'
+    format_str = "(%(asctime)s) [%(name)s] %(levelname)s: %(message)s"
 
     level = logging_verboseLevel[max(0, min(4, verbosity))]
-    logging.basicConfig(
-        level=level,
-        format=format_str,
-        force=True
-    )
+    logging.basicConfig(level=level, format=format_str, force=True)
 
     # need to override werkzeug which Flask uses
-    logging.getLogger('werkzeug').setLevel(level)
+    logging.getLogger("werkzeug").setLevel(level)
 
     if verbosity == 4:
         for module in ignore_debug_modules:
@@ -41,17 +37,14 @@ def setup_logging():
 
 
 def setup_cli_logging(verbosity):
-    
-    if verbosity > 3: # high verbose mode
-        format_str = '[%(name)s] %(levelname)s: %(message)s'
-    else: # low verbose mode
-        format_str = '[archi] %(message)s'
+
+    if verbosity > 3:  # high verbose mode
+        format_str = "[%(name)s] %(levelname)s: %(message)s"
+    else:  # low verbose mode
+        format_str = "[archi] %(message)s"
     level = logging_verboseLevel[max(0, min(4, verbosity))]
-    logging.basicConfig(
-        level=level,
-        format=format_str,
-        force=True
-    )
+    logging.basicConfig(level=level, format=format_str, force=True)
+
 
 def get_logger(name, verbosity=None):
     logger = logging.getLogger(name)

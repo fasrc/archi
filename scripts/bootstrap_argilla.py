@@ -158,26 +158,46 @@ def create_users(roster_path: Path, workspace: str) -> int:
         print(f"Created user: {username} (password printed below; record it now)")
 
     if created:
-        print("\n=== TEMPORARY PASSWORDS — distribute securely, then ask each user to rotate ===")
+        print(
+            "\n=== TEMPORARY PASSWORDS — distribute securely, then ask each user to rotate ==="
+        )
         for username, password in created:
             print(f"  {username}: {password}")
     return 0
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--generate-secrets", action="store_true",
-                        help="Generate Argilla secrets at ~/.archi/secrets/")
-    parser.add_argument("--export-env", action="store_true",
-                        help="Materialize ~/.archi/argilla.env for docker-compose")
-    parser.add_argument("--force", action="store_true",
-                        help="Overwrite existing secrets (use with --generate-secrets)")
-    parser.add_argument("--create-workspace", action="store_true",
-                        help="Create the 'archi' workspace via Argilla SDK")
-    parser.add_argument("--workspace", default="archi",
-                        help="Workspace name (default: archi)")
-    parser.add_argument("--create-users", metavar="ROSTER",
-                        help="Roster file: one user per line, username[,full_name][,email]")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--generate-secrets",
+        action="store_true",
+        help="Generate Argilla secrets at ~/.archi/secrets/",
+    )
+    parser.add_argument(
+        "--export-env",
+        action="store_true",
+        help="Materialize ~/.archi/argilla.env for docker-compose",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing secrets (use with --generate-secrets)",
+    )
+    parser.add_argument(
+        "--create-workspace",
+        action="store_true",
+        help="Create the 'archi' workspace via Argilla SDK",
+    )
+    parser.add_argument(
+        "--workspace", default="archi", help="Workspace name (default: archi)"
+    )
+    parser.add_argument(
+        "--create-users",
+        metavar="ROSTER",
+        help="Roster file: one user per line, username[,full_name][,email]",
+    )
     args = parser.parse_args()
 
     if args.generate_secrets:

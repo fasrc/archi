@@ -1,9 +1,11 @@
-from typing import Optional, Any
 import asyncio
 import threading
+from typing import Any, Optional
+
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
 
 class AsyncLoopThread:
     """
@@ -24,9 +26,7 @@ class AsyncLoopThread:
         self.loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
         self._started = threading.Event()
         self.thread = threading.Thread(
-            target=self._run,
-            daemon=True,
-            name="mcp-async-loop"
+            target=self._run, daemon=True, name="mcp-async-loop"
         )
         self.thread.start()
 

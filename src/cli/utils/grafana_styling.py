@@ -12,6 +12,7 @@ DISLIKE_COLORS = [  # reds
     "#EF7E7E",
 ]
 
+
 def assign_feedback_palette(configs):
     """
     Produce a color palette for like/dislike feedback grouped by config name.

@@ -1,10 +1,10 @@
 import os
 from typing import Callable, Optional
 
+from src.data_manager.collectors.localfile_manager import LocalFileManager
 from src.data_manager.collectors.processing import build_persistence
 from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
 from src.data_manager.collectors.tickets.ticket_manager import TicketManager
-from src.data_manager.collectors.localfile_manager import LocalFileManager
 from src.data_manager.vectorstore.manager import VectorStoreManager
 from src.utils.config_access import get_full_config
 from src.utils.config_service import ConfigService
@@ -13,7 +13,8 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-class DataManager():
+
+class DataManager:
 
     def __init__(self, *, run_ingestion: bool = True, factory=None):
 
@@ -28,11 +29,19 @@ class DataManager():
             "password": read_secret("PG_PASSWORD"),
             **self.config["services"]["postgres"],
         }
-        self.persistence = build_persistence(self.config, self.data_path, self.pg_config)
-        self.config_service = factory.config_service if factory else ConfigService(pg_config=self.pg_config)
+        self.persistence = build_persistence(
+            self.config, self.data_path, self.pg_config
+        )
+        self.config_service = (
+            factory.config_service
+            if factory
+            else ConfigService(pg_config=self.pg_config)
+        )
         static_config = self.config_service.get_static_config()
         if not static_config or static_config.sources_config is None:
-            raise RuntimeError("Static config missing sources_config; run deployment initialization first.")
+            raise RuntimeError(
+                "Static config missing sources_config; run deployment initialization first."
+            )
         self.config["data_manager"]["sources"] = static_config.sources_config
 
         self.localfile_manager = LocalFileManager(dm_config=self.config["data_manager"])
@@ -57,12 +66,25 @@ class DataManager():
         if self.should_run_ingestion:
             self.run_ingestion()
 
-    def run_ingestion(self, progress_callback: Optional[Callable[[str], None]] = None) -> None:
+    def run_ingestion(
+        self, progress_callback: Optional[Callable[[str], None]] = None
+    ) -> None:
         """Execute initial ingestion and vectorstore update."""
         source_aggregation = [
-            ("Copying configured local files", lambda: self.localfile_manager.collect_all_from_config(self.persistence)),
-            ("Scraping documents onto filesystem", lambda: self.scraper_manager.collect_all_from_config(self.persistence)),
-            ("Fetching ticket data onto filesystem", lambda: self.ticket_manager.collect_all_from_config(self.persistence)),
+            (
+                "Copying configured local files",
+                lambda: self.localfile_manager.collect_all_from_config(
+                    self.persistence
+                ),
+            ),
+            (
+                "Scraping documents onto filesystem",
+                lambda: self.scraper_manager.collect_all_from_config(self.persistence),
+            ),
+            (
+                "Fetching ticket data onto filesystem",
+                lambda: self.ticket_manager.collect_all_from_config(self.persistence),
+            ),
         ]
 
         for message, step in source_aggregation:
@@ -74,7 +96,6 @@ class DataManager():
         if progress_callback:
             progress_callback("Flushing indices")
         self.persistence.flush_index()
-
 
         # Verify catalog was updated
         catalog = self.persistence.catalog

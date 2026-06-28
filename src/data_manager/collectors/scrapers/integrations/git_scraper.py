@@ -7,23 +7,25 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from git import Repo
 from mkdocs.utils.yaml import yaml_load
 
-from src.utils.config_access import get_global_config
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
+from src.utils.config_access import get_global_config
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:
-    from src.data_manager.collectors.scrapers.scraper_manager import \
-        ScraperManager
+    from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
 
 global_config = get_global_config()
+
 
 class GitScraper:
     """Scraper integration that clones Git repositories and indexes MkDocs sites and code files."""
 
-    def __init__(self, manager: "ScraperManager", git_config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(
+        self, manager: "ScraperManager", git_config: Optional[Dict[str, Any]] = None
+    ) -> None:
         self.manager = manager
         self.config = git_config or {}
 
@@ -83,13 +85,17 @@ class GitScraper:
                 or []
             )
         }
-        self.max_file_size_bytes = int(self.config.get("max_file_size_bytes", 1_000_000))
+        self.max_file_size_bytes = int(
+            self.config.get("max_file_size_bytes", 1_000_000)
+        )
 
         self.git_username = read_secret("GIT_USERNAME")
         self.git_token = read_secret("GIT_TOKEN")
         self._credentials_available = bool(self.git_username and self.git_token)
         if not self._credentials_available:
-            logger.info("No git credentials supplied; will attempt public repo cloning.")
+            logger.info(
+                "No git credentials supplied; will attempt public repo cloning."
+            )
 
     def collect(self, git_urls: List[str]) -> List[ScrapedResource]:
         if not git_urls:
@@ -146,7 +152,9 @@ class GitScraper:
         ref = repo_info["ref"]
         docs_dir = repo_path / "docs"
         if not docs_dir.exists():
-            logger.info(f"Skipping MkDocs harvesting for {repo_path}; missing docs directory")
+            logger.info(
+                f"Skipping MkDocs harvesting for {repo_path}; missing docs directory"
+            )
             return []
 
         resources: List[ScrapedResource] = []
@@ -154,9 +162,14 @@ class GitScraper:
         used_blob_links = False
         for markdown_path in docs_dir.rglob("*.md"):
             if mkdocs_site_url:
-                current_url = mkdocs_site_url + markdown_path.relative_to(docs_dir).with_suffix("").as_posix()
+                current_url = (
+                    mkdocs_site_url
+                    + markdown_path.relative_to(docs_dir).with_suffix("").as_posix()
+                )
             else:
-                current_url = self._build_blob_url(base_url, ref, markdown_path.relative_to(repo_path))
+                current_url = self._build_blob_url(
+                    base_url, ref, markdown_path.relative_to(repo_path)
+                )
                 used_blob_links = True
             logger.info(f"Indexing Git doc: {current_url}")
             text_content = markdown_path.read_text(encoding="utf-8")
@@ -168,7 +181,9 @@ class GitScraper:
                 source_type="git",
                 metadata={
                     "repo_path": str(markdown_path.relative_to(repo_path)),
-                    "title": markdown_path.stem.replace("_", " ").replace("-", " ").title(),
+                    "title": markdown_path.stem.replace("_", " ")
+                    .replace("-", " ")
+                    .title(),
                     "parent": parent_repo,
                 },
                 file_name=markdown_path.name,
@@ -180,7 +195,9 @@ class GitScraper:
                 logger.info(f"Resource {current_url} is empty. Skipping...")
 
         if used_blob_links and not mkdocs_site_url:
-            logger.info(f"Used repository blob URLs for MkDocs content in {repo_path} (site_url missing)")
+            logger.info(
+                f"Used repository blob URLs for MkDocs content in {repo_path} (site_url missing)"
+            )
 
         return resources
 
@@ -196,7 +213,11 @@ class GitScraper:
             rel_path = file_path.relative_to(repo_path)
 
             # avoid overlap wtih _harvest_mkdocs
-            if rel_path.parts and rel_path.parts[0] == "docs" and file_path.suffix.lower() == ".md":
+            if (
+                rel_path.parts
+                and rel_path.parts[0] == "docs"
+                and file_path.suffix.lower() == ".md"
+            ):
                 continue
 
             try:
@@ -254,9 +275,13 @@ class GitScraper:
         # Only inject credentials if available (for private repos)
         if self._credentials_available:
             if "gitlab" in url:
-                clone_from_url = url.replace("gitlab", f"{self.git_username}:{self.git_token}@gitlab")
+                clone_from_url = url.replace(
+                    "gitlab", f"{self.git_username}:{self.git_token}@gitlab"
+                )
             elif "github" in url:
-                clone_from_url = url.replace("github", f"{self.git_username}:{self.git_token}@github")
+                clone_from_url = url.replace(
+                    "github", f"{self.git_username}:{self.git_token}@github"
+                )
             else:
                 # For other hosts, try without credentials
                 clone_from_url = url

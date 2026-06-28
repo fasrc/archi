@@ -8,11 +8,12 @@ from flask import Flask
 
 from src.archi.archi import archi
 from src.data_manager.data_manager import DataManager
+from src.utils.config_access import get_full_config
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
-from src.utils.config_access import get_full_config
 
 logger = get_logger(__name__)
+
 
 class MattermostAIWrapper:
     def __init__(self):
@@ -27,14 +28,15 @@ class MattermostAIWrapper:
         # form the formatted history using the post
         formatted_history = []
 
-        post_str = post['message']
-        formatted_history.append(("User", post_str)) 
+        post_str = post["message"]
+        formatted_history.append(("User", post_str))
 
         # call chain
         answer = self.archi(formatted_history)["answer"]
-        logger.debug('ANSWER = ',answer)
+        logger.debug("ANSWER = ", answer)
 
         return answer, post_str
+
 
 class Mattermost:
     """
@@ -43,27 +45,30 @@ class Mattermost:
     Also filter for new posts that have been resolved and add to vector store.
     For now, just iterate through all posts and send replies for unresolved.
     """
+
     def __init__(self):
 
-        logger.info('Mattermost::INIT')
+        logger.info("Mattermost::INIT")
 
-        self.mattermost_config = get_full_config().get("utils", {}).get("mattermost", None)
-        
+        self.mattermost_config = (
+            get_full_config().get("utils", {}).get("mattermost", None)
+        )
+
         # mattermost webhook for reading questions/sending responses
-        self.mattermost_url = 'https://mattermost.web.cern.ch/'
+        self.mattermost_url = "https://mattermost.web.cern.ch/"
         self.mattermost_webhook = read_secret("MATTERMOST_WEBHOOK")
         self.mattermost_channel_id_read = read_secret("MATTERMOST_CHANNEL_ID_READ")
         self.mattermost_channel_id_write = read_secret("MATTERMOST_CHANNEL_ID_WRITE")
-        self.PAK = read_secret("MATTERMOST_PAK")        
+        self.PAK = read_secret("MATTERMOST_PAK")
         self.mattermost_headers = {
-            'Authorization': f'Bearer {self.PAK}',
-            'Content-Type': 'application/json'
+            "Authorization": f"Bearer {self.PAK}",
+            "Content-Type": "application/json",
         }
 
-        logger.debug('mattermost_webhook =', self.mattermost_webhook)
-        logger.debug('mattermost_channel_id_read =', self.mattermost_channel_id_read)
-        logger.debug('mattermost_channel_id_write =', self.mattermost_channel_id_write)
-        logger.debug('PAK =', self.PAK)
+        logger.debug("mattermost_webhook =", self.mattermost_webhook)
+        logger.debug("mattermost_channel_id_read =", self.mattermost_channel_id_read)
+        logger.debug("mattermost_channel_id_write =", self.mattermost_channel_id_write)
+        logger.debug("PAK =", self.PAK)
 
         # initialize MattermostAIWrapper
         self.ai_wrapper = MattermostAIWrapper()
@@ -73,17 +78,21 @@ class Mattermost:
 
     def post_response(self, response):
 
-#        TODO: support writing in a dedicated mattermost_channel_id_write
-#        url = f"{self.mattermost_url}/api/v4/posts"
-#        print('GOING TO WRITE HERE: ',url)
+        #        TODO: support writing in a dedicated mattermost_channel_id_write
+        #        url = f"{self.mattermost_url}/api/v4/posts"
+        #        print('GOING TO WRITE HERE: ',url)
 
-#        payload = {
-#            "channel_id": self.mattermost_channel_id_write,
-#            "message": response
-#        }
+        #        payload = {
+        #            "channel_id": self.mattermost_channel_id_write,
+        #            "message": response
+        #        }
         # send response to MM
-        #r = requests.post(url, data=json.dumps(payload), headers=self.mattermost_headers)
-        r = requests.post(self.mattermost_webhook, data=json.dumps({"text": response,"channel" : "town-square"}), headers=self.mattermost_headers)
+        # r = requests.post(url, data=json.dumps(payload), headers=self.mattermost_headers)
+        r = requests.post(
+            self.mattermost_webhook,
+            data=json.dumps({"text": response, "channel": "town-square"}),
+            headers=self.mattermost_headers,
+        )
 
         return
 
@@ -101,9 +110,9 @@ class Mattermost:
 
         content = f"api/v4/channels/{self.mattermost_channel_id_read}/posts"
         r = requests.get(self.mattermost_url + content, headers=self.mattermost_headers)
-        active_posts={}
+        active_posts = {}
         for id in r.json()["order"]:
-            active_posts[id]=r.json()["posts"][id]["message"]
+            active_posts[id] = r.json()["posts"][id]["message"]
         return active_posts
 
     def filter_posts(self, posts, excluded_user_id):
@@ -135,11 +144,13 @@ class Mattermost:
 
         r = requests.get(self.mattermost_url + content, headers=self.mattermost_headers)
         data = r.json()
-        posts = data.get('posts', {})
+        posts = data.get("posts", {})
         excluded_archi_id = "ajb6wyizpinqir7m16owntod7o"
 
         filtered_posts = self.filter_posts(posts, excluded_user_id=excluded_archi_id)
-        sorted_posts = sorted(filtered_posts, key=lambda x: x['create_at'], reverse=True)
+        sorted_posts = sorted(
+            filtered_posts, key=lambda x: x["create_at"], reverse=True
+        )
 
         if sorted_posts:
             latest = sorted_posts[0]
@@ -192,17 +203,19 @@ class Mattermost:
             logger.error(str(e))
             return
 
-        if self.checkAnswerExist(topic['id']) :
-             # no need to answer someone already answered
-             logger.info('no need to answer someone already answered')
+        if self.checkAnswerExist(topic["id"]):
+            # no need to answer someone already answered
+            logger.info("no need to answer someone already answered")
         else:
             # otherwise, process it
             try:
                 answer, post_str = self.ai_wrapper(topic)
-                print('topic',topic,' \n ANSWER: ',answer)
+                print("topic", topic, " \n ANSWER: ", answer)
                 postedMM = self.post_response(answer)
-                post_str = self.write_min_next_post(topic['id'])
+                post_str = self.write_min_next_post(topic["id"])
 
             except Exception as e:
-                logger.error(f"ERROR - Failed to process post {topic['id']} due to the following exception:")
+                logger.error(
+                    f"ERROR - Failed to process post {topic['id']} due to the following exception:"
+                )
                 logger.error(str(e))

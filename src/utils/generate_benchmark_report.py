@@ -15,49 +15,47 @@ Usage:
     python generate_benchmark_report.py <results.json> --question 1
 """
 
-import json
-import sys
 import argparse
 import html
-from pathlib import Path
+import json
+import sys
 from datetime import datetime
+from pathlib import Path
 
 
 def get_single_question_results(config_data):
     """Return the single question results regardless of key format."""
     return (
-        config_data.get('single question results')
-        or config_data.get('single_question_results')
+        config_data.get("single question results")
+        or config_data.get("single_question_results")
         or {}
     )
+
 
 def get_total_results(config_data):
     """Return the total results regardless of key format."""
-    return (
-        config_data.get('total results')
-        or config_data.get('total_results')
-        or {}
-    )
+    return config_data.get("total results") or config_data.get("total_results") or {}
+
 
 def load_benchmark_results(filepath):
-
     """Load and parse benchmark results JSON"""
-    with open(filepath, 'r') as f:
+    with open(filepath, "r") as f:
         data = json.load(f)
 
-    return data['benchmarking_results'], data['metadata']
+    return data["benchmarking_results"], data["metadata"]
+
 
 def parse_benchmark_results(results, metadata):
     """Parse benchmark results JSON"""
 
     result = results[0]
-    
-    questions = result.get('single_question_results', {})
-    total_results = result.get('total_results', {})
-    config_name = result.get('configuration_file', 'Unknown configuration')
-    config_data = result.get('configuration', {})
+
+    questions = result.get("single_question_results", {})
+    total_results = result.get("total_results", {})
+    config_name = result.get("configuration_file", "Unknown configuration")
+    config_data = result.get("configuration", {})
     timestamp = metadata.get("time", "Unknown time")
-    
+
     return config_data, config_name, timestamp, questions, total_results
 
 
@@ -98,10 +96,11 @@ def format_total_duration(raw_duration):
     return friendly, assumed_unit
 
 
-def format_html_output(config_data, config_name, timestamp,questions, total_results):
+def format_html_output(config_data, config_name, timestamp, questions, total_results):
     """Format results as HTML for easier reading"""
 
-    html_parts = ["""
+    html_parts = [
+        """
     <!DOCTYPE html>
     <html>
     <head>
@@ -193,185 +192,246 @@ def format_html_output(config_data, config_name, timestamp,questions, total_resu
         </style>
     </head>
     <body>
-    """]
+    """
+    ]
 
-
-
-    
     # Header
-    html_parts.append(f"""
+    html_parts.append(
+        f"""
     <div class="header">
         <h1>📊 Benchmark Results Comparison</h1>
         <p><strong>Configuration:</strong> {config_name}</p>
         <p><strong>Timestamp:</strong> {timestamp}</p>
         <p><strong>Questions Processed:</strong> {len(questions)}</p>
     </div>
-""")
+"""
+    )
 
     # sources (retrieval accuracy) metrics
-    if 'SOURCES' in config_data.get('services', {}).get('benchmarking', {}).get('modes', []):
+    if "SOURCES" in config_data.get("services", {}).get("benchmarking", {}).get(
+        "modes", []
+    ):
 
         # Retrieval Accuracy
-        ret_accuracy = total_results.get('source_accuracy', None)
+        ret_accuracy = total_results.get("source_accuracy", None)
         ret_total = len(questions)
-        ret_correct =  int(ret_total*ret_accuracy)
+        ret_correct = int(ret_total * ret_accuracy)
 
-        if ret_accuracy: ret_accuracy *= 100
-        ret_partial = total_results.get('relative_source_accuracy', None)
-        ret_partial =  int(ret_total*ret_partial)-ret_correct
+        if ret_accuracy:
+            ret_accuracy *= 100
+        ret_partial = total_results.get("relative_source_accuracy", None)
+        ret_partial = int(ret_total * ret_partial) - ret_correct
 
         html_parts.append('<div class="metrics">')
-        html_parts.append('<h2>🎯 Retrieval Accuracy</h2>')
-        html_parts.append('<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; max-width: 900px; margin: 0 auto;">')
+        html_parts.append("<h2>🎯 Retrieval Accuracy</h2>")
+        html_parts.append(
+            '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; max-width: 900px; margin: 0 auto;">'
+        )
 
         # Fully Correct
-        score_class = 'score-low' if ret_accuracy < 50 else 'score-medium' if ret_accuracy < 80 else 'score-high'
-        html_parts.append(f"""
+        score_class = (
+            "score-low"
+            if ret_accuracy < 50
+            else "score-medium" if ret_accuracy < 80 else "score-high"
+        )
+        html_parts.append(
+            f"""
             <div class="metric-item">
                 <div class="metric-value {score_class}">{ret_accuracy:.1f}%</div>
                 <div class="metric-label">Fully Correct: {ret_correct}/{ret_total}</div>
             </div>
-        """)
+        """
+        )
 
         # Partially Correct
         if ret_partial > 0:
-            html_parts.append(f"""
+            html_parts.append(
+                f"""
                 <div class="metric-item">
                     <div class="metric-value score-medium">{ret_partial}</div>
                     <div class="metric-label">Partially Correct (some sources found)</div>
                 </div>
-            """)
+            """
+            )
 
         # Incorrect
         ret_incorrect = ret_total - ret_correct - ret_partial
         if ret_incorrect > 0:
-            html_parts.append(f"""
+            html_parts.append(
+                f"""
                 <div class="metric-item">
                     <div class="metric-value score-low">{ret_incorrect}</div>
                     <div class="metric-label">Incorrect (no sources found)</div>
                 </div>
-            """)
+            """
+            )
 
-        html_parts.append('</div></div>')
+        html_parts.append("</div></div>")
 
-    if 'RAGAS' in config_data.get('services', {}).get('benchmarking', {}).get('modes', []):
+    if "RAGAS" in config_data.get("services", {}).get("benchmarking", {}).get(
+        "modes", []
+    ):
 
         # Aggregate RAGAS Metrics
         if total_results:
             html_parts.append('<div class="metrics">')
-            html_parts.append('<h2>Aggregate RAGAS Metrics</h2>')
+            html_parts.append("<h2>Aggregate RAGAS Metrics</h2>")
             html_parts.append('<div class="metrics-grid">')
             for metric, value in total_results.items():
-                if 'aggregate' in metric:
-                    clean_name = metric.replace('aggregate_', '').replace('_', ' ').title()
-                    score_class = 'score-low' if value < 0.5 else 'score-medium' if value < 0.7 else 'score-high'
-                    html_parts.append(f"""
+                if "aggregate" in metric:
+                    clean_name = (
+                        metric.replace("aggregate_", "").replace("_", " ").title()
+                    )
+                    score_class = (
+                        "score-low"
+                        if value < 0.5
+                        else "score-medium" if value < 0.7 else "score-high"
+                    )
+                    html_parts.append(
+                        f"""
                     <div class="metric-item">
                         <div class="metric-value {score_class}">{value:.3f}</div>
                         <div class="metric-label">{clean_name}</div>
                     </div>
-                    """)
-            html_parts.append('</div></div>')
+                    """
+                    )
+            html_parts.append("</div></div>")
 
     # Each Question
     for i, (qid, q_data) in enumerate(questions.items(), 1):
         html_parts.append(f'<div class="question-card">')
-        html_parts.append(f'<h2>Question {i}: {qid}</h2>')
-        
+        html_parts.append(f"<h2>Question {i}: {qid}</h2>")
+
         # Question
         html_parts.append(f'<div class="section">')
         html_parts.append(f'<div class="section-title">❓ Question</div>')
         html_parts.append(f'<p>{q_data["question"]}</p>')
-        html_parts.append(f'</div>')
-        
+        html_parts.append(f"</div>")
+
         # reference sources
-        reference_sources_metadata = q_data.get('reference_sources_metadata', [])
-        reference_sources_match_fields = q_data.get('reference_sources_match_fields', [])
+        reference_sources_metadata = q_data.get("reference_sources_metadata", [])
+        reference_sources_match_fields = q_data.get(
+            "reference_sources_match_fields", []
+        )
         expected_sources = []
-        for ref_source, match_field in zip(reference_sources_metadata, reference_sources_match_fields):
+        for ref_source, match_field in zip(
+            reference_sources_metadata, reference_sources_match_fields
+        ):
             expected_sources.append(ref_source[match_field])
-        found_sources = [source for i, source in enumerate(expected_sources) if reference_sources_metadata[i]['matched']]
+        found_sources = [
+            source
+            for i, source in enumerate(expected_sources)
+            if reference_sources_metadata[i]["matched"]
+        ]
 
         # retrieved sources
-        sources_metadata = q_data.get('sources_metadata', [])
+        sources_metadata = q_data.get("sources_metadata", [])
         retrieved_sources = [
             s.get("display_name") or s.get("file_name") or "" for s in sources_metadata
         ]
-        
+
         # Check if any expected source was retrieved
-        expected_sources_set = set(expected_sources) 
-        
-        retrieval_status = 'none'
-        if len(found_sources) == len(expected_sources_set) and len(expected_sources_set) > 0:
-            retrieval_status = 'full'
+        expected_sources_set = set(expected_sources)
+
+        retrieval_status = "none"
+        if (
+            len(found_sources) == len(expected_sources_set)
+            and len(expected_sources_set) > 0
+        ):
+            retrieval_status = "full"
         elif len(found_sources) > 0:
-            retrieval_status = 'partial'
-        
+            retrieval_status = "partial"
+
         if expected_sources:
-            if retrieval_status == 'full':
-                status_class = 'score-high'
-                status_icon = '✅'
-                status_text = 'FULLY CORRECT'
-            elif retrieval_status == 'partial':
-                status_class = 'score-medium'
-                status_icon = '⚠️'
-                status_text = f'PARTIALLY CORRECT ({len(found_sources)}/{len(expected_sources_set)} sources found)'
+            if retrieval_status == "full":
+                status_class = "score-high"
+                status_icon = "✅"
+                status_text = "FULLY CORRECT"
+            elif retrieval_status == "partial":
+                status_class = "score-medium"
+                status_icon = "⚠️"
+                status_text = f"PARTIALLY CORRECT ({len(found_sources)}/{len(expected_sources_set)} sources found)"
             else:
-                status_class = 'score-low'
-                status_icon = '❌'
-                status_text = 'INCORRECT'
-            
+                status_class = "score-low"
+                status_icon = "❌"
+                status_text = "INCORRECT"
+
             # Display expected sources
-            expected_display = ', '.join(expected_sources)
-    
+            expected_display = ", ".join(expected_sources)
+
             html_parts.append(f'<div class="section">')
             html_parts.append(f'<div class="section-title">🎯 Retrieval Check</div>')
-            html_parts.append(f'<div style="background: #f8f9fa; padding: 15px; border-radius: 5px;">')
-            html_parts.append(f'<p><strong>Expected Document(s):</strong> {expected_display}</p>')
-            html_parts.append(f'<p><strong>Retrieved Documents:</strong> {", ".join(retrieved_sources) if retrieved_sources else "None"}</p>')
-            html_parts.append(f'<p><strong class="{status_class}">{status_icon} Status: {status_text}</strong></p>')
-            html_parts.append(f'</div>')
-            html_parts.append(f'</div>')
-
+            html_parts.append(
+                f'<div style="background: #f8f9fa; padding: 15px; border-radius: 5px;">'
+            )
+            html_parts.append(
+                f"<p><strong>Expected Document(s):</strong> {expected_display}</p>"
+            )
+            html_parts.append(
+                f'<p><strong>Retrieved Documents:</strong> {", ".join(retrieved_sources) if retrieved_sources else "None"}</p>'
+            )
+            html_parts.append(
+                f'<p><strong class="{status_class}">{status_icon} Status: {status_text}</strong></p>'
+            )
+            html_parts.append(f"</div>")
+            html_parts.append(f"</div>")
 
         # archi's Answer
         html_parts.append(f'<div class="section">')
         html_parts.append(f'<div class="section-title">🤖 archi\'s Answer</div>')
-        html_parts.append(f'<div class="answer-box">{q_data.get("answer", "N/A")}</div>')
-        html_parts.append(f'</div>')
-        
+        html_parts.append(
+            f'<div class="answer-box">{q_data.get("answer", "N/A")}</div>'
+        )
+        html_parts.append(f"</div>")
+
         # Expected Answer
         html_parts.append(f'<div class="section">')
         html_parts.append(f'<div class="section-title">✅ Expected Answer</div>')
-        html_parts.append(f'<div class="answer-box expected-box">{q_data.get("reference_answer", "N/A")}</div>')
-        html_parts.append(f'</div>')
+        html_parts.append(
+            f'<div class="answer-box expected-box">{q_data.get("reference_answer", "N/A")}</div>'
+        )
+        html_parts.append(f"</div>")
 
         # Expected Documents/Sources
         if expected_sources:
             html_parts.append(f'<div class="section">')
-            html_parts.append(f'<div class="section-title">🎯 Expected Source Documents</div>')
-            html_parts.append(f'<div style="background: #e8f5e9; border-left: 4px solid #4CAF50; padding: 15px; border-radius: 5px;">')
+            html_parts.append(
+                f'<div class="section-title">🎯 Expected Source Documents</div>'
+            )
+            html_parts.append(
+                f'<div style="background: #e8f5e9; border-left: 4px solid #4CAF50; padding: 15px; border-radius: 5px;">'
+            )
             html_parts.append(f'<ul style="margin: 0; padding-left: 20px;">')
             for source in expected_sources:
-                html_parts.append(f'<li style="padding: 5px 0;"><strong>{source}</strong></li>')
-            html_parts.append(f'</ul>')
-            html_parts.append(f'</div>')
-            html_parts.append(f'</div>')
+                html_parts.append(
+                    f'<li style="padding: 5px 0;"><strong>{source}</strong></li>'
+                )
+            html_parts.append(f"</ul>")
+            html_parts.append(f"</div>")
+            html_parts.append(f"</div>")
 
         # Retrieved Contexts/Documents
-        contexts = q_data.get('contexts', [])
+        contexts = q_data.get("contexts", [])
         if contexts:
             html_parts.append(f'<div class="section">')
-            html_parts.append(f'<div class="section-title">📚 Retrieved Documents ({len(contexts)})</div>')
+            html_parts.append(
+                f'<div class="section-title">📚 Retrieved Documents ({len(contexts)})</div>'
+            )
             for j, ctx in enumerate(contexts, 1):
                 # Extract ticket ID from context
-                ticket_id = retrieved_sources[j-1]
-                ticket_badge = f'<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.85em; margin-left: 10px;">{ticket_id}</span>' if ticket_id else ''
-                
+                ticket_id = retrieved_sources[j - 1]
+                ticket_badge = (
+                    f'<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.85em; margin-left: 10px;">{ticket_id}</span>'
+                    if ticket_id
+                    else ""
+                )
+
                 # Parse context if it's a Document representation
-                if isinstance(ctx, str) and ctx.startswith('page_content='):
+                if isinstance(ctx, str) and ctx.startswith("page_content="):
                     try:
-                        content_start = ctx.find("page_content='") + len("page_content='")
+                        content_start = ctx.find("page_content='") + len(
+                            "page_content='"
+                        )
                         content_end = ctx.find("' metadata=", content_start)
                         if content_end != -1:
                             ctx_text = ctx[content_start:content_end]
@@ -379,7 +439,7 @@ def format_html_output(config_data, config_name, timestamp,questions, total_resu
                             metadata_start = ctx.find("metadata={", content_end)
                             if metadata_start != -1:
                                 metadata_end = ctx.find("}", metadata_start)
-                                metadata_text = ctx[metadata_start:metadata_end+1]
+                                metadata_text = ctx[metadata_start : metadata_end + 1]
                         else:
                             ctx_text = ctx
                             metadata_text = ""
@@ -389,92 +449,120 @@ def format_html_output(config_data, config_name, timestamp,questions, total_resu
                 else:
                     ctx_text = str(ctx)
                     metadata_text = ""
-                
+
                 # Truncate if too long for display
-                display_text = ctx_text[:500] + "..." if len(ctx_text) > 500 else ctx_text
-                full_text = ctx_text.replace('<', '&lt;').replace('>', '&gt;')
-                
-                html_parts.append(f'''
+                display_text = (
+                    ctx_text[:500] + "..." if len(ctx_text) > 500 else ctx_text
+                )
+                full_text = ctx_text.replace("<", "&lt;").replace(">", "&gt;")
+
+                html_parts.append(
+                    f"""
                 <div class="context-box" style="background: #f8f9fa; border-left: 3px solid #2196F3; padding: 15px; margin: 10px 0; border-radius: 5px;">
                     <div style="font-weight: bold; margin-bottom: 8px;">Document {j}{ticket_badge}</div>
                     <div style="font-size: 0.9em; white-space: pre-wrap; font-family: 'Courier New', monospace;">{display_text}</div>
                     {f'<details style="margin-top: 10px;"><summary style="cursor: pointer; color: #667eea;">Show full document</summary><pre style="margin-top: 10px; font-size: 0.85em; overflow-x: auto;">{full_text}</pre></details>' if len(ctx_text) > 500 else ''}
                 </div>
-                ''')
-            html_parts.append(f'</div>')
+                """
+                )
+            html_parts.append(f"</div>")
 
         # Agent message trace
-        messages = q_data.get('messages', [])
+        messages = q_data.get("messages", [])
         if messages:
             html_parts.append(f'<div class="section">')
-            html_parts.append(f'<div class="section-title">💬 Agent Messages ({len(messages)})</div>')
-            html_parts.append(f'<div style="display: flex; flex-direction: column; gap: 12px;">')
+            html_parts.append(
+                f'<div class="section-title">💬 Agent Messages ({len(messages)})</div>'
+            )
+            html_parts.append(
+                f'<div style="display: flex; flex-direction: column; gap: 12px;">'
+            )
             for m_idx, message in enumerate(messages, 1):
-                msg_type = message.get('type', 'message')
-                duration_display, duration_unit = format_total_duration(message.get("total_duration"))
+                msg_type = message.get("type", "message")
+                duration_display, duration_unit = format_total_duration(
+                    message.get("total_duration")
+                )
                 duration_suffix = f" ({duration_display})" if duration_display else ""
                 duration_title = ""
                 if duration_display:
                     raw_duration = html.escape(str(message.get("total_duration")))
-                    unit_hint = f"assumed {duration_unit}" if duration_unit else "raw value"
-                    duration_title = f' title="Raw duration: {raw_duration} ({unit_hint})"'
-                if msg_type == 'tool_call':
+                    unit_hint = (
+                        f"assumed {duration_unit}" if duration_unit else "raw value"
+                    )
+                    duration_title = (
+                        f' title="Raw duration: {raw_duration} ({unit_hint})"'
+                    )
+                if msg_type == "tool_call":
                     title = f'🛠️ Tool Call #{m_idx}: {message.get("tool_name", "Unknown Tool")}{duration_suffix}'
-                    args = message.get('tool_args')
-                    body = f'<strong>Args:</strong> {html.escape(str(args))}' if args is not None else '<em>No arguments provided</em>'
-                    border_color = '#17a2b8'
-                elif msg_type == 'ai_message':
-                    title = f'🤖 Assistant Message #{m_idx}{duration_suffix}'
-                    content = message.get('content', '')
-                    body = html.escape(str(content)).replace('\\n', '<br>')
-                    border_color = '#6f42c1'
+                    args = message.get("tool_args")
+                    body = (
+                        f"<strong>Args:</strong> {html.escape(str(args))}"
+                        if args is not None
+                        else "<em>No arguments provided</em>"
+                    )
+                    border_color = "#17a2b8"
+                elif msg_type == "ai_message":
+                    title = f"🤖 Assistant Message #{m_idx}{duration_suffix}"
+                    content = message.get("content", "")
+                    body = html.escape(str(content)).replace("\\n", "<br>")
+                    border_color = "#6f42c1"
                 else:
-                    title = f'📝 Message #{m_idx}{duration_suffix}'
-                    fallback = message.get('content', message)
-                    body = html.escape(str(fallback)).replace('\\n', '<br>')
-                    border_color = '#343a40'
-                html_parts.append(f'''
+                    title = f"📝 Message #{m_idx}{duration_suffix}"
+                    fallback = message.get("content", message)
+                    body = html.escape(str(fallback)).replace("\\n", "<br>")
+                    border_color = "#343a40"
+                html_parts.append(
+                    f"""
                 <div class="answer-box" style="background: #fff; border-left-color: {border_color};">
                     <div style="font-weight: 600; margin-bottom: 6px;"{duration_title}>{title}</div>
                     <div style="font-size: 0.9em; white-space: pre-wrap;">{body}</div>
                 </div>
-                ''')
-            html_parts.append(f'</div>')
-            html_parts.append(f'</div>')
-            
+                """
+                )
+            html_parts.append(f"</div>")
+            html_parts.append(f"</div>")
 
         # RAGAS Metrics
         ragas_metrics = {
-            'answer_relevancy': 'Answer Relevancy',
-            'faithfulness': 'Faithfulness',
-            'context_precision': 'Context Precision',
-            'context_recall': 'Context Recall'
+            "answer_relevancy": "Answer Relevancy",
+            "faithfulness": "Faithfulness",
+            "context_precision": "Context Precision",
+            "context_recall": "Context Recall",
         }
 
-        if 'RAGAS' in config_data.get('services', {}).get('benchmarking', {}).get('modes', []):
+        if "RAGAS" in config_data.get("services", {}).get("benchmarking", {}).get(
+            "modes", []
+        ):
             html_parts.append(f'<div class="section">')
             html_parts.append(f'<div class="section-title">📊 RAGAS Scores</div>')
             html_parts.append(f'<div class="metrics-grid">')
             for metric_key, metric_name in ragas_metrics.items():
                 if metric_key in q_data and q_data[metric_key] is not None:
                     value = q_data[metric_key]
-                    score_class = 'score-low' if value < 0.5 else 'score-medium' if value < 0.7 else 'score-high'
-                    html_parts.append(f"""
+                    score_class = (
+                        "score-low"
+                        if value < 0.5
+                        else "score-medium" if value < 0.7 else "score-high"
+                    )
+                    html_parts.append(
+                        f"""
                     <div class="metric-item">
                         <div class="metric-value {score_class}">{value:.3f}</div>
                         <div class="metric-label">{metric_name}</div>
                     </div>
-                    """)
-            html_parts.append(f'</div></div>')
-        
-        html_parts.append(f'</div>')
+                    """
+                    )
+            html_parts.append(f"</div></div>")
 
-    html_parts.append('</body></html>')
-    return '\n'.join(html_parts)
+        html_parts.append(f"</div>")
+
+    html_parts.append("</body></html>")
+    return "\n".join(html_parts)
+
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Compare expected vs actual outputs from archi benchmarking',
+        description="Compare expected vs actual outputs from archi benchmarking",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -486,40 +574,46 @@ Examples:
   
   # Save HTML report to specific path
   python generate_benchmark_report.py results.json --html report.html
-        """
+        """,
     )
-    
-    parser.add_argument('results_file', help='Path to benchmark results JSON file')
-    parser.add_argument('--html_output', help='Generate HTML output file')
-    parser.add_argument('--question', '-q', type=int, help='Show only specific question number')
-    
+
+    parser.add_argument("results_file", help="Path to benchmark results JSON file")
+    parser.add_argument("--html_output", help="Generate HTML output file")
+    parser.add_argument(
+        "--question", "-q", type=int, help="Show only specific question number"
+    )
+
     args = parser.parse_args()
-    
+
     # Validate input file
     if not Path(args.results_file).exists():
         print(f"Error: File '{args.results_file}' not found", file=sys.stderr)
         sys.exit(1)
-    
+
     if not args.html_output:
         print(f"HTML output path not found, using default.")
-        html_path = Path(args.results_file).stem + '.html'
+        html_path = Path(args.results_file).stem + ".html"
     else:
         html_path = args.html_output
 
     # Load results
     try:
         results, metadata = load_benchmark_results(args.results_file)
-        config_data, config_name, timestamp, questions, total_results = parse_benchmark_results(results, metadata)
+        config_data, config_name, timestamp, questions, total_results = (
+            parse_benchmark_results(results, metadata)
+        )
     except Exception as e:
         print(f"Error loading results: {e}", file=sys.stderr)
         sys.exit(1)
-    
+
     # Generates HTML output
-    html_content = format_html_output(config_data, config_name, timestamp,questions, total_results)
-    with open(html_path, 'w') as f:
+    html_content = format_html_output(
+        config_data, config_name, timestamp, questions, total_results
+    )
+    with open(html_path, "w") as f:
         f.write(html_content)
     print(f"✅ HTML report generated: {args.html}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

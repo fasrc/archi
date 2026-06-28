@@ -18,8 +18,14 @@ class Anonymizer:
         """
         dm_config = get_data_manager_config()
 
-        data_manager_utils = dm_config.get("utils", {}) if isinstance(dm_config, dict) else {}
-        anonymizer_config = data_manager_utils.get("anonymizer", {}) if isinstance(data_manager_utils, dict) else {}
+        data_manager_utils = (
+            dm_config.get("utils", {}) if isinstance(dm_config, dict) else {}
+        )
+        anonymizer_config = (
+            data_manager_utils.get("anonymizer", {})
+            if isinstance(data_manager_utils, dict)
+            else {}
+        )
         if not anonymizer_config:
             raise KeyError(
                 "Anonymizer configuration not found under "
@@ -41,8 +47,12 @@ class Anonymizer:
             self.nlp = spacy.load(nlp_model)
 
         self.EXCLUDED_WORDS = excluded_words
-        self.GREETING_PATTERNS = [re.compile(pattern, re.IGNORECASE) for pattern in greeting_patterns]
-        self.SIGNOFF_PATTERNS = [re.compile(pattern, re.IGNORECASE) for pattern in signoff_patterns]
+        self.GREETING_PATTERNS = [
+            re.compile(pattern, re.IGNORECASE) for pattern in greeting_patterns
+        ]
+        self.SIGNOFF_PATTERNS = [
+            re.compile(pattern, re.IGNORECASE) for pattern in signoff_patterns
+        ]
         self.EMAIL_PATTERN = re.compile(email_pattern)
         self.USERNAME_PATTERN = re.compile(username_pattern)
 
@@ -52,7 +62,8 @@ class Anonymizer:
         """
         doc = self.nlp(text)
         names_to_replace = {
-            ent.text for ent in doc.ents
+            ent.text
+            for ent in doc.ents
             if ent.label_ == "PERSON" and ent.text not in self.EXCLUDED_WORDS
         }
 
@@ -74,7 +85,7 @@ class Anonymizer:
 
         # Remove names (case-insensitive)
         for name in sorted(names_to_replace, key=len, reverse=True):
-            pattern = re.compile(r'\b' + re.escape(name) + r'\b', re.IGNORECASE)
+            pattern = re.compile(r"\b" + re.escape(name) + r"\b", re.IGNORECASE)
             text = pattern.sub("", text)
 
         # Remove extra whitespace

@@ -25,7 +25,9 @@ from src.archi.pipelines.agents.base_react import BaseReActAgent
 class _TestableAgent(BaseReActAgent):
     """Subclass that skips LLM/prompt initialization so we can test budget machinery alone."""
 
-    def __init__(self, config: Dict[str, Any], *, pipeline_config: Dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, config: Dict[str, Any], *, pipeline_config: Dict[str, Any] | None = None
+    ) -> None:
         # Replicate the parts of BaseReActAgent.__init__ that are required for the budget
         # machinery to work, without touching providers, prompts, or LangGraph wiring.
         self.config = config
@@ -63,7 +65,9 @@ def test_class_default_applies_when_no_config():
 def test_chat_app_config_overrides_class_default():
     """services.chat_app.tool_budgets overrides DEFAULT_TOOL_BUDGETS."""
     agent = _TestableAgent(
-        config={"services": {"chat_app": {"tool_budgets": {"search_vectorstore_hybrid": 5}}}},
+        config={
+            "services": {"chat_app": {"tool_budgets": {"search_vectorstore_hybrid": 5}}}
+        },
     )
     assert agent._tool_budgets().get("search_vectorstore_hybrid") == 5
 
@@ -71,7 +75,9 @@ def test_chat_app_config_overrides_class_default():
 def test_pipeline_config_overrides_chat_app_config():
     """pipeline_config.tool_budgets wins over services.chat_app.tool_budgets."""
     agent = _TestableAgent(
-        config={"services": {"chat_app": {"tool_budgets": {"search_vectorstore_hybrid": 5}}}},
+        config={
+            "services": {"chat_app": {"tool_budgets": {"search_vectorstore_hybrid": 5}}}
+        },
         pipeline_config={"tool_budgets": {"search_vectorstore_hybrid": 7}},
     )
     assert agent._tool_budgets().get("search_vectorstore_hybrid") == 7
@@ -95,7 +101,13 @@ def test_tool_budgets_cached_after_first_call():
 def test_invalid_budget_value_is_logged_and_skipped():
     """Non-int budget values are ignored without raising."""
     agent = _TestableAgent(
-        config={"services": {"chat_app": {"tool_budgets": {"search_vectorstore_hybrid": "not-a-number"}}}},
+        config={
+            "services": {
+                "chat_app": {
+                    "tool_budgets": {"search_vectorstore_hybrid": "not-a-number"}
+                }
+            }
+        },
     )
     # Falls back to the class default since the override was rejected.
     assert agent._tool_budgets().get("search_vectorstore_hybrid") == 2
@@ -106,7 +118,11 @@ def test_non_positive_budget_is_ignored_not_unbounded(bad):
     """0/negative would be treated as 'no budget' downstream (silently disabling the
     cap); such values must be rejected so the default cap stands."""
     agent = _TestableAgent(
-        config={"services": {"chat_app": {"tool_budgets": {"search_vectorstore_hybrid": bad}}}},
+        config={
+            "services": {
+                "chat_app": {"tool_budgets": {"search_vectorstore_hybrid": bad}}
+            }
+        },
     )
     # Override rejected -> class default (2) preserved, cap NOT disabled.
     assert agent._tool_budgets().get("search_vectorstore_hybrid") == 2
@@ -138,7 +154,7 @@ def test_consume_tool_budget_short_circuits_after_cap_with_default():
 
     assert agent._consume_tool_budget("search_vectorstore_hybrid") is None  # call 1
     assert agent._consume_tool_budget("search_vectorstore_hybrid") is None  # call 2
-    msg = agent._consume_tool_budget("search_vectorstore_hybrid")            # call 3
+    msg = agent._consume_tool_budget("search_vectorstore_hybrid")  # call 3
     assert isinstance(msg, str)
     assert msg.startswith("Search budget exhausted:")
     assert "search_vectorstore_hybrid" in msg
@@ -171,7 +187,9 @@ def test_new_turn_resets_budget():
     agent.start_run_memory()
     assert agent.active_memory is not None
     assert agent.active_memory.tool_call_count("search_vectorstore_hybrid") == 0
-    assert agent._consume_tool_budget("search_vectorstore_hybrid") is None  # call 1 in new turn
+    assert (
+        agent._consume_tool_budget("search_vectorstore_hybrid") is None
+    )  # call 1 in new turn
 
 
 def test_recursion_handler_retry_preserves_counter():
@@ -192,9 +210,9 @@ def test_recursion_handler_retry_preserves_counter():
     msg = agent._consume_tool_budget("search_vectorstore_hybrid")
 
     assert pre_retry_count == 3, "counter must carry over into the retry"
-    assert isinstance(msg, str) and msg.startswith("Search budget exhausted:"), (
-        "an already-exhausted budget continues to short-circuit during recursion-handler retry"
-    )
+    assert isinstance(msg, str) and msg.startswith(
+        "Search budget exhausted:"
+    ), "an already-exhausted budget continues to short-circuit during recursion-handler retry"
 
 
 # --- 4.x: search_vectorstore_hybrid default ---------------------------------

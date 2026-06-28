@@ -613,9 +613,7 @@ class IndicoScraper:
                 delimiter = (
                     "/contributions/"
                     if "/contributions/" in href
-                    else "/contribution/"
-                    if "/contribution/" in href
-                    else None
+                    else "/contribution/" if "/contribution/" in href else None
                 )
                 if delimiter:
                     parts = href.split(delimiter)
@@ -735,7 +733,9 @@ class IndicoScraper:
         # formats (e.g. PDF + PPTX), keep only the first match in the
         # configured format-priority order to avoid duplicate chunks.
         folders = contribution.get("folders", [])
-        format_priority = self.supported_formats  # ordered, e.g. ["pdf", "pptx", "ppt", "odp"]
+        format_priority = (
+            self.supported_formats
+        )  # ordered, e.g. ["pdf", "pptx", "ppt", "odp"]
 
         all_attachments: List[Dict] = []
         for folder in folders:
