@@ -37,7 +37,7 @@
 - [x] 3.1 `bash scripts/gate.sh` green (diff-cover ≥ 80% on changed lines); no new dependency.
 - [x] 3.2 Unit: a minimal retrieval-agent prompt yields a system prompt carrying the citation
   baseline (covered by 1.1).
-- [ ] 3.3 **End-to-end (required by AGENTS.md "Deployment & Validation Policy"):** redeploy
+- [x] 3.3 **End-to-end (required by AGENTS.md "Deployment & Validation Policy"):** redeploy
   fasrc-dev and run at least one live retrieval chat turn; confirm in the response/logs that the
   agent renders an inline `[title](url)` citation and no bare `[n]` index — i.e. the behavior is
   driven by committed code. (To prove the tracked default specifically, temporarily verify with a
