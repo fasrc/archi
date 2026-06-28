@@ -34,6 +34,18 @@ evidence from retrieved sources, and keep responses concise and actionable.
 
 **Prompt body:** Everything after the frontmatter is the system prompt.
 
+!!! note "Automatic citation guidance for retrieval agents"
+    If an agent's `tools` list includes a vectorstore retriever
+    (`search_vectorstore_hybrid` or `search_knowledge_base`), Archi automatically
+    **appends a default citation instruction** to the resolved system prompt at load
+    time: cite sources inline as a Markdown link `[title](url)` (using the title and
+    URL shown for each search result), never as bare `[1]`/`[2]` indices, and never
+    fabricate a URL. This is why retrieval agents emit hyperlinked citations even when
+    their prompt body says nothing about citations — the guidance ships in code
+    (`agent_spec._apply_citation_guidance`), so it does not need to be repeated in every
+    agent file. Agents without a retriever tool are unaffected. To override the wording,
+    add your own citation instructions to the prompt body (they are additive).
+
 ### Practical Agent Spec Examples
 
 #### Minimal default agent
