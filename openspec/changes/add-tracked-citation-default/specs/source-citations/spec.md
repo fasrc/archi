@@ -10,16 +10,15 @@ wired with a catalog/vectorstore retrieval tool and SHALL NOT be applied to agen
 
 #### Scenario: A retrieval agent gets the citation default from committed code
 
-- **WHEN** an agent whose selected tools include the vectorstore retriever tool
-  (`search_vectorstore_hybrid` or `search_knowledge_base`) builds its system prompt — even from
-  a minimal prompt body that says nothing about citations
-- **THEN** the system prompt includes the committed citation guidance instructing inline
+- **WHEN** an agent that declares the vectorstore retriever tool (`search_vectorstore_hybrid` or
+  `search_knowledge_base`) is resolved — even from a minimal prompt body that says nothing about
+  citations
+- **THEN** its resolved system prompt includes the committed citation guidance instructing inline
   `[title](url)` citation and forbidding bare `[n]` indices
 
 #### Scenario: A non-retrieval agent does not get citation guidance
 
-- **WHEN** an agent whose selected tools include no vectorstore retriever tool builds its system
-  prompt
+- **WHEN** an agent that declares no vectorstore retriever tool is resolved
 - **THEN** the committed citation guidance is NOT appended
 
 #### Scenario: Tracked examples model the hyperlink style

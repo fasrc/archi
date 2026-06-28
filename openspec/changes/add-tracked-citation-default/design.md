@@ -13,28 +13,34 @@ good as whatever prompt a deployment happens to ship. We want a committed baseli
 
 ## Decisions
 
-### Injection point — `base_react._build_system_prompt()`
-Append a tracked `DEFAULT_CITATION_GUIDANCE` to the assembled prompt. Current body:
+### Injection point — `agent_spec.load_agent_spec()` (resolved-prompt append)
+Append a tracked `DEFAULT_CITATION_GUIDANCE` to the **resolved agent prompt** when the spec is
+loaded, so it flows through `BaseReActAgent.agent_prompt` → `_build_system_prompt()` →
+system prompt with no edit to `base_react`:
 ```python
-base_prompt = self.agent_prompt or ""
-role_context = get_role_context()
-return base_prompt + role_context
+return AgentSpec(
+    name=name, tools=tools,
+    prompt=_apply_citation_guidance(prompt, tools),   # appends guidance for retrieval agents
+    source_path=path,
+)
 ```
-becomes (illustrative):
-```python
-parts = [self.agent_prompt or ""]
-if self._has_retrieval_tool():
-    parts.append(DEFAULT_CITATION_GUIDANCE)
-parts.append(get_role_context())
-return "\n\n".join(p for p in parts if p)
-```
+where `_apply_citation_guidance(prompt, tools)` returns `f"{prompt}\n\n{DEFAULT_CITATION_GUIDANCE}"`
+when `set(tools) & RETRIEVAL_TOOL_NAMES`, else `prompt`. Applied in both `load_agent_spec` and
+`load_agent_spec_from_text`.
 
-### Targeting — only agents with the vectorstore retriever tool
-`base_react` already resolves `self.selected_tool_names`. Define a module constant
-`RETRIEVAL_TOOL_NAMES = frozenset({"search_knowledge_base", "search_vectorstore_hybrid"})` — the
-vectorstore retriever whose model-facing output is purpose-built to present `[i] <title> <url>`
-for citation (`retriever._format_documents_for_llm`).
-`_has_retrieval_tool()` = `bool(set(self.selected_tool_names or []) & RETRIEVAL_TOOL_NAMES)`.
+> Seam note (changed during implementation): the original plan put this in
+> `base_react._build_system_prompt()` keyed on `selected_tool_names`. Moved to `agent_spec`
+> because `base_react.py` is ~2000 lines and far from black-24-clean — editing it makes the
+> gate's `black` writer reflow ~400 pre-existing (largely untested) lines into the diff, failing
+> the ≥80% patch-coverage gate. `agent_spec.py` is small, and detection uses the spec's declared
+> `tools` (frontmatter) — the same value `base_react` copies into `selected_tool_names`. Same
+> outcome (the system prompt carries the baseline for retrieval agents), gate-clean change.
+
+### Targeting — only agents that declare the vectorstore retriever tool
+Module constant `RETRIEVAL_TOOL_NAMES = frozenset({"search_knowledge_base",
+"search_vectorstore_hybrid"})` — the vectorstore retriever whose model-facing output is
+purpose-built to present `[i] <title> <url>` for citation (`retriever._format_documents_for_llm`).
+Trigger = `bool(set(tools) & RETRIEVAL_TOOL_NAMES)`.
 
 **Why not the other search tools** (`search_local_files`, `search_metadata_index`): their
 model-facing output is not a clean `url`+`title` citation surface. `search_local_files` renders

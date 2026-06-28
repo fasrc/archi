@@ -1,10 +1,38 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
-import re
+
 import yaml
+
+# Tools whose model-facing output is purpose-built to present "[i] <title> <url>"
+# for citation (see retriever._format_documents_for_llm). An agent that declares one of
+# these gets the committed citation default appended to its resolved prompt. Other search
+# tools (search_local_files, search_metadata_index) are NOT a clean url+title citation
+# surface, so they are deliberately excluded.
+RETRIEVAL_TOOL_NAMES = frozenset({"search_knowledge_base", "search_vectorstore_hybrid"})
+
+# Committed baseline so the [title](url) citation behavior does not depend solely on a
+# per-deployment (possibly gitignored) agent prompt file. Appended to the resolved prompt
+# of any agent that declares a vectorstore retriever tool.
+DEFAULT_CITATION_GUIDANCE = (
+    "When you reference a source, cite it inline as a Markdown link [title](url) using "
+    "the title and url shown for that search result, placed where you would otherwise put "
+    "a bracketed number. Do not emit bare numeric indices like [1] or [2] in your final "
+    "answer. Never fabricate a URL; if a result has no url, name the source in plain text "
+    "instead."
+)
+
+
+def _apply_citation_guidance(prompt: str, tools: List[str]) -> str:
+    """Append the committed citation guidance when the agent declares a vectorstore
+    retriever tool, so inline ``[title](url)`` citation does not depend on a
+    per-deployment (possibly gitignored) prompt file."""
+    if set(tools) & RETRIEVAL_TOOL_NAMES:
+        return f"{prompt}\n\n{DEFAULT_CITATION_GUIDANCE}"
+    return prompt
 
 
 @dataclass(frozen=True)
@@ -24,7 +52,9 @@ def list_agent_files(agents_dir: Path) -> List[Path]:
         raise AgentSpecError(f"Agents directory not found: {agents_dir}")
     if not agents_dir.is_dir():
         raise AgentSpecError(f"Agents path is not a directory: {agents_dir}")
-    return sorted(p for p in agents_dir.iterdir() if p.is_file() and p.suffix.lower() == ".md")
+    return sorted(
+        p for p in agents_dir.iterdir() if p.is_file() and p.suffix.lower() == ".md"
+    )
 
 
 def load_agent_spec(path: Path) -> AgentSpec:
@@ -34,7 +64,7 @@ def load_agent_spec(path: Path) -> AgentSpec:
     return AgentSpec(
         name=name,
         tools=tools,
-        prompt=prompt,
+        prompt=_apply_citation_guidance(prompt, tools),
         source_path=path,
     )
 
@@ -45,7 +75,7 @@ def load_agent_spec_from_text(text: str) -> AgentSpec:
     return AgentSpec(
         name=name,
         tools=tools,
-        prompt=prompt,
+        prompt=_apply_citation_guidance(prompt, tools),
         source_path=Path("<memory>"),
     )
 
@@ -108,6 +138,10 @@ def _extract_metadata(frontmatter: dict, path: Path) -> Tuple[str, List[str]]:
     tools = frontmatter.get("tools")
     if not name or not isinstance(name, str):
         raise AgentSpecError(f"{path} frontmatter must include a string 'name'.")
-    if not tools or not isinstance(tools, list) or not all(isinstance(t, str) and t.strip() for t in tools):
+    if (
+        not tools
+        or not isinstance(tools, list)
+        or not all(isinstance(t, str) and t.strip() for t in tools)
+    ):
         raise AgentSpecError(f"{path} frontmatter must include a list 'tools'.")
     return name.strip(), [t.strip() for t in tools]
