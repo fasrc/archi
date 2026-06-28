@@ -103,7 +103,7 @@ is **no fixed or default location** and no auto-discovery. Keep it wherever suit
 
 Don't confuse the two files: the **manifest** is the *input* (operator-chosen location);
 the generated **`sources.list`** is the *output*, whose location is resolved from the
-config's `data_manager.sources.links.input_lists` (see [Build → redeploy workflow](#build--redeploy-workflow)).
+config's `data_manager.sources.links.input_lists` (see [Build → redeploy workflow](#build-redeploy-workflow)).
 
 ### Manifest format
 
