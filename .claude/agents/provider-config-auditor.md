@@ -29,8 +29,10 @@ read files and report a go/no-go list; you never edit, redeploy, or run anything
 2. **Runtime dep missing from `pyproject.toml`.** Deployment images do `pip install .` on
    top of the published base image, so a new runtime dependency present only in
    `requirements/requirements-base.txt` (and not in `pyproject.toml` `dependencies`)
-   → `ModuleNotFoundError` crash-loop. Cross-check any newly imported third-party package
-   against `pyproject.toml`; versions must match across both files.
+   → `ModuleNotFoundError` crash-loop. Presence in `pyproject.toml` is what prevents the
+   crash; cross-check any newly imported third-party package against it. Version agreement
+   across `pyproject.toml` and `requirements-base.txt` only needs checking for the package
+   the change touches (see Edge cases — unrelated pre-existing skew is out of scope).
 3. **IP-pinned `base_url`.** The vLLM `base_url` must use the HOSTNAME (resolved via host
    split-DNS with `--hostmode`), not a pinned IP — pinned IPs break when the GPU node is
    repointed. Flag `base_url: http://<numeric-ip>:port`.
@@ -47,8 +49,12 @@ read files and report a go/no-go list; you never edit, redeploy, or run anything
    `requirements/requirements-base.txt`).
 2. Walk the checklist 1–5; for each, cite the exact line (or its absence) and whether it
    is a PASS or a BLOCK.
-3. For a dep change, grep the diff for new `import`/`from` of third-party packages and
-   verify each appears in `pyproject.toml`.
+3. For a dependency change, work from the changed file(s) the caller names (or a PR diff
+   the caller pastes in). You have NO Git access (Read/Grep/Glob only) — do not assume you
+   can compute a diff yourself; if the changed files/packages are not given, ask for them.
+   For each third-party `import`/`from` in those files, verify the package is present in
+   `pyproject.toml` `dependencies`. BLOCK only a package that the change imports yet is
+   absent from `pyproject.toml`.
 
 ## Output format
 
@@ -61,7 +67,10 @@ read files and report a go/no-go list; you never edit, redeploy, or run anything
 
 - Both provider blocks `enabled: true` with one on standby → that is normal; only the
   ACTIVE `default_provider` path must be internally consistent.
-- Dep already in `pyproject.toml` with a different pin than `requirements-base.txt` →
-  BLOCK (version skew), and show both pins.
+- Version-skew blocking is SCOPED to the dependency the change actually touches. The tree
+  already carries benign pre-existing skew (e.g. `pyyaml` 6.0.1 vs 6.0.2, `requests`
+  2.31.0 vs 2.32.5) and pyproject-only packages (e.g. `click`) — these must NOT trigger a
+  No-go. Only BLOCK on skew for the package the change touches, and show both pins; for
+  every other package the actionable check is just presence in `pyproject.toml`.
 - Config file not found at the given path → stop and ask for the correct path rather than
   guessing.
