@@ -42,16 +42,49 @@ if [ ${#changed[@]} -gt 0 ]; then
   isort "${changed[@]}"
 fi
 
+# A change is "formatting-only" (for patch-coverage purposes) when every .py file
+# that differs from the base branch is EXACTLY what `isort` then `black` produce
+# from that file's base-branch version — i.e. the diff is pure reformatting that
+# introduces no new or altered logic. Such a diff cannot meaningfully meet a
+# coverage bar (it adds no testable code), so patch coverage is reported but not
+# enforced, mirroring the GATE_COVERAGE_ADVISORY release path. Any real content
+# change, a brand-new file, or an untracked .py makes the run NON-formatting-only.
+# This is what lets a one-shot `black`/`isort` tree normalization land without the
+# reformatted (mostly uncovered) legacy lines failing diff coverage.
+_diff_is_formatting_only() {
+  local base="$1" f base_blob reformatted
+  # Untracked .py = new, untested code -> never formatting-only.
+  [ -n "$(git ls-files --others --exclude-standard -- '*.py')" ] && return 1
+  local -a py
+  mapfile -t py < <(git diff --name-only --diff-filter=d "$base" -- '*.py' | sort -u)
+  [ ${#py[@]} -eq 0 ] && return 1
+  for f in "${py[@]}"; do
+    [ -f "$f" ] || return 1
+    base_blob=$(git show "$base:$f" 2>/dev/null) || return 1  # absent in base -> new file
+    reformatted=$(printf '%s' "$base_blob" | isort --profile black -q - 2>/dev/null \
+                  | black -q - 2>/dev/null) || return 1
+    [ "$reformatted" = "$(cat "$f")" ] || return 1
+  done
+  return 0
+}
+
 # Full coverage report, then PATCH coverage against the base branch.
 BASE="${DIFF_COVER_BASE:-origin/dev}"
 python -m pytest tests/unit/ --cov=src --cov-report=xml --cov-report=term-missing
 
 if git rev-parse --verify --quiet "$BASE" >/dev/null; then
-  if [ "${GATE_COVERAGE_ADVISORY:-}" = "1" ]; then
-    # Release PRs (dev→main): report patch coverage vs the base but never fail on
-    # it. CI sets this flag when github.base_ref == main; dev is already gated
-    # per-commit, so a release merge must not be re-blocked by diff coverage.
-    echo "gate: patch coverage is ADVISORY for this run (release PR) — reporting vs '$BASE', not failing" >&2
+  advisory="${GATE_COVERAGE_ADVISORY:-}"
+  advisory_reason="release PR"
+  # Release PRs (dev→main): CI sets GATE_COVERAGE_ADVISORY=1 because re-measuring the
+  # whole accumulated release vs main can't fairly hit 80%; dev was gated per-commit.
+  # A formatting-only diff gets the same treatment for the same reason: there is no
+  # new logic to cover. Detect it only when not already advisory (saves the work).
+  if [ "$advisory" != "1" ] && _diff_is_formatting_only "$BASE"; then
+    advisory="1"
+    advisory_reason="formatting-only diff (every changed .py equals isort+black of its base version)"
+  fi
+  if [ "$advisory" = "1" ]; then
+    echo "gate: patch coverage is ADVISORY for this run (${advisory_reason}) — reporting vs '$BASE', not failing" >&2
     diff-cover coverage.xml --compare-branch="$BASE" || true
   else
     diff-cover coverage.xml --compare-branch="$BASE" --fail-under=80
