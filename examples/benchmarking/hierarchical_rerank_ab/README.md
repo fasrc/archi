@@ -45,11 +45,21 @@ own dump JSON (each arm's four RAGAS metrics + per-question `time_elapsed`).
 
 Prereqs (this is a `needs-deploy` task — the local gate cannot run it):
 - FASRC VPN up (the vLLM SUT + HuggingFace embeddings need split-DNS).
-- `HUIT_API_KEY` in `~/.archi/.env.benchmark` for the Bedrock judge.
-- **Operator-local config** (the `config/` tree is gitignored): the configs reference
-  `agent_md_file: config/agents/fasrc-cannon.md` and a corpus list under
-  `data_manager.sources` — stage both on the host before running, or repoint them
-  at checked-in equivalents (e.g. an `examples/agents/*.md` spec).
+- `HUIT_API_KEY` in `~/.archi/.env.benchmark` for the Bedrock judge. RAGAS metric
+  embeddings use HuggingFace (`ragas_settings.embedding_model: huggingface`), so no
+  `OPENAI_API_KEY` is needed — omitting that key would render the `OpenAI` default
+  and fail scoring in this env.
+- **Agent persona** — the configs ship a checked-in placeholder
+  (`agent_md_file: examples/agents/fasrc-docs.md`) so they validate from a clean
+  checkout. For a scored run, swap it to your tuned `config/agents/fasrc-cannon.md`.
+- **Corpus list (REQUIRED, operator-supplied)** — both arms reference
+  `config/lists/sources.list`, the live FASRC KB list, which is gitignored and *not*
+  present in a clean checkout. **If it is missing, the scraper logs a warning and
+  skips it, and the benchmark runs against an empty corpus — producing meaningless
+  RAGAS scores rather than failing loudly.** Stage the file (or repoint `input_lists`
+  at your deployment's list) before running, then **verify the rendered
+  `~/.archi/archi-hr-ab-*/weblists/<list>` is non-empty and that ingest reported a
+  non-zero document count** before trusting any results.
 
 ## What #32 wants out of this
 
@@ -82,5 +92,6 @@ Prereqs (this is a `needs-deploy` task — the local gate cannot run it):
   both arms' `queries_path` at it. To add SOURCES scoring, use a url-bearing bank and
   reconcile its URLs against the ingested sitemap slugs first.
 - **Tool-call cap interaction** — the agent's `search_vectorstore_hybrid` tool
-  (`config/agents/fasrc-cannon.md`) can fire multiple times; capping it changes the
-  candidate pool the reranker sees. Note the cap setting alongside results.
+  (declared in the persona, e.g. `examples/agents/fasrc-docs.md`) can fire multiple
+  times; capping it changes the candidate pool the reranker sees. Note the cap
+  setting alongside results.

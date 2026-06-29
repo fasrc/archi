@@ -27,7 +27,10 @@
 - [x] 3b.2 Gate source match-field computation on SOURCES mode (`_resolve_reference_match_fields`) so RAGAS-only banks with zero-source `should_refuse` rows load (Codex #780); empty `source_match_field` on those rows — `test_benchmark_ragas_only_match_fields.py`
 - [x] 3b.3 Add required `-n` to the docs A/B `evaluate` command (Codex #774)
 - [x] 3b.4 ServiceNow bank removed from git (Codex #787) — see 1.1
-- [ ] 3b.5 (operator) Stage the operator-local `config/agents/fasrc-cannon.md` + corpus list, or repoint the configs at checked-in equivalents before the run (Codex #777/#783)
+- [x] 3b.5 Repoint `agent_md_file` at a checked-in FASRC persona so the configs validate from a clean checkout — new `examples/agents/fasrc-docs.md` placeholder (Codex re-review #3489134738); regression-guarded by `test_hierarchical_rerank_ab_configs.py`
+- [x] 3b.6 Set `ragas_settings.embedding_model: huggingface` in both arms — the omitted key rendered the `OpenAI` default and failed scoring under HUIT-only creds (Codex re-review #3489134745)
+- [x] 3b.7 Make the operator-supplied corpus a loud, REQUIRED prereq (both config comments + README verify-non-empty step) — missing `config/lists/sources.list` silently yields an empty corpus + meaningless RAGAS (Codex re-review #3489134741); kept FASRC corpus (no checked-in FASRC list exists; a foreign/empty corpus would be equally meaningless)
+- [ ] 3b.8 (operator) Stage the live FASRC corpus list (`config/lists/sources.list`) or repoint `input_lists` before the deploy run, and confirm `weblists/<list>` ingested a non-zero document count
 
 ## 4. Docs
 

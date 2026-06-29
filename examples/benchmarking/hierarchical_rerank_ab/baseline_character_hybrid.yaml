@@ -31,8 +31,13 @@ data_manager:
   sources:
     links:
       input_lists:
-        # Same corpus for both arms. Swap to the deployment's list to benchmark
-        # the live dev KB (e.g. /home/austin/Projects/archi-config/lists/sources.list).
+        # REQUIRED operator-supplied corpus (held identical across both arms).
+        # config/lists/sources.list is the live FASRC KB list and is gitignored
+        # (operator-local), so it is NOT present in a clean checkout. If it is
+        # missing the scraper logs a warning and SKIPS it -- the benchmark then
+        # runs against an EMPTY corpus and yields meaningless RAGAS scores. Stage
+        # this file (or repoint at your deployment's list) BEFORE running, and
+        # confirm the rendered weblists/<list> is non-empty. See README.md.
         - config/lists/sources.list
   embedding_name: HuggingFaceEmbeddings   # MUST match the treatment arm
   retrievers:
@@ -54,7 +59,9 @@ services:
   benchmarking:
     # --- HELD FIXED across both arms ---
     agent_class: FASRCDocsAgent
-    agent_md_file: config/agents/fasrc-cannon.md
+    # Checked-in placeholder persona so this example validates from a clean
+    # checkout. Swap to your tuned config/agents/fasrc-cannon.md for a scored run.
+    agent_md_file: examples/agents/fasrc-docs.md
     # SUT = the FASRC vLLM (openai_compat). For provider:local the harness reuses
     # ollama_url as the base_url. Requires the FASRC VPN.
     provider: local
@@ -70,6 +77,10 @@ services:
       - "RAGAS"   # snow bank has no `sources`; add "SOURCES" only with a url-bearing bank
     mode_settings:
       ragas_settings:
+        # RAGAS metric embeddings: HuggingFace (sentence-transformers, local) so
+        # scoring needs no OPENAI_API_KEY. Omitting this renders the "OpenAI"
+        # default, which fails in the benchmark env (HUIT_API_KEY + Postgres only).
+        embedding_model: huggingface
         # Judge/SUT split — break self-grading bias. Independent judge = Harvard
         # HUIT Bedrock Claude, pinned (not the rolling alias) for reproducibility.
         # Needs HUIT_API_KEY in the env file.

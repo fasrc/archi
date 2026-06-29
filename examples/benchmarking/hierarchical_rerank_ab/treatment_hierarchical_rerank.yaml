@@ -20,6 +20,13 @@ data_manager:
   sources:
     links:
       input_lists:
+        # REQUIRED operator-supplied corpus (held identical across both arms).
+        # config/lists/sources.list is the live FASRC KB list and is gitignored
+        # (operator-local), so it is NOT present in a clean checkout. If it is
+        # missing the scraper logs a warning and SKIPS it -- the benchmark then
+        # runs against an EMPTY corpus and yields meaningless RAGAS scores. Stage
+        # this file (or repoint at your deployment's list) BEFORE running, and
+        # confirm the rendered weblists/<list> is non-empty. See README.md.
         - config/lists/sources.list
   embedding_name: HuggingFaceEmbeddings
   retrievers:
@@ -46,7 +53,9 @@ services:
   benchmarking:
     # --- HELD FIXED across both arms (identical to baseline) ---
     agent_class: FASRCDocsAgent
-    agent_md_file: config/agents/fasrc-cannon.md
+    # Checked-in placeholder persona so this example validates from a clean
+    # checkout. Swap to your tuned config/agents/fasrc-cannon.md for a scored run.
+    agent_md_file: examples/agents/fasrc-docs.md
     provider: local
     model: "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4"
     ollama_url: http://archi.rc.fas.harvard.edu:8001/v1
@@ -59,6 +68,10 @@ services:
       - "RAGAS"
     mode_settings:
       ragas_settings:
+        # RAGAS metric embeddings: HuggingFace (sentence-transformers, local) so
+        # scoring needs no OPENAI_API_KEY. Omitting this renders the "OpenAI"
+        # default, which fails in the benchmark env (HUIT_API_KEY + Postgres only).
+        embedding_model: huggingface
         evaluator_provider: huit_bedrock
         evaluator_model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
         timeout: 180
