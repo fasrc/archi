@@ -63,7 +63,9 @@ services:
     # checkout. Swap to your tuned config/agents/fasrc-cannon.md for a scored run.
     agent_md_file: examples/agents/fasrc-docs.md
     # SUT = the FASRC vLLM (openai_compat). For provider:local the harness reuses
-    # ollama_url as the base_url. Requires the FASRC VPN.
+    # ollama_url as the SUT base_url. A `/v1` endpoint auto-selects the
+    # openai_compat client (ChatOpenAI); set `provider_mode: ollama` to force the
+    # native Ollama client for a real Ollama server (#73). Requires the FASRC VPN.
     provider: local
     model: "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4"
     ollama_url: http://archi.rc.fas.harvard.edu:8001/v1

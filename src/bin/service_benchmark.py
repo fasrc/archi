@@ -21,6 +21,8 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
+from src.bin.benchmark_sut import apply_sut_local_provider
+from src.utils.config_access import get_static_config
 from src.utils.env import read_secret
 from src.utils.generate_benchmark_report import (
     format_html_output,
@@ -622,6 +624,12 @@ class Benchmarker:
             )
         if ollama_url:
             os.environ["OLLAMA_HOST"] = str(ollama_url)
+
+        # Bridge a `provider: local` SUT into the config the agent reads
+        # (services.chat_app.providers.local), so an OpenAI-compatible endpoint
+        # (e.g. the FASRC vLLM at .../v1) builds a ChatOpenAI client instead of the
+        # Ollama client. No-op for non-local providers. See issue #73.
+        apply_sut_local_provider(benchmark_cfg, get_static_config())
 
         agent_spec = None
         try:

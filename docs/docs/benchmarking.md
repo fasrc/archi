@@ -81,7 +81,8 @@ services:
 | `agent_md_file` | — | Path to a single agent markdown file |
 | `provider` | — | Provider used for benchmark question answering |
 | `model` | — | Model used for benchmark question answering |
-| `ollama_url` | — | Ollama base URL when `provider: local` |
+| `ollama_url` | — | SUT base URL when `provider: local` (e.g. an Ollama server, or an OpenAI-compatible `/v1` endpoint such as a vLLM) |
+| `provider_mode` | _auto_ | Local SUT client mode: `openai_compat` (ChatOpenAI) or `ollama` (ChatOllama). Auto-detected from `ollama_url` — a `/v1` endpoint → `openai_compat`, otherwise `ollama`. Set explicitly to override |
 | `queries_path` | — | Path to the queries JSON file |
 | `out_dir` | — | Output directory for results (must exist) |
 | `modes` | — | List of evaluation modes (`RAGAS`, `SOURCES`) |

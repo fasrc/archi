@@ -59,6 +59,8 @@ services:
     # Checked-in placeholder persona so this example validates from a clean
     # checkout. Swap to your tuned config/agents/fasrc-cannon.md for a scored run.
     agent_md_file: examples/agents/fasrc-docs.md
+    # SUT base_url comes from ollama_url; a `/v1` endpoint auto-selects the
+    # openai_compat client (set `provider_mode: ollama` to force native Ollama). #73
     provider: local
     model: "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4"
     ollama_url: http://archi.rc.fas.harvard.edu:8001/v1
