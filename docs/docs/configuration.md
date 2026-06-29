@@ -195,6 +195,34 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 
 > **Note:** `use_hybrid_search` is a dynamic runtime setting (managed via the configuration API), not a YAML config key.
 
+### Chunking
+
+Controls how documents are split at ingestion. The default `character` strategy
+uses the flat `chunk_size`/`chunk_overlap` settings above. Setting `strategy` to
+`sentence` or `markdown` enables **hierarchical** parent-child chunking: small
+embedded child nodes linked to larger parent context nodes (the parent text is
+what a hierarchical-rerank retriever returns).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `chunking.strategy` | string | `character` | `character` (flat), `sentence`, or `markdown` (both hierarchical) |
+| `chunking.parent_chunk_size` | int | `2048` | Target size of parent context nodes (hierarchical strategies only) |
+| `chunking.child_chunk_size` | int | `512` | Target size of embedded child leaf nodes (hierarchical strategies only) |
+
+```yaml
+data_manager:
+  chunking:
+    strategy: sentence
+    parent_chunk_size: 2048
+    child_chunk_size: 512
+```
+
+> **Backward compatibility:** `parent_chunk_size`/`child_chunk_size` are optional.
+> Omitting them reproduces the built-in defaults (2048/512), so an existing
+> deployment's chunking is unchanged. They exist so a benchmark can sweep chunk
+> sizes and recommend defaults from data — see
+> [Benchmarking → Hierarchical-rerank A/B](benchmarking.md#hierarchical-rerank-ab).
+
 ### Sources
 
 ```yaml

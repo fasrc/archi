@@ -205,6 +205,62 @@ leaderboard is computed independently from each config's aggregates.
 
 ---
 
+## Hierarchical-rerank A/B
+
+A two-arm benchmark that measures what the hierarchical-rerank retriever buys
+over the baseline — across **three** deltas: answer quality (RAGAS), per-query
+latency, and deployment image size. The config pair and grounded question banks
+live under `examples/benchmarking/hierarchical_rerank_ab/` (see its `README.md`
+for the full A/B contract).
+
+- **Baseline arm** — `CharacterTextSplitter` (flat `character` chunking) +
+  `HybridRetriever`.
+- **Treatment arm** — `sentence` hierarchical chunking + the hierarchical-rerank
+  retriever (FlashRank rerank returning parent context).
+
+Only the chunking strategy, retriever selection, arm name, and data path differ
+between the two configs. The embedding model, candidate-generation weights
+(`bm25_weight`/`semantic_weight`), system-under-test model, RAGAS judge, and
+question bank are held identical, so any measured difference is attributable to
+the retrieval treatment. The leaderboard's `shared_context.warnings` cross-checks
+this. Each arm uses a **distinct `global.DATA_PATH`** so the two vectorstores do
+not collide.
+
+### Run
+
+```bash
+archi evaluate -cd examples/benchmarking/hierarchical_rerank_ab --hostmode
+```
+
+Both arms ingest their own corpus, then answer the shared bank. The dump JSON
+gains `ab_comparisons` (baseline vs treatment) plus a `leaderboard`.
+
+### Measuring the three deltas
+
+- **Quality** — the four RAGAS metrics per arm, reported overall and (using the
+  typed `fasrc_ragas_queries.json` bank) sliced by `anchor_type`
+  (`easy_retrieve` / `reasoning` / `should_refuse`). The hypothesis is that
+  returning parent context helps multi-step `reasoning` questions more than
+  simple lookups.
+- **Latency** — the treatment's **first** query pays a one-time FlashRank ONNX
+  model load (~45s on dev vs ~8s baseline). Report that cold-load cost
+  separately and compute **warm** latency by excluding the first treatment query
+  (or prepend a throwaway warm-up question), so the steady-state number is honest.
+- **Image size** — record the built deployment image size with and without the
+  treatment's dependencies (`llama-index-core` + `flashrank`); the difference is
+  the image-size delta the feature introduces.
+
+### Sweeping chunk sizes
+
+The hierarchical parent/child target sizes are configurable via
+[`data_manager.chunking.parent_chunk_size`/`child_chunk_size`](configuration.md#chunking).
+To recommend defaults from data rather than assumption, clone the treatment
+config into variants that differ **only** in those two keys (e.g. 1024/256,
+2048/512, 4096/512) and run them as one config directory — the leaderboard ranks
+them. The same pattern sweeps `retrievers.hybrid_retriever.bm25_weight`.
+
+---
+
 ## Human grading via Argilla
 
 `archi evaluate --argilla` pushes benchmark results to a self-hosted [Argilla](https://argilla.io/) instance for independent human grading. This is the platform we use to answer the question "is config A better than config B for FASRC users?" with data we trust — RAGAS scores alone can't decide prompt or model choices because the judge LLM has its own biases.

@@ -90,9 +90,14 @@ if "langchain_community.document_loaders.text" not in sys.modules:
     sys.modules["langchain_community.document_loaders.text"] = text_module
 
 from src.data_manager.vectorstore import manager as manager_module
-from src.data_manager.vectorstore.manager import VectorStoreManager
+from src.data_manager.vectorstore.manager import (
+    VectorStoreManager,
+    _resolve_chunk_sizes,
+)
 from src.data_manager.vectorstore.node_parsing import (
     CHILD_EMBEDDING_DIM,
+    DEFAULT_CHILD_CHUNK_SIZE,
+    DEFAULT_PARENT_CHUNK_SIZE,
     HierarchicalNode,
 )
 
@@ -165,6 +170,8 @@ def _make_manager():
     manager.collection_name = "test_collection"
     manager.chunking_strategy = "sentence"
     manager.hierarchical_chunking = True
+    manager.parent_chunk_size = DEFAULT_PARENT_CHUNK_SIZE
+    manager.child_chunk_size = DEFAULT_CHILD_CHUNK_SIZE
     manager._data_manager_config = {"stemming": {"enabled": False}}
     manager._pg_config = {"host": "localhost"}
     manager.embedding_dimensions = EMBED_DIM
@@ -192,7 +199,9 @@ def test_build_hierarchical_payload_links_children_and_enriches_metadata(monkeyp
         ),
     ]
     monkeypatch.setattr(
-        manager_module, "build_hierarchical_nodes", lambda doc, strategy=None: nodes
+        manager_module,
+        "build_hierarchical_nodes",
+        lambda doc, strategy=None, **_kwargs: nodes,
     )
 
     parents = manager._build_hierarchical_payload(
@@ -236,7 +245,9 @@ def test_build_hierarchical_payload_drops_parents_without_usable_children(monkey
         ),
     ]
     monkeypatch.setattr(
-        manager_module, "build_hierarchical_nodes", lambda doc, strategy=None: nodes
+        manager_module,
+        "build_hierarchical_nodes",
+        lambda doc, strategy=None, **_kwargs: nodes,
     )
 
     parents = manager._build_hierarchical_payload(
@@ -408,7 +419,7 @@ def test_add_to_postgres_hierarchical_persists_parents_and_children(monkeypatch)
     doc = SimpleNamespace(page_content="some text", metadata={})
     manager.loader = lambda _path: SimpleNamespace(load=lambda: [doc])
 
-    def _fake_nodes(document, strategy="sentence"):
+    def _fake_nodes(document, strategy="sentence", **_kwargs):
         return [
             HierarchicalNode(
                 parent_index=0,
@@ -482,7 +493,7 @@ def test_add_to_postgres_hierarchical_ensures_schema_before_writes(monkeypatch):
     monkeypatch.setattr(
         manager_module,
         "build_hierarchical_nodes",
-        lambda document, strategy="sentence": [
+        lambda document, strategy="sentence", **_kwargs: [
             HierarchicalNode(
                 parent_index=0,
                 parent_text="Parent context.",
@@ -563,3 +574,58 @@ def test_add_to_postgres_skips_schema_ensure_when_not_hierarchical(monkeypatch):
     assert not any(
         "document_parent_nodes" in sql for sql, _ in fake_cursor.executed
     ), "non-hierarchical path must not reference the parent-node table"
+
+
+def test_resolve_chunk_sizes_defaults_when_absent():
+    """Omitting the keys reproduces the built-in defaults (backward compatible)."""
+    assert _resolve_chunk_sizes({}) == (
+        DEFAULT_PARENT_CHUNK_SIZE,
+        DEFAULT_CHILD_CHUNK_SIZE,
+    )
+    # A missing ``chunking`` section (None coerced to {}) behaves identically.
+    assert _resolve_chunk_sizes({"strategy": "sentence"}) == (
+        DEFAULT_PARENT_CHUNK_SIZE,
+        DEFAULT_CHILD_CHUNK_SIZE,
+    )
+
+
+def test_resolve_chunk_sizes_reads_configured_values():
+    """Configured parent/child sizes override the defaults."""
+    assert _resolve_chunk_sizes(
+        {"parent_chunk_size": 1024, "child_chunk_size": 256}
+    ) == (1024, 256)
+    # Each key falls back independently when only one is provided.
+    assert _resolve_chunk_sizes({"parent_chunk_size": 4096}) == (
+        4096,
+        DEFAULT_CHILD_CHUNK_SIZE,
+    )
+
+
+def test_build_hierarchical_payload_passes_configured_chunk_sizes(monkeypatch):
+    """The configured chunk sizes reach ``build_hierarchical_nodes`` at the call
+    site, so a benchmark arm's chunk-size config actually drives the parser."""
+    manager = _make_manager()
+    manager.parent_chunk_size = 1024
+    manager.child_chunk_size = 256
+
+    captured = {}
+
+    def _capture(doc, strategy=None, parent_chunk_size=None, child_chunk_size=None):
+        captured["strategy"] = strategy
+        captured["parent_chunk_size"] = parent_chunk_size
+        captured["child_chunk_size"] = child_chunk_size
+        return []
+
+    monkeypatch.setattr(manager_module, "build_hierarchical_nodes", _capture)
+
+    manager._build_hierarchical_payload(
+        docs=[SimpleNamespace(page_content="x", metadata={})],
+        file_level_metadata={},
+        filename="doc.html",
+        filehash="h",
+        apply_stemming=False,
+    )
+
+    assert captured["strategy"] == "sentence"
+    assert captured["parent_chunk_size"] == 1024
+    assert captured["child_chunk_size"] == 256

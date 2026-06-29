@@ -17,6 +17,8 @@ from src.utils.logging import get_logger
 from .loader_utils import select_loader
 from .node_parsing import (
     CHILD_EMBEDDING_DIM,
+    DEFAULT_CHILD_CHUNK_SIZE,
+    DEFAULT_PARENT_CHUNK_SIZE,
     MARKDOWN_STRATEGY,
     SENTENCE_STRATEGY,
     build_hierarchical_nodes,
@@ -28,6 +30,19 @@ from .schema import ensure_hierarchical_schema
 logger = get_logger(__name__)
 
 SUPPORTED_DISTANCE_METRICS = ["l2", "cosine", "ip"]
+
+
+def _resolve_chunk_sizes(chunking_cfg):
+    """Resolve hierarchical parent/child target sizes from ``data_manager.chunking``.
+
+    Reads ``parent_chunk_size`` / ``child_chunk_size`` from the chunking config
+    section, falling back independently to the node-parser defaults when a key is
+    absent. Keeping this resolution backward-compatible means an existing
+    deployment that omits the keys reproduces its prior chunking exactly.
+    """
+    parent = chunking_cfg.get("parent_chunk_size", DEFAULT_PARENT_CHUNK_SIZE)
+    child = chunking_cfg.get("child_chunk_size", DEFAULT_CHILD_CHUNK_SIZE)
+    return parent, child
 
 
 class VectorStoreManager:
@@ -116,6 +131,11 @@ class VectorStoreManager:
         self.hierarchical_chunking = self.chunking_strategy in (
             SENTENCE_STRATEGY,
             MARKDOWN_STRATEGY,
+        )
+        # Target parent/child node sizes for the hierarchical parser; configurable
+        # so a benchmark can sweep them, defaulting to the node-parser constants.
+        self.parent_chunk_size, self.child_chunk_size = _resolve_chunk_sizes(
+            chunking_cfg
         )
 
         self.stemmer = None
@@ -792,7 +812,12 @@ class VectorStoreManager:
         parents: List[Dict[str, Any]] = []
         parent_index = 0
         for doc in docs:
-            for node in build_hierarchical_nodes(doc, strategy=self.chunking_strategy):
+            for node in build_hierarchical_nodes(
+                doc,
+                strategy=self.chunking_strategy,
+                parent_chunk_size=self.parent_chunk_size,
+                child_chunk_size=self.child_chunk_size,
+            ):
                 child_texts: List[str] = []
                 for child in node.child_texts:
                     child = (child or "").replace("\x00", "")

@@ -1,0 +1,74 @@
+# A/B config — BASELINE  (issue #32, task 6.2)
+# ---------------------------------------------------------------------------
+# Baseline arm: CharacterTextSplitter chunking + HybridRetriever (the pre-#31
+# default). Pair this with treatment_hierarchical_rerank.yaml and run the whole
+# directory so the harness emits ab_comparisons + a leaderboard:
+#
+#   mkdir -p bench_out/hierarchical_rerank_ab
+#   archi evaluate -n hr-ab -cd examples/benchmarking/hierarchical_rerank_ab \
+#     -e ~/.archi/.env.benchmark --hostmode
+#
+# CONTRACT: everything below is held IDENTICAL to the treatment config EXCEPT
+# the `data_manager.chunking` + `data_manager.retrievers` blocks and `name` /
+# `global.DATA_PATH`. The harness cross-checks the rest via shared_context and
+# warns on drift — keep embedding, SUT model, judge, and queries in lockstep.
+
+name: baseline-character-hybrid
+
+global:
+  TRAINED_ON: "FASRC Cannon documentation"
+  # DISTINCT per arm — each config ingests its OWN vectorstore. If both arms
+  # share a DATA_PATH the second ingest reuses the first's index and the A/B is
+  # meaningless.
+  DATA_PATH: bench_out/hierarchical_rerank_ab/_data/baseline
+
+data_manager:
+  # --- HELD FIXED across both arms ---
+  sources:
+    links:
+      input_lists:
+        # Same corpus for both arms. Swap to the deployment's list to benchmark
+        # the live dev KB (e.g. /home/austin/Projects/archi-config/lists/sources.list).
+        - config/lists/sources.list
+  embedding_name: HuggingFaceEmbeddings   # MUST match the treatment arm
+  retrievers:
+    hybrid_retriever:
+      # Candidate generation is shared by BOTH retrievers, so these weights must
+      # be identical in both files for a fair comparison.
+      bm25_weight: 0.6
+      semantic_weight: 0.4
+      num_documents_to_retrieve: 5        # k returned by the baseline HybridRetriever
+
+  # --- VARIED: baseline arm ---
+  # character strategy => CharacterTextSplitter; hierarchical_rerank off =>
+  # build_vector_retriever() returns HybridRetriever (factory.py).
+  chunking:
+    strategy: character
+    chunk_size: 1000
+
+services:
+  benchmarking:
+    # --- HELD FIXED across both arms ---
+    agent_class: FASRCDocsAgent
+    agent_md_file: config/agents/fasrc-cannon.md
+    # SUT = the FASRC vLLM (openai_compat). For provider:local the harness reuses
+    # ollama_url as the base_url. Requires the FASRC VPN.
+    provider: local
+    model: "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4"
+    ollama_url: http://archi.rc.fas.harvard.edu:8001/v1
+    queries_path: examples/benchmarking/fasrc_ragas_queries.json
+    # ^ typed FASRC bank, in-repo (sliceable by question type). For the headline
+    #   quality delta, swap to examples/benchmarking/snow_ragas_queries_pt1.json
+    #   (27 real ServiceNow tickets) — that bank is operator-local and gitignored
+    #   (real ticket data), so place it on disk before running.
+    out_dir: bench_out/hierarchical_rerank_ab
+    modes:
+      - "RAGAS"   # snow bank has no `sources`; add "SOURCES" only with a url-bearing bank
+    mode_settings:
+      ragas_settings:
+        # Judge/SUT split — break self-grading bias. Independent judge = Harvard
+        # HUIT Bedrock Claude, pinned (not the rolling alias) for reproducibility.
+        # Needs HUIT_API_KEY in the env file.
+        evaluator_provider: huit_bedrock
+        evaluator_model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+        timeout: 180
