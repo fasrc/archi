@@ -1,17 +1,21 @@
 # A/B config — BASELINE  (issue #32, task 6.2)
 # ---------------------------------------------------------------------------
 # Baseline arm: CharacterTextSplitter chunking + HybridRetriever (the pre-#31
-# default). Pair this with treatment_hierarchical_rerank.yaml and run the whole
-# directory so the harness emits ab_comparisons + a leaderboard:
+# default). Run this arm as its OWN deploy+ingest+evaluate pass (NOT in a `-cd`
+# directory — that mode can't vary chunking/retriever per arm; see README.md):
 #
 #   mkdir -p bench_out/hierarchical_rerank_ab
-#   archi evaluate -n hr-ab -cd examples/benchmarking/hierarchical_rerank_ab \
+#   archi evaluate -n hr-ab-baseline \
+#     -c examples/benchmarking/hierarchical_rerank_ab/baseline_character_hybrid.yaml \
 #     -e ~/.archi/.env.benchmark --hostmode
+#
+# Then redeploy + re-ingest with treatment_hierarchical_rerank.yaml, evaluate
+# again, and compare the two runs' RAGAS aggregates offline.
 #
 # CONTRACT: everything below is held IDENTICAL to the treatment config EXCEPT
 # the `data_manager.chunking` + `data_manager.retrievers` blocks and `name` /
-# `global.DATA_PATH`. The harness cross-checks the rest via shared_context and
-# warns on drift — keep embedding, SUT model, judge, and queries in lockstep.
+# `global.DATA_PATH`. Keep embedding, SUT model, judge, and queries in lockstep
+# so the only difference between the two runs is the retrieval treatment.
 
 name: baseline-character-hybrid
 

@@ -12,12 +12,13 @@ evidence with a reproducible A/B benchmark on the FASRC corpus.
 ## What Changes
 
 - Add a reproducible **two-arm benchmark** (baseline vs hierarchical-rerank treatment)
-  runnable via the existing `archi evaluate -cd` harness, holding everything fixed
-  except chunking strategy + retriever. (Config pair + banks drafted this session under
-  `examples/benchmarking/`.)
-- Add two **FASRC question banks** in the harness schema: 27 real ServiceNow tickets
-  (RAGAS-only) and 21 doc-grounded, typed questions (`easy_retrieve` / `reasoning` /
-  `should_refuse`) for sliced analysis.
+  holding everything fixed except chunking strategy + retriever. Because `archi evaluate`
+  sweeps only the prompt over a single ingested corpus, the arms run as **two separate
+  deploy+ingest+evaluate passes** compared offline (not one `-cd` directory — see design
+  D1). (Config pair + bank drafted this session under `examples/benchmarking/`.)
+- Add a **FASRC question bank** in the harness schema: 21 doc-grounded, typed questions
+  (`easy_retrieve` / `reasoning` / `should_refuse`) for sliced analysis. (A second bank
+  of real ServiceNow tickets is operator-local and gitignored — real ticket data.)
 - Plumb **`parent_chunk_size` / `child_chunk_size` through `data_manager.chunking`**
   config (currently hardcoded 2048/512 in `node_parsing.py`) so chunk sizes are
   sweepable — without this, a "recommend default parent/child sizes" outcome cannot be
@@ -44,13 +45,16 @@ evidence with a reproducible A/B benchmark on the FASRC corpus.
 
 ## Impact
 
-- **New artifacts** (data/config, no runtime code): `examples/benchmarking/snow_ragas_queries_pt1.json`,
-  `examples/benchmarking/fasrc_ragas_queries.json`, `examples/benchmarking/hierarchical_rerank_ab/`.
+- **New artifacts** (data/config, no runtime code): `examples/benchmarking/fasrc_ragas_queries.json`,
+  `examples/benchmarking/hierarchical_rerank_ab/`. (The ServiceNow bank is operator-local +
+  gitignored — real ticket data.)
 - **Code (gateable):** `src/data_manager/vectorstore/node_parsing.py` (already accepts the
-  params) + `src/data_manager/vectorstore/manager.py:795` call site to pass config-derived
-  sizes; config read in the data-manager config path. New unit tests for the config plumbing.
-- **Docs:** `docs/docs/benchmarking.md` (the A/B recipe) and a new decision record under
-  `docs/decisions/` for the recommendation.
+  params) + `src/data_manager/vectorstore/manager.py` call site to pass config-derived
+  sizes (via `_resolve_chunk_sizes`); `src/cli/templates/base-config.yaml` renders the keys
+  so they reach the deployed config; `src/bin/service_benchmark.py` gates source match-field
+  computation on SOURCES mode so RAGAS-only banks load. New unit tests for each.
+- **Docs:** `docs/docs/benchmarking.md` (the A/B recipe), `docs/docs/configuration.md` (the
+  chunking keys), and a new decision record under `docs/decisions/` for the recommendation.
 - **Deploy-bound:** the actual benchmark run requires the live dev deployment (vLLM SUT,
   HuggingFace embeddings, Bedrock judge) and a double corpus ingest — these tasks are
   marked `needs-deploy` and cannot be validated by the local gate.

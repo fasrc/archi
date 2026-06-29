@@ -209,7 +209,7 @@ leaderboard is computed independently from each config's aggregates.
 
 A two-arm benchmark that measures what the hierarchical-rerank retriever buys
 over the baseline — across **three** deltas: answer quality (RAGAS), per-query
-latency, and deployment image size. The config pair and grounded question banks
+latency, and deployment image size. The config pair and grounded question bank
 live under `examples/benchmarking/hierarchical_rerank_ab/` (see its `README.md`
 for the full A/B contract).
 
@@ -222,20 +222,32 @@ Only the chunking strategy, retriever selection, arm name, and data path differ
 between the two configs. The embedding model, candidate-generation weights
 (`bm25_weight`/`semantic_weight`), system-under-test model, RAGAS judge, and
 question bank are held identical, so any measured difference is attributable to
-the retrieval treatment. The leaderboard's `shared_context.warnings` cross-checks
-this. Each arm uses a **distinct `global.DATA_PATH`** so the two vectorstores do
-not collide.
+the retrieval treatment.
+
+> **Why two runs, not one `-cd` directory.** Unlike the prompt sweep above, this
+> A/B varies *ingestion and retrieval* config (chunking strategy + retriever),
+> not the prompt. The `archi evaluate -cd` mode sweeps only `services.benchmarking`
+> over a **single, once-ingested corpus** — its loader requires `global` (incl.
+> `DATA_PATH`) to be identical across configs, and runtime retriever/chunking come
+> from the once-seeded Postgres config. So each arm must be run as its **own**
+> deploy + ingest + evaluate pass, and the two results compared offline.
 
 ### Run
 
+Run each arm as a separate deployment, re-ingesting between them:
+
 ```bash
-archi evaluate -n hr-ab -cd examples/benchmarking/hierarchical_rerank_ab --hostmode
+# Arm 1 — baseline: deploy + ingest with the baseline config, then evaluate
+archi evaluate -n hr-ab-baseline -c examples/benchmarking/hierarchical_rerank_ab/baseline_character_hybrid.yaml --hostmode
+
+# Arm 2 — treatment: redeploy + re-ingest with the treatment config, then evaluate
+archi evaluate -n hr-ab-treatment -c examples/benchmarking/hierarchical_rerank_ab/treatment_hierarchical_rerank.yaml --hostmode
 ```
 
-`--name`/`-n` is required by the `evaluate` CLI (it names the deployment).
-
-Both arms ingest their own corpus, then answer the shared bank. The dump JSON
-gains `ab_comparisons` (baseline vs treatment) plus a `leaderboard`.
+`--name`/`-n` is required by the `evaluate` CLI (it names the deployment). Each
+pass ingests its own corpus at its own `DATA_PATH` and writes its own dump JSON;
+compare the two runs' RAGAS aggregates offline to get the baseline-vs-treatment
+delta.
 
 ### Measuring the three deltas
 
@@ -258,8 +270,9 @@ The hierarchical parent/child target sizes are configurable via
 [`data_manager.chunking.parent_chunk_size`/`child_chunk_size`](configuration.md#chunking).
 To recommend defaults from data rather than assumption, clone the treatment
 config into variants that differ **only** in those two keys (e.g. 1024/256,
-2048/512, 4096/512) and run them as one config directory — the leaderboard ranks
-them. The same pattern sweeps `retrievers.hybrid_retriever.bm25_weight`.
+2048/512, 4096/512) and run each as its own deploy+ingest+evaluate pass (same
+two-run protocol — chunk size changes ingestion), comparing the aggregates
+offline. The same pattern sweeps `retrievers.hybrid_retriever.bm25_weight`.
 
 ---
 

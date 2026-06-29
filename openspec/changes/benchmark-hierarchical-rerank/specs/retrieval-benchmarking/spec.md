@@ -2,17 +2,19 @@
 
 ### Requirement: Reproducible A/B benchmark for a retrieval change
 
-The system SHALL provide a reproducible two-arm benchmark, runnable through the existing
-`archi evaluate` config-directory harness, that compares a baseline retrieval
-configuration against a treatment configuration while holding every other variable
-(embedding model, candidate-generation weights, system-under-test model, RAGAS judge,
-and question bank) identical across the arms. The two arms SHALL ingest into separate
-vectorstores so their indexes do not collide.
+The system SHALL provide a reproducible two-arm benchmark that compares a baseline
+retrieval configuration against a treatment configuration while holding every other
+variable (embedding model, candidate-generation weights, system-under-test model, RAGAS
+judge, and question bank) identical across the arms. Because the `archi evaluate` harness
+sweeps only the prompt/agent over a single ingested corpus, the two arms SHALL be run as
+**separate** deploy+ingest+evaluate passes — each ingesting its own vectorstore — and their
+RAGAS aggregates compared offline (a single `archi evaluate -cd` directory run cannot vary
+chunking or the retriever per arm).
 
-#### Scenario: A/B run emits a comparable result set
+#### Scenario: Each arm is run and scored independently
 
-- **WHEN** the operator runs `archi evaluate` over the benchmark config directory containing the baseline and treatment arms
-- **THEN** the run produces per-arm RAGAS aggregates plus a pairwise comparison and a leaderboard, and the shared-context record reports no drift in the held-fixed variables
+- **WHEN** the operator deploys and ingests with one arm's config and runs `archi evaluate -n <name> -c <arm>.yaml`, then repeats the deploy+ingest+evaluate with the other arm's config
+- **THEN** each pass produces that arm's RAGAS aggregates over its own freshly ingested corpus, and the two aggregates are compared offline to yield the baseline-vs-treatment delta
 
 #### Scenario: Arms differ only in the retrieval treatment
 
@@ -21,8 +23,8 @@ vectorstores so their indexes do not collide.
 
 #### Scenario: Each arm ingests an isolated corpus
 
-- **WHEN** both arms are executed in one run
-- **THEN** each arm builds its own vectorstore at a distinct data path (baseline character-split vs treatment hierarchical), and neither arm reuses the other's index
+- **WHEN** an arm is run as its own deploy+ingest pass
+- **THEN** it builds its own vectorstore at a distinct data path (baseline character-split vs treatment hierarchical), independent of the other arm's index — the two config files are run one at a time with `-c`, never together in a `-cd` directory
 
 ### Requirement: Grounded FASRC question banks in the harness schema
 
