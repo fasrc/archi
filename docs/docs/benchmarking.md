@@ -229,8 +229,10 @@ not collide.
 ### Run
 
 ```bash
-archi evaluate -cd examples/benchmarking/hierarchical_rerank_ab --hostmode
+archi evaluate -n hr-ab -cd examples/benchmarking/hierarchical_rerank_ab --hostmode
 ```
+
+`--name`/`-n` is required by the `evaluate` CLI (it names the deployment).
 
 Both arms ingest their own corpus, then answer the shared bank. The dump JSON
 gains `ab_comparisons` (baseline vs treatment) plus a `leaderboard`.

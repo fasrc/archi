@@ -180,6 +180,15 @@ data_manager:
     # existing CharacterTextSplitter behavior; 'sentence'/'markdown' enable
     # hierarchical parent-child node parsing for the rerank retriever.
     strategy: {{ data_manager.chunking.strategy | default('character', true) }}
+    # Target parent/child node sizes for hierarchical chunking. Only emitted when
+    # set so VectorStoreManager falls back to its built-in defaults (2048/512)
+    # otherwise — keeping the default a single source of truth in code.
+{%- if data_manager.chunking.parent_chunk_size is defined %}
+    parent_chunk_size: {{ data_manager.chunking.parent_chunk_size }}
+{%- endif %}
+{%- if data_manager.chunking.child_chunk_size is defined %}
+    child_chunk_size: {{ data_manager.chunking.child_chunk_size }}
+{%- endif %}
   parallel_workers: {{ data_manager.parallel_workers | default(32, true) }}
   reset_collection: {{ data_manager.reset_collection | default(true, true) }}
   stemming:

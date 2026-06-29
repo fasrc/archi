@@ -148,7 +148,7 @@
     "question": "What is the GPU partition layout on MIT's Engaging cluster, and how do I request an L40S there?",
     "sources": [],
     "answer": "I don't have FASRC documentation covering MIT's Engaging cluster — it's a separate institution's HPC system. For Engaging-specific questions the right contact is the MIT research computing team. If you're comparing Engaging and Cannon for a workload, I can help with the Cannon side.",
-    "source_match_field": ["url"],
+    "source_match_field": [],
     "notes": "should-refuse. Out-of-scope (different institution). Correct behavior is to acknowledge the gap and refer, NOT to hallucinate Engaging partitions. Phrasing adjustable."
   },
   {
@@ -156,7 +156,7 @@
     "question": "How do I submit a job on TACC Frontera using its queue limits?",
     "sources": [],
     "answer": "That's outside FASRC's documentation — Frontera is a TACC system at UT Austin with its own scheduler policies and queues. Check TACC's user guide for Frontera. I can help with the equivalent on FASRC Cannon (SLURM partitions, limits, and submit scripts) if that's useful.",
-    "source_match_field": ["url"],
+    "source_match_field": [],
     "notes": "should-refuse. Out-of-scope (non-FASRC cluster). A confident answer with invented Frontera queue names fails the round."
   },
   {
@@ -164,7 +164,7 @@
     "question": "What is the exact dollar-per-core-hour price FASRC charges for Cannon CPU time this fiscal year?",
     "sources": [],
     "answer": "I don't have a documented per-core-hour price to quote — FASRC cost/billing specifics aren't something I can confirm from the documentation, and quoting a number I can't verify would be misleading. Please contact FASRC (e.g. via a support ticket) for current billing or cost-recovery details.",
-    "source_match_field": ["url"],
+    "source_match_field": [],
     "notes": "should-refuse. Tests refusal on an unverifiable specific figure rather than inventing a price. If the live KB later documents pricing, reclassify this question."
   }
 ]
