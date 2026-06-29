@@ -44,8 +44,11 @@ data_manager:
       # reranker:
       #   model: <override>            # omitted => DEFAULT_RERANKER_MODEL (FlashRank ONNX)
 
-  # structural chunking at ingest. parent/child sizes are NOT yet config-plumbed
-  # (hardcoded 2048/512 in node_parsing.py) — see #32 acceptance + the explore note.
+  # structural parent/child chunking at ingest. This arm omits
+  # parent_chunk_size/child_chunk_size, so VectorStoreManager uses its built-in
+  # 2048/512 defaults. Those keys ARE config-plumbed (base-config.yaml ->
+  # manager._resolve_chunk_sizes); set them here to sweep sizes — that's the #32
+  # chunk-size recommendation knob.
   chunking:
     strategy: sentence
 

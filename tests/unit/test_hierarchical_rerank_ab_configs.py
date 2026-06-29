@@ -108,3 +108,23 @@ def test_ab_arms_identical_except_retrieval_treatment():
         "Baseline and treatment must match except chunking/retrievers/name/"
         "DATA_PATH; a stray difference would confound the A/B."
     )
+
+
+def _hybrid_weights(config_path):
+    hybrid = _load(config_path)["data_manager"]["retrievers"]["hybrid_retriever"]
+    return {k: hybrid.get(k) for k in ("bm25_weight", "semantic_weight")}
+
+
+def test_ab_arms_share_candidate_generation_weights():
+    # bm25_weight/semantic_weight live UNDER data_manager.retrievers, which the
+    # contract test strips wholesale (the retriever IS the treatment). But hybrid
+    # candidate generation is SHARED by both arms, so these weights are held-fixed
+    # ("MUST equal baseline" in both configs) — guard them explicitly here so a
+    # stray drift in one arm can't silently bias the comparison.
+    baseline = _hybrid_weights(CONFIG_PATHS[0])
+    treatment = _hybrid_weights(CONFIG_PATHS[1])
+    assert baseline["bm25_weight"] is not None, "baseline must pin bm25_weight"
+    assert baseline == treatment, (
+        f"shared candidate-generation weights must match across arms; "
+        f"baseline={baseline} treatment={treatment}"
+    )
