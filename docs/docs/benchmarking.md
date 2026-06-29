@@ -205,6 +205,77 @@ leaderboard is computed independently from each config's aggregates.
 
 ---
 
+## Hierarchical-rerank A/B
+
+A two-arm benchmark that measures what the hierarchical-rerank retriever buys
+over the baseline — across **three** deltas: answer quality (RAGAS), per-query
+latency, and deployment image size. The config pair and grounded question bank
+live under `examples/benchmarking/hierarchical_rerank_ab/` (see its `README.md`
+for the full A/B contract).
+
+- **Baseline arm** — `CharacterTextSplitter` (flat `character` chunking) +
+  `HybridRetriever`.
+- **Treatment arm** — `sentence` hierarchical chunking + the hierarchical-rerank
+  retriever (FlashRank rerank returning parent context).
+
+Only the chunking strategy, retriever selection, arm name, and data path differ
+between the two configs. The embedding model, candidate-generation weights
+(`bm25_weight`/`semantic_weight`), system-under-test model, RAGAS judge, and
+question bank are held identical, so any measured difference is attributable to
+the retrieval treatment.
+
+> **Why two runs, not one `-cd` directory.** Unlike the prompt sweep above, this
+> A/B varies *ingestion and retrieval* config (chunking strategy + retriever),
+> not the prompt. The `archi evaluate -cd` mode sweeps only `services.benchmarking`
+> over a **single, once-ingested corpus** — its loader requires `global` (incl.
+> `DATA_PATH`) to be identical across configs, and runtime retriever/chunking come
+> from the once-seeded Postgres config. So each arm must be run as its **own**
+> deploy + ingest + evaluate pass, and the two results compared offline.
+
+### Run
+
+Run each arm as a separate deployment, re-ingesting between them:
+
+```bash
+# Arm 1 — baseline: deploy + ingest with the baseline config, then evaluate
+archi evaluate -n hr-ab-baseline -c examples/benchmarking/hierarchical_rerank_ab/baseline_character_hybrid.yaml --hostmode
+
+# Arm 2 — treatment: redeploy + re-ingest with the treatment config, then evaluate
+archi evaluate -n hr-ab-treatment -c examples/benchmarking/hierarchical_rerank_ab/treatment_hierarchical_rerank.yaml --hostmode
+```
+
+`--name`/`-n` is required by the `evaluate` CLI (it names the deployment). Each
+pass ingests its own corpus at its own `DATA_PATH` and writes its own dump JSON;
+compare the two runs' RAGAS aggregates offline to get the baseline-vs-treatment
+delta.
+
+### Measuring the three deltas
+
+- **Quality** — the four RAGAS metrics per arm, reported overall and (using the
+  typed `fasrc_ragas_queries.json` bank) sliced by `anchor_type`
+  (`easy_retrieve` / `reasoning` / `should_refuse`). The hypothesis is that
+  returning parent context helps multi-step `reasoning` questions more than
+  simple lookups.
+- **Latency** — the treatment's **first** query pays a one-time FlashRank ONNX
+  model load (~45s on dev vs ~8s baseline). Report that cold-load cost
+  separately and compute **warm** latency by excluding the first treatment query
+  (or prepend a throwaway warm-up question), so the steady-state number is honest.
+- **Image size** — record the built deployment image size with and without the
+  treatment's dependencies (`llama-index-core` + `flashrank`); the difference is
+  the image-size delta the feature introduces.
+
+### Sweeping chunk sizes
+
+The hierarchical parent/child target sizes are configurable via
+[`data_manager.chunking.parent_chunk_size`/`child_chunk_size`](configuration.md#chunking).
+To recommend defaults from data rather than assumption, clone the treatment
+config into variants that differ **only** in those two keys (e.g. 1024/256,
+2048/512, 4096/512) and run each as its own deploy+ingest+evaluate pass (same
+two-run protocol — chunk size changes ingestion), comparing the aggregates
+offline. The same pattern sweeps `retrievers.hybrid_retriever.bm25_weight`.
+
+---
+
 ## Human grading via Argilla
 
 `archi evaluate --argilla` pushes benchmark results to a self-hosted [Argilla](https://argilla.io/) instance for independent human grading. This is the platform we use to answer the question "is config A better than config B for FASRC users?" with data we trust — RAGAS scores alone can't decide prompt or model choices because the judge LLM has its own biases.

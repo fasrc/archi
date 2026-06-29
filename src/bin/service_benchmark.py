@@ -854,6 +854,23 @@ class Benchmarker:
 
         return match_fields
 
+    def _resolve_reference_match_fields(
+        self, question_item, reference_sources, modes_being_run
+    ):
+        """Reference source match fields, computed only when SOURCES mode runs.
+
+        ``prepare_match_fields`` requires the per-question match-field count to
+        equal the number of reference sources. RAGAS-only banks legitimately
+        carry zero-source rows (e.g. ``should_refuse`` questions), so computing
+        match fields for them would raise even though SOURCES scoring is off.
+        Returning empty lists for non-SOURCES runs keeps such banks consumable.
+        """
+        if "SOURCES" not in modes_being_run:
+            return [], []
+        match_fields_list = self.prepare_match_fields(question_item)
+        formatted = self.prepare_reference_sources(reference_sources, match_fields_list)
+        return match_fields_list, formatted
+
     def prepare_reference_sources(self, reference_sources, match_fields):
 
         # Clean and prepare reference sources
@@ -1118,10 +1135,12 @@ class Benchmarker:
                     result.get("messages", [])
                 )
 
-                # format the reference sources
-                match_fields_list = self.prepare_match_fields(question_item)
-                formatted_reference_sources = self.prepare_reference_sources(
-                    reference_sources, match_fields_list
+                # format the reference sources (only when SOURCES scoring runs;
+                # RAGAS-only banks may carry zero-source refusal rows)
+                match_fields_list, formatted_reference_sources = (
+                    self._resolve_reference_match_fields(
+                        question_item, reference_sources, modes_being_run
+                    )
                 )
                 q_results["reference_sources_match_fields"] = match_fields_list
                 q_results["reference_sources_metadata"] = formatted_reference_sources

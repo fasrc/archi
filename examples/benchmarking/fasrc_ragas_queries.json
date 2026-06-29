@@ -1,0 +1,170 @@
+[
+  {
+    "anchor_type": "easy_retrieve",
+    "question": "How do I request a single GPU in a SLURM submission script on FASRC Cannon?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/"],
+    "answer": "Add #SBATCH --gpus=1 to your submission script and SLURM will give the job access to one GPU.",
+    "source_match_field": ["url"],
+    "notes": "easy-retrieve. DRAFT — grounded in Running Jobs page text as fetched 2026-06-28. NOTE: live docs use --gpus=1; the older --gres=gpu:N form in anchor_questions.json is stale. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "question": "What is the maximum run time for a job on the FASRC sapphire partition?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/"],
+    "answer": "The sapphire partition has a maximum run time of 3 days.",
+    "source_match_field": ["url"],
+    "notes": "easy-retrieve. DRAFT — grounded in Running Jobs partition table as fetched 2026-06-28. Operator-confirm before locking (partition limits change)."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "question": "How much memory does a SLURM job get on Cannon if I don't specify a memory request?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/"],
+    "answer": "If you omit the memory request you are granted 100 MB by default, which is usually too little and will likely cause the job to be killed for going over.",
+    "source_match_field": ["url"],
+    "notes": "easy-retrieve. DRAFT — grounded in Running Jobs page as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "question": "What is the storage quota for a FASRC user home directory?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/cluster-storage/"],
+    "answer": "Each user gets a 100 GB home directory, enforced as a hard limit.",
+    "source_match_field": ["url"],
+    "notes": "easy-retrieve. DRAFT — grounded in Home and Lab directories page as fetched 2026-06-28. SOURCES-mode url may need reconciling against the ingested sitemap slug. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "question": "How much storage does a FASRC lab group directory get, and how many files?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/cluster-storage/"],
+    "answer": "Each lab gets a 4 TiB lab directory as a hard limit, with a 1 million file limit.",
+    "source_match_field": ["url"],
+    "notes": "easy-retrieve. DRAFT — grounded in Home and Lab directories page as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "question": "Where on the Cannon filesystem do FASRC lab directories reside?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/cluster-storage/"],
+    "answer": "Lab directories reside under /n/holylabs.",
+    "source_match_field": ["url"],
+    "notes": "easy-retrieve. DRAFT — grounded in Home and Lab directories page as fetched 2026-06-28. NOTE: anchor_questions.json's /n/holyscratch01 answer is stale. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "question": "What hostname do I SSH to for command-line access to the FASRC cluster?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/quickstart-guide/"],
+    "answer": "SSH to login.rc.fas.harvard.edu using your FASRC username, password, and OpenAuth token.",
+    "source_match_field": ["url"],
+    "notes": "easy-retrieve. DRAFT — grounded in User Quick Start Guide as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "question": "What command lists the modules I currently have loaded on Cannon?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/modules-intro/"],
+    "answer": "Run module list to display all modules currently loaded in your shell environment.",
+    "source_match_field": ["url"],
+    "notes": "easy-retrieve. DRAFT — grounded in Lmod software modules page as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "question": "What command shows my lab's fairshare information on FASRC?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/fairshare/"],
+    "answer": "Use sshare (e.g. sshare --account=<lab> -a) to see RawShares, NormShares, RawUsage, EffectvUsage, and the FairShare score for an account.",
+    "source_match_field": ["url"],
+    "notes": "easy-retrieve. DRAFT — grounded in Fairshare and Job Accounting page as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "question": "How long are FASRC home directory snapshots kept?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/cluster-storage/"],
+    "answer": "Home directories have daily snapshots retained for 2 weeks, accessible via the .snapshot directory.",
+    "source_match_field": ["url"],
+    "notes": "easy-retrieve. DRAFT — grounded in Home and Lab directories page as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "reasoning",
+    "question": "My SLURM job on Cannon was killed for running out of memory. How do I find out how much memory it actually used, and how do I request more next time?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/"],
+    "answer": "After the job ends, run sacct -j <jobid> --format=JobID,Elapsed,ReqMem,MaxRSS to compare the peak memory used (MaxRSS) against what was requested (ReqMem). In your next submit script raise the request with --mem=<N>G (whole job) or --mem-per-cpu=<N>G, setting it a bit above the observed MaxRSS so normal variation doesn't kill the job.",
+    "source_match_field": ["url"],
+    "notes": "reasoning. Multi-step: diagnose with sacct/MaxRSS then act with --mem. DRAFT — grounded in Running Jobs page as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "reasoning",
+    "question": "Is the two-factor code for logging into FASRC the same as my Harvard Key code? If not, how do I set it up?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/quickstart-guide/"],
+    "answer": "No. FASRC has its own two-factor system (OpenAuth) that is separate from Harvard Key. Set it up with a smartphone authenticator app (e.g. Google Authenticator or Duo) before accessing cluster resources; you use this OpenAuth token along with your FASRC username and password.",
+    "source_match_field": ["url"],
+    "notes": "reasoning. Tests distinguishing FASRC OpenAuth from Harvard Key (a common confusion). DRAFT — grounded in User Quick Start Guide as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "reasoning",
+    "question": "How do I find which versions of a software package are available as modules on Cannon, and how should I load it so my workflow keeps working when defaults change?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/modules-intro/"],
+    "answer": "Search with module spider <name> to list all available modules matching the string regardless of your current environment. Then load with both the name and a specific version (module load <name>/<version>) — FASRC strongly recommends this so you are protected if the default version changes later.",
+    "source_match_field": ["url"],
+    "notes": "reasoning. Synthesis of discovery (spider) + the versioning best practice. DRAFT — grounded in Lmod software modules page as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "reasoning",
+    "question": "What's the recommended way to set up an isolated Python environment for a project on Cannon?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/python/"],
+    "answer": "Load a module that provides mamba (python/3*, Miniforge3, or Mambaforge), then create an isolated environment, e.g. mamba create -n data_env python=3.9 pandas numpy, and activate it with source activate data_env. FASRC recommends using Miniforge with mamba so dependencies are isolated and you avoid conflicts rather than working in the base environment.",
+    "source_match_field": ["url"],
+    "notes": "reasoning. Multi-step env setup + the isolation best practice. DRAFT — grounded in Python Programming Language page as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "reasoning",
+    "question": "How is my job's priority determined on Cannon, and how can I see the priority of my pending jobs?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/fairshare/"],
+    "answer": "A job's priority combines two parts: your FairShare score multiplied by a weighting factor (10,000,000) to make it an integer, plus job age, which accrues while the job waits and caps at 3 days on Cannon. Inspect the breakdown for pending jobs with sprio, or use showq -o -p <partition> to see the pending queue ordered by priority.",
+    "source_match_field": ["url"],
+    "notes": "reasoning. Synthesis of priority formula + the inspection commands. DRAFT — grounded in Fairshare and Job Accounting page as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "reasoning",
+    "question": "I need to move a very large dataset to the cluster. Should I use Globus, and can I transfer it straight into my home directory?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/"],
+    "answer": "Yes, use Globus — it's the recommended alternative to SSH/SCP specifically for very large data sets, and you can install Globus Connect Personal to make your own machine an endpoint. However, you cannot transfer into your home directory: home directories are not available through Globus (and never will be) because sharing them is a security vulnerability. Target a lab or scratch location instead.",
+    "source_match_field": ["url"],
+    "notes": "reasoning. Reasoning under a constraint (home-dir exclusion). DRAFT — grounded in Globus File Transfer page as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "reasoning",
+    "question": "I accidentally deleted some files in my home directory on Cannon. Can I get them back, and is there any situation where I can't?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/cluster-storage/"],
+    "answer": "Usually yes: home directories have daily snapshots retained for 2 weeks, so you can recover recently deleted files from the .snapshot directory. The exception is if you delete your entire home directory — that also deletes the snapshots, and it is not recoverable.",
+    "source_match_field": ["url"],
+    "notes": "reasoning. Conditional reasoning: recoverable via snapshots EXCEPT whole-home deletion. DRAFT — grounded in Home and Lab directories page as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "reasoning",
+    "question": "I want to run a short GPU job on Cannon. How do I request the GPU and make sure it has enough memory so it isn't killed?",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/"],
+    "answer": "Request the GPU with #SBATCH --gpus=1. Don't rely on the default memory — if you omit a memory request you only get 100 MB and the job will likely be killed, so set #SBATCH --mem=<N>G to a value your job needs. Submit to a GPU-capable partition and keep within its time limit (for short tests, use a test/short partition).",
+    "source_match_field": ["url"],
+    "notes": "reasoning. Multi-fact synthesis: GPU request + default-memory pitfall + partition choice. DRAFT — grounded in Running Jobs page as fetched 2026-06-28. Operator-confirm before locking."
+  },
+  {
+    "anchor_type": "should_refuse",
+    "question": "What is the GPU partition layout on MIT's Engaging cluster, and how do I request an L40S there?",
+    "sources": [],
+    "answer": "I don't have FASRC documentation covering MIT's Engaging cluster — it's a separate institution's HPC system. For Engaging-specific questions the right contact is the MIT research computing team. If you're comparing Engaging and Cannon for a workload, I can help with the Cannon side.",
+    "source_match_field": [],
+    "notes": "should-refuse. Out-of-scope (different institution). Correct behavior is to acknowledge the gap and refer, NOT to hallucinate Engaging partitions. Phrasing adjustable."
+  },
+  {
+    "anchor_type": "should_refuse",
+    "question": "How do I submit a job on TACC Frontera using its queue limits?",
+    "sources": [],
+    "answer": "That's outside FASRC's documentation — Frontera is a TACC system at UT Austin with its own scheduler policies and queues. Check TACC's user guide for Frontera. I can help with the equivalent on FASRC Cannon (SLURM partitions, limits, and submit scripts) if that's useful.",
+    "source_match_field": [],
+    "notes": "should-refuse. Out-of-scope (non-FASRC cluster). A confident answer with invented Frontera queue names fails the round."
+  },
+  {
+    "anchor_type": "should_refuse",
+    "question": "What is the exact dollar-per-core-hour price FASRC charges for Cannon CPU time this fiscal year?",
+    "sources": [],
+    "answer": "I don't have a documented per-core-hour price to quote — FASRC cost/billing specifics aren't something I can confirm from the documentation, and quoting a number I can't verify would be misleading. Please contact FASRC (e.g. via a support ticket) for current billing or cost-recovery details.",
+    "source_match_field": [],
+    "notes": "should-refuse. Tests refusal on an unverifiable specific figure rather than inventing a price. If the live KB later documents pricing, reclassify this question."
+  }
+]

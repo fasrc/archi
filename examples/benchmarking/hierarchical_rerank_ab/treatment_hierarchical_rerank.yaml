@@ -1,0 +1,80 @@
+# A/B config — TREATMENT  (issue #32, task 6.2)
+# ---------------------------------------------------------------------------
+# Treatment arm: structural parent/child chunking at ingest + cross-encoder
+# (FlashRank) rerank at retrieval, returning PARENT context. This is the #31
+# hierarchical-rerank feature, default-off in prod, enabled here.
+#
+# Pair with baseline_character_hybrid.yaml; run the directory (see baseline header).
+#
+# CONTRACT: identical to the baseline config EXCEPT the `data_manager.chunking` +
+# `data_manager.retrievers.hierarchical_rerank` blocks and `name` / `DATA_PATH`.
+
+name: treatment-hierarchical-rerank
+
+global:
+  TRAINED_ON: "FASRC Cannon documentation"
+  DATA_PATH: bench_out/hierarchical_rerank_ab/_data/treatment   # DISTINCT from baseline
+
+data_manager:
+  # --- HELD FIXED across both arms (identical to baseline) ---
+  sources:
+    links:
+      input_lists:
+        # REQUIRED operator-supplied corpus (held identical across both arms).
+        # config/lists/sources.list is the live FASRC KB list and is gitignored
+        # (operator-local), so it is NOT present in a clean checkout. If it is
+        # missing the scraper logs a warning and SKIPS it -- the benchmark then
+        # runs against an EMPTY corpus and yields meaningless RAGAS scores. Stage
+        # this file (or repoint at your deployment's list) BEFORE running, and
+        # confirm the rendered weblists/<list> is non-empty. See README.md.
+        - config/lists/sources.list
+  embedding_name: HuggingFaceEmbeddings
+  retrievers:
+    hybrid_retriever:
+      bm25_weight: 0.6        # MUST equal baseline — shared candidate generation
+      semantic_weight: 0.4
+
+    # --- VARIED: treatment arm ---
+    # hierarchical_rerank on => build_vector_retriever() returns
+    # LlamaIndexHierarchicalRetriever (hybrid child candidates -> rerank -> top-N parents).
+    hierarchical_rerank:
+      enabled: true
+      candidate_pool_size: 20          # child candidates fed to the reranker
+      num_documents_to_retrieve: 5     # parent contexts returned (match baseline k=5)
+      # reranker:
+      #   model: <override>            # omitted => DEFAULT_RERANKER_MODEL (FlashRank ONNX)
+
+  # structural parent/child chunking at ingest. This arm omits
+  # parent_chunk_size/child_chunk_size, so VectorStoreManager uses its built-in
+  # 2048/512 defaults. Those keys ARE config-plumbed (base-config.yaml ->
+  # manager._resolve_chunk_sizes); set them here to sweep sizes — that's the #32
+  # chunk-size recommendation knob.
+  chunking:
+    strategy: sentence
+
+services:
+  benchmarking:
+    # --- HELD FIXED across both arms (identical to baseline) ---
+    agent_class: FASRCDocsAgent
+    # Checked-in placeholder persona so this example validates from a clean
+    # checkout. Swap to your tuned config/agents/fasrc-cannon.md for a scored run.
+    agent_md_file: examples/agents/fasrc-docs.md
+    provider: local
+    model: "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4"
+    ollama_url: http://archi.rc.fas.harvard.edu:8001/v1
+    queries_path: examples/benchmarking/fasrc_ragas_queries.json
+    # ^ keep both arms on the SAME bank. snow_ragas_queries_pt1.json (real
+    #   ServiceNow tickets) is operator-local + gitignored; swap it in on disk for
+    #   the headline run, matching the baseline arm.
+    out_dir: bench_out/hierarchical_rerank_ab
+    modes:
+      - "RAGAS"
+    mode_settings:
+      ragas_settings:
+        # RAGAS metric embeddings: HuggingFace (sentence-transformers, local) so
+        # scoring needs no OPENAI_API_KEY. Omitting this renders the "OpenAI"
+        # default, which fails in the benchmark env (HUIT_API_KEY + Postgres only).
+        embedding_model: huggingface
+        evaluator_provider: huit_bedrock
+        evaluator_model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+        timeout: 180

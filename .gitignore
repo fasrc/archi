@@ -34,6 +34,9 @@ local_files/
 raw_local_files/
 websites/
 
+# Real ServiceNow ticket data — operator-local only, never commit.
+examples/benchmarking/snow_ragas_queries_pt1.json
+
 # config/ is its own git repository and holds config/benchmarking/secrets.env;
 # committing it would either break as a gitlink or leak the secret.
 /config/
