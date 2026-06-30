@@ -3,7 +3,7 @@
 - [x] 1.1 ServiceNow bank (`snow_ragas_queries_pt1.json`, 27 real tickets) — kept operator-local + gitignored (real ticket data); NOT committed. Drop on disk + repoint `queries_path` for the headline run
 - [x] 1.2 Add `examples/benchmarking/fasrc_ragas_queries.json` (21 doc-grounded, typed `easy_retrieve`/`reasoning`/`should_refuse`) + README
 - [x] 1.3 Operator confirms the `DRAFT` ground-truth answers before the scored run — **OUT OF SCOPE for this change**; externalized as a HIGH-priority operator task in Asana (p-Search-Engine-LLM, "Confirm benchmark ground-truth answers against current FASRC docs"). Live docs already drifted (e.g. `--gpus=1`, `/n/holylabs`); remove `DRAFT` notes once locked
-- [ ] 1.4 (optional) Reconcile `fasrc_ragas_queries.json` source URLs against ingested sitemap slugs if SOURCES mode is ever enabled
+- [~] 1.4 (optional) Reconcile `fasrc_ragas_queries.json` source URLs against ingested sitemap slugs if SOURCES mode is ever enabled
 
 ## 2. A/B config pair (drafted this session)
 
@@ -42,8 +42,8 @@
 - [x] 5.1 Build/refresh the benchmark images; record the built-image size with and without `llama-index-core` + `flashrank` (the image-size delta)
 - [x] 5.2 Run each arm as its OWN deploy+ingest+evaluate pass on dev: `archi evaluate -n hr-ab-baseline -c baseline_character_hybrid.yaml`, then redeploy+re-ingest and `-n hr-ab-treatment -c treatment_hierarchical_rerank.yaml`; capture each run's dump JSON (per-arm RAGAS aggregate + per-question `time_elapsed`). NOT a single `-cd` run (design D1)
 - [x] 5.3 Use the typed `fasrc_ragas_queries.json` bank for per-`anchor_type` slices; compare the two runs' aggregates offline
-- [ ] 5.4 Run a parent/child size sweep (e.g. 1024/256, 2048/512, 4096/512) via configs differing only in the chunk-size keys — each as its own pass (chunk size changes ingestion)
-- [ ] 5.5 (optional) Run a `bm25_weight` sweep via cloned configs differing only in that weight
+- [~] 5.4 Run a parent/child size sweep (e.g. 1024/256, 2048/512, 4096/512) via configs differing only in the chunk-size keys — each as its own pass (chunk size changes ingestion)
+- [~] 5.5 (optional) Run a `bm25_weight` sweep via cloned configs differing only in that weight
 
 ## 6. Analysis & recommendation
 
@@ -54,5 +54,5 @@
 ## 7. Validate & archive
 
 - [x] 7.1 `openspec validate benchmark-hierarchical-rerank --strict` — valid
-- [ ] 7.2 Open a PR to `fasrc/archi:dev` with the code + data + docs changes (the deploy run + recommendation referenced in the PR body)
+- [x] 7.2 Open a PR to `fasrc/archi:dev` with the code + data + docs changes (the deploy run + recommendation referenced in the PR body)
 - [ ] 7.3 `/opsx:archive` once the recommendation lands and the change is merged
