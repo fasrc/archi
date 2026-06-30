@@ -21,6 +21,8 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
+from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
+from src.utils.config_access import get_static_config
 from src.utils.env import read_secret
 from src.utils.generate_benchmark_report import (
     format_html_output,
@@ -623,6 +625,12 @@ class Benchmarker:
         if ollama_url:
             os.environ["OLLAMA_HOST"] = str(ollama_url)
 
+        # Bridge a `provider: local` SUT into the config the agent reads
+        # (services.chat_app.providers.local), so an OpenAI-compatible endpoint
+        # (e.g. the FASRC vLLM at .../v1) builds a ChatOpenAI client instead of the
+        # Ollama client. No-op for non-local providers. See issue #73.
+        apply_sut_local_provider(benchmark_cfg, get_static_config())
+
         agent_spec = None
         try:
             agent_spec = load_agent_spec(Path(str(agent_md_file)))
@@ -781,12 +789,25 @@ class Benchmarker:
                     model_kwargs={"format": "json"},
                 )
             case "local":
+                # Mirror the SUT bridge (#73): a /v1 judge endpoint is
+                # OpenAI-compatible, so build a ChatOpenAI client instead of
+                # ChatOllama (which 404s against /v1). An explicit provider_mode
+                # (judge-specific or inherited from the SUT) overrides the
+                # /v1 auto-detection.
+                explicit_mode = ragas_configs.get(
+                    "evaluator_provider_mode"
+                ) or benchmark_cfg.get("provider_mode")
+                if resolve_local_mode(ollama_url, explicit_mode) == "openai_compat":
+                    return get_model(
+                        "local",
+                        model_name,
+                        {"base_url": ollama_url, "mode": "openai_compat"},
+                    )
                 from langchain_ollama import ChatOllama
 
-                base_url = ollama_url
                 return ChatOllama(
                     model=model_name,
-                    base_url=base_url,
+                    base_url=ollama_url,
                     num_predict=-2,
                     model_kwargs={"format": "json"},
                 )
