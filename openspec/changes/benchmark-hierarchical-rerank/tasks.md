@@ -2,7 +2,7 @@
 
 - [x] 1.1 ServiceNow bank (`snow_ragas_queries_pt1.json`, 27 real tickets) — kept operator-local + gitignored (real ticket data); NOT committed. Drop on disk + repoint `queries_path` for the headline run
 - [x] 1.2 Add `examples/benchmarking/fasrc_ragas_queries.json` (21 doc-grounded, typed `easy_retrieve`/`reasoning`/`should_refuse`) + README
-- [ ] 1.3 Operator confirms the `DRAFT` ground-truth answers before the scored run (live docs already drifted, e.g. `--gpus=1`, `/n/holylabs`); remove `DRAFT` notes once locked
+- [x] 1.3 Operator confirms the `DRAFT` ground-truth answers before the scored run — **OUT OF SCOPE for this change**; externalized as a HIGH-priority operator task in Asana (p-Search-Engine-LLM, "Confirm benchmark ground-truth answers against current FASRC docs"). Live docs already drifted (e.g. `--gpus=1`, `/n/holylabs`); remove `DRAFT` notes once locked
 - [ ] 1.4 (optional) Reconcile `fasrc_ragas_queries.json` source URLs against ingested sitemap slugs if SOURCES mode is ever enabled
 
 ## 2. A/B config pair (drafted this session)
