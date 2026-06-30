@@ -25,6 +25,20 @@
 - [x] 2.3 Run the new tests and confirm GREEN; confirm `factory.py` is left unchanged (the
       `.get("enabled", False)` runtime fallback stays conservative per design.md decision #2).
 
+## 2b. Pair the chunking default (review finding, PR #78 Codex P2)
+
+- [x] 2b.1 RED: add `test_default_chunking_strategy_is_hierarchical` and
+      `test_default_retrieval_config_is_coherent` — render with no chunking/retriever settings
+      and assert `chunking.strategy == "sentence"` (and reranker enabled). Watch them fail
+      (current default renders `character`).
+- [x] 2b.2 GREEN: flip `data_manager.chunking.strategy` Jinja default `character → sentence`
+      in `base-config.yaml` (~line 187) and update its comment. Rationale: the reranker only
+      returns parent context when ingestion built parent/child nodes (`sentence`/`markdown`);
+      `character` produces flat chunks with no `parent_id`, so default-on rerank would pay its
+      cost with no parent-context benefit. The two defaults must flip together to match the
+      ADR 0003 treatment. `manager.py`'s `.get("strategy", "character")` runtime fallback left
+      conservative.
+
 ## 3. Gate + regression
 
 - [x] 3.1 Run the full gate: `bash scripts/gate.sh` (format → lint → test, ≥80% diff

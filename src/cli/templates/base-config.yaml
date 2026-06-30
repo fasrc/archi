@@ -181,10 +181,13 @@ data_manager:
   chunk_size: {{ data_manager.chunk_size | default(1000, true) }}
   chunk_overlap: {{ data_manager.chunk_overlap | default(0, true) }}
   chunking:
-    # Structure-aware chunking strategy. 'character' (default) preserves the
-    # existing CharacterTextSplitter behavior; 'sentence'/'markdown' enable
-    # hierarchical parent-child node parsing for the rerank retriever.
-    strategy: {{ data_manager.chunking.strategy | default('character', true) }}
+    # Structure-aware chunking strategy. 'sentence' (default) builds hierarchical
+    # parent-child nodes that the default-on rerank retriever needs to return
+    # parent context (ADR 0003). 'markdown' is header-aware; 'character' is the
+    # legacy CharacterTextSplitter path (flat chunks, no parent_id) — pair it with
+    # `retrievers.hierarchical_rerank.enabled: false` to avoid paying rerank cost
+    # with no parent-context benefit.
+    strategy: {{ data_manager.chunking.strategy | default('sentence', true) }}
     # Target parent/child node sizes for hierarchical chunking. Only emitted when
     # set so VectorStoreManager falls back to its built-in defaults (2048/512)
     # otherwise — keeping the default a single source of truth in code.

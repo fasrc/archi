@@ -54,11 +54,24 @@ while making the missing-block failure mode heavier. The two defaults answer dif
 questions ("what should a normal deployment get?" vs. "what if the config is broken?") and
 correctly have different answers.
 
-**3. TDD via a template-render assertion.**
-Add/extend a unit test that renders the template with the key omitted and asserts the output
-contains `enabled: true` under `hierarchical_rerank`, plus a test that an explicit
-`enabled: false` source value still renders `false`. This guards the default at the seam that
-actually ships it.
+**3. Flip the paired `chunking.strategy` default `character → sentence` (added after review).**
+The reranker and hierarchical chunking are one package, not two independent knobs. The
+retriever only returns *parent context* when ingestion built parent/child nodes, which happens
+only for `sentence`/`markdown` strategies (`manager.py`: `hierarchical_chunking = strategy in
+{sentence, markdown}`). With the legacy `character` default the retriever still runs — its
+passthrough path returns the bare child chunk (`hierarchical_retriever.py:253`) — but it pays
+the FlashRank cost and yields no parent expansion, i.e. *not* the ADR 0003 treatment that
+produced +19%. So flipping only `enabled` ships a config that looks on but underdelivers.
+Flipping both defaults together makes "default-on" mean the benchmarked package
+(`sentence` chunking + rerank). The runtime fallback `manager.py`
+`chunking_cfg.get("strategy", "character")` is left conservative for the same reason as
+decision #2 (a config missing the whole block stays on the cheap legacy path).
+
+**4. TDD via template-render assertions.**
+Render the template with keys omitted and assert: `hierarchical_rerank.enabled: true`,
+`chunking.strategy: sentence`, and the two together (coherence guard); plus a test that an
+explicit `enabled: false` still renders `false`. This guards the defaults at the seam that
+actually ships them.
 
 ## Risks / Trade-offs
 
