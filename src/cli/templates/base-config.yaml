@@ -209,9 +209,12 @@ data_manager:
       bm25_weight: {{ data_manager.retrievers.hybrid_retriever.bm25_weight | default(0.6, true) }}
       semantic_weight: {{ data_manager.retrievers.hybrid_retriever.semantic_weight | default(0.4, true) }}
     hierarchical_rerank:
-      # Hierarchical retriever with CPU cross-encoder reranking. Disabled by
-      # default: when off, retrieval falls back to the hybrid_retriever above.
-      enabled: {{ data_manager.retrievers.hierarchical_rerank.enabled | default(false, true) }}
+      # Hierarchical retriever with CPU cross-encoder reranking. Enabled by
+      # default (ADR 0003: +19% RAGAS in the issue #32 A/B). Set
+      # `enabled: false` to opt out and fall back to the hybrid_retriever above.
+      # NOTE: bare `default(true)` (no boolean arg) so an explicit `false` is
+      # honored — `default(true, true)` would treat falsy `false` as unset.
+      enabled: {{ data_manager.retrievers.hierarchical_rerank.enabled | default(true) }}
       # Number of child candidates fetched from hybrid_search before reranking.
       candidate_pool_size: {{ data_manager.retrievers.hierarchical_rerank.candidate_pool_size | default(20, true) }}
       # Number of (deduplicated) parent nodes returned after reranking.
