@@ -50,10 +50,10 @@
 
 ## 4. Ship
 
-- [ ] 4.1 Branch from `origin/dev`, commit (short lowercase message, no `Co-Authored-By`),
+- [x] 4.1 Branch from `origin/dev`, commit (short lowercase message, no `Co-Authored-By`),
       push, open PR with `gh pr create --repo fasrc/archi --base dev` referencing ADR 0003;
       request `@codex review`.
-- [ ] 4.2 Reply inline per review finding; merge once CI green and comments resolved.
-- [ ] 4.3 Release: redeploy fasrc-dev (`archi-dev-deploy-verify`) so the live dev instance
+- [x] 4.2 Reply inline per review finding; merge once CI green and comments resolved.
+- [x] 4.3 Release: redeploy fasrc-dev (`archi-dev-deploy-verify`) so the live dev instance
       picks up the new default; confirm chat HTTP-200 and that retrieval logs show
       "hierarchical_rerank enabled". Then archive this change (`/opsx:archive`).
