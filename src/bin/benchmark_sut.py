@@ -50,13 +50,21 @@ def inject_sut_provider(
     providers = chat.setdefault("providers", {})
     if not isinstance(providers, dict):
         return None
-    block = {
-        "base_url": ollama_url,
-        "mode": mode,
-        "default_model": model,
-        "enabled": True,
-    }
-    providers[str(provider).lower()] = block
+    key = str(provider).lower()
+    # Merge into any existing block: a pre-existing provider entry may carry
+    # extra_kwargs (vLLM extra_body, timeouts) that BaseReActAgent forwards, and
+    # overwriting the whole dict would silently drop them. The SUT keys win.
+    existing = providers.get(key)
+    block = existing if isinstance(existing, dict) else {}
+    block.update(
+        {
+            "base_url": ollama_url,
+            "mode": mode,
+            "default_model": model,
+            "enabled": True,
+        }
+    )
+    providers[key] = block
     return block
 
 

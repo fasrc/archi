@@ -22,6 +22,11 @@ services:
     agent_class: {{ services.benchmarking.agent_class | default("", true) }}
     agent_md_file: "{{ services.benchmarking.agent_md_file | default("", true) }}"
     provider: {{ services.benchmarking.provider | default("", true) }}
+    {%- if services.benchmarking.provider_mode %}
+    # Forces the local-provider client when the base URL does not end in /v1
+    # (otherwise benchmark_sut.resolve_local_mode auto-detects from the URL).
+    provider_mode: {{ services.benchmarking.provider_mode }}
+    {%- endif %}
     model: {{ services.benchmarking.model | default("", true) }}
     ollama_url: {{ services.benchmarking.ollama_url | default("", true) }}
     out_dir: {{ services.benchmarking.out_dir | default(".", true) }}

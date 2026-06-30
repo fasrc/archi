@@ -58,6 +58,36 @@ def test_inject_preserves_other_providers_and_keys():
     assert providers["local"]["mode"] == "openai_compat"  # provider key lowercased
 
 
+def test_inject_merges_into_existing_block_preserving_extra_kwargs():
+    # A pre-existing provider block may carry vLLM extra_kwargs/timeouts that
+    # BaseReActAgent._build_provider_config forwards. Overwriting the whole block
+    # would silently drop them, so the SUT keys must be merged in, not replace it.
+    services = {
+        "chat_app": {
+            "providers": {
+                "local": {
+                    "extra_kwargs": {"extra_body": {"enable_thinking": False}},
+                    "timeout": 600,
+                    "mode": "ollama",
+                }
+            }
+        }
+    }
+    block = inject_sut_provider(
+        services, "local", "qwen-x", "http://host:8001/v1", "openai_compat"
+    )
+    injected = services["chat_app"]["providers"]["local"]
+    assert injected is block
+    # SUT keys take the resolved values...
+    assert injected["base_url"] == "http://host:8001/v1"
+    assert injected["mode"] == "openai_compat"
+    assert injected["default_model"] == "qwen-x"
+    assert injected["enabled"] is True
+    # ...but pre-existing options the agent still reads are preserved.
+    assert injected["extra_kwargs"] == {"extra_body": {"enable_thinking": False}}
+    assert injected["timeout"] == 600
+
+
 def test_inject_tolerates_non_dict_services():
     # Must not raise on a missing/malformed static config.
     assert inject_sut_provider(None, "local", "m", "u", "ollama") is None
