@@ -49,3 +49,39 @@ def test_chunk_sizes_absent_when_unset_preserves_defaults():
     # Keys omitted → VectorStoreManager applies its built-in 2048/512 defaults.
     assert "parent_chunk_size" not in chunking
     assert "child_chunk_size" not in chunking
+
+
+def test_hierarchical_rerank_enabled_by_default():
+    # ADR 0003: hierarchical-rerank is the recommended default. When a deployment
+    # config omits the key, the rendered runtime config must enable it.
+    cfg = _render({})
+    rerank = cfg["data_manager"]["retrievers"]["hierarchical_rerank"]
+    assert rerank["enabled"] is True
+
+
+def test_hierarchical_rerank_explicit_opt_out_renders_false():
+    # Operators must still be able to turn it off. An explicit enabled: false must
+    # render false (not be swallowed by a falsy-default), so retrieval falls back
+    # to HybridRetriever.
+    cfg = _render({"retrievers": {"hierarchical_rerank": {"enabled": False}}})
+    rerank = cfg["data_manager"]["retrievers"]["hierarchical_rerank"]
+    assert rerank["enabled"] is False
+
+
+def test_default_chunking_strategy_is_hierarchical():
+    # The reranker is default-on (ADR 0003), but it only delivers the benchmarked
+    # +19% when ingestion builds parent/child nodes — i.e. a 'sentence'/'markdown'
+    # chunking strategy. 'character' produces flat chunks with no parent_id, so the
+    # reranker pays its cost with no parent-context benefit. The default chunking
+    # strategy must therefore be hierarchical to match the default-on reranker.
+    cfg = _render({})
+    assert cfg["data_manager"]["chunking"]["strategy"] == "sentence"
+
+
+def test_default_retrieval_config_is_coherent():
+    # Guard the pairing as a unit: out of the box, hierarchical chunking AND the
+    # reranker are both on, so the default deployment matches the ADR 0003 package.
+    cfg = _render({})
+    dm = cfg["data_manager"]
+    assert dm["chunking"]["strategy"] == "sentence"
+    assert dm["retrievers"]["hierarchical_rerank"]["enabled"] is True
