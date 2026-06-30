@@ -53,3 +53,15 @@ examples/benchmarking/snow_ragas_queries_pt1.json
 /review-findings.md
 .coverage
 coverage.xml
+
+# FASRC 'dev' deployment. Track the secret-free orchestration scripts and a
+# sanitized example config so the deploy is reproducible and not bus-factor-1,
+# but keep the real host-specific config, agent prompts, source manifests, and
+# any secrets out. Default-deny: a future stray file under deploy/fasrc-dev/ is
+# ignored unless explicitly allow-listed here.
+deploy/fasrc-dev/*
+!deploy/fasrc-dev/scripts
+!deploy/fasrc-dev/config.example.yaml
+# Defense-in-depth: never track secrets/env even under the allow-listed scripts dir.
+deploy/fasrc-dev/scripts/**/*.env
+deploy/fasrc-dev/scripts/**/*secret*

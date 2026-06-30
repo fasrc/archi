@@ -1,0 +1,117 @@
+# archi 'dev' deployment — EXAMPLE config (sanitized template).
+#
+# Copy to config.yaml (git-excluded) and fill in the host-specific values
+# marked <LIKE_THIS>:
+#   cp deploy/fasrc-dev/config.example.yaml deploy/fasrc-dev/config.yaml
+#
+# LLM: a hosted vLLM endpoint (default_provider: local). A direct Anthropic API
+#      block is kept as a standby — fall back by setting
+#      services.chat_app.default_provider to: anthropic.
+#
+# Create with (run from repo root, or use deploy/fasrc-dev/scripts/create.sh):
+#   archi create \
+#     --name dev \
+#     --config deploy/fasrc-dev/config.yaml \
+#     --env-file ~/.secrets/archi-secrets.env \   # or set ARCHI_ENV_FILE
+#     --services chatbot \
+#     --hostmode \
+#     --force -v 3
+#
+# --hostmode is REQUIRED when the LLM endpoint / huggingface.co / link sources
+# are only resolvable via the host's split-DNS (systemd-resolved + VPN). Docker's
+# bridge DNS is unreachable from archi's isolated compose network, so host
+# networking lets containers use the host resolver. Under --hostmode the template
+# sets PGHOST=localhost automatically.
+#
+# Secrets live in the --env-file (PG_PASSWORD required; HUIT_API_KEY for HUIT
+# Bedrock; ANTHROPIC_API_KEY for the standby). A bare vLLM endpoint needs no key.
+
+name: archi_dev
+
+services:
+  chat_app:
+    agent_class: FASRCDocsAgent
+    agents_dir: deploy/fasrc-dev/agents   # dir of agent .md files (provide your own; git-excluded)
+    client_timeout_seconds: 1800
+    default_provider: local
+    default_model: "<LLM_MODEL_ID>"       # e.g. the model your vLLM serves
+    providers:
+      # Standby: direct Anthropic API, usable while the vLLM endpoint is down.
+      # Tool-capable (ChatAnthropic), so FASRCDocsAgent works. Reachable over the
+      # internet (no VPN needed). Needs ANTHROPIC_API_KEY in the secrets env.
+      # Fall back to it by setting default_provider back to: anthropic.
+      anthropic:
+        enabled: true
+        default_model: "claude-sonnet-4-6"
+        # NOTE: do NOT add a `models:` list here. The Anthropic provider's
+        # get_model_info() iterates list_models() doing `model.id`, which crashes
+        # on plain YAML strings ("'str' object has no attribute 'id'"). Omitting it
+        # falls back to the provider's built-in ModelInfo list; default_model above
+        # still selects the model actually used.
+      local:
+        enabled: true
+        # Hosted vLLM instance. Prefer the hostname (not a pinned IP): under
+        # --hostmode the container shares the host's resolver, so split-DNS
+        # resolves and the config survives the backend being repointed to a
+        # different node. Requires the VPN to be connected if the host is internal.
+        base_url: http://<LLM_HOST>:8001/v1
+        mode: openai_compat   # -> LangChain ChatOpenAI against a custom base_url
+        default_model: "<LLM_MODEL_ID>"
+        models:               # dropdown options (vLLM /v1/models is not auto-fetched in openai_compat mode)
+          - "<LLM_MODEL_ID>"
+        # Disable a reasoning model's "thinking" when it emits chain-of-thought as
+        # BARE text (no <think> tags) that the agent's stripper can't remove, so it
+        # bleeds into answers. The hard switch for vLLM is chat_template_kwargs.
+        # enable_thinking. extra_kwargs is spread verbatim into ChatOpenAI, which
+        # forwards extra_body into the request body where vLLM reads it. Drop this
+        # block if your model does not need it.
+        extra_kwargs:
+          extra_body:
+            chat_template_kwargs:
+              enable_thinking: false
+    trained_on: "<deployment corpus description>"
+    port: 7866
+    external_port: 7866
+  vectorstore:
+    backend: postgres   # PostgreSQL with pgvector (only supported backend)
+  data_manager:
+    port: 7889
+    external_port: 7889
+    auth:
+      enabled: false
+
+data_manager:
+  sources:
+    links:
+      input_lists:
+        - <PATH_TO_SOURCES_LIST>   # newline-delimited list of source URLs to ingest
+  embedding_name: HuggingFaceEmbeddings
+  # --- ingest processing: HTML->Markdown (default-on) + optional LLM categorization ---
+  # Categorization makes one LLM call per doc at ingest, writing a single-token
+  # label to metadata.llm_category. Remove the categorization block (or set
+  # enabled: false) to skip it.
+  processing:
+    html_to_markdown:
+      enabled: true
+    categorization:
+      enabled: true
+      provider: local            # the deployed vLLM (services.chat_app.providers.local)
+      model: "<LLM_MODEL_ID>"
+      max_chars: 4000
+      categories:                # example category set — tailor to your corpus
+        - job-scheduling
+        - storage
+        - account-access
+        - software
+        - compute
+        - data-transfer
+  # --- hierarchical-rerank retrieval (now default-on; see ADR 0003) -------------
+  # Structural parent-child chunking at ingestion + cross-encoder rerank at
+  # retrieval. These two blocks are the shipped defaults as of the
+  # enable-hierarchical-rerank-default change; shown here explicitly for clarity.
+  # Set strategy: character / hierarchical_rerank.enabled: false to opt out.
+  chunking:
+    strategy: sentence
+  retrievers:
+    hierarchical_rerank:
+      enabled: true
