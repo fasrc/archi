@@ -160,6 +160,10 @@ class TemplateManager:
         )
         source_commit = resolve_source_commit()
         logger.info(f"archi source commit for `{plan.name}`: {source_commit}")
+        try:
+            (context.base_dir / "SOURCE_COMMIT").write_text(f"{source_commit}\n")
+        except Exception as exc:  # best-effort: never fail the deploy on IO error
+            logger.warning(f"Could not write SOURCE_COMMIT for `{plan.name}`: {exc}")
 
         for stage in self._build_workflow(context):
             logger.debug(f"Starting template stage {stage.__name__}")
