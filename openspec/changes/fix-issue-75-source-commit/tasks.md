@@ -20,6 +20,6 @@
 
 ## 3. Gate and finalize
 
-- [ ] 3.1 Run `bash scripts/gate.sh`; confirm it exits 0 with ≥80% diff coverage on changed lines.
+- [x] 3.1 Run `bash scripts/gate.sh`; confirm it exits 0 with ≥80% diff coverage on changed lines.
 - [ ] 3.2 Confirm no changes under `deploy/fasrc-dev/**` and no new runtime dependencies; update
   `docs/` only if a user-facing deploy behavior is documented there.
