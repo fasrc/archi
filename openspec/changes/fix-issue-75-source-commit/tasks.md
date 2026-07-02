@@ -13,7 +13,7 @@
 
 ## 2. Wire into deployment-artifact preparation
 
-- [ ] 2.1 In `src/cli/managers/templates_manager.py` `prepare_artifacts`, resolve the source
+- [x] 2.1 In `src/cli/managers/templates_manager.py` `prepare_artifacts`, resolve the source
   commit and `logger.info` it next to the existing "Preparing deployment artifacts" line.
 - [ ] 2.2 Write the resolved value to a `SOURCE_COMMIT` file in `context.base_dir`, guarding the
   write so an IO error is logged but never propagates (best-effort, never fatal).

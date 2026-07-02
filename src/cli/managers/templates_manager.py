@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from jinja2 import Environment
 
+from src.cli.managers.source_version import resolve_source_commit
 from src.cli.service_registry import service_registry
 from src.cli.utils.grafana_styling import assign_feedback_palette
 from src.cli.utils.service_builder import DeploymentPlan
@@ -157,6 +158,8 @@ class TemplateManager:
         logger.info(
             f"Preparing deployment artifacts for `{plan.name}` in {str(context.base_dir)}"
         )
+        source_commit = resolve_source_commit()
+        logger.info(f"archi source commit for `{plan.name}`: {source_commit}")
 
         for stage in self._build_workflow(context):
             logger.debug(f"Starting template stage {stage.__name__}")
