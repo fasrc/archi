@@ -1,11 +1,11 @@
 ## 1. Source-commit helper (TDD)
 
-- [ ] 1.1 Write a failing unit test `tests/unit/test_source_version.py` for
+- [x] 1.1 Write a failing unit test `tests/unit/test_source_version.py` for
   `resolve_source_commit(repo_root)` covering: clean checkout returns the short SHA;
   dirty checkout returns `<sha>-dirty`; non-git path / git-unavailable returns `unknown`;
   the helper never raises. Mock/patch the git invocation (e.g. patch `subprocess.run`) so the
   test does not depend on the runner's own git state. Watch it fail.
-- [ ] 1.2 Implement `src/cli/managers/source_version.py` with `resolve_source_commit(repo_root=None)`:
+- [x] 1.2 Implement `src/cli/managers/source_version.py` with `resolve_source_commit(repo_root=None)`:
   run `git rev-parse --short HEAD` and `git status --porcelain` with `cwd=repo_root`
   (default: the archi package root derived from `__file__`); return `<sha>` or `<sha>-dirty`,
   or `unknown` on any failure. Wrap all logic in a broad `except Exception` so it never raises.

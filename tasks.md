@@ -1,1 +1,1 @@
-openspec/changes/fix-issue-39-content-hash-staleness/tasks.md
+openspec/changes/fix-issue-75-source-commit/tasks.md
