@@ -20,20 +20,38 @@ circumstances; on any failure it MUST return the sentinel value `unknown`.
   not available
 - **THEN** it returns `unknown` and does not raise
 
+#### Scenario: Default repository root
+- **WHEN** the helper is called without an explicit repository root
+- **THEN** it resolves the commit against the checkout path recorded at install time (the same
+  source the deployment is built from), so a non-editable `pip install .` still resolves the
+  real commit rather than `unknown`
+
 ### Requirement: Deployment records the source commit
 
-When `archi create` prepares deployment artifacts, the system SHALL record the resolved archi
-source commit. It MUST emit the resolved value to the deploy log, and it MUST write the value to
-a `SOURCE_COMMIT` file in the rendered deployment-artifacts directory. Recording the source
-commit MUST be best-effort and MUST NOT cause artifact preparation to fail.
+When the system copies the archi source into an image build (`archi create`, or `archi restart`
+that rebuilds the image), it SHALL record the resolved archi source commit for that build. It
+MUST emit the resolved value to the deploy log, and it MUST write the value to a `SOURCE_COMMIT`
+file at the deployment root, resolved from the same repository root the source was copied from so
+the recorded commit reflects the code that lands in the image. Recording the source commit MUST
+be best-effort and MUST NOT cause the deploy to fail. The write MUST be tied to the source-copy
+step: a restart that does not rebuild the image MUST NOT overwrite `SOURCE_COMMIT`.
 
-#### Scenario: Source commit logged and written during artifact preparation
-- **WHEN** `prepare_artifacts` runs for a deployment
+#### Scenario: Source commit logged and written when source is copied
+- **WHEN** the deployment source is copied for an image build
 - **THEN** the deploy log contains the resolved archi source commit
-- **AND** a `SOURCE_COMMIT` file exists in the artifacts directory whose contents are the
-  resolved value (the short SHA, optionally `-dirty`, or `unknown`)
+- **AND** a `SOURCE_COMMIT` file exists at the deployment root whose contents are the resolved
+  value (the short SHA, optionally `-dirty`, or `unknown`)
+
+#### Scenario: Restart rebuild refreshes the recorded commit
+- **WHEN** `archi restart` rebuilds the image (the default, without `--no-build`)
+- **THEN** the copied source's commit is written to `SOURCE_COMMIT`, so it is not left stale
+
+#### Scenario: Restart without rebuild leaves the recorded commit untouched
+- **WHEN** `archi restart --no-build` runs (no image is rebuilt)
+- **THEN** the source is not re-copied and `SOURCE_COMMIT` is not overwritten, so it continues to
+  describe the code running in the current image
 
 #### Scenario: Resolution failure does not break the deploy
 - **WHEN** the source commit cannot be resolved (non-git checkout or git unavailable)
-- **THEN** artifact preparation still completes successfully
+- **THEN** source copying still completes successfully
 - **AND** the recorded value is `unknown`

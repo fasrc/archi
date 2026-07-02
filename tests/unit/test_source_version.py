@@ -10,7 +10,8 @@ import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from src.cli.managers.source_version import resolve_source_commit
+from src.cli.managers import source_version
+from src.cli.managers.source_version import resolve_source_commit, write_source_commit
 
 
 def _completed(stdout):
@@ -69,3 +70,67 @@ def test_default_repo_root_does_not_raise():
     result = resolve_source_commit()
     assert isinstance(result, str)
     assert result
+
+
+def test_default_repo_root_uses_recorded_checkout_path():
+    # With no explicit repo_root, the resolver must run git against the same
+    # checkout ``copy_source_code`` ships from — the path setup.py records in
+    # ``_repository_info.REPO_PATH`` — so a non-editable ``pip install .`` (where
+    # this module lives under site-packages with no ``.git``) still resolves the
+    # real commit instead of ``unknown``.
+    captured = {}
+
+    def _fake_run(cmd, cwd, **kwargs):
+        captured["cwd"] = cwd
+        return _completed("936a52f8\n") if "rev-parse" in cmd else _completed("")
+
+    with patch("src.cli.utils._repository_info.REPO_PATH", "/recorded/checkout"):
+        with patch(
+            "src.cli.managers.source_version.subprocess.run", side_effect=_fake_run
+        ):
+            assert resolve_source_commit() == "936a52f8"
+
+    assert captured["cwd"] == "/recorded/checkout"
+
+
+def test_default_repo_root_falls_back_when_recorded_path_unavailable():
+    # If the recorded checkout path cannot be imported/read, fall back to the
+    # file-derived package root rather than raising.
+    def _fake_run(cmd, cwd, **kwargs):
+        return _completed("936a52f8\n") if "rev-parse" in cmd else _completed("")
+
+    with patch.object(
+        source_version, "_recorded_repo_root", side_effect=RuntimeError("no info")
+    ):
+        with patch(
+            "src.cli.managers.source_version.subprocess.run", side_effect=_fake_run
+        ):
+            assert resolve_source_commit() == "936a52f8"
+
+
+def test_write_source_commit_writes_file_and_returns_value(tmp_path):
+    with patch(
+        "src.cli.managers.source_version.resolve_source_commit",
+        return_value="936a52f8-dirty",
+    ):
+        result = write_source_commit(tmp_path, repo_root="/some/repo")
+
+    assert result == "936a52f8-dirty"
+    assert (tmp_path / "SOURCE_COMMIT").read_text().strip() == "936a52f8-dirty"
+
+
+def test_write_source_commit_never_raises_on_io_error(tmp_path):
+    # Best-effort: a write failure must not propagate (it must never break a deploy).
+    def _boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    with patch(
+        "src.cli.managers.source_version.resolve_source_commit",
+        return_value="936a52f8",
+    ):
+        with patch("src.cli.managers.source_version.Path.write_text", _boom):
+            # Must not raise.
+            result = write_source_commit(tmp_path, repo_root="/some/repo")
+
+    assert result == "936a52f8"
+    assert not (tmp_path / "SOURCE_COMMIT").exists()

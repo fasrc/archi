@@ -1,18 +1,24 @@
-"""prepare_deployment_files records the resolved archi source commit.
+"""Provenance is tied to the source-copy/build path.
 
-Covers the "Deployment records the source commit" spec requirement: the resolved
-value is emitted to the deploy log. The render workflow is stubbed to an empty stage
-list so the test exercises only the provenance wiring, and ``resolve_source_commit``
-is patched so the assertion does not depend on the runner's own git state.
+Covers the "Deployment records the source commit" spec requirement. The write lives
+in ``copy_source_code`` (the single point that materialises the source the image is
+built from) rather than in ``prepare_deployment_files``, so:
+
+* a rebuild that copies source always refreshes ``SOURCE_COMMIT`` (``restart`` with the
+  default rebuild), and
+* a run that does not rebuild (``restart --no-build``) leaves it untouched — the recorded
+  commit reflects the code actually running in the image.
+
+The commit resolver is patched so assertions do not depend on the runner's git state.
 """
 
-import logging
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from jinja2 import Environment
 
-from src.cli.managers import templates_manager
-from src.cli.managers.templates_manager import TemplateManager
+from src.cli.managers import source_version, templates_manager
+from src.cli.managers.templates_manager import TemplateContext, TemplateManager
 from src.cli.utils.service_builder import ServiceBuilder
 
 
@@ -29,74 +35,88 @@ def _plan(base_dir):
     )
 
 
-def test_source_commit_is_logged(monkeypatch, tmp_path, caplog):
-    monkeypatch.setattr(TemplateManager, "_build_workflow", lambda self, ctx: [])
+def _context(base_dir, **options):
+    return TemplateContext(
+        plan=_plan(base_dir),
+        config_manager=None,
+        secrets_manager=None,
+        options=dict(options),
+    )
+
+
+def _fake_repo(tmp_path):
+    repo = tmp_path / "checkout"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "archi.py").write_text("print('hi')\n")
+    (repo / "pyproject.toml").write_text("[project]\nname='archi'\n")
+    (repo / "LICENSE").write_text("MIT\n")
+    return repo
+
+
+def test_copy_source_code_writes_source_commit(monkeypatch, tmp_path):
+    repo = _fake_repo(tmp_path)
+    base_dir = tmp_path / "deploy"
+    base_dir.mkdir()
+
+    monkeypatch.setattr("src.cli.utils._repository_info.REPO_PATH", str(repo))
     monkeypatch.setattr(
-        templates_manager, "resolve_source_commit", lambda: "936a52f8-dirty"
+        source_version,
+        "resolve_source_commit",
+        lambda repo_root=None: "936a52f8-dirty",
     )
 
-    with caplog.at_level(logging.INFO):
-        _manager().prepare_deployment_files(
-            _plan(tmp_path), config_manager=None, secrets_manager=None
-        )
+    _manager().copy_source_code(base_dir)
 
-    assert "936a52f8-dirty" in caplog.text
+    assert (base_dir / "archi_code").is_dir()
+    assert (base_dir / "SOURCE_COMMIT").read_text().strip() == "936a52f8-dirty"
 
 
-def test_unresolvable_source_commit_does_not_break_preparation(
-    monkeypatch, tmp_path, caplog
-):
-    monkeypatch.setattr(TemplateManager, "_build_workflow", lambda self, ctx: [])
-    monkeypatch.setattr(templates_manager, "resolve_source_commit", lambda: "unknown")
+def test_copy_source_code_ties_commit_to_copied_repo_root(monkeypatch, tmp_path):
+    repo = _fake_repo(tmp_path)
+    base_dir = tmp_path / "deploy"
+    base_dir.mkdir()
 
-    with caplog.at_level(logging.INFO):
-        _manager().prepare_deployment_files(
-            _plan(tmp_path), config_manager=None, secrets_manager=None
-        )
+    monkeypatch.setattr("src.cli.utils._repository_info.REPO_PATH", str(repo))
+    spy = MagicMock(return_value="deadbeef")
+    monkeypatch.setattr(templates_manager, "write_source_commit", spy)
 
-    assert "unknown" in caplog.text
-    assert "Finished preparing deployment artifacts" in caplog.text
+    _manager().copy_source_code(base_dir)
+
+    spy.assert_called_once()
+    args, kwargs = spy.call_args
+    # Provenance is resolved from the same checkout the source was copied from.
+    assert Path(kwargs.get("repo_root", args[1] if len(args) > 1 else None)) == repo
 
 
-def test_source_commit_is_written_to_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(TemplateManager, "_build_workflow", lambda self, ctx: [])
+def test_stage_source_copy_runs_when_build_enabled(monkeypatch, tmp_path):
+    called = {}
     monkeypatch.setattr(
-        templates_manager, "resolve_source_commit", lambda: "936a52f8-dirty"
+        TemplateManager,
+        "copy_source_code",
+        lambda self, base_dir: called.setdefault("base_dir", base_dir),
     )
 
-    _manager().prepare_deployment_files(
-        _plan(tmp_path), config_manager=None, secrets_manager=None
+    ctx = _context(tmp_path)  # build defaults to True
+    _manager()._stage_source_copy(ctx)
+
+    assert called.get("base_dir") == tmp_path
+
+
+def test_stage_source_copy_skips_when_build_disabled(monkeypatch, tmp_path):
+    called = {}
+    monkeypatch.setattr(
+        TemplateManager,
+        "copy_source_code",
+        lambda self, base_dir: called.setdefault("base_dir", base_dir),
     )
 
-    assert (tmp_path / "SOURCE_COMMIT").read_text().strip() == "936a52f8-dirty"
+    ctx = _context(tmp_path, build=False)
+    _manager()._stage_source_copy(ctx)
 
-
-def test_unresolvable_source_commit_is_written_to_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(TemplateManager, "_build_workflow", lambda self, ctx: [])
-    monkeypatch.setattr(templates_manager, "resolve_source_commit", lambda: "unknown")
-
-    _manager().prepare_deployment_files(
-        _plan(tmp_path), config_manager=None, secrets_manager=None
-    )
-
-    assert (tmp_path / "SOURCE_COMMIT").read_text().strip() == "unknown"
-
-
-def test_source_commit_write_failure_does_not_break_preparation(
-    monkeypatch, tmp_path, caplog
-):
-    monkeypatch.setattr(TemplateManager, "_build_workflow", lambda self, ctx: [])
-    monkeypatch.setattr(templates_manager, "resolve_source_commit", lambda: "936a52f8")
-
-    def _boom(*args, **kwargs):
-        raise OSError("disk full")
-
-    monkeypatch.setattr(templates_manager.Path, "write_text", _boom)
-
-    with caplog.at_level(logging.INFO):
-        _manager().prepare_deployment_files(
-            _plan(tmp_path), config_manager=None, secrets_manager=None
-        )
-
-    assert "Finished preparing deployment artifacts" in caplog.text
+    assert "base_dir" not in called
     assert not (tmp_path / "SOURCE_COMMIT").exists()
+
+
+def test_context_build_defaults_true_and_reads_option(tmp_path):
+    assert _context(tmp_path).build is True
+    assert _context(tmp_path, build=False).build is False
