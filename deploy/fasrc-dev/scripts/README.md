@@ -29,6 +29,14 @@ deploy/fasrc-dev/scripts/nuke.sh -y     # full teardown, no prompt (automation)
 - **`create` vs `redeploy`** run the same `archi create --force` underneath
   (archi has no separate redeploy verb); both preserve data volumes. Only
   `nuke` removes volumes.
+- **Config changes must go through `redeploy.sh`.** The running config is read
+  from Postgres `static_config` at chat-process boot, seeded by the one-shot
+  `config-seed` container. A bare `docker restart chatbot-dev` re-reads Postgres
+  but does **not** re-run `config-seed`, so it can come up serving *stale* config
+  (this caused a two-day `enable_thinking` leak). `redeploy.sh` ends with an
+  explicit `docker compose up -d --force-recreate config-seed chatbot` so the
+  re-seed always precedes the chat restart — do not hand-edit `config.yaml` and
+  bounce the container instead.
 - **`nuke` is irreversible** — it wipes the Postgres DB and the ingested corpus.
   The next `create` re-ingests and rebuilds images from scratch (slow).
 - Config: `../config.yaml` (git-excluded — host-specific). First-time setup:
