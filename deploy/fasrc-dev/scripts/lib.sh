@@ -22,7 +22,13 @@ case "$ENV_FILE" in
   *)  ENV_FILE_ABS="$REPO_ROOT/$ENV_FILE" ;;
 esac
 VERBOSITY="3"
-CHAT_URL="http://localhost:7866"
+
+# Chat UI port, read from the chat_app external_port in the config so it never
+# drifts from the rendered compose (per-host: 7861 here, 7866 in the example).
+# Falls back to 7861 when the git-excluded config.yaml is absent.
+CHAT_PORT="$(awk '/chat_app:/{f=1} f&&/external_port:/{print $2; exit}' \
+  "$REPO_ROOT/$CONFIG" 2>/dev/null | grep -oE '[0-9]+' || true)"
+CHAT_URL="http://localhost:${CHAT_PORT:-7861}"
 
 # FASRC vLLM endpoint (scheme://host:port), read from the base_url line in the
 # config so it never drifts. Matches both hostnames and IPs.
