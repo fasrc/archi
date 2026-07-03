@@ -62,6 +62,10 @@ from src.archi.utils.output_dataclass import PipelineOutput
 # from src.data_manager.data_manager import DataManager
 from src.data_manager.data_viewer_service import DataViewerService
 from src.data_manager.vectorstore.manager import VectorStoreManager
+from src.interfaces.chat_app.config_fingerprint import (
+    build_health_payload,
+    resolve_provider_boot_summary,
+)
 from src.interfaces.chat_app.document_utils import *
 from src.interfaces.chat_app.service_alerts import (
     get_active_banner_alerts,
@@ -139,7 +143,10 @@ def _build_provider_config_from_payload(
         return None
 
     models = [ModelInfo(id=m, name=m, display_name=m) for m in cfg.get("models", [])]
-    extra = {}
+    # Preserve the provider's extra_kwargs (e.g. extra_body.chat_template_kwargs.
+    # enable_thinking) — dropping them here silently strips the thinking toggle
+    # from a request-time LLM override. Mirror base_react._build_provider_config.
+    extra = dict(cfg.get("extra_kwargs", {}) or {})
     if provider_type == ProviderType.LOCAL and cfg.get("mode"):
         extra["local_mode"] = cfg.get("mode")
 
@@ -151,6 +158,38 @@ def _build_provider_config_from_payload(
         default_model=cfg.get("default_model"),
         extra_kwargs=extra,
     )
+
+
+def _swap_pipeline_llm(pipeline: Any, new_llm: Any) -> Any:
+    """Point the shared pipeline at ``new_llm``, returning the previous LLM.
+
+    The swap is deliberately reversible (see ``_restore_pipeline_llm``) so a
+    per-request provider/model override never persists on the shared pipeline
+    into later requests — which would bleed one request's model and its
+    ``extra_kwargs`` (e.g. ``enable_thinking``) into everyone else's.
+
+    The swap is atomic: if refreshing the agent onto ``new_llm`` fails, the
+    original LLM is restored before the error propagates, so a failed override
+    can never leave the shared pipeline pointing at the override LLM.
+    """
+    original = pipeline.agent_llm
+    pipeline.agent_llm = new_llm
+    try:
+        if hasattr(pipeline, "refresh_agent"):
+            pipeline.refresh_agent(force=True)
+    except Exception:
+        # Never leave the shared pipeline on the override LLM when the refresh
+        # fails — restore the original before the error propagates.
+        _restore_pipeline_llm(pipeline, original)
+        raise
+    return original
+
+
+def _restore_pipeline_llm(pipeline: Any, original_llm: Any) -> None:
+    """Undo a ``_swap_pipeline_llm``, rebuilding the agent from the original LLM."""
+    pipeline.agent_llm = original_llm
+    if hasattr(pipeline, "refresh_agent"):
+        pipeline.refresh_agent(force=True)
 
 
 def _is_provider_enabled_in_config(
@@ -1928,6 +1967,14 @@ class ChatWrapper:
                 "tool_args": merged_args,
             }
 
+        # Track a request-time LLM override so it can be undone in `finally` — the
+        # pipeline is shared across requests, so a persisted override would bleed
+        # one request's provider/model (and its extra_kwargs, e.g. enable_thinking)
+        # into every later request on this process.
+        override_applied = False
+        override_original_llm = None
+        override_original_model = None
+
         try:
             context, error_code = self._prepare_chat_context(
                 message,
@@ -1964,12 +2011,12 @@ class ChatWrapper:
                         and hasattr(self.archi, "pipeline")
                         and hasattr(self.archi.pipeline, "agent_llm")
                     ):
-                        original_llm = self.archi.pipeline.agent_llm
-                        self.archi.pipeline.agent_llm = override_llm
-                        # Force agent refresh to use new LLM
-                        if hasattr(self.archi.pipeline, "refresh_agent"):
-                            self.archi.pipeline.refresh_agent(force=True)
+                        override_original_llm = _swap_pipeline_llm(
+                            self.archi.pipeline, override_llm
+                        )
+                        override_applied = True
                         logger.info(f"Overrode pipeline LLM with {provider}/{model}")
+                        override_original_model = self.current_model_used
                         self.current_model_used = f"{provider}/{model}"
                 except ValueError as e:
                     logger.warning(
@@ -2480,6 +2527,13 @@ class ChatWrapper:
                 "message": "server error; see chat logs for message",
             }
         finally:
+            # Undo any request-time LLM override so it never persists on the shared
+            # pipeline into later requests (which would strip enable_thinking, etc.).
+            if override_applied:
+                _restore_pipeline_llm(self.archi.pipeline, override_original_llm)
+                # Restore the reported model too, else later requests that skip
+                # update_config's reconfigure keep persisting the override's model.
+                self.current_model_used = override_original_model
             if self.cursor is not None:
                 self.cursor.close()
             if self.conn is not None:
@@ -2557,6 +2611,11 @@ class FlaskAppWrapper(object):
         # create the chat from the wrapper and ensure default config is active
         self.chat = ChatWrapper()
         self.chat.update_config(config_name=self.config["name"])
+
+        # Log the effective provider config the process actually loaded, so drift
+        # between the stored config and this running process is greppable from
+        # `docker logs` (see OpenSpec change harden-config-propagation).
+        logger.info(resolve_provider_boot_summary(self.config))
 
         # Conditionally register OpenAI-compatible /v1 blueprint
         openai_compat_config = self.chat_app_config.get("openai_compat", {})
@@ -3384,7 +3443,9 @@ class FlaskAppWrapper(object):
         return decorator
 
     def health(self):
-        return jsonify({"status": "OK"}), 200
+        # Public, secret-free effective-config surface for post-deploy assertion:
+        # config_version, provider/model, resolved enable_thinking, providers hash.
+        return jsonify(build_health_payload(self.config)), 200
 
     # -- API token management (for /v1 bearer auth) --------------------------
 
