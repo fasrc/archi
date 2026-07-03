@@ -57,7 +57,12 @@ def resolved_enable_thinking(config: Dict[str, Any]) -> Optional[bool]:
 
 
 def _redact(value: Any) -> Any:
-    """Recursively mask values whose key looks secret-bearing."""
+    """Recursively mask values whose key looks secret-bearing.
+
+    Recurses into both dicts and list/tuple items, so a secret nested inside a
+    list-valued kwarg (e.g. per-endpoint entries with ``api_key``) is masked
+    before the boot summary is logged.
+    """
     if isinstance(value, dict):
         return {
             k: (
@@ -67,6 +72,8 @@ def _redact(value: Any) -> Any:
             )
             for k, v in value.items()
         }
+    if isinstance(value, (list, tuple)):
+        return [_redact(v) for v in value]
     return value
 
 

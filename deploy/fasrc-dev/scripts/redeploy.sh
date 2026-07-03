@@ -23,7 +23,10 @@ archi_deploy
 # dependency ordering. Scoped to just these two services — postgres and
 # data-manager are NOT named and --always-recreate-deps is NOT passed, so the
 # DB/corpus containers (and their volumes) are never bounced.
-COMPOSE_FILE="$HOME/.archi/archi-$DEPLOYMENT/compose.yaml"
+# Resolve the deployment root the same way the archi CLI does (ARCHI_DIR override,
+# default ~/.archi), so this targeted call finds the compose file archi_deploy
+# just rendered even when ARCHI_DIR points elsewhere.
+COMPOSE_FILE="${ARCHI_DIR:-$HOME/.archi}/archi-$DEPLOYMENT/compose.yaml"
 log "Forcing re-seed + chat restart (config-seed, chatbot)…"
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE_ABS" \
   up -d --force-recreate config-seed chatbot

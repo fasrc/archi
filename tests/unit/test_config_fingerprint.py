@@ -92,3 +92,15 @@ def test_empty_config_does_not_crash():
     assert build_health_payload({})["status"] == "OK"
     assert len(providers_sha256({})) == 12
     assert "effective chat config" in resolve_provider_boot_summary({})
+
+
+def test_boot_summary_redacts_secrets_nested_in_lists():
+    # A secret inside a list-valued kwarg must still be masked in the boot log.
+    summary = resolve_provider_boot_summary(
+        _cfg(
+            enable_thinking=False,
+            extra={"endpoints": [{"url": "u", "api_key": "sk-secret"}]},
+        )
+    )
+    assert "sk-secret" not in summary
+    assert "***" in summary

@@ -1973,6 +1973,7 @@ class ChatWrapper:
         # into every later request on this process.
         override_applied = False
         override_original_llm = None
+        override_original_model = None
 
         try:
             context, error_code = self._prepare_chat_context(
@@ -2015,6 +2016,7 @@ class ChatWrapper:
                         )
                         override_applied = True
                         logger.info(f"Overrode pipeline LLM with {provider}/{model}")
+                        override_original_model = self.current_model_used
                         self.current_model_used = f"{provider}/{model}"
                 except ValueError as e:
                     logger.warning(
@@ -2529,6 +2531,9 @@ class ChatWrapper:
             # pipeline into later requests (which would strip enable_thinking, etc.).
             if override_applied:
                 _restore_pipeline_llm(self.archi.pipeline, override_original_llm)
+                # Restore the reported model too, else later requests that skip
+                # update_config's reconfigure keep persisting the override's model.
+                self.current_model_used = override_original_model
             if self.cursor is not None:
                 self.cursor.close()
             if self.conn is not None:
