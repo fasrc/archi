@@ -46,14 +46,24 @@ def providers_sha256(config: Dict[str, Any]) -> str:
 
 
 def resolved_enable_thinking(config: Dict[str, Any]) -> Optional[bool]:
-    """The ``enable_thinking`` the default provider will send, or ``None``."""
+    """The ``enable_thinking`` the default provider will send, or ``None``.
+
+    Guards each level: a config that sets ``extra_body`` (or
+    ``chat_template_kwargs``) to ``null``/non-mapping resolves to ``None`` rather
+    than raising — this runs at boot and on ``/api/health``, so it must not crash.
+    """
     _, block = _default_provider_block(config)
-    return (
-        (block.get("extra_kwargs", {}) or {})
-        .get("extra_body", {})
-        .get("chat_template_kwargs", {})
-        .get("enable_thinking")
-    )
+    node: Any = block
+    for key in (
+        "extra_kwargs",
+        "extra_body",
+        "chat_template_kwargs",
+        "enable_thinking",
+    ):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    return node
 
 
 def _redact(value: Any) -> Any:

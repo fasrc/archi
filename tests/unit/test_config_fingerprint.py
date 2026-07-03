@@ -94,6 +94,24 @@ def test_empty_config_does_not_crash():
     assert "effective chat config" in resolve_provider_boot_summary({})
 
 
+def test_null_extra_body_or_chat_template_kwargs_does_not_crash():
+    # extra_body/chat_template_kwargs set to null must resolve to None, not raise —
+    # these run at boot and on /api/health.
+    for ek in ({"extra_body": None}, {"extra_body": {"chat_template_kwargs": None}}):
+        cfg = {
+            "config_version": "2.0.0",
+            "services": {
+                "chat_app": {
+                    "default_provider": "local",
+                    "providers": {"local": {"default_model": "m", "extra_kwargs": ek}},
+                }
+            },
+        }
+        assert resolved_enable_thinking(cfg) is None
+        assert build_health_payload(cfg)["enable_thinking"] is None
+        assert "effective chat config" in resolve_provider_boot_summary(cfg)
+
+
 def test_boot_summary_redacts_secrets_nested_in_lists():
     # A secret inside a list-valued kwarg must still be masked in the boot log.
     summary = resolve_provider_boot_summary(
