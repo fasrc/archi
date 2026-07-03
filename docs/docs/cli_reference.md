@@ -146,6 +146,30 @@ archi restart -n my-archi --service chatbot -e new_secrets.env --no-build
 
 ---
 
+### Deployment provenance (`SOURCE_COMMIT`)
+
+Whenever `archi create` or `archi restart` copies the archi source into an image build,
+it records which source commit that image was built from:
+
+- A `SOURCE_COMMIT` file is written at the deployment root
+  (`~/.archi/archi-<name>/SOURCE_COMMIT`) containing the short git commit of the source
+  that was copied — with a `-dirty` suffix when the checkout had uncommitted changes, or
+  `unknown` when the source is not a git checkout.
+- The same value is emitted to the deploy log (`archi source commit: <value>`).
+
+The commit is resolved from the same checkout the source is copied from (the path
+recorded at `pip install` time), so it reflects the code that actually lands in the
+image even for a non-editable install. Because it is tied to the build, a
+`--no-build` restart leaves `SOURCE_COMMIT` untouched — it always describes the code
+running in the current image. Inspect it to confirm which commit a deployment is
+serving:
+
+```bash
+cat ~/.archi/archi-<name>/SOURCE_COMMIT
+```
+
+---
+
 ### `archi list-services`
 
 List all available services and data sources with descriptions.

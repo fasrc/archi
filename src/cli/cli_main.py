@@ -544,6 +544,7 @@ def restart(
             secrets_manager,
             host_mode=host_mode,
             allow_port_reuse=True,
+            build=not no_build,
         )
 
     if not no_build and not (config_files or config_dir):

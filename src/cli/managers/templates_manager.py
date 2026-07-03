@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from jinja2 import Environment
 
+from src.cli.managers.source_version import write_source_commit
 from src.cli.service_registry import service_registry
 from src.cli.utils.grafana_styling import assign_feedback_palette
 from src.cli.utils.service_builder import DeploymentPlan
@@ -127,6 +128,13 @@ class TemplateContext:
     def benchmarking(self) -> bool:
         return bool(self.options.get("benchmarking"))
 
+    @property
+    def build(self) -> bool:
+        # Whether this run will (re)build the image. Source is only copied — and the
+        # SOURCE_COMMIT provenance file only refreshed — when a build actually happens,
+        # so ``restart --no-build`` leaves both matching the running image.
+        return bool(self.options.get("build", True))
+
 
 class TemplateManager:
     """Manages template rendering and file preparation using service registry"""
@@ -157,6 +165,9 @@ class TemplateManager:
         logger.info(
             f"Preparing deployment artifacts for `{plan.name}` in {str(context.base_dir)}"
         )
+        # SOURCE_COMMIT provenance is written by ``copy_source_code`` (the source-copy
+        # stage), so it is tied to the code that actually lands in the image and is
+        # skipped when no build happens (``restart --no-build``).
 
         for stage in self._build_workflow(context):
             logger.debug(f"Starting template stage {stage.__name__}")
@@ -330,6 +341,10 @@ class TemplateManager:
         self._copy_web_input_lists(context)
 
     def _stage_source_copy(self, context: TemplateContext) -> None:
+        # Only copy source (and refresh SOURCE_COMMIT) when a build will consume it;
+        # ``restart --no-build`` must not overwrite the running image's provenance.
+        if not context.build:
+            return
         self.copy_source_code(context.base_dir)
 
     def _stage_benchmarking(self, context: TemplateContext) -> None:
@@ -844,3 +859,7 @@ class TemplateManager:
                 raise FileNotFoundError(
                     f"Source path {src_path} does not exist. Something went wrong in the repo structure."
                 )
+
+        # Record the provenance of the source just copied, resolved from the same
+        # repo root, so SOURCE_COMMIT reflects the code that lands in the image.
+        write_source_commit(base_dir, repo_root=repo_root)
