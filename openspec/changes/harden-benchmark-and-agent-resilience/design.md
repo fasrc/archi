@@ -40,18 +40,54 @@ Reading the code changes the shape of the fix from the naive framing:
 ## Decisions
 
 ### D1 — #1: isolate per-question failures via a tested helper
-Wrap the answer + scoring body of the `run()` loop so any exception is caught, logged, and
-recorded as a failure entry (question text + captured error), then `continue`. Because
+Wrap the answer **and per-question scoring** body of the `run()` loop so any exception is caught,
+logged, and recorded as a failure entry (question text + captured error), then `continue`. The
+boundary MUST span the per-question scoring that runs inside the loop after `self.chain(...)` —
+`get_source_results` (source matching) and the RAGAS-input assembly / `question_wise_results`
+population — not just the answer call, since those can raise too (Codex F1). The aggregate RAGAS
+computation (`Dataset.from_list` after the loop) is a separate concern handled by D4. Because
 `src/bin/service_benchmark.py` is a service entrypoint that unit tests do not import (same
 constraint as `interfaces/chat_app/app.py`), the resilience logic goes in a small
-unit-importable helper (e.g. `run_question_safely(answer_callable) -> (result | failure)`),
+unit-importable helper (e.g. `run_question_safely(answer_and_score_callable) -> (result | failure)`),
 and the loop becomes a thin call site. Tests exercise the helper directly with a succeeding and
 a raising callable.
 - *Alternative — inline try/except in the loop:* rejected; the new lines would not be covered
   by unit tests and would fail diff-cover.
+- *Alternative — wrap only the answer call:* rejected (Codex F1); per-question scoring runs in
+  the same loop iteration and would still abort the run if it raised.
 - *Alternative — mark failed questions as zero-score:* rejected as the default; a failure is
   recorded distinctly, not silently averaged in as a legitimate 0 (a crashed question and a
   wrong-but-answered question are different signals).
+
+### D4 — #1: all-failed configuration emits skipped aggregates, never empty RAGAS (Codex F2)
+When a configuration ends with zero successful questions, `ragas_input` is empty; the current
+path (`Dataset.from_list(ragas_input)` → `get_ragas_results`) would build an empty dataset and
+then access metric columns that do not exist. Guard the aggregation: if the success set is
+empty, skip RAGAS for that configuration and record marked `n/a` / skipped aggregates so the run
+still completes. Unit-test the all-failed case explicitly.
+- *Alternative — let RAGAS handle empty input:* rejected; empty aggregation raises or yields
+  meaningless columns, re-introducing the "run doesn't complete" failure this change removes.
+
+### D5 — #1: failure rows excluded from human-eval consumers (Codex F4)
+Failure entries live in `question_wise_results` / `single_question_results`, which are iterated
+by `pair_ab_results` (A/B comparison) and `push_single_results_to_argilla` (human-eval export).
+Left unfiltered, a failed question enters A/B pairing and Argilla as a blank-answer gradeable
+record and skews evaluation. Mark failure entries and have both consumers skip (or explicitly
+flag) them. Unit-test that a failure entry is not emitted as a normal record by either consumer.
+- *Alternative — leave consumers as-is:* rejected; silent blank-answer records corrupt human
+  evaluation and A/B deltas.
+
+### D6 — #2: a recovered overflow retry stays marked degraded (Codex F3)
+The shared `_handle_context_overflow` retry-success path returns the recovered answer with only
+a `context_overflow_retry` metadata flag and no user-facing message. Rather than inject a
+user-facing message into the shared helper (which would also change production chat UX on a
+successful recovery), the marker `context_overflow_retry` is treated as the degraded signal: the
+benchmark records such rows as degraded, and the agent-context-resilience spec requires the
+output be *distinguishable* from a clean success (message on hard failure, metadata marker on
+recovered retry). Add a retry-success unit test asserting the marker is present.
+- *Alternative — force a visible "trimmed context" message into the shared helper:* rejected;
+  it changes production chat behavior for every successful long-conversation recovery, beyond
+  the scope of this reactive fix. The metadata marker satisfies "message **or marker**."
 
 ### D2 — #2a: add the existing overflow guard to `invoke()`
 After the `except GraphRecursionError` branch in `invoke()`, add

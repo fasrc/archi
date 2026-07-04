@@ -15,28 +15,41 @@
   to `invoke()`, after the `GraphRecursionError` branch, mirroring `stream()`/`astream()`.
 - [ ] 1.6 RED: unit test that `invoke()` RE-RAISES a non-overflow 400 (e.g. malformed param) —
   watch it fail if the guard is too broad; confirm GREEN with D3's specific matching.
-- [ ] 1.7 Refactor; run `conda run -n archi bash scripts/gate.sh` (patch coverage ≥ 80%); commit
+- [ ] 1.7 RED: unit test that when the trimmed-context retry SUCCEEDS, `invoke()` returns the
+  recovered answer marked with the `context_overflow_retry` metadata (distinguishable from a
+  clean success) — per D6 / Codex F3. GREEN: the existing marker already carries this; assert it
+  flows through `invoke()`.
+- [ ] 1.8 Refactor; run `conda run -n archi bash scripts/gate.sh` (patch coverage ≥ 80%); commit
   green.
-- [ ] 1.8 Branch from `origin/dev`, push, open PR to `fasrc/archi:dev`; request `@codex review`;
+- [ ] 1.9 Branch from `origin/dev`, push, open PR to `fasrc/archi:dev`; request `@codex review`;
   reply in-thread per finding; merge on green + `--delete-branch`; clean up local branch.
 
 ## 2. PR 2 — Benchmark per-question error isolation (`service_benchmark.py`)
 
-- [ ] 2.1 RED: unit test for a new helper (e.g. `run_question_safely`) — a succeeding answer
-  callable returns its result; a raising answer callable returns a marked failure entry with the
-  captured error, without propagating. Watch it fail (helper does not exist yet).
+- [ ] 2.1 RED: unit test for a new helper (e.g. `run_question_safely`) — a succeeding
+  answer+score callable returns its result; a raising callable returns a marked failure entry
+  with the captured error, without propagating. Watch it fail (helper does not exist yet).
 - [ ] 2.2 GREEN: implement the helper in a unit-importable module; failure entry is distinct from
   a legitimate zero-score.
 - [ ] 2.3 Wire `service_benchmark.py` `run()` loop (~line 1141) to call the helper as a thin call
-  site: on failure, record the failure entry and `continue`; on success, proceed to scoring as
-  today.
+  site, wrapping the answer AND the per-question scoring that follows it in the same iteration
+  (`get_source_results`, RAGAS-input assembly, `question_wise_results` population — Codex F1): on
+  failure, record the failure entry and `continue`; on success, proceed as today.
 - [ ] 2.4 RED: unit test that aggregate scoring excludes failure entries from the success
   aggregate (a crashed question is not averaged in as a 0) and that an all-success run is
   unchanged vs prior behavior.
 - [ ] 2.5 GREEN: adjust aggregation to honor the failure marking.
-- [ ] 2.6 Refactor; run `conda run -n archi bash scripts/gate.sh` (patch coverage ≥ 80%); commit
+- [ ] 2.6 RED: unit test the ALL-FAILED configuration (Codex F2) — every question fails →
+  `ragas_input` empty. Assert the run completes, RAGAS is skipped (no `Dataset.from_list` on
+  empty input), and the aggregate is recorded as `n/a`/skipped. GREEN: guard the aggregation on
+  an empty success set (D4).
+- [ ] 2.7 RED: unit test that failure entries are excluded/flagged in the human-eval consumers
+  (Codex F4) — `pair_ab_results` does not pair a failed question as a real answer, and
+  `push_single_results_to_argilla` does not emit it as a normal blank-answer record. GREEN: mark
+  failure entries and have both consumers skip/flag them (D5).
+- [ ] 2.8 Refactor; run `conda run -n archi bash scripts/gate.sh` (patch coverage ≥ 80%); commit
   green.
-- [ ] 2.7 Branch from `origin/dev`, push, open PR to `fasrc/archi:dev`; request `@codex review`;
+- [ ] 2.9 Branch from `origin/dev`, push, open PR to `fasrc/archi:dev`; request `@codex review`;
   reply in-thread per finding; merge on green + `--delete-branch`; clean up local branch.
 
 ## 3. End-to-end verification

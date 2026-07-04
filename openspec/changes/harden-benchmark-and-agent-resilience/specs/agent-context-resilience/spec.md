@@ -2,18 +2,29 @@
 
 ### Requirement: The agent degrades gracefully on a model-context-length overflow
 
-The agent runtime SHALL return a graceful degraded output when a model call fails because the
-assembled prompt exceeds the model's context window, rather than propagating the provider error
-as an unhandled crash. This mirrors the existing recursion-limit overflow handling. The degraded
-output MUST be a valid pipeline output carrying a clear, user-appropriate message that the
-request exceeded the model's context limit.
+The agent runtime SHALL return a graceful degraded output, marked as a context-overflow result,
+when a model call fails because the assembled prompt exceeds the model's context window, rather
+than propagating the provider error as an unhandled crash. This mirrors the existing
+recursion-limit overflow handling. When no recovery is possible the degraded output MUST carry a
+clear, user-appropriate message that the request exceeded the model's context limit. When a
+trimmed-context retry recovers an answer, the output MAY carry the recovered answer but MUST
+still be marked (via metadata, e.g. `context_overflow_retry`) so downstream consumers do not
+treat it as a clean, full-context success.
 
-#### Scenario: invoke() catches a context-length overflow
+#### Scenario: invoke() catches a context-length overflow with no recovery
 
-- **WHEN** the underlying model call raises a provider error indicating the input exceeds the
-  model's maximum context length
-- **THEN** `invoke()` returns a valid degraded pipeline output with a context-limit message
+- **WHEN** the underlying model call raises a context-length overflow and no trimmed retry
+  recovers an answer
+- **THEN** `invoke()` returns a valid degraded pipeline output carrying the context-limit
+  message
 - **AND** does not raise
+
+#### Scenario: A recovered retry is still marked degraded
+
+- **WHEN** the trimmed-context retry inside the overflow handler succeeds and returns an answer
+- **THEN** `invoke()` returns that answer marked with the context-overflow metadata
+- **AND** does not raise
+- **AND** the result is distinguishable from a clean, full-context answer
 
 #### Scenario: stream() catches a context-length overflow
 
