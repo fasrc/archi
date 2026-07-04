@@ -333,6 +333,22 @@ class BaseReActAgent:
                 latest_messages=[],
                 agent_inputs=agent_inputs,
             )
+        except Exception as exc:
+            # A context-window overflow must degrade gracefully rather than crash,
+            # mirroring stream()/astream(). Only genuine context-length overflows
+            # are degraded; any other error re-raises so real bugs still surface.
+            if not self._is_context_overflow_error(exc):
+                raise
+            logger.warning(
+                "Context overflow during invoke for %s: %s",
+                self.__class__.__name__,
+                exc,
+            )
+            return self._handle_context_overflow(
+                error=exc,
+                agent_inputs=agent_inputs,
+                latest_messages=[],
+            )
 
     def stream(self, **kwargs) -> Iterator[PipelineOutput]:
         """Stream agent updates synchronously with structured trace events."""
@@ -1769,11 +1785,16 @@ class BaseReActAgent:
         """Return True if *exc* is a context-window / token-limit overflow error."""
         exc_type = type(exc).__name__
         exc_str = str(exc)
+        exc_lower = exc_str.lower()
         return (
             "ContextOverflow" in exc_type
             or "context_length_exceeded" in exc_str
             or "Input tokens exceed" in exc_str
-            or "maximum context length" in exc_str.lower()
+            or "maximum context length" in exc_lower
+            # OpenAI-compatible servers (e.g. vLLM) phrase it differently:
+            # "the model's context length is only N, resulting in a maximum input length of N".
+            or "context length is only" in exc_lower
+            or "maximum input length" in exc_lower
         )
 
     def _handle_context_overflow(
