@@ -1814,8 +1814,20 @@ class BaseReActAgent:
             original_messages: List[BaseMessage] = list(
                 agent_inputs.get("messages") or []
             )
-            # Keep only the last human message to stay well within context
-            trimmed: List[BaseMessage] = [m for m in original_messages[-1:] if True]
+            # Keep only the last human message to stay well within context. Selecting
+            # the last *human* message (not simply the last message) matters for agents
+            # with forced initial retrieval (e.g. FASRCDocsAgent): their message list
+            # ends with a large ToolMessage of retrieved chunks — often the very payload
+            # that overflowed — so retrying with messages[-1:] would resend it and
+            # overflow again. Fall back to the last message only if no human message
+            # is present.
+            last_human = next(
+                (m for m in reversed(original_messages) if isinstance(m, HumanMessage)),
+                None,
+            )
+            trimmed: List[BaseMessage] = (
+                [last_human] if last_human is not None else original_messages[-1:]
+            )
             if trimmed:
                 try:
                     trimmed_inputs = {**agent_inputs, "messages": trimmed}

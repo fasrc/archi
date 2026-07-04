@@ -18,7 +18,7 @@ from typing import Any, Dict, Optional
 from unittest.mock import MagicMock
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from src.archi.pipelines.agents.base_react import BaseReActAgent
 
@@ -136,3 +136,35 @@ def test_invoke_marks_recovered_retry_as_degraded():
 
     assert out.answer == "recovered answer"
     assert out.metadata.get("context_overflow_retry") is True
+
+
+def test_overflow_retry_trims_to_last_human_not_tool_payload():
+    """Forced-retrieval agents end their message list with a large ToolMessage; the
+    trimmed retry must keep the last HUMAN question, not that oversized tool payload
+    (which caused the overflow). Mirrors the FASRCDocsAgent benchmark scenario."""
+    agent = _TestableAgent()
+    human = HumanMessage(content="how do I request a GPU for 2 hours?")
+    ai_call = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "search_vectorstore_hybrid", "args": {"query": "gpu"}, "id": "c1"}
+        ],
+    )
+    tool_msg = ToolMessage(
+        content="X" * 500, tool_call_id="c1", name="search_vectorstore_hybrid"
+    )
+    agent._prepare_agent_inputs = lambda **kw: {  # type: ignore[method-assign]
+        "messages": [human, ai_call, tool_msg]
+    }
+    agent.agent.invoke = MagicMock(
+        side_effect=[
+            Exception(VLLM_OVERFLOW_MSG),
+            {"messages": [AIMessage(content="ok")]},
+        ]
+    )
+
+    agent.invoke()
+
+    # The retry (second call) must be made with only the last human message.
+    retry_inputs = agent.agent.invoke.call_args_list[1].args[0]
+    assert retry_inputs["messages"] == [human]
