@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+from src.utils.benchmark_resilience import is_scorable
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -444,6 +445,14 @@ def push_single_results_to_argilla(
 
     records = []
     for i, (q_key, item) in enumerate(sorted(questions.items())):
+        # A failed/degraded question has no real answer; exporting it as a blank
+        # gradeable record would corrupt human evaluation. Skip it.
+        if not is_scorable(item):
+            logger.info(
+                "Skipping failed/degraded question %s from Argilla human-eval export.",
+                q_key,
+            )
+            continue
         metadata = {}
         ar = item.get("answer_relevancy")
         if ar is not None and ar == ar:
