@@ -22,6 +22,16 @@ from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
+from src.utils.benchmark_resilience import (
+    OK,
+    build_failure_entry,
+    build_ragas_aggregates,
+    build_source_aggregates,
+    classify_metadata,
+    is_scorable,
+    scorable_items,
+    source_hits,
+)
 from src.utils.config_access import get_static_config
 from src.utils.env import read_secret
 from src.utils.generate_benchmark_report import (
@@ -240,6 +250,15 @@ class ResultHandler:
                 continue
             qa = results_a[key]
             qb = results_b[key]
+
+            # Never pair a failed/degraded row: it carries no real answer and would
+            # skew the A/B comparison (blank-answer or truncated-context result).
+            if not is_scorable(qa) or not is_scorable(qb):
+                logger.warning(
+                    "Question key %s is a failed/degraded row in a config; skipping A/B pairing.",
+                    key,
+                )
+                continue
 
             ragas_a = {m: qa.get(m, float("nan")) for m in ragas_metrics if m in qa}
             ragas_b = {m: qb.get(m, float("nan")) for m in ragas_metrics if m in qb}
@@ -1072,6 +1091,204 @@ class Benchmarker:
 
         return res
 
+    def _process_config(self, modes_being_run):
+        """Answer + score every question for the current config.
+
+        Returns ``(question_wise_results, total_results)``. Per-question failures
+        are isolated (see ``_answer_and_score_question``) so one bad question never
+        aborts the run; an all-failed config yields ``n/a`` aggregates rather than
+        an empty RAGAS dataset.
+        """
+        question_id = 0
+        question_wise_results: Dict[str, Any] = {}
+        total_results: Dict[str, Any] = {}
+        ragas_input: List[Dict[str, Any]] = []
+        relative_source_accuracy = 0.0
+        source_accuracy = 0.0
+
+        for question_item in self.queries_to_answers:
+
+            logger.info("")
+            logger.info("====================================")
+            logger.info(f"Answering question: {question_id + 1}")
+
+            if type(question_item) is not dict:
+                logger.error(
+                    f"Each item in the question to answer list must be a dictionary, but got {type(question_item)}"
+                )
+                continue
+            if not all(field in question_item for field in self.required_fields):
+                logger.error(
+                    f"Each item in the question to answer list must contain the following fields: {self.required_fields}, but got {question_item.keys()}"
+                )
+                continue
+
+            logger.info(f"Question: {question_item['question']}")
+            logger.info(f"Reference Answer: {question_item.get('answer', 'N/A')}")
+            logger.info(f"Reference Sources: {question_item.get('sources', 'N/A')}")
+
+            question_id += 1
+            # Answer + score is isolated: a failure returns a marked entry instead
+            # of aborting the run (see _answer_and_score_question).
+            bundle = self._answer_and_score_question(
+                question_item, question_id, modes_being_run
+            )
+            q_results = bundle["q_results"]
+            question_wise_results[f"question_{question_id}"] = q_results
+
+            # Only clean successes contribute RAGAS input and source matches;
+            # failed/degraded rows return None for both.
+            if bundle["dataset_result"] is not None:
+                ragas_input.append(bundle["dataset_result"])
+
+            rel_hit, strict_hit = source_hits(
+                bundle["matches"], q_results.get("reference_sources_metadata", [])
+            )
+            relative_source_accuracy += rel_hit
+            source_accuracy += strict_hit
+
+            logger.info("====================================")
+            logger.info("")
+
+        if "RAGAS" in modes_being_run:
+            # No scorable input (all failed/degraded) -> ragas_results stays None and
+            # build_ragas_aggregates emits NaN, instead of an empty Dataset that raises.
+            ragas_results = None
+            if ragas_input:
+                logger.info("Starting to collect RAGAS results")
+                from datasets import (
+                    Dataset,  # lazy: benchmark-only dep (see module header)
+                )
+
+                data = Dataset.from_list(ragas_input)
+                # get_ragas_results writes metric rows back by position into the
+                # dict it is given, so it MUST receive exactly the scorable rows
+                # that produced ragas_input (same order) — passing the full
+                # question_wise_results would misalign and index-error (Codex F1).
+                ragas_results = self.get_ragas_results(
+                    data, scorable_items(question_wise_results)
+                )
+            total_results.update(build_ragas_aggregates(ragas_results))
+
+        if "SOURCES" in modes_being_run:
+            # Denominator is the total question count, matching how the HTML report
+            # derives per-bucket counts (generate_benchmark_report uses len(questions)).
+            # A failed/degraded row contributes no hit, so it counts as a miss.
+            total_results.update(
+                build_source_aggregates(
+                    relative_source_accuracy,
+                    source_accuracy,
+                    len(self.queries_to_answers),
+                )
+            )
+
+        return question_wise_results, total_results
+
+    def _answer_and_score_question(self, question_item, question_id, modes_being_run):
+        """Answer and score one question, isolating failures.
+
+        Isolation boundary (openspec harden-benchmark-and-agent-resilience): any
+        exception from answering OR per-question scoring is caught and returned as a
+        marked failure entry, so one bad question never aborts the whole run. A
+        context-overflow *degraded* answer (marked by the agent in
+        ``PipelineOutput.metadata``) is recorded with ``status="degraded"`` and
+        excluded from the RAGAS input and source scoring, so it is never counted as a
+        clean success.
+
+        Returns a dict with keys ``q_results`` (always), ``dataset_result`` (RAGAS
+        input for this question, or ``None``), and ``matches`` (source-match booleans,
+        or ``None``).
+        """
+        question = question_item["question"]
+        reference_answer = question_item.get("answer", "N/A")
+        reference_sources = question_item.get("sources", "N/A")
+        try:
+            formatted_question = [("User", question)]
+            start = time.perf_counter()
+            result = self.chain(history=formatted_question)
+            end = time.perf_counter()
+            logger.info(
+                f"Finished answering question: {question_id} ({end - start:.2f}s)"
+            )
+
+            status = classify_metadata(
+                result.get("metadata") if hasattr(result, "get") else None
+            )
+
+            q_results: Dict[str, Any] = {}
+            q_results["time_elapsed"] = end - start
+            q_results["question"] = question
+            q_results["reference_answer"] = reference_answer
+            q_results["answer"] = result["answer"]
+            q_results["status"] = status
+            q_results["messages"] = self.prepare_messages(result.get("messages", []))
+
+            match_fields_list, formatted_reference_sources = (
+                self._resolve_reference_match_fields(
+                    question_item, reference_sources, modes_being_run
+                )
+            )
+            q_results["reference_sources_match_fields"] = match_fields_list
+            q_results["reference_sources_metadata"] = formatted_reference_sources
+
+            # A degraded (context-overflow) answer must not be scored as a clean
+            # success: skip source matching AND RAGAS input for it, so it neither
+            # stamps `matched` onto its sources (Codex F4) nor feeds aggregates.
+            scorable = status == OK
+
+            matches = None
+            if "SOURCES" in modes_being_run and scorable:
+                matches = self.get_source_results(result, formatted_reference_sources)
+                for idx, source in enumerate(q_results["reference_sources_metadata"]):
+                    source["matched"] = matches[idx]
+
+            sources_metadata: List[Dict[str, Any]] = []
+            sources_trunc_content: List[str] = []
+            for document in result["source_documents"]:
+                metadata = getattr(document, "metadata", {}) or {}
+                sources_metadata.append(metadata)
+                sources_trunc_content.append(
+                    getattr(document, "page_content", "")[:300]
+                )
+            q_results["sources_metadata"] = sources_metadata
+            q_results["sources_trunc_content"] = sources_trunc_content
+            q_results["anchor_type"] = (
+                question_item.get("anchor_type", "")
+                if isinstance(question_item, dict)
+                else ""
+            )
+
+            dataset_result = None
+            if "RAGAS" in modes_being_run and scorable:
+                contexts = [s.page_content for s in result["source_documents"]]
+                dataset_result = {
+                    "question": question,
+                    "contexts": contexts,
+                    "answer": result["answer"],
+                    "ground_truth": reference_answer,
+                }
+
+            return {
+                "q_results": q_results,
+                "dataset_result": dataset_result,
+                "matches": matches,
+            }
+        except Exception as exc:  # isolate: one question must not abort the run
+            logger.error(
+                "Question %s failed; recording a failure entry and continuing: %s",
+                question_id,
+                exc,
+            )
+            return {
+                "q_results": build_failure_entry(
+                    question=question,
+                    reference_answer=reference_answer,
+                    error=exc,
+                ),
+                "dataset_result": None,
+                "matches": None,
+            }
+
     def run(self):
         self.wait_for_ingestion_completion()
 
@@ -1094,171 +1311,7 @@ class Benchmarker:
         logger.info("")
 
         while self.all_config_files:
-
-            question_id = 0
-
-            # results for each question
-            question_wise_results = {}
-
-            # results for all of the questions in this config
-            total_results = {}
-
-            # RAGAS mode: ragas inputs
-            ragas_input = []
-
-            # SOUCES mode: sources accuracy
-            relative_source_accuracy = 0.0
-            source_accuracy = 0.0
-
-            for question_item in self.queries_to_answers:
-
-                logger.info("")
-                logger.info("====================================")
-                logger.info(f"Answering question: {question_id + 1}")
-
-                if type(question_item) is not dict:
-                    logger.error(
-                        f"Each item in the question to answer list must be a dictionary, but got {type(question_item)}"
-                    )
-                    continue
-                if not all(field in question_item for field in self.required_fields):
-                    logger.error(
-                        f"Each item in the question to answer list must contain the following fields: {self.required_fields}, but got {question_item.keys()}"
-                    )
-                    continue
-
-                question = question_item["question"]
-                reference_answer = question_item.get("answer", "N/A")
-                reference_sources = question_item.get("sources", "N/A")
-
-                logger.info(f"Question: {question}")
-                logger.info(f"Reference Answer: {reference_answer}")
-                logger.info(f"Reference Sources: {reference_sources}")
-
-                question_id += 1
-                formatted_question = [("User", question)]
-                start = time.perf_counter()
-                result = self.chain(history=formatted_question)
-                end = time.perf_counter()
-                logger.info(
-                    f"Finished answering question: {question_id} ({end - start:.2f}s)"
-                )
-                q_results = {}
-
-                # prepare info to store for this question
-                q_results["time_elapsed"] = end - start
-                q_results["question"] = question
-                q_results["reference_answer"] = reference_answer
-                q_results["answer"] = result["answer"]
-
-                # format the messages
-                q_results["messages"] = self.prepare_messages(
-                    result.get("messages", [])
-                )
-
-                # format the reference sources (only when SOURCES scoring runs;
-                # RAGAS-only banks may carry zero-source refusal rows)
-                match_fields_list, formatted_reference_sources = (
-                    self._resolve_reference_match_fields(
-                        question_item, reference_sources, modes_being_run
-                    )
-                )
-                q_results["reference_sources_match_fields"] = match_fields_list
-                q_results["reference_sources_metadata"] = formatted_reference_sources
-
-                if "RAGAS" in modes_being_run:
-                    # we collect the necessary info for ragas evaluation
-                    # TODO this is likely broken now
-                    contexts = [s.page_content for s in result["source_documents"]]
-                    dataset_result = {
-                        "question": question,
-                        "contexts": contexts,
-                        "answer": result["answer"],
-                        "ground_truth": reference_answer,
-                    }
-                    ragas_input.append(dataset_result)
-
-                if "SOURCES" in modes_being_run:
-                    # sources evaluation is done on the fly -- check if each of the given sources was found
-                    matches = self.get_source_results(
-                        result,
-                        formatted_reference_sources,
-                    )
-                    # we count accuracy via any of the sources matching
-                    if any(matches):
-                        relative_source_accuracy += 1.0
-                    if len(matches) == len(formatted_reference_sources) and all(
-                        matches
-                    ):
-                        source_accuracy += 1.0
-                    # but we still store the match of each reference source in its metadata
-                    for idx, source in enumerate(
-                        q_results["reference_sources_metadata"]
-                    ):
-                        source["matched"] = matches[idx]
-                    logger.info(
-                        f"Current relative accuracy: {relative_source_accuracy / question_id if question_id > 0 else 0.0}"
-                    )
-                    logger.info(
-                        f"Current strict accuracy: {source_accuracy / question_id if question_id > 0 else 0.0}"
-                    )
-
-                # store the sources metadata and truncated content
-                sources_metadata: List[Dict[str, Any]] = []
-                sources_trunc_content: List[str] = []
-                for document in result["source_documents"]:
-                    metadata = getattr(document, "metadata", {}) or {}
-                    sources_metadata.append(metadata)
-                    sources_trunc_content.append(
-                        getattr(document, "page_content", "")[:300]
-                    )  # first 300 chars
-                q_results["sources_metadata"] = sources_metadata
-                q_results["sources_trunc_content"] = sources_trunc_content
-                # Forward the anchor marker so the Argilla push can stamp it
-                # onto record metadata. Empty string means "not an anchor"
-                # (Argilla TermsMetadataProperty accepts any string).
-                q_results["anchor_type"] = (
-                    question_item.get("anchor_type", "")
-                    if isinstance(question_item, dict)
-                    else ""
-                )
-                logger.debug("Sources returned: %s", sources_metadata)
-
-                # store the results for this question
-                question_wise_results[f"question_{question_id}"] = q_results
-
-                logger.info("====================================")
-                logger.info("")
-
-            if "RAGAS" in modes_being_run:
-                # TODO this is likely broken now
-                logger.info(f"Starting to collect RAGAS results")
-                from datasets import (
-                    Dataset,  # lazy: benchmark-only dep (see module header)
-                )
-
-                data = Dataset.from_list(ragas_input)
-                # were modifying final_addition here to add ragas results by question
-                ragas_results = self.get_ragas_results(data, question_wise_results)
-
-                answer_relevancy = ragas_results["answer_relevancy"].mean()
-                faithfulness = ragas_results["faithfulness"].mean()
-                context_precision = ragas_results["context_precision"].mean()
-                context_recall = ragas_results["context_recall"].mean()
-
-                total_results["aggregate_answer_relevancy"] = answer_relevancy
-                total_results["aggregate_faithfulness"] = faithfulness
-                total_results["aggregate_context_precision"] = context_precision
-                total_results["aggregate_context_recall"] = context_recall
-
-            if "SOURCES" in modes_being_run:
-                total_results["relative_source_accuracy"] = (
-                    relative_source_accuracy / len(self.queries_to_answers)
-                )
-                total_results["source_accuracy"] = source_accuracy / len(
-                    self.queries_to_answers
-                )
-
+            question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
                 Path(self.current_config), question_wise_results, total_results
             )
