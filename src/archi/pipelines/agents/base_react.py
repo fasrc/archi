@@ -333,6 +333,22 @@ class BaseReActAgent:
                 latest_messages=[],
                 agent_inputs=agent_inputs,
             )
+        except Exception as exc:
+            # A context-window overflow must degrade gracefully rather than crash,
+            # mirroring stream()/astream(). Only genuine context-length overflows
+            # are degraded; any other error re-raises so real bugs still surface.
+            if not self._is_context_overflow_error(exc):
+                raise
+            logger.warning(
+                "Context overflow during invoke for %s: %s",
+                self.__class__.__name__,
+                exc,
+            )
+            return self._handle_context_overflow(
+                error=exc,
+                agent_inputs=agent_inputs,
+                latest_messages=[],
+            )
 
     def stream(self, **kwargs) -> Iterator[PipelineOutput]:
         """Stream agent updates synchronously with structured trace events."""
@@ -1769,11 +1785,16 @@ class BaseReActAgent:
         """Return True if *exc* is a context-window / token-limit overflow error."""
         exc_type = type(exc).__name__
         exc_str = str(exc)
+        exc_lower = exc_str.lower()
         return (
             "ContextOverflow" in exc_type
             or "context_length_exceeded" in exc_str
             or "Input tokens exceed" in exc_str
-            or "maximum context length" in exc_str.lower()
+            or "maximum context length" in exc_lower
+            # OpenAI-compatible servers (e.g. vLLM) phrase it differently:
+            # "the model's context length is only N, resulting in a maximum input length of N".
+            or "context length is only" in exc_lower
+            or "maximum input length" in exc_lower
         )
 
     def _handle_context_overflow(
@@ -1793,8 +1814,20 @@ class BaseReActAgent:
             original_messages: List[BaseMessage] = list(
                 agent_inputs.get("messages") or []
             )
-            # Keep only the last human message to stay well within context
-            trimmed: List[BaseMessage] = [m for m in original_messages[-1:] if True]
+            # Keep only the last human message to stay well within context. Selecting
+            # the last *human* message (not simply the last message) matters for agents
+            # with forced initial retrieval (e.g. FASRCDocsAgent): their message list
+            # ends with a large ToolMessage of retrieved chunks — often the very payload
+            # that overflowed — so retrying with messages[-1:] would resend it and
+            # overflow again. Fall back to the last message only if no human message
+            # is present.
+            last_human = next(
+                (m for m in reversed(original_messages) if isinstance(m, HumanMessage)),
+                None,
+            )
+            trimmed: List[BaseMessage] = (
+                [last_human] if last_human is not None else original_messages[-1:]
+            )
             if trimmed:
                 try:
                     trimmed_inputs = {**agent_inputs, "messages": trimmed}
