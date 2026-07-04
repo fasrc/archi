@@ -10,6 +10,8 @@ Covers the `benchmark-run-resilience` capability of the openspec change
 
 from __future__ import annotations
 
+import math
+
 from src.utils.benchmark_resilience import (
     DEGRADED,
     FAILED,
@@ -140,6 +142,9 @@ def test_answer_and_score_degraded_is_excluded():
     # A degraded answer feeds neither RAGAS nor source scoring.
     assert bundle["dataset_result"] is None
     assert bundle["matches"] is None
+    # and it must NOT stamp `matched` onto its sources (Codex F4), or the HTML
+    # report would show a truncated-context answer as source-correct.
+    assert "matched" not in bundle["q_results"]["reference_sources_metadata"][0]
 
 
 def test_answer_and_score_exception_is_isolated():
@@ -191,7 +196,12 @@ def test_pair_ab_results_skips_non_scorable(monkeypatch):
 
 def test_source_hits_none_contributes_nothing():
     assert source_hits(None, [{"url": "x"}]) == (0, 0)
-    assert source_hits([], [{"url": "x"}]) == (0, 0)
+
+
+def test_source_hits_zero_reference_keeps_original_semantics():
+    # A clean row with no expected sources: empty match list is NOT a failure;
+    # original any([])/all([]) semantics are preserved (strict hit).
+    assert source_hits([], []) == (0, 1)
 
 
 def test_source_hits_relative_only():
@@ -206,14 +216,15 @@ def test_source_hits_strict():
 # --- build_ragas_aggregates / build_source_aggregates -----------------------
 
 
-def test_build_ragas_aggregates_na_when_none():
+def test_build_ragas_aggregates_nan_when_none():
     aggs = build_ragas_aggregates(None)
-    assert aggs == {
-        "aggregate_answer_relevancy": "n/a",
-        "aggregate_faithfulness": "n/a",
-        "aggregate_context_precision": "n/a",
-        "aggregate_context_recall": "n/a",
+    assert set(aggs) == {
+        "aggregate_answer_relevancy",
+        "aggregate_faithfulness",
+        "aggregate_context_precision",
+        "aggregate_context_recall",
     }
+    assert all(isinstance(v, float) and math.isnan(v) for v in aggs.values())
 
 
 def test_build_ragas_aggregates_means_when_present():
@@ -232,14 +243,14 @@ def test_build_ragas_aggregates_means_when_present():
     assert aggs["aggregate_faithfulness"] == 0.5
 
 
-def test_build_source_aggregates_na_when_no_scorable():
+def test_build_source_aggregates_zero_questions_is_numeric():
     assert build_source_aggregates(0.0, 0.0, 0) == {
-        "relative_source_accuracy": "n/a",
-        "source_accuracy": "n/a",
+        "relative_source_accuracy": 0.0,
+        "source_accuracy": 0.0,
     }
 
 
-def test_build_source_aggregates_divides_by_scorable_count():
+def test_build_source_aggregates_divides_by_total_count():
     aggs = build_source_aggregates(3.0, 1.0, 4)
     assert aggs["relative_source_accuracy"] == 0.75
     assert aggs["source_accuracy"] == 0.25
@@ -288,13 +299,13 @@ def test_process_config_sources_aggregate():
     assert total["source_accuracy"] == 1.0
 
 
-def test_process_config_all_failed_ragas_is_na():
+def test_process_config_all_failed_ragas_is_nan():
     agent = _ConfigStub(queries=[{"question": "q"}], bundles=[_fail_bundle()])
     qwr, total = agent._process_config({"RAGAS"})
     assert qwr["question_1"]["status"] == FAILED
-    # no scorable RAGAS input -> aggregates are n/a, not an empty-Dataset crash
-    assert total["aggregate_faithfulness"] == "n/a"
-    assert total["aggregate_answer_relevancy"] == "n/a"
+    # no scorable RAGAS input -> aggregates are NaN, not an empty-Dataset crash
+    assert math.isnan(total["aggregate_faithfulness"])
+    assert math.isnan(total["aggregate_answer_relevancy"])
 
 
 def test_process_config_skips_invalid_items():
@@ -302,4 +313,44 @@ def test_process_config_skips_invalid_items():
     qwr, total = agent._process_config({"SOURCES"})
     # both invalid items are skipped; the answer path is never reached
     assert qwr == {}
-    assert total["relative_source_accuracy"] == "n/a"
+    # denominator is the total question count (2); no hits -> 0.0, numeric
+    assert total["relative_source_accuracy"] == 0.0
+
+
+def test_process_config_passes_only_scorable_to_ragas(monkeypatch):
+    """RAGAS scoring must receive exactly the scorable rows aligned with
+    ragas_input, not the full result set (Codex F1)."""
+    import sys
+    import types
+
+    import pandas as pd
+
+    monkeypatch.setitem(
+        sys.modules,
+        "datasets",
+        types.SimpleNamespace(
+            Dataset=types.SimpleNamespace(from_list=lambda rows: rows)
+        ),
+    )
+
+    captured = {}
+
+    class _RagasStub(_ConfigStub):
+        def get_ragas_results(self, data, to_add):
+            captured["to_add_keys"] = list(to_add.keys())
+            return pd.DataFrame(
+                {
+                    "answer_relevancy": [1.0],
+                    "faithfulness": [1.0],
+                    "context_precision": [1.0],
+                    "context_recall": [1.0],
+                }
+            )
+
+    agent = _RagasStub(
+        queries=[{"question": "a"}, {"question": "b"}],
+        bundles=[_ok_bundle(), _fail_bundle()],
+    )
+    agent._process_config({"RAGAS"})
+    # question_2 failed (no ragas input) -> only question_1 reaches RAGAS
+    assert captured["to_add_keys"] == ["question_1"]

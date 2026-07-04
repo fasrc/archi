@@ -70,7 +70,10 @@ def source_hits(
     A relative hit means any reference source matched; a strict hit means every
     reference source matched.
     """
-    if not matches:
+    # Only a failed/degraded question (matches is None) contributes nothing. An
+    # empty match list (a clean zero-reference / should-refuse row) keeps the
+    # original semantics (any([])/all([])) and is NOT treated as a failure.
+    if matches is None:
         return (0, 0)
     relative = 1 if any(matches) else 0
     strict = 1 if len(matches) == len(reference_metadata) and all(matches) else 0
@@ -87,21 +90,26 @@ _RAGAS_AGG = {
 
 
 def build_ragas_aggregates(ragas_results: Any) -> Dict[str, Any]:
-    """Mean per RAGAS metric, or ``"n/a"`` for every metric when there is no
-    scorable input (``ragas_results is None`` — an all-failed configuration)."""
+    """Mean per RAGAS metric, or ``NaN`` for every metric when there is no scorable
+    input (``ragas_results is None`` — an all-failed configuration).
+
+    ``NaN`` (not the string ``"n/a"``) is used so the numeric consumers stay happy:
+    the leaderboard already maps ``NaN`` to an incomplete/None metric, and the HTML
+    report formats it as ``nan`` without raising on ``float`` / ``:.3f`` (Codex F2).
+    """
     if ragas_results is None:
-        return {key: "n/a" for key in _RAGAS_AGG}
+        return {key: float("nan") for key in _RAGAS_AGG}
     return {key: ragas_results[col].mean() for key, col in _RAGAS_AGG.items()}
 
 
 def build_source_aggregates(
-    relative_hits: float, strict_hits: float, scorable_count: int
+    relative_hits: float, strict_hits: float, total_count: int
 ) -> Dict[str, Any]:
-    """Source-accuracy aggregates over the scorable questions, or ``"n/a"`` when
-    none are scorable (denominator would be zero)."""
-    if not scorable_count:
-        return {"relative_source_accuracy": "n/a", "source_accuracy": "n/a"}
+    """Source-accuracy aggregates over ``total_count`` questions (kept numeric so the
+    HTML report's count derivation stays consistent). Zero questions -> ``0.0``."""
+    if not total_count:
+        return {"relative_source_accuracy": 0.0, "source_accuracy": 0.0}
     return {
-        "relative_source_accuracy": relative_hits / scorable_count,
-        "source_accuracy": strict_hits / scorable_count,
+        "relative_source_accuracy": relative_hits / total_count,
+        "source_accuracy": strict_hits / total_count,
     }

@@ -1152,7 +1152,7 @@ class Benchmarker:
 
         if "RAGAS" in modes_being_run:
             # No scorable input (all failed/degraded) -> ragas_results stays None and
-            # build_ragas_aggregates emits n/a, instead of an empty Dataset that raises.
+            # build_ragas_aggregates emits NaN, instead of an empty Dataset that raises.
             ragas_results = None
             if ragas_input:
                 logger.info("Starting to collect RAGAS results")
@@ -1161,17 +1161,24 @@ class Benchmarker:
                 )
 
                 data = Dataset.from_list(ragas_input)
-                ragas_results = self.get_ragas_results(data, question_wise_results)
+                # get_ragas_results writes metric rows back by position into the
+                # dict it is given, so it MUST receive exactly the scorable rows
+                # that produced ragas_input (same order) — passing the full
+                # question_wise_results would misalign and index-error (Codex F1).
+                ragas_results = self.get_ragas_results(
+                    data, scorable_items(question_wise_results)
+                )
             total_results.update(build_ragas_aggregates(ragas_results))
 
         if "SOURCES" in modes_being_run:
-            # Denominator is the count of scorable (clean-success) questions, so a
-            # failed/degraded question is neither a numerator hit nor a silent 0.
+            # Denominator is the total question count, matching how the HTML report
+            # derives per-bucket counts (generate_benchmark_report uses len(questions)).
+            # A failed/degraded row contributes no hit, so it counts as a miss.
             total_results.update(
                 build_source_aggregates(
                     relative_source_accuracy,
                     source_accuracy,
-                    len(scorable_items(question_wise_results)),
+                    len(self.queries_to_answers),
                 )
             )
 
@@ -1224,8 +1231,13 @@ class Benchmarker:
             q_results["reference_sources_match_fields"] = match_fields_list
             q_results["reference_sources_metadata"] = formatted_reference_sources
 
+            # A degraded (context-overflow) answer must not be scored as a clean
+            # success: skip source matching AND RAGAS input for it, so it neither
+            # stamps `matched` onto its sources (Codex F4) nor feeds aggregates.
+            scorable = status == OK
+
             matches = None
-            if "SOURCES" in modes_being_run:
+            if "SOURCES" in modes_being_run and scorable:
                 matches = self.get_source_results(result, formatted_reference_sources)
                 for idx, source in enumerate(q_results["reference_sources_metadata"]):
                     source["matched"] = matches[idx]
@@ -1247,7 +1259,7 @@ class Benchmarker:
             )
 
             dataset_result = None
-            if "RAGAS" in modes_being_run:
+            if "RAGAS" in modes_being_run and scorable:
                 contexts = [s.page_content for s in result["source_documents"]]
                 dataset_result = {
                     "question": question,
@@ -1255,12 +1267,6 @@ class Benchmarker:
                     "answer": result["answer"],
                     "ground_truth": reference_answer,
                 }
-
-            # A degraded answer must not feed aggregates or source scoring as a
-            # clean success (Codex F3 / PR#91 F2): drop its RAGAS input and matches.
-            if status != OK:
-                dataset_result = None
-                matches = None
 
             return {
                 "q_results": q_results,
