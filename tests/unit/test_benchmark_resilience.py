@@ -107,7 +107,7 @@ class _StubBenchmarker(Benchmarker):
         return [True]
 
 
-_QITEM = {"question": "how do I do X?", "answer": "ref", "sources": []}
+_QITEM = {"user_input": "how do I do X?", "reference": "ref", "sources": []}
 _MODES = {"RAGAS", "SOURCES"}
 
 
@@ -126,6 +126,15 @@ def test_answer_and_score_clean_success():
     assert bundle["q_results"]["status"] == OK
     assert bundle["q_results"]["answer"] == "an answer"
     assert bundle["dataset_result"] is not None  # RAGAS input built
+    # RAGAS input uses the modern ragas 0.3.5 dialect, not legacy columns.
+    assert set(bundle["dataset_result"]) == {
+        "user_input",
+        "retrieved_contexts",
+        "response",
+        "reference",
+    }
+    assert bundle["dataset_result"]["reference"] == "ref"
+    assert bundle["dataset_result"]["response"] == "an answer"
     assert bundle["matches"] == [True]
     # per-source match stamped, and source metadata/truncation captured
     assert bundle["q_results"]["reference_sources_metadata"][0]["matched"] is True
@@ -264,7 +273,7 @@ class _ConfigStub(Benchmarker):
 
     def __init__(self, queries, bundles):
         self.queries_to_answers = queries
-        self.required_fields = ["question"]
+        self.required_fields = ["user_input"]
         self._bundles = list(bundles)
 
     def _answer_and_score_question(self, question_item, question_id, modes_being_run):
@@ -278,7 +287,7 @@ def _ok_bundle():
             "question": "q",
             "reference_sources_metadata": [{"url": "x"}],
         },
-        "dataset_result": {"question": "q"},
+        "dataset_result": {"user_input": "q", "reference": "r"},
         "matches": [True],
     }
 
@@ -292,7 +301,7 @@ def _fail_bundle():
 
 
 def test_process_config_sources_aggregate():
-    agent = _ConfigStub(queries=[{"question": "q"}], bundles=[_ok_bundle()])
+    agent = _ConfigStub(queries=[{"user_input": "q"}], bundles=[_ok_bundle()])
     qwr, total = agent._process_config({"SOURCES"})
     assert set(qwr) == {"question_1"}
     assert total["relative_source_accuracy"] == 1.0
@@ -300,7 +309,7 @@ def test_process_config_sources_aggregate():
 
 
 def test_process_config_all_failed_ragas_is_nan():
-    agent = _ConfigStub(queries=[{"question": "q"}], bundles=[_fail_bundle()])
+    agent = _ConfigStub(queries=[{"user_input": "q"}], bundles=[_fail_bundle()])
     qwr, total = agent._process_config({"RAGAS"})
     assert qwr["question_1"]["status"] == FAILED
     # no scorable RAGAS input -> aggregates are NaN, not an empty-Dataset crash
@@ -317,40 +326,26 @@ def test_process_config_skips_invalid_items():
     assert total["relative_source_accuracy"] == 0.0
 
 
-def test_process_config_passes_only_scorable_to_ragas(monkeypatch):
-    """RAGAS scoring must receive exactly the scorable rows aligned with
-    ragas_input, not the full result set (Codex F1)."""
-    import sys
-    import types
-
-    import pandas as pd
-
-    monkeypatch.setitem(
-        sys.modules,
-        "datasets",
-        types.SimpleNamespace(
-            Dataset=types.SimpleNamespace(from_list=lambda rows: rows)
-        ),
-    )
-
+def test_process_config_passes_only_scorable_to_ragas():
+    """RAGAS scoring must receive exactly the scorable rows, keyed by question
+    (not the full result set, and by key never positionally — Codex F1/F5)."""
     captured = {}
 
     class _RagasStub(_ConfigStub):
-        def get_ragas_results(self, data, to_add):
-            captured["to_add_keys"] = list(to_add.keys())
-            return pd.DataFrame(
-                {
-                    "answer_relevancy": [1.0],
-                    "faithfulness": [1.0],
-                    "context_precision": [1.0],
-                    "context_recall": [1.0],
-                }
-            )
+        def get_ragas_results(self, rows, keys, results_by_key):
+            captured["keys"] = list(keys)
+            captured["rows"] = list(rows)
+            captured["results_keys"] = list(results_by_key.keys())
+            return {"aggregate_faithfulness": 1.0}
 
     agent = _RagasStub(
-        queries=[{"question": "a"}, {"question": "b"}],
+        queries=[{"user_input": "a"}, {"user_input": "b"}],
         bundles=[_ok_bundle(), _fail_bundle()],
     )
-    agent._process_config({"RAGAS"})
-    # question_2 failed (no ragas input) -> only question_1 reaches RAGAS
-    assert captured["to_add_keys"] == ["question_1"]
+    _, total = agent._process_config({"RAGAS"})
+    # question_2 failed (no ragas input) -> only question_1 reaches RAGAS, keyed.
+    assert captured["keys"] == ["question_1"]
+    assert captured["results_keys"] == ["question_1"]
+    # exactly the scorable row's modern dataset_result is scored.
+    assert captured["rows"] == [{"user_input": "q", "reference": "r"}]
+    assert total["aggregate_faithfulness"] == 1.0
