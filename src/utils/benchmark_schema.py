@@ -90,9 +90,18 @@ def required_fields_for_modes(benchmarking_configs: Any) -> List[str]:
     SOURCES mode and mis-score). RAGAS mode adds NOTHING — an empty ``reference``
     is valid input, ineligible only for the context metrics. Returns a fresh list
     each call (never accumulates across configs).
+
+    ``benchmarking_configs`` is the ``services.benchmarking`` mapping; the active
+    modes live in its ``modes`` LIST (not as top-level keys), so membership is
+    tested against that list.
     """
     fields = ["user_input"]
-    if isinstance(benchmarking_configs, dict) and "SOURCES" in benchmarking_configs:
+    modes = (
+        benchmarking_configs.get("modes", [])
+        if isinstance(benchmarking_configs, dict)
+        else []
+    )
+    if "SOURCES" in modes:
         fields.append("sources")
     return fields
 

@@ -168,6 +168,21 @@ def test_answer_and_score_exception_is_isolated():
     assert bundle["matches"] is None
 
 
+def test_answer_and_score_draft_row_display_safe_but_ragas_reference_raw():
+    """A draft row (empty `reference`) is scorable: its ragas payload keeps the raw
+    empty `reference` (which drives context-metric eligibility), but the
+    human-facing `reference_answer` is an "N/A" sentinel so the result / Argilla
+    record never carries a blank required field (adversarial review)."""
+    draft_item = {"user_input": "draft q", "sources": []}  # no `reference`
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(draft_item, 1, _MODES)
+    assert bundle["q_results"]["status"] == OK
+    # display / Argilla sink gets a non-empty sentinel...
+    assert bundle["q_results"]["reference_answer"] == "N/A"
+    # ...while the ragas payload keeps the raw empty reference for eligibility.
+    assert bundle["dataset_result"]["reference"] == ""
+
+
 # --- pair_ab_results excludes failed/degraded rows (F4) ---------------------
 
 

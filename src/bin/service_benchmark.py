@@ -1230,7 +1230,12 @@ class Benchmarker:
             q_results: Dict[str, Any] = {}
             q_results["time_elapsed"] = end - start
             q_results["question"] = question
-            q_results["reference_answer"] = reference_answer
+            # reference_answer is "" for a draft row (empty reference). That raw
+            # empty drives context-metric eligibility in dataset_result below, but
+            # the human-facing result / Argilla record needs a non-empty value
+            # (its reference_answer field is a required TextField), so store an
+            # "N/A" sentinel for display while the ragas payload keeps the raw "".
+            q_results["reference_answer"] = reference_answer or "N/A"
             q_results["answer"] = result["answer"]
             q_results["status"] = status
             q_results["messages"] = self.prepare_messages(result.get("messages", []))

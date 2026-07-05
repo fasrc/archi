@@ -203,3 +203,18 @@ def test_merge_anchor_questions_normalizes_and_dedups_on_user_input(tmp_path):
     assert new["reference"] == "ref"
     assert new["anchor_type"] == "reasoning"
     assert "question" not in new and "answer" not in new
+
+
+def test_merge_anchor_questions_skips_empty_anchor_file(tmp_path):
+    anchor_file = tmp_path / "anchors.json"
+    anchor_file.write_text("[]")  # empty/malformed -> skip, leave the bank untouched
+
+    bench = object.__new__(Benchmarker)
+    original = [{"user_input": "q", "reference": "r"}]
+    bench.queries_to_answers = list(original)
+    bench.benchmarking_configs = {"anchors": {"path": str(anchor_file)}}
+    bench.data_path = str(tmp_path)
+
+    bench._merge_anchor_questions()
+
+    assert bench.queries_to_answers == original

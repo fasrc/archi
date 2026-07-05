@@ -116,23 +116,36 @@ def test_normalize_bank_tolerates_non_dict_items():
 def test_ragas_mode_requires_only_user_input_not_reference():
     # An empty reference is a valid draft row; load must not reject it. Schema
     # validation is separate from per-metric eligibility.
-    assert required_fields_for_modes({"RAGAS": {}}) == ["user_input"]
+    assert required_fields_for_modes({"modes": ["RAGAS"]}) == ["user_input"]
 
 
 def test_sources_mode_additionally_requires_sources():
-    fields = required_fields_for_modes({"SOURCES": {}})
+    fields = required_fields_for_modes({"modes": ["SOURCES"]})
     assert "user_input" in fields
     assert "sources" in fields
     assert "reference" not in fields
 
 
 def test_both_modes_require_user_input_and_sources_only():
-    fields = required_fields_for_modes({"RAGAS": {}, "SOURCES": {}})
+    fields = required_fields_for_modes({"modes": ["RAGAS", "SOURCES"]})
     assert set(fields) == {"user_input", "sources"}
+
+
+def test_modes_are_read_from_the_modes_list_not_top_level_keys():
+    # The active modes live in the `modes` list of services.benchmarking, NOT as
+    # top-level keys. A stray top-level "SOURCES" key must NOT enable sources
+    # enforcement (the pre-existing dead-check bug this fix closes).
+    assert required_fields_for_modes({"SOURCES": {}, "modes": ["RAGAS"]}) == [
+        "user_input"
+    ]
 
 
 def test_required_fields_tolerates_non_dict_config():
     assert required_fields_for_modes(None) == ["user_input"]
+
+
+def test_required_fields_tolerates_config_without_modes():
+    assert required_fields_for_modes({"provider": "local"}) == ["user_input"]
 
 
 # --- per-metric row eligibility ---------------------------------------------
