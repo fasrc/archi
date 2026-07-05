@@ -23,6 +23,11 @@ out-of-scope refusal).
 - **WHEN** the harness loads a bank whose records use the legacy `question`/`answer` schema
 - **THEN** each record is normalized to `user_input`/`reference` — the ground-truth answer mapping to `reference` (never `response`) — before scoring, and the run proceeds without error
 
+#### Scenario: Required fields are validated per mode
+
+- **WHEN** a normalized bank is validated for the modes being run
+- **THEN** `user_input` is required for every record, `reference` is additionally required for RAGAS mode, and `sources` (with compatible match fields) is additionally required for SOURCES mode — so a modern bank lacking `sources` does not silently enter SOURCES mode and mis-score
+
 #### Scenario: Results can be sliced by question type
 
 - **WHEN** a typed bank is used and results are analyzed
@@ -31,7 +36,7 @@ out-of-scope refusal).
 #### Scenario: Out-of-scope questions test refusal, not recall
 
 - **WHEN** a should-refuse question (covering a system outside the FASRC corpus) is scored
-- **THEN** the expected answer is a referral/acknowledgement of the gap, so a confident fabricated answer is counted as a failure
+- **THEN** its `reference` holds a non-empty referral/acknowledgement of the gap (so a confident fabricated answer counts as a failure) — meaning should-refuse rows are a scored refusal case, NOT an empty-`reference` case
 
 ## ADDED Requirements
 
@@ -44,7 +49,9 @@ out-of-scope refusal).
   set this change scores over. Requirements below deliberately do NOT restate keyed
   per-question attribution. They DO own per-metric scored denominators, because the
   sibling's whole-column `build_ragas_aggregates` (a single skip-NaN mean per metric)
-  structurally cannot express a different denominator for context vs answer metrics.
+  structurally cannot express a different denominator for context vs answer metrics —
+  and they own attaching each per-metric subset result back by #92's question key
+  (consuming that key, not adding a positional join).
 -->
 
 ### Requirement: RAGAS scoring uses the ragas 0.3.5 EvaluationDataset contract
@@ -70,9 +77,11 @@ SHALL NOT be passed into the ragas records.
 ### Requirement: Per-metric row eligibility for empty required columns
 
 The harness SHALL score each RAGAS metric only over rows whose required columns are
-populated. When a row's `reference` is empty (for example an intentional
-should-refuse question), `context_precision` and `context_recall` SHALL exclude
-that row. Each metric SHALL be scored over its own eligible `EvaluationDataset`, so
+populated. When a row's `reference` is empty (for example a question authored
+without a confirmed ground-truth answer yet — a DRAFT/unlocked reference;
+should-refuse rows do NOT qualify, they carry a non-empty referral reference),
+`context_precision` and `context_recall` SHALL exclude that row. Each metric SHALL
+be scored over its own eligible `EvaluationDataset`, so
 its aggregate is the mean over the eligible rows — **not** a skip-NaN mean over the
 full set — and the harness SHALL report each metric's scored denominator
 (`n_scored / n_total`). This data-emptiness eligibility composes with the run-status
@@ -98,3 +107,13 @@ which supplies the scorable candidate set the eligibility is applied on top of.
 
 - **WHEN** the run-resilience layer has already excluded failed/degraded rows from the scorable set
 - **THEN** per-metric eligibility is applied to that scorable set (not the raw bank), so status-excluded and empty-`reference` rows are both absent from a context metric's denominator
+
+#### Scenario: Per-metric subset scores attach by question key
+
+- **WHEN** a metric is scored over a subset that excludes some rows
+- **THEN** each returned score is attached back to its originating question by #92's per-question key carried through the subset, so an excluded row never shifts another question's score (no positional write-back)
+
+#### Scenario: A metric with no eligible rows records n/a
+
+- **WHEN** a metric's eligible subset is empty (every scorable row lacks that metric's required column) while the config still has answered questions
+- **THEN** the harness records `n/a` / `0 of n_total` for that metric instead of invoking RAGAS on an empty `EvaluationDataset`

@@ -99,9 +99,17 @@ carries it in unchanged. No new mount, no new bridge.
 - **[Migrating the four banks could preserve stale facts]** (`anchor_questions.json`
   still has the old `--gres=gpu:N` form) → Migration is schema-only; factual
   corrections are tracked separately and out of scope here.
-- **[Cross-repo coordination with the editor]** → Not a hard dependency:
-  normalize-on-read means the harness tolerates either dialect, so the editor's
-  preserve-rest change can land independently and in any order.
+- **[Editor round-trip can still land ground truth in `response`]** → The editor's
+  *authoring* UI writes `reference` correctly, but its `ragas.js` *import* path maps
+  legacy `answer→response` (not `→reference`). A legacy bank imported through the
+  editor therefore carries ground truth in `response` with an empty `reference`,
+  which the harness would mis-score. The archi normalizer deliberately does NOT try
+  to repair this: a populated `response` is ambiguous (it can be a legitimate
+  pre-recorded agent answer), so a heuristic risks clobbering real data. Instead,
+  fixing the editor's import mapping to `answer→reference` is an explicit part of the
+  **companion `ragas-json-editor` change** and is a dependency for the drop-in editor
+  round-trip promise — NOT for the harness's own dialect fix, which still tolerates
+  hand-authored modern and legacy-`answer` banks in any order.
 
 ## Migration Plan
 

@@ -27,8 +27,12 @@ both sides of the seam.
   require.
 - Accept legacy banks via a normalize-on-read shim (`question→user_input`,
   `answer→reference`, `contexts→retrieved_contexts`) so existing and
-  externally-supplied files keep loading. Migrate the four in-repo banks to the
-  modern schema so new authoring is clean.
+  externally-supplied files keep loading. Migrate the in-repo banks
+  (`fasrc_ragas_queries`, `anchor_questions`, `queries`) to the modern schema — and
+  normalize the **separate anchor-file load path** too (`_merge_anchor_questions`
+  keys dedup on `question`), or migrated anchors get silently skipped.
+  (`snow_ragas_queries_pt1.json` is gitignored/operator-local — an operator handoff,
+  not a tracked migration.)
 - Score each metric only over rows whose required columns are populated — skip
   `context_precision`/`context_recall` when `reference` is empty (the intentional
   `should_refuse` rows) — by scoring each metric over its **own eligible
@@ -50,10 +54,13 @@ dialect, the normalizer, per-metric data-eligibility, and the per-metric scored
 denominators that #92's whole-column aggregate cannot express, as further helpers on
 the same seam.
 
-Companion (separate repo, its own proposal): `fasrc/ragas-json-editor` preserves
-the extension fields on edit so a bank can round-trip through the browser tool
-without losing SOURCES/anchor data. The normalize-on-read contract is the shared
-seam between the two changes.
+Companion (separate repo, its own proposal): `fasrc/ragas-json-editor` (a) preserves
+the extension fields on edit so a bank round-trips through the browser tool without
+losing SOURCES/anchor data, and (b) fixes its `ragas.js` import mapping from
+`answer→response` to `answer→reference` so a legacy bank imported through the editor
+keeps ground truth in `reference`. The normalize-on-read contract is the shared seam;
+(b) is a dependency for the drop-in editor round-trip (the harness's own dialect fix
+does not depend on it).
 
 ## Capabilities
 
@@ -78,8 +85,10 @@ seam between the two changes.
   which moves this region substantially. The normalizer and the per-metric
   eligibility helper land in / beside `src/utils/benchmark_resilience.py` (#92's
   pure module), not a standalone new file.
-- **Data:** `examples/benchmarking/{fasrc_ragas_queries,snow_ragas_queries_pt1,anchor_questions,queries}.json`
-  migrated to the modern schema.
+- **Data:** `examples/benchmarking/{fasrc_ragas_queries,anchor_questions,queries}.json`
+  migrated to modern schema; the anchor-file load path (`_merge_anchor_questions`,
+  keys on `question`) normalized alongside. `snow_ragas_queries_pt1.json` is
+  gitignored/operator-local — an operator handoff, not an in-repo migration.
 - **Config / docs:** `queries_path` field docs in `base-config.yaml`,
   `fasrc_ragas_queries.README.md`, `docs/docs/benchmarking.md`.
 - **Tests:** `test_ragas_evaluator_local_mode.py`,

@@ -12,20 +12,23 @@
 
 ## 2. Harness dialect rewrite (on the post-#92 loop)
 
-- [ ] 2.1 Write failing test: bank load normalizes both legacy and modern records; required-field validation is on `user_input`
+- [ ] 2.1 Write failing test: bank load normalizes both legacy and modern records; required-field validation is **mode-specific** after normalization — `user_input` always, `reference` additionally for RAGAS, `sources` (+ match fields) additionally for SOURCES. Do NOT flatten to `user_input`-only: a modern bank lacking `sources` would then enter SOURCES mode and the source scorer would mis-score (Codex #93)
 - [ ] 2.2 Wire normalize-on-read into the bank load path (`QandA.txt` → `queries_to_answers`), re-anchored to the merged loop
 - [ ] 2.3 Write failing test: RAGAS scoring input is a `ragas.EvaluationDataset` with modern columns only, extension fields absent
 - [ ] 2.4 Replace the raw `datasets.Dataset` + legacy columns with `EvaluationDataset.from_list` keyed `user_input/retrieved_contexts/response/reference`, built from #92's scorable set
-- [ ] 2.5 Write failing test: empty-`reference` rows are excluded from `context_precision`/`context_recall`; `answer_relevancy`/`faithfulness` still score them
+- [ ] 2.5 Write failing test: empty-`reference` rows excluded from `context_precision`/`context_recall` while `answer_relevancy`/`faithfulness` still score them; per-metric subset scores attach to the correct question; a zero-eligible-row metric records `n/a` without calling RAGAS
 - [ ] 2.6 Implement per-metric eligibility as a helper alongside #92's `scorable_items`/`is_scorable` (data-emptiness axis composing on top of the status axis): score each metric over its own eligible `EvaluationDataset` and report its `n_scored / n_total` — a mean over real rows, not a skip-NaN mean over the full set
+- [ ] 2.7 Attach each per-metric subset result back by #92's **per-question key** carried through the subset — never positionally — so excluding a row never shifts other rows' scores onto the wrong `question_wise_results` entries (this consumes #92's keying; it is not a positional-join replacement) (Codex #93)
+- [ ] 2.8 Guard the empty per-metric subset: when a metric has zero eligible rows (e.g. every scorable row has an empty `reference`), record `n/a` / `0 of n_total` instead of calling RAGAS on an empty `EvaluationDataset` — #92's all-failed guard is config-level, not metric-level (Codex #93)
 
 ## 3. Data bank migration (schema-only)
 
-- [ ] 3.1 Migrate `examples/benchmarking/fasrc_ragas_queries.json` (`question→user_input`, `answer→reference`; keep `sources`/`source_match_field`/`anchor_type`/`notes`)
-- [ ] 3.2 Migrate `snow_ragas_queries_pt1.json`
-- [ ] 3.3 Migrate `anchor_questions.json` (schema-only; note stale KB facts are tracked separately, not corrected here)
+- [ ] 3.1 Migrate `examples/benchmarking/fasrc_ragas_queries.json` (`question→user_input`, `answer→reference`; keep `sources`/`source_match_field`/`anchor_type`/`notes`). `should_refuse` rows keep their **non-empty referral** in `reference` — they are a refusal-scoring case, NOT an empty-reference case (Codex #93)
+- [ ] 3.2 Normalize the **anchor-file load path** before migrating anchors: `_merge_anchor_questions` keys dedup/append on `question` (`service_benchmark.py:1489`), a load separate from `queries_path`; normalize anchors on read (or teach the merge to read `user_input`) so migrated anchors are not silently skipped (Codex #93)
+- [ ] 3.3 Migrate `anchor_questions.json` (schema-only; **paired with 3.2**; stale KB facts tracked separately, not corrected here)
 - [ ] 3.4 Migrate `queries.json`
-- [ ] 3.5 Verify each migrated bank loads against the modern contract without a missing-field error
+- [ ] 3.5 `snow_ragas_queries_pt1.json` is **gitignored/operator-local** real ServiceNow data (`.gitignore:38`, untracked) — NOT a tracked migration. Ship an operator handoff note (run the normalizer on the local copy); never commit or require this file (Codex #93)
+- [ ] 3.6 Verify each migrated in-repo bank loads against the modern contract without a missing-field error
 
 ## 4. Docs + config
 
