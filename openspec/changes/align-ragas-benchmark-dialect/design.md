@@ -69,6 +69,11 @@ taking #92's scorable set as the candidate pool, and reports each metric's
 aggregate is a mean over real rows, never a skip-NaN mean — this **structurally
 avoids** the silent-denominator bug rather than routing through it. *Not owned here:*
 the positional→keyed attribution and status isolation — those are #92's.
+**Schema validation is separate from eligibility:** RAGAS bank-load validation
+requires only `user_input`; an empty `reference` is valid input (a draft row) that
+eligibility excludes from the context metrics — load must not reject it, or the
+draft / `n/a` cases the design depends on could never be benchmarked (only SOURCES
+mode adds a load requirement, `sources`).
 *Alternative rejected:* full-dataset-per-metric relying on NaN skip — the
 silent-denominator bug itself.
 

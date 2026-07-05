@@ -12,7 +12,7 @@
 
 ## 2. Harness dialect rewrite (on the post-#92 loop)
 
-- [ ] 2.1 Write failing test: bank load normalizes both legacy and modern records; required-field validation is **mode-specific** after normalization — `user_input` always, `reference` additionally for RAGAS, `sources` (+ match fields) additionally for SOURCES. Do NOT flatten to `user_input`-only: a modern bank lacking `sources` would then enter SOURCES mode and the source scorer would mis-score (Codex #93)
+- [ ] 2.1 Write failing test: bank load normalizes both legacy and modern records; required-field validation is **mode-specific and separate from metric eligibility** after normalization — `user_input` always; `sources` (+ match fields) additionally for SOURCES (a modern bank lacking `sources` must not enter SOURCES mode and mis-score). RAGAS mode requires only `user_input` at load: an empty `reference` is **valid input** (a draft row) that per-metric eligibility later excludes from the context metrics, so load validation MUST NOT reject it (Codex #93 review + adversarial)
 - [ ] 2.2 Wire normalize-on-read into the bank load path (`QandA.txt` → `queries_to_answers`), re-anchored to the merged loop
 - [ ] 2.3 Write failing test: RAGAS scoring input is a `ragas.EvaluationDataset` with modern columns only, extension fields absent
 - [ ] 2.4 Replace the raw `datasets.Dataset` + legacy columns with `EvaluationDataset.from_list` keyed `user_input/retrieved_contexts/response/reference`, built from #92's scorable set

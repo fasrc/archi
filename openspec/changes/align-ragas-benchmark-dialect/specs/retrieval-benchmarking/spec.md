@@ -26,7 +26,8 @@ out-of-scope refusal).
 #### Scenario: Required fields are validated per mode
 
 - **WHEN** a normalized bank is validated for the modes being run
-- **THEN** `user_input` is required for every record, `reference` is additionally required for RAGAS mode, and `sources` (with compatible match fields) is additionally required for SOURCES mode — so a modern bank lacking `sources` does not silently enter SOURCES mode and mis-score
+- **THEN** `user_input` is required for every record, and SOURCES mode additionally requires `sources` (with compatible match fields) so a modern bank lacking `sources` does not silently enter SOURCES mode and mis-score
+- **AND** RAGAS mode does NOT require `reference` at load — an empty `reference` is valid input (a draft/unconfirmed row) that the per-metric eligibility below excludes from `context_precision`/`context_recall` while the answer metrics still score it; schema validation is therefore separate from metric eligibility and must not reject empty-`reference` rows
 
 #### Scenario: Results can be sliced by question type
 

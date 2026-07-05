@@ -34,11 +34,14 @@ both sides of the seam.
   (`snow_ragas_queries_pt1.json` is gitignored/operator-local — an operator handoff,
   not a tracked migration.)
 - Score each metric only over rows whose required columns are populated — skip
-  `context_precision`/`context_recall` when `reference` is empty (the intentional
-  `should_refuse` rows) — by scoring each metric over its **own eligible
+  `context_precision`/`context_recall` when `reference` is empty (draft/unconfirmed
+  rows — **never** `should_refuse`, which keep a non-empty referral `reference` and
+  are scored as refusal cases) — by scoring each metric over its **own eligible
   `EvaluationDataset`** and reporting its `n_scored / n_total`, instead of a skip-NaN
   mean over the full set. This eligibility **composes on top of** PR #92's run-status
-  filtering (failed/degraded rows), which supplies the scorable candidate set.
+  filtering (failed/degraded rows), which supplies the scorable candidate set. Bank
+  schema validation stays **separate** from this eligibility: an empty `reference` is
+  valid input, ineligible only for the context metrics — load must not reject it.
 - archi extension fields (`sources`, `source_match_field`, `anchor_type`, `notes`)
   are carried alongside but never passed into ragas; SOURCES mode and anchor
   slicing keep reading them directly.
