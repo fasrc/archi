@@ -30,6 +30,8 @@ services:
     model: {{ services.benchmarking.model | default("", true) }}
     ollama_url: {{ services.benchmarking.ollama_url | default("", true) }}
     out_dir: {{ services.benchmarking.out_dir | default(".", true) }}
+    # Question bank in ragas 0.3.5's modern dialect (user_input/reference); legacy
+    # question/answer banks are normalized on read (see docs/docs/benchmarking.md).
     queries_path: {{ services.benchmarking.queries_path | default("queries", true) }}
     modes:
       {%- for mode in services.benchmarking.modes | default(["SOURCES", "RAGAS"]) %}

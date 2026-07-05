@@ -26,17 +26,20 @@ Uses the [Ragas](https://docs.ragas.io/en/stable/concepts/metrics/) evaluator fo
 
 ## Preparing the Queries File
 
-Provide questions, expected answers, and correct sources in JSON format:
+Provide questions, ground-truth answers, and correct sources in ragas 0.3.5's
+modern JSON schema (`user_input`/`reference`). Banks authored in the legacy
+`question`/`answer` schema are still accepted — the harness normalizes them on
+read (`question`→`user_input`, `answer`→`reference`, `contexts`→`retrieved_contexts`).
 
 ```json
 [
   {
-    "question": "Does Jorian Benke work with the PPC?",
+    "user_input": "Does Jorian Benke work with the PPC?",
     "sources": [
       "https://ppc.mit.edu/blog/2025/07/14/welcome-our-first-ever-in-house-masters-student/",
       "CMSPROD-42"
     ],
-    "answer": "Yes, Jorian works with the PPC and her topic is Lorentz invariance.",
+    "reference": "Yes, Jorian works with the PPC and her topic is Lorentz invariance.",
     "source_match_field": ["url", "ticket_id"]
   }
 ]
@@ -44,10 +47,15 @@ Provide questions, expected answers, and correct sources in JSON format:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `question` | Yes | The question to ask |
-| `sources` | Yes | List of source identifiers (URLs, ticket IDs, etc.) |
-| `answer` | Yes | Expected answer (used for RAGAS evaluation) |
+| `user_input` | Yes | The question to ask (ragas `user_input`) |
+| `sources` | SOURCES mode | List of source identifiers (URLs, ticket IDs, etc.) |
+| `reference` | No¹ | Ground-truth answer (ragas `reference`, used for RAGAS evaluation) |
 | `source_match_field` | No | Metadata fields to match sources against (defaults to config value) |
+
+¹ Only `user_input` is required at load (plus `sources` for SOURCES mode). An
+empty `reference` is a valid draft row: it is skipped by the context metrics
+(`context_precision`/`context_recall`) but still scored by `answer_relevancy` and
+`faithfulness`.
 
 See `examples/benchmarking/queries.json` for a complete example.
 
@@ -83,7 +91,7 @@ services:
 | `model` | — | Model used for benchmark question answering |
 | `ollama_url` | — | SUT base URL when `provider: local` (e.g. an Ollama server, or an OpenAI-compatible `/v1` endpoint such as a vLLM) |
 | `provider_mode` | _auto_ | Local SUT client mode: `openai_compat` (ChatOpenAI) or `ollama` (ChatOllama). Auto-detected from `ollama_url` — a `/v1` endpoint → `openai_compat`, otherwise `ollama`. Set explicitly to override |
-| `queries_path` | — | Path to the queries JSON file |
+| `queries_path` | — | Path to the queries JSON file (ragas modern dialect `user_input`/`reference`; legacy `question`/`answer` banks are normalized on read) |
 | `out_dir` | — | Output directory for results (must exist) |
 | `modes` | — | List of evaluation modes (`RAGAS`, `SOURCES`) |
 | `mode_settings.ragas_settings.timeout` | `180` | Max seconds per QA pair for RAGAS evaluation |

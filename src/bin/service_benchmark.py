@@ -12,7 +12,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
 
-import pandas as pd
 import yaml
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -31,6 +30,11 @@ from src.utils.benchmark_resilience import (
     is_scorable,
     scorable_items,
     source_hits,
+)
+from src.utils.benchmark_schema import (
+    normalize_bank,
+    required_fields_for_modes,
+    score_metrics_per_eligibility,
 )
 from src.utils.config_access import get_static_config
 from src.utils.env import read_secret
@@ -572,8 +576,8 @@ class ResultHandler:
 class Benchmarker:
 
     def __init__(self, configs: Path, q_to_a: dict[str, str]):
-        self.queries_to_answers = q_to_a
-        self.required_fields = ["question"]
+        self.queries_to_answers = normalize_bank(q_to_a)
+        self.required_fields = ["user_input"]
         self.benchmark_name = os.environ["container_name"]
         self.all_config_files = self.get_all_configs(configs)
         self.all_config_files.append("FINISHED")
@@ -606,10 +610,12 @@ class Benchmarker:
         del self.chain
         self.config = config
         self.benchmarking_configs = config["services"]["benchmarking"]
-        if "SOURCES" in self.benchmarking_configs:
-            self.required_fields += ["sources"]
-        elif "RAGAS" in self.benchmarking_configs:
-            self.required_fields += ["answer"]
+        # Schema validation is per-mode and SEPARATE from metric eligibility:
+        # user_input is always required, SOURCES additionally requires `sources`,
+        # and RAGAS requires nothing extra (an empty `reference` is a valid draft
+        # row that per-metric eligibility, not load validation, excludes from the
+        # context metrics). Recomputed fresh per config (never accumulated).
+        self.required_fields = required_fields_for_modes(self.benchmarking_configs)
 
         # for now it only uses one pipeline (the first one) but maybe later we make this work for mulitple
         logger.info(f"loaded new configuration: {self.current_config}")
@@ -756,7 +762,7 @@ class Benchmarker:
                     continue
                 qid = idx + 1
                 chain = chains[idx % n_workers]
-                future = executor.submit(_ask, chain, qid, question_item["question"])
+                future = executor.submit(_ask, chain, qid, question_item["user_input"])
                 futures[future] = qid
 
             for future in as_completed(futures):
@@ -1028,11 +1034,26 @@ class Benchmarker:
         logger.info("Source matching result: %s", matches)
         return matches
 
-    def get_ragas_results(self, data, to_add):
-        """WARNING: this method modifies the to_add dictionary to add the relevant scores to the relevant questions"""
+    def get_ragas_results(self, rows, keys, results_by_key):
+        """Score each enabled RAGAS metric over its OWN eligible subset, attaching
+        each per-row score back to its question by key.
+
+        ``rows`` are the modern-dialect ragas records
+        (``user_input``/``retrieved_contexts``/``response``/``reference``) for the
+        scorable questions; ``keys`` are their per-question keys (from #92's
+        ``scorable_items``) in the same order; ``results_by_key`` is the keyed
+        result dict each score is written onto. A context metric skips rows whose
+        ``reference`` is empty (a draft row) and a metric with no eligible row
+        records ``n/a`` WITHOUT invoking ragas — so each aggregate is a mean over
+        real rows, not a skip-NaN mean over a hidden partial denominator. Returns
+        the per-metric ``aggregate_<metric>`` + ``<metric>_scored`` dict.
+
+        WARNING: mutates ``results_by_key`` in place (adds each metric's score to
+        the matching question entry).
+        """
         # Lazy import: ragas (and its transitive `datasets` dep) is benchmark-only
         # and absent from the unit-test environment. See the module-header note.
-        from ragas import RunConfig, evaluate
+        from ragas import EvaluationDataset, RunConfig, evaluate
         from ragas.embeddings import LangchainEmbeddingsWrapper
         from ragas.llms import LangchainLLMWrapper
         from ragas.metrics import (
@@ -1042,22 +1063,16 @@ class Benchmarker:
             faithfulness,
         )
 
-        all_metrics_dict = {
+        all_metrics = {
             "answer_relevancy": answer_relevancy,
             "faithfulness": faithfulness,
             "context_precision": context_precision,
             "context_recall": context_recall,
         }
-
         enabled_metrics = self.benchmarking_configs["mode_settings"]["ragas_settings"][
             "enabled_metrics"
         ]
-
-        metrics_dict = {
-            k: v for k, v in all_metrics_dict.items() if k in enabled_metrics
-        }
-
-        res = pd.DataFrame()
+        metrics = [name for name in all_metrics if name in enabled_metrics]
 
         ragas_settings = self.config["services"]["benchmarking"]["mode_settings"][
             "ragas_settings"
@@ -1065,31 +1080,32 @@ class Benchmarker:
         # The archi config-render pipeline can strip global.verbosity; tolerate
         # missing key (verbosity 4 enables tenacity retry logging in ragas).
         log_tenacity = self.config.get("global", {}).get("verbosity", 0) >= 4
-        timeout = ragas_settings["timeout"]
-        batch_settings = ragas_settings["batch_size"]
-        if not batch_settings:
-            batch_settings = None
+        batch_size = ragas_settings["batch_size"] or None
+        runconfig = RunConfig(
+            timeout=ragas_settings["timeout"], log_tenacity=log_tenacity
+        )
+        llm = LangchainLLMWrapper(self.get_ragas_llm_evaluator())
+        embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
 
-        runconfig = RunConfig(timeout=timeout, log_tenacity=log_tenacity)
-        # going one metric at a time prevents errors
-        for metric_name, metric in metrics_dict.items():
-            evaluation_results = evaluate(
-                data,
-                metrics=[metric],
-                llm=LangchainLLMWrapper(self.get_ragas_llm_evaluator()),
-                embeddings=LangchainEmbeddingsWrapper(self.get_ragas_embedding_model()),
+        def score_fn(metric, eligible_rows):
+            # One metric at a time over its own eligible subset: keeps a single
+            # bad metric from failing the batch and preserves per-metric
+            # denominators (the modern EvaluationDataset replaces the legacy
+            # datasets.Dataset + column names).
+            dataset = EvaluationDataset.from_list(eligible_rows)
+            evaluation = evaluate(
+                dataset,
+                metrics=[all_metrics[metric]],
+                llm=llm,
+                embeddings=embeddings,
                 run_config=runconfig,
-                batch_size=batch_settings,
+                batch_size=batch_size,
             )
+            return evaluation.to_pandas()[metric].tolist()
 
-            metric_results = evaluation_results.to_pandas()
-            res[metric_name] = metric_results[metric_name]
-
-        for question_idx, question in enumerate(to_add.values()):
-            for metric in metrics_dict.keys():
-                question[metric] = res.at[question_idx, metric]
-
-        return res
+        return score_metrics_per_eligibility(
+            rows, keys, metrics, results_by_key, score_fn
+        )
 
     def _process_config(self, modes_being_run):
         """Answer + score every question for the current config.
@@ -1123,8 +1139,8 @@ class Benchmarker:
                 )
                 continue
 
-            logger.info(f"Question: {question_item['question']}")
-            logger.info(f"Reference Answer: {question_item.get('answer', 'N/A')}")
+            logger.info(f"Question: {question_item['user_input']}")
+            logger.info(f"Reference Answer: {question_item.get('reference') or 'N/A'}")
             logger.info(f"Reference Sources: {question_item.get('sources', 'N/A')}")
 
             question_id += 1
@@ -1151,24 +1167,20 @@ class Benchmarker:
             logger.info("")
 
         if "RAGAS" in modes_being_run:
-            # No scorable input (all failed/degraded) -> ragas_results stays None and
-            # build_ragas_aggregates emits NaN, instead of an empty Dataset that raises.
-            ragas_results = None
             if ragas_input:
                 logger.info("Starting to collect RAGAS results")
-                from datasets import (
-                    Dataset,  # lazy: benchmark-only dep (see module header)
+                # scorable_items carries #92's per-question keys in ragas_input
+                # order; get_ragas_results scores each metric over its own
+                # eligible subset and attaches scores back BY KEY (never
+                # positionally — Codex #93 F5).
+                scorable = scorable_items(question_wise_results)
+                total_results.update(
+                    self.get_ragas_results(ragas_input, list(scorable.keys()), scorable)
                 )
-
-                data = Dataset.from_list(ragas_input)
-                # get_ragas_results writes metric rows back by position into the
-                # dict it is given, so it MUST receive exactly the scorable rows
-                # that produced ragas_input (same order) — passing the full
-                # question_wise_results would misalign and index-error (Codex F1).
-                ragas_results = self.get_ragas_results(
-                    data, scorable_items(question_wise_results)
-                )
-            total_results.update(build_ragas_aggregates(ragas_results))
+            else:
+                # No scorable input (all failed/degraded): #92's config-level n/a
+                # guard emits NaN for every metric, with no empty-Dataset ragas call.
+                total_results.update(build_ragas_aggregates(None))
 
         if "SOURCES" in modes_being_run:
             # Denominator is the total question count, matching how the HTML report
@@ -1199,8 +1211,8 @@ class Benchmarker:
         input for this question, or ``None``), and ``matches`` (source-match booleans,
         or ``None``).
         """
-        question = question_item["question"]
-        reference_answer = question_item.get("answer", "N/A")
+        question = question_item["user_input"]
+        reference_answer = question_item.get("reference", "")
         reference_sources = question_item.get("sources", "N/A")
         try:
             formatted_question = [("User", question)]
@@ -1218,7 +1230,12 @@ class Benchmarker:
             q_results: Dict[str, Any] = {}
             q_results["time_elapsed"] = end - start
             q_results["question"] = question
-            q_results["reference_answer"] = reference_answer
+            # reference_answer is "" for a draft row (empty reference). That raw
+            # empty drives context-metric eligibility in dataset_result below, but
+            # the human-facing result / Argilla record needs a non-empty value
+            # (its reference_answer field is a required TextField), so store an
+            # "N/A" sentinel for display while the ragas payload keeps the raw "".
+            q_results["reference_answer"] = reference_answer or "N/A"
             q_results["answer"] = result["answer"]
             q_results["status"] = status
             q_results["messages"] = self.prepare_messages(result.get("messages", []))
@@ -1261,11 +1278,13 @@ class Benchmarker:
             dataset_result = None
             if "RAGAS" in modes_being_run and scorable:
                 contexts = [s.page_content for s in result["source_documents"]]
+                # ragas 0.3.5 modern dialect: the agent's answer is `response`;
+                # the bank's ground-truth answer is `reference` (never `response`).
                 dataset_result = {
-                    "question": question,
-                    "contexts": contexts,
-                    "answer": result["answer"],
-                    "ground_truth": reference_answer,
+                    "user_input": question,
+                    "retrieved_contexts": contexts,
+                    "response": result["answer"],
+                    "reference": reference_answer,
                 }
 
             return {
@@ -1542,17 +1561,22 @@ class Benchmarker:
             logger.warning("Anchor file %s is empty or malformed.", anchor_path)
             return
 
+        # The anchor file is a load path separate from queries_path; normalize it
+        # onto the modern dialect so migrated (or legacy) anchors dedup and merge
+        # on `user_input` rather than being silently skipped (Codex #93 F1).
+        anchors = normalize_bank(anchors)
+
         existing_questions = {
-            q.get("question")
+            q.get("user_input")
             for q in self.queries_to_answers
-            if isinstance(q, dict) and q.get("question")
+            if isinstance(q, dict) and q.get("user_input")
         }
         merged = list(self.queries_to_answers)
         added = 0
         for a in anchors:
-            if not isinstance(a, dict) or not a.get("question"):
+            if not isinstance(a, dict) or not a.get("user_input"):
                 continue
-            if a["question"] in existing_questions:
+            if a["user_input"] in existing_questions:
                 continue  # Anchor already in the bank — don't duplicate.
             merged.append(a)
             added += 1
