@@ -30,11 +30,13 @@ def main() -> int:
         return 2
 
     try:
-        from datasets import Dataset
         from langchain_huggingface import (
             HuggingFaceEmbeddings,  # pyright: ignore[reportMissingImports]
         )
-        from ragas import evaluate  # pyright: ignore[reportMissingImports]
+        from ragas import (  # pyright: ignore[reportMissingImports]
+            EvaluationDataset,
+            evaluate,
+        )
         from ragas.embeddings import (
             LangchainEmbeddingsWrapper,  # pyright: ignore[reportMissingImports]
         )
@@ -50,7 +52,7 @@ def main() -> int:
     except ImportError as exc:
         print(
             f"ERROR: missing required dep ({exc}). Run inside the benchmarks container "
-            "or install ragas + langchain-huggingface + datasets locally.",
+            "or install ragas + langchain-huggingface locally.",
             file=sys.stderr,
         )
         return 2
@@ -70,34 +72,35 @@ def main() -> int:
         HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     )
 
-    ds = Dataset.from_dict(
+    # Modern ragas 0.3.5 dialect (user_input/retrieved_contexts/response/reference),
+    # built the same way the harness does (EvaluationDataset.from_list).
+    rows = [
         {
-            "question": [
-                "What partition do I use for GPU jobs on FASRC Cannon?",
-                "How do I check my fairshare on Cannon?",
-                "Where should I store large datasets that don't need long-term backup?",
+            "user_input": "What partition do I use for GPU jobs on FASRC Cannon?",
+            "retrieved_contexts": [
+                "FASRC Cannon has a `gpu` partition for GPU-bound jobs. Request GPUs via --gres=gpu:N."
             ],
-            "answer": [
-                "Use the `gpu` partition. Request GPUs with `--gres=gpu:N` in your SLURM submit script.",
-                "Run `sshare -U $USER` to see your fairshare value.",
-                "Use `/n/holyscratch01/<lab>/` — fast, no backups, periodically purged.",
+            "response": "Use the `gpu` partition. Request GPUs with `--gres=gpu:N` in your SLURM submit script.",
+            "reference": "Use the gpu partition with --gres=gpu:N.",
+        },
+        {
+            "user_input": "How do I check my fairshare on Cannon?",
+            "retrieved_contexts": [
+                "Use sshare -U $USER to see your fairshare value on Cannon."
             ],
-            "contexts": [
-                [
-                    "FASRC Cannon has a `gpu` partition for GPU-bound jobs. Request GPUs via --gres=gpu:N."
-                ],
-                ["Use sshare -U $USER to see your fairshare value on Cannon."],
-                [
-                    "holyscratch01 is the fast scratch filesystem; no backups; auto-purged."
-                ],
+            "response": "Run `sshare -U $USER` to see your fairshare value.",
+            "reference": "Run sshare -U $USER.",
+        },
+        {
+            "user_input": "Where should I store large datasets that don't need long-term backup?",
+            "retrieved_contexts": [
+                "holyscratch01 is the fast scratch filesystem; no backups; auto-purged."
             ],
-            "ground_truth": [
-                "Use the gpu partition with --gres=gpu:N.",
-                "Run sshare -U $USER.",
-                "Use /n/holyscratch01/.",
-            ],
-        }
-    )
+            "response": "Use `/n/holyscratch01/<lab>/` — fast, no backups, periodically purged.",
+            "reference": "Use /n/holyscratch01/.",
+        },
+    ]
+    ds = EvaluationDataset.from_list(rows)
 
     metrics = [answer_relevancy, faithfulness, context_precision, context_recall]
     print(f"Running RAGAS eval on {len(ds)} questions with HUIT Bedrock judge...")

@@ -18,7 +18,7 @@ def test_ragas_only_skips_match_fields_for_zero_source_row():
     bench = _benchmarker()
 
     # A should_refuse row: no sources, but a match field is declared.
-    question_item = {"question": "q", "sources": [], "source_match_field": ["url"]}
+    question_item = {"user_input": "q", "sources": [], "source_match_field": ["url"]}
 
     # prepare_match_fields would raise here (1 field != 0 sources); the gate must
     # avoid calling it at all when SOURCES is not in the run.
@@ -38,7 +38,7 @@ def test_sources_mode_still_computes_match_fields():
     bench = _benchmarker()
 
     question_item = {
-        "question": "q",
+        "user_input": "q",
         "sources": ["https://example.org/doc"],
         "source_match_field": ["url"],
     }
