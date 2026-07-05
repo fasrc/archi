@@ -7,15 +7,19 @@ records to Argilla for human grading.
 
 ## File format
 
-A single JSON **array** of question objects. One object per question. This is
-the exact shape the benchmark loader (`queries_path`) and the anchor file
-(`anchor_questions.json`) already use.
+A single JSON **array** of question objects, one per question, in ragas 0.3.5's
+modern schema (`user_input`/`reference`). This is the shape the benchmark loader
+(`queries_path`) and the anchor file (`anchor_questions.json`) use. Banks authored
+in the legacy `question`/`answer` schema are still accepted — the harness
+normalizes them on read (`question`→`user_input`, `answer`→`reference`,
+`contexts`→`retrieved_contexts`), so existing and externally-supplied files keep
+loading.
 
 ```json
 [
   {
-    "question": "Which SLURM partition on Cannon should I submit GPU jobs to?",
-    "answer": "Use the gpu partition (or gpu_test for short test jobs). Request GPUs with --gres=gpu:N.",
+    "user_input": "Which SLURM partition on Cannon should I submit GPU jobs to?",
+    "reference": "Use the gpu partition (or gpu_test for short test jobs). Request GPUs with --gres=gpu:N.",
     "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/"],
     "source_match_field": ["url"],
     "notes": "optional authoring note; never scored"
@@ -27,22 +31,31 @@ the exact shape the benchmark loader (`queries_path`) and the anchor file
 
 | Field                | Type        | Required | Purpose |
 |----------------------|-------------|----------|---------|
-| `question`           | str         | always   | The query posed to the agent. |
-| `answer`             | str         | RAGAS mode | Reference / ground-truth answer. Becomes RAGAS `ground_truth`. |
+| `user_input`         | str         | always   | The query posed to the agent (ragas `user_input`). |
+| `reference`          | str         | RAGAS mode¹ | Ground-truth answer (ragas `reference` — **not** `response`, which is the agent's run-time answer). |
 | `sources`            | list[str]   | SOURCES mode | Reference source URLs the answer should be grounded in. |
 | `source_match_field` | list[str]   | with `sources` | How each source is matched, e.g. `["url"]`. |
 | `notes`              | str         | no       | Authoring notes (e.g. "confirm with operator"). Not scored, not shown to graders. |
 
-`contexts` is **not** authored here — the harness fills it from the agent's
-retrieved `source_documents` at run time, then hands the full
-`question`/`answer`/`contexts`/`ground_truth` record to RAGAS.
+¹ `reference` is **not required at load** — an empty `reference` is a valid draft
+row. Load validation requires only `user_input` (plus `sources` for SOURCES mode),
+kept separate from metric eligibility. A draft row is simply skipped by the context
+metrics (`context_precision`/`context_recall`, which need a ground truth) while
+`answer_relevancy`/`faithfulness` still score it.
+
+`retrieved_contexts` is **not** authored here — the harness fills it from the
+agent's retrieved `source_documents` at run time, then hands the full
+`user_input`/`retrieved_contexts`/`response`/`reference` record to RAGAS
+(`response` is the agent's answer; `reference` is this file's ground truth).
 
 ## How it's consumed
 
-- **RAGAS** — `service_benchmark.py` builds `Dataset.from_list([...])` with
-  `question`, `contexts` (retrieved at run time), `answer` (the agent's answer),
-  and `ground_truth` (this file's `answer`), then runs `answer_relevancy`,
-  `faithfulness`, `context_precision`, `context_recall`.
+- **RAGAS** — `service_benchmark.py` builds a ragas `EvaluationDataset` with
+  `user_input`, `retrieved_contexts` (retrieved at run time), `response` (the
+  agent's answer), and `reference` (this file's ground-truth answer), then runs
+  `answer_relevancy`, `faithfulness`, `context_precision`, `context_recall`. Each
+  metric is scored over only the rows eligible for it (the context metrics skip
+  empty-`reference` rows) and the run reports each metric's `n_scored / n_total`.
 - **Argilla** — `src/utils/benchmark_argilla.py` pushes each record (question,
   agent answer, retrieved trace, RAGAS scores) to the self-hosted Argilla stack
   (`argilla/`) for team human grading.
@@ -61,10 +74,11 @@ services:
 
 ## Authoring workflow
 
-Paste questions (and answers when available) and they are appended here as
-objects in the array. Keep the JSON valid (it's a plain list — no comments).
-Records with no confirmed `answer` yet can carry a `notes` flag and an empty or
-placeholder `answer` until the operator locks it.
+Paste questions (and reference answers when available) and they are appended here
+as objects in the array. Keep the JSON valid (it's a plain list — no comments).
+A record with no confirmed ground truth yet can carry a `notes` flag and an empty
+`reference` (a draft row) until the operator locks it — it is still scored on the
+answer metrics, just skipped by the context metrics.
 
 ## Seeded content (2026-06-28)
 
@@ -84,12 +98,13 @@ Source pages used: `running-jobs`, `cluster-storage`, `fairshare`, `quickstart-g
 **Two caveats before a scored run:**
 
 1. **Answers are `DRAFT`.** Each `notes` field flags the answer as grounded-but-unlocked.
-   Have an operator confirm before treating RAGAS `ground_truth` as authoritative — KB
+   Have an operator confirm before treating the RAGAS `reference` as authoritative — KB
    facts drift (e.g. GPU requests moved from `--gres=gpu:N` to `--gpus=1`, and lab dirs
    from `/n/holyscratch01` to `/n/holylabs`; `anchor_questions.json` still holds the stale
    forms).
 2. **SOURCES mode needs URL reconciliation.** The `sources` URLs are the canonical KB
    page URLs as fetched. SOURCES mode matches them against the ingested document `url`
    metadata, which the sitemap-driven SPLIT ingest may store under a slightly different
-   slug. RAGAS mode is unaffected (it scores `question`/`answer`/retrieved `contexts`
-   only) — start there, and verify URL matching before relying on SOURCES scores.
+   slug. RAGAS mode is unaffected (it scores `user_input`/`reference`/retrieved
+   `retrieved_contexts` only) — start there, and verify URL matching before relying on
+   SOURCES scores.
