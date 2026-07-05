@@ -321,7 +321,10 @@ def format_html_output(config_data, config_name, timestamp, questions, total_res
         found_sources = [
             source
             for i, source in enumerate(expected_sources)
-            if reference_sources_metadata[i]["matched"]
+            # Degraded/failed rows are never source-scored, so the harness does
+            # not stamp `matched` on their reference metadata; treat an absent
+            # flag as a miss rather than crashing report generation.
+            if reference_sources_metadata[i].get("matched")
         ]
 
         # retrieved sources
