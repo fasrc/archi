@@ -7,6 +7,7 @@ from src.data_manager.collectors.localfile_resource import LocalFileResource
 from src.data_manager.collectors.processing import (
     HtmlToMarkdownProcessor,
     ResourcePipeline,
+    _slice_kb_article,
 )
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 
@@ -205,3 +206,87 @@ def test_pipeline_runs_processors_in_order():
     out = pipeline.run(_html_resource(content="<h1>Title</h1>"))
     assert "# Title" in out.get_content()
     assert out.suffix == "md"
+
+
+# --- KB landmark slice (improve-fasrc-kb-ingestion) --------------------------
+# Echo-KB pages bound the article between "Table of Contents" and either
+# "Bookmarkable Links" or (fallback) "Last Updated". The slice keeps only the body
+# between those landmarks; non-KB pages (no landmarks) keep the full conversion.
+
+_KB_HTML = (
+    "<html><body>"
+    "<nav>Filter by categories Affiliates AI Applications</nav>"
+    "<div class='eckb-article-toc__title'>Table of Contents</div>"
+    "<h1>Running Jobs</h1>"
+    "<p>UNIQUEBODYMARKER real article content.</p>"
+    "<p class='toc_title'>Bookmarkable Links</p>"
+    "<ul><li>1 Introduction</li><li>2 Getting Started</li></ul>"
+    "<div>Last Updated May 26 2026</div>"
+    "</body></html>"
+)
+
+
+def test_kb_article_sliced_between_landmarks():
+    out = HtmlToMarkdownProcessor().process(_html_resource(content=_KB_HTML))
+    md = out.get_content()
+    # body kept
+    assert "UNIQUEBODYMARKER" in md
+    assert "Running Jobs" in md
+    # pre-"Table of Contents" nav dropped
+    assert "Filter by categories" not in md
+    assert "Affiliates" not in md
+    # "Bookmarkable Links" and everything after dropped
+    assert "Bookmarkable Links" not in md
+    assert "1 Introduction" not in md
+    assert "Last Updated" not in md
+    assert out.suffix == "md"
+    assert out.get_metadata().as_dict()["converted_from"] == "html"
+
+
+def test_end_landmark_falls_back_to_last_updated():
+    html = (
+        "<html><body>"
+        "<nav>PRENAV Affiliates</nav>"
+        "<div>Table of Contents</div>"
+        "<p>BODYMARKER content.</p>"
+        "<div>Last Updated May 26 2026</div>"
+        "</body></html>"
+    )
+    md = HtmlToMarkdownProcessor().process(_html_resource(content=html)).get_content()
+    assert "BODYMARKER" in md
+    assert "PRENAV" not in md
+    assert "Last Updated" not in md
+    assert "May 26" not in md
+
+
+def test_no_landmarks_keeps_full_page():
+    html = "<html><body><h1>Plain</h1><p>FULLBODY hello world.</p></body></html>"
+    md = HtmlToMarkdownProcessor().process(_html_resource(content=html)).get_content()
+    assert "FULLBODY" in md
+    assert "# Plain" in md
+
+
+def test_start_landmark_without_end_keeps_full_page():
+    html = (
+        "<html><body><nav>NAVTEXT keep me</nav>"
+        "<div>Table of Contents</div><p>BODY here.</p></body></html>"
+    )
+    md = HtmlToMarkdownProcessor().process(_html_resource(content=html)).get_content()
+    # No end landmark -> do not slice; the pre-TOC nav is retained.
+    assert "NAVTEXT" in md
+    assert "BODY" in md
+
+
+def test_slice_helper_returns_body_between_landmarks():
+    md = "junk\nTable of Contents\nBODY LINE\nBookmarkable Links\nfooter"
+    assert _slice_kb_article(md).strip() == "BODY LINE"
+
+
+def test_slice_helper_blank_between_keeps_original():
+    md = "Table of Contents\nBookmarkable Links\n"
+    assert _slice_kb_article(md) == md
+
+
+def test_slice_helper_no_start_keeps_original():
+    md = "some\nmarkdown with Bookmarkable Links only"
+    assert _slice_kb_article(md) == md

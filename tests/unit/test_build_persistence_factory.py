@@ -4,6 +4,8 @@ from pathlib import Path
 
 from src.data_manager.collectors.processing import (
     CategorizationProcessor,
+    HtmlCategoryProcessor,
+    HtmlTitleProcessor,
     HtmlToMarkdownProcessor,
     ProcessingPersistenceService,
     build_persistence,
@@ -134,6 +136,23 @@ def test_categorization_missing_provider_with_conversion_off_yields_bare_service
     )
     assert isinstance(service, _FakePersistence)
     assert not isinstance(service, ProcessingPersistenceService)
+
+
+def test_html_processor_order_is_title_category_markdown():
+    """Category capture must sit between title capture and Markdown conversion:
+    all three read/transform raw HTML, and category (like title) must run before
+    conversion strips the breadcrumb."""
+    service = _build(
+        processing={
+            "html_to_markdown": {"enabled": True},
+            "categorization": {"enabled": False},
+        }
+    )
+    assert [type(p) for p in service._pipeline.processors] == [
+        HtmlTitleProcessor,
+        HtmlCategoryProcessor,
+        HtmlToMarkdownProcessor,
+    ]
 
 
 def test_conversion_only_when_categorization_disabled():

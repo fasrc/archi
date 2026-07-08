@@ -261,7 +261,7 @@ collected (scraped/uploaded/fetched) and *before* it is written to disk. It is b
 once from `data_manager.processing` and applied uniformly across **both** scheduled
 ingest and the uploader UI, so the two never produce an inconsistent corpus.
 
-Data flow per document: **collect → convert (HTML→Markdown) → categorize (optional LLM) → persist**.
+Data flow per document: **collect → capture (title + source category) → convert (HTML→Markdown, KB article-body slice) → categorize (optional LLM) → persist**.
 
 ```yaml
 data_manager:
@@ -282,7 +282,7 @@ data_manager:
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `html_to_markdown.enabled` | `true` | Convert string HTML content (suffix `html`/`htm`) to ATX Markdown via `markdownify`, flip the suffix and path fields to `.md`, and record `metadata.converted_from = "html"`. The `.md` file then loads through `TextLoader` instead of `BSHTMLLoader`, so headings, lists, tables, and links survive into chunks. |
+| `html_to_markdown.enabled` | `true` | Convert string HTML content (suffix `html`/`htm`) to ATX Markdown via `markdownify`, flip the suffix and path fields to `.md`, and record `metadata.converted_from = "html"`. The `.md` file then loads through `TextLoader` instead of `BSHTMLLoader`, so headings, lists, tables, and links survive into chunks. For FASRC KB (Echo-KB) pages, the converted Markdown is additionally sliced to the article body between the page's `Table of Contents` and `Bookmarkable Links` (or, when absent, `Last Updated`) landmarks, dropping the surrounding category-filter nav and footer; pages without those landmarks (non-KB sources) keep the full-page conversion. |
 | `categorization.enabled` | `false` | Assign one label from `categories` to each document via an LLM and store it under `metadata.llm_category`. |
 | `categorization.provider` / `model` | — | Which chat model to use. `provider` is a key under `services.chat_app.providers`; that block (base_url / mode / models / extra_kwargs) supplies the model's `provider_config`, so a custom local/vLLM endpoint is honored. |
 | `categorization.max_chars` | `4000` | Document content is truncated to this length before the model call (bounds cost/latency). |
@@ -297,9 +297,16 @@ data_manager:
   Markdown (e.g. a script-only page), keeps the original resource. A categorization
   error never raises and defaults to `uncategorized`.
 - **`llm_category` is distinct from `category`.** A source-provided
-  `metadata.category` (e.g. the Indico scraper's event category) is **never**
-  overwritten; the LLM label is written to `metadata.llm_category`. Both propagate to
-  `documents.extra_json` and onward to `document_chunks.metadata`.
+  `metadata.category` is **never** overwritten; the LLM label is written to
+  `metadata.llm_category`. Both propagate to `documents.extra_json` and onward to
+  `document_chunks.metadata`.
+- **Source category capture (KB).** When conversion is enabled, an HTML page's
+  breadcrumb category is captured *before* conversion into `metadata.category` — for
+  FASRC KB pages this is the site taxonomy term (`Home › <Category> › <Article>`,
+  e.g. `Storage`, `Cluster Usage`). It never overwrites a category a scraper already
+  set (e.g. the Indico event category) and is silent on pages without a breadcrumb.
+  Like the body slice, it only affects documents that are (re-)ingested after the
+  change.
 - **Cost.** Categorization issues one LLM call per document — expensive on large
   crawls, hence off by default.
 - **Local `.html` uploads are not converted.** Uploaded local files arrive as `bytes`

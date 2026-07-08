@@ -40,6 +40,15 @@ logger = get_logger(__name__)
 _HTML_SUFFIXES = {"html", "htm"}
 UNCATEGORIZED = "uncategorized"
 
+# FASRC KB (Echo Knowledge Base) article-body landmarks. Every article page wraps a
+# small body in category-filter nav (before) and a bookmark/tags/date footer (after).
+# The body is bounded by a unique "Table of Contents" heading and a "Bookmarkable
+# Links" section — or, when that is absent, the always-present "Last Updated" footer.
+# Slicing between them drops the chrome; non-KB pages lack these and are left whole.
+_KB_SLICE_START = "Table of Contents"
+_KB_SLICE_END = "Bookmarkable Links"
+_KB_SLICE_END_FALLBACK = "Last Updated"
+
 # Headroom for converting pathologically deep HTML (issue #40). markdownify parses
 # with BeautifulSoup and converts recursively, so a tree nested thousands of levels
 # deep overflows the default 1000-frame recursion limit. Merely raising the limit is
@@ -112,6 +121,29 @@ def _extract_html_title(html: str) -> str:
     return ""
 
 
+def _extract_kb_category(html: str) -> Optional[str]:
+    """Source category from an Echo-KB breadcrumb, or ``None``.
+
+    KB pages render ``Home › <Category> › <Article>`` as a server-side breadcrumb
+    (``span.eckb-breadcrumb-link``). Return the immediate category — the span between
+    ``Home`` and the article title (``crumbs[-2]``), which yields the most specific
+    parent for nested categories. Returns ``None`` for non-KB / crumbless pages and
+    never raises — a missing category must not block ingest.
+    """
+    try:
+        soup = BeautifulSoup(html or "", "html.parser")
+        crumbs = [
+            s.get_text(strip=True)
+            for s in soup.select("span.eckb-breadcrumb-link")
+            if s.get_text(strip=True)
+        ]
+        if len(crumbs) >= 3:
+            return crumbs[-2]
+    except Exception:
+        logger.debug("Failed to extract KB category", exc_info=True)
+    return None
+
+
 class HtmlTitleProcessor:
     """Capture a clean ``metadata["title"]`` from HTML before Markdown conversion.
 
@@ -137,6 +169,37 @@ class HtmlTitleProcessor:
             return resource
 
         resource.set_metadata_field("title", _extract_html_title(content))
+        return resource
+
+
+class HtmlCategoryProcessor:
+    """Capture a source ``metadata["category"]`` from an HTML breadcrumb.
+
+    Guards on ``isinstance(content, str)`` and an ``html``/``htm`` suffix so only
+    scraped/web HTML is touched. Must run BEFORE ``HtmlToMarkdownProcessor`` (which
+    rewrites content to Markdown, stripping the breadcrumb). Never overwrites a
+    non-empty ``category`` already set by a source scraper (e.g. Indico), and writes
+    nothing when no breadcrumb is found. Distinct from the LLM ``llm_category``.
+    """
+
+    def process(self, resource: BaseResource) -> BaseResource:
+        content = getattr(resource, "content", None)
+        if not isinstance(content, str):
+            return resource
+
+        suffix = getattr(resource, "suffix", "")
+        if not isinstance(suffix, str):
+            return resource
+        if suffix.lstrip(".").lower() not in _HTML_SUFFIXES:
+            return resource
+
+        existing = resource.get_metadata().as_dict().get("category")
+        if isinstance(existing, str) and existing.strip():
+            return resource
+
+        category = _extract_kb_category(content)
+        if category:
+            resource.set_metadata_field("category", category)
         return resource
 
 
@@ -178,6 +241,10 @@ class HtmlToMarkdownProcessor:
                 _resource_label(resource),
             )
             return resource
+
+        # Strip KB page chrome to the article body when the page's landmarks are
+        # present; a no-op (returns the full Markdown) for non-KB pages.
+        markdown = _slice_kb_article(markdown)
 
         resource.content = markdown
         resource.suffix = "md"
@@ -236,6 +303,31 @@ def _markdownify_deep_safe(content: str) -> str:
     if "error" in result:
         raise result["error"]
     return result["value"]
+
+
+def _slice_kb_article(markdown: str) -> str:
+    """Return the KB article body sliced from full-page Markdown by its landmarks.
+
+    Drops everything up to and including the ``Table of Contents`` line and everything
+    from ``Bookmarkable Links`` (or, when absent, ``Last Updated``) onward. Slicing is
+    applied ONLY when both a start and an end landmark are found and the result is
+    non-blank; otherwise ``markdown`` is returned unchanged, so non-KB pages and edge
+    cases keep the full-page conversion (no article is ever dropped).
+    """
+    start = markdown.find(_KB_SLICE_START)
+    if start == -1:
+        return markdown
+    # Drop through the end of the start-landmark line (up to & including it).
+    body_start = markdown.find("\n", start)
+    if body_start == -1:
+        return markdown
+    end = markdown.find(_KB_SLICE_END)
+    if end == -1:
+        end = markdown.find(_KB_SLICE_END_FALLBACK)
+    if end == -1 or end <= body_start:
+        return markdown
+    sliced = markdown[body_start:end].strip()
+    return sliced if sliced else markdown
 
 
 def _rewrite_path_field(resource: BaseResource, field_name: str) -> None:
@@ -512,8 +604,10 @@ def build_persistence(
     processors: List[ResourceProcessor] = []
 
     if bool(html_cfg.get("enabled", True)):
-        # Title capture must precede markdown conversion (which strips <title>).
+        # Title and category capture must precede markdown conversion (which strips
+        # the <title> and the breadcrumb).
         processors.append(HtmlTitleProcessor())
+        processors.append(HtmlCategoryProcessor())
         processors.append(HtmlToMarkdownProcessor())
 
     if bool(cat_cfg.get("enabled", False)):
