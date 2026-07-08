@@ -49,6 +49,11 @@ _KB_SLICE_START = "Table of Contents"
 _KB_SLICE_END = "Bookmarkable Links"
 _KB_SLICE_END_FALLBACK = "Last Updated"
 
+# Echo-KB (EPKB) structural markers in the raw page HTML. The article-body slice is
+# gated on these so an arbitrary non-KB page that merely contains "Table of Contents"
+# and "Last Updated" is never truncated (per PR #97 review).
+_ECHO_KB_MARKERS = ("eckb-breadcrumb-link", "eckb-article-toc", "eckb-article-content")
+
 # Headroom for converting pathologically deep HTML (issue #40). markdownify parses
 # with BeautifulSoup and converts recursively, so a tree nested thousands of levels
 # deep overflows the default 1000-frame recursion limit. Merely raising the limit is
@@ -242,9 +247,11 @@ class HtmlToMarkdownProcessor:
             )
             return resource
 
-        # Strip KB page chrome to the article body when the page's landmarks are
-        # present; a no-op (returns the full Markdown) for non-KB pages.
-        markdown = _slice_kb_article(markdown)
+        # Strip KB page chrome to the article body — ONLY for Echo-KB pages (gated on
+        # their raw-HTML signature), so an arbitrary non-KB page that merely contains
+        # "Table of Contents"/"Last Updated" is never truncated.
+        if _is_echo_kb_page(content):
+            markdown = _slice_kb_article(markdown)
 
         resource.content = markdown
         resource.suffix = "md"
@@ -328,6 +335,15 @@ def _slice_kb_article(markdown: str) -> str:
         return markdown
     sliced = markdown[body_start:end].strip()
     return sliced if sliced else markdown
+
+
+def _is_echo_kb_page(html: str) -> bool:
+    """True when the raw HTML carries an Echo Knowledge Base signature.
+
+    Gates the article-body slice to real KB pages so an arbitrary scraped page that
+    merely contains the landmark phrases is never truncated.
+    """
+    return any(marker in html for marker in _ECHO_KB_MARKERS)
 
 
 def _rewrite_path_field(resource: BaseResource, field_name: str) -> None:

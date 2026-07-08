@@ -247,7 +247,7 @@ def test_end_landmark_falls_back_to_last_updated():
     html = (
         "<html><body>"
         "<nav>PRENAV Affiliates</nav>"
-        "<div>Table of Contents</div>"
+        "<div class='eckb-article-toc__title'>Table of Contents</div>"
         "<p>BODYMARKER content.</p>"
         "<div>Last Updated May 26 2026</div>"
         "</body></html>"
@@ -257,6 +257,25 @@ def test_end_landmark_falls_back_to_last_updated():
     assert "PRENAV" not in md
     assert "Last Updated" not in md
     assert "May 26" not in md
+
+
+def test_non_kb_page_with_landmarks_not_sliced():
+    """A non-KB page (no Echo-KB markup) that happens to contain the landmark
+    phrases must NOT be sliced — the slice is gated on the Echo-KB signature, so an
+    arbitrary scraped page with a `Table of Contents` and a `Last Updated` footer is
+    never silently truncated."""
+    html = (
+        "<html><body>"
+        "<h2>Table of Contents</h2>"
+        "<p>KEEPBODY real content.</p>"
+        "<footer>Last Updated 2026</footer>"
+        "</body></html>"
+    )
+    md = HtmlToMarkdownProcessor().process(_html_resource(content=html)).get_content()
+    assert "KEEPBODY" in md
+    # Not gated as KB -> full page kept, including the landmark lines.
+    assert "Table of Contents" in md
+    assert "Last Updated" in md
 
 
 def test_no_landmarks_keeps_full_page():

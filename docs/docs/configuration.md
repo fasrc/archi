@@ -305,21 +305,25 @@ data_manager:
   FASRC KB pages this is the site taxonomy term (`Home › <Category> › <Article>`,
   e.g. `Storage`, `Cluster Usage`). It never overwrites a category a scraper already
   set (e.g. the Indico event category) and is silent on pages without a breadcrumb.
-  Like the body slice, it only affects documents that are (re-)ingested after the
-  change.
+  Like the body slice, it takes effect only on **newly** ingested documents or when an
+  already-persisted document is force-overwritten — see *Applying to an existing
+  corpus* below.
 - **Cost.** Categorization issues one LLM call per document — expensive on large
   crawls, hence off by default.
 - **Local `.html` uploads are not converted.** Uploaded local files arrive as `bytes`
   (not string content), so the conversion guard skips them; scraped/web HTML is the
   target. (A decode-on-`html` path is future work.)
-- **Re-ingest refreshes chunks.** Hashes are identity-based (URL/path), so converting
-  an already-ingested HTML document keeps its hash. On re-ingest the vectorstore
-  detects that the persisted filename changed (`page.html` → `page.md`) and refreshes
-  that document's chunks, so retrieval never serves stale HTML-flattened content.
-  Note this detection keys off the persisted **filename**, not the content: it catches
-  the HTML→Markdown case (the extension always flips) but a content-only change that
-  keeps the **same filename** under an unchanged hash is not detected and would retain
-  its old chunks until the hash changes or the document is removed and re-added.
+- **Applying to an existing corpus (a plain re-ingest is _not_ enough).** Standard-URL
+  ingest calls `persist_resource(resource, output_dir)` **without** `overwrite`, and the
+  persistence layer skips writing when the target path already exists. So for a document
+  already on disk (an existing deployment), re-ingesting does **not** rewrite its
+  persisted Markdown — the new body slice / `category` never reach disk, and the
+  vectorstore (which detects refreshes by the persisted **filename**, e.g.
+  `page.html` → `page.md`, not by content) keeps serving the old chunks. A content-only
+  change under the same `.md` filename and unchanged hash therefore requires a
+  **force-overwrite or a nuke + re-ingest** (or removing the document so it is re-added)
+  to take effect. New documents are unaffected — they are sliced/categorized on first
+  ingest.
 - **Missing categorization provider fails loud, not silent.** If `categorization.enabled`
   is true but its `provider` is absent from `services.chat_app.providers`, the
   categorizer is **not** built (a prominent warning is logged and no `llm_category` is
