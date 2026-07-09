@@ -248,38 +248,106 @@ def effective_benchmarking(bench: Any) -> Dict[str, Any]:
     return eff
 
 
-def preflight_benchmark_configs(configs: Any) -> Tuple[List[str], List[str]]:
-    """Preflight EVERY config's effective question set before a deploy.
+def _load_bank_file(path: Any) -> Optional[List[Any]]:
+    """Load + normalize a bank JSON file to a list, or ``None`` on any problem
+    (missing / unreadable / non-JSON / non-list). Never raises."""
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        with open(path, "r") as handle:
+            raw = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    bank = normalize_bank(raw)
+    return bank if isinstance(bank, list) else None
 
-    ``archi evaluate --config-dir`` / comma-separated ``-c`` keep more than one
-    config, and the benchmarker recomputes ``required_fields_for_modes`` per
-    config. Iterate them all, apply the template defaults
-    (:func:`effective_benchmarking`), and validate both the queries bank and —
-    when anchors are enabled (default) and the anchor file exists — the anchor
-    bank, mirroring what ``Benchmarker._process_config`` enforces after the
-    ingest. A missing anchor file is skipped (the runtime warns and continues),
-    never an error. Returns aggregated ``(errors, warnings)`` labelled per config.
+
+def _bank_user_inputs(path: Any) -> set:
+    """The set of ``user_input`` values in the bank at ``path`` (for anchor dedup)."""
+    bank = _load_bank_file(path) or []
+    return {
+        it.get("user_input")
+        for it in bank
+        if isinstance(it, dict) and it.get("user_input")
+    }
+
+
+def _resolve_anchor_path(anchors: Dict[str, Any], data_path: Any) -> Optional[str]:
+    """Resolve the anchor file the SAME way ``_merge_anchor_questions`` does:
+    ``Path(DATA_PATH)/path`` first, then the raw (CWD-relative) path. Returns the
+    first that exists on disk, else ``None`` (mirrors the runtime's skip-if-absent
+    — a container-only ``DATA_PATH`` file simply isn't visible at host preflight
+    and is left to the runtime's own per-item guard)."""
+    raw = anchors.get("path") or DEFAULT_ANCHOR_PATH
+    if not isinstance(raw, str) or not raw:
+        return None
+    candidates: List[str] = []
+    if isinstance(data_path, str) and data_path:
+        candidates.append(os.path.join(data_path, raw))
+    candidates.append(raw)
+    return next((c for c in candidates if os.path.exists(c)), None)
+
+
+def _anchor_errors(
+    anchor_path: str, eff: Dict[str, Any], staged_user_inputs: set
+) -> List[str]:
+    """Validate only the anchors that would actually be MERGED — the runtime skips
+    an anchor whose ``user_input`` already appears in the question bank before it
+    is ever validated, so validating those here would false-fail a valid run."""
+    anchors = _load_bank_file(anchor_path)
+    if anchors is None:
+        return []  # unreadable anchor file -> runtime warns+skips, not an error
+    to_merge = [
+        a
+        for a in anchors
+        if not (isinstance(a, dict) and a.get("user_input") in staged_user_inputs)
+    ]
+    return validate_bank(to_merge, eff)
+
+
+def preflight_benchmark_configs(configs: Any) -> Tuple[List[str], List[str]]:
+    """Preflight the effective question set for every config before a deploy.
+
+    Models what actually runs: the deployment stages ONLY the FIRST config's
+    ``queries_path`` (``cli_main`` sets ``query_file`` from ``configs[0]``;
+    ``templates_manager`` copies that single file to ``queries.txt``;
+    ``service_benchmark`` loads it once) and runs that one bank under EVERY
+    config's modes. So the staged first bank is validated against each config's
+    effective (template-defaulted) modes — not each config's own bank. Per config,
+    an enabled anchor bank is also validated, resolved DATA_PATH-first like the
+    runtime and deduplicated against the staged bank so only anchors that would be
+    merged are checked. A missing/unreadable anchor file is skipped, never an
+    error. Returns aggregated ``(errors, warnings)`` labelled per config.
     """
     if not isinstance(configs, list):
         configs = [configs]
-    all_errors: List[str] = []
-    all_warnings: List[str] = []
+    entries = []
     for idx, config in enumerate(configs):
         config = config if isinstance(config, dict) else {}
         bench = (config.get("services") or {}).get("benchmarking") or {}
-        eff = effective_benchmarking(bench)
+        data_path = (config.get("global") or {}).get("DATA_PATH")
         label = config.get("name") or f"config[{idx}]"
+        entries.append((label, effective_benchmarking(bench), data_path))
 
-        q_errors, q_warnings = preflight_bank_file(eff.get("queries_path"), eff)
+    all_errors: List[str] = []
+    all_warnings: List[str] = []
+    if not entries:
+        return all_errors, all_warnings
+
+    # Only the first config's bank is staged and run under every config.
+    staged_queries_path = entries[0][1].get("queries_path")
+    staged_user_inputs = _bank_user_inputs(staged_queries_path)
+
+    for label, eff, data_path in entries:
+        q_errors, q_warnings = preflight_bank_file(staged_queries_path, eff)
         all_errors.extend(f"{label} queries {e}" for e in q_errors)
         all_warnings.extend(f"{label} queries: {w}" for w in q_warnings)
 
         anchors = eff.get("anchors") or {}
         if anchors.get("enabled", True) is not False:
-            anchor_path = anchors.get("path") or DEFAULT_ANCHOR_PATH
-            # Mirror the runtime: a missing anchor file warns+skips, never fails.
-            if isinstance(anchor_path, str) and os.path.exists(anchor_path):
-                a_errors, _ = preflight_bank_file(anchor_path, eff)
+            anchor_path = _resolve_anchor_path(anchors, data_path)
+            if anchor_path:
+                a_errors = _anchor_errors(anchor_path, eff, staged_user_inputs)
                 all_errors.extend(f"{label} anchors {e}" for e in a_errors)
     return all_errors, all_warnings
 

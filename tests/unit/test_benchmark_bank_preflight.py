@@ -15,6 +15,9 @@ import json
 from pathlib import Path
 
 from src.utils.benchmark_schema import (
+    _anchor_errors,
+    _load_bank_file,
+    _resolve_anchor_path,
     bank_eligibility_warnings,
     effective_benchmarking,
     preflight_bank_file,
@@ -323,3 +326,95 @@ def test_preflight_configs_accepts_a_single_non_list_config(tmp_path):
     single = {"services": {"benchmarking": {"queries_path": str(cfg)}}}
     errors, _ = preflight_benchmark_configs(single)  # a dict, not a list
     assert any("sources" in e for e in errors)
+
+
+# --- F1 (round 2): only the FIRST config's bank is staged + run --------------
+
+
+def test_preflight_configs_validates_the_staged_first_bank_under_later_modes(tmp_path):
+    # The deployment stages ONLY configs[0].queries_path and runs it under every
+    # config. So a RAGAS-only first bank (no sources) that is valid for itself
+    # must still be flagged under a later SOURCES config — even though that later
+    # config points at its OWN valid bank (which never actually runs).
+    c0 = _cfg_with_bank(tmp_path, "c0", ["RAGAS"], [{"user_input": "q"}])
+    c1 = _cfg_with_bank(
+        tmp_path, "c1", ["RAGAS", "SOURCES"], [{"user_input": "q", "sources": ["u"]}]
+    )
+    errors, _ = preflight_benchmark_configs([c0, c1])
+    assert any("c1" in e and "sources" in e for e in errors)
+
+
+# --- F2 (round 2): resolve anchor path DATA_PATH-first, like the benchmarker --
+
+
+def test_preflight_configs_resolves_anchor_under_data_path(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "anchors.json").write_text(json.dumps([{"user_input": "a"}]))  # no sources
+    queries = tmp_path / "q.json"
+    queries.write_text(json.dumps([{"user_input": "q", "sources": ["u"]}]))
+    cfg = {
+        "name": "c",
+        "global": {"DATA_PATH": str(data)},
+        "services": {
+            "benchmarking": {
+                "modes": ["RAGAS", "SOURCES"],
+                "queries_path": str(queries),
+                # relative path: only resolvable via DATA_PATH, not CWD
+                "anchors": {"enabled": True, "path": "anchors.json"},
+            }
+        },
+    }
+    errors, _ = preflight_benchmark_configs([cfg])
+    assert any("anchors" in e for e in errors)
+
+
+# --- F3 (round 2): only validate anchors that will actually be merged --------
+
+
+def test_preflight_configs_skips_duplicate_anchor(tmp_path):
+    # The queries bank already contains user_input "dup"; the anchor file has a
+    # malformed "dup" (skipped as a duplicate at runtime) plus a malformed "new".
+    # Only "new" is really merged -> exactly one anchor error, not two.
+    queries = tmp_path / "q.json"
+    queries.write_text(json.dumps([{"user_input": "dup", "sources": ["u"]}]))
+    anchors = tmp_path / "anchors.json"
+    anchors.write_text(json.dumps([{"user_input": "dup"}, {"user_input": "new"}]))
+    cfg = {
+        "name": "c",
+        "services": {
+            "benchmarking": {
+                "modes": ["RAGAS", "SOURCES"],
+                "queries_path": str(queries),
+                "anchors": {"enabled": True, "path": str(anchors)},
+            }
+        },
+    }
+    errors, _ = preflight_benchmark_configs([cfg])
+    anchor_errors = [e for e in errors if "anchors" in e]
+    assert len(anchor_errors) == 1  # "new" only; the duplicate "dup" is skipped
+
+
+# --- helper defensive branches ----------------------------------------------
+
+
+def test_load_bank_file_none_and_unreadable(tmp_path):
+    assert _load_bank_file(None) is None  # non-str path
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json {")
+    assert _load_bank_file(str(bad)) is None  # unreadable / non-JSON
+    obj = tmp_path / "obj.json"
+    obj.write_text(json.dumps({"user_input": "q"}))
+    assert _load_bank_file(str(obj)) is None  # non-list
+
+
+def test_resolve_anchor_path_non_str_is_none():
+    assert _resolve_anchor_path({"path": 123}, None) is None
+
+
+def test_anchor_errors_unreadable_file_is_empty(tmp_path):
+    assert _anchor_errors(str(tmp_path / "missing.json"), {}, set()) == []
+
+
+def test_preflight_configs_empty_list_is_empty():
+    assert preflight_benchmark_configs([]) == ([], [])

@@ -812,10 +812,13 @@ def evaluate(
         deployment_manager = DeploymentManager(compose_config.use_podman)
         deployment_manager.start_deployment(base_dir)
     except Exception as e:
+        # Always surface a failing exit status. Previously verbosity >= 4 printed
+        # the traceback but did NOT re-raise, so evaluate exited 0 on failure —
+        # silently swallowing the fail-fast bank preflight at -v 4. Print the
+        # traceback for debugging, then still fail.
         if verbosity >= 4:
             traceback.print_exc()
-        else:
-            raise click.ClickException(f"Failed due to the following exception: {e}")
+        raise click.ClickException(f"Failed due to the following exception: {e}")
 
 
 @click.command()
