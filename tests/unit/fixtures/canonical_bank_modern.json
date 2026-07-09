@@ -1,0 +1,14 @@
+[
+  {
+    "user_input": "How do I request an interactive GPU session on the cluster?",
+    "reference": "Use salloc with --partition=gpu and --gres=gpu:1.",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs"],
+    "source_match_field": ["url"]
+  },
+  {
+    "user_input": "Where is my lab's shared storage mounted?",
+    "reference": "Lab shares are under /n/holylabs or the lab's dedicated tier.",
+    "sources": ["https://docs.rc.fas.harvard.edu/kb/storage"],
+    "source_match_field": ["url"]
+  }
+]

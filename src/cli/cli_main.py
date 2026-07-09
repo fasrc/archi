@@ -26,6 +26,7 @@ from src.cli.utils.helpers import (
     _validate_non_chatbot_sections,
 )
 from src.cli.utils.service_builder import ServiceBuilder
+from src.utils.benchmark_schema import preflight_benchmark_configs
 from src.utils.logging import get_logger, setup_cli_logging
 
 # DEFINITIONS
@@ -720,6 +721,22 @@ def evaluate(
 
     try:
         base_dir = Path(ARCHI_DIR) / f"archi-{name}"
+
+        # Load configs (no side effects) and fail fast on a bad question bank
+        # BEFORE handle_existing_deployment — which under --force deletes the
+        # existing archi-<name> directory — and before any deploy/ingest work.
+        # Validate EVERY config's effective (template-defaulted) question set,
+        # including enabled anchors, so a bank/mode mismatch never survives to
+        # grading and wastes the ~50-min re-ingest.
+        config_manager = ConfigurationManager(config_files, env)
+        bank_errors, bank_warnings = preflight_benchmark_configs(config_manager.configs)
+        for bank_warning in bank_warnings:
+            logger.warning("Benchmark bank: %s", bank_warning)
+        if bank_errors:
+            raise click.ClickException(
+                "Benchmark question bank failed preflight:\n" + "\n".join(bank_errors)
+            )
+
         handle_existing_deployment(
             base_dir, name, force, False, other_flags.get("podman", False)
         )
@@ -729,7 +746,6 @@ def evaluate(
                 f"Benchmarking runtime '{name}' already exists at {base_dir}"
             )
 
-        config_manager = ConfigurationManager(config_files, env)
         secrets_manager = SecretsManager(env_file, config_manager)
 
         # Services for benchmarking: PostgreSQL is required
@@ -796,10 +812,13 @@ def evaluate(
         deployment_manager = DeploymentManager(compose_config.use_podman)
         deployment_manager.start_deployment(base_dir)
     except Exception as e:
+        # Always surface a failing exit status. Previously verbosity >= 4 printed
+        # the traceback but did NOT re-raise, so evaluate exited 0 on failure —
+        # silently swallowing the fail-fast bank preflight at -v 4. Print the
+        # traceback for debugging, then still fail.
         if verbosity >= 4:
             traceback.print_exc()
-        else:
-            raise click.ClickException(f"Failed due to the following exception: {e}")
+        raise click.ClickException(f"Failed due to the following exception: {e}")
 
 
 @click.command()
