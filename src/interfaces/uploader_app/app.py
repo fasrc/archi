@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 import secrets
-import shlex
 import time
 from functools import wraps
 from pathlib import Path
@@ -31,6 +30,7 @@ from src.data_manager.collectors.utils.catalog_postgres import (
 )
 from src.data_manager.vectorstore.loader_utils import load_text_from_path
 from src.interfaces.chat_app.document_utils import check_credentials
+from src.utils.catalog_query import parse_metadata_query
 from src.utils.config_access import get_full_config
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
@@ -803,46 +803,10 @@ def _flatten_metadata(data: Dict[str, object], prefix: str = "") -> Dict[str, st
     return flattened
 
 
-_METADATA_ALIAS_MAP = {
-    "resource_type": "source_type",
-    "resource_id": "ticket_id",
-}
-
-
 def _parse_metadata_query(
     query: str,
 ) -> Tuple[Dict[str, str] | List[Dict[str, str]], str]:
-    filters_groups: List[Dict[str, str]] = []
-    current_group: Dict[str, str] = {}
-    free_tokens = []
-    for token in shlex.split(query):
-        if token.upper() == "OR":
-            if current_group:
-                filters_groups.append(current_group)
-                current_group = {}
-            continue
-        if ":" in token:
-            key, value = token.split(":", 1)
-            key = key.strip()
-            value = value.strip()
-            if key and value:
-                # Normalize legacy keys to canonical column names
-                key = _METADATA_ALIAS_MAP.get(key, key)
-                current_group[key] = value
-                continue
-        free_tokens.append(token)
-
-    if current_group:
-        filters_groups.append(current_group)
-
-    if not filters_groups:
-        filters: Dict[str, str] | List[Dict[str, str]] = {}
-    elif len(filters_groups) == 1:
-        filters = filters_groups[0]
-    else:
-        filters = filters_groups
-
-    return filters, " ".join(free_tokens)
+    return parse_metadata_query(query)
 
 
 def _parse_bool(value: Optional[str], *, default: bool = False) -> bool:
