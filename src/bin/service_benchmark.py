@@ -882,6 +882,13 @@ class Benchmarker:
             match_fields = [match_fields] if match_fields else []
 
         n_sources = len(question_item.get("sources", []))
+        if n_sources == 0:
+            # Nothing to pair. A zero-reference row (e.g. a `should_refuse` anchor)
+            # declares no sources, so a declared match field has nothing to match
+            # against — that is not the count mismatch the raise below guards. See
+            # `source_hits`, which already scores an empty match list as a clean
+            # row rather than a failure.
+            return []
         if not match_fields:
             # hardcode a default if nothing is provided
             match_fields = ["file_name"] * n_sources

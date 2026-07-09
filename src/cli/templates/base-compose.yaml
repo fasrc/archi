@@ -654,6 +654,9 @@ services:
     volumes:
       - {{ benchmarking_volume_name }}:/root/data/
       - ./queries.txt:/root/archi/QandA.txt
+      {% if benchmark_anchors_target -%}
+      - ./anchors.json:{{ benchmark_anchors_target }}:ro
+      {% endif -%}
       - {{ benchmarking_dest }}:/root/archi/benchmarks
       - ./data/prompts:/root/archi/data/prompts:ro
       {{ dev_agents_mount() }}

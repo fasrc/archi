@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import posixpath
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 # Mirror of the Jinja defaults in src/cli/templates/base-config.yaml so the
@@ -55,6 +56,11 @@ DEFAULT_ENABLED_METRICS: List[str] = [
     "context_recall",
 ]
 DEFAULT_ANCHOR_PATH: str = "examples/benchmarking/anchor_questions.json"
+
+# WORKDIR of the benchmarking image (src/cli/templates/dockerfiles/Dockerfile-benchmarks).
+# A relative anchor path is probed against this at runtime, so it is also where the
+# staged bank must be bind-mounted.
+CONTAINER_WORKDIR: str = "/root/archi"
 
 # Legacy authoring dialect -> ragas 0.3.5 modern schema.
 LEGACY_TO_MODERN: Dict[str, str] = {
@@ -286,6 +292,53 @@ def _resolve_anchor_path(anchors: Dict[str, Any], data_path: Any) -> Optional[st
         candidates.append(os.path.join(data_path, raw))
     candidates.append(raw)
     return next((c for c in candidates if os.path.exists(c)), None)
+
+
+def _anchor_cfg(benchmarking_configs: Any) -> Dict[str, Any]:
+    """The ``anchors`` sub-mapping, tolerating a missing/non-dict config."""
+    if not isinstance(benchmarking_configs, dict):
+        return {}
+    anchors = benchmarking_configs.get("anchors")
+    return anchors if isinstance(anchors, dict) else {}
+
+
+def anchors_enabled(benchmarking_configs: Any) -> bool:
+    """True unless a config sets ``anchors.enabled`` to an explicit ``false``.
+
+    Mirrors the runtime predicate in ``service_benchmark._merge_anchor_questions``
+    (``anchor_cfg.get("enabled", True) is False``) EXACTLY: an absent ``anchors``
+    block means anchors are ON, so a config that never mentions them still merges
+    the default bank.
+    """
+    return _anchor_cfg(benchmarking_configs).get("enabled", True) is not False
+
+
+def anchor_container_path(benchmarking_configs: Any) -> Optional[str]:
+    """Absolute in-container path the runtime will probe for the anchor bank.
+
+    A relative configured path is resolved against the image's ``CONTAINER_WORKDIR``
+    (the runtime's second candidate, after the ``DATA_PATH`` volume miss); an
+    absolute one is used verbatim. ``None`` when anchors are disabled, so the
+    compose template can omit the mount entirely rather than bind a path that
+    Docker would materialise as an empty directory.
+    """
+    if not anchors_enabled(benchmarking_configs):
+        return None
+    raw = _anchor_cfg(benchmarking_configs).get("path") or DEFAULT_ANCHOR_PATH
+    if not isinstance(raw, str) or not raw:
+        return None
+    return raw if posixpath.isabs(raw) else posixpath.join(CONTAINER_WORKDIR, raw)
+
+
+def anchor_source_path(benchmarking_configs: Any, data_path: Any) -> Optional[str]:
+    """The host anchor bank to stage, or ``None`` if disabled or absent on disk.
+
+    Resolved DATA_PATH-first exactly like ``preflight_benchmark_configs`` so the
+    file that is *validated* at deploy is the same file that gets *staged*.
+    """
+    if not anchors_enabled(benchmarking_configs):
+        return None
+    return _resolve_anchor_path(_anchor_cfg(benchmarking_configs), data_path)
 
 
 def _anchor_errors(
