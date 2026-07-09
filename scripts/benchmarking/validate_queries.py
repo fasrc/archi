@@ -25,7 +25,10 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.utils.benchmark_schema import preflight_bank_file  # noqa: E402  # isort: skip
+from src.utils.benchmark_schema import (  # noqa: E402  # isort: skip
+    effective_benchmarking,
+    preflight_bank_file,
+)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -47,7 +50,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     with open(args.config, "r") as handle:
         config = yaml.safe_load(handle)
-    bench = (config or {}).get("services", {}).get("benchmarking", {})
+    # Apply the same base-config.yaml defaults the rendered deployment uses, so a
+    # config that omits `modes` is still judged against its effective [SOURCES, RAGAS].
+    bench = effective_benchmarking(
+        (config or {}).get("services", {}).get("benchmarking", {})
+    )
     queries_path = args.queries or bench.get("queries_path")
 
     print(f"config : {args.config}")

@@ -38,7 +38,23 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+# Mirror of the Jinja defaults in src/cli/templates/base-config.yaml so the
+# preflight judges a config by the SAME effective settings the rendered
+# deployment runs — e.g. a config that omits ``modes`` still enters
+# ``[SOURCES, RAGAS]`` and therefore must carry ``sources``. Keep in sync with
+# that template.
+DEFAULT_MODES: List[str] = ["SOURCES", "RAGAS"]
+DEFAULT_QUERIES_PATH: str = "queries"
+DEFAULT_ENABLED_METRICS: List[str] = [
+    "answer_relevancy",
+    "faithfulness",
+    "context_precision",
+    "context_recall",
+]
+DEFAULT_ANCHOR_PATH: str = "examples/benchmarking/anchor_questions.json"
 
 # Legacy authoring dialect -> ragas 0.3.5 modern schema.
 LEGACY_TO_MODERN: Dict[str, str] = {
@@ -183,8 +199,11 @@ def preflight_bank_file(
     A missing, unreadable, non-JSON, or non-list file is returned as a single
     hard error (the function NEVER raises), so every caller branches uniformly on
     ``errors``. A well-formed list is delegated to ``validate_bank`` /
-    ``bank_eligibility_warnings``.
+    ``bank_eligibility_warnings``. A missing or non-string ``queries_path`` (e.g.
+    a config that omits it) is likewise a single hard error, never a raise.
     """
+    if not isinstance(queries_path, str) or not queries_path:
+        return ([f"queries file path is missing or invalid: {queries_path!r}"], [])
     try:
         with open(queries_path, "r") as handle:
             raw = json.load(handle)
@@ -203,6 +222,66 @@ def preflight_bank_file(
         validate_bank(raw, benchmarking_configs),
         bank_eligibility_warnings(raw, benchmarking_configs),
     )
+
+
+def effective_benchmarking(bench: Any) -> Dict[str, Any]:
+    """Return ``services.benchmarking`` with the base-config.yaml defaults applied.
+
+    The rendered deployment fills ``modes`` (default ``[SOURCES, RAGAS]``),
+    ``queries_path`` (default ``queries``), and ``enabled_metrics`` (the four RAGAS
+    metrics) when a config omits them. The preflight must judge a config by those
+    SAME effective values — otherwise a config that omits ``modes`` would look
+    RAGAS-only here yet run SOURCES (requiring ``sources``) after the ingest.
+    Builds a fresh dict; the input is never mutated.
+    """
+    bench = bench if isinstance(bench, dict) else {}
+    eff = dict(bench)
+    eff["modes"] = bench.get("modes") or DEFAULT_MODES
+    eff["queries_path"] = bench.get("queries_path") or DEFAULT_QUERIES_PATH
+    mode_settings = dict(bench.get("mode_settings") or {})
+    ragas_settings = dict(mode_settings.get("ragas_settings") or {})
+    ragas_settings["enabled_metrics"] = (
+        ragas_settings.get("enabled_metrics") or DEFAULT_ENABLED_METRICS
+    )
+    mode_settings["ragas_settings"] = ragas_settings
+    eff["mode_settings"] = mode_settings
+    return eff
+
+
+def preflight_benchmark_configs(configs: Any) -> Tuple[List[str], List[str]]:
+    """Preflight EVERY config's effective question set before a deploy.
+
+    ``archi evaluate --config-dir`` / comma-separated ``-c`` keep more than one
+    config, and the benchmarker recomputes ``required_fields_for_modes`` per
+    config. Iterate them all, apply the template defaults
+    (:func:`effective_benchmarking`), and validate both the queries bank and —
+    when anchors are enabled (default) and the anchor file exists — the anchor
+    bank, mirroring what ``Benchmarker._process_config`` enforces after the
+    ingest. A missing anchor file is skipped (the runtime warns and continues),
+    never an error. Returns aggregated ``(errors, warnings)`` labelled per config.
+    """
+    if not isinstance(configs, list):
+        configs = [configs]
+    all_errors: List[str] = []
+    all_warnings: List[str] = []
+    for idx, config in enumerate(configs):
+        config = config if isinstance(config, dict) else {}
+        bench = (config.get("services") or {}).get("benchmarking") or {}
+        eff = effective_benchmarking(bench)
+        label = config.get("name") or f"config[{idx}]"
+
+        q_errors, q_warnings = preflight_bank_file(eff.get("queries_path"), eff)
+        all_errors.extend(f"{label} queries {e}" for e in q_errors)
+        all_warnings.extend(f"{label} queries: {w}" for w in q_warnings)
+
+        anchors = eff.get("anchors") or {}
+        if anchors.get("enabled", True) is not False:
+            anchor_path = anchors.get("path") or DEFAULT_ANCHOR_PATH
+            # Mirror the runtime: a missing anchor file warns+skips, never fails.
+            if isinstance(anchor_path, str) and os.path.exists(anchor_path):
+                a_errors, _ = preflight_bank_file(anchor_path, eff)
+                all_errors.extend(f"{label} anchors {e}" for e in a_errors)
+    return all_errors, all_warnings
 
 
 def row_is_eligible(row: Dict[str, Any], metric: str) -> bool:

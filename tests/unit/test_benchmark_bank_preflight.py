@@ -16,7 +16,9 @@ from pathlib import Path
 
 from src.utils.benchmark_schema import (
     bank_eligibility_warnings,
+    effective_benchmarking,
     preflight_bank_file,
+    preflight_benchmark_configs,
     validate_bank,
 )
 
@@ -199,3 +201,125 @@ def test_eligibility_warnings_empty_bank_is_empty():
         bank_eligibility_warnings([], _cfg_with_metrics(["RAGAS"], ["context_recall"]))
         == []
     )
+
+
+# --- F3: None / non-str queries path must not raise -------------------------
+
+
+def test_preflight_none_path_is_single_hard_error():
+    # queries_path absent in config -> None reaches the helper; open(None) would
+    # TypeError. Contract says it returns a hard error, never raises.
+    errors, warnings = preflight_bank_file(None, {"modes": ["RAGAS"]})
+    assert len(errors) == 1
+    assert warnings == []
+
+
+# --- F1b: effective_benchmarking applies base-config.yaml defaults ----------
+
+
+def test_effective_benchmarking_defaults_modes_to_sources_and_ragas():
+    # base-config.yaml defaults modes to [SOURCES, RAGAS] when omitted, so an
+    # omitted-modes config effectively requires `sources`.
+    eff = effective_benchmarking({})
+    assert set(eff["modes"]) == {"SOURCES", "RAGAS"}
+    assert eff["queries_path"] == "queries"
+
+
+def test_effective_benchmarking_preserves_explicit_values():
+    eff = effective_benchmarking({"modes": ["RAGAS"], "queries_path": "x.json"})
+    assert eff["modes"] == ["RAGAS"]
+    assert eff["queries_path"] == "x.json"
+
+
+def test_effective_benchmarking_defaults_enabled_metrics():
+    eff = effective_benchmarking({})
+    metrics = eff["mode_settings"]["ragas_settings"]["enabled_metrics"]
+    assert "context_recall" in metrics and "answer_relevancy" in metrics
+
+
+# --- F1a: preflight_benchmark_configs validates EVERY config -----------------
+
+
+def _cfg_with_bank(tmp_path, name, modes, items, extra_bench=None):
+    bank = tmp_path / f"{name}.json"
+    bank.write_text(json.dumps(items))
+    bench = {"modes": modes, "queries_path": str(bank)}
+    if extra_bench:
+        bench.update(extra_bench)
+    return {"name": name, "services": {"benchmarking": bench}}
+
+
+def test_preflight_configs_flags_a_later_config(tmp_path):
+    good = _cfg_with_bank(
+        tmp_path, "c0", ["RAGAS"], [{"user_input": "q"}]
+    )  # RAGAS only: ok
+    bad = _cfg_with_bank(
+        tmp_path, "c1", ["RAGAS", "SOURCES"], [{"user_input": "q"}]
+    )  # needs sources
+    errors, _ = preflight_benchmark_configs([good, bad])
+    assert errors  # the second config is caught, not just the first
+    assert any("c1" in e for e in errors)
+    assert all("c0" not in e for e in errors)
+
+
+def test_preflight_configs_omitted_modes_requires_sources(tmp_path):
+    # A config that omits `modes` still renders as [SOURCES, RAGAS] -> must carry
+    # sources. Without the default applied this would wrongly pass.
+    cfg = tmp_path / "bank.json"
+    cfg.write_text(json.dumps([{"user_input": "q"}]))
+    config = {"services": {"benchmarking": {"queries_path": str(cfg)}}}  # no modes
+    errors, _ = preflight_benchmark_configs([config])
+    assert any("sources" in e for e in errors)
+
+
+# --- F2: anchors are part of the effective question set ----------------------
+
+
+def test_preflight_configs_validates_enabled_anchor_file(tmp_path):
+    anchors = tmp_path / "anchors.json"
+    anchors.write_text(json.dumps([{"user_input": "a"}]))  # missing sources
+    cfg = _cfg_with_bank(
+        tmp_path,
+        "c",
+        ["RAGAS", "SOURCES"],
+        [{"user_input": "q", "sources": ["u"]}],  # queries OK
+        extra_bench={"anchors": {"enabled": True, "path": str(anchors)}},
+    )
+    errors, _ = preflight_benchmark_configs([cfg])
+    # queries pass, but the anchor bank lacks sources -> flagged
+    assert any("anchors" in e for e in errors)
+
+
+def test_preflight_configs_skips_disabled_anchors(tmp_path):
+    anchors = tmp_path / "anchors.json"
+    anchors.write_text(json.dumps([{"user_input": "a"}]))  # would fail if checked
+    cfg = _cfg_with_bank(
+        tmp_path,
+        "c",
+        ["RAGAS", "SOURCES"],
+        [{"user_input": "q", "sources": ["u"]}],
+        extra_bench={"anchors": {"enabled": False, "path": str(anchors)}},
+    )
+    errors, _ = preflight_benchmark_configs([cfg])
+    assert errors == []  # disabled anchors are never validated
+
+
+def test_preflight_configs_skips_missing_anchor_file(tmp_path):
+    # Mirror runtime: a missing anchor file WARNS+skips, it does not fail the run.
+    cfg = _cfg_with_bank(
+        tmp_path,
+        "c",
+        ["RAGAS", "SOURCES"],
+        [{"user_input": "q", "sources": ["u"]}],
+        extra_bench={"anchors": {"enabled": True, "path": str(tmp_path / "nope.json")}},
+    )
+    errors, _ = preflight_benchmark_configs([cfg])
+    assert errors == []  # a missing anchor file is skipped, not an error
+
+
+def test_preflight_configs_accepts_a_single_non_list_config(tmp_path):
+    cfg = tmp_path / "bank.json"
+    cfg.write_text(json.dumps([{"user_input": "q"}]))  # no sources, defaulted SOURCES
+    single = {"services": {"benchmarking": {"queries_path": str(cfg)}}}
+    errors, _ = preflight_benchmark_configs(single)  # a dict, not a list
+    assert any("sources" in e for e in errors)
