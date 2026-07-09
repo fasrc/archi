@@ -297,10 +297,16 @@ def _anchor_errors(
     anchors = _load_bank_file(anchor_path)
     if anchors is None:
         return []  # unreadable anchor file -> runtime warns+skips, not an error
+    # Mirror the runtime's exact merge predicate (_merge_anchor_questions): an
+    # anchor is validated only if it is a dict WITH a truthy user_input that is
+    # NOT already in the bank. Non-dict / user_input-less / duplicate anchors are
+    # skipped there before validation, so flagging them here would false-fail.
     to_merge = [
         a
         for a in anchors
-        if not (isinstance(a, dict) and a.get("user_input") in staged_user_inputs)
+        if isinstance(a, dict)
+        and a.get("user_input")
+        and a["user_input"] not in staged_user_inputs
     ]
     return validate_bank(to_merge, eff)
 

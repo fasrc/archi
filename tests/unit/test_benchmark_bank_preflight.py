@@ -395,6 +395,30 @@ def test_preflight_configs_skips_duplicate_anchor(tmp_path):
     assert len(anchor_errors) == 1  # "new" only; the duplicate "dup" is skipped
 
 
+def test_preflight_configs_skips_malformed_anchor(tmp_path):
+    # The runtime skips a non-dict anchor and a dict without user_input BEFORE
+    # validation, so the preflight must not flag them either (else it false-fails
+    # a run the runtime would complete).
+    queries = tmp_path / "q.json"
+    queries.write_text(json.dumps([{"user_input": "q", "sources": ["u"]}]))
+    anchors = tmp_path / "anchors.json"
+    anchors.write_text(
+        json.dumps(["stray string", {"anchor_type": "reasoning", "reference": "r"}])
+    )
+    cfg = {
+        "name": "c",
+        "services": {
+            "benchmarking": {
+                "modes": ["RAGAS", "SOURCES"],
+                "queries_path": str(queries),
+                "anchors": {"enabled": True, "path": str(anchors)},
+            }
+        },
+    }
+    errors, _ = preflight_benchmark_configs([cfg])
+    assert errors == []  # both malformed anchors are skipped, not validated
+
+
 # --- helper defensive branches ----------------------------------------------
 
 
