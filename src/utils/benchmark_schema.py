@@ -36,6 +36,7 @@ Per-metric eligibility
 
 from __future__ import annotations
 
+import json
 import math
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -110,6 +111,98 @@ def metric_required_column(metric: str) -> Optional[str]:
     """The bank column ``metric`` requires be non-empty, or ``None`` if it has no
     extra data requirement beyond the always-present ``user_input``/``response``."""
     return _METRIC_REQUIRED_COLUMN.get(metric)
+
+
+def validate_bank(bank: Any, benchmarking_configs: Any) -> List[str]:
+    """Return per-item schema errors for ``bank`` under the configured modes.
+
+    The bank is first ``normalize_bank``-d (same as the harness) so a legacy
+    bank is judged by its modern shape, then every item is checked for the
+    presence of each field in ``required_fields_for_modes``. Returns a list of
+    human-readable errors (empty ⇒ valid). Pure and never raises — a malformed
+    item is reported, not thrown, so a preflight can surface EVERY problem at
+    once rather than aborting on the first.
+    """
+    normalized = normalize_bank(bank)
+    if not isinstance(normalized, list):
+        return [f"bank is not a JSON list (got {type(normalized).__name__})"]
+    required = required_fields_for_modes(benchmarking_configs)
+    errors: List[str] = []
+    for i, item in enumerate(normalized):
+        if not isinstance(item, dict):
+            errors.append(f"item[{i}]: not a dict (got {type(item).__name__})")
+            continue
+        missing = [f for f in required if f not in item]
+        if missing:
+            errors.append(f"item[{i}]: missing {missing} (has {sorted(item)})")
+    return errors
+
+
+def bank_eligibility_warnings(bank: Any, benchmarking_configs: Any) -> List[str]:
+    """Return non-fatal warnings for RAGAS metrics that will score on a subset.
+
+    Only when ``RAGAS`` is among the modes: for each enabled metric with a
+    required column (see ``metric_required_column``), count the rows whose column
+    is empty and warn with the scored denominator, so an operator sees the real
+    per-metric sample size before spending an ingest. Never fatal, never raises.
+    """
+    if not isinstance(benchmarking_configs, dict):
+        return []
+    if "RAGAS" not in (benchmarking_configs.get("modes") or []):
+        return []
+    normalized = normalize_bank(bank)
+    if not isinstance(normalized, list) or not normalized:
+        return []
+    total = len(normalized)
+    metrics = (
+        benchmarking_configs.get("mode_settings", {})
+        .get("ragas_settings", {})
+        .get("enabled_metrics", [])
+    )
+    warnings: List[str] = []
+    for metric in metrics:
+        column = metric_required_column(metric)
+        if not column:
+            continue
+        n_ok = sum(
+            1 for it in normalized if isinstance(it, dict) and bool(it.get(column))
+        )
+        if n_ok < total:
+            warnings.append(
+                f"{metric}: only {n_ok}/{total} rows have non-empty '{column}'"
+                f" -> the other {total - n_ok} are excluded from this metric"
+            )
+    return warnings
+
+
+def preflight_bank_file(
+    queries_path: Any, benchmarking_configs: Any
+) -> Tuple[List[str], List[str]]:
+    """Load the bank JSON at ``queries_path`` and return ``(errors, warnings)``.
+
+    A missing, unreadable, non-JSON, or non-list file is returned as a single
+    hard error (the function NEVER raises), so every caller branches uniformly on
+    ``errors``. A well-formed list is delegated to ``validate_bank`` /
+    ``bank_eligibility_warnings``.
+    """
+    try:
+        with open(queries_path, "r") as handle:
+            raw = json.load(handle)
+    except FileNotFoundError:
+        return ([f"queries file not found: {queries_path}"], [])
+    except (OSError, ValueError) as exc:  # ValueError covers JSONDecodeError
+        return ([f"queries file could not be read as JSON ({queries_path}): {exc}"], [])
+    if not isinstance(raw, list):
+        return (
+            [
+                f"queries file must be a JSON list, got {type(raw).__name__}: {queries_path}"
+            ],
+            [],
+        )
+    return (
+        validate_bank(raw, benchmarking_configs),
+        bank_eligibility_warnings(raw, benchmarking_configs),
+    )
 
 
 def row_is_eligible(row: Dict[str, Any], metric: str) -> bool:

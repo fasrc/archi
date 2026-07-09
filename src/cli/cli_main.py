@@ -26,6 +26,7 @@ from src.cli.utils.helpers import (
     _validate_non_chatbot_sections,
 )
 from src.cli.utils.service_builder import ServiceBuilder
+from src.utils.benchmark_schema import preflight_bank_file
 from src.utils.logging import get_logger, setup_cli_logging
 
 # DEFINITIONS
@@ -760,6 +761,22 @@ def evaluate(
         config_manager.set_sources_enabled(enabled_sources)
 
         benchmarking_configs = config_manager.get_interface_config("benchmarking")
+
+        # Fail fast BEFORE any deploy/ingest if the question bank doesn't satisfy
+        # the schema the configured modes require. Otherwise a bank/mode mismatch
+        # only surfaces per-question at grading time — after the ~50-min re-ingest.
+        preflight_queries = benchmarking_configs.get("queries_path")
+        bank_errors, bank_warnings = preflight_bank_file(
+            preflight_queries, benchmarking_configs
+        )
+        for bank_warning in bank_warnings:
+            logger.warning("Benchmark bank: %s", bank_warning)
+        if bank_errors:
+            raise click.ClickException(
+                "Benchmark question bank failed preflight for "
+                f"{preflight_queries!r} (modes {benchmarking_configs.get('modes')}):\n"
+                + "\n".join(bank_errors)
+            )
 
         other_flags["benchmarking"] = True
         other_flags["query_file"] = benchmarking_configs.get("queries_path", ".")
