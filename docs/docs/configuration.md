@@ -261,7 +261,7 @@ collected (scraped/uploaded/fetched) and *before* it is written to disk. It is b
 once from `data_manager.processing` and applied uniformly across **both** scheduled
 ingest and the uploader UI, so the two never produce an inconsistent corpus.
 
-Data flow per document: **collect → convert (HTML→Markdown) → categorize (optional LLM) → persist**.
+Data flow per document: **collect → capture (title + source category) → convert (HTML→Markdown, KB article-body slice) → categorize (optional LLM) → persist**.
 
 ```yaml
 data_manager:
@@ -282,7 +282,7 @@ data_manager:
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `html_to_markdown.enabled` | `true` | Convert string HTML content (suffix `html`/`htm`) to ATX Markdown via `markdownify`, flip the suffix and path fields to `.md`, and record `metadata.converted_from = "html"`. The `.md` file then loads through `TextLoader` instead of `BSHTMLLoader`, so headings, lists, tables, and links survive into chunks. |
+| `html_to_markdown.enabled` | `true` | Convert string HTML content (suffix `html`/`htm`) to ATX Markdown via `markdownify`, flip the suffix and path fields to `.md`, and record `metadata.converted_from = "html"`. The `.md` file then loads through `TextLoader` instead of `BSHTMLLoader`, so headings, lists, tables, and links survive into chunks. For FASRC KB (Echo-KB) pages, the converted Markdown is additionally sliced to the article body between the page's `Table of Contents` and `Bookmarkable Links` (or, when absent, `Last Updated`) landmarks, dropping the surrounding category-filter nav and footer; pages without those landmarks (non-KB sources) keep the full-page conversion. |
 | `categorization.enabled` | `false` | Assign one label from `categories` to each document via an LLM and store it under `metadata.llm_category`. |
 | `categorization.provider` / `model` | — | Which chat model to use. `provider` is a key under `services.chat_app.providers`; that block (base_url / mode / models / extra_kwargs) supplies the model's `provider_config`, so a custom local/vLLM endpoint is honored. |
 | `categorization.max_chars` | `4000` | Document content is truncated to this length before the model call (bounds cost/latency). |
@@ -297,22 +297,33 @@ data_manager:
   Markdown (e.g. a script-only page), keeps the original resource. A categorization
   error never raises and defaults to `uncategorized`.
 - **`llm_category` is distinct from `category`.** A source-provided
-  `metadata.category` (e.g. the Indico scraper's event category) is **never**
-  overwritten; the LLM label is written to `metadata.llm_category`. Both propagate to
-  `documents.extra_json` and onward to `document_chunks.metadata`.
+  `metadata.category` is **never** overwritten; the LLM label is written to
+  `metadata.llm_category`. Both propagate to `documents.extra_json` and onward to
+  `document_chunks.metadata`.
+- **Source category capture (KB).** When conversion is enabled, an HTML page's
+  breadcrumb category is captured *before* conversion into `metadata.category` — for
+  FASRC KB pages this is the site taxonomy term (`Home › <Category> › <Article>`,
+  e.g. `Storage`, `Cluster Usage`). It never overwrites a category a scraper already
+  set (e.g. the Indico event category) and is silent on pages without a breadcrumb.
+  Like the body slice, it takes effect only on **newly** ingested documents or when an
+  already-persisted document is force-overwritten — see *Applying to an existing
+  corpus* below.
 - **Cost.** Categorization issues one LLM call per document — expensive on large
   crawls, hence off by default.
 - **Local `.html` uploads are not converted.** Uploaded local files arrive as `bytes`
   (not string content), so the conversion guard skips them; scraped/web HTML is the
   target. (A decode-on-`html` path is future work.)
-- **Re-ingest refreshes chunks.** Hashes are identity-based (URL/path), so converting
-  an already-ingested HTML document keeps its hash. On re-ingest the vectorstore
-  detects that the persisted filename changed (`page.html` → `page.md`) and refreshes
-  that document's chunks, so retrieval never serves stale HTML-flattened content.
-  Note this detection keys off the persisted **filename**, not the content: it catches
-  the HTML→Markdown case (the extension always flips) but a content-only change that
-  keeps the **same filename** under an unchanged hash is not detected and would retain
-  its old chunks until the hash changes or the document is removed and re-added.
+- **Applying to an existing corpus (a plain re-ingest is _not_ enough).** Standard-URL
+  ingest calls `persist_resource(resource, output_dir)` **without** `overwrite`, and the
+  persistence layer skips writing when the target path already exists. So for a document
+  already on disk (an existing deployment), re-ingesting does **not** rewrite its
+  persisted Markdown — the new body slice / `category` never reach disk, and the
+  vectorstore (which detects refreshes by the persisted **filename**, e.g.
+  `page.html` → `page.md`, not by content) keeps serving the old chunks. A content-only
+  change under the same `.md` filename and unchanged hash therefore requires a
+  **force-overwrite or a nuke + re-ingest** (or removing the document so it is re-added)
+  to take effect. New documents are unaffected — they are sliced/categorized on first
+  ingest.
 - **Missing categorization provider fails loud, not silent.** If `categorization.enabled`
   is true but its `provider` is absent from `services.chat_app.providers`, the
   categorizer is **not** built (a prominent warning is logged and no `llm_category` is
