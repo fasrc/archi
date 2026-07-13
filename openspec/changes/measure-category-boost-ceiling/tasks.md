@@ -1,56 +1,143 @@
-## 1. Preconditions — make the result interpretable (D0, D7)
+## 0. Read this first — what this change can and cannot decide
+
+The bank's unit of independent evidence is the gold **article**, not the question. 18 gold rows
+resolve to **7 articles** (sizes `[5,5,2,2,2,1,1]`; `running-jobs` + `cluster-storage` = 56% of
+rows), collapsing to ~5 categories — and the category, not the question, is what the boost is
+applied to.
+
+At K=7 the instrument is broken three separate ways: a nominal 95% cluster-bootstrap interval
+delivers ~83% real coverage; a paired sign test clears p<0.05 only on a 7/7 unanimous result; and
+a +14pp hit-rate delta has ~23% power. **Therefore Phase A produces no kill and no advance
+verdict.** Phase B (bank expansion) is a *prerequisite* of the decision, not a follow-up to it.
+
+The planned ~6 non-KB (SchedMD/wiki) rows fix **harm visibility** and do nothing for
+**benefit-side power** — non-KB docs can never carry a category, so they add zero benefit-side
+clusters. Do not let one fix be credited for both. **They are Phase B (10.3), not Phase A** — every
+count quoted in §7–§9 (H1 n=0, H2 n=3, H3 n=7) is a statement about the bank *as it stands*, and
+editing the bank in this PR would falsify all of them.
+
+But note the asymmetry that makes the change worth running anyway: **harm is a MIN, benefit is a
+MEAN.** One witnessed (row × category × weight) cell in which the boost displaces a correct
+document is an *entailment* — it needs no statistical power and it stands at K=7. So Phase A can
+still **halt** the no-classifier path on harm demonstrated *before* any benefit (7.12), and the
+corpus census can still block the work outright at any K (1.2). What it cannot do is *endorse* the
+feature, or kill it on a null. (`NO_HEADROOM` is a third live finding, but below the coverage
+minimums it is a statement about *this bank at this retrieval config* — a hypothesis to retest, not
+a kill.)
+
+Two guards keep that halt from becoming its own unfalsifiable gate — the failure the withdrawn
+"decisive null" was:
+
+1. **The weight is bounded (6.0).** Rerank scores are bounded, so at a large enough `w` the boost is
+   lexicographic and a harm cell is arithmetic, not evidence. The sweep stops below `W_LEX`.
+2. **The trigger is weight-conditioned (7.12).** Harm *anywhere* is not a halt. Harm at or below the
+   first weight that helps anything (`W_safe ≤ W_benefit`) is. Harm above it merely bounds the
+   operating window — which is the case in which the feature is *usable*.
+
+## 1. Corpus census — bank-independent, and the only K-free gate (D0)
 
 - [ ] 1.1 Nuke + full re-ingest the dev corpus (a plain re-ingest will NOT refresh #97's sliced bodies — `persist_resource` skips existing files); verify with the deploy-verify smoke test
-- [ ] 1.2 Report category coverage: fraction of KB chunks with a non-empty `metadata.category`, plus the distribution across the 19 labels. **HARD GATE** — if coverage is low, the oracle is inert and a null result would measure the extractor, not the idea. Fix extraction or scope the experiment to the covered subset before proceeding
-- [ ] 1.3 Add ~5 questions to `examples/benchmarking/fasrc_ragas_queries.json` whose gold source is a `slurm.schedmd.com` page, and at least 1 answered by the namesake wiki page — the corpus has three source groups, and today zero non-KB gold sources exist in any bank. Use the modern dialect (`user_input`/`reference`/`sources`)
-- [ ] 1.4 Add an authored `assumed_category` to **every** question in the bank — the in-KB category a plausible classifier would assign — including `should_refuse` anchors and the new non-KB rows. Record the reasoning in `notes` so the label is auditable (D3a). Without this the harm channels are unmeasurable
-- [ ] 1.5 Confirm the expanded bank still passes `benchmark-bank-preflight`
+- [ ] 1.2 **CORPUS-DEDUCTIVE GATE, on a PRE-REGISTERED floor.** Report `coverage_KB` = fraction of KB chunks with a non-empty `metadata.category`, and `|V|` = size of the measured vocabulary. The thresholds are fixed **before** the census is read, so "is coverage too low?" is never an operator judgment: **`coverage_KB < 0.50` or `|V| < 2` ⇒ `CORPUS_BLOCKED`, do not sweep** (below 0.50 most of the KB corpus is, w.r.t. the boost predicate, indistinguishable from SchedMD — an uncategorized KB chunk can never be boosted either — so the "category boost" would mostly be a labelled-vs-unlabelled discriminator; with `|V| < 2` the predicate is constant and the boost is a global offset that reorders nothing). **`0.50 ≤ coverage_KB < 0.80` ⇒ sweep but EXPLICITLY SCOPED** to the covered subset: exclude and report uncategorized gold rows, and label every number with its coverage. **`≥ 0.80` ⇒ unscoped.** `CORPUS_BLOCKED` is phrased as a defect in the **extractor**, not a verdict on the **idea**
+- [ ] 1.3 **MEASURE the category vocabulary** — the set of distinct non-empty `metadata["category"]` values on KB chunks — and report its cardinality and the chunk distribution over it. Do **not** assume the proposal's "19 labels", and do **not** use the 6-label list in `deploy/fasrc-dev/config.yaml`: that is `llm_category`, a *different field* the boost does not read. Every category-indexed sweep below ranges over **this measured set**
 
-## 2. The rerank seam (D1)
+## 2. The rerank seam — the benchmark's CAPTURE seam, not its boost seam (D1)
 
-- [ ] 2.1 RED: test asserting `LlamaIndexHierarchicalRetriever._adjust_ranked_scores` is identity — same `ranked` list in, same list out, so production ordering is bit-for-bit unchanged
-- [ ] 2.2 GREEN: add the `_adjust_ranked_scores(query, candidates, ranked)` hook (identity default) and call it where `ranked` is produced (`hierarchical_retriever.py:236`)
-- [ ] 2.3 Test that a subclass overriding the hook actually changes the returned document order — proving the seam can promote a candidate from below the top-k cut, which post-hoc reordering of the returned top-5 could not
+- [ ] 2.1 RED: test asserting `LlamaIndexHierarchicalRetriever._adjust_ranked_scores` is identity — same `ranked` list in, same list out — **and** that the retriever's output ordering is bit-for-bit unchanged by the hook's existence. This obligation is a requirement ("Single-retrieval pool capture with offline replay of the ranking tail"), not merely a task
+- [ ] 2.2 GREEN: add the `_adjust_ranked_scores(query, candidates, ranked)` hook (identity default) and call it where `ranked` is produced (`hierarchical_retriever.py:236`). This is the **only** production code this change touches
+- [ ] 2.3 Test that a subclass overriding the hook sees `candidates`, `ranked`, and the rerank scores together — the three objects the capture needs, which coexist at no other point in the pipeline (`_rerank` returns only `(index, score)` pairs). Also test that an override *can* change the returned document order, proving the seam sits above the top-k cut and could later host a real production boost
+- [ ] 2.4 **The benchmark's override RECORDS; it does not boost.** After D8 every (category, weight) cell is offline replay against the capture, so no boost is ever applied inside a live retrieval. Assert the capture override returns `ranked` unmodified
 
-## 3. Retrieval-only scorer (D2, D3, D4)
+## 3. Pool capture + offline replay — the enabler for everything downstream (D8)
 
-- [ ] 3.1 RED: tests for the scoring primitives against a fake retriever — hit-rate@k, MRR, and exclusion of zero-source (`should_refuse`) rows from both
-- [ ] 3.2 GREEN: implement hit-rate@k + MRR over a question bank, matching returned document URLs against each question's `sources`
-- [ ] 3.3 RED + GREEN: URL canonicalization applied to **both** sides before matching and before the category join (trailing slashes, slug variants) — the bank README explicitly warns SOURCES mode needs URL reconciliation. Report any gold source that resolves to no ingested document as **unresolved**, never as a silent miss
-- [ ] 3.4 Build the `url -> category` map in one query over `documents` ⋈ `document_chunks`; expose `gold_category(q)` as the canonicalized-URL lookup of `q.sources[0]`
-- [ ] 3.5 Wire the scorer to the deployment's configured retriever via `build_vector_retriever` (`retrievers/factory.py:29`) using the project's own config loading — no hand-read secrets, no answer-generation LLM
-- [ ] 3.6 Verify the scorer needs no **answer-generation** credentials on a local-embedding deployment (dev uses `HuggingFaceEmbeddings`), and document that a hosted embedder still requires its own key — the no-key guarantee is scoped, not blanket
+- [ ] 3.1 RED + GREEN: capture, per query, the 20-candidate pool **through the §2 hook** (the one point where `candidates`, `ranked`, and the rerank scores coexist), as **plain immutable records** — `rerank_score`, `category` (may be absent), `parent_id` (may be None), `url` — plus the baseline `ranked` order as returned by the reranker. Never cache live `Document` objects: production mutates `doc.metadata["rerank_score"]` in place (`hierarchical_retriever.py:269`) and objects would leak scores between grid cells
+- [ ] 3.2 GREEN: pre-fetch parents for **all** distinct `parent_id`s in the pool in one `_fetch_parents` call, and cache the unresolved-id set. This is exact, not an approximation: the dedupe loop that builds `parent_ids` is exhaustive over the whole pool with no `break` (`:243-257`; truncation is a *later* loop at `:271-272`), and `_fetch_parents` is a set-membership lookup returning a dict (`WHERE p.id = ANY(%s)`), so a boost permutes the id list but cannot change its membership
+- [ ] 3.3 GREEN: offline replay of the tail for any `(category, w)` — stable descending sort (ties keep the captured baseline order), first-seen-parent dedupe, materialize skipping unresolved parents **without** charging them against the top-k budget, truncate at `num_documents_to_retrieve`
+- [ ] 3.4 **PARITY TEST (blocking):** offline replay at `w = 0` must reproduce the live retriever's top-5 exactly, for every question in the bank. If it does not, every downstream number is void
+- [ ] 3.5 Key the capture cache on query text + `candidate_pool_size` + `semantic_weight` + `bm25_weight` + reranker model id; changing any of them forces re-retrieval
 
-## 4. Counter-metrics — without these a boost result is inadmissible
+## 4. Retrieval-only scorer (D2, D3, D4)
 
-- [ ] 4.1 RED + GREEN: `non_kb_share@k` — fraction of returned top-k not under `docs.rc.fas.harvard.edu/kb/` (exactly the population that can never carry a category, hence can never be boosted)
-- [ ] 4.2 RED + GREEN: `refusal_confidence` — top-k rerank scores (max and mean) returned for `should_refuse` anchors
-- [ ] 4.3 Emit both counter-metrics in the same result record as hit-rate@k and MRR — never separately
-- [ ] 4.4 Assert both counter-metrics are read from a **simulated-classifier** run and are reported as *vacuous* if taken from an oracle run, where the at-risk rows carry no category and are never boosted
+- [ ] 4.1 RED: tests for the scoring primitives against a fake retriever — hit-rate@k, MRR, and exclusion of zero-source (`should_refuse`) rows from both
+- [ ] 4.2 GREEN: implement hit-rate@k + MRR over a question bank, matching returned document URLs against each question's `sources`
+- [ ] 4.3 RED + GREEN: URL canonicalization applied to **both** sides before matching and before the category join (trailing slashes, slug variants). Report any gold source that resolves to no ingested document as **unresolved**, never as a silent miss
+- [ ] 4.4 Build the `url -> category` map in one query over `documents` ⋈ `document_chunks`; expose `gold_category(q)` as the canonicalized-URL lookup of `q.sources[0]`
+- [ ] 4.5 Wire the scorer to the deployment's configured retriever via `build_vector_retriever` (`retrievers/factory.py:29`) using the project's own config loading — no hand-read secrets, no answer-generation LLM
+- [ ] 4.6 Verify the scorer needs no **answer-generation** credentials on a local-embedding deployment (dev uses `HuggingFaceEmbeddings`), and document that a hosted embedder still requires its own key
+- [ ] 4.7 Do **not** implement `recall@k`. No bank row carries more than one gold source, so `recall@k` is definitionally identical to `hit-rate@k` here — it is not a finer-resolution metric
 
-## 5. Treatment modes: oracle (benefit) and simulated-classifier (harm) — D3a, D5, D6
+## 5. Prechecks that gate the sweep — run these BEFORE any weight is swept (D9)
 
-- [ ] 5.1 RED: test that the oracle boost boosts every chunk sharing the gold article's *category*, not the gold article itself — it must simulate a perfect classifier, not circularly retrieve the answer
-- [ ] 5.2 GREEN: benchmark-only retriever subclass overriding `_adjust_ranked_scores` to apply `score' = rerank_score + w · (chunk.category == treatment_category(q))`
-- [ ] 5.3 RED + GREEN: **oracle mode** — `treatment_category(q)` = gold article's captured category. Measures the ceiling only. Rows with no gold source or no captured category get no boost (documented as benefit-only, not safe)
-- [ ] 5.4 RED + GREEN: **simulated-classifier mode** — `treatment_category(q)` = the authored `assumed_category`, applied to every row including refusal anchors and non-KB rows. This is the mode that can express harm
-- [ ] 5.5 Sweep `w` across a range in a single run per mode (FlashRank's score scale is model-dependent — `w` cannot be chosen a priori), recording all four metrics at each `w`
-- [ ] 5.6 Assert production is untouched: with no treatment configured, retrieval results are identical to baseline
+- [ ] 5.1 RED + GREEN: **headroom precheck.** Report `pool_recall@20`, `baseline_hit@5`, `baseline_hit@1`, `baseline_MRR`, `MRR_pool_ceiling` (rank 1 for every in-pool gold), and the full rank-of-first-gold distribution (incl. "not in pool"). Compute `max_possible_lift(hit@5) = pool_recall@20 − baseline_hit@5` and `max_possible_lift(MRR) = MRR_pool_ceiling − baseline_MRR` — exact, because the boost reorders only *inside* the pool and cannot recall what `hybrid_search` never fetched. `max_possible_lift` is defined for the two **inferential** metrics only; the primary structural readout has no ceiling and is **never** instrument-dead. **MRR headroom is the single trigger** (it is strictly stronger): `max_possible_lift(MRR) = 0` ⟺ every in-pool gold already ranks 1 ⟹ hit@5 headroom is 0 **and** `W_benefit = ∞`. Record `NO_HEADROOM` — and **still run §6 and §7**. `NO_HEADROOM` stops the *interpretation of a benefit null*, it does **not** stop the run: `w*_harm`, `W_safe`, and the harm matrix stay computable and are the only thing here that can halt the feature
+- [ ] 5.2 RED + GREEN: **degeneracy precheck.** Per query, report the pool category-match fraction and the count of ordered pairs `(i, j)` where `i` matches the treatment category, `j` does not, and `j` outranks `i` — the complete set of reorderings any `w` could ever achieve. Empty pair set ⇒ **structurally inert**; report inert rows separately, never averaged silently into the delta
+- [ ] 5.3 Assess inertness **across articles**, not chunks: `category` is written identically to a parent and all its children (`manager.py:835-843`), so the boost adds the same constant to every chunk of an article and can only reorder *across* articles
+- [ ] 5.4 Report bank coverage: distinct gold-article count, per-article row shares, distinct-category count, and the **per-channel** at-risk unit counts (§7.9). This is what the decision gate reads
 
-## 6. Measure and decide
+## 6. Metrics, in evidential order (D10)
 
-- [ ] 6.1 Record **baseline**: hit-rate@k, MRR, `non_kb_share@k`, `refusal_confidence` on the re-ingested corpus
-- [ ] 6.2 Record the **oracle sweep** across `w` → the ceiling (benefit upper bound)
-- [ ] 6.3 Record the **simulated-classifier sweep** across `w` → the harm channels
-- [ ] 6.4 Apply the decision gate and write the verdict into the change:
-  - Δ(oracle)≈0 ⇒ **kill the boost**, keep the harness. No classifier is built
-  - Δ(oracle) large, and simulated-classifier run shows `non_kb_share` + `refusal_confidence` stable ⇒ provisional ceiling; expand the bank before tuning `w` or choosing a classifier
-  - Δ(oracle) large but simulated-classifier `non_kb_share` collapses ⇒ lift is an artifact of demoting SchedMD/wiki docs; restrict to within-KB or drop
-  - Δ(oracle) large but simulated-classifier `refusal_confidence` rises ⇒ the boost degrades refusal; treat as a regression, not a win
-- [ ] 6.5 State the asymmetry explicitly in the write-up: a **null** is decisive (perfect mapping + favorable bank + no lift ⇒ no classifier can help); a **positive** is provisional, because 18 gold-sourced questions across ~7 articles — two of which dominate — cannot support tuning. Benefit and harm come from *different runs*; never report an oracle-run counter-metric as a safety result
+- [ ] 6.0 **BOUND THE SWEEP FIRST (D6a).** Compute `w_lex(q)` = (max − min rerank score in `q`'s pool) — the weight at which the boost goes **lexicographic** on `q` (every matched candidate above every unmatched one, whatever the cross-encoder said) — and `W_LEX = min over bank queries of w_lex(q)`. **The admissible operating range is `0 < w < W_LEX`.** Everything in §6 and §7 is computed inside it. Weights ≥ `W_LEX` are the **degenerate regime**: the boost has become a hard category preference (an explicit non-goal), and a harm cell there is arithmetic, not evidence. Without this bound the harm gate fires on *every* run — the mirror image of the withdrawn "decisive null". Report `W_LEX`, the per-query `w_lex(q)`, the observed score range, and the reranker model id
+- [ ] 6.1 **PRIMARY (structural): min-weight-to-flip.** The boost is additive and monotone, so candidate `i` overtakes `j` exactly when `w > s_j − s_i` — the top-k is a step function of `w` whose breakpoints are the pairwise rerank-score gaps. Compute exactly from the capture (infinite resolution, no grid sampling), restricted to the §6.0 range, under the **oracle** category: `w*_gold_hit(r)` = smallest admissible `w` promoting row `r`'s gold source **into** the top-k (baseline-MISS rows only; ∞ if the gold source is not in the pool, or if promotion needs `w ≥ W_LEX`); `w*_gold_rank(r)` = smallest admissible `w` **strictly improving the rank** of the gold source within the top-k (baseline-HIT rows at rank > 1; ∞ if it already ranks 1 or no admissible `w` improves it). Record `already_hit` / `already_first` as **FLAGS, never as a `w*` of 0** — a 0 would enter a minimum and destroy it, which is precisely how rank-improvement (the only benefit a hit-saturated bank has) got deleted from the benefit side in the last draft. `w*_harm(r)` = smallest admissible `w` at which **any** measured category triggers H1, H2, or H3 on row `r` (§7)
+- [ ] 6.2 **OPERATING WINDOW — every `min` gets an explicit empty-set convention.** `W_safe = min over ALL instrumented rows of w*_harm(r)`, **`+∞` if no row is ever harmed**. `W_benefit_hit = min over baseline-MISS gold rows of w*_gold_hit(r)`, **`+∞` WHEN THAT SET IS EMPTY** (the hit-saturated case this bank is expected to be in). `W_benefit_rank = min over baseline-HIT rank>1 rows of w*_gold_rank(r)`, **`+∞` when empty**. `W_benefit = min(W_benefit_hit, W_benefit_rank)`. Then: **(a)** `W_benefit` finite and `W_safe ≤ W_benefit` ⇒ *no admissible weight helps any question in this bank before worst-case harm becomes reachable* — **dominated on the rows measured**, verdict `HARM_REACHABLE`; **(b)** `W_benefit` finite and `W_safe > W_benefit` ⇒ report the **operating window** `[W_benefit, W_safe)`; **(c)** `W_benefit = ∞` ⇒ **DO NOT print "dominated"** — a min over an empty set is not evidence that harm precedes benefit, it is evidence there is no benefit to precede. Report `NO_HEADROOM` (nothing could help at any `w`) or *"benefit reachable only in the degenerate regime"* (`w ≥ W_LEX` would help — i.e. only a hard filter would, which is out of scope). Report all of these **without CIs** (per-row entailments, not estimates) and state explicitly that `W_safe` is a **min over instrumented rows**, so adding at-risk rows can only lower it — an **optimistic** ceiling, never a conservative one
+- [ ] 6.3 **SECONDARY (inferential): MRR.** Continuous, so it is the strongest inferential metric a small clustered bank can carry. Its headroom must be *measured* (5.1), not assumed — it is itself at ceiling if gold already ranks 1
+- [ ] 6.4 **GUARDRAIL ONLY: hit-rate@k.** Coarsest possible estimator and saturated by design (10/18 gold rows are `easy_retrieve`, documented as "should always score high"). A hit-rate@k delta must never be quoted as the headline
+- [ ] 6.5 Label every metric in the result record as structural / inferential / guardrail
 
-## 7. Gate and land
+## 7. Harm gate — adversarial worst-case sweep, NEVER an authored label (D3a-revised)
 
-- [ ] 7.1 `bash scripts/gate.sh` green (format → lint → test, ≥80% diff coverage)
-- [ ] 7.2 Update `docs/` for the new benchmark: how to run each mode, what the counter-metrics mean, why the oracle cannot show harm, and why a positive result is not a green light
-- [ ] 7.3 Open PR to `fasrc/archi --base dev`; request `@codex review`
+- [ ] 7.1 RED + GREEN: sweep **every measured category (1.3) × every admissible weight (6.0) × every row**, and gate on the **worst** cell. The sweep covers **every row in the bank**, not just the refusal and non-KB rows — H3 (7.4) makes every gold row an at-risk row. Emit the full (row × category × weight) matrix and **name the arg-max category** per row, so a reader can judge whether the damaging routing is one a real classifier would plausibly emit. Harm cells at `w ≥ W_LEX` are **not** harm events for gating purposes
+- [ ] 7.2 RED + GREEN: **H1 — non-KB displacement.** A non-KB gold source present in the baseline top-k is absent from the boosted top-k. (Non-KB chunks have no `category` key at all ⇒ +0 boost at every category and every weight ⇒ strictly demoted relative to any boosted KB chunk)
+- [ ] 7.3 RED + GREEN: **H2 — refusal context injection.** A `should_refuse` anchor's boosted top-k gains a KB page carrying the boosted category that was **not** in the baseline top-k
+- [ ] 7.4 RED + GREEN: **H3 — in-KB misrouting** (NEW, and the likeliest real-world harm). A KB gold row that baseline **hits** loses its gold source from the boosted top-k under some category ≠ its gold category. This is what an ordinary classifier error does in production; it costs nothing (another cell of the same cached grid) and it is the only harm channel with any observational base on the current bank
+- [ ] 7.5 Cost check: a full |vocabulary| × |W| matrix is a few thousand in-memory sorts over ≤20 elements — milliseconds, zero extra retrieval/DB/ONNX work (§3). **Cost is not an admissible reason to narrow the gate to one authored label**
+- [ ] 7.6 `assumed_category` is **NOT** authored and **NOT** added to the bank. If one ever exists it is a **non-normative annotation** plotted on the harm surface — it must never gate a result, and a missing one must not block a run or change any number. A *representative* harm figure may come only from a real candidate classifier's output, reported **in addition to** the worst case
+- [ ] 7.7 RED + GREEN: `non_kb_share@k` — fraction of returned top-k not under `docs.rc.fas.harvard.edu/kb/` (exactly the population that has no `category` key at all). **It is a sized DIAGNOSTIC, not a gate, and must be labelled as such** — it gets no "materiality" threshold, because a non-KB doc displaced from the top-k of a *KB-gold* row is not known to be correct, so its displacement is not demonstrated harm. Report baseline vs boosted, per row and pooled, at the worst category, **plus the exact count of non-KB documents displaced**. The **gate** on non-KB demotion is **H1** (7.2), a per-row binary witness over a *verified-correct* non-KB gold source. State plainly in the record that H1 has **n=0** at-risk units on the current bank, so `non_kb_share@k` is today **reportable but unfalsifiable** as a gate — no movement of it can be scored as harm, and closing that blind spot is a Phase B prerequisite (10.3)
+- [ ] 7.8 RED + GREEN: `refusal_confidence`, **de-confounded**. Do **NOT** report the post-boost score mass: the boost adds `w` to every matched chunk by definition, so "scores rise" is an arithmetic identity, not evidence. Report (i) the **count of documents in the boosted top-k that are KB pages carrying the boosted category and were absent from the baseline top-k**, and (ii) the **baseline, pre-boost** rerank scores of the boosted top-k. Both are comparable to baseline on the same scale
+- [ ] 7.9 **HARM POWER, per channel.** With 0 harmful units out of `n` **independent** units, the 95% upper bound on the true harm rate is ≈ `3/n`. The unit differs by channel: H1 → distinct non-KB gold page (**n=0** today ⇒ unobserved, no bound); H2 → `should_refuse` anchor (**n=3** ⇒ ≈100%); H3 → gold **article**, not row, because the boost moves an article's rows together (**n=7** ⇒ ≈43%). Refuse "harm-clean" on a channel until `n ≥ 12` (≤25%); `n ≥ 30` (≤10%) before production enablement
+- [ ] 7.10 Emit both counter-metrics in the same result record as the headline metrics, **with** their channel's at-risk unit count and rule-of-three bound
+- [ ] 7.11 Assert an oracle-run counter-metric is reported as **vacuous** — under the oracle the at-risk rows are never misrouted and never boosted, so it is trivially flat
+- [ ] 7.12 **Gate semantics — ONE trigger, weight-conditioned, identical in every artifact.** The halt trigger is: **`W_benefit` finite and `W_safe ≤ W_benefit`** (or harm reachable while `W_benefit = ∞`), at **admissible** weights only. A harm cell **above** `W_benefit` bounds the operating window and does **NOT** halt; a harm cell at `w ≥ W_LEX` is not a harm event at all. "Any harm cell anywhere halts" is **wrong and is withdrawn** — with an unbounded weight it fires on every run and makes the operating-window case unreachable. Dirty (trigger fired) ⇒ **HALT** the no-classifier path, **not** a kill: harm is *reachable*, not proven, and safety may still be certified against a real classifier's output distribution
+- [ ] 7.13 **Scope condition on the certificate — record it, do not assume it away.** A clean worst case is an upper bound on harm **only for a boost that adds `w` to exactly ONE category per query under a hard-match predicate**. It is **not** an upper bound for a multi-label boost or a soft `w · P(c | q)` boost: there the displaced set is the **union** over boosted categories, which can strictly exceed any single category's harm — and *both* classifier candidates (embedding-affinity centroids; agent tool argument) naturally emit a **distribution**. So the certificate ships with a **binding precondition on `decide-category-boost`**: single-label hard-match ⇒ it transfers; multi-label or soft ⇒ **it does not**, and the sweep must be re-run over category **sets** (or against the classifier's actual output distribution). No run may state a certificate without naming which branch it assumed
+
+## 8. Uncertainty — cluster-level or not at all (D11)
+
+- [ ] 8.1 RED + GREEN: cluster bootstrap resampled over **gold articles**, paired per-row delta, **ratio estimator** (Σ per-article delta sums / Σ per-article row counts). Do **not** use the mean of per-article means — clusters are `[5,5,2,2,2,1,1]` and mean-of-means silently reweights a 1-question article equal to a 5-question one, changing the estimand
+- [ ] 8.2 Zero new deps: `numpy==1.26.4`, `scipy==1.13.1`, `pandas==2.3.2` are already direct pins (`requirements/requirements-base.txt:83,64,68`). Either `scipy.stats.bootstrap(..., paired=True, vectorized=True)` over `(cluster_sum, cluster_n)` — the statistic **must** accept an `axis` kwarg or scipy raises `TypeError` — or a ~12-line stdlib/numpy resample loop. Do **not** add `statsmodels` (not installed) and do **not** import `sklearn` (transitive-only, pinned nowhere)
+- [ ] 8.3 Fixed seed, pure function `(deltas, cluster_ids) -> (point, lo, hi)`, unit-tested — nothing to reuse in-repo (`build_leaderboard` reports bare means; `scripts/bootstrap_argilla.py` is a *deployment* bootstrap)
+- [ ] 8.4 Every delta in every result record carries: `K` (distinct gold articles), the distinct-category count, the design effect, the ESS, and the interval. A delta without them is an invalid record
+- [ ] 8.5 State explicitly that the *treatment* unit is the category (~5 units), which is smaller than the *article* unit (7) — so the article-level interval **overstates** the available independence
+- [ ] 8.6 Per-slice reporting: by anchor type, gold article, category, and source group, each with its own row and article counts. A slice spanning <3 articles is descriptive only — no interval, no verdict
+- [ ] 8.7 RED + GREEN: **DERIVE the power constants; do not assert them.** The ≥30-article prerequisite — the thing that blocks the whole decision — currently rests on asserted numbers (~83/86/92/94% coverage at K=7/12/20/30; ~23% power at +14pp) that no task computes and no source cites. That is the same failure class as an authored `assumed_category`: an uncheckable number doing load-bearing work. `numpy` is already pinned, so this costs **zero** dependencies. Ship a deterministic **fixed-seed Monte-Carlo** that estimates (a) the actual coverage of the nominal-95% article-level cluster bootstrap at K = 7/12/20/30 on the bank's real cluster-size vector, and (b) the power of the paired cluster test at a stated effect size. **Publish its assumptions with its output** — seed, cluster sizes, assumed ICC, base rate, replicate count — so a reader can re-run and disagree. Replace the spec's provisional constants with its output and **re-derive** the ≥30 minimum from it; if the simulation contradicts them, the minimum moves and the spec is corrected. The minimum may move **only** by a published seeded re-derivation, never by judgment. The closed-form pieces (sign test 7/7 ⇒ p=0.0156, 6/7 ⇒ p=0.125; rule of three `3/n`; "significant benefit impossible once baseline hit@5 ≥ 15/18") are exact arithmetic and are exempt
+
+## 9. Phase A run — diagnostics only, NO kill and NO advance
+
+**Phase A ships NO edits to `examples/benchmarking/fasrc_ragas_queries.json`.** Every number in
+§7–§9 is stated against the bank *as it stands today* (H1 n=0, H2 n=3, H3 n=7 articles, 18 gold
+rows). Editing the bank in this PR would falsify all of them on the day it lands. Bank work —
+SchedMD/wiki gold rows **and** the ≥30-article expansion — is Phase B (§10).
+
+- [ ] 9.1 Record baseline + census (§1) + prechecks (§5) + the operating range (6.0) + the primary/secondary/guardrail metrics (§6) + the worst-case harm matrix (§7) on the current, **unmodified** bank
+- [ ] 9.2 Record the oracle sweep — implemented as the *column* of the (category × weight) matrix in which each row's category is its gold category, not as a separate retrieval pass
+- [ ] 9.3 RED + GREEN: the result record carries a `verdict` field defaulting to **`INDETERMINATE`**. A benefit delta — positive **or** null — cannot move it. Only three non-inferential conditions can, each on a **pre-registered** trigger, none an operator judgment: `CORPUS_BLOCKED` (`coverage_KB < 0.50` or `|V| < 2`; 1.2; bank-independent); `NO_HEADROOM` (`max_possible_lift(MRR) = 0` ⟺ every in-pool gold already ranks 1 ⟹ hit@5 headroom 0 **and** `W_benefit = ∞`; 5.1; analytic, config-scoped, and below the coverage minimums it is a hypothesis about *this bank*, not a kill of the feature); `HARM_REACHABLE` (the 7.12 trigger: `W_benefit` finite and `W_safe ≤ W_benefit`, or harm reachable with `W_benefit = ∞`, at admissible weights ⇒ **halt**, not kill). If several hold, record all and make `HARM_REACHABLE` operative. Absence of demonstrated harm is **never** recorded as safety
+- [ ] 9.4 Write the Phase A findings under their evidence class. The governing asymmetry: **harm is a MIN, benefit is a MEAN** — one witnessed cell is an entailment needing no power; a benefit claim needs a population average this bank cannot supply
+  - **corpus-deductive** (category coverage, measured vocabulary) — may halt the work at any K, as a verdict on the extractor
+  - **bank-structural** (zero headroom, structural inertness, a witnessed harm cell, `W_safe ≤ W_benefit`) — exact for the measured queries but generalizes only as far as the bank ⇒ at K=7 these are **hypotheses to retest**, *except* a harm cell **firing the 7.12 trigger**, which always halts the no-classifier path (a harm cell *above* `W_benefit` bounds the window instead; a harm cell at `w ≥ W_LEX` is not a harm event at all)
+  - **inferential** (Δhit@k, ΔMRR, intervals) — **no** decision authority in either direction at K=7
+- [ ] 9.5 Do **not** write a kill verdict and do **not** write an advance verdict. The old "a null is decisive" rule is **withdrawn**: with 10/18 rows saturated by design and a hard arithmetic floor (a significant benefit is impossible at any `w` once baseline hit@5 ≥ 15/18), the null is the only outcome the instrument can produce — an unfalsifiable gate
+- [ ] 9.6 Name the successor change (`decide-category-boost`) and publish its entry condition (the §10 coverage minimums), so the deferral is a scheduled next step with a trigger, not an open-ended postponement
+
+## 10. Phase B — bank expansion is the PREREQUISITE, not the follow-up
+
+**All bank edits live here.** Phase A (§9) runs on the current bank untouched; this section is the
+only place `examples/benchmarking/fasrc_ragas_queries.json` changes.
+
+- [ ] 10.1 Expand to **≥30 distinct gold KB articles** across **≥6 distinct captured categories**, with **no article >10% of gold rows** (today `running-jobs` and `cluster-storage` are 28% each). ~78 gold rows. Below ~30 articles the "95%" interval is not 95% (~83% coverage at K=7, ~86% at K=12, ~92% at K=20, ~94% at K=30)
+- [ ] 10.2 Expand at-risk units to **≥12 per harm channel** (bound ≤25%): more `should_refuse` anchors spanning a range of refusal shapes (H2, today n=3), and ≥12 distinct non-KB gold pages (H1, today n=0). H3's unit is the gold article, so 10.1 carries it from 7 to ≥30. These count for the **harm** minimums only
+- [ ] 10.3 Add ~5 `slurm.schedmd.com`-gold and ≥1 wiki-gold questions in the modern dialect (`user_input`/`reference`/`sources`) — the corpus has three source groups and today zero non-KB gold sources exist in any bank. **These do not raise benefit-side power**; do not count them toward 10.1
+- [ ] 10.4 Confirm the expanded bank still passes `benchmark-bank-preflight`
+- [ ] 10.5 Re-run §5–§8 on the expanded bank. **Only now** may a CI-based or significance-based rule be applied, and only now may a kill or an advance verdict be written
+- [ ] 10.6 If bank expansion is not funded, the honest close-out is: "harness built, feature undecided" — not "feature killed"
+
+## 11. Gate and land
+
+- [ ] 11.1 `bash scripts/gate.sh` green (format → lint → test, ≥80% diff coverage)
+- [ ] 11.2 Update `docs/` for the new benchmark: how to run it, what each metric class means, the three harm channels (H1/H2/H3), why the oracle cannot show harm, why the adversarial worst-case sweep replaces the authored label, why `refusal_confidence` is not the post-boost score, why the sweep stops at `W_LEX`, why a harm cell above `W_benefit` does not halt, the single-label scope condition on the safety certificate, and why the verdict is `INDETERMINATE` on the current bank
+- [ ] 11.3 Open PR to `fasrc/archi --base dev`; request `@codex review`
