@@ -42,36 +42,60 @@ query → true category with zero hand-labeling.
     to `Cluster Usage`; the boost then promotes confident FASRC context for a question the bot
     should decline. **The boost can manufacture false confidence**, turning refusals into
     confident wrong answers.
-- **New: an oracle boost mode** in the harness (experiment-only, never production) that applies
-  `w · (chunk.category == gold_category(q))` at the rerank seam and sweeps `w`. FlashRank's
-  score scale is model-dependent, so `w` cannot be reasoned about a priori — it must be swept.
-- **Modified: the question bank must cover non-KB gold sources.** Today every gold source in
-  every bank is a KB page — **zero** live in `slurm.schedmd.com` — so the set cannot detect
-  non-KB demotion. Add ~5 slurm-answered questions. Until this lands, no boost measurement is
-  trustworthy.
+- **New: two treatment modes**, because a gold-category oracle is **benefit-only by
+  construction** and cannot express either harm. Refusal anchors have no gold source, and non-KB
+  articles have no captured category — so under an oracle both receive **zero boost at any `w`**
+  and both counter-metrics would read "stable" no matter how harmful the real feature is.
+  - **Oracle mode** — category from the gold article. Measures the **ceiling** (upper bound on
+    benefit). Sweeps `w`, since FlashRank's score scale is model-dependent and `w` cannot be
+    reasoned about a priori.
+  - **Simulated-classifier mode** — category from an authored per-question `assumed_category`
+    (the in-KB label a plausible classifier would assign), carried by **every** row including
+    refusal anchors and non-KB rows. This is the only mode in which the harms are reachable.
+
+  Benefit and harm are therefore read from *different runs*, and a stable counter-metric from an
+  oracle run is vacuous, not reassuring.
+- **New: URL reconciliation.** Authored bank URLs and ingested `documents.url` differ in form —
+  the bank's own README warns SOURCES mode "needs URL reconciliation." Exact-string lookup would
+  score a retrieved gold article as a miss *and* silently resolve the oracle to no category, so
+  the sweep would measure **URL-format drift** rather than the boost. Canonicalize both sides;
+  report unresolved gold sources rather than swallowing them.
+- **Modified: the question bank must cover every corpus source group.** Today every gold source
+  in every bank is a KB page — **zero** in `slurm.schedmd.com`, none on the namesake wiki page
+  (the corpus has three groups). Add SchedMD- and wiki-answered questions, in the modern
+  `user_input`/`reference` dialect the bank and harness actually use. Coverage alone is not
+  enough: those rows are only *exercised* once they carry an `assumed_category`.
 - **A decision gate, not a feature.** This change deliberately ships *no* production retrieval
   behavior. Its output is a number and a decision.
 
 ## Capabilities
 
 ### New Capabilities
-- `retrieval-only-benchmark`: LLM-free, in-process scoring of retrieval quality against gold
-  sources (hit-rate@k, MRR), with the `non_kb_share@k` and `refusal_confidence` counter-metrics
-  and an experiment-only oracle category-boost sweep.
+- `retrieval-only-benchmark`: in-process scoring of retrieval quality against gold sources
+  (hit-rate@k, MRR) with no answer-generation LLM, URL reconciliation on both sides of every
+  match, the `non_kb_share@k` and `refusal_confidence` counter-metrics, and two experiment-only
+  treatment modes — an oracle sweep for the benefit ceiling and a simulated-classifier sweep for
+  the harm channels.
 
 ### Modified Capabilities
 - `retrieval-benchmarking`: the "Grounded FASRC question banks" requirement gains a coverage
-  obligation — a bank must include gold sources from **every corpus source group** (KB *and*
-  non-KB), so that a treatment which harms one group is detectable rather than invisible.
+  obligation — a bank must include gold sources from **every corpus source group** (KB, SchedMD,
+  and the namesake wiki), so that a treatment which harms one group is detectable rather than
+  invisible. The requirement text is also brought onto the modern RAGAS 0.3.5 dialect
+  (`user_input`/`reference`), which is what the bank and harness already use.
 
 ## Impact
 
 - **New code:** a retrieval-only scorer under `scripts/benchmarking/`. Reuses
   `build_vector_retriever` (`retrievers/factory.py:29`) and the project's own config loading;
   does **not** touch `src/bin/service_benchmark.py` (RAGAS path is unchanged).
-- **Data:** `examples/benchmarking/fasrc_ragas_queries.json` gains ~5 slurm-gold questions.
-  Current bank is 10 `easy_retrieve` + 8 `reasoning` (gold-sourced) + 3 `should_refuse` (no
-  gold source, by design — they test refusal, not recall).
+- **Data:** `examples/benchmarking/fasrc_ragas_queries.json` gains SchedMD- and wiki-gold
+  questions, plus an authored `assumed_category` on **every** row. Current bank is 10
+  `easy_retrieve` + 8 `reasoning` (gold-sourced) + 3 `should_refuse` (no gold source, by
+  design — they test refusal, not recall).
+- **Credentials:** no *answer-generation* LLM is constructed, but retrieval still embeds the
+  query — so a deployment with a hosted embedder still needs that key. The no-key guarantee
+  holds end-to-end on dev only because dev uses `HuggingFaceEmbeddings`.
 - **Production retrieval: unchanged.** The soft boost is *not* wired in. The oracle lives in
   the harness only.
 - **Operational precondition:** measuring against dev needs a **nuke + full re-ingest** — a

@@ -89,17 +89,58 @@ New script under `scripts/benchmarking/`. It builds the *configured* retriever v
 project's own config loading — **not** hand-read secrets. For each question it invokes the
 retriever and scores the returned documents' URLs against `sources`.
 
-No LLM is constructed, so no LLM credentials are needed. This is the whole reason the sweep is
-cheap: one process, one corpus, N weights.
+No **answer-generation** LLM is constructed, which is what makes the sweep cheap: one process,
+one corpus, N weights. Note the guarantee is scoped: retrieval still **embeds the query**, so a
+deployment configured with a hosted embedder (`OpenAIEmbeddings`) still needs that provider's
+key. It holds end-to-end on FASRC dev only because dev uses `HuggingFaceEmbeddings`
+(`deploy/fasrc-dev/config.yaml:84`).
 
-### D3 — Gold category by URL join, computed once
+### D3 — Gold category by *canonicalized* URL join, computed once
 `gold_category(q)` = the captured `category` of the article at `q.sources[0]`. Build a
 `url -> category` map in one query over `documents` ⋈ `document_chunks` at startup, then look
-up per question. No hand-labeling anywhere.
+up per question.
+
+**URLs must be canonicalized on both sides before matching or joining.** The bank's own README
+warns that SOURCES mode "needs URL reconciliation" — the sitemap-driven SPLIT ingest may store
+a slightly different slug than the authored canonical URL, and source-list generation can
+collapse trailing slashes. An exact-string lookup would therefore both (a) score a retrieved
+gold article as a miss and (b) silently resolve the oracle to *no category* — so the sweep
+would be measuring URL-format drift, not the category boost. Any gold source that fails to
+resolve to an ingested document is **reported as unresolved**, never silently counted as a
+retrieval failure.
 
 The oracle boosts **every chunk sharing the gold article's category**, not the gold article
 itself — that is what makes it a simulation of a *perfect classifier* rather than a circular
 lookup of the answer.
+
+### D3a — Two treatment modes: the oracle measures benefit, it cannot measure harm
+A gold-category oracle is **benefit-only by construction**, and this initially went unnoticed:
+it only ever boosts toward the correct category, so the two at-risk populations receive **zero
+boost at any `w`** —
+
+- `should_refuse` anchors have **no gold source**, so `gold_category(q)` is undefined;
+- non-KB gold articles (SchedMD, wiki) have **no captured category** at all.
+
+Both counter-metrics would therefore read "stable" under an oracle sweep no matter how harmful
+the real feature is. Adding SchedMD questions to the bank does *not* by itself fix this — under
+the oracle those rows are simply inert.
+
+So the harness has **two modes**:
+
+| Mode | Boost category from | Measures |
+|---|---|---|
+| **Oracle** | the gold article's captured category | the **ceiling** — upper bound on benefit |
+| **Simulated-classifier** | an authored per-question `assumed_category` | the **harm channels** |
+
+`assumed_category` is a new authored bank field: the in-KB category a plausible real classifier
+would assign to that query — carried by **every** question, including refusal anchors and
+non-KB rows. *"GPU partition layout on MIT's Engaging cluster"* reads as a cluster question, so
+a classifier assigns `Cluster Usage`; only then does the boost promote confident FASRC context
+for a query that must be declined, and only then is the harm visible. Same for a SchedMD query
+assigned an in-KB category, which pushes KB chunks above the document that actually answers it.
+
+Benefit and harm are therefore read from **different runs**, and a stable counter-metric from an
+oracle-only run is vacuous, not reassuring.
 
 ### D4 — KB membership by URL prefix
 A document is a KB page iff its URL is under `docs.rc.fas.harvard.edu/kb/`. This is the same
@@ -112,16 +153,27 @@ metric is a *comparison*, not an absolute: if the boosted arm returns systematic
 higher-scoring context than baseline for questions the assistant should decline, the boost is
 degrading refusal — it is manufacturing plausible context for an out-of-scope question.
 
+Read this **only from a simulated-classifier run** (D3a). Under the oracle these rows carry no
+category and are never boosted, so the metric would be trivially flat.
+
 ### D6 — Sweep `w`, never assume it
 The boost is added to a **FlashRank cross-encoder score**, not a cosine similarity, and that
 scale is model-dependent (`ms-marco-MiniLM-L-12-v2` by default). `w` therefore cannot be
 reasoned about a priori. Report the full sweep; read the ceiling off it.
 
 ### D7 — Close the bank's blind spot before trusting any number
-Every gold source in every bank is a KB page — **zero** in `slurm.schedmd.com`. The set is
-structurally incapable of observing non-KB demotion, so an unfixed bank would let the oracle
-flatter itself. Add ~5 questions whose gold source is a SchedMD page. New questions must keep
-passing `benchmark-bank-preflight`.
+Every gold source in every bank is a KB page — **zero** in `slurm.schedmd.com`, none on the
+namesake wiki page. The set is structurally incapable of observing non-KB demotion. Add ~5
+questions whose gold source is a SchedMD page **and at least one** answered by the wiki page,
+so both non-KB source groups are represented (the corpus has three groups, not two). New
+questions must keep passing `benchmark-bank-preflight`.
+
+Bank additions use the modern RAGAS 0.3.5 dialect (`user_input`/`reference`/`sources`), which
+is what the bank and harness actually use today — not the legacy `question`/`answer` fields
+still described in the `retrieval-benchmarking` spec text.
+
+Coverage alone is insufficient: these rows are only *exercised* once they carry an
+`assumed_category` (D3a).
 
 ## Risks / Trade-offs
 
@@ -135,7 +187,13 @@ passing `benchmark-bank-preflight`.
   null is uninterpretable.
 - **The oracle is optimistic by construction.** It resolves every ambiguous query to the "right"
   category by definition. That is intended — it is an upper bound — but it means the real
-  classifier will land *below* whatever the sweep shows, never above.
+  classifier will land *below* whatever the sweep shows, never above. It also means the oracle
+  **cannot show harm at all** (D3a), which is why the counter-metrics are read from a separate
+  simulated-classifier run.
+- **`assumed_category` is authored, so it encodes our guess about the classifier.** A charitable
+  label understates the harm; an uncharitable one overstates it. Label each at-risk row with the
+  category a *competent* classifier would most plausibly pick given the query's surface form,
+  and record the reasoning in the bank's `notes` so the choice is auditable rather than silent.
 - **Requires a nuke + full re-ingest of dev.** A plain re-ingest will **not** refresh #97's
   sliced bodies: `_handle_standard_url` calls `persist_resource` without `overwrite`, and
   persistence skips files that already exist. The dev deploy-verify already hit this.
