@@ -1,3 +1,45 @@
+> # ⏸️ SHELVED — do not implement
+>
+> **Decision (2026-07-13): the category boost is not being built, and this instrument is not
+> being built either.** Loop 1 completed and this plan is kept for the record; Loop 2 was
+> never started. Do not run `/opsx:apply` on it.
+>
+> **Why the feature was dropped.** Five independent strikes, none of which got weaker under
+> review:
+> 1. The category is mostly a restatement of words the query already contains — which BM25 and
+>    the embedder already use. Near-zero information gain on a typical query.
+> 2. It is anti-correlated with need: it would help most where the query's wording does *not*
+>    match the article, which is exactly where a classifier reading those same words also fails.
+> 3. The FASRCDocsAgent already runs a FlashRank cross-encoder with full query–passage
+>    attention — a strictly richer version of what a 19-bucket match approximates.
+> 4. Only KB pages carry a breadcrumb, so SchedMD/wiki chunks can *never* be boosted. A boost a
+>    document can never receive is arithmetically a penalty on it.
+> 5. It can manufacture confident context for out-of-scope questions, converting refusals into
+>    confident fabrications.
+>
+> **Why the instrument was dropped too.** The RAGAS benchmark (`retrieval-benchmarking`,
+> `src/bin/service_benchmark.py`) already exists to decide whether an idea works. Building a
+> second, parallel measuring apparatus to adjudicate this one feature was scaffolding we did not
+> need. If the boost is ever revisited, run it as a RAGAS A/B arm.
+>
+> **What this analysis DID find, and it outlives the shelved feature.** Two real defects in the
+> evaluation set itself, which affect **every** retrieval change (chunking, reranking,
+> embeddings), not just this one:
+>
+> - **The bank is ceiling-pinned, so improvements are undetectable.** 18 gold rows resolve to
+>   only **7 distinct articles** (`running-jobs` + `cluster-storage` = 56% of them), and 10 of
+>   the 18 are `easy_retrieve` anchors the bank itself documents as trivially retrievable. With
+>   almost no headroom left, a genuinely good retrieval change measures as "no change." And the
+>   unit of independent evidence is the *article*, not the question — a change moves an article's
+>   rows together — so the effective sample size is ~7, not 18.
+> - **Zero non-KB gold sources, so regressions are undetectable.** Every gold source in every
+>   bank is a KB page; none live in `slurm.schedmd.com` or the namesake wiki page. Any change
+>   that lifts KB recall *by demoting the SchedMD docs* would measure as a clean win while
+>   silently regressing a third of the corpus.
+>
+> Fixing the bank is the prerequisite for trusting **any** future retrieval result, including a
+> RAGAS A/B of this feature if it is ever revived.
+
 ## Why
 
 PR #97 landed website-category capture: every FASRC KB chunk now carries
