@@ -2,145 +2,217 @@
   {
     "anchor_type": "easy_retrieve",
     "user_input": "How do I request a single GPU in a SLURM submission script on FASRC Cannon?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/running-jobs"
+    ],
     "reference": "Add #SBATCH --gpus=1 to your submission script and SLURM will give the job access to one GPU.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "easy-retrieve. DRAFT — grounded in Running Jobs page text as fetched 2026-06-28. NOTE: live docs use --gpus=1; the older --gres=gpu:N form in anchor_questions.json is stale. Operator-confirm before locking."
   },
   {
     "anchor_type": "easy_retrieve",
     "user_input": "What is the maximum run time for a job on the FASRC sapphire partition?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/running-jobs"
+    ],
     "reference": "The sapphire partition has a maximum run time of 3 days.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "easy-retrieve. DRAFT — grounded in Running Jobs partition table as fetched 2026-06-28. Operator-confirm before locking (partition limits change)."
   },
   {
     "anchor_type": "easy_retrieve",
     "user_input": "How much memory does a SLURM job get on Cannon if I don't specify a memory request?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/running-jobs"
+    ],
     "reference": "If you omit the memory request you are granted 100 MB by default, which is usually too little and will likely cause the job to be killed for going over.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "easy-retrieve. DRAFT — grounded in Running Jobs page as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
     "anchor_type": "easy_retrieve",
     "user_input": "What is the storage quota for a FASRC user home directory?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/cluster-storage/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/cluster-storage"
+    ],
     "reference": "Each user gets a 100 GB home directory, enforced as a hard limit.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "easy-retrieve. DRAFT — grounded in Home and Lab directories page as fetched 2026-06-28. SOURCES-mode url may need reconciling against the ingested sitemap slug. Operator-confirm before locking."
   },
   {
     "anchor_type": "easy_retrieve",
     "user_input": "How much storage does a FASRC lab group directory get, and how many files?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/cluster-storage/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/cluster-storage"
+    ],
     "reference": "Each lab gets a 4 TiB lab directory as a hard limit, with a 1 million file limit.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "easy-retrieve. DRAFT — grounded in Home and Lab directories page as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
     "anchor_type": "easy_retrieve",
     "user_input": "Where on the Cannon filesystem do FASRC lab directories reside?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/cluster-storage/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/cluster-storage"
+    ],
     "reference": "Lab directories reside under /n/holylabs.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "easy-retrieve. DRAFT — grounded in Home and Lab directories page as fetched 2026-06-28. NOTE: anchor_questions.json's /n/holyscratch01 answer is stale. Operator-confirm before locking."
   },
   {
     "anchor_type": "easy_retrieve",
     "user_input": "What hostname do I SSH to for command-line access to the FASRC cluster?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/quickstart-guide/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/quickstart-guide"
+    ],
     "reference": "SSH to login.rc.fas.harvard.edu using your FASRC username, password, and OpenAuth token.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "easy-retrieve. DRAFT — grounded in User Quick Start Guide as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
     "anchor_type": "easy_retrieve",
     "user_input": "What command lists the modules I currently have loaded on Cannon?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/modules-intro/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/modules-intro"
+    ],
     "reference": "Run module list to display all modules currently loaded in your shell environment.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "easy-retrieve. DRAFT — grounded in Lmod software modules page as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
     "anchor_type": "easy_retrieve",
     "user_input": "What command shows my lab's fairshare information on FASRC?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/fairshare/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/fairshare"
+    ],
     "reference": "Use sshare (e.g. sshare --account=<lab> -a) to see RawShares, NormShares, RawUsage, EffectvUsage, and the FairShare score for an account.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "easy-retrieve. DRAFT — grounded in Fairshare and Job Accounting page as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
     "anchor_type": "easy_retrieve",
     "user_input": "How long are FASRC home directory snapshots kept?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/cluster-storage/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/cluster-storage"
+    ],
     "reference": "Home directories have daily snapshots retained for 2 weeks, accessible via the .snapshot directory.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "easy-retrieve. DRAFT — grounded in Home and Lab directories page as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
     "anchor_type": "reasoning",
     "user_input": "My SLURM job on Cannon was killed for running out of memory. How do I find out how much memory it actually used, and how do I request more next time?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/running-jobs"
+    ],
     "reference": "After the job ends, run sacct -j <jobid> --format=JobID,Elapsed,ReqMem,MaxRSS to compare the peak memory used (MaxRSS) against what was requested (ReqMem). In your next submit script raise the request with --mem=<N>G (whole job) or --mem-per-cpu=<N>G, setting it a bit above the observed MaxRSS so normal variation doesn't kill the job.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "reasoning. Multi-step: diagnose with sacct/MaxRSS then act with --mem. DRAFT — grounded in Running Jobs page as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
     "anchor_type": "reasoning",
     "user_input": "Is the two-factor code for logging into FASRC the same as my Harvard Key code? If not, how do I set it up?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/quickstart-guide/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/quickstart-guide"
+    ],
     "reference": "No. FASRC has its own two-factor system (OpenAuth) that is separate from Harvard Key. Set it up with a smartphone authenticator app (e.g. Google Authenticator or Duo) before accessing cluster resources; you use this OpenAuth token along with your FASRC username and password.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "reasoning. Tests distinguishing FASRC OpenAuth from Harvard Key (a common confusion). DRAFT — grounded in User Quick Start Guide as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
     "anchor_type": "reasoning",
     "user_input": "How do I find which versions of a software package are available as modules on Cannon, and how should I load it so my workflow keeps working when defaults change?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/modules-intro/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/modules-intro"
+    ],
     "reference": "Search with module spider <name> to list all available modules matching the string regardless of your current environment. Then load with both the name and a specific version (module load <name>/<version>) — FASRC strongly recommends this so you are protected if the default version changes later.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "reasoning. Synthesis of discovery (spider) + the versioning best practice. DRAFT — grounded in Lmod software modules page as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
     "anchor_type": "reasoning",
     "user_input": "What's the recommended way to set up an isolated Python environment for a project on Cannon?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/python/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/python"
+    ],
     "reference": "Load a module that provides mamba (python/3*, Miniforge3, or Mambaforge), then create an isolated environment, e.g. mamba create -n data_env python=3.9 pandas numpy, and activate it with source activate data_env. FASRC recommends using Miniforge with mamba so dependencies are isolated and you avoid conflicts rather than working in the base environment.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "reasoning. Multi-step env setup + the isolation best practice. DRAFT — grounded in Python Programming Language page as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
     "anchor_type": "reasoning",
     "user_input": "How is my job's priority determined on Cannon, and how can I see the priority of my pending jobs?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/fairshare/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/fairshare"
+    ],
     "reference": "A job's priority combines two parts: your FairShare score multiplied by a weighting factor (10,000,000) to make it an integer, plus job age, which accrues while the job waits and caps at 3 days on Cannon. Inspect the breakdown for pending jobs with sprio, or use showq -o -p <partition> to see the pending queue ordered by priority.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "reasoning. Synthesis of priority formula + the inspection commands. DRAFT — grounded in Fairshare and Job Accounting page as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
     "anchor_type": "reasoning",
     "user_input": "I need to move a very large dataset to the cluster. Should I use Globus, and can I transfer it straight into my home directory?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/globus-file-transfer"
+    ],
     "reference": "Yes, use Globus — it's the recommended alternative to SSH/SCP specifically for very large data sets, and you can install Globus Connect Personal to make your own machine an endpoint. However, you cannot transfer into your home directory: home directories are not available through Globus (and never will be) because sharing them is a security vulnerability. Target a lab or scratch location instead.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "reasoning. Reasoning under a constraint (home-dir exclusion). DRAFT — grounded in Globus File Transfer page as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
     "anchor_type": "reasoning",
     "user_input": "I accidentally deleted some files in my home directory on Cannon. Can I get them back, and is there any situation where I can't?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/cluster-storage/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/cluster-storage"
+    ],
     "reference": "Usually yes: home directories have daily snapshots retained for 2 weeks, so you can recover recently deleted files from the .snapshot directory. The exception is if you delete your entire home directory — that also deletes the snapshots, and it is not recoverable.",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "reasoning. Conditional reasoning: recoverable via snapshots EXCEPT whole-home deletion. DRAFT — grounded in Home and Lab directories page as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
     "anchor_type": "reasoning",
     "user_input": "I want to run a short GPU job on Cannon. How do I request the GPU and make sure it has enough memory so it isn't killed?",
-    "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs/"],
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/running-jobs"
+    ],
     "reference": "Request the GPU with #SBATCH --gpus=1. Don't rely on the default memory — if you omit a memory request you only get 100 MB and the job will likely be killed, so set #SBATCH --mem=<N>G to a value your job needs. Submit to a GPU-capable partition and keep within its time limit (for short tests, use a test/short partition).",
-    "source_match_field": ["url"],
+    "source_match_field": [
+      "url"
+    ],
     "notes": "reasoning. Multi-fact synthesis: GPU request + default-memory pitfall + partition choice. DRAFT — grounded in Running Jobs page as fetched 2026-06-28. Operator-confirm before locking."
   },
   {
@@ -148,7 +220,6 @@
     "user_input": "What is the GPU partition layout on MIT's Engaging cluster, and how do I request an L40S there?",
     "sources": [],
     "reference": "I don't have FASRC documentation covering MIT's Engaging cluster — it's a separate institution's HPC system. For Engaging-specific questions the right contact is the MIT research computing team. If you're comparing Engaging and Cannon for a workload, I can help with the Cannon side.",
-    "source_match_field": [],
     "notes": "should-refuse. Out-of-scope (different institution). Correct behavior is to acknowledge the gap and refer, NOT to hallucinate Engaging partitions. Phrasing adjustable."
   },
   {
@@ -156,7 +227,6 @@
     "user_input": "How do I submit a job on TACC Frontera using its queue limits?",
     "sources": [],
     "reference": "That's outside FASRC's documentation — Frontera is a TACC system at UT Austin with its own scheduler policies and queues. Check TACC's user guide for Frontera. I can help with the equivalent on FASRC Cannon (SLURM partitions, limits, and submit scripts) if that's useful.",
-    "source_match_field": [],
     "notes": "should-refuse. Out-of-scope (non-FASRC cluster). A confident answer with invented Frontera queue names fails the round."
   },
   {
@@ -164,7 +234,1028 @@
     "user_input": "What is the exact dollar-per-core-hour price FASRC charges for Cannon CPU time this fiscal year?",
     "sources": [],
     "reference": "I don't have a documented per-core-hour price to quote — FASRC cost/billing specifics aren't something I can confirm from the documentation, and quoting a number I can't verify would be misleading. Please contact FASRC (e.g. via a support ticket) for current billing or cost-recovery details.",
-    "source_match_field": [],
     "notes": "should-refuse. Tests refusal on an unverifiable specific figure rather than inventing a price. If the live KB later documents pricing, reclassify this question."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I'm Harvard faculty but I just want to run jobs inside a colleague's existing lab group on the cluster — I don't want my own group and I don't want to deal with billing. Which job title should I pick on the account request form?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/account-qualifications"
+    ],
+    "reference": "Pick POSTDOC/RESEARCHER. A Harvard faculty member who wants to sign up as an individual collaborator under another faculty member's cluster group should choose POSTDOC/RESEARCHER, because choosing FACULTY requires billing information and starts the new lab setup process (and FACULTY signups require vetting, so they take longer to process).",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests retrieval of the counterintuitive job-title caveat buried in TIPS BEFORE SIGNUP / JOB TITLES. A naive retriever surfaces the FACULTY bullet and gives the wrong answer. Why hard: keyword search on 'faculty' ranks the FACULTY job-title definition highest, which is exactly the wrong answer; the correct answer is stated only as an exception clause. The user's vocabulary ('colleague's lab group', 'don't want billing') never appears in the article, and the answer requires understanding that the title must NOT match their appointment in this one case."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "What does someone with non-faculty PI rights have to supply at signup that an ordinary researcher does not?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/account-qualifications"
+    ],
+    "reference": "A NON-FACULTY PI must supply a 33-digit billing code at signup. Non-Faculty PI accounts also carry additional controls and privileges, and the signup requires vetting so it takes longer to process.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Direct single-fact lookup (easy_retrieve anchor). The '33-digit billing code required at signup' clause sits at the end of a bullet, not in a heading. Why hard: genuinely a single-fact lookup, so it is the batch's easy anchor — but the fact is a trailing clause inside a bullet list rather than a heading, and the other pages that mention 33-digit billing strings do so about school-level MoUs, not about what an individual must present at signup."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Our lab has grant money and wants to buy extra compute nodes for the cluster. Can we just have them racked whenever we're ready?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa"
+    ],
+    "reference": "No. FASRC will discuss your computing needs, coordinate a quote, and install the new hardware, but as of the 2019 cluster refresh and the move to water-cooling, new nodes can be added into the cluster only at certain times of the year.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests a hard scheduling constraint hidden in a trailing 'Note:' inside a Q&A answer. This is the kind of buried operational limit a real PI would be surprised by. Why hard: the user's phrasing ('buy extra nodes', 'racked whenever we're ready') shares no vocabulary with the article's 'May I invest in more resources ... by purchasing additional nodes'. The actual answer — a seasonal installation window caused by water-cooling — is one trailing sentence, so keyword retrieval on 'buy nodes' or 'hardware' drifts to general cluster/storage pages that would answer 'yes' with no caveat."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "If a Chan School PI sponsors an outside collaborator's cluster account, who ends up paying for that person's compute time, and what happens to their access if the PI leaves?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa"
+    ],
+    "reference": "There is no up-front cost for the collaborator's account, but their cluster usage (in CPU hours) is applied to the sponsoring PI's lab group fairshare and billed to the school on a quarterly basis. The account must be requested as EXTERNAL and be approved by and attached to an existing HCSPH PI's FASRC account. Should the PI leave HCSPH, the collaborator's access also ends unless it is transferred to another PI's account and billing; it is the PI's responsibility to notify FASRC when the collaborator's access should be withdrawn.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Requires combining the cost/fairshare answer with the PI-departure consequence, which fall on opposite sides of a chunk boundary in the ingested text. Why hard: two facts must be joined and they straddle a chunk split, so a single retrieved chunk answers only half the question. The account-qualifications page also discusses EXTERNAL collaborators and would look like a plausible hit, but only this page carries the HCSPH-specific billing mechanics (no up-front cost, charged against the PI's fairshare, billed quarterly to the school)."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "How long can a job run on the Chan School's own GPU nodes, and what GPUs are actually in them?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview"
+    ],
+    "reference": "The hsph_gpu partition has a 3 day time limit. The block contains 128 AMD Genoa cores and 8 Nvidia H200 GPUs; each node is water-cooled with 64 cores, 1.5TB of RAM, and 4 GPUs, and the nodes are interconnected with NDR Infiniband. (The CPU-only hsph partition also has a 3 day time limit.)",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests recall of HCSPH-specific partition hardware and its wall-clock cap. Distinguishes this page from the generic running-jobs / GPU-computing pages. Why hard: a query about 'GPU partition time limit' keyword-matches the cluster-wide running-jobs and gpgpu-computing pages far more strongly, since those are entirely about partitions and time limits — yet they do not describe hsph_gpu. The user's wording ('Chan School's own GPU nodes') never appears; the article says 'HCSPH has their own partitions of purchased hardware', so the model must map Chan School -> HCSPH -> hsph_gpu."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Do Harvard Chan people still get charged that yearly per-person fee just to have a Research Computing account?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview"
+    ],
+    "reference": "No. The previous annual per-user charge for FAS Research Computing accounts is no longer used as of fiscal year 2019. Standard services — including accounts and access to the FASRC high-performance computing cluster — are effectively free to Harvard Chan School community members via the account of an eligible PI, because these FASRC computing costs are now covered by the school's overhead rate. Supplemental resources such as increased storage and VMs still involve additional charges.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests whether retrieval finds the negated/superseded policy rather than the generic billing pages that describe charges which DO apply. Why hard: the user says 'fee' and 'charged'; the article says 'previous annual per-user charge ... is no longer used'. Keyword search on cost/fee/billing ranks the storage-billing and data-storage pages, which describe charges that DO apply — producing the opposite answer. Getting this right requires retrieving a sentence whose whole point is that a charge was removed."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I'm on FASSE and want to run VS Code on a compute node. Can I just set up Remote-SSH to the compute node the way I do on Cannon?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel"
+    ],
+    "reference": "No. You cannot use Remote SSH to connect your local VS Code to a FASSE compute node, because salloc is not permitted on FASSE for security reasons. Remote SSH to FASSE's login node does work. For a FASSE compute node, launching a Remote Tunnel as a batch job (Approach I) is your only option — and before doing that you must enable internet access by setting a network proxy (you are on the FASSE VPN realm, @fasse), including adding the same proxy in your local VS Code settings; remember to unset that proxy in VS Code when you are not on the FASSE VPN, or it will block your other non-FASSE VS Code remote sessions.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the FASSE exception at the tail of a long, Cannon-dominated article, plus the proxy prerequisite that makes the tunnel actually work. Why hard: 'FASSE' as a keyword pulls the dedicated FASSE page (and the proxy-settings page), neither of which covers VS Code; meanwhile most of this article is about Cannon SSH configs, so a 'VSCode Remote SSH compute node' query retrieves the Cannon instructions and yields a confidently wrong 'yes, here's the ProxyCommand'. The correct answer hinges on one sentence and on the causal reason (salloc is blocked on FASSE), then must be combined with the proxy prerequisite from a later paragraph."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "The VS Code Dev Containers extension keeps trying to talk to a Docker daemon on the cluster, which doesn't exist there. What do I have to change so it uses the container runtime FASRC actually provides?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel"
+    ],
+    "reference": "Point the Dev Containers extension at Podman. In Code > Settings > Extensions > Dev Containers, change 'Dev > Containers: Docker Path' from 'docker' to 'podman', and change 'Dev > Containers: Docker Socket Path' from '/var/run/docker.sock' to '/tmp/podman-run-<uid>/podman/podman.sock', replacing <uid> with your FASRC user ID (obtained by running 'id -u' on the cluster). If you are using a local VS Code rather than an OOD Remote Desktop, you will need to revert these settings later if you use dev containers with a local Docker installation.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Deep-body config detail (exact socket path template + how to get the uid) in a subsection at the very bottom of a long article. Why hard: the user never says 'podman' or 'socket path' — they describe a Docker failure — so lexical overlap points at Docker/Podman KB pages rather than a VS Code article. The fix is in a 'Dev Containers' subsection at the very end of a 400-line document whose title and headings are all about SSH and tunnels, and the answer requires the exact path template plus the 'id -u' step, neither of which is a heading."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I set up TF 2.16 on the cluster with the FASRC conda steps and now Keras blows up saying it has no backend. What environment variable am I supposed to export?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/tensorflow"
+    ],
+    "reference": "Export KERAS_BACKEND=\"tensorflow\". Starting with version 2.16.1, TensorFlow includes Keras 3.0, so the Keras backend must be set to TF. FASRC's instructions include `export KERAS_BACKEND=\"tensorflow\"` in both the GPU and CPU conda recipes, and prefix the singularity runs with it as well, e.g. `KERAS_BACKEND=\"tensorflow\" singularity exec --nv tf2.16.1_gpu.simg python3`.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests recall of a setting that exists only inside code blocks plus a parenthetical NOTE, triggered by a symptom rather than the article's vocabulary. Why hard: the user describes a failure ('Keras blows up saying it has no backend'); the article never uses the words error, fail, or blow up, and KERAS_BACKEND appears only inside fenced code blocks and one parenthetical comment — never in a heading or prose sentence. Keyword retrieval on 'Keras backend error' has nothing to latch onto, so the system must connect the TF 2.16.1 -> Keras 3.0 note to the export line several sections earlier."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "In FASRC's GPU conda recipe for TensorFlow, which CUDA toolkit and cuDNN versions are pinned?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/tensorflow"
+    ],
+    "reference": "The GPU conda recipe pins CUDA toolkit 12.1.0 (`mamba install -c \"nvidia/label/cuda-12.1.0\" cuda-toolkit=12.1.0`) and cuDNN 9.0.0.312 (`pip install nvidia-cudnn-cu12==9.0.0.312`). This example is for TensorFlow 2.16.1 with Python 3.10.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Direct version-pin lookup (easy_retrieve anchor). Only this article carries these exact pins. Why hard: this is the batch's deliberate easy anchor — a direct single-fact lookup — but it is still non-trivial because the exact pins (9.0.0.312, cuda-toolkit=12.1.0) exist only inside a code block, and the PyTorch page carries a competing set of CUDA versions (12.9, 11.8) that a confused retriever could return instead."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "My PyTorch job on gpu_test sees a device but the card looks sliced up and I only get a fraction of it. What do I need to do differently on that partition?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/pytorch"
+    ],
+    "reference": "gpu_test is currently the only FASRC partition with MIG (multi-instance GPU) mode enabled, so you must target a MIG instance explicitly. Get the GPU/MIG instance name with `nvidia-smi -L`, then set CUDA_VISIBLE_DEVICES to the MIG instance, e.g. `export CUDA_VISIBLE_DEVICES=MIG-5b36b802-0ab0-5f37-af2d-ac23f40ef62d`, or automate it with `export CUDA_VISIBLE_DEVICES=$(nvidia-smi -L | awk '/MIG/ {gsub(/[()]/,\"\");print $NF}')`.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Symptom-phrased question whose answer requires linking the 'only gpu_test has MIG' note to the CUDA_VISIBLE_DEVICES recipe in a different section. Why hard: the user never says 'MIG' — the whole difficulty is inferring it from the symptom ('card looks sliced up') plus the partition name. A keyword query on 'gpu_test' matches the gpgpu-computing and running-jobs pages (and the TensorFlow page's salloc example) much more strongly than this PyTorch page, and none of those give the CUDA_VISIBLE_DEVICES fix. The answer also spans two separated sections of the article."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Our CryoSPARC master keeps coming up bound to the wrong machine name so the workers can't reach it. Where is that hostname actually set?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/cryosparc"
+    ],
+    "reference": "It is set in the CryoSPARC master config file, `cryosparc_master/config.sh`, which holds the license, the path to the MongoDB database, the master hostname, and the base TCP port. The hostname of the node running the master application is typically hardcoded in that config.sh; if it is left unset, CryoSPARC takes the hostname of the machine on which `cryosparcm start` is called. If these config.sh settings are not correct you will experience errors. Note also that the TCP ports of the individual component programs are not individually configurable — only the base port the user connects to is.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Diagnostic question whose answer spans two sections ('CryoSPARC Master Program' and 'CryoSPARC Operation'); the fallback hostname behaviour is the actual explanation of the symptom. Why hard: the article has no troubleshooting section and no heading mentioning hostnames; the user's words ('bound to the wrong machine name', 'workers can't reach it') do not appear anywhere in the text. Answering well requires combining the config.sh contents (one section) with the implicit-hostname fallback (a later section) — the second half is what actually explains the symptom, and a keyword retriever has no lexical hook for it."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "Which processes does `cryosparcm start` bring up?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/cryosparc"
+    ],
+    "reference": "Running `cryosparcm start` brings up six applications: app (cli), command_core, command_rtp, command_vis, database (MongoDB), and webapp. At the top level cryosparcm is a Supervisor-based shell script that manages them, and they mostly communicate with one another over TCP.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Direct single-fact lookup keyed on a literal command name (easy_retrieve anchor); answerable only from this page. Why hard: this is the batch's easy anchor for the Applications category — the command name is a strong literal hook and the answer is a bullet list. It is still not heading-restatable (there is no 'cryosparcm start' heading), and it is uniquely sourced — no other corpus page names these six components."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Google finally approved my AlphaFold 3 request and sent me the weights as a .bin.zst download. Where am I supposed to unpack that on Cannon — can I just leave it in netscratch?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/alphafold"
+    ],
+    "reference": "Extract the file Google sends you with `unzstd file.bin.zst`, then place the resulting `file.bin` in a lab share — do NOT put it in netscratch. That location is what you pass as `--model_dir` when you run AlphaFold3.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the AlphaFold3 model-parameter placement rule, which is a single parenthetical sentence in the body of the AlphaFold page. Combines three facts (unzstd, lab share, netscratch prohibition, --model_dir) that a user must apply together. Why hard: the user says 'weights' and 'unpack'; the article says 'model parameters' and 'Extract'. The netscratch prohibition appears nowhere in any heading — it is a parenthetical mid-sentence. Keyword search on 'netscratch' pulls dozens of storage/Globus pages that have nothing to do with AlphaFold, and keyword search on 'AlphaFold weights' misses the section entirely because the page never uses the word 'weights'."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "Before I can run an AlphaFold3 prediction on the cluster, do I need to download the AlphaFold databases into my own lab storage first? If they're already there, what's the path?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/alphafold"
+    ],
+    "reference": "No download is needed. The AlphaFold database is kept in a cluster-wide location (on SSD, as the developers recommend), so individual users do not have to download it. The AlphaFold3 database is at `/n/holylabs/rc_admin/Everyone/alphafold_databases/v3` (AlphaFold2's is at `/n/holylabs/rc_admin/Everyone/alphafold_databases/v2`). Likewise, the Singularity images are cluster-wide at `/n/singularity_images/FAS/alphafold/`, so you do not have to copy those either.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Direct lookup of the shared AlphaFold3 database path, plus the 'you do not have to download it' framing. Exact path is a concrete, checkable string that only this page carries. Why hard: genuinely a single-fact lookup, but the answer is an exact filesystem path buried under a small 'Alphafold3' sub-sub-heading in a code fence; a retriever that chunks on prose can easily drop the path itself. It is the anchor/canary row for this article."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I copied a friend's sbatch script and stripped it down — it has no partition line, no memory line, and no time line. What does the scheduler actually hand me?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/running-jobs"
+    ],
+    "reference": "FASRC's defaults when nothing is requested are: 1 core, 100 MB of memory, 0 GPUs, and the `serial_requeue` partition. Time is the exception — there is no default time limit, so you must always declare a time yourself. The 100 MB memory default is very likely to get your job killed, so you should always specify `--mem` or `--mem-per-cpu`.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the FASRC-specific defaults block, including the trap that time has NO default while everything else does. Requires the reader to notice that one item in the list behaves differently from the rest. Why hard: the user never uses the word 'default' — they describe a stripped-down script. The correct answer requires reading a bullet list where four entries give a value and the fifth negates the premise ('there is no default time'). Keyword matching on 'default memory' will happily surface the Slurm sbatch reference docs (80% of the corpus), which give Slurm's upstream defaults, not FASRC's 100 MB / serial_requeue."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I have about 12,000 near-identical runs to do. Can I submit them as one --array job, and does that eat into the number of jobs I'm allowed to have queued?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/running-jobs"
+    ],
+    "reference": "No — you must split it. The maximum array size is 10,000 (that cap applies to both the array index and the array size), so a single 12,000-element array is not allowed. And yes, it counts against your job cap: each array index counts as a single job for the purposes of the Maximum Number of Jobs per User, which is 10,100.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests two FASRC global limits that must be combined, plus the non-obvious rule that array elements are billed individually against the per-user job cap. The numbers (10,000 / 10,100) are deliberately close, so a sloppy retrieval that grabs the wrong bullet gives a wrong answer. Why hard: answering requires joining two separate bullets (array cap and per-user job cap) and the interaction clause between them. Slurm's own sbatch/job_array docs — which dominate the corpus — describe --array syntax and MaxArraySize as a site-configurable, so keyword search on 'array size limit' pulls SchedMD pages that cannot give FASRC's actual numbers."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "My analysis takes about 3 hours every time on the shared partition, but when I run the exact same thing on serial_requeue it keeps getting killed for hitting the wall clock. What time should I be asking for there?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices"
+    ],
+    "reference": "Ask for roughly 9 hours. `serial_requeue` (and `gpu_requeue`) are mosaic partitions made of a wide variety of hardware, so run times vary a lot depending on which host you land on. The rule of thumb is a factor of three variance in speed — so a job that takes 3 hours on most hardware should be given 9 hours on `serial_requeue`. Alternatively, use the `--constraint` option to pin the job to a specific hardware type so the runtime is predictable.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the factor-of-three padding rule for requeue partitions — a concrete, applied number, and the alternative remedy (--constraint). Requires the model to actually do the 3x arithmetic against the user's stated 3 hours. Why hard: the user describes a symptom ('killed for hitting the wall clock') rather than asking about hardware heterogeneity, so lexical overlap with the answering sentence is near zero. Keyword search on 'serial_requeue time limit' lands on the Running Jobs partition table, which says '3 days' — a plausible-looking but wrong answer to what the user actually needs."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "My PI bought the nodes in our lab's own partition, and we only ever run there. So why does our fairshare keep dropping — aren't we just using hardware we already paid for?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/fairshare"
+    ],
+    "reference": "Because Fairshare is a global quantity on Cannon, not a per-partition one: RawShares are granted to everyone and can be used anywhere on the cluster, so a user is charged regardless of which partition they run in. Groups that own private partitions are granted RawShares equivalent to the hardware in that partition, and that grant exactly offsets the usage of the partition — so it nets out. The upside of this design is flexibility: because the Share is global, a group can leave its own partition idle and spend its shares elsewhere on the cluster instead.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the 'why am I charged on my PI's own partition' FAQ — the single most common fairshare misconception. The answer requires understanding that the charge is offset by an equivalent RawShare grant, not that the charge is waived. Why hard: the answer lives in the very last Q&A at the bottom of a long page, well past where a chunker usually stops caring. The user's framing ('we already paid for it') is an argument, not a keyword; matching on 'private partition' surfaces the Running Jobs partition table instead. A naive answer would wrongly say private-partition usage is free."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Last week a bunch of our jobs died from node failures and we cancelled several more that were misconfigured. Does that wasted compute still count against our lab's score, and how long until it stops hurting us?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/fairshare"
+    ],
+    "reference": "Yes, it still counts. RawUsage is the sum of all usage including failed jobs, jobs that are requeued, and jobs that ran on nodes that failed — FASRC counts it because it is the user's responsibility to use the allocated time effectively even when it is cut short. That usage does decay, though: RawUsage is attenuated by the cluster's half-life, currently 3 days. Work done in the last 3 days counts at full cost, work done 6 days ago costs half, work done 9 days ago one fourth, and so on. To limit the damage from failures, FASRC recommends testing/verifying code before running and enabling checkpointing so jobs can restart where they left off.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Requires combining two adjacent-but-distinct statements: (a) failed/requeued/node-failed jobs are still billed to RawUsage, and (b) the 3-day half-life decay ladder. Tests a real, painful user situation rather than a definition. Why hard: two facts in two different paragraphs must be merged, and the 'failed jobs still count' clause is introduced as a throwaway 'A quick aside'. Slurm's own priority_multifactor docs (in-corpus) explain half-life decay generically, so a keyword retriever chasing 'half-life' can answer with SchedMD prose and never surface FASRC's actual 3-day value or the failed-jobs rule."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I'm a master's student and my advisor wants me to run analyses on the Nielsen consumer panel data. Can I be added to the agreement?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/nielsen-dataset"
+    ],
+    "reference": "No. Under the Master Access Agreement, the Nielsen data and license are made solely to the individual researcher registered via the Chicago Booth Nielsen site. That researcher can be a Ph.D. student or a postdoc who has a tenure-track faculty member registered on the site — but the data is explicitly not available to undergraduates or master's students. Relatedly, under the Data Access and Confidentiality Agreement the Researcher may disclose the Data only to PhD-seeking students of Harvard working under their supervision on the Research Project.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the eligibility restriction in the Master Access Agreement summary, reinforced by the disclosure clause in the Confidentiality Agreement. The correct answer is a flat 'no', which the model must not soften. Why hard: the user asks about being 'added to the agreement' — the article's answer is framed as who the license is issued to, not who can be added. The exclusion sits at the end of numbered item 1 in a numbered list, and the corroborating clause is in a different section of the page, so the model must reconcile two agreements to answer confidently."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "We're about to submit a paper that uses the Nielsen data. Do we owe Chicago Booth anything before it goes out?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/nielsen-dataset"
+    ],
+    "reference": "Yes. The Researcher must submit to Chicago Booth copies of all final papers or other publications arising from use of the Data at least thirty (30) days prior to their proposed publication or other public dissemination. Note also that Nielsen owns the data and there are particular rules around publishing that must be met, an annual status report must be provided back to Chicago Booth, and no personally identified information within the Data may be disclosed in any manner.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Direct lookup of the 30-day pre-publication notice requirement — a hard, checkable number that appears only on this page. Why hard: direct single-fact lookup, but the number is spelled out as 'thirty (30) days' inside numbered item 6 of an agreement summary — not in any heading — and the user's word 'submit a paper' collides with the cluster sense of 'submit a job', which is the dominant meaning of that word across the rest of the corpus."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I want to spin up a few hundred cores on Cannon to crawl a public website faster. It's for academic research — any issue with that?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/web-scraping-policy"
+    ],
+    "reference": "Yes, several. FASRC highly discourages using the cluster itself to scrape: because of its size and ease of parallelization, the cluster is easily weaponized and your actions could have consequences for other researchers, so you should seek another avenue for data acquisition first. You must contact FASRC before commencing any scraping activity using the FASRC cluster. It is highly preferable that you do the scraping elsewhere and then bring the data to the cluster for processing — and if the data is sensitive, confidential, contains human data, or it is unclear, doing it elsewhere is a requirement. Highly parallelized scraping is specifically called out as risking blacklisting of the cluster's or the university's IP range, which would harm other users. Being an academic does not exempt you from a site's usage policies.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the core policy: parallel scraping from the cluster is discouraged/permission-gated, not merely 'be polite'. The user's framing ('for academic research') is exactly the excuse the article pre-empts. Why hard: the user's words are 'crawl', 'spin up cores', 'public website' — the article says 'scraping', 'parallelization', 'source'. A retriever keying on 'few hundred cores' will pull Running Jobs / job-efficiency pages about core counts and answer with scheduling advice, completely missing that the activity itself is policy-gated. The must-contact-FASRC-first sentence is a lone line with no heading."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I logged in to Globus and picked the Harvard FAS RC Holyoke collection, but I can't browse into my home directory and the Everyone folder in my lab share doesn't show up either. Is my account misconfigured?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/globus-file-transfer"
+    ],
+    "reference": "Nothing is misconfigured — both are expected. Home directories are not and will not be added to Globus under any circumstances, because sharing home directories creates a security vulnerability (authentication keys/passwords could be shared inadvertently). And within a lab share, Globus can only see the `Lab` and `Users/$USER` folders — anything outside those, such as `Everyone` and `Transfer`, is not available through Globus (note the `Users` folder has been deprecated as of 2025). Also be aware symlinks do not work in Globus. If your lab share genuinely lacks a `Lab` directory or is not visible at all in the Holyoke/Boston collections, contact FASRC.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Combines the absolute home-directory prohibition with the Lab/Users-only visibility rule to explain a symptom the user reports as a bug. Both facts sit in short prose under low-signal headings ('Available storage', 'Available folders'). Why hard: the user reports a symptom ('can't browse', 'doesn't show up', 'misconfigured') rather than asking what Globus can see, so there is almost no lexical overlap with the answering sentences. Two separate rules in two different sections must be merged, and 'Everyone' is a stopword-ish token that keyword search handles badly — it also collides with the AlphaFold database path /n/holylabs/rc_admin/Everyone/... elsewhere in the corpus."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "I need to move a directory holding roughly half a million small output files off the cluster with Globus. What's the recommended way to package that up?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/globus-file-transfer"
+    ],
+    "reference": "Tar the directory into subset files first. FASRC recommends that your tar files range in size from 1-100 GiB — that size range transfers more quickly (especially if the transfer is interrupted) and is smaller to retrieve if it ever needs to come back from Tape. If you leave hundreds or thousands of files in a single directory, Globus will go into an 'endpoint is too busy' state and your job will timeout, restart, timeout, etc. FASRC also recommends reading their 'Tips for using tar to archive data' page before tarring.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Direct lookup of the recommended 1-100 GiB tar size for Globus transfers, plus the endpoint-too-busy failure mode it prevents. Concrete, checkable numbers unique to this page. Why hard: single-fact lookup, but the recommendation lives under a heading called 'Step 0: Prerequisite knowledge', which no keyword query would ever target. The user never says 'tar' or 'GiB' — they say 'package up' and 'small output files' — and 'tips for tar archiving' is a separate KB page in the corpus that would compete for the retrieval slot without carrying the Globus-specific 1-100 GiB number."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I ran shasum on a folder before I tarred it up, and when I extracted the archive later and hashed it again the values don't match, even though every file looks fine. What am I doing wrong?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving"
+    ],
+    "reference": "The checksum depends on the path you hand to find, so the same files hashed two different ways produce two different values. FASRC's guidance is to always do it the exact same way: cd to the directory *above* the one you are archiving (e.g. /n/mypath/scans) and then run find against the relative directory name (myscans) — not the full path. Two other things will break the comparison: (1) modifying the data after you took the checksum but before you tarred it (a checksum is useless on an active filesystem), and (2) storing the checksum file itself inside the tar, since its presence changes the checksum unless you remove it after un-tarring and before re-running.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the 'Caveats and Recommendations' section plus two NOTE blocks buried well below the article's headings. The user describes a symptom (hash mismatch) and never uses the article's vocabulary. Requires combining three separate statements scattered across the page. Why hard: keyword search on 'shasum mismatch' or 'hashes don't match' hits nothing — the article never uses those words. The answer lives in a caveats section whose heading shares no terms with the question, and the correct answer requires stitching together a caveat, a NOTE about modification, and a separate NOTE about the checksum file being inside the tar."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "RC made a tar of my project with Starfish. I copied it to netscratch and extracted it there, but instead of my ProjectX folder I got this weird nested tree of empty directories with ProjectX way down at the bottom. Is the archive corrupt?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving"
+    ],
+    "reference": "The archive is fine. Starfish tars in place and captures the entire path inside the tar file, so extracting recreates that whole path underneath your output directory. Extracting a Starfish tar of /n/holylabs/jharvard_lab/ProjectX into /n/netscratch/jharvard/temp gives you /n/netscratch/jharvard/temp/n/holylabs/jharvard_lab/ProjectX. Move the ProjectX directory to where you actually want it, then remove the leftover empty n/holylabs/jharvard_lab tree. Use plain `rm` rather than `rm -rf`, so it errors out if other files remain or you typed the wrong path.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the 'Tar Archives Created by Starfish' subsection at the very end of the article, plus the rm/rm -rf Tip callout. The user's framing ('is it corrupt?') is a misdiagnosis the article explicitly corrects. Why hard: the user's words ('nested tree of empty directories', 'corrupt') appear nowhere in the article; the only bridging keyword is 'Starfish', mentioned in passing. Answering fully also requires the follow-on cleanup advice, which sits in a separate paragraph and a Tip callout, so a single keyword hit gives only half the answer."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I already pushed a bunch of archives into our lab's tape area on Globus and then realized I named them badly. Can I just rename them, or move a couple into a different folder to tidy things up?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/tape-globus-access"
+    ],
+    "reference": "No — do not delete, move, or rename data once it has been transferred to the tape buffer. The Globus buffer gives you write access to upload data destined for tape, and all changes within your lab's Globus collection are automatically picked up by the tape robot. Deletions on the Globus buffer may result in permanent deletion on tape, and deleting files that have already been placed on tape removes the 'link' and makes retrieval impossible. Mass deletions, moves, and file renaming require cumbersome manual intervention. Name files appropriately before you transfer them, and work with your PI or lab data manager on your lab's tape storage protocols.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests 'Note 2' in the Important notes section — a high-consequence, data-loss rule buried below the transfer walkthrough. This is the costliest mistake a user can make with tape, so it is a high-value row. Why hard: phrased as an innocuous housekeeping request ('tidy things up'), using none of the article's alarm vocabulary ('permanent deletion', 'tape robot', 'buffer'). The retriever must surface a warning the user did not know to ask for, and the KB's other Globus pages describe renaming/moving as ordinary Globus features — strong lexical decoys that produce the opposite answer."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "Our PI wants to let a postdoc read and write only one project folder inside our lab's tape collection on Globus, not the rest of it. How do we set that up?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/tape-globus-access"
+    ],
+    "reference": "You cannot. There is no way to restrict permissions on individual folders within your lab tape collection — read/write access applies to the whole lab collection on Globus. The underlying filesystem is not owned by FASRC, so FASRC cannot set those permissions; everyone with access is essentially a guest on the NESE tape system. (The PI and General Manager can add lab members to the collection, but only to all of it.)",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Direct single-fact lookup of a hard 'no' that users routinely assume is possible, from the 'Permission to access your lab's tape collection' section of the tape-specific Globus page. Why hard: one hop once the right chunk is found, but the question presupposes it works ('how do we set that up'), so lexical overlap points at the generic Globus sharing and Coldfront allocation-management pages rather than the one page that says it is impossible for tape. Only this page carries the negative answer and the NESE-ownership reason."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "On Cannon I just do salloc to grab a shell on a compute node, but on FASSE it doesn't work. How am I supposed to get an interactive session there?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/fasse"
+    ],
+    "reference": "salloc is deliberately unavailable on FASSE — it is disabled for security reasons, and FASSE does not allow interactive jobs from the command line at all. For interactive work you use the FASSE Open OnDemand (OOD) / VDI virtual desktop at https://fasseood.rc.fas.harvard.edu, reachable in your browser while connected to the FASRC VPN on the @fasse realm (note @fasse, not the @fasrc realm you use for Cannon). OOD gives you pre-built apps and interactive command-line access in a desktop-like environment. SSH to fasselogin.rc.fas.harvard.edu remains available for batch work.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the 'Do not use salloc' warning combined with the OOD/VDI section — the answer needs both the prohibition and its replacement. Realistic Cannon-user-moving-to-FASSE question. Why hard: 'interactive session' is exactly the phrasing of the Cannon Running Jobs page, which documents salloc as the recommended method — so plain keyword matching pulls the wrong cluster's page and yields advice that is explicitly forbidden here. The correct answer is a two-line warning plus a separate OOD section further down the page; combining them is what makes it reasoning."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "How long can a job run on the FASSE H200 GPU nodes, and how many GPUs does each of those nodes have?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/fasse"
+    ],
+    "reference": "The fasse_gpu_h200 partition has a 3-day time limit — shorter than the 7 days allowed on the other FASSE partitions. There are 2 such nodes, each with 4 H200 GPUs, 112 Intel 'Sapphire Rapids' cores, 990 GB of memory per node, and 843 GB of local /scratch.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Direct lookup of one row in the FASSE partition table. Chosen because the H200 partition is the sole exception to FASSE's otherwise uniform 7-day limit — exactly the kind of fact a model gets wrong by generalizing from neighboring rows. Why hard: the fact exists only as cells in an unlabeled markdown table row — the words 'how long' or 'time limit' never appear in prose next to 'H200'. It also competes with the Cannon Running Jobs partition table, which lists its own GPU partitions and limits, so the retriever must pick the FASSE-specific table. A model that pattern-matches surrounding rows answers '7 days' and is wrong."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "A data provider will only let me download their dataset if I give them an IP address to add to their allowlist. What address do they see when I pull the data from a FASSE compute node?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/proxy-settings"
+    ],
+    "reference": "140.247.232.228. All traffic to the Internet from FASSE — VPN, login, compute, or fasseood — goes out through the FASRC proxy (rcproxy.rc.fas.harvard.edu), which currently has that external IP address. It is subject to change, so you can confirm it by running `curl icanhazip.com` from the node you will actually be working on.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Single-fact lookup of the FASSE proxy's external egress IP, at the very bottom of the page under 'What IP Address am I Coming From?'. Realistic DUA / data-provider onboarding scenario. Why hard: worded in the third party's vocabulary ('allowlist', 'data provider') rather than restating the article's heading. The IP appears only twice — once in a sentence, once in a code block — at the tail of a long how-to page whose bulk is proxy configuration snippets for Stata, RStudio, Jupyter and sftp, so the retriever has to reach past all the high-similarity 'proxy' chunks to the one that carries the number."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Our data use agreement says the data has to be encrypted at rest. I was planning to stage the intermediate files for my FASSE jobs in netscratch since it's fast. Is that OK?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers"
+    ],
+    "reference": "No. If you have a DUA that requires encryption at rest, you must not use scratch for any data the DUA applies to — neither local scratch nor FASRC's global scratch supports encryption at rest. Separately, DSL 3 / FASSE data should not be stored in your home directory either. You are responsible for knowing and complying with the applicable Harvard Information Security Policy, the Harvard Research Data Security Policy, and any applicable contracts / data use agreements; if you are unsure how this applies to your data, consult FASRC at security@rc.fas.harvard.edu or your School Security Officer.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the DSL3 caveat bullets on the FASSE / Protected Data Transfers page. A high-stakes compliance answer that directly contradicts the performance advice given on nearly every other FASRC page. Why hard: every other FASRC page (Quick Start, Running Jobs, Scratch Policy) actively recommends netscratch as the primary job working area, so keyword overlap on 'netscratch'/'scratch' retrieves the pages that say YES. The single page that says NO frames it as 'encryption at rest' + 'DUA' in a bullet under a transfers heading — the model must be routed there by the DUA clause, not by the scratch keyword, and must recognize the conflict."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Our level 3 project storage doesn't show up as a collection in Globus at all. What do we have to do to get it added?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers"
+    ],
+    "reference": "Nothing is broken: DSL 3 / FASSE storage is intentionally not included in Globus by default. To have it exposed, first review the governing DUA — Globus makes data available over the Internet without a VPN or private network, so a DUA requiring VPN/private-network access for all access to the data would not be Globus-compliant (consult your School Security Officer if unsure). Then submit a ticket to rchelp@rc.fas.harvard.edu that (1) includes the path to the project to add (e.g. /n/piname_project_l3), (2) states that the PI attests Globus is compliant with any contracts/DUAs governing the data, and (3) is either sent by the PI or receives a direct reply from the PI confirming it.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the 'FASSE Large Data Transfer with Globus' section: the default exclusion, the DUA/VPN compliance caveat, and the three-part ticket requirement including PI attestation. Why hard: the FASSE overview page says 'FASSE secure storage shares should be accessible via Globus', a strong lexical competitor giving the opposite impression, and the general Globus File Transfer page is another decoy. Only this page carries the default-exclusion rule and the exact ticket contents, and a correct answer must combine the DUA/VPN compliance caveat with the three ticket requirements rather than quoting one sentence."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "How much CPU and RAM am I actually allowed on the FASRC login server, and is there a cap on how many terminal windows I can have open at once?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/terminal-access"
+    ],
+    "reference": "Each login-node session is limited to 1 core and 8GB of memory, and you may have at most 5 sessions per user. Users who abuse the login nodes may have their sessions terminated, and the login nodes are rebooted during monthly maintenance to clear out stale sessions. If you need more than 5 sessions, switch to batch jobs, use Open OnDemand (which gives you a desktop with multiple terminals on a dedicated compute node), or use screen/tmux to multiplex one session.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests recall of the hard numeric login-node limits (1 core / 8GB / 5 sessions) plus the monthly-reboot detail. These numbers appear only in the terminal-access page, not in the Quick Start Guide. Why hard: 'login node limits' is not a heading anywhere; the numbers sit in an unlabeled paragraph under 'Login Nodes'. The user asks in terms of 'terminal windows', which the article never says (it says 'sessions'), and many other KB pages talk about cores and memory in the context of sbatch requests — so a keyword match on 'cores'/'memory' is far more likely to retrieve a job-submission page than this one."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I ran ssh-copy-id and my key works great when I'm in the office, but from my apartment it still makes me punch in the 6-digit code every single time. Did the key not install properly?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/terminal-access"
+    ],
+    "reference": "The key is fine — this is by design. Passwordless (ssh-key) authentication is only permitted to the Cannon login nodes from Harvard networks, including Harvard/FASRC VPNs. If you connect from an external network you are still required to provide two-factor authentication regardless of your key. So either connect to the VPN from home, or accept the 2FA prompt. (On FASSE, passwordless ssh is permitted from the FASSE VPN only.) You can confirm the key installed by checking that it is present in ~/.ssh/authorized_keys on the cluster.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Reasoning row: the user presents a symptom and a wrong hypothesis ('my key is broken'); the correct answer requires knowing the network-dependent policy on passwordless SSH, plus the FASSE-only-from-FASSE-VPN carve-out. Directly tests whether retrieval finds the policy sentence rather than the generic ssh-keygen how-to. Why hard: keyword search on 'ssh-copy-id' or 'passwordless' retrieves the step-by-step key setup instructions, which would lead a model to answer 'check your authorized_keys / permissions' — the wrong answer. The correct answer hinges on one policy sentence about network location, and the user never uses the words 'passwordless', 'external network', or 'two factor' (they say 'from my apartment' and '6-digit code')."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I'm an IQSS researcher and my survey data is classified Level 2. Which cluster am I supposed to be on, and what exactly goes in the VPN box versus the cluster login box?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide"
+    ],
+    "reference": "Level 2 data belongs on Cannon, the FAS research computing cluster for Data Security Level 2 (only Level 3 data must move to the FASSE secure environment). To get on: in the Cisco AnyConnect VPN client use server address vpn.rc.fas.harvard.edu and enter your FASRC username in the format username@fasrc, your FASRC password, and your FASRC 2FA token — note this is NOT the code associated with your HarvardKey account. Then log into the Cannon cluster at https://rcood.rc.fas.harvard.edu using just your FASRC username WITHOUT the '@fasrc', plus your FASRC password.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Reasoning row: combines the data-security-level to cluster mapping with the realm-suffix asymmetry (username@fasrc for VPN, bare username for rcood) and the HarvardKey 2FA disclaimer. Why hard: three facts must be combined (security level -> cluster; realm suffix in VPN; NO realm suffix at rcood), and the key discriminator is a negation buried in a bullet. The user's phrasing ('the VPN box versus the cluster login box') shares no vocabulary with the article's headings, and the plausible-but-wrong answer (use username@fasrc everywhere, or use HarvardKey's 2FA code) is exactly what a keyword-matching retriever produces."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "My pandas script keeps blowing up with a memory error because the file is bigger than the node's RAM. Does FASRC want me to rewrite it, or can I keep using pandas somehow?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/python"
+    ],
+    "reference": "Both options exist, and which one FASRC recommends depends on scale. Start with chunking. For moderately large datasets, Dask can enhance Pandas by parallelizing operations — you can convert a Pandas DataFrame to a Dask DataFrame with dd.from_pandas() and keep most of your existing code. But for very large datasets that exceed memory constraints, using Dask alone as a substitute for Pandas is the more effective solution: Dask is a drop-in replacement with a familiar DataFrame API that works lazily, breaking work into smaller tasks that only execute when you call .compute(). Separately, switching from CSV to a columnar format like Parquet (e.g. df.to_parquet('output_data.parquet', compression='snappy')) greatly improves I/O performance.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Reasoning row: the answer requires combining the 'Dask with Pandas' and 'Dask instead of Pandas' subsections and applying the size condition (exceeds memory => Dask alone). Tests whether the model surfaces the conditional recommendation rather than a generic 'use Dask'. Why hard: the page gives two competing recommendations under two adjacent headings, and picking the right one requires reading the size qualifier ('moderately large' vs 'exceed memory constraints') — a keyword hit on 'pandas memory' returns whichever chunk lands first and produces a half-answer. The user never says 'Dask', 'chunking', or 'larger-than-memory', so the question cannot be answered by matching the article's own vocabulary."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I switched to the newest Intel module on the cluster and now the compiler command I've always used doesn't exist anymore. What am I supposed to call to build my C file now?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/c-programming-language"
+    ],
+    "reference": "Intel renamed the compiler binaries at version 24.0.0. For Intel modules below 24.0.0 the commands are icc (C), ifortran (Fortran), and icpc (C++). For Intel 24.0.0 and above they are icx (C), ifx (Fortran), and icpx (C++). So with a newer Intel module you must invoke icx instead of icc. (You can list the available Intel compilers with `module spider intel` and load a specific one, e.g. `module load intel/23.0.0-fasrc01`.)",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Reasoning row keyed to the version-cutoff table on the FASRC C page. The reference is only correct if the model reads the correct row of a markdown table; a hallucinated answer typically says 'icc' for all versions. Why hard: the answer lives entirely inside a four-column table with no prose restating it, and tables chunk badly. The user never types 'icc', 'icx', or '24.0.0' — they describe a symptom ('the command doesn't exist anymore') — so there is no keyword overlap at all with the row that holds the answer, and generic 'Intel compiler' matches would pull the Software/module pages instead."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Is it fine to build my C code right after I ssh in, and should I just put the gcc line at the top of my job script so it's always fresh?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/c-programming-language"
+    ],
+    "reference": "No on both counts. FASRC recommends jumping to a compute node to compile a C program (compilation can take a few seconds to a minute depending on the code's complexity), and specifically recommends using the `test` partition to compile and test the program before running the production job. Best practice is to compile the code separately and then use the resulting executable in your sbatch script — avoid putting the compilation command inside the sbatch script, because that recompiles the program on every submission. If you change the source, recompile separately and then resubmit the production batch job.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Reasoning row: combines the 'compile on a compute node / use the test partition' recommendation with the separate 'do not put the compile step in your sbatch script' rule, and correctly rejects the user's stated plan. Names the specific `test` partition, which is what makes this page the single best source. Why hard: the user proposes a plausible-sounding workflow and the correct answer is to contradict it twice, which requires two separate statements from the 'Best Practice' section. Keyword-wise the question looks like a generic 'login node etiquette' or 'partitions' query, so lexical retrieval pulls the Running Jobs / responsibilities pages, which do not mention compiling on the `test` partition or the recompile-per-submission cost."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "I want to completely wipe my Julia install off the cluster and start clean. Is there a single command, and does it leave junk behind in my home directory?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/julia"
+    ],
+    "reference": "Run `juliaup self uninstall`. That is the uninstall command, but it does not always clean everything up: afterward, check for the `~/.julia` and `~/.juliaup` directories and delete them manually if they are still there. (This matters because the default Julia install location is $HOME, and the installer also adds Juliaup initialization to your ~/.bashrc to put `julia` on your $PATH.)",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests recall of the exact uninstall command plus the leftover-directories caveat. The 'does it leave junk behind' half is the discriminating part — a model that only retrieves the command will miss ~/.julia and ~/.juliaup. Why hard: the user says 'wipe' / 'start clean' / 'junk behind', none of which appear in the article (it says 'uninstalled', 'deleted'). The complete answer requires the second sentence about residual dot-directories, which a single-command keyword hit on 'uninstall Julia' would drop — and dropping it produces a technically-incomplete answer that leaves a stale install in place."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I chmod 777'd a file in my lab's share so a collaborator in a different lab group could grab it, but they still get permission denied when they try to read it. What's going on?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/understanding-permissions"
+    ],
+    "reference": "Making the file world-readable is not enough on its own. For a user in the 'Other' category to reach a file, they must first be able to traverse into the top-level share/directory that contains it. If the top level of the lab directory or share is set drwxr-x---, drwxrwx---, or drwxr-s--- then Other has no access to the share at all, even if a file inside it is set -rwxrwxrwx. Other must first be able to 'see' into the directory/share; otherwise it has no access. (FASSE/L3 shares should never allow Other access.) To share with someone outside the group, the enclosing directory must permit Other traversal - e.g. the 'Everyone' directory that lab shares provide for exactly this purpose - or the person can be added to your lab Group by your PI.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the POSIX directory-traversal rule (parent permissions gate child access), which is the most common real user confusion. Why hard: the literal tokens in the question ('chmod 777', 'permission denied', 'collaborator') never appear in the article; the answer requires knowing that -rwxrwxrwx equals 777 and then combining the file-level permission statement with the separate share-traversal rule. The answer is one buried sentence in the 'Permissions in Practice' metaphor section, not a heading, and keyword search on 'permission denied' matches nothing useful in this doc."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "My labmate keeps his personal scratch folder under Users/ in our old lab share, but our newly created share and netscratch have no Users folder. Where am I supposed to put my own personal directory now?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/understanding-permissions"
+    ],
+    "reference": "The Users directory only exists on shares created prior to October 2024. On new shares and on /n/netscratch there is no Users directory - FASRC says to use the Lab directory to create personal folders instead. The Lab directory is set drwxrws--- so that every member of the lab group has read/write/execute access to share data amongst the group, and it is the preferred place both for personal folders on new shares and for sharing data with your lab group. On the older shares, the sub-directories in the Users directory are owned by individuals and by default only allow execute access to the group.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests a dated policy change buried in a bullet inside 'One, Many, All'. The correct answer is the Lab directory, which the article otherwise describes as the *sharing* directory - so a shallow read gives the wrong answer. Why hard: a keyword match on 'personal folder' or 'Users directory' surfaces the Users bullet, whose surrounding text is about the old behavior; the actual answer is the italicized Please Note carve-out combined with the Lab-directory description - two separate statements. The October 2024 cutoff appears in no heading and is even misspelled ('Octpber') in the ingested text, defeating literal matching."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "I finished the cluster account request form and it never asked me to choose a password. How do I actually get a password to log in?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/account-signup"
+    ],
+    "reference": "Passwords are not collected by the signup application. Your account is created with a random password, and upon completion of the request you use the password reset tool to set your initial password. You will receive an email once the account has been created with links and instructions to do so.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Single-fact lookup about the signup flow's password handling. Why hard: labeled easy_retrieve honestly — 'password' is dense in this section and a heading states passwords are not collected, so keyword search finds it. Kept as an anchor to detect gross retrieval regressions."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I log into the FASRC web portal in my browser, it accepts my credentials, and then it just spins forever and never shows the menus. Restarting the browser doesn't help. What can I do myself before emailing support?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/virtual-desktop"
+    ],
+    "reference": "If the browser hangs for a long time after authenticating without displaying the Open OnDemand dashboard, restart your Per-User NGINX (PUN) process by visiting:\n- Cannon: https://rcood.rc.fas.harvard.edu/nginx/stop?redir=/pun/sys/dashboard/\n- FASSE: https://fasseood.rc.fas.harvard.edu/nginx/stop?redir=/pun/sys/dashboard/\nAlso note that the very first login can legitimately take some time while OOD sets up files and cache in your home directory; that Avast security software can cause 'no internet', 'read error', and 'the requested URL could not be retrieved' messages (disable Web Shield); and that Chrome or Firefox are recommended over Safari and Internet Explorer.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the most actionable OOD troubleshooting step - the Per-User NGINX stop URL. Highly discriminative: no other KB page carries that URL. Why hard: the user never says 'Open OnDemand', 'OOD', 'dashboard', or 'NGINX' - they say 'web portal' and 'spins forever'. Keyword search on those terms matches nothing in the article; the system must map the described symptom onto the Troubleshooting bullet and surface a URL the user could not have guessed."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "My R job asks Slurm for 8 cores, but when it runs my parallel code spawns dozens of workers and the node grinds to a halt. How am I supposed to determine the worker count inside the script?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/r-parallel"
+    ],
+    "reference": "Do not use parallel::detectCores() to determine the number of CPUs/processes to use in your job - it detects the number of physical CPU cores on the compute node, not the number allocated to your job, which is why you end up oversubscribed. Use parallelly::availableCores() instead, which returns the number of CPUs allocated to your Slurm job.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the most consequential gotcha on the page - detectCores() vs availableCores() under Slurm. Deliberately phrased as the symptom (oversubscription) rather than the function name. Why hard: the question deliberately omits both function names, so there is no lexical hook - the only shared tokens are generic ('R', 'cores', 'job'). Retrieval must recognize the oversubscription symptom as the scenario the IMPORTANT callout describes, and that callout is mid-page body text, not a heading."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I had openmpi loaded, then loaded mpich later in the same session, and now openmpi is gone from my module list. Did I corrupt my environment, and can I keep both around?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface"
+    ],
+    "reference": "Nothing is corrupted - this is intentional. The modules are set up so that you can only have one MPI module loaded at a time; if you try loading a second one it will automatically unload the first, which is done to avoid dependency collisions. So you cannot keep both loaded: pick one implementation (OpenMPI or MPICH, each built with either the GNU or the Intel compiler suite) and load it with its matching compiler module, e.g. module load gcc/13.2.0-fasrc01 openmpi/5.0.2-fasrc01. Note also that there is no default MPI library in your environment when you log in - you must load one.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the 'one MPI module at a time' rule plus the no-default-MPI fact. Highly discriminative to this page. Why hard: the user frames it as a suspected bug ('did I corrupt my environment'), so the query's content words are mostly 'openmpi'/'mpich' - tokens shared with many other pages (modules intro, software, spack) that do not contain this rule. The discriminating sentence sits deep inside the 'OpenMPI with GNU Compiler' section, well past any heading."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I need mpi4py in a conda environment, but it has to be built against the same OpenMPI my Fortran code uses. I just ran mamba create with mpi4py in the package list - what MPI did that actually give me, and how do I get OpenMPI instead?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface"
+    ],
+    "reference": "Putting mpi4py in the mamba create package list (e.g. mamba create -n python3_env1 python numpy pip wheel mpi4py) also installs an MPI library required by mpi4py, and by default that is MPICH - not OpenMPI. If your workflow requires a specific flavor and/or version of MPI, install mpi4py with pip into a custom conda environment instead: load the compiler and MPI modules first (module load gcc/12.2.0-fasrc01; module load openmpi/4.1.5-fasrc03), load a Python module (module load python/3.10.12-fasrc01), create the environment WITHOUT mpi4py (mamba create -n python3_env2 python numpy pip wheel), activate it (source activate python3_env2), then run pip install mpi4py so it builds against the loaded OpenMPI.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the conda-pulls-MPICH-by-default trap and the documented pip-against-loaded-modules workaround - the most common real mpi4py support case on the cluster. Why hard: the decisive sentence begins a continuation chunk and refers to 'the above commands' rather than repeating 'mamba' or 'conda', so a keyword search for 'mpi4py MPICH conda' can miss it entirely. The full answer also requires stitching that sentence to the four-step pip procedure that follows under separate sub-headings."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I used the 'copy mount path to clipboard' button in Starfish and got /n/vast-holylabs/C/jharvard_lab, but when I cd to it on a login node I get 'No such file or directory'. What's the correct path?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage"
+    ],
+    "reference": "The path Starfish copies is not directly usable - you must make two edits: remove 'vast-' and remove '/C'. So /n/vast-holylabs/C/jharvard_lab becomes /n/holylabs/jharvard_lab. The letter C indicates the filesystem is on the Cannon cluster; a group share on FASSE would show F instead of C before the group name.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the Starfish path-mangling gotcha (remove 'vast-' and '/C'), which the article itself flags as 'Very important!'. Strong discriminator - no other page explains the C/F cluster letter. Why hard: the query is dominated by an error message ('No such file or directory') and a literal path, neither of which appears in the article, while its one strong token ('Starfish') points at the separate Starfish data-management page - a plausible but wrong top hit. The answer is the last step of a numbered self-service walkthrough, not a heading."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I want to drag a few files out of my home directory into my lab's netscratch folder using a point-and-click interface, but my home directory doesn't show up as an endpoint in Globus. What else can I use?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage"
+    ],
+    "reference": "Globus does not have access to home directories, which is why yours does not appear. For transfers to or from your home directory, use an Open OnDemand Remote Desktop session instead: go to the OOD dashboard (Cannon: rcood.rc.fas.harvard.edu, FASSE: fasseood.rc.fas.harvard.edu), start a Remote Desktop session, open a File Manager by clicking the 'Home' folder on the desktop (or Applications -> File Manager), open a second File Manager window, navigate one to the source (e.g. /n/home01/jharvard/) and the other to the destination (e.g. /n/netscratch/jharvard_lab/Lab/), then right-click the source file -> Copy and right-click the destination window -> Paste (drag-and-drop works too, but behaves like cut-and-paste). Command-line tools (cp, mv, rsync, fpsync) are the alternative; Globus is only recommended for transfers between different filesystems, not within one.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the 'Globus cannot see home directories' limitation and the documented OOD Remote Desktop two-file-manager workaround. Requires combining the limitation with the procedure that follows it. Why hard: a keyword search for 'Globus' pulls the dedicated Globus File Transfer page, which is the wrong source - the exclusion ('Globus does not have access to home directories') is stated only here, as a subordinate clause under a generic 'Option 2' heading. The user's vocabulary ('drag files', 'point-and-click', 'endpoint') matches none of the article's terms."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "My collaborator is at another university and doesn't have a HarvardKey. Can she still get an account on the cluster, and is there anything I have to keep doing so her access doesn't get shut off?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/onboarding"
+    ],
+    "reference": "Yes. A collaborator without a HarvardKey can apply for an external FASRC account through the account request portal (https://portal.rc.fas.harvard.edu/request/account). External accounts have to be re-enabled every 90 days: the PI must request an extension every 90 days or the account will be suspended. Faculty can sponsor FASRC accounts for anyone working in their lab, including external collaborators.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the recurring 90-day re-enablement obligation for externally sponsored accounts. Fact lives in a single continuation sentence inside the Faculty onboarding checklist, not under any heading. Verified unique in the corpus: the string 'reenabled every 90 days' appears only in the onboarding document. Why hard: the user's vocabulary ('another university', 'access gets shut off') shares almost no tokens with the source sentence ('reenabled', 'extension', 'suspended'). Keyword search for 'external collaborator account' pulls the account-signup / account-qualifications pages, which do NOT carry the 90-day rule, so lexical matching lands on a plausible-but-wrong article. The answer also has two parts (how to get the account + the recurring PI obligation) that sit in one buried sentence."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "I'm a new PI with a HarvardKey but the system won't let me approve my grad student's FASRC account request. What do I need to do?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/onboarding"
+    ],
+    "reference": "Complete the FAS Onboard tool for approvers at https://onboard.rc.fas.harvard.edu/onboard/. The onboarding checklist states that if you have a HarvardKey but are denied access to approve new accounts, you should visit and complete the FAS Onboard tool for approvers.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Direct single-fact lookup of a specific remedy (the FAS Onboard approver tool). Verified unique: the string 'FAS Onboard' occurs in exactly one document in the entire corpus (onboarding). Why hard: direct lookup, but the fact is a third-level sub-bullet under 'Link FASRC account to HarvardKey' rather than a heading, and the user never types 'Onboard' — the only high-signal token in the source. A keyword search on the user's actual words ('approve account request', 'PI can't approve') hits the general account-request pages instead."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "We're wrapping up a project and want to push the raw data off to tape. Before we start, what constraints are there on how the data has to be laid out, and what does it cost per year?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/storage-service-center-bill",
+      "https://docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm",
+      "https://docs.rc.fas.harvard.edu/kb/storage-service-center"
+    ],
+    "reference": "Tape (NESE) storage is sold in 20TB increments, allows ten thousand files per folder, and requires file sizes between 1GiB and 100GiB. It costs $15/yr per TB, is externally managed by the Northeast Storage Exchange (NESE), and data is transferred to tape using Globus. It is intended for long-term storage of inactive research data after project completion or for data retention purposes.",
+    "source_match_field": [
+      "url",
+      "url",
+      "url"
+    ],
+    "notes": "IMPORTANT — this article is TRIPLICATED in the live corpus: the identical 'Data Storage (Offerings, Workflow, Costs)' text is ingested under three URLs (storage-service-center-bill, data-storage-workflow-rdm, storage-service-center), verified by querying document_chunks. Listing only one URL would score a false miss whenever the retriever surfaces one of the identical twins, so all three verified URLs are listed. Why hard: the answer is not prose — it is spread across three separate cells (Size, Folder Path, Cost) of the FOURTH column of a 5-column markdown table, so a retriever must return the right table chunk and a reader must track column position. Nothing in the user's phrasing ('push data off to tape', 'constraints', 'laid out') matches the source tokens ('increments', 'NESE', 'per folder'). No heading in the article contains 'tape'."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I put a dataset in the Everyone folder so another lab could grab it, but it never shows up in Globus. Is Globus broken?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/storage-service-center-bill",
+      "https://docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm",
+      "https://docs.rc.fas.harvard.edu/kb/storage-service-center"
+    ],
+    "reference": "No, that is expected behavior. The Everyone subdirectory is visible to anyone on the HPC cluster and is intended only for internal sharing with other labs on the cluster — it is not available on Globus. The Lab subdirectory is the one shared out via Globus, so data that has to move over Globus needs to live under Lab.",
+    "source_match_field": [
+      "url",
+      "url",
+      "url"
+    ],
+    "notes": "Same triplicated article as the tape question (storage-service-center-bill / data-storage-workflow-rdm / storage-service-center are byte-identical in the corpus), hence three gold URLs. Tests the Lab-vs-Everyone default directory gotcha — requires combining the Lab paragraph ('shared out via Globus') with the Everyone paragraph ('not available on Globus'). Why hard: a keyword query containing 'Globus' overwhelmingly retrieves the dedicated globus-file-transfer article (and the tape-globus page), which cannot answer this — the Lab/Everyone distinction exists only in the storage-offerings article, under the heading 'Default Directory Structure', which contains neither 'Globus' nor 'Everyone'."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "Is there already a samtools container sitting on the cluster somewhere, or do I have to pull one from Docker Hub myself?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster"
+    ],
+    "reference": "There is one already on the cluster. Cluster nodes automount a CernVM-File System at /cvmfs/singularity.galaxyproject.org/, which provides Singularity images for the BioContainers project (auto-generated from Bioconda packages). Images follow the layout /cvmfs/singularity.galaxyproject.org/FIRST_LETTER/SECOND_LETTER/PACKAGE_NAME:VERSION--CONDA_BUILD, for example: `singularity exec /cvmfs/singularity.galaxyproject.org/s/a/samtools:1.13--h8c37831_0 samtools --help`. Expect a 10-30 second delay the first time the path is accessed on a compute node that has not mounted/cached it.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Direct lookup of a concrete filesystem path (the CVMFS BioContainers namespace) plus its naming convention. Verified unique: 'singularity.galaxyproject.org' appears only in the singularity-on-the-cluster document. Why hard: the only literal overlap between the question and the answer is the example token 'samtools', which appears exactly once, deep inside a code block near the bottom of a very long article. The user's framing ('Docker Hub') actively pulls toward the wrong sections (Docker Hub pull examples) and toward other container pages."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "A spack install blew up and by the time I looked the build log was already gone. How do I stop spack from throwing the logs away?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/spack",
+      "https://docs.rc.fas.harvard.edu/kb/spack-package-manager"
+    ],
+    "reference": "Spack builds in a `stage` directory located in /tmp and cleans that space up once it finishes building, whether the build succeeded or failed — which is why the logs disappear. To keep them, first set the `$TMP` environment variable to a location you want the stage files dumped into, then add the `--keep-stage` flag, e.g. `spack install --keep-stage <package>`, which tells spack to keep the staging files rather than remove them.",
+    "source_match_field": [
+      "url",
+      "url"
+    ],
+    "notes": "IMPORTANT — the SPACK article is DUPLICATED in the live corpus: /kb/spack and /kb/spack-package-manager are byte-identical documents (md5 verified on the ingested text, and the probe string '--keep-stage' returns both URLs). Both are listed as gold so the row cannot false-miss on an arbitrary tie-break between the twins. Why hard: the user says 'log', 'blew up', 'thrown away'; the source says 'stage', 'cleans up', 'preserve'. The load-bearing token ('stage') is a word the user would never type, and the answer has two parts ($TMP plus --keep-stage) that must both be recovered. The section heading is just 'Troubleshooting', so heading-level matching gives nothing."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Software I built with spack runs fine on the node I built it on but won't run on nodes in other partitions. How do I build something that works everywhere on the cluster?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/spack",
+      "https://docs.rc.fas.harvard.edu/kb/spack-package-manager"
+    ],
+    "reference": "By default Spack autodetects the architecture of the hardware it is building on and optimizes the build for it, so a build made on one CPU generation may not run on another (the docs give the example that LAMMPS built on Sapphire Rapids may not run on Cascade Lake). If you plan to run across heterogeneous hardware/partitions, set Spack to a generic architecture: edit `etc/spack/packages.yaml` inside the spack folder (create it if it does not exist) and add:\npackages:\n  all:\n    target: [x86_64]",
+    "source_match_field": [
+      "url",
+      "url"
+    ],
+    "notes": "Same duplicated SPACK article (both /kb/spack and /kb/spack-package-manager carry identical text), so both are listed as gold. Requires combining the 'Default Architecture' config block near the top of the page with the architecture warning buried in the LAMMPS recipe far down the page. Why hard: the user's words ('won't run on other partitions', 'works everywhere') do not appear anywhere in the article, which instead says 'heterogeneous hardware' and 'may not run on another hardware'. The two halves of the answer (why it happens, and the exact packages.yaml stanza) live in two sections separated by ~700 lines, so a single keyword-matched chunk yields at best half the answer."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I don't want spack spending hours compiling its own OpenMPI — how do I make it use the openmpi module we already have on the cluster, and is there anything I have to do before installing?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/spack",
+      "https://docs.rc.fas.harvard.edu/kb/spack-package-manager"
+    ],
+    "reference": "Configure the cluster's OpenMPI as an external package in `~/.spack/packages.yaml` (create the file if it does not exist). Get the prefix by loading the modules and reading $MPI_HOME, then add:\npackages:\n  openmpi:\n    externals:\n    - spec: openmpi@5.0.5%gcc@14.2.0\n      prefix: /n/sw/helmod-rocky8/apps/Comp/gcc/14.2.0-fasrc01/openmpi/5.0.5-fasrc01\n    buildable: false\nThe `buildable: false` option ensures MPI won't be built from source and Spack will use the module in that prefix instead. Before installing, run `module purge` — this is required or the build fails (e.g. `module purge` then `spack install hdf5@1.14.6 % gcc@14.2.0 ^ openmpi@5.0.5`).",
+    "source_match_field": [
+      "url",
+      "url"
+    ],
+    "notes": "Same duplicated SPACK article (probe 'buildable: false' returns both /kb/spack and /kb/spack-package-manager), so both URLs are gold. Tests the external-MPI configuration plus the easily-missed `module purge` prerequisite — a very common real FASRC user task. Why hard: the decisive token is the YAML key `buildable: false`, which the user cannot guess and would never type; their phrasing ('use the module we already have') matches instead the generic 'software modules' language that appears on dozens of KB pages. The second half of the answer (`module purge` is mandatory or the build fails) sits in a separate blockquote note that a naive keyword match on 'openmpi module' would not surface."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "We cleaned out several TB of old data last month but this month's storage charge came in exactly the same. Is the bill wrong?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/data-storage-billing"
+    ],
+    "reference": "No, the bill is correct. The monthly charge is based on the size of the storage allocation, not on the amount of storage actually used, so deleting files will not reduce the charge unless the allocation size itself is also reduced. Separately, the cutoff for billing changes is the 15th of each month — any change made to an allocation after the 15th is only reflected on the following month's bill.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the single most common storage-billing misconception, plus the 15th-of-the-month cutoff that explains a one-month lag. Requires combining the allocation-vs-usage rule with the cutoff date, which appear in different sections of the article. Why hard: the user asks whether the bill is 'wrong' after 'cleaning out data' — vocabulary that does not overlap the source's 'allocation', 'usage', 'reduced'. Worse, the query's strong tokens (storage, TB, bill) match the storage-offerings/pricing article family (which is triplicated in the corpus and dominates on those tokens) even though only data-storage-billing states the allocation-not-usage rule."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "After the storage billing email lands, how long do we actually get to dispute the charges before they just go through?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/data-storage-billing"
+    ],
+    "reference": "Three days. Once billing emails are sent, PIs or lab managers have 3 days to review the charges and approve them, make adjustments, or contact the storage service center to clear up any issues. After 3 days, a lack of communication is considered approval and the bills will be processed.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Direct single-fact lookup of a concrete deadline (the 3-day auto-approval window). Verified discriminative: 'considered approval' appears only in the data-storage-billing document. Why hard: the deadline is stated in body prose under the heading 'Billing notifications are sent monthly', which does not mention deadlines, disputes, or approval — so heading matching misses it. The user says 'dispute' and 'go through'; the article says 'make adjustments' and 'considered approval'."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Every time I try to map my Cannon home drive on my Windows laptop I end up locked out of my account. How many bad tries does that take, how long am I locked out for, and what am I doing wrong in the Map Network Drive box?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/mounting-storage"
+    ],
+    "reference": "You are almost certainly letting Windows authenticate with your local PC account. In the Map Network Drive dialog you must tick \"Connect using different credentials\"; if you don't, Windows tries your local PC information and after three failed attempts you are locked out. The lockout expires automatically in about 5 minutes. When prompted for network credentials, prepend your FASRC username with RC\\ (for example RC\\jharvard) so you authenticate against the RC domain.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests a specific failure mode (3 strikes, ~5 minute lockout, RC\\ domain prefix, 'Connect using different credentials' checkbox) buried in the Windows section of the mounting page. Requires combining the checkbox explanation with the credentials-prompt instruction. Why hard: the user's vocabulary ('locked out', 'bad tries') never appears as a heading; the article's headings are 'PCs use Map Network Drive'. The lockout count and the 5-minute expiry are parenthetical asides deep in the body, and the fix requires joining two separate paragraphs."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I'm on a collaborator's network where I can't run a second VPN client. Can I still get files off the cluster with FileZilla, or is the VPN mandatory for everything?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/mounting-storage"
+    ],
+    "reference": "You can still use SFTP. Mounting cluster storage as a drive does require the VPN — cluster storage must be routed through a VPN connection — but SFTP to a login node does not require a FASRC/FAS VPN connection, because login nodes use two-factor authentication. FASRC recommends FileZilla as a cross-platform SFTP client; you need OpenAuth set up plus cluster access and a home directory.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Reasoning row: the answer requires reconciling two statements that appear far apart — 'Cluster storage must be routed through a VPN connection' (mount section) and 'SFTP to a login node does not require a FASRC/FAS VPN connection as login nodes use two-factor authentication' (SFTP section). Why hard: a naive retrieval on 'VPN' returns the blunt 'storage must be routed through a VPN' sentence and would produce the wrong answer. The correct answer depends on the exception buried in the last paragraph, and the user never says 'SFTP' or 'login node' — they say FileZilla and 'can't run a second VPN client'."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "My home dir is full and now rm won't even work — it says 'No space left on device' when I try to delete something. How am I supposed to clean up if I can't delete anything?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/home-directory-full"
+    ],
+    "reference": "Shrink a file to zero bytes instead of unlinking it. Pick a large file you intend to remove and run `truncate -s 0 FILENAME` (you can list several files: `truncate -s 0 FILE1 FILE2 FILE3`), or equivalently redirect the empty device into it with `cat /dev/null > ~/mybig.file`. Once enough space is recovered to get you back under quota, `rm` will work again. Use full paths when deleting to avoid removing the wrong file.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests the specific workaround command (truncate -s 0 / cat /dev/null >) for the paradoxical 'cannot remove: No space left on device' state. The fix is a concrete flag, not a heading. Why hard: the article's heading is just 'WORKAROUND' — the word 'truncate' appears only in the body. A keyword system matching 'home directory full' will surface generic quota/storage pages that tell you to delete files, which is exactly the advice that fails here."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Quota says I'm at my limit but when I add up my folders with du it's way less than that. Which one is lying, and how do I find whatever is eating the space?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/home-directory-full"
+    ],
+    "reference": "Neither is lying — you likely have sparse files, whose space is counted by the filesystem's quota check (what `df` reports) but not accounted for properly by `du`. To find them, show the logical size instead: `cd ~` then `du -ch --apparent-size --max-depth=1 .` That points you at the directories responsible.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Reasoning row grounded in the 'What To Do If du and df Are Different' section. The answer is a cause (sparse files) plus a specific flag (--apparent-size), both buried in the body. Why hard: the user never uses the term 'sparse file' — that concept is the answer, not the query. Their phrasing ('which one is lying') shares almost no vocabulary with the article beyond 'du' and 'quota', and generic storage/quota pages in the corpus would match those two tokens just as well while giving the wrong answer."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "openconnect on my Ubuntu box dies right after it authenticates — something about not being able to find a script to configure the tunnel. How do I fix that?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/linux-vpn"
+    ],
+    "reference": "OpenConnect needs vpnc-script. Install it if you don't have it (Ubuntu/Debian: `sudo apt-get install vpnc-scripts`; Fedora/CentOS: `sudo dnf install vpnc-script`; Arch: `sudo pacman -S vpnc`), make sure it is executable (e.g. `sudo chmod u+x /etc/vpnc/vpnc-script`), and if OpenConnect still can't find it, pass its location explicitly: `openconnect --script /etc/vpnc/vpnc-script https://vpn.rc.fas.harvard.edu/` (substituting the actual path on your system).",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Reasoning row: combines the install step, the chmod step, and the --script override, all of which sit above the two 'Option 1/Option 2' headings on the Linux VPN page. Why hard: the user never says 'vpnc-script' — that term is the answer. Their description ('a script to configure the tunnel') has no lexical overlap with the article's headings, and the fix is spread across three bullets in the preamble rather than any titled section."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "Connecting to the FASRC VPN with openconnect on Linux, what exactly do I type at the Username prompt — just my RC login?",
+    "sources": [
+      "https://docs.rc.fas.harvard.edu/kb/linux-vpn"
+    ],
+    "reference": "No — the username must be your RC username with the @fasrc realm appended, i.e. <rcusername>@fasrc. You then supply your RC password, and finally a six-digit authorization token (OpenAuth). If you launched openconnect with sudo, the first password prompt is your local computer password, not your RC password.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Single-fact lookup of the @fasrc username realm from the Linux/openconnect command-line transcript. Why hard: direct lookup, hence easy_retrieve — but the fact lives inside a pasted terminal transcript, not prose, and the page has no heading containing 'username'. Chunkers frequently strip or mangle this block, so it is a fair canary rather than a heading-echo."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I hit Ctrl-C on my srun job to stop it and it just printed some status about the tasks and kept running. How do I actually make it stop?",
+    "sources": [
+      "https://slurm.schedmd.com/srun.html"
+    ],
+    "reference": "That is by design: a single <control-c> is an escape sequence that reports the state of all tasks associated with the srun command. To kill the job, press <control-c> twice within one second — that sends SIGINT to all tasks and starts a termination sequence of SIGCONT, SIGTERM and SIGKILL to all spawned tasks. A third <control-c> terminates srun itself immediately, without waiting for the remote tasks to exit or their I/O to complete. (Signal forwarding does not work at all for asynchronous steps launched with --async; use scancel --signal for those.)",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "SLURM coverage row. Grounded in the 'SIGNALS AND ESCAPE SEQUENCES' section of srun(1). Very realistic FASRC interactive-session confusion, and only the SchedMD srun reference answers it. Why hard: the user's words are 'Ctrl-C', 'stop', 'kept running'; the document says '<control-c>', 'escape sequence', 'termination sequence'. Nothing in the question matches a heading, and the operative detail — twice within one second, three presses to abandon — is a mid-paragraph clause. Keyword search for 'cancel job' would wrongly land on scancel or a KB page."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I asked for several tasks in an interactive srun --pty session, but only one of them shows any output and the rest die instantly. What is --pty doing to the others?",
+    "sources": [
+      "https://slurm.schedmd.com/srun.html"
+    ],
+    "reference": "--pty runs only task zero under a pseudo terminal. It implicitly sets --error and --output to /dev/null for every task except task zero, which can make those other tasks exit immediately — shells in particular typically exit right away in that situation. --pty also implicitly sets --unbuffered, and it applies to step allocations.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "SLURM coverage row. The consequence (other tasks get /dev/null I/O and exit) is exactly the confusing behavior FASRC users report with interactive sessions, and it is stated only in the srun option body. Why hard: the question is about observed behavior ('the rest die instantly'), not about the flag's name-level definition; the explanation is a subordinate clause about /dev/null redirection. FASRC KB pages describe how to start an interactive session but never explain this side effect, so only the srun reference is correct."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I added two more #SBATCH lines further down my script, below my module load commands, and Slurm completely ignored them. I also tried #SBATCH --job-name=$MYNAME and it came out literally as $MYNAME. Why?",
+    "sources": [
+      "https://slurm.schedmd.com/sbatch.html"
+    ],
+    "reference": "Both behaviors are documented sbatch parsing rules. Slurm stops reading #SBATCH directives once the first non-comment, non-whitespace line in the script has been reached — so any #SBATCH placed after your module load (or any other command) is never processed. And #SBATCH directives are read directly by Slurm, not by the shell, so shell-specific syntax including variable names is read as literal text, which is why $MYNAME was not expanded. Put all #SBATCH lines at the top of the script, before any commands.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "SLURM coverage row combining two adjacent facts from the sbatch DESCRIPTION: directives stop at the first non-comment line, and directives are not shell-expanded. Classic real-world FASRC support ticket. Why hard: requires combining two separate statements to answer both halves of the question, and the phrasing ('ignored them', 'came out literally') shares no tokens with 'non-comment, non-whitespace line' or 'read as literal text'. The words the user would search for — job name, module load — pull toward unrelated FASRC KB job-submission pages."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I ran scontrol hold on a job that was already running because I wanted to pause it, and it just kept going. What did that command actually do to my job, and can I pause a running job at all?",
+    "sources": [
+      "https://slurm.schedmd.com/scontrol.html"
+    ],
+    "reference": "Holding a running job does not suspend or cancel it. What it does is set the job's priority to 0 and update the job's reason field, which would hold the job if it were requeued at a later time. Actually pausing a running job is the `suspend` command, and only a privileged user or an account coordinator can suspend jobs (time spent suspended does not count against the job's time limit, and a suspended job that is requeued is placed in a held state). Note also that a hold placed by an ordinary user is a user-hold, while one placed by a privileged user is an admin-hold, and the hold type determines who can `release` it.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "SLURM coverage row. The 'hold does nothing useful to a running job' behavior plus the fact that suspend is admin-only are both stated only in the scontrol reference. Why hard: the naive expectation ('hold = pause') is wrong, and the correction is one sentence appended to the `hold` entry. Answering the second half requires jumping to a different command entry (`suspend`) elsewhere in the page. The user's words 'pause' and 'kept going' appear nowhere in the document."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I overwrote my submit script by accident but the job is still sitting in the queue. Is there any way to get the original script back out of Slurm?",
+    "sources": [
+      "https://slurm.schedmd.com/scontrol.html"
+    ],
+    "reference": "Yes — use `scontrol write batch_script <job_id> [optional_filename]`. It writes the batch script that was submitted for that job to a file, defaulting to slurm-<job_id>.sh if you don't give a filename; pass `-` instead of a filename to write it to stdout. Only a privileged user or the owner of the job can retrieve the script.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "SLURM coverage row. A specific, recoverable-from-disaster subcommand with a concrete default filename — realistic FASRC ticket, answerable only from the scontrol reference. Why hard: the user says 'overwrote my submit script' and 'get it back' — no overlap with 'write batch_script'. Lexically, 'write' in their question would mean the opposite of what they want. The default output filename slurm-<job_id>.sh is a buried detail, and nothing in the FASRC KB documents this subcommand."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I want to grab a couple of nodes and sit on them for a while, but I don't want salloc to drop me into a shell that I have to keep open. Can I reserve the resources and then send work at them later from my normal terminal?",
+    "sources": [
+      "https://slurm.schedmd.com/salloc.html"
+    ],
+    "reference": "Use `salloc --no-shell`. It exits immediately after allocating the resources without running a command, but the Slurm job is still created and stays active, owning the allocated resources for as long as it lives — you get a Slurm job id with no associated processes or tasks. You can then run work against it by passing `--jobid=<that job id>` to srun. The job is still subject to normal constraints such as time limits, so it will eventually end on its own, or you can end it early with scancel.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "SLURM coverage row. --no-shell plus the srun --jobid follow-up is exactly the workflow a user describes here, and it exists only in the salloc reference. Why hard: the user describes a workflow ('reserve now, send work later, no shell to babysit') without naming any flag. The two pieces of the answer — the flag and the --jobid follow-up — sit in one dense option paragraph with no heading. Generic 'interactive job' retrieval would return the FASRC KB running-jobs page, which teaches salloc but not --no-shell."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "If my salloc allocation gets cancelled or hits its time limit, what signal does salloc send to the command it launched when I used -K without giving it a signal?",
+    "sources": [
+      "https://slurm.schedmd.com/salloc.html"
+    ],
+    "reference": "If you do not name a signal and Slurm is configured to signal the spawned command at job termination, the default is SIGHUP for interactive sessions and SIGTERM for non-interactive sessions. Note that -K takes its optional argument with no space (e.g. \"-K1\", not \"-K 1\").",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "SLURM coverage row, direct single-fact lookup of the --kill-command default signal (SIGHUP interactive / SIGTERM non-interactive). Why hard: marked easy_retrieve because it is a single documented default, but it is not heading-matchable — 'SIGHUP' and 'SIGTERM' appear only inside the --kill-command option body, and the question's framing (allocation revoked / time limit) matches the surrounding prose rather than any title. No FASRC KB page states this, so it also probes Slurm-doc recall specifically."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Our compute nodes have hyperthreading turned on (2 threads per core). If my job asks for 3 tasks, does Slurm hand me exactly 3 hyperthreads, and could another user's job end up sharing a core with mine?",
+    "sources": [
+      "https://slurm.schedmd.com/faq.html"
+    ],
+    "reference": "With hyperthreading enabled a \"CPU\" in Slurm means a hyperthread (without it, a CPU is a core), but Slurm still generally allocates resources to jobs at the level of a whole core. A job requesting three tasks on a node with ThreadsPerCore=2 is therefore allocated two full cores (four threads), not three threads. Two different jobs will not share a core unless the partition's OverSubscribe configuration parameter allows it. You can check ThreadsPerCore with \"scontrol show node\". The exception is the atypical configuration where the admin sets SelectTypeParameters=CR_CPU with only a CPU count per node (no socket/core/thread spec) — then each thread is scheduled independently as a CPU.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Tests whether retrieval finds the SchedMD FAQ 'What exactly is considered a CPU?' entry from a user's practical phrasing about task counts and core sharing. Why hard: the answer is a synthesis of three separate statements (CPU==hyperthread, allocation happens at core granularity, OverSubscribe exception) plus a worked example buried mid-paragraph. The user's words ('3 tasks', 'hyperthreads', 'sharing a core') do not include the article's key terms, and keyword search on 'hyperthreading' hits many pages."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "My MPI run blows up about half a minute after one rank finishes early — the rest of the ranks were still working. Can I stop Slurm from tearing the whole thing down that fast?",
+    "sources": [
+      "https://slurm.schedmd.com/faq.html"
+    ],
+    "reference": "That is srun's default behavior, not a crash: srun monitors when tasks exit and by default kills the job 30 seconds after the first task exits (producing \"srun: First task exited 30s ago\" followed by \"srun Job Failed\"). Use srun's --wait=<time> option to either lengthen the timeout period or disable the timeout altogether.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Targets the buried default (30 seconds) and its remedy (--wait). Realistic FASRC user report phrased as a bug rather than as the error string. Why hard: the user never quotes the error message that the FAQ heading uses, and never mentions srun's --wait flag, so lexical overlap with the source passage is limited to 'srun'/'job'. The retrievable payload (the 30-second default and --wait) sits in a short body paragraph, not in a heading."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Why does sacct come back empty for a job I ran last Tuesday, but show it just fine as soon as I pass the job ID with -j?",
+    "sources": [
+      "https://slurm.schedmd.com/sacct.html"
+    ],
+    "reference": "sacct's default search window changes depending on which options you use. With neither --jobs nor --state specified, --starttime defaults to Midnight and --endtime defaults to Now, so a job from last week falls outside the window and nothing is returned. As soon as you specify --jobs, --starttime defaults to Epoch 0 (with --endtime still Now), so the old job is found. To list older jobs without a job ID, pass an explicit -S/--starttime. Running sacct with -v/--verbose prints the time window actually in use.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Grounded in the sacct man page's DEFAULT TIME WINDOW section. This is the single most common sacct confusion for cluster users and it has exactly one authoritative source. Why hard: the user's vocabulary is 'empty', 'last Tuesday', 'job ID' — none of which match the section's language ('DEFAULT TIME WINDOW', 'Midnight', 'Epoch 0'). Answering requires contrasting two of the four enumerated default-window cases, so a keyword hit on 'sacct' alone does not produce the explanation."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "sacct -X shows my completed job but every memory and CPU utilization column reads 0. Is our accounting broken?",
+    "sources": [
+      "https://slurm.schedmd.com/sacct.html"
+    ],
+    "reference": "Not necessarily. -X/--allocations only shows statistics relevant to the job allocation itself and does not take job steps into consideration, and without including steps the utilization statistics for the allocation are reported as zero. Drop -X (or query the steps) to see real usage. Separately, which metrics exist at all depends on the jobacct_gather plugin in use — for example jobacct_gather/cgroup with cgroup/v2 cannot provide virtual-memory metrics and shows 0 for those fields.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Two-part answer combining the -X NOTE with the jobacct_gather plugin NOTE. Both are parenthetical NOTEs, not headings. Why hard: a keyword search for 'sacct memory zero' matches nothing distinctive; the explanation lives in a NOTE attached to an option definition inside a long options list. The user frames it as a suspected bug, using words ('utilization column', 'broken') absent from the source."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "Is there a way to keep an eye on just my own jobs in the queue, refreshing every 30 seconds, without typing my username or wrapping the command in a shell loop?",
+    "sources": [
+      "https://slurm.schedmd.com/squeue.html"
+    ],
+    "reference": "Yes — run `squeue --me -i 30`. The --me option is equivalent to --user=<my username>, and -i/--iterate=<seconds> makes squeue repeatedly gather and report the requested information at the interval specified (printing a time stamp with the header by default). Note the man page's PERFORMANCE warning: executing squeue sends a remote procedure call to slurmctld, so do not run squeue from loops in shell scripts or other programs, and keep calls to the minimum necessary — enough of them can degrade slurmctld and even cause a denial of service.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Requires combining two option definitions (--me, --iterate) and the PERFORMANCE warning. The 'without a shell loop' clause is exactly what the PERFORMANCE section is about. Why hard: the question contains none of the flag names, and 'refreshing every 30 seconds' does not lexically match 'iterate'. The correct answer stitches together two separate option entries plus the PERFORMANCE caveat, so keyword retrieval on 'squeue' alone lands on the wrong part of a very long man page."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I want a one-line-per-partition view of how many nodes are busy versus free, but sinfo keeps giving me several rows per partition. What do I run, and how do I read the counts it prints?",
+    "sources": [
+      "https://slurm.schedmd.com/sinfo.html"
+    ],
+    "reference": "Run `sinfo -s` (--summarize), which lists only a partition state summary with no node state details (internally it uses the format \"%#P %.5a %.10l %.16F %N\"). In that output the NODES(A/I/O/T) column is the count of nodes by state in the form allocated/idle/other/total — so, for example, 2/6/0/8 means 2 allocated, 6 idle, 0 other, 8 total.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Combines the -s/--summarize option definition with the OUTPUT FIELD DESCRIPTIONS entry that decodes the A/I/O/T column. Both halves are needed for a usable answer. Why hard: the user says 'busy versus free' and 'one line per partition', not 'summarize' or 'allocated/idle'. The decoding of the A/I/O/T column lives in a separate section from the flag, so a single keyword hit answers only half the question."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "Several nodes are offline and I want to see the note the admins left about why. Which sinfo option shows those notes, and how much of each note do I actually get to see?",
+    "sources": [
+      "https://slurm.schedmd.com/sinfo.html"
+    ],
+    "reference": "Use `sinfo -R` (--list-reasons). It lists the reasons nodes are in the down, drained, fail or failing state — the administrator-supplied \"reason\" string — but it displays only the first 20 characters of the reason field, along with the list of nodes carrying that reason. Adding -l (--long) also includes the current node state in the output.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "The buried numeric detail (first 20 characters) is the discriminating fact; the flag alone is guessable, the truncation limit is not. Why hard: direct lookup of one flag, hence easy_retrieve, but the second half of the question (the 20-character truncation) appears in exactly one sentence in the whole corpus and is invisible to keyword search on 'node offline reason'."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I compiled my binary in my home directory on the login node and the job can't find it once it lands on a compute node. Does the scheduler copy my files out to the nodes for me?",
+    "sources": [
+      "https://slurm.schedmd.com/quickstart.html"
+    ],
+    "reference": "No. Slurm does not automatically migrate executable or data files to the nodes allocated to a job — the files must already exist on local disk on those nodes or on a global file system such as NFS or Lustre. If you do want a copy on the compute nodes' local storage, use sbcast, which transfers a file to local disk on the allocated nodes using Slurm's hierarchical communications (e.g. `sbcast a.out /tmp/joe.a.out`, then run it with srun and delete it from local storage afterwards).",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Grounded in the salloc/sbcast example section of the Quick Start User Guide. Answers a very common new-user misconception with the authoritative 'Slurm does not automatically migrate' statement. Why hard: the user asks about 'copying files to nodes', while the source says 'migrate executable or data files' and names a tool (sbcast) the user has never heard of. The statement sits inside a worked salloc example, not under a heading like 'file staging', so lexical retrieval has little to latch onto."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "I ran scancel -s KILL on my job. The processes died, but the job is still sitting there holding its nodes. Why didn't it go away?",
+    "sources": [
+      "https://slurm.schedmd.com/scancel.html"
+    ],
+    "reference": "Because sending a signal value of KILL to an entire job cancels the job's active job steps but does not cancel the job itself, and cancelling a job step never terminates the job — the job must be cancelled to release its resource allocation. To actually cancel it, invoke scancel with no --signal option: that sends a SIGCONT to all steps to wake them up, then a SIGTERM, waits the KillWait duration defined in slurm.conf, and finally sends SIGKILL if they have not terminated.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Two facts from the NOTES section that together explain a real and confusing failure mode, plus the exact default signal sequence of a plain scancel. Why hard: keyword search on 'scancel' surfaces the OPTIONS list, where --signal is described neutrally; the counterintuitive rule that KILL kills the steps but not the job is a single sentence in NOTES. The user's phrasing ('still sitting there holding its nodes') shares no distinctive terms with that sentence."
+  },
+  {
+    "anchor_type": "easy_retrieve",
+    "user_input": "Can I wipe out all of my queued-but-not-yet-started jobs in one partition with a single command, without touching the ones already running and without listing job IDs?",
+    "sources": [
+      "https://slurm.schedmd.com/scancel.html"
+    ],
+    "reference": "Yes — filter scancel by state, owner and partition, e.g. `scancel --state=PENDING --user=bob --partition=debug` (use --me instead of --user to mean your own jobs). The -t/--state filter accepts PENDING, RUNNING or SUSPENDED, and when multiple filters are supplied only the jobs satisfying all of the filtering options are signaled, so running jobs in that partition are left alone.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "Backed by a literal example in the scancel man page plus the --state value list and the AND-semantics note. Why hard: the exact command appears in the EXAMPLES block, so this is a direct lookup (easy_retrieve), but the user never says 'pending', 'state' or 'filter' — they say 'queued-but-not-yet-started' — and the AND semantics that guarantee running jobs are spared comes from a separate NOTES sentence."
+  },
+  {
+    "anchor_type": "reasoning",
+    "user_input": "The Slurm website's manual pages describe a much newer release than the one our cluster actually runs. Where can I get documentation that matches our older version?",
+    "sources": [
+      "https://slurm.schedmd.com/documentation.html"
+    ],
+    "reference": "The online documentation set on slurm.schedmd.com is for Slurm version 26.05. Documentation for older versions of Slurm is distributed with the Slurm source itself, or can be found in SchedMD's documentation archive at https://slurm.schedmd.com/archive/.",
+    "source_match_field": [
+      "url"
+    ],
+    "notes": "The archive pointer and the 'shipped with the source' fallback appear only in the NOTE at the top of the documentation index; every other Slurm page merely shows the version number in its navigation sidebar. Why hard: every Slurm page in the corpus carries the string 'Version 26.05' in its navigation, so a keyword search for the version number matches ~147 documents equally. Only this page states where older-version docs live, and the user's phrasing ('matches our older version') never uses the word 'archive'."
   }
 ]
