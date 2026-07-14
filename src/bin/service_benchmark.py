@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
+from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -954,16 +955,24 @@ class Benchmarker:
     def _canonical_source(value: Any) -> str:
         """Canonical form of a gold/retrieved source value, for comparison only.
 
-        Strips surrounding whitespace and a single trailing ``/`` — the one
-        difference that actually occurs between an authored bank URL and the
-        ingested ``documents.url``. Deliberately conservative: it does NOT
-        lowercase (paths are case-sensitive), normalize the scheme, or drop query
-        strings, because over-matching would silently conflate distinct pages —
-        a worse failure than the miss it fixes, and an invisible one.
+        Strips surrounding whitespace and a single trailing ``/`` from the URL
+        *path* — the one difference that actually occurs between an authored bank
+        URL and the ingested ``documents.url``. Deliberately conservative: it does
+        NOT lowercase (paths are case-sensitive), normalize the scheme, or drop the
+        query/fragment, because over-matching would silently conflate distinct
+        pages — a worse failure than the miss it fixes, and an invisible one.
+
+        The slash is stripped from the path only, so a query or fragment that
+        legitimately ends in ``/`` (e.g. ``...?redirect=/kb/foo/``) is preserved.
+        A value with no scheme (e.g. a ``file_name`` match field) parses as a bare
+        path, so the same one-trailing-slash rule applies without special-casing.
         """
         text = str(value).strip()
-        if len(text) > 1 and text.endswith("/"):
-            text = text[:-1]
+        parts = urlsplit(text)
+        path = parts.path
+        if len(path) > 1 and path.endswith("/"):
+            path = path[:-1]
+            return urlunsplit(parts._replace(path=path))
         return text
 
     def prepare_messages(self, raw_messages):

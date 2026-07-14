@@ -77,6 +77,21 @@ def test_prefix_urls_are_not_conflated():
     )
 
 
+def test_trailing_slash_inside_query_string_is_preserved():
+    # The canonicalizer strips a trailing slash from the PATH only. A query value
+    # that ends in '/' must survive, or two URLs differing only in their query
+    # would be conflated — the over-match the docstring promises not to do.
+    a = "https://docs.rc.fas.harvard.edu/kb/foo/?redirect=/kb/bar/"
+    b = "https://docs.rc.fas.harvard.edu/kb/foo?redirect=/kb/bar/"
+    # path slash normalizes away; the query slash does NOT, so these still match
+    assert _match(a, b)
+    # but two rows whose ONLY difference is the query must stay distinct
+    assert not _match(
+        "https://docs.rc.fas.harvard.edu/kb/foo?redirect=/kb/bar/",
+        "https://docs.rc.fas.harvard.edu/kb/foo?redirect=/kb/baz/",
+    )
+
+
 def test_non_url_match_fields_are_unaffected():
     assert _match("running_jobs.md", "running_jobs.md", field="file_name")
     assert not _match("running_jobs.md", "cluster_storage.md", field="file_name")

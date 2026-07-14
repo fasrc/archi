@@ -864,33 +864,25 @@
     "anchor_type": "reasoning",
     "user_input": "We're wrapping up a project and want to push the raw data off to tape. Before we start, what constraints are there on how the data has to be laid out, and what does it cost per year?",
     "sources": [
-      "https://docs.rc.fas.harvard.edu/kb/storage-service-center-bill",
-      "https://docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm",
       "https://docs.rc.fas.harvard.edu/kb/storage-service-center"
     ],
     "reference": "Tape (NESE) storage is sold in 20TB increments, allows ten thousand files per folder, and requires file sizes between 1GiB and 100GiB. It costs $15/yr per TB, is externally managed by the Northeast Storage Exchange (NESE), and data is transferred to tape using Globus. It is intended for long-term storage of inactive research data after project completion or for data retention purposes.",
     "source_match_field": [
-      "url",
-      "url",
       "url"
     ],
-    "notes": "IMPORTANT — this article is TRIPLICATED in the live corpus: the identical 'Data Storage (Offerings, Workflow, Costs)' text is ingested under three URLs (storage-service-center-bill, data-storage-workflow-rdm, storage-service-center), verified by querying document_chunks. Listing only one URL would score a false miss whenever the retriever surfaces one of the identical twins, so all three verified URLs are listed. Why hard: the answer is not prose — it is spread across three separate cells (Size, Folder Path, Cost) of the FOURTH column of a 5-column markdown table, so a retriever must return the right table chunk and a reader must track column position. Nothing in the user's phrasing ('push data off to tape', 'constraints', 'laid out') matches the source tokens ('increments', 'NESE', 'per folder'). No heading in the article contains 'tape'."
+    "notes": "IMPORTANT — this article is TRIPLICATED in the live corpus: the identical 'Data Storage (Offerings, Workflow, Costs)' text is ingested under three URLs (storage-service-center-bill, data-storage-workflow-rdm, storage-service-center), verified by querying document_chunks. Listing only one URL would score a false miss whenever the retriever surfaces one of the identical twins, so all three verified URLs are listed. Why hard: the answer is not prose — it is spread across three separate cells (Size, Folder Path, Cost) of the FOURTH column of a 5-column markdown table, so a retriever must return the right table chunk and a reader must track column position. Nothing in the user's phrasing ('push data off to tape', 'constraints', 'laid out') matches the source tokens ('increments', 'NESE', 'per folder'). No heading in the article contains 'tape'. [Collapsed byte-identical duplicate corpus documents to one canonical gold URL; the strict source metric requires all listed sources, so listing twins false-missed when retrieval returned only one.]"
   },
   {
     "anchor_type": "reasoning",
     "user_input": "I put a dataset in the Everyone folder so another lab could grab it, but it never shows up in Globus. Is Globus broken?",
     "sources": [
-      "https://docs.rc.fas.harvard.edu/kb/storage-service-center-bill",
-      "https://docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm",
       "https://docs.rc.fas.harvard.edu/kb/storage-service-center"
     ],
     "reference": "No, that is expected behavior. The Everyone subdirectory is visible to anyone on the HPC cluster and is intended only for internal sharing with other labs on the cluster — it is not available on Globus. The Lab subdirectory is the one shared out via Globus, so data that has to move over Globus needs to live under Lab.",
     "source_match_field": [
-      "url",
-      "url",
       "url"
     ],
-    "notes": "Same triplicated article as the tape question (storage-service-center-bill / data-storage-workflow-rdm / storage-service-center are byte-identical in the corpus), hence three gold URLs. Tests the Lab-vs-Everyone default directory gotcha — requires combining the Lab paragraph ('shared out via Globus') with the Everyone paragraph ('not available on Globus'). Why hard: a keyword query containing 'Globus' overwhelmingly retrieves the dedicated globus-file-transfer article (and the tape-globus page), which cannot answer this — the Lab/Everyone distinction exists only in the storage-offerings article, under the heading 'Default Directory Structure', which contains neither 'Globus' nor 'Everyone'."
+    "notes": "Same triplicated article as the tape question (storage-service-center-bill / data-storage-workflow-rdm / storage-service-center are byte-identical in the corpus), hence three gold URLs. Tests the Lab-vs-Everyone default directory gotcha — requires combining the Lab paragraph ('shared out via Globus') with the Everyone paragraph ('not available on Globus'). Why hard: a keyword query containing 'Globus' overwhelmingly retrieves the dedicated globus-file-transfer article (and the tape-globus page), which cannot answer this — the Lab/Everyone distinction exists only in the storage-offerings article, under the heading 'Default Directory Structure', which contains neither 'Globus' nor 'Everyone'. [Collapsed byte-identical duplicate corpus documents to one canonical gold URL; the strict source metric requires all listed sources, so listing twins false-missed when retrieval returned only one.]"
   },
   {
     "anchor_type": "easy_retrieve",
@@ -908,43 +900,37 @@
     "anchor_type": "reasoning",
     "user_input": "A spack install blew up and by the time I looked the build log was already gone. How do I stop spack from throwing the logs away?",
     "sources": [
-      "https://docs.rc.fas.harvard.edu/kb/spack",
-      "https://docs.rc.fas.harvard.edu/kb/spack-package-manager"
+      "https://docs.rc.fas.harvard.edu/kb/spack"
     ],
     "reference": "Spack builds in a `stage` directory located in /tmp and cleans that space up once it finishes building, whether the build succeeded or failed — which is why the logs disappear. To keep them, first set the `$TMP` environment variable to a location you want the stage files dumped into, then add the `--keep-stage` flag, e.g. `spack install --keep-stage <package>`, which tells spack to keep the staging files rather than remove them.",
     "source_match_field": [
-      "url",
       "url"
     ],
-    "notes": "IMPORTANT — the SPACK article is DUPLICATED in the live corpus: /kb/spack and /kb/spack-package-manager are byte-identical documents (md5 verified on the ingested text, and the probe string '--keep-stage' returns both URLs). Both are listed as gold so the row cannot false-miss on an arbitrary tie-break between the twins. Why hard: the user says 'log', 'blew up', 'thrown away'; the source says 'stage', 'cleans up', 'preserve'. The load-bearing token ('stage') is a word the user would never type, and the answer has two parts ($TMP plus --keep-stage) that must both be recovered. The section heading is just 'Troubleshooting', so heading-level matching gives nothing."
+    "notes": "IMPORTANT — the SPACK article is DUPLICATED in the live corpus: /kb/spack and /kb/spack-package-manager are byte-identical documents (md5 verified on the ingested text, and the probe string '--keep-stage' returns both URLs). Both are listed as gold so the row cannot false-miss on an arbitrary tie-break between the twins. Why hard: the user says 'log', 'blew up', 'thrown away'; the source says 'stage', 'cleans up', 'preserve'. The load-bearing token ('stage') is a word the user would never type, and the answer has two parts ($TMP plus --keep-stage) that must both be recovered. The section heading is just 'Troubleshooting', so heading-level matching gives nothing. [Collapsed byte-identical duplicate corpus documents to one canonical gold URL; the strict source metric requires all listed sources, so listing twins false-missed when retrieval returned only one.]"
   },
   {
     "anchor_type": "reasoning",
     "user_input": "Software I built with spack runs fine on the node I built it on but won't run on nodes in other partitions. How do I build something that works everywhere on the cluster?",
     "sources": [
-      "https://docs.rc.fas.harvard.edu/kb/spack",
-      "https://docs.rc.fas.harvard.edu/kb/spack-package-manager"
+      "https://docs.rc.fas.harvard.edu/kb/spack"
     ],
     "reference": "By default Spack autodetects the architecture of the hardware it is building on and optimizes the build for it, so a build made on one CPU generation may not run on another (the docs give the example that LAMMPS built on Sapphire Rapids may not run on Cascade Lake). If you plan to run across heterogeneous hardware/partitions, set Spack to a generic architecture: edit `etc/spack/packages.yaml` inside the spack folder (create it if it does not exist) and add:\npackages:\n  all:\n    target: [x86_64]",
     "source_match_field": [
-      "url",
       "url"
     ],
-    "notes": "Same duplicated SPACK article (both /kb/spack and /kb/spack-package-manager carry identical text), so both are listed as gold. Requires combining the 'Default Architecture' config block near the top of the page with the architecture warning buried in the LAMMPS recipe far down the page. Why hard: the user's words ('won't run on other partitions', 'works everywhere') do not appear anywhere in the article, which instead says 'heterogeneous hardware' and 'may not run on another hardware'. The two halves of the answer (why it happens, and the exact packages.yaml stanza) live in two sections separated by ~700 lines, so a single keyword-matched chunk yields at best half the answer."
+    "notes": "Same duplicated SPACK article (both /kb/spack and /kb/spack-package-manager carry identical text), so both are listed as gold. Requires combining the 'Default Architecture' config block near the top of the page with the architecture warning buried in the LAMMPS recipe far down the page. Why hard: the user's words ('won't run on other partitions', 'works everywhere') do not appear anywhere in the article, which instead says 'heterogeneous hardware' and 'may not run on another hardware'. The two halves of the answer (why it happens, and the exact packages.yaml stanza) live in two sections separated by ~700 lines, so a single keyword-matched chunk yields at best half the answer. [Collapsed byte-identical duplicate corpus documents to one canonical gold URL; the strict source metric requires all listed sources, so listing twins false-missed when retrieval returned only one.]"
   },
   {
     "anchor_type": "reasoning",
     "user_input": "I don't want spack spending hours compiling its own OpenMPI — how do I make it use the openmpi module we already have on the cluster, and is there anything I have to do before installing?",
     "sources": [
-      "https://docs.rc.fas.harvard.edu/kb/spack",
-      "https://docs.rc.fas.harvard.edu/kb/spack-package-manager"
+      "https://docs.rc.fas.harvard.edu/kb/spack"
     ],
     "reference": "Configure the cluster's OpenMPI as an external package in `~/.spack/packages.yaml` (create the file if it does not exist). Get the prefix by loading the modules and reading $MPI_HOME, then add:\npackages:\n  openmpi:\n    externals:\n    - spec: openmpi@5.0.5%gcc@14.2.0\n      prefix: /n/sw/helmod-rocky8/apps/Comp/gcc/14.2.0-fasrc01/openmpi/5.0.5-fasrc01\n    buildable: false\nThe `buildable: false` option ensures MPI won't be built from source and Spack will use the module in that prefix instead. Before installing, run `module purge` — this is required or the build fails (e.g. `module purge` then `spack install hdf5@1.14.6 % gcc@14.2.0 ^ openmpi@5.0.5`).",
     "source_match_field": [
-      "url",
       "url"
     ],
-    "notes": "Same duplicated SPACK article (probe 'buildable: false' returns both /kb/spack and /kb/spack-package-manager), so both URLs are gold. Tests the external-MPI configuration plus the easily-missed `module purge` prerequisite — a very common real FASRC user task. Why hard: the decisive token is the YAML key `buildable: false`, which the user cannot guess and would never type; their phrasing ('use the module we already have') matches instead the generic 'software modules' language that appears on dozens of KB pages. The second half of the answer (`module purge` is mandatory or the build fails) sits in a separate blockquote note that a naive keyword match on 'openmpi module' would not surface."
+    "notes": "Same duplicated SPACK article (probe 'buildable: false' returns both /kb/spack and /kb/spack-package-manager), so both URLs are gold. Tests the external-MPI configuration plus the easily-missed `module purge` prerequisite — a very common real FASRC user task. Why hard: the decisive token is the YAML key `buildable: false`, which the user cannot guess and would never type; their phrasing ('use the module we already have') matches instead the generic 'software modules' language that appears on dozens of KB pages. The second half of the answer (`module purge` is mandatory or the build fails) sits in a separate blockquote note that a naive keyword match on 'openmpi module' would not surface. [Collapsed byte-identical duplicate corpus documents to one canonical gold URL; the strict source metric requires all listed sources, so listing twins false-missed when retrieval returned only one.]"
   },
   {
     "anchor_type": "reasoning",
