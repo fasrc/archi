@@ -70,10 +70,15 @@ def source_hits(
     A relative hit means any reference source matched; a strict hit means every
     reference source matched.
     """
-    # Only a failed/degraded question (matches is None) contributes nothing. An
-    # empty match list (a clean zero-reference / should-refuse row) keeps the
-    # original semantics (any([])/all([])) and is NOT treated as a failure.
     if matches is None:
+        return (0, 0)
+    # A zero-reference row (a `should_refuse` anchor) declares no expected sources,
+    # so it can neither hit nor miss one. `all([])` is vacuously true, which booked
+    # a FREE strict hit for it regardless of what the SUT actually answered. Such a
+    # row is not scorable for source accuracy at all: it contributes to neither
+    # numerator, and `Benchmarker._source_scorable_count` keeps it out of the
+    # denominator too.
+    if not reference_metadata:
         return (0, 0)
     relative = 1 if any(matches) else 0
     strict = 1 if len(matches) == len(reference_metadata) and all(matches) else 0
@@ -105,11 +110,24 @@ def build_ragas_aggregates(ragas_results: Any) -> Dict[str, Any]:
 def build_source_aggregates(
     relative_hits: float, strict_hits: float, total_count: int
 ) -> Dict[str, Any]:
-    """Source-accuracy aggregates over ``total_count`` questions (kept numeric so the
-    HTML report's count derivation stays consistent). Zero questions -> ``0.0``."""
+    """Source-accuracy aggregates over ``total_count`` SOURCE-SCORABLE questions —
+    those declaring at least one expected source (see
+    ``Benchmarker._source_scorable_count``). Kept numeric so the HTML report's count
+    derivation stays consistent. Zero scorable questions -> ``0.0``.
+
+    ``source_scored_count`` travels with the scores because the denominator is no
+    longer ``len(questions)``: the report used to re-derive the hit count as
+    ``int(len(questions) * accuracy)``, which silently disagrees once zero-source
+    rows are excluded. Mirrors the per-metric ``scored_counts`` RAGAS already emits.
+    """
     if not total_count:
-        return {"relative_source_accuracy": 0.0, "source_accuracy": 0.0}
+        return {
+            "relative_source_accuracy": 0.0,
+            "source_accuracy": 0.0,
+            "source_scored_count": 0,
+        }
     return {
         "relative_source_accuracy": relative_hits / total_count,
         "source_accuracy": strict_hits / total_count,
+        "source_scored_count": total_count,
     }

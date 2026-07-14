@@ -882,6 +882,13 @@ class Benchmarker:
             match_fields = [match_fields] if match_fields else []
 
         n_sources = len(question_item.get("sources", []))
+        if n_sources == 0:
+            # Nothing to pair. A zero-reference row (e.g. a `should_refuse` anchor)
+            # declares no sources, so a declared match field has nothing to match
+            # against — that is not the count mismatch the raise below guards. See
+            # `source_hits`, which already scores an empty match list as a clean
+            # row rather than a failure.
+            return []
         if not match_fields:
             # hardcode a default if nothing is provided
             match_fields = ["file_name"] * n_sources
@@ -1107,6 +1114,20 @@ class Benchmarker:
             rows, keys, metrics, results_by_key, score_fn
         )
 
+    def _source_scorable_count(self) -> int:
+        """The source-accuracy denominator: questions that declare expected sources.
+
+        A zero-source row — the `should_refuse` anchor is the reason this exists —
+        has nothing to retrieve, so it is neither a hit nor a miss and must not sit
+        in the denominator. Every other row does, so a failed retrieval still
+        registers as a miss rather than quietly vanishing from the average.
+        """
+        return sum(
+            1
+            for q in self.queries_to_answers
+            if isinstance(q, dict) and q.get("sources")
+        )
+
     def _process_config(self, modes_being_run):
         """Answer + score every question for the current config.
 
@@ -1183,14 +1204,17 @@ class Benchmarker:
                 total_results.update(build_ragas_aggregates(None))
 
         if "SOURCES" in modes_being_run:
-            # Denominator is the total question count, matching how the HTML report
-            # derives per-bucket counts (generate_benchmark_report uses len(questions)).
-            # A failed/degraded row contributes no hit, so it counts as a miss.
+            # Denominator is the questions that DECLARE expected sources, not the
+            # total count. A failed/degraded row still counts as a miss, but a
+            # zero-source row (a `should_refuse` anchor) has no source to hit or
+            # miss — counting it would either fabricate a hit or dilute the score.
+            # The count is emitted alongside so the report stops re-deriving it
+            # from len(questions).
             total_results.update(
                 build_source_aggregates(
                     relative_source_accuracy,
                     source_accuracy,
-                    len(self.queries_to_answers),
+                    self._source_scorable_count(),
                 )
             )
 

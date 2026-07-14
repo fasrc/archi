@@ -214,7 +214,11 @@ def format_html_output(config_data, config_name, timestamp, questions, total_res
 
         # Retrieval Accuracy
         ret_accuracy = total_results.get("source_accuracy", None)
-        ret_total = len(questions)
+        # The scores were divided by the SOURCE-SCORABLE question count, which
+        # excludes zero-source rows (e.g. the `should_refuse` anchor). Deriving the
+        # count from len(questions) would disagree with the score it is derived
+        # from. Older result files predate the key and used len(questions).
+        ret_total = total_results.get("source_scored_count", len(questions))
         ret_correct = int(ret_total * ret_accuracy)
 
         if ret_accuracy:
