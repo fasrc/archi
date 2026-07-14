@@ -5,7 +5,7 @@ import socket
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from jinja2 import Environment
 
@@ -13,6 +13,11 @@ from src.cli.managers.source_version import write_source_commit
 from src.cli.service_registry import service_registry
 from src.cli.utils.grafana_styling import assign_feedback_palette
 from src.cli.utils.service_builder import DeploymentPlan
+from src.utils.benchmark_schema import (
+    anchor_container_path,
+    anchor_source_path,
+    anchors_enabled,
+)
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -347,6 +352,36 @@ class TemplateManager:
             return
         self.copy_source_code(context.base_dir)
 
+    @staticmethod
+    def _benchmarking_config(context: TemplateContext) -> Tuple[Dict[str, Any], Any]:
+        """``(services.benchmarking, global.DATA_PATH)`` of the FIRST config.
+
+        The deploy stages only ``configs[0]``'s assets (see
+        ``preflight_benchmark_configs``), so anchors resolve off that same config.
+        """
+        config_manager = getattr(context, "config_manager", None)
+        if config_manager is None:
+            return {}, None
+        configs = config_manager.get_configs() or [{}]
+        config = configs[0] if isinstance(configs[0], dict) else {}
+        bench = (config.get("services") or {}).get("benchmarking") or {}
+        return bench, (config.get("global") or {}).get("DATA_PATH")
+
+    def _anchor_mount_target(self, context: TemplateContext) -> Optional[str]:
+        """In-container mount point for the staged anchor bank, or ``None``.
+
+        ``None`` whenever nothing will be staged — anchors off, no benchmarking
+        service, or no host bank — because binding a missing host path would make
+        Docker materialise an empty DIRECTORY at the destination, which the runtime
+        would then fail to read (``IsADirectoryError``).
+        """
+        if not context.plan.get_service("benchmarking").enabled:
+            return None
+        bench, data_path = self._benchmarking_config(context)
+        if not anchor_source_path(bench, data_path):
+            return None
+        return anchor_container_path(bench)
+
     def _stage_benchmarking(self, context: TemplateContext) -> None:
         query_file = context.pop_option("query_file")
         if not query_file:
@@ -356,6 +391,20 @@ class TemplateManager:
         else:
             query_file_dest = context.base_dir / "queries.txt"
             shutil.copyfile(query_file, query_file_dest)
+
+        # Anchors default ON, but the image ships no `examples/` and /root/data is a
+        # named volume — so the bank only reaches the runtime via this staged copy
+        # plus the bind mount rendered into the compose file.
+        bench, data_path = self._benchmarking_config(context)
+        anchor_src = anchor_source_path(bench, data_path)
+        if anchor_src:
+            shutil.copyfile(anchor_src, context.base_dir / "anchors.json")
+            logger.info(f"Staged anchor questions from {anchor_src}")
+        elif anchors_enabled(bench):
+            logger.warning(
+                "Anchor questions are enabled but no anchor bank was found on the "
+                "host; the benchmark will run without anchors."
+            )
 
         git_info = get_git_information()
         git_info_path = context.base_dir / "git_info.yaml"
@@ -601,6 +650,8 @@ class TemplateManager:
         # Compose template still expects optional lists
         template_vars.setdefault("prompt_files", [])
         template_vars.setdefault("rubrics", [])
+
+        template_vars["benchmark_anchors_target"] = self._anchor_mount_target(context)
 
         if context.plan.get_service("grader").enabled:
             template_vars["rubrics"] = self._get_grader_rubrics(context.config_manager)

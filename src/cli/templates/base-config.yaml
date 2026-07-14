@@ -33,6 +33,16 @@ services:
     # Question bank in ragas 0.3.5's modern dialect (user_input/reference); legacy
     # question/answer banks are normalized on read (see docs/docs/benchmarking.md).
     queries_path: {{ services.benchmarking.queries_path | default("queries", true) }}
+    {%- if services.benchmarking.anchors %}
+    # Host and container MUST probe the same path. templates_manager stages the bank
+    # and bind-mounts it at this path under the image WORKDIR; dropping the block
+    # here would leave _merge_anchor_questions probing the DEFAULT path while the
+    # mount sits at the configured one, so a custom bank is staged somewhere the
+    # runtime never looks and the run silently loses its anchors.
+    anchors:
+      enabled: {{ services.benchmarking.anchors.enabled | default(true) }}
+      path: {{ services.benchmarking.anchors.path | default("examples/benchmarking/anchor_questions.json", true) }}
+    {%- endif %}
     modes:
       {%- for mode in services.benchmarking.modes | default(["SOURCES", "RAGAS"]) %}
       - {{ mode }}

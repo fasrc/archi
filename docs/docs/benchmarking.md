@@ -359,6 +359,12 @@ See `argilla/README.md` for the self-hosted Argilla setup, including secret gene
 
 These exist to make eval rounds trustworthy as an adoption signal, not just a vibes check.
 
+> **Before you report a result as an improvement, read
+> [Interpreting Benchmark Results](interpreting_benchmark_results.md).** This page
+> covers how to *run* a benchmark; that one covers how to tell whether the number
+> that came out means anything. It defines a mandatory gate for any result used to
+> justify shipping a change.
+
 ### Pre-registration
 
 Before each eval round, write a pre-reg using the template at `docs/eval/preregs/_template.md`. Capture: primary hypothesis, the metric that decides, the decision rule (incl. what would make us NOT adopt the change), and any planned secondary analyses. **Lock the pre-reg before running the eval** — committing it on the benchmarking branch is the time-stamp.

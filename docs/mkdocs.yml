@@ -13,10 +13,15 @@ nav:
   - CLI Reference: cli_reference.md
   - API Reference: api_reference.md
   - Benchmarking: benchmarking.md
+  - Interpreting Results: interpreting_benchmark_results.md
   - Advanced Setup: advanced_setup_deploy.md
   - Adding Providers: adding_providers.md
   - Developer Guide: developer_guide.md
   - Troubleshooting: troubleshooting.md
 theme: readthedocs
+markdown_extensions:
+  # Renders `!!! note` / `!!! warning` callouts. Without this they appear as
+  # literal text (agents_tools.md and interpreting_benchmark_results.md use them).
+  - admonition
 repo_url: https://github.com/archi-physics/archi
 repo_name: 'GitHub'
