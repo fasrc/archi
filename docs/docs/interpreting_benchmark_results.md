@@ -140,6 +140,13 @@ include the ones the question said it should have used.
 - **`source_accuracy`** — fraction of questions where *every* expected source was
   retrieved. Strictly harder, so always lower.
 
+Both are averaged over the questions that actually *declare* expected sources, not
+over every question in the run. A question with no expected sources (the
+`should_refuse` anchor) has nothing to retrieve, so it can neither hit nor miss and
+is left out of both. The count that was divided by is published as
+**`source_scored_count`** — read it, because it is not the same as the number of
+questions in the run.
+
 ### 2.3 Which metric responds to which change
 
 This table is the single most useful thing to internalise. If you change one part
@@ -483,7 +490,8 @@ bench_out/benchmarking-<name>-<timestamp>.json
     │   ├── aggregate_<metric>
     │   ├── <metric>_scored    # "71 of 73" — CHECK THIS (§3.4)
     │   ├── source_accuracy
-    │   └── relative_source_accuracy
+    │   ├── relative_source_accuracy
+    │   └── source_scored_count # denominator of the two above; NOT the question count
     └── single_question_results
         └── question_<n>
             ├── question       # join on THIS, not the key (G5)
@@ -521,36 +529,40 @@ actually measured.
 *Fix:* track the bank, and stamp a hash of its contents into `metadata` beside
 `git_info`, so a comparison tool can refuse to compare across banks (G4).
 
-### Gap 3: anchors are averaged into the bank, and `should_refuse` corrupts two metrics
+### Gap 3: anchors are averaged into the bank aggregates
 
 The harness merges the 5 anchors into the question set and averages everything
-together, with the SOURCES denominator set to the full question count. Two
-consequences, both verified in code:
+together, rather than reporting them as their own track. Anchors are meant to be
+*tripwires* — pass/fail guards you never tune against — so folding them into the
+same averages you are trying to move is self-defeating: it both dilutes the bank's
+signal and hides the tripwire.
 
-- **`should_refuse` books a free strict source hit.** It declares zero expected
-  sources, and `source_hits` computes strict success as `all(matches)`, which is
-  vacuously true for an empty list — so it returns `(0, 1)` regardless of what the
-  SUT actually answered. `source_accuracy` is inflated, `relative_source_accuracy`
-  is diluted (`src/utils/benchmark_resilience.py:64`).
-- **A correct refusal scores near zero on the `context_*` metrics**, because its
-  reference answer ("I don't have documentation covering that") is by construction
-  unsupported by any retrieved FASRC chunk. We penalise exactly the behaviour we
-  are testing for.
+One consequence is still live, verified in code:
 
-*Fix:* report anchors as a separate track; exclude them from the bank aggregates;
-score `should_refuse` as a binary assertion (did it decline, did it avoid inventing
-names) rather than feeding it to RAGAS.
+- **A correct refusal scores near zero on the `context_*` metrics.** The
+  `should_refuse` anchor's reference answer ("I don't have documentation covering
+  that") is by construction unsupported by any retrieved FASRC chunk, and it has a
+  non-empty `reference`, which is what makes a row eligible for `context_precision`
+  and `context_recall`. So the anchor drags both metrics down *for behaving
+  correctly*. We penalise exactly the behaviour we are testing for.
 
-*Status:* this gap is **live as of the change that shipped this page**. Anchors were
-enabled by default but never actually ran — the anchor file never reached the
-benchmarking container, so the harness logged "running without anchors" and graded
-only the bank. That delivery bug is now fixed, which means anchors score for the
-first time, which in turn means the flaw above now affects real numbers.
+*Fix:* report anchors as a separate track, exclude them from the bank aggregates,
+and score `should_refuse` as a binary assertion (did it decline; did it avoid
+inventing names) rather than feeding it to RAGAS at all.
 
-> **Do not compare a run from after that fix against a baseline from before it.**
-> The graded set goes from 73 questions to 78, which violates G4 and G6. Every
-> benchmark result recorded before this page existed — including the July 4
-> floor baseline — is a 73-question measurement. Re-baseline first.
+*Already fixed — do not go looking for it:* `should_refuse` used to also book a
+**free strict source hit**. It declares zero expected sources, and `source_hits`
+computed strict success as `all(matches)`, which is vacuously true for an empty
+list — so the row returned `(0, 1)` no matter what the model said, inflating
+`source_accuracy`. Zero-source rows are now excluded from source accuracy entirely:
+they contribute to neither the numerator nor the denominator, and the denominator
+actually used is published as `source_scored_count` in the results file. A row that
+*declares* a source and misses it still counts as a miss.
+
+> **Do not compare a run from after anchors began scoring against a baseline from
+> before it.** The graded set goes from 73 questions to 78, which violates G4 and
+> G6. Every benchmark result recorded before this page existed — including the
+> July 4 floor baseline — is a 73-question measurement. Re-baseline first.
 
 ### Gap 4: the benchmark SUT samples at temperature 0.3
 

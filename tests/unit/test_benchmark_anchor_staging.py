@@ -17,12 +17,14 @@ which is what these tests pin.
 from __future__ import annotations
 
 import json
+import posixpath
 from pathlib import Path
 
 import pytest
 from jinja2 import ChainableUndefined, Environment, FileSystemLoader, select_autoescape
 
 from src.utils.benchmark_schema import (
+    CONTAINER_WORKDIR,
     DEFAULT_ANCHOR_PATH,
     anchor_container_path,
     anchor_source_path,
@@ -350,3 +352,98 @@ def _benchmark_context(base_dir: Path, *, query_file: str, benchmarking: dict):
         secrets_manager=None,
         options={"query_file": query_file, "benchmarking": True},
     )
+
+
+# --- the default bank must resolve from the checkout, not the caller's CWD ----
+#
+# `archi evaluate` is a CLI and may be invoked from anywhere. The tracked default
+# bank lives in the checkout under `examples/` (which is not packaged and is not
+# COPYd into the benchmark image), so resolving it only against DATA_PATH and the
+# process CWD means an invocation from any other directory stages nothing, and the
+# run silently reverts to the pre-fix "running without anchors" behaviour that this
+# whole change exists to eliminate.
+
+
+def test_source_path_resolves_default_from_repo_root_outside_the_checkout(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)  # not the checkout; CWD-relative lookup must miss
+    resolved = anchor_source_path({}, data_path=None)
+    assert resolved is not None, "default anchor bank must resolve outside the CWD"
+    assert Path(resolved).is_file()
+    assert Path(resolved).name == "anchor_questions.json"
+
+
+def test_source_path_still_prefers_data_path_over_repo_root(tmp_path, monkeypatch):
+    # The repo-root fallback must be LAST: a DATA_PATH bank still wins.
+    monkeypatch.chdir(tmp_path)
+    nested = tmp_path / "data" / "examples" / "benchmarking"
+    nested.mkdir(parents=True)
+    (nested / "anchor_questions.json").write_text("[]")
+    resolved = anchor_source_path({}, data_path=str(tmp_path / "data"))
+    assert resolved == str(nested / "anchor_questions.json")
+
+
+# --- base-config render: the container must probe where we actually mounted ----
+#
+# `_merge_anchor_questions` reads `services.benchmarking.anchors` from the RENDERED
+# container config. base-config.yaml emitted every other benchmarking field but
+# dropped `anchors` entirely, so the runtime always fell back to the default path
+# while the host mounted the bank at the CONFIGURED path — a custom bank was staged
+# and mounted somewhere the runtime never looked, and the run lost its anchors.
+
+
+@pytest.fixture
+def render_base_config():
+    repo_root = Path(__file__).resolve().parents[2]
+    env = Environment(
+        loader=FileSystemLoader(str(repo_root / "src" / "cli" / "templates")),
+        undefined=ChainableUndefined,
+    )
+    template = env.get_template("base-config.yaml")
+
+    def _render(benchmarking):
+        import yaml
+
+        rendered = template.render(services={"benchmarking": benchmarking})
+        return yaml.safe_load(rendered)["services"]["benchmarking"]
+
+    return _render
+
+
+def test_base_config_renders_custom_anchor_path(render_base_config):
+    bench = render_base_config({"anchors": {"path": "config/custom_anchors.json"}})
+    assert bench["anchors"]["path"] == "config/custom_anchors.json"
+    assert bench["anchors"]["enabled"] is True
+
+
+def test_base_config_renders_disabled_anchors(render_base_config):
+    bench = render_base_config({"anchors": {"enabled": False}})
+    assert bench["anchors"]["enabled"] is False
+
+
+def test_base_config_omits_anchors_when_absent(render_base_config):
+    # No anchors block on the host -> none in the container, and BOTH sides fall
+    # back to the same default. Rendering an empty block would be noise.
+    assert "anchors" not in render_base_config({})
+
+
+def test_mount_target_matches_what_the_rendered_config_makes_the_runtime_probe(
+    render_base_config,
+):
+    """The crux of the bug: host and container must agree on ONE path.
+
+    The host mounts the staged bank at `anchor_container_path(host_config)`. The
+    runtime reads `anchors.path` out of the RENDERED container config and probes it
+    relative to the image WORKDIR. If those two strings differ, the bank is mounted
+    somewhere nothing ever reads. Pin them together.
+    """
+    host_config = {"anchors": {"path": "config/custom_anchors.json"}}
+    mount_target = anchor_container_path(host_config)
+
+    rendered = render_base_config(host_config)
+    # What _merge_anchor_questions does with a relative path: resolve it against the
+    # process CWD, which inside the image is WORKDIR.
+    runtime_probe = posixpath.join(CONTAINER_WORKDIR, rendered["anchors"]["path"])
+
+    assert mount_target == runtime_probe == "/root/archi/config/custom_anchors.json"

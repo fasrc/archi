@@ -62,6 +62,16 @@ DEFAULT_ANCHOR_PATH: str = "examples/benchmarking/anchor_questions.json"
 # staged bank must be bind-mounted.
 CONTAINER_WORKDIR: str = "/root/archi"
 
+# The checkout root (this file is src/utils/benchmark_schema.py). `archi evaluate` is
+# a CLI and may be invoked from any directory, but the tracked default anchor bank
+# lives under the checkout's `examples/` — which is not packaged and is not COPYd
+# into the benchmark image. Resolving the default against the process CWD alone means
+# any invocation from elsewhere stages nothing. Same root `_copy_default_prompts`
+# stages its defaults from.
+REPO_ROOT: str = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+
 # Legacy authoring dialect -> ragas 0.3.5 modern schema.
 LEGACY_TO_MODERN: Dict[str, str] = {
     "question": "user_input",
@@ -280,10 +290,13 @@ def _bank_user_inputs(path: Any) -> set:
 
 def _resolve_anchor_path(anchors: Dict[str, Any], data_path: Any) -> Optional[str]:
     """Resolve the anchor file the SAME way ``_merge_anchor_questions`` does:
-    ``Path(DATA_PATH)/path`` first, then the raw (CWD-relative) path. Returns the
-    first that exists on disk, else ``None`` (mirrors the runtime's skip-if-absent
-    — a container-only ``DATA_PATH`` file simply isn't visible at host preflight
-    and is left to the runtime's own per-item guard)."""
+    ``Path(DATA_PATH)/path`` first, then the raw (CWD-relative) path — then, as a
+    host-only last resort, the checkout root (see ``REPO_ROOT``), so that running
+    ``archi evaluate`` from outside the repo still finds the tracked default bank
+    instead of silently reverting to "running without anchors". Returns the first
+    that exists on disk, else ``None`` (mirrors the runtime's skip-if-absent — a
+    container-only ``DATA_PATH`` file simply isn't visible at host preflight and is
+    left to the runtime's own per-item guard)."""
     raw = anchors.get("path") or DEFAULT_ANCHOR_PATH
     if not isinstance(raw, str) or not raw:
         return None
@@ -291,6 +304,7 @@ def _resolve_anchor_path(anchors: Dict[str, Any], data_path: Any) -> Optional[st
     if isinstance(data_path, str) and data_path:
         candidates.append(os.path.join(data_path, raw))
     candidates.append(raw)
+    candidates.append(os.path.join(REPO_ROOT, raw))
     return next((c for c in candidates if os.path.exists(c)), None)
 
 

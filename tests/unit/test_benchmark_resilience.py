@@ -222,10 +222,23 @@ def test_source_hits_none_contributes_nothing():
     assert source_hits(None, [{"url": "x"}]) == (0, 0)
 
 
-def test_source_hits_zero_reference_keeps_original_semantics():
-    # A clean row with no expected sources: empty match list is NOT a failure;
-    # original any([])/all([]) semantics are preserved (strict hit).
-    assert source_hits([], []) == (0, 1)
+def test_source_hits_zero_reference_is_not_a_strict_hit():
+    # A row with no expected sources (a `should_refuse` anchor) cannot hit or
+    # miss a source. `all([])` is vacuously true, so the original semantics
+    # booked a FREE strict hit for it — inflating `source_accuracy` no matter
+    # what the model answered. Such a row must contribute nothing, exactly like
+    # a failed row; `_source_scorable_count` also keeps it out of the denominator.
+    assert source_hits([], []) == (0, 0)
+
+
+def test_source_hits_zero_reference_is_not_confused_with_a_perfect_hit():
+    perfect = source_hits([True], [{"url": "a"}])
+    assert perfect == (1, 1)
+    # The bug: a zero-reference row ALSO returned strict=1, making it
+    # indistinguishable from a row whose every expected source was retrieved.
+    assert source_hits([], [])[1] != perfect[1]
+    # A declared reference that went unmatched is still a real miss, not a no-op.
+    assert source_hits([False], [{"url": "a"}]) == (0, 0)
 
 
 def test_source_hits_relative_only():
@@ -271,7 +284,16 @@ def test_build_source_aggregates_zero_questions_is_numeric():
     assert build_source_aggregates(0.0, 0.0, 0) == {
         "relative_source_accuracy": 0.0,
         "source_accuracy": 0.0,
+        "source_scored_count": 0,
     }
+
+
+def test_build_source_aggregates_emits_its_denominator():
+    # The HTML report used to re-derive the hit count as int(len(questions) * acc).
+    # Now that zero-source rows are excluded, len(questions) is the WRONG
+    # denominator, so the count that was actually divided by has to travel with
+    # the score (mirrors the per-metric `scored_counts` RAGAS already emits).
+    assert build_source_aggregates(3.0, 1.0, 4)["source_scored_count"] == 4
 
 
 def test_build_source_aggregates_divides_by_total_count():
@@ -307,6 +329,32 @@ def _ok_bundle():
     }
 
 
+def _miss_bundle():
+    # A real question whose declared source was NOT retrieved.
+    return {
+        "q_results": {
+            "status": OK,
+            "question": "q",
+            "reference_sources_metadata": [{"url": "x"}],
+        },
+        "dataset_result": {"user_input": "q", "reference": "r"},
+        "matches": [False],
+    }
+
+
+def _zero_source_bundle():
+    # A `should_refuse` anchor: declares no sources, so nothing to match.
+    return {
+        "q_results": {
+            "status": OK,
+            "question": "refuse",
+            "reference_sources_metadata": [],
+        },
+        "dataset_result": {"user_input": "refuse", "reference": "r"},
+        "matches": [],
+    }
+
+
 def _fail_bundle():
     return {
         "q_results": {"status": FAILED, "error": "boom"},
@@ -316,11 +364,50 @@ def _fail_bundle():
 
 
 def test_process_config_sources_aggregate():
-    agent = _ConfigStub(queries=[{"user_input": "q"}], bundles=[_ok_bundle()])
+    # The query must DECLARE the source its bundle claims to have matched:
+    # `reference_sources_metadata` is derived from `sources`, so a row cannot match
+    # a source it never declared, and `sources` is now the aggregate's denominator.
+    agent = _ConfigStub(
+        queries=[{"user_input": "q", "sources": ["x"]}], bundles=[_ok_bundle()]
+    )
     qwr, total = agent._process_config({"SOURCES"})
     assert set(qwr) == {"question_1"}
     assert total["relative_source_accuracy"] == 1.0
     assert total["source_accuracy"] == 1.0
+    assert total["source_scored_count"] == 1
+
+
+def test_process_config_excludes_zero_source_row_from_source_aggregate():
+    # A `should_refuse` anchor beside one real question. Before the fix the anchor
+    # booked a free strict hit AND sat in the denominator, so a run that matched
+    # the one real source reported source_accuracy = 2/2 = 1.0 either way — the
+    # anchor's "score" was pure fiction. It must now be invisible to both.
+    agent = _ConfigStub(
+        queries=[
+            {"user_input": "q", "sources": ["x"]},
+            {"user_input": "refuse", "sources": []},
+        ],
+        bundles=[_ok_bundle(), _zero_source_bundle()],
+    )
+    _, total = agent._process_config({"SOURCES"})
+    assert total["source_scored_count"] == 1
+    assert total["source_accuracy"] == 1.0
+    assert total["relative_source_accuracy"] == 1.0
+
+
+def test_process_config_zero_source_row_cannot_rescue_a_miss():
+    # The anchor must not paper over a real retrieval miss: one declared source,
+    # unmatched -> 0.0, not the 0.5 the free strict hit used to manufacture.
+    agent = _ConfigStub(
+        queries=[
+            {"user_input": "q", "sources": ["x"]},
+            {"user_input": "refuse", "sources": []},
+        ],
+        bundles=[_miss_bundle(), _zero_source_bundle()],
+    )
+    _, total = agent._process_config({"SOURCES"})
+    assert total["source_scored_count"] == 1
+    assert total["source_accuracy"] == 0.0
 
 
 def test_process_config_all_failed_ragas_is_nan():

@@ -92,3 +92,43 @@ def test_prepare_match_fields_still_raises_on_genuine_mismatch():
     }
     with pytest.raises(ValueError):
         bench.prepare_match_fields(question_item)
+
+
+# --- the source-accuracy denominator ----------------------------------------
+#
+# Letting a zero-source row through `prepare_match_fields` is only half the job.
+# It then reaches `source_hits`, and the denominator in `_process_config` was
+# `len(self.queries_to_answers)` — the FULL question count. A `should_refuse`
+# anchor has no source to hit or miss, so counting it either fabricates a hit or
+# dilutes the score. It must not be in the denominator at all.
+
+
+def test_source_scorable_count_excludes_zero_source_rows():
+    bench = _benchmarker()
+    bench.queries_to_answers = [
+        {"user_input": "a", "sources": ["https://example.org/a"]},
+        {"user_input": "b", "sources": ["https://example.org/b"]},
+        {"user_input": "refuse", "sources": []},  # should_refuse anchor
+    ]
+    assert bench._source_scorable_count() == 2
+
+
+def test_source_scorable_count_still_counts_rows_that_will_miss():
+    # A row that HAS expected sources stays in the denominator even if retrieval
+    # fails — a miss must still register as a miss.
+    bench = _benchmarker()
+    bench.queries_to_answers = [
+        {"user_input": "a", "sources": ["https://example.org/a"]},
+        {"user_input": "b", "sources": ["https://example.org/b"]},
+    ]
+    assert bench._source_scorable_count() == 2
+
+
+def test_source_scorable_count_tolerates_malformed_rows():
+    bench = _benchmarker()
+    bench.queries_to_answers = [
+        {"user_input": "a", "sources": ["https://example.org/a"]},
+        {"user_input": "no_sources_key"},
+        "not-a-dict",
+    ]
+    assert bench._source_scorable_count() == 1
