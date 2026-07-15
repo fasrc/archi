@@ -40,6 +40,32 @@ def select_loader(file_path: str | Path):
         ".log",
         ".rst",
         ".md",
+        # Shipped-default git code suffixes the loader was missing — collected by
+        # default (see git_scraper.py `code_suffixes`) but previously unloadable.
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".java",
+        ".go",
+        ".rs",
+        ".sql",
+        ".cpp",
+        ".hpp",
+        ".toml",
+        # FASRC HPC/scientific additions: Slurm job scripts, Fortran, CUDA, R,
+        # MATLAB, Julia, Singularity defs.
+        ".sbatch",
+        ".slurm",
+        ".f90",
+        ".f",
+        ".f95",
+        ".cu",
+        ".r",
+        ".rmd",
+        ".m",
+        ".jl",
+        ".def",
     }:
         return TextLoader(str(path))
     if file_extension == ".py":
