@@ -35,6 +35,10 @@ mistune==3.0.2
 monotonic==1.6
 mkdocs==1.6.1
 mkdocs-material==9.7.3
+# Explicit pin for the docs `pymdownx.snippets` extension (glossary acronym
+# tooltips). Previously only transitive via mkdocs-material; declared directly so
+# it stays in lockstep with pyproject.toml's dependencies list.
+pymdown-extensions==11.0.1
 overrides==7.4.0
 piazza-api==0.14.0
 posthog==3.3.1

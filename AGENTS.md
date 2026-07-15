@@ -37,6 +37,7 @@
 ## Agent Workflow
 - When changing user-facing behavior, CLI flags, configuration, or public APIs, update the relevant docs in `docs/` and/or `README.md` in the same change.
 - If no docs change is needed, note the reason briefly in the PR description or commit message.
+- In PR and issue bodies, link the first use of a project term to the glossary (`https://github.com/fasrc/archi/blob/dev/docs/docs/glossary.md#<slug>`) so a reader with no background can decode the jargon.
 
 ## Deployment & Validation Policy
 - **Match the real runtime path before debugging:** Verify which code path the running service imports (workspace source vs installed `site-packages`) and patch/reload the active path.
