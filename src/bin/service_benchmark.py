@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
+from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -950,6 +951,30 @@ class Benchmarker:
 
         return formatted_reference_sources
 
+    @staticmethod
+    def _canonical_source(value: Any) -> str:
+        """Canonical form of a gold/retrieved source value, for comparison only.
+
+        Strips surrounding whitespace and a single trailing ``/`` from the URL
+        *path* — the one difference that actually occurs between an authored bank
+        URL and the ingested ``documents.url``. Deliberately conservative: it does
+        NOT lowercase (paths are case-sensitive), normalize the scheme, or drop the
+        query/fragment, because over-matching would silently conflate distinct
+        pages — a worse failure than the miss it fixes, and an invisible one.
+
+        The slash is stripped from the path only, so a query or fragment that
+        legitimately ends in ``/`` (e.g. ``...?redirect=/kb/foo/``) is preserved.
+        A value with no scheme (e.g. a ``file_name`` match field) parses as a bare
+        path, so the same one-trailing-slash rule applies without special-casing.
+        """
+        text = str(value).strip()
+        parts = urlsplit(text)
+        path = parts.path
+        if len(path) > 1 and path.endswith("/"):
+            path = path[:-1]
+            return urlunsplit(parts._replace(path=path))
+        return text
+
     def prepare_messages(self, raw_messages):
         """Format the langchain Messages into something we can store and view later."""
         formatted_messages = []
@@ -1002,6 +1027,11 @@ class Benchmarker:
         The reference sources and match fields are paired one-to-one; a single string field is
         expanded to cover all provided sources. Returns summary information and whether all
         reference sources were found.
+
+        Comparison is on the canonical form of both sides (see ``_canonical_source``):
+        banks author the canonical page URL with a trailing slash, while the
+        sitemap-driven ingest stores it without one, and an exact compare scored
+        every gold source as a miss regardless of retrieval quality.
         """
         sources = result.get("source_documents", [])
         logger.info("Agent found %s sources.", len(sources))
@@ -1009,6 +1039,7 @@ class Benchmarker:
         matches: List[bool] = []
         for source in formatted_reference_sources:
             field, reference = list(source.items())[0]
+            canonical_reference = self._canonical_source(reference)
             logger.debug(
                 "Checking for reference source '%s' in field '%s'", reference, field
             )
@@ -1018,9 +1049,9 @@ class Benchmarker:
                 if value is None:
                     continue
                 if isinstance(value, list):
-                    values = [str(v).strip() for v in value if v is not None]
+                    values = [self._canonical_source(v) for v in value if v is not None]
                 else:
-                    values = [str(value).strip()]
+                    values = [self._canonical_source(value)]
                 logger.info("Returned source '%s': %s", field, values)
                 logger.debug(
                     "Checking reference '%s' against document metadata field '%s': %s",
@@ -1028,7 +1059,7 @@ class Benchmarker:
                     field,
                     values,
                 )
-                if reference in values:
+                if canonical_reference in values:
                     logger.debug(
                         "Matched reference source '%s' in document metadata.", reference
                     )
