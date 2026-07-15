@@ -30,21 +30,21 @@
 
 - [x] 3.1 `bash scripts/gate.sh` — black 24.10.0 + isort 6.0.1 clean, pytest passing,
   diff-cover `--fail-under=80` vs `origin/dev`. Do not bypass with `--no-verify`.
-- [ ] 3.2 Commit on a branch off `origin/dev` (never commit to `dev` directly),
+- [x] 3.2 Commit on a branch off `origin/dev` (never commit to `dev` directly),
   lowercase message, no attribution trailers.
 
 ## 4. Deploy and verify the corpus effect
 
-- [ ] 4.1 Redeploy dev: `deploy/fasrc-dev/scripts/redeploy.sh` (`reset_collection: true`
+- [x] 4.1 Redeploy dev: `deploy/fasrc-dev/scripts/redeploy.sh` (`reset_collection: true`
   re-embeds the whole corpus with the new loader).
-- [ ] 4.2 Verify the failure drop: `SELECT ingestion_status, count(*) FROM documents
+- [x] 4.2 Verify the failure drop: `SELECT ingestion_status, count(*) FROM documents
   WHERE source_type='git' GROUP BY 1` — `failed` drops by ~315 (the 327 minus ~12
   `.ipynb`), and the added code files show `embedded`.
-- [ ] 4.3 Spot-check retrieval: confirm at least one Slurm-script chunk is now
+- [x] 4.3 Spot-check retrieval: confirm at least one Slurm-script chunk is now
   returned for a relevant query (e.g. a `.sbatch` example), proving the files reached
   the vector store.
 
 ## 5. Follow-up (not blocking)
 
-- [ ] 5.1 File a tracking issue for notebook-aware `.ipynb` loading (nbconvert/jq
+- [x] 5.1 File a tracking issue for notebook-aware `.ipynb` loading (nbconvert/jq
   source+markdown extraction), referencing D3 in this change's design.
