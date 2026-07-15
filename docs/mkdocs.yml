@@ -1,6 +1,7 @@
 site_name: Archi Docs
 nav:
   - Home: index.md
+  - Glossary: glossary.md
   - Install: install.md
   - Quickstart: quickstart.md
   - Secrets: secrets.md
@@ -23,5 +24,17 @@ markdown_extensions:
   # Renders `!!! note` / `!!! warning` callouts. Without this they appear as
   # literal text (agents_tools.md and interpreting_benchmark_results.md use them).
   - admonition
+  # `abbr` + snippets auto-append render glossary acronyms (RAG, MRR, FASRC, …) as
+  # <abbr> hover tooltips on EVERY page from one shared file, with no per-page edits.
+  # Two base_path roots so the shared file resolves whether the build runs from the
+  # repo root (CI: `mkdocs build --config-file docs/mkdocs.yml`) or from docs/
+  # (local: `cd docs && mkdocs serve`).
+  - abbr
+  - pymdownx.snippets:
+      auto_append:
+        - includes/abbreviations.md
+      base_path:
+        - docs/docs
+        - docs
 repo_url: https://github.com/archi-physics/archi
 repo_name: 'GitHub'
