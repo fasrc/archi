@@ -1,0 +1,77 @@
+## Context
+
+`deploy/fasrc-dev/scripts/lib.sh` defines `REPO_ROOT` (:9), `CONFIG=deploy/fasrc-dev/config.yaml`
+(:13), and the shared deploy path that runs `archi create --config "$CONFIG" --force` (:76–78).
+Nothing provisions `$REPO_ROOT/config` (the nested fasrc/archi-config clone). Issue #99 specifies
+the fix but its anchors are stale: archi-config's history was rewritten in the secrets purge
+(`944556f` gone; now ~67 tracked files at `7e2cd5c`+, including systemd units and specs), and its
+`environments/dev.yaml` is an April template that drifted far behind the live dev config. The
+operator confirmed scope: #99's `ensure_config` + the dead sources-path fix + a one-way sync of
+the live config into archi-config. Deployment behavior does not change.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Fresh host: `create.sh` works with no pre-existing `config/` (clone at pin).
+- Existing host: every deploy converges `config/` to `CONFIG_REF` when clean; NEVER
+  destroys live edits (bind-mounted agent prompts, untracked local question banks).
+- The next re-ingest reads a sources.list path that exists.
+- archi-config's `environments/dev.yaml` matches the live dev config at sync time.
+
+**Non-Goals:**
+- Pointing the deployment at `environments/dev.yaml` (that's issue #88's layered-config
+  design — deliberately not folded in).
+- Any change to what the running containers read; no redeploy required by this change.
+- Secret handling (config repo already ignores `secrets/`; stays host-local).
+
+## Decisions
+
+1. **Pin = annotated tag, env-overridable** (`CONFIG_REF:-deploy-pin-2026-07`), created at
+   archi-config's current HEAD. Config schema is validated by code (see PR #98), so deploys
+   must get a known ref, not a floating `main`. Bump = retag or `CONFIG_REF=... redeploy`.
+2. **Dirty tree wins by default.** `git -C config status --porcelain` non-empty → warn
+   loudly (naming the dirty paths) and deploy with on-disk config. `CONFIG_FORCE=1` →
+   `git stash -u` then checkout — stash is recoverable; `reset --hard`/`clean -fd` are
+   banned because agent prompts are edited live through a bind mount and question banks
+   are untracked-only. Rationale over "fail on dirty": a dirty tree is the *normal* state
+   of an operated host (issue #99 captured one), and blocking every deploy on it would
+   train operators to force.
+3. **Shell-only, in lib.sh.** No Python helper → nothing new for diff-cover; the gate
+   still runs format + unit tests. Dirty-tree safety gets a self-test script
+   (`deploy/fasrc-dev/scripts/test_ensure_config.sh`) exercising clone/clean/dirty/forced
+   paths against a throwaway fixture repo — runnable locally and cited in the PR.
+4. **Post-provision verification**: `lists/sources.list`, `environments/dev.yaml`, and
+   `agents/` must exist after `ensure_config`, else `die` (catches a bad ref/partial clone
+   before `archi create` bakes a broken image).
+5. **Sync direction is live → repo, once, manually reviewed.** `environments/dev.yaml`
+   becomes a copy of the live `config.yaml` (comments included — they encode deploy
+   footguns like the Anthropic `models:` crash and `enable_thinking`). Host-specific
+   absolute paths stay as-is and are acceptable in a private single-deployment ops repo;
+   parameterizing them is #88's problem.
+6. **Ordering vs `harden-config-propagation`**: both edit `lib.sh`. This change lands
+   first (it's shell-only and unblocks re-ingest); the propagation change rebases on it.
+
+## Risks / Trade-offs
+
+- [Pin goes stale as archi-config moves] → deploys keep working at the pin (that's the
+  point); the weekly `git -C config fetch` in ensure_config makes drift visible in the
+  warning; bump procedure documented in lib.sh header.
+- [Stash-on-force surprises an operator] → stash is named (`ensure_config forced update
+  <date>`) and the warning prints `git -C config stash pop` as the recovery command.
+- [`config.yaml` is gitignored so the path fix can't be PR'd] → fix applied host-locally
+  AND mirrored in tracked `config.example.yaml`; acceptance check greps the live file.
+- [Tag lives in a different repo than the PR] → task list orders tag creation before the
+  fasrc/archi PR merge; ensure_config fails loudly if the ref doesn't resolve.
+
+## Migration Plan
+
+1. Tag archi-config HEAD; sync `environments/dev.yaml`; push archi-config main.
+2. Land the fasrc/archi PR (lib.sh + config.example.yaml + .gitignore comment).
+3. Host-local: fix `config.yaml` sources path.
+4. Verify: `redeploy.sh` runs `ensure_config` (clean tree → converges to pin; no
+   container behavior change expected); re-ingest smoke can find sources.list.
+5. Rollback: revert the lib.sh commit; `config/` on disk is untouched by rollback.
+
+## Open Questions
+
+- None blocking. (Tag name finalized at implementation: `deploy-pin-YYYY-MM`.)
