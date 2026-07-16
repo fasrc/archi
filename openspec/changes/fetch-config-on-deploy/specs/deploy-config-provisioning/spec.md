@@ -2,9 +2,10 @@
 
 ### Requirement: Deploys provision the config checkout
 Both `create.sh` and `redeploy.sh` SHALL run `ensure_config` before `archi create`:
-if `$REPO_ROOT/config/.git` is absent, clone `fasrc/archi-config` there and check out
-`CONFIG_REF`; if present, fetch (with tags) from origin. The function SHALL be
-idempotent across repeated deploys.
+if `$REPO_ROOT/config/.git` is absent, clone the config repo (URL from `CONFIG_REPO`,
+defaulting to `fasrc/archi-config` and overridable via the environment, so tests can
+substitute a local fixture) and check out `CONFIG_REF`; if present, fetch (with tags)
+from origin. The function SHALL be idempotent across repeated deploys.
 
 #### Scenario: Fresh host
 - **WHEN** a deploy runs on a host with no `config/` directory

@@ -27,8 +27,12 @@ the live config into archi-config. Deployment behavior does not change.
 ## Decisions
 
 1. **Pin = annotated tag, env-overridable** (`CONFIG_REF:-deploy-pin-2026-07`), created at
-   archi-config's current HEAD. Config schema is validated by code (see PR #98), so deploys
-   must get a known ref, not a floating `main`. Bump = retag or `CONFIG_REF=... redeploy`.
+   the sync commit (see Migration Plan order). Config schema is validated by code (see PR
+   #98), so deploys must get a known ref, not a floating `main`. **Bump = a NEW tag name**
+   (`deploy-pin-YYYY-MM[-n]`) + updating the default in `lib.sh` — never move an existing
+   tag: `git fetch --tags` refuses to clobber a changed local tag without `--force`, so a
+   moved tag would silently keep resolving to the old commit on already-provisioned hosts.
+   One-off override: `CONFIG_REF=... redeploy`.
 2. **Dirty tree wins by default.** `git -C config status --porcelain` non-empty → warn
    loudly (naming the dirty paths) and deploy with on-disk config. `CONFIG_FORCE=1` →
    `git stash -u` then checkout — stash is recoverable; `reset --hard`/`clean -fd` are
@@ -39,7 +43,10 @@ the live config into archi-config. Deployment behavior does not change.
 3. **Shell-only, in lib.sh.** No Python helper → nothing new for diff-cover; the gate
    still runs format + unit tests. Dirty-tree safety gets a self-test script
    (`deploy/fasrc-dev/scripts/test_ensure_config.sh`) exercising clone/clean/dirty/forced
-   paths against a throwaway fixture repo — runnable locally and cited in the PR.
+   paths against a throwaway fixture repo — runnable locally and cited in the PR. To make
+   the fixture possible (and offline runs non-flaky), the remote is a defaulted variable:
+   `CONFIG_REPO="${CONFIG_REPO:-git@github.com:fasrc/archi-config.git}"`; the self-test
+   overrides it to a local `file://` fixture.
 4. **Post-provision verification**: `lists/sources.list`, `environments/dev.yaml`, and
    `agents/` must exist after `ensure_config`, else `die` (catches a bad ref/partial clone
    before `archi create` bakes a broken image).
@@ -65,7 +72,9 @@ the live config into archi-config. Deployment behavior does not change.
 
 ## Migration Plan
 
-1. Tag archi-config HEAD; sync `environments/dev.yaml`; push archi-config main.
+1. Sync `environments/dev.yaml` into archi-config and commit; THEN create the tag at that
+   sync commit; push both. (Order matters: tagging first would pin the stale April
+   template — the exact drift this change exists to close.)
 2. Land the fasrc/archi PR (lib.sh + config.example.yaml + .gitignore comment).
 3. Host-local: fix `config.yaml` sources path.
 4. Verify: `redeploy.sh` runs `ensure_config` (clean tree → converges to pin; no
