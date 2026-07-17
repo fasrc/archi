@@ -30,16 +30,31 @@ the live config into archi-config. Deployment behavior does not change.
    the sync commit (see Migration Plan order). Config schema is validated by code (see PR
    #98), so deploys must get a known ref, not a floating `main`. **Bump = a NEW tag name**
    (`deploy-pin-YYYY-MM[-n]`) + updating the default in `lib.sh` — never move an existing
-   tag: `git fetch --tags` refuses to clobber a changed local tag without `--force`, so a
-   moved tag would silently keep resolving to the old commit on already-provisioned hosts.
-   One-off override: `CONFIG_REF=... redeploy`.
+   tag: `git fetch --tags` refuses to clobber a changed local tag without `--force`
+   (verified against a fixture: the fetch fails loudly, exit 1, so an already-provisioned
+   host would abort while a fresh host resolved the moved tag — divergence, just not
+   silent). **The pin is content-addressed, not name-trusted:** `lib.sh` records the
+   expected commit id (`CONFIG_SHA`) next to the tag name, and `ensure_config` dies if
+   `git -C config rev-parse "$CONFIG_REF^{commit}"` differs — a re-pointed remote tag
+   aborts the deploy instead of being believed, and the tag→commit binding is reviewable
+   in the fasrc/archi PR (a submodule/vendored copy was rejected: archi is PUBLIC,
+   archi-config is PRIVATE — a gitlink breaks public cloners and vendoring leaks ops
+   config). One-off override: `CONFIG_REF=... CONFIG_SHA=... redeploy`.
 2. **Dirty tree wins by default.** `git -C config status --porcelain` non-empty → warn
    loudly (naming the dirty paths) and deploy with on-disk config. `CONFIG_FORCE=1` →
    `git stash -u` then checkout — stash is recoverable; `reset --hard`/`clean -fd` are
    banned because agent prompts are edited live through a bind mount and question banks
    are untracked-only. Rationale over "fail on dirty": a dirty tree is the *normal* state
    of an operated host (issue #99 captured one), and blocking every deploy on it would
-   train operators to force.
+   train operators to force. **Every deploy records config provenance** — `git -C config
+   rev-parse HEAD`, a pin-match boolean, and a name-status of dirty paths — and the
+   dirty-tree warning states how far off the pin the deploy is running
+   (`rev-list --count HEAD..$CONFIG_REF` + `diff --stat`), so an off-pin deploy is always
+   reconstructable after the fact. (Fail-closed and allowlist variants were evaluated and
+   rejected: deploys are human-run only — automation rails forbid `deploy/fasrc-dev/**` —
+   and issue #99's captured dirty set was exactly the tracked deploy-critical files, so an
+   allowlist collapses; the truly fatal class, deleted critical paths, already fails
+   closed via decision 4.)
 3. **Shell-only, in lib.sh.** No Python helper → nothing new for diff-cover; the gate
    still runs format + unit tests. Dirty-tree safety gets a self-test script
    (`deploy/fasrc-dev/scripts/test_ensure_config.sh`) exercising clone/clean/dirty/forced
@@ -61,8 +76,12 @@ the live config into archi-config. Deployment behavior does not change.
 ## Risks / Trade-offs
 
 - [Pin goes stale as archi-config moves] → deploys keep working at the pin (that's the
-  point); the weekly `git -C config fetch` in ensure_config makes drift visible in the
-  warning; bump procedure documented in lib.sh header.
+  point); the every-deploy `git -C config fetch` in ensure_config makes drift visible in
+  the warning; bump procedure documented in lib.sh header.
+- [agents_dir ambiguity] → the live config currently points `agents_dir` at
+  `deploy/fasrc-dev/agents`, while the live-edit rationale anchors on `config/agents`
+  (issue #99's capture) — confirm at implementation which directory the running
+  deployment actually bind-mounts and document it in the lib.sh header.
 - [Stash-on-force surprises an operator] → stash is named (`ensure_config forced update
   <date>`) and the warning prints `git -C config stash pop` as the recovery command.
 - [`config.yaml` is gitignored so the path fix can't be PR'd] → fix applied host-locally

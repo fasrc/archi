@@ -17,7 +17,10 @@ from origin. The function SHALL be idempotent across repeated deploys.
 
 ### Requirement: Version pinning
 The checkout SHALL target a pinned ref `CONFIG_REF` (annotated tag; overridable via the
-`CONFIG_REF` environment variable), never a floating branch. On a clean working tree the
+`CONFIG_REF` environment variable), never a floating branch, and `lib.sh` SHALL record
+the expected commit id (`CONFIG_SHA`) alongside the tag name. After fetch, the deploy
+SHALL verify the tag resolves to `CONFIG_SHA` and abort on mismatch (a re-pointed remote
+tag is treated as an attack or mistake, never followed). On a clean working tree the
 deploy SHALL converge `config/` to that ref. If the ref does not resolve after fetch,
 the deploy SHALL abort.
 
@@ -30,6 +33,10 @@ the deploy SHALL abort.
 - **WHEN** `CONFIG_REF` names a ref that does not exist
 - **THEN** the deploy dies before `archi create`, naming the bad ref
 
+#### Scenario: Re-pointed tag aborts
+- **WHEN** the remote tag `CONFIG_REF` resolves to a commit other than `CONFIG_SHA`
+- **THEN** the deploy dies before `archi create`, naming both commit ids
+
 ### Requirement: Dirty-tree safety
 A dirty `config/` working tree (any modified, deleted, or untracked path) SHALL NOT be
 modified by a default deploy run: no checkout, no reset, no clean. The deploy SHALL
@@ -41,8 +48,9 @@ SHALL NOT be used under any path.
 #### Scenario: Dirty tree untouched by default
 - **WHEN** `config/` has a modified tracked file and an untracked file and a default
   deploy runs
-- **THEN** both files are byte-for-byte unchanged afterward and the deploy proceeded
-  using the on-disk config
+- **THEN** both files are byte-for-byte unchanged afterward, the deploy proceeded using
+  the on-disk config, and the warning stated how far HEAD is from `CONFIG_REF`
+  (commit count and diffstat)
 
 #### Scenario: Forced update stashes, never destroys
 - **WHEN** the same dirty tree is deployed with `CONFIG_FORCE=1`
@@ -57,6 +65,17 @@ before `archi create` if any is missing.
 #### Scenario: Partial or wrong checkout aborts
 - **WHEN** the checked-out ref lacks `lists/sources.list`
 - **THEN** the deploy dies naming the missing file, and `archi create` never runs
+
+### Requirement: Config provenance is recorded
+Every deploy SHALL record the provisioned config state — `git -C config rev-parse HEAD`,
+whether it matches `CONFIG_SHA`, and a name-status listing of any dirty paths — in the
+deploy output, so the exact config that produced any deployment is reconstructable
+after the fact.
+
+#### Scenario: Off-pin deploy is reconstructable
+- **WHEN** a deploy runs with a dirty tree (off the pin)
+- **THEN** the deploy output records the config HEAD, the pin mismatch, and the dirty
+  paths with their statuses
 
 ### Requirement: Sources path resolves to the provisioned checkout
 The deploy config's ingestion source lists SHALL reference paths under the provisioned
