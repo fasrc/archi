@@ -8,7 +8,14 @@
 #      block is kept as a standby — fall back by setting
 #      services.chat_app.default_provider to: anthropic.
 #
-# Create with (run from repo root, or use deploy/fasrc-dev/scripts/create.sh):
+# Create with the deploy script — it provisions the config/ checkout
+# (fasrc/archi-config, pinned + SHA-verified) BEFORE rendering the deployment:
+#   deploy/fasrc-dev/scripts/create.sh
+#
+# Advanced: invoking `archi create` directly BYPASSES that provisioning — on a
+# host without config/ checked out, the CLI silently skips the missing source
+# lists (weblists/ ends up empty → empty corpus). Only do it if config/ is
+# already provisioned, e.g. after a prior scripted deploy:
 #   archi create \
 #     --name dev \
 #     --config deploy/fasrc-dev/config.yaml \
@@ -84,7 +91,9 @@ data_manager:
   sources:
     links:
       input_lists:
-        - <PATH_TO_SOURCES_LIST>   # newline-delimited list of source URLs to ingest
+        # The nested config/ checkout (fasrc/archi-config), provisioned by
+        # ensure_config on every scripted deploy. Use an ABSOLUTE path.
+        - <REPO_ROOT>/config/lists/sources.list
   embedding_name: HuggingFaceEmbeddings
   # --- ingest processing: HTML->Markdown (default-on) + optional LLM categorization ---
   # Categorization makes one LLM call per doc at ingest, writing a single-token

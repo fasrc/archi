@@ -20,7 +20,10 @@ The checkout SHALL target a pinned ref `CONFIG_REF` (annotated tag; overridable 
 `CONFIG_REF` environment variable), never a floating branch, and `lib.sh` SHALL record
 the expected commit id (`CONFIG_SHA`) alongside the tag name. After fetch, the deploy
 SHALL verify the tag resolves to `CONFIG_SHA` and abort on mismatch (a re-pointed remote
-tag is treated as an attack or mistake, never followed). On a clean working tree the
+tag is treated as an attack or mistake, never followed). On provisioned hosts the REMOTE
+tag object SHALL be checked directly (`git ls-remote`) so a re-point aborts even though
+`git fetch --tags` refuses to clobber the correct local tag; an unreachable origin is
+tolerated with a warning (local verification still applies). On a clean working tree the
 deploy SHALL converge `config/` to that ref. If the ref does not resolve after fetch,
 the deploy SHALL abort.
 
@@ -37,25 +40,41 @@ the deploy SHALL abort.
 - **WHEN** the remote tag `CONFIG_REF` resolves to a commit other than `CONFIG_SHA`
 - **THEN** the deploy dies before `archi create`, naming both commit ids
 
-### Requirement: Dirty-tree safety
-A dirty `config/` working tree (any modified, deleted, or untracked path) SHALL NOT be
-modified by a default deploy run: no checkout, no reset, no clean. The deploy SHALL
-print a loud warning naming the dirty paths and continue with the on-disk config. With
-`CONFIG_FORCE=1`, the deploy SHALL preserve the dirty state via `git stash -u` (printing
-the recovery command) before checking out the pin; `git reset --hard` and `git clean`
-SHALL NOT be used under any path.
+### Requirement: Dirty-tree safety, split by dirt type
+Local state SHALL never be destroyed: `git reset --hard` and `git clean` SHALL NOT be
+used under any path, and tracked modifications are only ever moved aside via a
+recoverable `git stash -u` (with the recovery command printed). Default-run behavior
+splits by dirt type:
+- **Untracked-only dirt** SHALL NOT block pin convergence: the deploy checks out the
+  pin (git's own collision protection guards untracked files; a collision aborts the
+  deploy) and untracked files remain in place.
+- **Tracked modifications with HEAD at the pin** (live edits on the pinned base) SHALL
+  be left byte-for-byte untouched; the deploy proceeds with the on-disk config after a
+  loud warning naming the dirty paths.
+- **Tracked modifications with HEAD off the pin** SHALL abort the deploy, naming the
+  dirty paths and the symmetric drift (ahead N, behind M vs the pin), unless
+  `CONFIG_FORCE=1` — which stashes (including untracked) and converges to the pin.
+Drift SHALL always be reported symmetrically (ahead and behind), never behind-only.
 
-#### Scenario: Dirty tree untouched by default
-- **WHEN** `config/` has a modified tracked file and an untracked file and a default
-  deploy runs
-- **THEN** both files are byte-for-byte unchanged afterward, the deploy proceeded using
-  the on-disk config, and the warning stated how far HEAD is from `CONFIG_REF`
-  (commit count and diffstat)
+#### Scenario: Untracked-only dirt converges
+- **WHEN** `config/` has only untracked files and HEAD is not at the pin
+- **THEN** the deploy converges HEAD to the pin and the untracked files are preserved
+
+#### Scenario: Live edits on the pin proceed untouched
+- **WHEN** `config/` has a modified tracked file and HEAD equals the pin commit
+- **THEN** the file is byte-for-byte unchanged, the deploy proceeds with the on-disk
+  config, and the warning names the dirty paths
+
+#### Scenario: Tracked edits on an off-pin base abort
+- **WHEN** `config/` has a modified tracked file and HEAD is NOT at the pin
+- **THEN** the deploy aborts before `archi create`, naming the dirty paths, the
+  ahead/behind drift, and the `CONFIG_FORCE=1` escape
 
 #### Scenario: Forced update stashes, never destroys
-- **WHEN** the same dirty tree is deployed with `CONFIG_FORCE=1`
-- **THEN** `config/` is at `CONFIG_REF`, the edits exist in a stash entry, and the
-  warning printed the `git -C config stash pop` recovery command
+- **WHEN** the off-pin dirty tree is deployed with `CONFIG_FORCE=1`
+- **THEN** `config/` is at `CONFIG_REF`, the edits exist in a stash entry, the warning
+  printed the `git -C config stash pop` recovery command, and provenance labels the
+  stashed paths as NOT part of the deployed config
 
 ### Requirement: Post-provision verification
 After provisioning, the deploy SHALL verify that `lists/sources.list`,

@@ -291,5 +291,18 @@ The high-performance server that hosts the actual chat language model on FASRC's
 separately from archi. archi talks to it over an OpenAI-compatible interface.
 
 ### deploy/fasrc-dev
-The folder holding the FASRC `dev` deployment's config, secrets, and scripts. It's deliberately
-kept out of version control (git-ignored) and never appears in pull requests.
+The folder holding the FASRC `dev` deployment's config, secrets, and scripts. The real config
+and secrets are deliberately kept out of version control (git-ignored), but the management
+scripts and a sanitized example config *are* tracked and reviewed like any other code.
+
+### archi-config
+A separate, private repository holding the operational configuration a deployment needs —
+which websites to ingest, environment settings, the assistant's instructions. Kept apart from
+the public archi code so internal details never appear in the open-source repo. Deploy scripts
+fetch it automatically (see [config pin](#config-pin)).
+
+### config pin
+The exact, named version of the [archi-config](#archi-config) repository that deployments
+install — like ordering a specific edition of a book rather than "whatever's newest". Every
+deploy checks the version it got against a recorded fingerprint and refuses to proceed if
+someone has quietly swapped what the name points to.

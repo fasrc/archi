@@ -43,13 +43,17 @@ the live config into archi-config. Deployment behavior does not change.
    ruleset protecting `deploy-pin-*` was attempted as defense-in-depth and is
    unavailable on the private repo's plan — 403, requires Pro; the `CONFIG_SHA` check
    is the load-bearing control.)
-2. **Dirty tree wins by default.** `git -C config status --porcelain` non-empty → warn
-   loudly (naming the dirty paths) and deploy with on-disk config. `CONFIG_FORCE=1` →
-   `git stash -u` then checkout — stash is recoverable; `reset --hard`/`clean -fd` are
-   banned because agent prompts are edited live through a bind mount and question banks
-   are untracked-only. Rationale over "fail on dirty": a dirty tree is the *normal* state
-   of an operated host (issue #99 captured one), and blocking every deploy on it would
-   train operators to force. **Every deploy records config provenance** — `git -C config
+2. **Dirty-tree policy: split by dirt type** (refined after a second adversarial pass,
+   operator-approved 2026-07-16). Untracked-only dirt does NOT block pin convergence —
+   git's checkout collision protection makes converging safe, and the dev host's dirt
+   is typically untracked-only (question banks), so a pure dirty-wins rule would have
+   silently pinned this host to an old base forever after any pin bump. Tracked edits
+   with HEAD *at* the pin (the live-edit workflow) win: untouched, warn, deploy on-disk.
+   Tracked edits with HEAD *off* the pin abort (that deploy would silently run an old
+   base under local edits) unless `CONFIG_FORCE=1` → `git stash -u` then checkout —
+   stash is recoverable; `reset --hard`/`clean -fd` are banned. Rationale over blanket
+   fail-on-dirty stands: it would train operators to force (issue #99 captured dirty as
+   the normal state). **Every deploy records config provenance** — `git -C config
    rev-parse HEAD`, a pin-match boolean, and a name-status of dirty paths — and the
    dirty-tree warning states how far off the pin the deploy is running
    (`rev-list --count HEAD..$CONFIG_REF` + `diff --stat`), so an off-pin deploy is always

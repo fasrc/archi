@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Shared config + helpers for managing the archi 'dev' deployment on localhost.
 # Sourced by create.sh / redeploy.sh / nuke.sh / status.sh — not run directly.
+# Deploys provision the config/ checkout (fasrc/archi-config) at a pinned,
+# SHA-verified ref via ensure_config — see the "config repo pin" section for
+# the bump procedure, and test_ensure_config.sh for the executable contract.
 set -euo pipefail
 
 # Resolve the repo root from this file's location (deploy/fasrc-dev/scripts/),
@@ -15,6 +18,23 @@ CONFIG="deploy/fasrc-dev/config.yaml"         # repo-relative (git-excluded; cop
 # defaults to ~/.secrets/archi-secrets.env so the scripts aren't tied to one user.
 ENV_FILE="${ARCHI_ENV_FILE:-$HOME/.secrets/archi-secrets.env}"
 SERVICES="chatbot"                            # auto-pulls postgres + data-manager
+
+# --- config repo pin (fasrc/archi-config) ------------------------------------
+# The config/ checkout (source lists, environments, agent prompts) is provisioned
+# by ensure_config on every deploy at a pinned, content-addressed ref: CONFIG_REF
+# names the tag, CONFIG_SHA is the commit it must resolve to (a re-pointed tag
+# aborts the deploy instead of being believed).
+# Pin bump procedure: create a NEW annotated tag in fasrc/archi-config (never
+# move an existing one — `git fetch --tags` refuses to clobber a moved tag), then
+# update CONFIG_REF + CONFIG_SHA here in the same PR. After bumping, deploy with
+# a clean config/ tree (or CONFIG_FORCE=1) so the checkout actually converges.
+# One-off override: CONFIG_REF=... CONFIG_SHA=... ./redeploy.sh
+# CONFIG_REPO/CONFIG_DIR are overridable so test_ensure_config.sh can run
+# against a local fixture instead of the real remote/checkout.
+CONFIG_REPO="${CONFIG_REPO:-git@github.com:fasrc/archi-config.git}"
+CONFIG_REF="${CONFIG_REF:-deploy-pin-2026-07}"
+CONFIG_SHA="${CONFIG_SHA:-990c54c761ce83bce311d00a2576d58fd8af517b}"
+CONFIG_DIR="${CONFIG_DIR:-$REPO_ROOT/config}"
 
 # Resolve the secrets file: absolute path used as-is, relative path is repo-relative.
 case "$ENV_FILE" in
@@ -66,11 +86,117 @@ check_llm() {
   fi
 }
 
+# --- config repo provisioning -------------------------------------------------
+# Provision $CONFIG_DIR at the pin. Dirty trees WIN by default: operators
+# live-edit agent prompts and keep untracked local files (benchmarking banks)
+# here — a blind checkout would destroy work, so a dirty tree is warned about
+# (with pin drift) and deployed as-is unless CONFIG_FORCE=1, which stashes
+# (recoverable) and never uses reset/clean.
+# Agents-dir note (verified 2026-07-16): on THIS host the deployment stages
+# deploy/fasrc-dev/agents/ into the rendered dir (~/.archi/archi-dev/data/agents,
+# bind-mounted rw) — config/agents/ is the config-repo copy that OTHER hosts
+# bind-mount live (issue #99's capture); it is not consumed by this deployment.
+ensure_config() {
+  if [ ! -e "$CONFIG_DIR/.git" ]; then
+    log "config/ absent — cloning $CONFIG_REPO…"
+    git clone --quiet "$CONFIG_REPO" "$CONFIG_DIR" \
+      || die "could not clone $CONFIG_REPO into $CONFIG_DIR"
+  fi
+
+  # Verify the REMOTE tag object first: a re-pointed remote tag must abort even
+  # though `git fetch --tags` would refuse to clobber our (correct) local tag.
+  # ls-remote failing entirely = offline; that's tolerated — the local SHA
+  # check below still guards content.
+  local remote_commit=""
+  if remote_commit="$(git -C "$CONFIG_DIR" ls-remote origin \
+        "refs/tags/$CONFIG_REF^{}" "refs/tags/$CONFIG_REF" 2>/dev/null \
+        | tail -1 | cut -f1)"; then
+    if [ -n "$remote_commit" ] && [ "$remote_commit" != "$CONFIG_SHA" ]; then
+      die "config pin mismatch on REMOTE: $CONFIG_REF points at $remote_commit, expected $CONFIG_SHA — re-pointed tag? Refusing to deploy."
+    fi
+  else
+    warn "config: could not reach origin (offline?); verifying local refs only"
+  fi
+  # Pick up new tags (e.g. a bumped pin). Rejection of a moved same-name tag is
+  # non-fatal — the ls-remote check above already adjudicated tampering.
+  git -C "$CONFIG_DIR" fetch --tags --quiet origin 2>/dev/null \
+    || warn "config: fetch from origin failed; using local refs"
+
+  local resolved
+  resolved="$(git -C "$CONFIG_DIR" rev-parse "$CONFIG_REF^{commit}" 2>/dev/null)" \
+    || die "config ref '$CONFIG_REF' does not resolve in $CONFIG_DIR (bad ref, or fetch needed?)"
+  [ "$resolved" = "$CONFIG_SHA" ] \
+    || die "config pin mismatch: $CONFIG_REF resolves to $resolved, expected $CONFIG_SHA — re-pointed tag? Refusing to deploy."
+
+  local dirty tracked_dirty head drift stashed=""
+  dirty="$(git -C "$CONFIG_DIR" status --porcelain)"
+  tracked_dirty="$(printf '%s\n' "$dirty" | grep -v '^??' | grep -v '^$' || true)"
+  head="$(git -C "$CONFIG_DIR" rev-parse HEAD)"
+  # Symmetric drift: "ahead A, behind B" relative to the pin (P3 review fix —
+  # `HEAD..pin` alone reports 0 for ahead/diverged checkouts).
+  drift="$(git -C "$CONFIG_DIR" rev-list --left-right --count "HEAD...$CONFIG_SHA" 2>/dev/null \
+    | awk '{print "ahead " $1 ", behind " $2}' || echo 'drift unknown')"
+
+  if [ "$head" = "$CONFIG_SHA" ] && [ -n "$tracked_dirty" ]; then
+    # Live edits ON the pin — the designed workflow. Never touch them.
+    warn "config: tracked edits on top of the pin — leaving them; deploying the ON-DISK config. Dirty paths:"
+    printf '%s\n' "$dirty" >&2
+    warn "config: reconverge with CONFIG_FORCE=1 (stashes edits) or commit-and-sync them."
+  elif [ "$head" != "$CONFIG_SHA" ]; then
+    if [ -z "$tracked_dirty" ]; then
+      # Clean or untracked-only: convergence is safe — git checkout never
+      # touches untracked files (and aborts itself on a path collision).
+      log "config: converging to $CONFIG_REF ($CONFIG_SHA) [$drift]"
+      git -C "$CONFIG_DIR" checkout --quiet "$CONFIG_SHA" \
+        || die "config: checkout of $CONFIG_SHA refused (untracked file collision?) — resolve manually or CONFIG_FORCE=1"
+      head="$CONFIG_SHA"
+    elif [ "${CONFIG_FORCE:-0}" = "1" ]; then
+      warn "config: dirty tree off the pin — CONFIG_FORCE=1: stashing edits, then converging."
+      warn "config: recover them with: git -C $CONFIG_DIR stash pop"
+      git -C "$CONFIG_DIR" stash push --include-untracked \
+        -m "ensure_config forced update $(date +%F)" >/dev/null
+      stashed="$dirty"
+      git -C "$CONFIG_DIR" checkout --quiet "$CONFIG_SHA"
+      head="$CONFIG_SHA"
+      dirty="$(git -C "$CONFIG_DIR" status --porcelain)"
+    else
+      # Tracked edits on a NON-pin base: deploying would silently run an old
+      # base under local edits. Ambiguous — refuse (adversarial-review fix).
+      warn "config: tracked edits on a checkout that is OFF the pin ($drift vs $CONFIG_REF). Dirty paths:"
+      printf '%s\n' "$tracked_dirty" >&2
+      die "config: refusing to deploy an off-pin base with local edits — commit-and-sync them, or CONFIG_FORCE=1 to stash and converge."
+    fi
+  fi
+
+  # Provenance: every deploy records the exact config state it ran with.
+  local match=no
+  [ "$head" = "$CONFIG_SHA" ] && match=yes
+  log "config provenance: HEAD=$head pin=$CONFIG_REF@$CONFIG_SHA match=$match"
+  if [ -n "$stashed" ]; then
+    log "config provenance: stashed pre-deploy edits (NOT in the deployed config):"
+    printf '%s\n' "$stashed"
+  elif [ -n "$dirty" ]; then
+    log "config provenance: dirty paths (name-status):"
+    printf '%s\n' "$dirty"
+  fi
+
+  # A bad ref/partial checkout must die before `archi create` bakes it in.
+  # Type-strict (P3 review fix): a file named `agents` must not pass.
+  [ -f "$CONFIG_DIR/lists/sources.list" ] \
+    || die "config checkout is missing expected file: lists/sources.list (wrong ref content?)"
+  [ -f "$CONFIG_DIR/environments/dev.yaml" ] \
+    || die "config checkout is missing expected file: environments/dev.yaml (wrong ref content?)"
+  [ -d "$CONFIG_DIR/agents" ] \
+    || die "config checkout is missing expected directory: agents (wrong ref content?)"
+}
+
 # The actual deploy. --force makes this idempotent: first run creates, repeat
 # runs rebuild images + re-render config + restart. Volumes (DB + corpus) are
 # preserved across create/--force; only nuke.sh removes them.
 archi_deploy() {
-  require_archi; require_files; check_llm
+  require_archi; require_files
+  ensure_config   # provision config/ at the pin BEFORE rendering the deployment
+  check_llm
   cd "$REPO_ROOT"
   log "Deploying (hostmode, --force; data volumes preserved)…"
   archi create \
