@@ -22,6 +22,7 @@ export GH_TOKEN ?= $(shell gh auth token 2>/dev/null)
 RUN_FLAGS := \
   --userns=keep-id \
   -e RALPH_MODEL \
+  -e RALPH_TASKS \
   -e GH_TOKEN \
   -e GH_REPO=fasrc/archi \
   -v $(WORKSPACE):/workspace \
