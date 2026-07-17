@@ -101,12 +101,26 @@ ensure_config() {
     log "config/ absent — cloning $CONFIG_REPO…"
     git clone --quiet "$CONFIG_REPO" "$CONFIG_DIR" \
       || die "could not clone $CONFIG_REPO into $CONFIG_DIR"
-  else
-    # Tolerate a failed fetch (transient network): the SHA check below still
-    # verifies whatever we have locally; only an unresolvable ref is fatal.
-    git -C "$CONFIG_DIR" fetch --tags --quiet origin 2>/dev/null \
-      || warn "config: fetch from origin failed (offline?); using local refs"
   fi
+
+  # Verify the REMOTE tag object first: a re-pointed remote tag must abort even
+  # though `git fetch --tags` would refuse to clobber our (correct) local tag.
+  # ls-remote failing entirely = offline; that's tolerated — the local SHA
+  # check below still guards content.
+  local remote_commit=""
+  if remote_commit="$(git -C "$CONFIG_DIR" ls-remote origin \
+        "refs/tags/$CONFIG_REF^{}" "refs/tags/$CONFIG_REF" 2>/dev/null \
+        | tail -1 | cut -f1)"; then
+    if [ -n "$remote_commit" ] && [ "$remote_commit" != "$CONFIG_SHA" ]; then
+      die "config pin mismatch on REMOTE: $CONFIG_REF points at $remote_commit, expected $CONFIG_SHA — re-pointed tag? Refusing to deploy."
+    fi
+  else
+    warn "config: could not reach origin (offline?); verifying local refs only"
+  fi
+  # Pick up new tags (e.g. a bumped pin). Rejection of a moved same-name tag is
+  # non-fatal — the ls-remote check above already adjudicated tampering.
+  git -C "$CONFIG_DIR" fetch --tags --quiet origin 2>/dev/null \
+    || warn "config: fetch from origin failed; using local refs"
 
   local resolved
   resolved="$(git -C "$CONFIG_DIR" rev-parse "$CONFIG_REF^{commit}" 2>/dev/null)" \
@@ -114,48 +128,66 @@ ensure_config() {
   [ "$resolved" = "$CONFIG_SHA" ] \
     || die "config pin mismatch: $CONFIG_REF resolves to $resolved, expected $CONFIG_SHA — re-pointed tag? Refusing to deploy."
 
-  local dirty head
+  local dirty tracked_dirty head drift stashed=""
   dirty="$(git -C "$CONFIG_DIR" status --porcelain)"
+  tracked_dirty="$(printf '%s\n' "$dirty" | grep -v '^??' | grep -v '^$' || true)"
   head="$(git -C "$CONFIG_DIR" rev-parse HEAD)"
+  # Symmetric drift: "ahead A, behind B" relative to the pin (P3 review fix —
+  # `HEAD..pin` alone reports 0 for ahead/diverged checkouts).
+  drift="$(git -C "$CONFIG_DIR" rev-list --left-right --count "HEAD...$CONFIG_SHA" 2>/dev/null \
+    | awk '{print "ahead " $1 ", behind " $2}' || echo 'drift unknown')"
 
-  if [ -z "$dirty" ]; then
-    if [ "$head" != "$CONFIG_SHA" ]; then
-      log "config: clean tree — converging to $CONFIG_REF ($CONFIG_SHA)"
+  if [ "$head" = "$CONFIG_SHA" ] && [ -n "$tracked_dirty" ]; then
+    # Live edits ON the pin — the designed workflow. Never touch them.
+    warn "config: tracked edits on top of the pin — leaving them; deploying the ON-DISK config. Dirty paths:"
+    printf '%s\n' "$dirty" >&2
+    warn "config: reconverge with CONFIG_FORCE=1 (stashes edits) or commit-and-sync them."
+  elif [ "$head" != "$CONFIG_SHA" ]; then
+    if [ -z "$tracked_dirty" ]; then
+      # Clean or untracked-only: convergence is safe — git checkout never
+      # touches untracked files (and aborts itself on a path collision).
+      log "config: converging to $CONFIG_REF ($CONFIG_SHA) [$drift]"
+      git -C "$CONFIG_DIR" checkout --quiet "$CONFIG_SHA" \
+        || die "config: checkout of $CONFIG_SHA refused (untracked file collision?) — resolve manually or CONFIG_FORCE=1"
+      head="$CONFIG_SHA"
+    elif [ "${CONFIG_FORCE:-0}" = "1" ]; then
+      warn "config: dirty tree off the pin — CONFIG_FORCE=1: stashing edits, then converging."
+      warn "config: recover them with: git -C $CONFIG_DIR stash pop"
+      git -C "$CONFIG_DIR" stash push --include-untracked \
+        -m "ensure_config forced update $(date +%F)" >/dev/null
+      stashed="$dirty"
       git -C "$CONFIG_DIR" checkout --quiet "$CONFIG_SHA"
       head="$CONFIG_SHA"
+      dirty="$(git -C "$CONFIG_DIR" status --porcelain)"
+    else
+      # Tracked edits on a NON-pin base: deploying would silently run an old
+      # base under local edits. Ambiguous — refuse (adversarial-review fix).
+      warn "config: tracked edits on a checkout that is OFF the pin ($drift vs $CONFIG_REF). Dirty paths:"
+      printf '%s\n' "$tracked_dirty" >&2
+      die "config: refusing to deploy an off-pin base with local edits — commit-and-sync them, or CONFIG_FORCE=1 to stash and converge."
     fi
-  elif [ "${CONFIG_FORCE:-0}" = "1" ]; then
-    warn "config: dirty tree — CONFIG_FORCE=1: stashing live edits before converging."
-    warn "config: recover them with: git -C $CONFIG_DIR stash pop"
-    git -C "$CONFIG_DIR" stash push --include-untracked \
-      -m "ensure_config forced update $(date +%F)" >/dev/null
-    git -C "$CONFIG_DIR" checkout --quiet "$CONFIG_SHA"
-    head="$CONFIG_SHA"
-  else
-    warn "config: dirty tree — leaving it untouched; deploying with the ON-DISK config, not the pin. Dirty paths:"
-    printf '%s\n' "$dirty" >&2
-    local behind
-    behind="$(git -C "$CONFIG_DIR" rev-list --count "HEAD..$CONFIG_SHA" 2>/dev/null || echo '?')"
-    warn "config: pin drift: HEAD is $behind commit(s) behind $CONFIG_REF; diffstat vs pin:"
-    git -C "$CONFIG_DIR" diff --stat "$CONFIG_SHA" >&2 || true
-    warn "config: reconverge with CONFIG_FORCE=1 (stashes edits) or commit-and-sync them."
   fi
 
   # Provenance: every deploy records the exact config state it ran with.
   local match=no
   [ "$head" = "$CONFIG_SHA" ] && match=yes
   log "config provenance: HEAD=$head pin=$CONFIG_REF@$CONFIG_SHA match=$match"
-  if [ -n "$dirty" ]; then
+  if [ -n "$stashed" ]; then
+    log "config provenance: stashed pre-deploy edits (NOT in the deployed config):"
+    printf '%s\n' "$stashed"
+  elif [ -n "$dirty" ]; then
     log "config provenance: dirty paths (name-status):"
     printf '%s\n' "$dirty"
   fi
 
   # A bad ref/partial checkout must die before `archi create` bakes it in.
-  local f
-  for f in lists/sources.list environments/dev.yaml agents; do
-    [ -e "$CONFIG_DIR/$f" ] \
-      || die "config checkout is missing expected path: $f (wrong ref content?)"
-  done
+  # Type-strict (P3 review fix): a file named `agents` must not pass.
+  [ -f "$CONFIG_DIR/lists/sources.list" ] \
+    || die "config checkout is missing expected file: lists/sources.list (wrong ref content?)"
+  [ -f "$CONFIG_DIR/environments/dev.yaml" ] \
+    || die "config checkout is missing expected file: environments/dev.yaml (wrong ref content?)"
+  [ -d "$CONFIG_DIR/agents" ] \
+    || die "config checkout is missing expected directory: agents (wrong ref content?)"
 }
 
 # The actual deploy. --force makes this idempotent: first run creates, repeat
