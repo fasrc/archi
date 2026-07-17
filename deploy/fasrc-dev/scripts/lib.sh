@@ -88,10 +88,14 @@ check_llm() {
 
 # --- config repo provisioning -------------------------------------------------
 # Provision $CONFIG_DIR at the pin. Dirty trees WIN by default: operators
-# live-edit agent prompts (bind-mounted into containers) and keep untracked
-# local files (benchmarking banks) here — a blind checkout would destroy work,
-# so a dirty tree is warned about (with pin drift) and deployed as-is unless
-# CONFIG_FORCE=1, which stashes (recoverable) and never uses reset/clean.
+# live-edit agent prompts and keep untracked local files (benchmarking banks)
+# here — a blind checkout would destroy work, so a dirty tree is warned about
+# (with pin drift) and deployed as-is unless CONFIG_FORCE=1, which stashes
+# (recoverable) and never uses reset/clean.
+# Agents-dir note (verified 2026-07-16): on THIS host the deployment stages
+# deploy/fasrc-dev/agents/ into the rendered dir (~/.archi/archi-dev/data/agents,
+# bind-mounted rw) — config/agents/ is the config-repo copy that OTHER hosts
+# bind-mount live (issue #99's capture); it is not consumed by this deployment.
 ensure_config() {
   if [ ! -e "$CONFIG_DIR/.git" ]; then
     log "config/ absent — cloning $CONFIG_REPO…"

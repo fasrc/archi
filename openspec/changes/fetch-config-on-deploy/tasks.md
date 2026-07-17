@@ -17,12 +17,12 @@
 
 ## 4. Verify (issue #99 checks A–F, refreshed anchors)
 
-- [ ] 4.1 A: fresh-clone check in a mktemp dir at `deploy-pin-2026-07` — sources.list + environments/dev.yaml + agents/ present
-- [ ] 4.2 B: dirty-tree byte-for-byte safety — via the self-test, plus a live run against the real (deliberately dirtied then restored) checkout
-- [ ] 4.3 C: clean-tree pin convergence — `git -C config rev-parse HEAD == deploy-pin-2026-07^{commit}` after a real `redeploy.sh`
-- [ ] 4.4 D: `git -C config check-ignore secrets/` still holds; no secret in any commit
-- [ ] 4.5 E+F: both entrypoints reach ensure_config (grep) and the gate is green
-- [ ] 4.6 Live: `redeploy.sh` end-to-end on this host (clean tree expected) → containers healthy, chat smoke HTTP 200 (no behavior change expected — this proves no regression); confirm which agents dir the running deployment bind-mounts (`config/agents` vs `deploy/fasrc-dev/agents`) and document it in the lib.sh header
+- [x] 4.1 A: fresh-clone check in a mktemp dir at `deploy-pin-2026-07` — sources.list + environments/dev.yaml + agents/ present
+- [x] 4.2 B: dirty-tree byte-for-byte safety — via the self-test, plus a live run against the real (deliberately dirtied then restored) checkout
+- [x] 4.3 C: clean-tree pin convergence — `git -C config rev-parse HEAD == deploy-pin-2026-07^{commit}` after a real `redeploy.sh`
+- [x] 4.4 D: `git -C config check-ignore secrets/` still holds; no secret in any commit
+- [x] 4.5 E+F: both entrypoints reach ensure_config (grep) and the gate is green
+- [x] 4.6 Live: `redeploy.sh` end-to-end on this host (clean tree expected) → containers healthy, chat smoke HTTP 200 (no behavior change expected — this proves no regression); confirm which agents dir the running deployment bind-mounts (`config/agents` vs `deploy/fasrc-dev/agents`) and document it in the lib.sh header
 
 ## 5. PR + close
 
