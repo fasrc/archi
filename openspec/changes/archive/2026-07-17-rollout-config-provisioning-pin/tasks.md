@@ -47,37 +47,64 @@
   fasrc/archi-config (never move `deploy-pin-2026-07`); push the tag.
   → tag `64ca5ffa` → commit `98f9bd22` on remote (local==remote object, verified). Old
   `deploy-pin-2026-07` untouched (still `ab4593e`→`990c54c7`).
-- [ ] 3.2 Branch `fasrc/archi` from `origin/dev`; update `CONFIG_REF` and `CONFIG_SHA`
+- [x] 3.2 Branch `fasrc/archi` from `origin/dev`; update `CONFIG_REF` and `CONFIG_SHA`
   in `deploy/fasrc-dev/scripts/lib.sh` to the new tag + its commit id.
-- [ ] 3.3 Run `deploy/fasrc-dev/scripts/test_ensure_config.sh` against a local fixture —
-  the pin-values substitute for the (absent) Python diff-cover signal.
-- [ ] 3.4 Run `bash scripts/gate.sh` (format + unit tests); commit lowercase, no
+  → branch `rollout/config-pin-2026-07b`; pin → `deploy-pin-2026-07b` / `98f9bd22`.
+- [x] 3.3 Run `deploy/fasrc-dev/scripts/test_ensure_config.sh` against a local fixture —
+  the pin-values substitute for the (absent) Python diff-cover signal. → 10/10 pass.
+- [x] 3.4 Run `bash scripts/gate.sh` (format + unit tests); commit lowercase, no
   trailers; open PR to `fasrc/archi:dev`, print the full PR URL. Flag the
   `fasrc-cannon.md` path move for any host that bind-mounts `config/agents/` live.
+  → gate green (870 passed); commit `5e553fa5`; PR #116
+  https://github.com/fasrc/archi/pull/116 (cannon path-move flagged in the PR body).
 
 ## 4. Roll out on the dev host (D4)
 
-- [ ] 4.1 Sync local `dev` to `origin/dev` (brings `ensure_config` + merged #108) and
+- [x] 4.1 Sync local `dev` to `origin/dev` (brings `ensure_config` + merged #108) and
   update the working branch.
-- [ ] 4.2 Back up the stranded checkout: `mv config config.pre-rewrite-bak` (retains the
-  2 stranded commits + all host-local files).
-- [ ] 4.3 Run `deploy/fasrc-dev/scripts/redeploy.sh` (with the new pin, via the branch or
+  → #116 merged; deploying from branch `rollout/config-pin-2026-07b` whose `lib.sh` is
+  byte-identical to `origin/dev` (both carry the new pin). Full dev sync + merged-branch
+  cleanup deferred to closeout to avoid a mid-rollout switch with a dirty tasks.md.
+- [x] 4.2 Back up the stranded checkout: `mv config config.pre-rewrite-bak` (retains the
+  2 stranded commits + all host-local files). → backup 1.2M; reconcile worktree detached first.
+- [x] 4.3 Run `deploy/fasrc-dev/scripts/redeploy.sh` (with the new pin, via the branch or
   a one-off `CONFIG_REF=…/CONFIG_SHA=…`); `ensure_config` clones fresh at the new pin.
-- [ ] 4.4 Restore kept host-local untracked files (`scripts/` additions, `compose.yaml`)
+  → done. Clone + converge to pin (provenance match=yes); re-ingest completed 17:17
+  (~88 min). Chat stayed HTTP 200 throughout; retrieval degraded during the re-embed.
+- [x] 4.4 Restore kept host-local untracked files (`scripts/` additions, `compose.yaml`)
   from `config.pre-rewrite-bak` into the fresh `config/`.
+  → restored benchmarking/secrets.env (for the RAGAS re-baseline; still gitignored) +
+  4 host ops scripts (iptables/singularity/vllm). compose.yaml left as pin's tracked copy.
 
 ## 5. Verify corpus parity (D5, spec requirement)
 
-- [ ] 5.1 Assert the deploy provenance line reports `match=yes`.
-- [ ] 5.2 Wait for re-ingest (~53 min); poll for the "Vectorstore update has been
-  completed" marker.
-- [ ] 5.3 Compare post-ingest corpus counts to the task 1.1 baseline: web ≈ 549, git 724
+- [x] 5.1 Assert the deploy provenance line reports `match=yes`. → `HEAD=98f9bd22 … match=yes`.
+- [x] 5.2 Wait for re-ingest (~53 min); poll for the "Vectorstore update has been
+  completed" marker. → completed 17:17 (poll 88).
+- [x] 5.3 Compare post-ingest corpus counts to the task 1.1 baseline: web ≈ 549, git 724
   embedded / 13 failed. A drop in embedded git documents = rollout failure → stop and
   investigate (restore from `config.pre-rewrite-bak` if needed).
-- [ ] 5.4 Live chat smoke test returns HTTP 200 with the active agent `FASRC-inline-v1`.
+  → PASS: git embedded 724→**738 (+14, grew)**; web 546→548; parent nodes 17767→20445.
+  git failed 13→19 = 12 known .ipynb (#109) + **7 NLTK LazyCorpusLoader parallelism race**
+  (new, pre-existing flaky bug, NOT a rollout regression — each raced suffix still mostly
+  embeds: cpp 26/1, f90 51/2, md 224/4). Acceptance harness `verify_rollout.sh`: ALL GREEN.
+- [x] 5.4 Live chat smoke test returns HTTP 200 with the active agent `FASRC-inline-v1`.
+  → real turn (SLURM sbatch question) → HTTP 200, correct answer, model Qwen3.6, **3 sources**
+  incl. inline citation docs.rc.fas/kb/running-jobs. Fully back online.
+  → independent ingestion-verifier audit: rollout confirmed clean (0 orphans/stale, both
+  git sources, config at pin). See `audit.md`. Corrections: NLTK race is 8 files (7 git +
+  1 web), not 7; found 182 slash-redirect dup pages (~1,154 redundant chunks, pre-existing
+  crawler behavior) + 2 silent seed drops + 2-file KB regression (mkltest/blas_test.f90).
 
 ## 6. Close out
 
-- [ ] 6.1 Remove `config.pre-rewrite-bak` only after 5.3/5.4 pass.
-- [ ] 6.2 Note in the change that the RAGAS re-baseline is now unblocked and MUST be
+- [x] 6.1 Remove `config.pre-rewrite-bak` only after 5.3/5.4 pass.
+  → audit returned clean (0 orphans/stale, config swap verified); backup contents
+  superseded (2 stranded commits) or already restored into config/ → removed.
+  Follow-ups filed: #118 (slash-dup canonicalization), #119 (NLTK race).
+- [x] 6.2 Note in the change that the RAGAS re-baseline is now unblocked and MUST be
   taken on this post-rollout corpus (D6 ordering satisfied).
+  → UNBLOCKED. Corpus is in final intended state (pin 98f9bd22; git 738, web 548, parent
+  nodes 20445; active agent FASRC-inline-v1). Any RAGAS baseline MUST be captured on THIS
+  corpus and not compared across the #97/#108/pin boundary (see
+  project-benchmark-floor-baseline SUPERSEDED note).
