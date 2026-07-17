@@ -39,7 +39,10 @@ the live config into archi-config. Deployment behavior does not change.
    aborts the deploy instead of being believed, and the tag→commit binding is reviewable
    in the fasrc/archi PR (a submodule/vendored copy was rejected: archi is PUBLIC,
    archi-config is PRIVATE — a gitlink breaks public cloners and vendoring leaks ops
-   config). One-off override: `CONFIG_REF=... CONFIG_SHA=... redeploy`.
+   config). One-off override: `CONFIG_REF=... CONFIG_SHA=... redeploy`. (A GitHub tag
+   ruleset protecting `deploy-pin-*` was attempted as defense-in-depth and is
+   unavailable on the private repo's plan — 403, requires Pro; the `CONFIG_SHA` check
+   is the load-bearing control.)
 2. **Dirty tree wins by default.** `git -C config status --porcelain` non-empty → warn
    loudly (naming the dirty paths) and deploy with on-disk config. `CONFIG_FORCE=1` →
    `git stash -u` then checkout — stash is recoverable; `reset --hard`/`clean -fd` are
