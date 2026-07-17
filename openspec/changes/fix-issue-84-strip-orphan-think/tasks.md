@@ -29,4 +29,4 @@
   test file).
 - [x] 3.3 Run the full gate `bash scripts/gate.sh` — must exit 0, including diff-cover
   ≥80% (target 100%) on the changed `base_react.py` lines.
-- [ ] 3.4 Open the PR against `fasrc/archi:dev`; body links issue #84. Do not merge.
+- [x] 3.4 Open the PR against `fasrc/archi:dev`; body links issue #84. Do not merge.
