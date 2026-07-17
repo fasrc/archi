@@ -208,7 +208,24 @@ class BaseReActAgent:
         thinking_content = "\n".join(thinking_matches)
 
         # Remove thinking blocks from visible content
-        visible_content = thinking_pattern.sub("", text).strip()
+        visible_content = thinking_pattern.sub("", text)
+
+        # Handle orphan </think> closing tags (no matching <think>): some models
+        # emit reasoning terminated only by a bare closing tag. Everything up to
+        # and including the LAST remaining </think> is reasoning; keep only what
+        # follows it as visible content, and preserve the reasoning in thinking.
+        last_close = visible_content.rfind("</think>")
+        if last_close != -1:
+            orphan_reasoning = visible_content[:last_close].strip()
+            if orphan_reasoning:
+                thinking_content = (
+                    f"{thinking_content}\n{orphan_reasoning}"
+                    if thinking_content
+                    else orphan_reasoning
+                )
+            visible_content = visible_content[last_close + len("</think>") :]
+
+        visible_content = visible_content.strip()
 
         return visible_content, thinking_content
 
