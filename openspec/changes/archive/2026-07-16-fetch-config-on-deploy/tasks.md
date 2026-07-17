@@ -26,5 +26,5 @@
 
 ## 5. PR + close
 
-- [ ] 5.1 Push branch, open PR to fasrc/archi:dev with `Closes #99` + refreshed-anchor note (issue's SHAs predate the history rewrite), request review
-- [ ] 5.2 Work review findings (verify-first, in-thread replies), merge when green
+- [x] 5.1 Push branch, open PR to fasrc/archi:dev with `Closes #99` + refreshed-anchor note (issue's SHAs predate the history rewrite), request review
+- [x] 5.2 Work review findings (verify-first, in-thread replies), merge when green
