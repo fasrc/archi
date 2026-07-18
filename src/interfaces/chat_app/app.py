@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import re
@@ -190,6 +191,40 @@ def _restore_pipeline_llm(pipeline: Any, original_llm: Any) -> None:
     pipeline.agent_llm = original_llm
     if hasattr(pipeline, "refresh_agent"):
         pipeline.refresh_agent(force=True)
+
+
+def _build_request_local_pipeline(pipeline: Any, override_llm: Any) -> Any:
+    """Build a request-local *view* of ``pipeline`` bound to ``override_llm``.
+
+    Returns a shallow copy of the shared pipeline whose ``agent_llm`` is the
+    per-request override, so an overridden request performs **zero writes to the
+    shared pipeline instance** (issue #86). ``copy.copy`` gives the view its own
+    ``__dict__`` while genuinely stateless collaborators (prompts, config dicts,
+    catalog service, vectorstore connector) stay shared by reference at near-zero
+    cost.
+
+    Invariant: any attribute that is per-run state, or that closes over a bound
+    method of the pipeline, must be rebuilt on the view, never shared. Static
+    tools cache their ``store_docs`` / ``store_tool_input`` / ``enforce_budget``
+    callbacks bound to the instance that built them, so a shared tool would
+    record documents into the *source* pipeline's run memory — the same
+    cross-request bug #86 exists to close, merely relocated from the LLM to the
+    sources. We therefore reset every per-run attribute and call
+    ``refresh_agent(force=True)`` so the tools rebuild bound to the view.
+    """
+    view = copy.copy(pipeline)
+    view.agent_llm = override_llm
+    view.agent = None
+    view._active_tools = []
+    view._active_middleware = []
+    view._active_memory = None
+    view._static_tools = None
+    if hasattr(view, "_vector_tools"):
+        view._vector_tools = None
+    if hasattr(view, "_vector_retrievers"):
+        view._vector_retrievers = None
+    view.refresh_agent(force=True)
+    return view
 
 
 def _is_provider_enabled_in_config(
