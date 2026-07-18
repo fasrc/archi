@@ -70,9 +70,14 @@ class archi:
             f"Pipeline '{self.pipeline_name}' returned '{type(result).__name__}' instead of PipelineOutput."
         )
 
-    def supports_stream(self) -> bool:
-        """Return True when the active pipeline exposes a synchronous stream."""
-        return callable(getattr(self.pipeline, "stream", None))
+    def supports_stream(self, pipeline=None) -> bool:
+        """Return True when the pipeline in use exposes a synchronous stream.
+
+        Defaults to the shared ``self.pipeline`` but evaluates ``pipeline``
+        when a request-local view is supplied.
+        """
+        target = pipeline if pipeline is not None else self.pipeline
+        return callable(getattr(target, "stream", None))
 
     def supports_astream(self) -> bool:
         """Return True when the active pipeline exposes an async stream."""
@@ -88,16 +93,23 @@ class archi:
         result = self.pipeline.invoke(*args, **call_kwargs)
         return self._ensure_pipeline_output(result)
 
-    def stream(self, *args, **kwargs):
+    def stream(self, *args, pipeline=None, **kwargs):
         """
         Stream the pipeline output if the underlying pipeline supports it.
+
+        When ``pipeline`` is supplied, stream from that pipeline instead of the
+        shared ``self.pipeline`` — the request-local override seam that lets a
+        caller serve one request from its own pipeline view without mutating
+        shared state. With no ``pipeline`` the shared pipeline is used, exactly
+        as before.
         """
-        if not self.supports_stream():
+        target = pipeline if pipeline is not None else self.pipeline
+        if not self.supports_stream(target):
             raise AttributeError(
                 f"Pipeline '{self.pipeline_name}' does not expose a 'stream' method."
             )
         call_kwargs = self._prepare_call_kwargs(kwargs)
-        for event in self.pipeline.stream(*args, **call_kwargs):
+        for event in target.stream(*args, **call_kwargs):
             yield self._ensure_pipeline_output(event)
 
     async def astream(self, *args, **kwargs):

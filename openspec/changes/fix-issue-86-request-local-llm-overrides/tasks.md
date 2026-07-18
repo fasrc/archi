@@ -1,7 +1,7 @@
 ## 1. Orchestrator: let a caller supply the pipeline
 
-- [ ] 1.1 Write a failing test in `tests/unit/test_archi_pipeline_override.py`: `archi.stream(..., pipeline=<other>)` streams from the supplied pipeline and never touches `self.pipeline`; with no `pipeline=` kwarg it still uses `self.pipeline`. (Construct `archi` without running `__init__` — e.g. `object.__new__` plus the attributes `stream` needs — so the test stays a unit test.)
-- [ ] 1.2 Add the optional `pipeline=None` keyword to `archi.stream()` in `src/archi/archi.py`, defaulting to `self.pipeline`; make `supports_stream()` evaluate the pipeline actually in use, and keep `_prepare_call_kwargs` + `_ensure_pipeline_output` on the path. Confirm 1.1 passes.
+- [x] 1.1 Write a failing test in `tests/unit/test_archi_pipeline_override.py`: `archi.stream(..., pipeline=<other>)` streams from the supplied pipeline and never touches `self.pipeline`; with no `pipeline=` kwarg it still uses `self.pipeline`. (Construct `archi` without running `__init__` — e.g. `object.__new__` plus the attributes `stream` needs — so the test stays a unit test.)
+- [x] 1.2 Add the optional `pipeline=None` keyword to `archi.stream()` in `src/archi/archi.py`, defaulting to `self.pipeline`; make `supports_stream()` evaluate the pipeline actually in use, and keep `_prepare_call_kwargs` + `_ensure_pipeline_output` on the path. Confirm 1.1 passes.
 - [ ] 1.3 Extend the same optional-pipeline support to `archi.invoke()` and `archi.astream()` (with matching `supports_astream()` handling), with a test per method.
 
 ## 2. Request-local pipeline view
