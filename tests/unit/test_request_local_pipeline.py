@@ -13,6 +13,8 @@ these stay pure unit tests while exercising the real ``refresh_agent`` / ``tools
 / ``RunMemory`` code paths that the view relies on.
 """
 
+import threading
+
 from langchain_core.documents import Document
 
 from src.archi.pipelines.agents.base_react import BaseReActAgent
@@ -55,6 +57,59 @@ class _StaticToolPipeline(BaseReActAgent):
 
     def _build_static_middleware(self):
         return []
+
+
+class _McpPipeline(BaseReActAgent):
+    """A pipeline selecting ``mcp`` whose ``_build_mcp_tools`` is counted."""
+
+    def __init__(self):
+        self._active_memory = None
+        self._tool_budgets_cache = None
+        self._static_tools = None
+        self._mcp_tools = None
+        self._active_tools = []
+        self._static_middleware = None
+        self._active_middleware = []
+        self.agent = None
+        self.agent_llm = "default-llm"
+        self.agent_prompt = ""
+        self.selected_tool_names = ["mcp"]
+        self._mcp_lock = threading.Lock()
+        self.mcp_client = None
+        self.build_calls = 0
+
+    def _create_agent(self, tools, middleware):
+        return {"tools": list(tools)}
+
+    def _build_static_tools(self):
+        return []
+
+    def _build_static_middleware(self):
+        return []
+
+    def _build_mcp_tools(self):
+        self.build_calls += 1
+        self.mcp_client = object()
+        return [lambda: "mcp-result"]
+
+
+def test_mcp_tools_memoized_on_source_and_shared_by_views():
+    """Codex finding (PR #124) / design D6: concurrent overridden requests must
+    share ONE MCP build. The memoization must fill the SOURCE's ``_mcp_tools``
+    (the one permitted shared write), so building multiple views triggers
+    ``_build_mcp_tools`` exactly once and every view reuses that list — rather
+    than each view building (and leaking) its own client."""
+    source = _McpPipeline()
+
+    view1 = _build_request_local_pipeline(source, "override-1")
+    view2 = _build_request_local_pipeline(source, "override-2")
+
+    # Exactly one build, performed on the SOURCE (not once per view).
+    assert source.build_calls == 1
+    assert source._mcp_tools is not None
+    # Every view reuses the source-populated list, never a per-view rebuild.
+    assert view1._mcp_tools is source._mcp_tools
+    assert view2._mcp_tools is source._mcp_tools
 
 
 def test_view_is_distinct_and_shared_pipeline_unchanged():

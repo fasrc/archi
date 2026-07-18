@@ -151,6 +151,62 @@ def test_overridden_turn_persists_override_model_without_touching_shared():
     assert wrapper.current_model_used == default_model
 
 
+def test_config_switch_without_override_reports_new_config_model():
+    """Codex finding (PR #124): ``reported_model`` must be snapshotted AFTER
+    ``update_config()``. A request that switches ``config_name`` without an
+    override otherwise persists the PREVIOUS config's model into the row."""
+    wrapper = object.__new__(ChatWrapper)
+    wrapper.archi = _FakeArchi(_FakePipeline(_LLM("default")))
+    wrapper.current_model_used = "old/model"
+    wrapper.number_of_queries = 0
+    wrapper.cursor = None
+    wrapper.conn = None
+
+    wrapper._init_timestamps = lambda: {}
+    wrapper._resolve_config_name = lambda name: name or "default"
+
+    def _update_config(config_name=None):
+        # Switching config changes the active model on the shared attribute.
+        wrapper.current_model_used = "new/model"
+
+    wrapper.update_config = _update_config
+    wrapper.create_agent_trace = lambda **kwargs: None
+    wrapper.update_agent_trace = lambda **kwargs: None
+    wrapper.insert_timing = lambda *a, **k: None
+    wrapper._prepare_chat_context = lambda message, conversation_id, *a, **k: (
+        SimpleNamespace(conversation_id=conversation_id, history=[]),
+        None,
+    )
+
+    captured = {}
+
+    def _finalize(result, *, model_used=None, **kwargs):
+        captured["persisted"] = (
+            model_used if model_used is not None else wrapper.current_model_used
+        )
+        return "out", [10, 11]
+
+    wrapper._finalize_result = _finalize
+
+    list(
+        wrapper.stream(
+            message=["hi"],
+            conversation_id=202,
+            client_id="c",
+            is_refresh=False,
+            server_received_msg_ts=None,
+            client_sent_msg_ts=0.0,
+            client_timeout=0,
+            config_name="other",
+            provider=None,
+            model=None,
+        )
+    )
+
+    # The row must carry the NEW config's model, not the stale pre-update snapshot.
+    assert captured.get("persisted") == "new/model", captured
+
+
 class _FakeCursor:
     def __init__(self, rows):
         self._rows = rows

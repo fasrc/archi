@@ -180,6 +180,19 @@ def _build_request_local_pipeline(pipeline: Any, override_llm: Any) -> Any:
     sources. We therefore reset every per-run attribute and call
     ``refresh_agent(force=True)`` so the tools rebuild bound to the view.
     """
+    # D6: idempotently memoize MCP tools on the SOURCE (the one permitted write to
+    # shared state) BEFORE copying, so concurrent request-local views share a single
+    # initialize_mcp_client() instead of each building — and leaking — its own. The
+    # view inherits the populated list via copy.copy; we must NOT reset _mcp_tools
+    # below. Guarded by the source's own _mcp_lock (shared by the views via copy).
+    if (
+        "mcp" in getattr(pipeline, "selected_tool_names", ())
+        and pipeline._mcp_tools is None
+    ):
+        with pipeline._mcp_lock:
+            if pipeline._mcp_tools is None:
+                pipeline._mcp_tools = list(pipeline._build_mcp_tools() or [])
+
     view = copy.copy(pipeline)
     view.agent_llm = override_llm
     view.agent = None
@@ -1988,7 +2001,6 @@ class ChatWrapper:
         # in `reported_model` and is threaded through finalization, so the shared
         # `self.current_model_used` is never mutated mid-turn (design D3).
         request_pipeline = None
-        reported_model = self.current_model_used
 
         try:
             context, error_code = self._prepare_chat_context(
@@ -2014,6 +2026,11 @@ class ChatWrapper:
 
             requested_config = self._resolve_config_name(config_name)
             self.update_config(config_name=requested_config)
+            # Snapshot the reported model AFTER update_config, so a request that
+            # switches config_name (without an override) reports the NEW config's
+            # model, not the previously-active one. The override path overwrites
+            # this below (PR #124 review). Stays request-local either way (D3).
+            reported_model = self.current_model_used
 
             # If provider and model are specified, serve this request from a
             # request-local pipeline view bound to the override LLM (issue #86).
