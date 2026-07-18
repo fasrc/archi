@@ -262,6 +262,77 @@ class _CoordinatedArchi:
             yield _FakeOutput("partial-2")
 
 
+class _RaisingArchi:
+    """Fake orchestrator whose overridden turn raises mid-stream.
+
+    It yields one output (so the override path has already built and installed a
+    request-local view) and then raises, exercising ``stream()``'s except/finally
+    cleanup. The shared pipeline must be left untouched: the request-local view
+    (issue #86) never mutates ``self.archi.pipeline.agent_llm``, so there is
+    nothing to unwind in ``finally`` — this guards that the removal of the old
+    swap/restore machinery did not reintroduce shared-pipeline mutation.
+    """
+
+    def __init__(self, pipeline, observe):
+        self.pipeline = pipeline
+        self.pipeline_name = "FakeReAct"
+        self._observe = observe
+
+    def supports_stream(self, pipeline=None):
+        return True
+
+    def stream(self, history=None, conversation_id=None, pipeline=None):
+        used = pipeline if pipeline is not None else self.pipeline
+        self._observe(conversation_id, used.agent_llm)
+        yield _FakeOutput("partial")
+        raise RuntimeError("boom mid-stream")
+
+
+def test_shared_pipeline_llm_unchanged_when_overridden_turn_raises():
+    default_llm = _LLM("default", {"enable_thinking": False})
+    llm_x = _LLM("X", {"temp": 0.1})
+    llm_by_key = {("provX", "modX"): llm_x}
+
+    observations: dict = {}
+    observe_lock = threading.Lock()
+    wrapper = _make_wrapper(
+        default_llm,
+        llm_by_key,
+        observations,
+        observe_lock,
+        archi_factory=lambda pipeline, observe: _RaisingArchi(pipeline, observe),
+    )
+
+    shared_pipeline = wrapper.archi.pipeline
+    assert shared_pipeline.agent_llm is default_llm
+
+    errors: list = []
+    # The mid-stream raise is caught by stream()'s except clause and surfaced as a
+    # 500 event, so draining does not propagate the RuntimeError.
+    outputs = list(
+        wrapper.stream(
+            message=["hi"],
+            conversation_id=301,
+            client_id="c",
+            is_refresh=False,
+            server_received_msg_ts=None,
+            client_sent_msg_ts=0.0,
+            client_timeout=0,
+            config_name="default",
+            provider="provX",
+            model="modX",
+        )
+    )
+    assert not errors
+
+    # The turn actually ran on the override LLM (request-local view)...
+    assert observations.get(301) == [llm_x]
+    # ...it did raise mid-stream, surfaced as a 500 error event...
+    assert any(o.get("type") == "error" and o.get("status") == 500 for o in outputs)
+    # ...and the shared pipeline's LLM is the *identical* object it was before.
+    assert shared_pipeline.agent_llm is default_llm
+
+
 def test_overlapping_overrides_are_not_serialized():
     default_llm = _LLM("default", {"enable_thinking": False})
     llm_x = _LLM("X", {"temp": 0.1})

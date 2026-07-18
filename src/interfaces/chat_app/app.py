@@ -2020,8 +2020,6 @@ class ChatWrapper:
         # in `reported_model` and is threaded through finalization, so the shared
         # `self.current_model_used` is never mutated mid-turn (design D3).
         request_pipeline = None
-        override_applied = False
-        override_original_model = None
         reported_model = self.current_model_used
 
         try:
@@ -2079,12 +2077,10 @@ class ChatWrapper:
                         request_pipeline = _build_request_local_pipeline(
                             self.archi.pipeline, override_llm
                         )
-                        override_applied = True
                         logger.info(
                             f"Serving request from request-local view with "
                             f"{provider}/{model}"
                         )
-                        override_original_model = self.current_model_used
                         reported_model = f"{provider}/{model}"
                     except Exception as e:
                         # A view-build failure (copy or refresh_agent) mutates
@@ -2601,11 +2597,9 @@ class ChatWrapper:
             }
         finally:
             # The shared pipeline's LLM is never mutated on the override path
-            # (issue #86 request-local view), so there is nothing to unwind there.
-            # Restore only the reported model, else later requests that skip
-            # update_config's reconfigure keep persisting the override's model.
-            if override_applied:
-                self.current_model_used = override_original_model
+            # (issue #86 request-local view) and the reported model is threaded
+            # through finalization as a request-local value (design D3), so there
+            # is nothing to unwind here — only the cursor/connection to close.
             if self.cursor is not None:
                 self.cursor.close()
             if self.conn is not None:
