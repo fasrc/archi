@@ -79,18 +79,30 @@ class archi:
         target = pipeline if pipeline is not None else self.pipeline
         return callable(getattr(target, "stream", None))
 
-    def supports_astream(self) -> bool:
-        """Return True when the active pipeline exposes an async stream."""
-        return callable(getattr(self.pipeline, "astream", None))
+    def supports_astream(self, pipeline=None) -> bool:
+        """Return True when the pipeline in use exposes an async stream.
 
-    def invoke(self, *args, **kwargs) -> PipelineOutput:
+        Defaults to the shared ``self.pipeline`` but evaluates ``pipeline``
+        when a request-local view is supplied.
+        """
+        target = pipeline if pipeline is not None else self.pipeline
+        return callable(getattr(target, "astream", None))
+
+    def invoke(self, *args, pipeline=None, **kwargs) -> PipelineOutput:
         """
         Updates the vectorstore connection,
         passes it to the Pipeline's retriever,
         and then invokes the Pipeline.
+
+        When ``pipeline`` is supplied, invoke that pipeline instead of the
+        shared ``self.pipeline`` — the request-local override seam that lets a
+        caller serve one request from its own pipeline view without mutating
+        shared state. With no ``pipeline`` the shared pipeline is used, exactly
+        as before.
         """
+        target = pipeline if pipeline is not None else self.pipeline
         call_kwargs = self._prepare_call_kwargs(kwargs)
-        result = self.pipeline.invoke(*args, **call_kwargs)
+        result = target.invoke(*args, **call_kwargs)
         return self._ensure_pipeline_output(result)
 
     def stream(self, *args, pipeline=None, **kwargs):
@@ -112,16 +124,23 @@ class archi:
         for event in target.stream(*args, **call_kwargs):
             yield self._ensure_pipeline_output(event)
 
-    async def astream(self, *args, **kwargs):
+    async def astream(self, *args, pipeline=None, **kwargs):
         """
         Asynchronously stream the pipeline output if supported.
+
+        When ``pipeline`` is supplied, stream from that pipeline instead of the
+        shared ``self.pipeline`` — the request-local override seam that lets a
+        caller serve one request from its own pipeline view without mutating
+        shared state. With no ``pipeline`` the shared pipeline is used, exactly
+        as before.
         """
-        if not self.supports_astream():
+        target = pipeline if pipeline is not None else self.pipeline
+        if not self.supports_astream(target):
             raise AttributeError(
                 f"Pipeline '{self.pipeline_name}' does not expose an 'astream' method."
             )
         call_kwargs = self._prepare_call_kwargs(kwargs)
-        async for event in self.pipeline.astream(*args, **call_kwargs):
+        async for event in target.astream(*args, **call_kwargs):
             yield self._ensure_pipeline_output(event)
 
     def __call__(self, *args, **kwargs) -> PipelineOutput:
