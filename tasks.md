@@ -1,1 +1,1 @@
-openspec/changes/fix-issue-75-source-commit/tasks.md
+openspec/changes/fix-issue-86-request-local-llm-overrides/tasks.md
