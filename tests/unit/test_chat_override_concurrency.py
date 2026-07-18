@@ -99,15 +99,27 @@ class _FakeOutput:
         return default
 
 
-def _make_wrapper(default_llm, llm_by_key, observations, observe_lock):
-    """Build a ``ChatWrapper`` wired to fakes, running the real override path."""
+def _make_wrapper(
+    default_llm, llm_by_key, observations, observe_lock, archi_factory=None
+):
+    """Build a ``ChatWrapper`` wired to fakes, running the real override path.
+
+    ``archi_factory`` (optional) receives ``(pipeline, observe)`` and returns the
+    fake orchestrator to install, so a test can supply its own interleaving. When
+    omitted the default barrier-driven :class:`_FakeArchi` is used.
+    """
     wrapper = object.__new__(ChatWrapper)
 
     def _observe(conversation_id, llm):
         with observe_lock:
             observations.setdefault(conversation_id, []).append(llm)
 
-    archi = _FakeArchi(_FakePipeline(default_llm), _observe)
+    pipeline = _FakePipeline(default_llm)
+    archi = (
+        archi_factory(pipeline, _observe)
+        if archi_factory is not None
+        else _FakeArchi(pipeline, _observe)
+    )
     wrapper.archi = archi
     wrapper.current_model_used = "default/default"
     wrapper.number_of_queries = 0
@@ -198,3 +210,132 @@ def test_overlapping_overrides_keep_own_model_and_leave_no_residue():
     assert all(
         llm.extra_kwargs == {"enable_thinking": False} for llm in observations[103]
     )
+
+
+class _CoordinatedArchi:
+    """Fake orchestrator driving an *asymmetric* A/B interleaving.
+
+    Request A yields its first output and then *blocks* until request B has
+    yielded its own first output; request B is only started once A is suspended.
+    So B makes real progress while A's turn is still open — the pair is not
+    serialized. A serialized implementation (e.g. a lock spanning the whole turn)
+    could not produce B's output while A is parked, so it would time out here.
+
+    Every step also records ``used.agent_llm`` via ``observe``, so the same run
+    proves each turn keeps its *own* override LLM throughout the overlap. Against
+    the swap/restore implementation A observes B's LLM on its second step (B has
+    mutated the shared pipeline and not yet restored it), so this test fails until
+    ``stream()`` builds a request-local pipeline view.
+    """
+
+    def __init__(self, pipeline, observe, record, role_of, a_first, b_first, a_second):
+        self.pipeline = pipeline
+        self.pipeline_name = "FakeReAct"
+        self._observe = observe
+        self._record = record
+        self._role_of = role_of
+        self._a_first = a_first
+        self._b_first = b_first
+        self._a_second = a_second
+
+    def supports_stream(self, pipeline=None):
+        return True
+
+    def stream(self, history=None, conversation_id=None, pipeline=None):
+        used = pipeline if pipeline is not None else self.pipeline
+        role = self._role_of(conversation_id)
+
+        self._observe(conversation_id, used.agent_llm)  # observation #1
+        self._record(conversation_id, "first")
+        yield _FakeOutput("partial-1")
+
+        if role == "A":
+            self._a_first.set()
+            # Suspend A mid-turn until B has produced its first output. A serialized
+            # impl never lets B run here, so this wait would time out.
+            assert self._b_first.wait(
+                timeout=10
+            ), "B produced no output while A was suspended (serialized?)"
+            self._observe(conversation_id, used.agent_llm)  # observation #2
+            yield _FakeOutput("partial-2")
+            self._a_second.set()
+        else:  # role B — its turn only started after A was already suspended.
+            self._b_first.set()
+            # Keep B's turn open (do not restore) until A has taken its second
+            # observation, so the swap impl still has the shared pipeline on B's
+            # LLM when A observes it.
+            assert self._a_second.wait(timeout=10), "A never took its second step"
+            self._observe(conversation_id, used.agent_llm)  # observation #2
+            yield _FakeOutput("partial-2")
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Request-local view (task 3.3) not wired yet: stream() still swaps the "
+    "shared pipeline's agent_llm, so the overlapping turn observes the peer's LLM",
+)
+def test_overlapping_overrides_are_not_serialized():
+    default_llm = _LLM("default", {"enable_thinking": False})
+    llm_x = _LLM("X", {"temp": 0.1})
+    llm_y = _LLM("Y", {"temp": 0.9})
+    llm_by_key = {("provX", "modX"): llm_x, ("provY", "modY"): llm_y}
+
+    observations: dict = {}
+    observe_lock = threading.Lock()
+
+    a_first = threading.Event()  # A produced its first output
+    b_first = threading.Event()  # B produced its first output
+    a_second = threading.Event()  # A took its second observation
+
+    timeline: list = []
+    timeline_lock = threading.Lock()
+
+    def _record(conversation_id, phase):
+        with timeline_lock:
+            timeline.append((conversation_id, phase))
+
+    def _role_of(conversation_id):
+        return "A" if conversation_id == 201 else "B"
+
+    def _factory(pipeline, observe):
+        return _CoordinatedArchi(
+            pipeline, observe, _record, _role_of, a_first, b_first, a_second
+        )
+
+    wrapper = _make_wrapper(
+        default_llm, llm_by_key, observations, observe_lock, archi_factory=_factory
+    )
+
+    errors: list = []
+
+    def _run(conversation_id, provider, model, start_gate):
+        if start_gate is not None:
+            assert start_gate.wait(timeout=10), "start gate never opened"
+        try:
+            _drain(wrapper, conversation_id, provider, model, errors)
+        finally:
+            _record(conversation_id, "complete")
+
+    # A starts immediately; B only starts once A has produced its first output and
+    # is suspended — so B's override applies strictly after A's, i.e. genuine
+    # overlap rather than one turn running fully before the other.
+    ta = threading.Thread(target=_run, args=(201, "provX", "modX", None))
+    tb = threading.Thread(target=_run, args=(202, "provY", "modY", a_first))
+    ta.start()
+    tb.start()
+    ta.join(timeout=30)
+    tb.join(timeout=30)
+
+    assert not errors, f"stream turn raised: {errors!r}"
+    assert not ta.is_alive() and not tb.is_alive(), "a turn hung (serialized?)"
+
+    # Not serialized: B produced its first output before A's turn completed.
+    assert (201, "first") in timeline and (202, "first") in timeline
+    assert (201, "complete") in timeline
+    assert timeline.index((202, "first")) < timeline.index((201, "complete")), timeline
+
+    # ...and the overlap did not cross the streams: each turn kept its own LLM.
+    assert observations.get(201), "request A produced no observations"
+    assert observations.get(202), "request B produced no observations"
+    assert all(llm is llm_x for llm in observations[201]), observations[201]
+    assert all(llm is llm_y for llm in observations[202]), observations[202]
