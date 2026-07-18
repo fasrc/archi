@@ -1,1 +1,1 @@
-openspec/changes/fix-issue-75-source-commit/tasks.md
+openspec/changes/fix-issue-84-strip-orphan-think/tasks.md
