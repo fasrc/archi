@@ -24,8 +24,6 @@ strict marker fails the gate and must be removed in the GREEN phase (task 2.6).
 
 import threading
 
-import pytest
-
 from src.archi.pipelines.agents.base_react import BaseReActAgent
 
 
@@ -90,10 +88,6 @@ class _McpPipeline(BaseReActAgent):
         return [_mcp_tool]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D6 lock (task 2.6) not implemented yet: refresh_agent races and builds twice",
-)
 def test_concurrent_builds_initialize_mcp_exactly_once():
     """Task 2.5: two threads concurrently building the shared pipeline's agent,
     with ``_mcp_tools is None``, must trigger exactly one ``_build_mcp_tools``

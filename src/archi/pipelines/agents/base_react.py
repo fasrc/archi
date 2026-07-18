@@ -1,4 +1,5 @@
 import re
+import threading
 import time
 import uuid
 from typing import (
@@ -79,6 +80,10 @@ class BaseReActAgent:
         self._tool_budgets_cache: Optional[Dict[str, int]] = None
         self._static_tools: Optional[List[Callable]] = None
         self._mcp_tools: Optional[List[Callable]] = None
+        # Guards the lazy, idempotent MCP-tool memoization in refresh_agent so
+        # concurrent request-local view builds (issue #86, design D6) yield
+        # exactly one _build_mcp_tools() call per pipeline instance.
+        self._mcp_lock = threading.Lock()
         self._active_tools: List[Callable] = []
         self._static_middleware: Optional[List[Callable]] = None
         self._active_middleware: List[Callable] = []
@@ -1199,8 +1204,12 @@ class BaseReActAgent:
 
         if "mcp" in self.selected_tool_names:
             if self._mcp_tools is None:
-                built = self._build_mcp_tools()
-                self._mcp_tools = list(built or [])
+                with self._mcp_lock:
+                    # Double-checked: another thread may have built it while we
+                    # waited for the lock.
+                    if self._mcp_tools is None:
+                        built = self._build_mcp_tools()
+                        self._mcp_tools = list(built or [])
             toolset.extend(self._mcp_tools)
 
         if extra_tools:
