@@ -161,38 +161,6 @@ def _build_provider_config_from_payload(
     )
 
 
-def _swap_pipeline_llm(pipeline: Any, new_llm: Any) -> Any:
-    """Point the shared pipeline at ``new_llm``, returning the previous LLM.
-
-    The swap is deliberately reversible (see ``_restore_pipeline_llm``) so a
-    per-request provider/model override never persists on the shared pipeline
-    into later requests — which would bleed one request's model and its
-    ``extra_kwargs`` (e.g. ``enable_thinking``) into everyone else's.
-
-    The swap is atomic: if refreshing the agent onto ``new_llm`` fails, the
-    original LLM is restored before the error propagates, so a failed override
-    can never leave the shared pipeline pointing at the override LLM.
-    """
-    original = pipeline.agent_llm
-    pipeline.agent_llm = new_llm
-    try:
-        if hasattr(pipeline, "refresh_agent"):
-            pipeline.refresh_agent(force=True)
-    except Exception:
-        # Never leave the shared pipeline on the override LLM when the refresh
-        # fails — restore the original before the error propagates.
-        _restore_pipeline_llm(pipeline, original)
-        raise
-    return original
-
-
-def _restore_pipeline_llm(pipeline: Any, original_llm: Any) -> None:
-    """Undo a ``_swap_pipeline_llm``, rebuilding the agent from the original LLM."""
-    pipeline.agent_llm = original_llm
-    if hasattr(pipeline, "refresh_agent"):
-        pipeline.refresh_agent(force=True)
-
-
 def _build_request_local_pipeline(pipeline: Any, override_llm: Any) -> Any:
     """Build a request-local *view* of ``pipeline`` bound to ``override_llm``.
 

@@ -24,9 +24,9 @@
 ## 4. Remove the swap/restore machinery
 
 - [x] 4.1 Delete the `override_applied` / `override_original_llm` / `override_original_model` locals and their restore block from the `finally` (~`app.py:2528-2535`), keeping the cursor/connection cleanup intact. Add a test that the shared pipeline's `agent_llm` is unchanged across an overridden turn that raises mid-stream.
-- [ ] 4.2 Delete `_swap_pipeline_llm` and `_restore_pipeline_llm` from `src/interfaces/chat_app/app.py` (~163-192) once they have no callers.
-- [ ] 4.3 Update `tests/unit/test_provider_config_override.py`: it imports and tests both deleted helpers (lines ~16-17, ~68-79, ~113, ~133). Remove the swap/restore-specific tests and keep the `_build_provider_config_from_payload` / `extra_kwargs` coverage, which is still valid and still guards `enable_thinking`.
-- [ ] 4.4 Grep the tree for any remaining `_swap_pipeline_llm` / `_restore_pipeline_llm` / `override_original_llm` references (src, tests, docs) and clean up stragglers.
+- [x] 4.2 Delete `_swap_pipeline_llm` and `_restore_pipeline_llm` from `src/interfaces/chat_app/app.py` (~163-192) once they have no callers.
+- [x] 4.3 Update `tests/unit/test_provider_config_override.py`: it imports and tests both deleted helpers (lines ~16-17, ~68-79, ~113, ~133). Remove the swap/restore-specific tests and keep the `_build_provider_config_from_payload` / `extra_kwargs` coverage, which is still valid and still guards `enable_thinking`.
+- [x] 4.4 Grep the tree for any remaining `_swap_pipeline_llm` / `_restore_pipeline_llm` / `override_original_llm` references (src, tests, docs) and clean up stragglers.
 
 ## 5. Gate and close out
 
