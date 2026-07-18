@@ -1401,9 +1401,16 @@ class ChatWrapper:
         link,
         archi_context,
         is_refresh=False,
+        model_used: Optional[str] = None,
     ) -> List[int]:
         """ """
         logger.debug("Entered insert_conversation.")
+
+        # Request-local reported model (issue #86, design D3): callers on the
+        # override path pass the override's provider/model so the row is labelled
+        # correctly without mutating the shared ``self.current_model_used``.
+        if model_used is None:
+            model_used = self.current_model_used
 
         def _sanitize(text: str) -> str:
             return text.replace("\x00", "") if isinstance(text, str) else text
@@ -1430,7 +1437,7 @@ class ChatWrapper:
                     "",
                     "",
                     user_msg_ts,
-                    self.current_model_used,
+                    model_used,
                     self.current_pipeline_used,
                 ),
                 (
@@ -1441,7 +1448,7 @@ class ChatWrapper:
                     link,
                     archi_context,
                     archi_msg_ts,
-                    self.current_model_used,
+                    model_used,
                     self.current_pipeline_used,
                 ),
             ]
@@ -1455,7 +1462,7 @@ class ChatWrapper:
                     link,
                     archi_context,
                     archi_msg_ts,
-                    self.current_model_used,
+                    model_used,
                     self.current_pipeline_used,
                 ),
             ]
@@ -1783,6 +1790,7 @@ class ChatWrapper:
         server_received_msg_ts: datetime,
         timestamps: Dict[str, datetime],
         render_markdown: bool = True,
+        model_used: Optional[str] = None,
     ) -> tuple[str, List[int]]:
         # For streaming responses, return raw markdown (client renders with marked.js)
         # For non-streaming responses, render server-side with Mistune
@@ -1818,6 +1826,7 @@ class ChatWrapper:
             best_reference,
             context_data,
             context.is_refresh,
+            model_used=model_used,
         )
         timestamps["insert_convo_ts"] = datetime.now(timezone.utc)
         context.history.append((ARCHI_SENDER, result["answer"]))
@@ -2007,11 +2016,13 @@ class ChatWrapper:
         # concurrent overridden requests cannot bleed one another's provider/model
         # (or its extra_kwargs, e.g. enable_thinking). `request_pipeline` stays
         # None on the non-override / fallback path, so the orchestrator uses the
-        # shared pipeline. Only the reported model is still tracked for restore
-        # here (removed once made request-local).
+        # shared pipeline. The reported model is likewise request-local: it lives
+        # in `reported_model` and is threaded through finalization, so the shared
+        # `self.current_model_used` is never mutated mid-turn (design D3).
         request_pipeline = None
         override_applied = False
         override_original_model = None
+        reported_model = self.current_model_used
 
         try:
             context, error_code = self._prepare_chat_context(
@@ -2074,7 +2085,7 @@ class ChatWrapper:
                             f"{provider}/{model}"
                         )
                         override_original_model = self.current_model_used
-                        self.current_model_used = f"{provider}/{model}"
+                        reported_model = f"{provider}/{model}"
                     except Exception as e:
                         # A view-build failure (copy or refresh_agent) mutates
                         # nothing shared, so warn and fall back to the shared
@@ -2477,6 +2488,7 @@ class ChatWrapper:
                 server_received_msg_ts=server_received_msg_ts,
                 timestamps=timestamps,
                 render_markdown=False,  # Client renders with marked.js
+                model_used=reported_model,
             )
 
             timestamps["finish_call_ts"] = datetime.now(timezone.utc)
@@ -2542,7 +2554,7 @@ class ChatWrapper:
                 "final_response_msg_ts": datetime.now(timezone.utc).timestamp(),
                 "usage": usage,
                 "model": model,
-                "model_used": self.current_model_used,
+                "model_used": reported_model,
                 "source_documents": raw_source_documents,
                 "retriever_scores": raw_retriever_scores,
             }
