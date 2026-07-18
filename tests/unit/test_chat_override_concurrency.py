@@ -24,8 +24,6 @@ and the real ``finally`` cleanup.
 import threading
 from types import SimpleNamespace
 
-import pytest
-
 from src.interfaces.chat_app.app import ChatWrapper
 
 
@@ -167,11 +165,6 @@ def _drain(wrapper, conversation_id, provider, model, errors):
         errors.append(exc)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Request-local view (task 3.3) not wired yet: stream() still swaps the "
-    "shared pipeline's agent_llm, so overlapping overrides read each other's LLM",
-)
 def test_overlapping_overrides_keep_own_model_and_leave_no_residue():
     default_llm = _LLM("default", {"enable_thinking": False})
     llm_x = _LLM("X", {"temp": 0.1})
@@ -269,11 +262,6 @@ class _CoordinatedArchi:
             yield _FakeOutput("partial-2")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Request-local view (task 3.3) not wired yet: stream() still swaps the "
-    "shared pipeline's agent_llm, so the overlapping turn observes the peer's LLM",
-)
 def test_overlapping_overrides_are_not_serialized():
     default_llm = _LLM("default", {"enable_thinking": False})
     llm_x = _LLM("X", {"temp": 0.1})

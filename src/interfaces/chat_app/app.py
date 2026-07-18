@@ -2002,12 +2002,15 @@ class ChatWrapper:
                 "tool_args": merged_args,
             }
 
-        # Track a request-time LLM override so it can be undone in `finally` — the
-        # pipeline is shared across requests, so a persisted override would bleed
-        # one request's provider/model (and its extra_kwargs, e.g. enable_thinking)
-        # into every later request on this process.
+        # A request-time LLM override is applied by building a *request-local*
+        # pipeline view (issue #86); the shared pipeline is never mutated, so
+        # concurrent overridden requests cannot bleed one another's provider/model
+        # (or its extra_kwargs, e.g. enable_thinking). `request_pipeline` stays
+        # None on the non-override / fallback path, so the orchestrator uses the
+        # shared pipeline. Only the reported model is still tracked for restore
+        # here (removed once made request-local).
+        request_pipeline = None
         override_applied = False
-        override_original_llm = None
         override_original_model = None
 
         try:
@@ -2035,25 +2038,15 @@ class ChatWrapper:
             requested_config = self._resolve_config_name(config_name)
             self.update_config(config_name=requested_config)
 
-            # If provider and model are specified, override the pipeline's LLM
+            # If provider and model are specified, serve this request from a
+            # request-local pipeline view bound to the override LLM (issue #86).
             if provider and model:
                 try:
                     override_llm = self._create_provider_llm(
                         provider, model, provider_api_key
                     )
-                    if (
-                        override_llm
-                        and hasattr(self.archi, "pipeline")
-                        and hasattr(self.archi.pipeline, "agent_llm")
-                    ):
-                        override_original_llm = _swap_pipeline_llm(
-                            self.archi.pipeline, override_llm
-                        )
-                        override_applied = True
-                        logger.info(f"Overrode pipeline LLM with {provider}/{model}")
-                        override_original_model = self.current_model_used
-                        self.current_model_used = f"{provider}/{model}"
                 except ValueError as e:
+                    # Invalid provider/model or disabled override → hard 400.
                     logger.warning(
                         f"Failed to create provider LLM {provider}/{model}: {e}"
                     )
@@ -2064,6 +2057,37 @@ class ChatWrapper:
                         f"Failed to create provider LLM {provider}/{model}: {e}"
                     )
                     yield {"type": "warning", "message": f"Using default model: {e}"}
+                    override_llm = None
+
+                if (
+                    override_llm
+                    and hasattr(self.archi, "pipeline")
+                    and hasattr(self.archi.pipeline, "agent_llm")
+                ):
+                    try:
+                        request_pipeline = _build_request_local_pipeline(
+                            self.archi.pipeline, override_llm
+                        )
+                        override_applied = True
+                        logger.info(
+                            f"Serving request from request-local view with "
+                            f"{provider}/{model}"
+                        )
+                        override_original_model = self.current_model_used
+                        self.current_model_used = f"{provider}/{model}"
+                    except Exception as e:
+                        # A view-build failure (copy or refresh_agent) mutates
+                        # nothing shared, so warn and fall back to the shared
+                        # pipeline — no unwind needed.
+                        logger.warning(
+                            f"Failed to build request-local pipeline for "
+                            f"{provider}/{model}: {e}"
+                        )
+                        yield {
+                            "type": "warning",
+                            "message": f"Using default model: {e}",
+                        }
+                        request_pipeline = None
 
             # Create trace for this streaming request
             trace_id = self.create_agent_trace(
@@ -2078,7 +2102,9 @@ class ChatWrapper:
             )
 
             for output in self.archi.stream(
-                history=context.history, conversation_id=context.conversation_id
+                history=context.history,
+                conversation_id=context.conversation_id,
+                pipeline=request_pipeline,
             ):
                 if client_timeout and time.time() - stream_start_time > client_timeout:
                     if trace_id:
@@ -2562,12 +2588,11 @@ class ChatWrapper:
                 "message": "server error; see chat logs for message",
             }
         finally:
-            # Undo any request-time LLM override so it never persists on the shared
-            # pipeline into later requests (which would strip enable_thinking, etc.).
+            # The shared pipeline's LLM is never mutated on the override path
+            # (issue #86 request-local view), so there is nothing to unwind there.
+            # Restore only the reported model, else later requests that skip
+            # update_config's reconfigure keep persisting the override's model.
             if override_applied:
-                _restore_pipeline_llm(self.archi.pipeline, override_original_llm)
-                # Restore the reported model too, else later requests that skip
-                # update_config's reconfigure keep persisting the override's model.
                 self.current_model_used = override_original_model
             if self.cursor is not None:
                 self.cursor.close()
