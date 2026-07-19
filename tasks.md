@@ -1,1 +1,1 @@
-openspec/changes/fix-issue-86-request-local-llm-overrides/tasks.md
+openspec/changes/fix-issue-84-strip-orphan-think/tasks.md
