@@ -27,17 +27,18 @@
 
 ## 3. Gate and PR
 
-- [ ] 3.1 Run `bash scripts/gate.sh` and confirm it exits 0 — black 24.10.0 + isort 6.0.1
+- [x] 3.1 Run `bash scripts/gate.sh` and confirm it exits 0 — black 24.10.0 + isort 6.0.1
       clean, `pytest tests/unit/` green, and diff-cover patch coverage ≥ 80% vs
       `origin/dev`. The new `if`/`return` are measured statements (design D4); if patch
       coverage is short, the tests in group 1 are not exercising the branch.
-- [ ] 3.2 Commit (lowercase message, e.g. `add ipynb notebook loader to select_loader`).
+- [x] 3.2 Commit (lowercase message, e.g. `add ipynb notebook loader to select_loader`).
       No `Co-Authored-By` or session trailers. Never `--no-verify`.
-- [ ] 3.3 Push the branch and open the PR: `gh pr create --repo fasrc/archi --base dev`
+- [x] 3.3 Push the branch and open the PR: `gh pr create --repo fasrc/archi --base dev`
       with `closes #109` in the body. Note in the body that this is a **corpus change**
       (12 new documents at next re-ingest) that must land before any benchmark baseline is
       locked, and list the post-merge dev-host verification steps from the issue as
       outstanding. STOP at the open PR — do not merge.
+      PR: https://github.com/fasrc/archi/pull/125 (open, not merged).
 
 ## Verification deferred to the dev host (post-merge, NOT part of this change)
 
