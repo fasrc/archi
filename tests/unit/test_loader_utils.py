@@ -7,7 +7,10 @@ kept ~327 HPC example files (Slurm scripts, Fortran/C++/CUDA/R/MATLAB sources) o
 the knowledge base. These tests pin the collection->loader parity invariant.
 """
 
+import json
+
 import pytest
+from langchain_community.document_loaders.notebook import NotebookLoader
 from langchain_community.document_loaders.text import TextLoader
 
 from src.data_manager.vectorstore.loader_utils import select_loader
@@ -33,29 +36,37 @@ HPC_ADDITION_SUFFIXES = [
 # maintained copy of `GitScraper`'s default `code_suffixes` plus the HPC additions
 # above. `git_scraper.py` runs `get_global_config()` at import, so it cannot be
 # imported into a unit test to read the list directly; keep this in sync by hand.
-REQUIRED_LOADABLE_SUFFIXES = [
-    # GitScraper default code_suffixes:
-    ".py",
-    ".js",
-    ".ts",
-    ".tsx",
-    ".jsx",
-    ".java",
-    ".go",
-    ".rs",
-    ".c",
-    ".cpp",
-    ".h",
-    ".hpp",
-    ".sh",
-    ".sql",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".md",
-    ".txt",
-] + HPC_ADDITION_SUFFIXES
+REQUIRED_LOADABLE_SUFFIXES = (
+    [
+        # GitScraper default code_suffixes:
+        ".py",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".java",
+        ".go",
+        ".rs",
+        ".c",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".sh",
+        ".sql",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".md",
+        ".txt",
+    ]
+    + HPC_ADDITION_SUFFIXES
+    + [
+        # Jupyter notebooks: JSON with cell source/markdown, excluded from the
+        # TextLoader set because they also carry execution-output blobs (issue #109).
+        ".ipynb",
+    ]
+)
 
 
 def _loader_for(tmp_path, name):
@@ -91,6 +102,49 @@ def test_unsupported_binary_types_still_return_none(tmp_path):
     # binaries into garbage embeddings.
     assert _loader_for(tmp_path, "figure.png") is None
     assert _loader_for(tmp_path, "archive.zip") is None
+
+
+def test_notebook_files_are_loadable():
+    loader = select_loader("analysis.ipynb")
+    assert isinstance(loader, NotebookLoader)
+
+
+def test_notebook_extracts_source_and_markdown_excludes_outputs(tmp_path):
+    notebook = {
+        "cells": [
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": ["# Distinctive Markdown Heading\n"],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": 1,
+                "metadata": {},
+                "outputs": [
+                    {
+                        "output_type": "stream",
+                        "name": "stdout",
+                        "text": ["DISTINCTIVE_STDOUT_OUTPUT_BLOB\n"],
+                    }
+                ],
+                "source": ["distinctive_code_source_line = 1\n"],
+            },
+        ],
+        "metadata": {},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    notebook_path = tmp_path / "analysis.ipynb"
+    notebook_path.write_text(json.dumps(notebook))
+
+    loader = select_loader(str(notebook_path))
+    docs = loader.load()
+    page_content = docs[0].page_content
+
+    assert "Distinctive Markdown Heading" in page_content
+    assert "distinctive_code_source_line = 1" in page_content
+    assert "DISTINCTIVE_STDOUT_OUTPUT_BLOB" not in page_content
 
 
 @pytest.mark.parametrize("suffix", REQUIRED_LOADABLE_SUFFIXES)

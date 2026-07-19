@@ -1,1 +1,1 @@
-openspec/changes/fix-issue-84-strip-orphan-think/tasks.md
+openspec/changes/fix-issue-109-ipynb-notebook-loader/tasks.md

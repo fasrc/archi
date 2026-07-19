@@ -1,28 +1,28 @@
 ## 1. Red tests (write first, watch them fail)
 
-- [ ] 1.1 In `tests/unit/test_loader_utils.py`, add a test asserting
+- [x] 1.1 In `tests/unit/test_loader_utils.py`, add a test asserting
       `select_loader("analysis.ipynb")` returns a `NotebookLoader` instance (not `None`).
       Run `python -m pytest tests/unit/test_loader_utils.py -q` and confirm it FAILS
       (currently returns `None`).
-- [ ] 1.2 In the same file, add a behavioral test: write a real `.ipynb` fixture under
+- [x] 1.2 In the same file, add a behavioral test: write a real `.ipynb` fixture under
       `tmp_path` containing (a) a markdown cell, (b) a code cell with distinctive source,
       and (c) a recorded stdout output blob with a distinctive string. Load it via
       `select_loader(...).load()` and assert `page_content` CONTAINS the markdown text and
       the code source, and does NOT contain the output blob string. Confirm it FAILS.
-- [ ] 1.3 Add `.ipynb` to `REQUIRED_LOADABLE_SUFFIXES` (starts line 36) so the
+- [x] 1.3 Add `.ipynb` to `REQUIRED_LOADABLE_SUFFIXES` (starts line 36) so the
       parametrized drift guard `test_every_collected_code_suffix_is_loadable` (line 96)
       covers notebooks. Confirm the new parametrization FAILS.
 
 ## 2. Implementation (minimum code to go green)
 
-- [ ] 2.1 In `src/data_manager/vectorstore/loader_utils.py`, add `NotebookLoader` to the
+- [x] 2.1 In `src/data_manager/vectorstore/loader_utils.py`, add `NotebookLoader` to the
       existing `from langchain_community.document_loaders import (...)` block (keep isort
       ordering).
-- [ ] 2.2 Add the branch immediately after the `.py` branch:
+- [x] 2.2 Add the branch immediately after the `.py` branch:
       `if file_extension == ".ipynb": return NotebookLoader(str(path), include_outputs=False)`.
       Pass `include_outputs=False` explicitly (design D1) — do not rely on the library
       default.
-- [ ] 2.3 Run `python -m pytest tests/unit/test_loader_utils.py -q` and confirm all three
+- [x] 2.3 Run `python -m pytest tests/unit/test_loader_utils.py -q` and confirm all three
       tests from group 1 now PASS.
 
 ## 3. Gate and PR
