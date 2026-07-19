@@ -8,25 +8,11 @@ overridden LLM, so Qwen runs in thinking mode and chain-of-thought bleeds into
 answers.
 """
 
-import pytest
-
 from src.archi.providers.base import ProviderType
 from src.interfaces.chat_app.app import (
     _build_provider_config_from_payload,
-    _restore_pipeline_llm,
-    _swap_pipeline_llm,
+    _is_provider_enabled_in_config,
 )
-
-
-class _FakePipeline:
-    """Minimal stand-in for a ReAct pipeline for override swap/restore tests."""
-
-    def __init__(self, llm):
-        self.agent_llm = llm
-        self.refreshed = 0
-
-    def refresh_agent(self, force=False):
-        self.refreshed += 1
 
 
 def _cfg(extra_kwargs):
@@ -65,23 +51,6 @@ def test_override_provider_config_no_extra_kwargs_still_sets_local_mode():
     assert pc.extra_kwargs == {"local_mode": "openai_compat"}
 
 
-def test_swap_pipeline_llm_returns_original_and_refreshes():
-    pipeline = _FakePipeline("orig-llm")
-    original = _swap_pipeline_llm(pipeline, "override-llm")
-    assert original == "orig-llm"
-    assert pipeline.agent_llm == "override-llm"
-    assert pipeline.refreshed == 1
-
-
-def test_restore_pipeline_llm_undoes_swap():
-    pipeline = _FakePipeline("orig-llm")
-    original = _swap_pipeline_llm(pipeline, "override-llm")
-    _restore_pipeline_llm(pipeline, original)
-    # the shared pipeline is back to its original LLM — no cross-request bleed
-    assert pipeline.agent_llm == "orig-llm"
-    assert pipeline.refreshed == 2
-
-
 def test_override_provider_config_does_not_mutate_source():
     ek = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
     cfg = _cfg(ek)
@@ -91,44 +60,41 @@ def test_override_provider_config_does_not_mutate_source():
     assert "local_mode" not in src_extra
 
 
-class _RefreshFailPipeline:
-    """Refresh fails while agent_llm equals ``bad`` (the override), succeeds otherwise."""
-
-    def __init__(self, llm, bad):
-        self.agent_llm = llm
-        self.bad = bad
-        self.refreshed = 0
-
-    def refresh_agent(self, force=False):
-        if self.agent_llm == self.bad:
-            raise RuntimeError("refresh boom")
-        self.refreshed += 1
+def test_provider_enabled_by_name_converts_and_checks_config():
+    # provider_name is coerced to a ProviderType and, with no explicit
+    # `enabled: false`, the override is allowed.
+    ok, reason = _is_provider_enabled_in_config(_cfg({}), provider_name="local")
+    assert ok is True
+    assert reason is None
 
 
-def test_swap_rolls_back_agent_llm_when_refresh_fails():
-    # A failed override refresh must NOT leave the shared pipeline pointing at the
-    # override LLM — that would poison every later request (enable_thinking, etc.).
-    pipeline = _RefreshFailPipeline("orig-llm", bad="override-llm")
-    with pytest.raises(RuntimeError, match="refresh boom"):
-        _swap_pipeline_llm(pipeline, "override-llm")
-    assert pipeline.agent_llm == "orig-llm"  # rolled back, not left on the override
-    assert pipeline.refreshed == 1  # rollback refresh ran on the restored original
+def test_provider_disabled_by_explicit_enabled_false():
+    cfg = _cfg({})
+    cfg["services"]["chat_app"]["providers"]["local"]["enabled"] = False
+    ok, reason = _is_provider_enabled_in_config(cfg, ProviderType.LOCAL)
+    assert ok is False
+    assert "local" in reason
 
 
-class _AlwaysFailPipeline:
-    """Refresh always fails — both the override attempt and the rollback attempt."""
+def test_unknown_provider_name_treated_as_enabled():
+    # An unrecognized provider name can't be coerced to a ProviderType, so the
+    # config check defers to other validation and reports enabled.
+    ok, reason = _is_provider_enabled_in_config(
+        _cfg({}), provider_name="not-a-real-provider"
+    )
+    assert ok is True
+    assert reason is None
 
-    def __init__(self, llm):
-        self.agent_llm = llm
 
-    def refresh_agent(self, force=False):
-        raise RuntimeError("refresh always boom")
+def test_no_provider_identifier_is_enabled():
+    # Neither provider_type nor provider_name given -> nothing to disable.
+    ok, reason = _is_provider_enabled_in_config(_cfg({}))
+    assert ok is True
+    assert reason is None
 
 
-def test_swap_restores_agent_llm_even_if_rollback_refresh_fails():
-    # Even when the rollback refresh can't run, the attribute must be restored so
-    # no override leaks into later requests; the original error propagates.
-    pipeline = _AlwaysFailPipeline("orig-llm")
-    with pytest.raises(RuntimeError, match="always boom"):
-        _swap_pipeline_llm(pipeline, "override-llm")
-    assert pipeline.agent_llm == "orig-llm"
+def test_non_dict_config_payload_is_enabled():
+    # A malformed (non-dict) payload must not crash and defaults to enabled.
+    ok, reason = _is_provider_enabled_in_config(None, ProviderType.LOCAL)
+    assert ok is True
+    assert reason is None
