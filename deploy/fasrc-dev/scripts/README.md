@@ -11,6 +11,7 @@ so they run from anywhere. The deployment name is hard-wired to `dev` in
 | `redeploy.sh` | Rebuild + re-render config + restart (picks up config/code edits). Provisions `config/` first. | preserved |
 | `nuke.sh [-y]` | **Destroy everything**: containers, volumes (DB + corpus), images, files. | **WIPED** |
 | `status.sh` | Read-only: containers, volumes, chat UI, LLM reachability. | — |
+| `firewall.sh` | Idempotently (re-)apply the archi host firewall rules. Not part of deploy. | — |
 
 ## Usage
 
@@ -54,6 +55,42 @@ missing directory, and an existing host never silently follows a moved tag:
   checkout.
 - Raw `archi create` **bypasses all of this** — see the warning in
   `config.example.yaml`.
+
+## Host firewall (`firewall.sh`)
+
+The archi service ports are reachable only from Harvard VPN networks. Those
+rules are **hand-added and unmanaged**: the host's base ruleset is
+config-managed (puppet — its rules carry numeric `0000`/`0010` comment
+prefixes), but the archi ports are not in that managed set. So they can vanish
+on a host rebuild, and a puppet run may purge them outright if the firewall
+class runs with `purge => true`.
+
+`firewall.sh` is the reproducible record of what to re-add:
+
+```bash
+deploy/fasrc-dev/scripts/firewall.sh --dry-run   # show what's missing
+deploy/fasrc-dev/scripts/firewall.sh             # apply (needs sudo)
+deploy/fasrc-dev/scripts/firewall.sh --list      # show archi rules in place
+```
+
+- **Idempotent** — each rule is checked with `iptables -C` before insertion, so
+  re-running is a no-op. `--dry-run` never mutates.
+- **Placement** is derived from the chain, not hardcoded: rules are inserted
+  ahead of the terminal `REJECT all -- 0.0.0.0/0 0.0.0.0/0`. On a chain with no
+  such rule they are appended instead.
+- **Access:** `7861` (chat UI) is open to the Harvard gencom VPN
+  (`10.1.4.0/22`, `10.1.16.0/22`) and the FASRC VPN (`10.255.8.0/22`); every
+  other port is admin-VPN only (`10.255.13.96/27`). The table in the script is
+  the source of truth.
+- **Deliberately not wired into `create`/`redeploy`** — opening host-wide ports
+  is a privileged action that should stay an explicit human decision, never a
+  deploy side effect.
+- **Rules are runtime-only until persisted** (e.g. `service iptables save`).
+  The durable fix is to get these ports into the puppet-managed set via FASRC
+  ops; this script is the stopgap and the documentation of intent.
+- **Self-test:** `bash deploy/fasrc-dev/scripts/test_firewall.sh` — 8 cases
+  against a fake `iptables`; no root, no network, never touches the real
+  firewall.
 
 ## Notes
 
