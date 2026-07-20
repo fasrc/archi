@@ -42,8 +42,16 @@ FW_RULES=(
   "8001|$VPN_RC_ADMIN|archi-vllm from admin VPN"
   "6900|$VPN_RC_ADMIN|argilla from admin VPN"
   "80|$VPN_RC_ADMIN|homer dashboard from admin VPN"
+  # 7881 is the RAGAS benchmark host-side mapping (see service_benchmark.py).
   "3000,3080,7881,8000,8080,9100,9400,11434|$VPN_RC_ADMIN|0014 archi services from admin VPN"
 )
+# DELIBERATELY NOT OPENED: data_manager (7889). It listens on 0.0.0.0 with
+# `auth.enabled: false`, so the terminal REJECT is the only thing keeping an
+# unauthenticated ingestion API off the network. Opening it is a security
+# decision that needs auth in front of it first — not a transcription fix.
+# This table records the host's intended posture; it is not derived from
+# config.yaml on purpose, so that editing app config can never silently
+# widen the firewall.
 
 log() { printf '%s\n' "$*"; }
 
