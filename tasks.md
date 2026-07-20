@@ -1,1 +1,1 @@
-openspec/changes/fix-issue-84-strip-orphan-think/tasks.md
+openspec/changes/fix-issue-112-dry-run-docker-check/tasks.md

@@ -1,22 +1,11 @@
 """Smoke-test that archi create --dev --dry runs and prints the dev warning."""
 
-import shutil
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from src.cli.utils import service_builder
-
-# `archi create` aborts early ("Docker is not available") without a container
-# runtime, so these smoke tests can only run where docker/podman is on PATH. The
-# unit gate runs inside the loop container (no nested runtime), so skip there; CI
-# (ubuntu-latest, Docker preinstalled) still exercises them.
-pytestmark = pytest.mark.skipif(
-    shutil.which("docker") is None and shutil.which("podman") is None,
-    reason="archi create requires a container runtime (docker/podman) on PATH",
-)
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE_CONFIG = REPO_ROOT / "examples" / "deployments" / "basic-openai" / "config.yaml"
@@ -74,15 +63,6 @@ def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #112 RED phase: the Docker-availability check in create() runs before "
-        "the --dry early return, so --dry still raises ClickException without a "
-        "runtime. Task 2.1/2.2 moves the check after the dry-run summary; remove this "
-        "marker once that lands."
-    ),
-)
 def test_dry_run_succeeds_without_docker(env_file, tmp_path, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
@@ -115,6 +95,72 @@ def test_dry_run_succeeds_without_docker(env_file, tmp_path, monkeypatch):
     )
     assert result.exit_code == 0, (
         f"--dry should exit 0 without Docker. exit_code={result.exit_code}\n"
+        f"output:\n{result.output}\n"
+    )
+
+
+def test_non_dry_create_requires_docker(env_file, tmp_path, monkeypatch):
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
+
+    from src.cli import cli_main
+
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: False)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "-n",
+            "smoke",
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"non-dry create without --podman should fail without Docker. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        "Docker is not available on this system" in result.output
+    ), f"expected the Docker-unavailable message. output:\n{result.output}\n"
+
+
+def test_non_dry_create_with_podman_skips_docker_check(env_file, tmp_path, monkeypatch):
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
+
+    from src.cli import cli_main
+
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: False)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "-n",
+            "smoke",
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+            "--podman",
+        ],
+    )
+
+    assert "Docker is not available on this system" not in result.output, (
+        f"--podman should short-circuit the Docker check regardless of exit code. "
         f"output:\n{result.output}\n"
     )
 

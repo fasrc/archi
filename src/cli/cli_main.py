@@ -137,14 +137,6 @@ def create(
 
     warn_if_template_mismatch()
 
-    # Check if Docker is available when --podman is not specified
-    if not other_flags.get("podman", False) and not check_docker_available():
-        raise click.ClickException(
-            "Docker is not available on this system. "
-            "Please install Docker or use the '--podman' option to use Podman instead.\n"
-            "Example: archi create --name mybot --podman ..."
-        )
-
     try:
         # Validate inputs
         validate_services_selection(services)
@@ -229,6 +221,14 @@ def create(
                 base_dir,
             )
             return
+
+        # Check if Docker is available when --podman is not specified
+        if not other_flags.get("podman", False) and not check_docker_available():
+            raise click.ClickException(
+                "Docker is not available on this system. "
+                "Please install Docker or use the '--podman' option to use Podman instead.\n"
+                "Example: archi create --name mybot --podman ..."
+            )
 
         # Actual deployment
         template_manager = TemplateManager(env, verbosity)
