@@ -39,6 +39,23 @@ performed. The error message MUST be unchanged, so existing operator guidance st
   `check_docker_available()` returns `False`
 - **THEN** the Docker-availability check is skipped and the command proceeds
 
+#### Scenario: Forced re-create on a host with no Docker
+
+- **WHEN** `archi create --force` is invoked without `--dry` and without `--podman` against
+  an existing deployment, and `check_docker_available()` returns `False`
+- **THEN** the command exits non-zero before `handle_existing_deployment()` runs
+- **AND** the existing deployment directory is left intact, because a forced cleanup
+  swallows a failed compose stop and would otherwise remove the deployment on a host that
+  cannot bring it back up
+
+#### Scenario: Real deployment on a host with no Docker at maximum verbosity
+
+- **WHEN** `archi create` is invoked without `--dry` and without `--podman` at
+  `--verbosity 4`, and `check_docker_available()` returns `False`
+- **THEN** the command still exits non-zero
+- **AND** the preflight is not swallowed by the broad exception handler that only prints a
+  traceback at verbosity >= 4
+
 ### Requirement: Dry-run smoke coverage executes without a container runtime
 
 The `archi create` dry-run smoke tests SHALL execute — not skip — in environments with
@@ -51,3 +68,13 @@ verified by the gate rather than silently unverified.
   PATH
 - **THEN** the dry-run smoke tests in `tests/unit/test_cli_create_dev_smoke.py` run and pass
 - **AND** only tests that genuinely require a container runtime remain skipped
+
+#### Scenario: Smoke tests on a host that does have a container runtime
+
+- **WHEN** the unit gate runs on a host with `docker` or `podman` installed
+- **THEN** no test in `tests/unit/test_cli_create_dev_smoke.py` creates volumes, containers,
+  or deployment files on the host runtime — non-dry runs are halted at the first step after
+  the preflight
+- **AND** each test resolves `ARCHI_DIR` to its own temporary directory, patching the
+  module-level constant rather than only the environment variable, so tests cannot leak into
+  one another or into the operator's real `~/.archi`
