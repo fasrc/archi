@@ -57,10 +57,10 @@
 
 - [x] 6.1 Run `bash scripts/gate.sh` and confirm exit 0, including ≥80% diff coverage on
   the changed lines.
-- [ ] 6.2 Commit with a short lowercase message and no `Co-Authored-By`/session trailers.
+- [x] 6.2 Commit with a short lowercase message and no `Co-Authored-By`/session trailers.
   Never use `--no-verify`.
-- [ ] 6.3 Open the PR: `gh pr create --repo fasrc/archi --base dev`. Body must say
+- [x] 6.3 Open the PR: `gh pr create --repo fasrc/archi --base dev`. Body must say
   `closes #112` and link both contrasting CI runs
   (https://github.com/fasrc/archi/actions/runs/29549066080 — failed;
   https://github.com/fasrc/archi/actions/runs/29549067994 — passed on the same commit).
-  Do NOT merge.
+  Do NOT merge. Opened as https://github.com/fasrc/archi/pull/126.
