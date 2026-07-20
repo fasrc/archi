@@ -74,6 +74,51 @@ def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "issue #112 RED phase: the Docker-availability check in create() runs before "
+        "the --dry early return, so --dry still raises ClickException without a "
+        "runtime. Task 2.1/2.2 moves the check after the dry-run summary; remove this "
+        "marker once that lands."
+    ),
+)
+def test_dry_run_succeeds_without_docker(env_file, tmp_path, monkeypatch):
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
+
+    from src.cli import cli_main
+
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: False)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--dry",
+            "-n",
+            "smoke",
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert "Docker is not available" not in result.output, (
+        f"--dry should not require a container runtime. exit_code={result.exit_code}\n"
+        f"output:\n{result.output}\n"
+    )
+    assert result.exit_code == 0, (
+        f"--dry should exit 0 without Docker. exit_code={result.exit_code}\n"
+        f"output:\n{result.output}\n"
+    )
+
+
 def test_no_dev_flag_no_warning(env_file, tmp_path, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")

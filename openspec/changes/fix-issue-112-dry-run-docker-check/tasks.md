@@ -1,12 +1,12 @@
 ## 1. Red test — dry run must not need a runtime
 
-- [ ] 1.1 In `tests/unit/test_cli_create_dev_smoke.py`, add
+- [x] 1.1 In `tests/unit/test_cli_create_dev_smoke.py`, add
   `test_dry_run_succeeds_without_docker`: monkeypatch
   `src.cli.cli_main.check_docker_available` to return `False` (patch the name as bound in
   `cli_main`, not in `helpers` — see design decision 3), invoke `create` with
   `--dry -n smoke -c <EXAMPLE_CONFIG> -e <env_file>` via `CliRunner`, assert
   `result.exit_code == 0` and that "Docker is not available" is absent from the output.
-- [ ] 1.2 Run `python -m pytest tests/unit/test_cli_create_dev_smoke.py -v` in a shell with
+- [x] 1.2 Run `python -m pytest tests/unit/test_cli_create_dev_smoke.py -v` in a shell with
   a runtime present and confirm the new test FAILS on the `ClickException`. Record the
   failure output. Do not write implementation before seeing red.
 
