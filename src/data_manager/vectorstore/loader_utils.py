@@ -5,6 +5,7 @@ from typing import List, Optional
 
 from langchain_community.document_loaders import (
     BSHTMLLoader,
+    NotebookLoader,
     PyPDFLoader,
     PythonLoader,
 )
@@ -70,6 +71,8 @@ def select_loader(file_path: str | Path):
         return TextLoader(str(path))
     if file_extension == ".py":
         return PythonLoader(str(path))
+    if file_extension == ".ipynb":
+        return NotebookLoader(str(path), include_outputs=False)
     if file_extension in {".html", ".htm"}:
         return BSHTMLLoader(str(path), bs_kwargs={"features": "html.parser"})
     if file_extension == ".pdf":
