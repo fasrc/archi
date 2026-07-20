@@ -137,8 +137,16 @@ def create(
 
     warn_if_template_mismatch()
 
-    # Check if Docker is available when --podman is not specified
-    if not other_flags.get("podman", False) and not check_docker_available():
+    # Check if Docker is available when --podman is not specified. This has to
+    # run before handle_existing_deployment() (a --force cleanup tears the old
+    # deployment down and would leave nothing behind if the runtime is missing)
+    # and outside the try below (whose verbosity>=4 branch swallows exceptions
+    # and would report success). --dry inspects only, so it needs no runtime.
+    if (
+        not dry
+        and not other_flags.get("podman", False)
+        and not check_docker_available()
+    ):
         raise click.ClickException(
             "Docker is not available on this system. "
             "Please install Docker or use the '--podman' option to use Podman instead.\n"
