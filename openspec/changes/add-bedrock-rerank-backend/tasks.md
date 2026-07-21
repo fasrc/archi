@@ -1,38 +1,37 @@
-## 1. Reranker seam (pure refactor, no behavior change)
+> **Sequencing (D6):** evidence gates production. Phases 1–2 are a *disposable* spike — no
+> production seam, no `boto3` in `pyproject.toml`, no config wiring. Phases 3–4 are built
+> **only if** the phase-2 ADR selects Bedrock (decision gate). Phase 1 blocks all live-Bedrock
+> work.
 
-- [ ] 1.1 Add a `Reranker` protocol/base — `rerank(query, passages) -> list[(index, score)]`, sorted descending over the full pool (new adapters module under `retrievers/`).
-- [ ] 1.2 TDD: extract today's inline FlashRank call into `FlashRankReranker` (wraps `_get_cached_ranker` + `RerankRequest`); assert its output is identical to the pre-refactor `_rerank` for a fixed candidate pool.
-- [ ] 1.3 Rewrite `LlamaIndexHierarchicalRetriever._rerank` to delegate to an injected `self._reranker` (default `FlashRankReranker(reranker_model)`); keep the existing `reranker` injection point working for tests.
-- [ ] 1.4 Run the existing hierarchical-retriever tests — behavior unchanged, gate green.
+## 1. Governance + pre-registration gate (blocks all live-Bedrock work — D8, D7)
 
-## 2. Bedrock backend adapter (raw boto3)
+- [ ] 1.1 **(D8, blocker)** Obtain documented data-owner/security approval for sending query text to AWS Bedrock: allowed datasets, AWS account + region, retention/logging terms. If approval is not granted, designate a **sanitized synthetic or public** evaluation bank and use ONLY that. No live Bedrock call before this task is done.
+- [ ] 1.2 Version a privacy-safe evaluation bank with committed cardinality and representativeness criteria (record which bank, its size, and how it was sanitized/selected).
+- [ ] 1.3 Pre-register the benchmark to `docs/decisions/` **before running anything**: power/variance analysis → minimum detectable effect; paired per-query metrics with confidence intervals; repeated-judge strategy; predeclared minimum quality improvement AND end-to-end latency budget (both must pass). Name the three arms: current FlashRank / stronger-local cross-encoder / Bedrock Cohere.
 
-- [ ] 2.1 Add `boto3` to `pyproject.toml` `dependencies` (match any pin in `requirements/`); note the redeploy requirement.
-- [ ] 2.2 TDD: `BedrockReranker` calling `bedrock-agent-runtime.rerank` with `cohere.rerank-v3-5:0`, mapping `results[].index`/`.relevanceScore` onto the seam contract; **inject a fake client** so tests are hermetic (no network, no AWS import in the FlashRank path).
-- [ ] 2.3 TDD the full-pool invariant (spec: "Reranker ranks the full candidate pool"): assert `numberOfResults == len(passages)` in the request, and that a low-ranked-but-unique-parent candidate survives parent dedup.
-- [ ] 2.4 Configure the boto3 client with tight timeouts (`connect≈1s`, `read≈2s`, `max_attempts≈2`) via `botocore.config.Config`.
-- [ ] 2.5 TDD model-id → ARN normalization: a bare `cohere.rerank-v3-5:0` is expanded to `arn:aws:bedrock:<region>::foundation-model/<id>` (the `modelArn` the Rerank API requires); a full ARN passes through unchanged; a bare id with no configured region fails fast with a clear error.
+## 2. Disposable spike — evidence before any production code (D6)
 
-## 3. Fallback + config wiring
+- [ ] 2.1 Write a **throwaway** spike script (NOT wired into the retriever, no `boto3` in `pyproject.toml`) that captures the existing FlashRank candidate pools once for the eval bank — identical pools reused across all three arms so only the rerank step varies (kills corpus/index drift).
+- [ ] 2.2 Rerank each captured pool three ways: (a) current FlashRank `ms-marco-MiniLM-L-12-v2`; (b) a stronger/newer **local** cross-encoder; (c) Bedrock Cohere Rerank 3.5. Run **fail-closed** — a Bedrock error aborts that arm, never silently substitutes FlashRank. For Bedrock, normalize the model id to `arn:aws:bedrock:<region>::foundation-model/<id>` and request `numberOfResults = len(pool)`.
+- [ ] 2.3 Score all three arms under the pre-registered protocol (paired metrics + CIs); capture quality AND end-to-end latency for each.
+- [ ] 2.4 ADR (`docs/decisions/`): report each arm against the predeclared gates. Decision: **(a)** Bedrock clears quality+latency gates AND beats the stronger-local arm by enough to justify egress → productionize (phase 3); **(b)** stronger-local wins/ties → adopt it, no egress; **(c)** neither meaningfully beats FlashRank → keep FlashRank. Discard the spike script in every branch.
 
-- [ ] 3.1 TDD: `FallbackReranker(primary, secondary)` — on any primary error/timeout, degrade to secondary; log the fallback (spec: "Graceful fallback when a remote reranker fails").
-- [ ] 3.2 TDD the pre-warm path: local fallback reranker is initialized ahead of first use when `bedrock` is primary (no cold-start at failure time).
-- [ ] 3.3 Extend `factory.build_vector_retriever` to read `reranker.backend` (`flashrank` default | `bedrock`) + Bedrock sub-keys (`model`, `region`, `timeout_s`, `fallback`); build the selected backend, wrapping Bedrock in `FallbackReranker`. TDD: `flashrank`/absent → `FlashRankReranker`; `bedrock` → fallback-wrapped `BedrockReranker`.
-- [ ] 3.3a Backend-aware model resolution/validation: under `backend: bedrock`, default the model to `cohere.rerank-v3-5:0` when omitted (NOT the FlashRank default the template renders), and **fail fast** if a FlashRank-shaped model id is configured under `bedrock` — never silently fall through to FlashRank. TDD both.
-- [ ] 3.4 Add the `reranker.backend` keys to `src/cli/templates/base-config.yaml` with comments (rendered with Jinja defaults, matching the existing `enabled`/`candidate_pool_size` pattern). TDD the **behavior** guarantee: omitting `backend` selects `flashrank` and produces the identical ranking — NOT byte-identical rendered YAML (the render gains a documented `backend: flashrank` line by design; assert the default value + behavior, not file bytes).
+## 3. Production reranker backend — GATED on the phase-2 decision (a) only (D1/D2/D5/D6)
 
-## 4. A/B harness arm (the spike)
+- [ ] 3.1 `Reranker` seam derived from the demonstrated consumers, with EXPLICIT contract: **score semantics** (ordering-only within one backend, NOT cross-backend-comparable — the retriever relies on order, not absolute scores), **ranking completeness** (full pool — D2), and backend metadata. TDD.
+- [ ] 3.2 Extract today's inline FlashRank call into `FlashRankReranker` behind the seam; assert identical ranking to the pre-refactor `_rerank` for a fixed pool.
+- [ ] 3.3 `BedrockReranker` (raw boto3, **injectable fake client** for hermetic tests; `numberOfResults = len(pool)`; model-id→ARN normalization; tight `botocore.config.Config` timeouts). Add `boto3` to `pyproject.toml` `dependencies` (redeploy required — the deploy image `pip install .`s; neither gate nor CI catches a missing dep).
+- [ ] 3.4 `FallbackReranker` (remote primary → local FlashRank on error/timeout; pre-warm FlashRank at startup) **plus a circuit breaker** (D9 — stop hammering a failing remote for a cooldown). TDD both.
+- [ ] 3.5 `factory.build_vector_retriever` reads `reranker.backend` (`flashrank` default | `bedrock`) + Bedrock sub-keys (`model`, `region`, `timeout_s`, `fallback`); apply a **backend-specific model default** (Bedrock → `cohere.rerank-v3-5:0`) and **fail fast** on a FlashRank-shaped model under `bedrock` (never silent fallback). TDD.
+- [ ] 3.6 Add `reranker.backend` keys to `src/cli/templates/base-config.yaml` with comments. TDD the **behavior** guarantee: omitting `backend` selects `flashrank` and produces the identical ranking — NOT byte-identical rendered YAML (the render gains a documented `backend: flashrank` line by design).
 
-- [ ] 4.1 Add a Bedrock arm under `examples/benchmarking/hierarchical_rerank_ab/` that **isolates the reranker as the only variable**: the FlashRank and Bedrock arms MUST share one ingested index/snapshot (same `DATA_PATH`, no re-scrape/re-ingest) so `hybrid_search` returns identical candidate pools and only the rerank step differs — do NOT clone the chunking-comparison pattern that re-ingests per arm (that lets corpus drift confound the delta). Set `reranker.backend: bedrock` + model/region, and `fallback: none` (**fail closed**). Document required AWS env + Model Access in its README.
-- [ ] 4.2 Run FlashRank vs Bedrock over the shared index on the FASRC bank; capture the RAGAS delta and latency. **Assert zero fallback events** for the Bedrock arm (a fallback means the arm measured FlashRank, not Bedrock — discard and fix rather than record the delta).
-- [ ] 4.3 Record the result in an ADR (`docs/decisions/`), including the decision gate: does the delta justify productionization?
+## 4. Fail-open production validation — GATED (D9)
 
-## 5. Docs + verification
+- [ ] 4.1 Exercise an end-to-end agent workload with realistic repeated retrievals; inject timeout/throttle/outage cases; record **fallback-rate telemetry** and expose backend/fallback status in traces.
+- [ ] 4.2 Measure p50/p95/p99 end-to-end latency against the predeclared budget; compute expected realized quality as a **function of the observed fallback rate** (NOT the fail-closed spike score).
+- [ ] 4.3 Only if realized quality + tail latency clear the gates: credential injection (`~/.secrets/` → env, mirror `HUIT_API_KEY`), Model Access, least-privilege IAM (**both `bedrock:Rerank` and `bedrock:InvokeModel`** scoped to the foundation-model ARN, plus `aws-marketplace:ViewSubscriptions` / `aws-marketplace:Subscribe` for the Cohere third-party model), deploy, and any default-backend flip.
 
-- [ ] 5.1 Update `docs/docs/configuration.md` (`reranker.backend` and Bedrock sub-keys) and `docs/docs/benchmarking.md` (the Bedrock A/B arm).
-- [ ] 5.2 Full gate green (`bash scripts/gate.sh`, ≥80% diff coverage on changed lines); `openspec validate add-bedrock-rerank-backend --strict` passes.
-- [ ] 5.3 Adversarial check before PR: verify the full-pool invariant and the fallback path against the code; run the suite.
+## 5. Docs + verification (per phase, as each lands)
 
-## 6. Out of scope for this change (sequenced after the decision gate)
-
-- [ ] 6.1 (Deferred — separate change) Production credential injection (`~/.secrets/` → env, mirror `HUIT_API_KEY`), Model Access provisioning, the least-privilege IAM role (**both `bedrock:Rerank` and `bedrock:InvokeModel`** scoped to the foundation-model ARN, plus `aws-marketplace:ViewSubscriptions` / `aws-marketplace:Subscribe` for the Cohere third-party model), deploy, and any default-backend flip — only if task 4 shows the delta is worth it. Requires the data-egress sign-off (Open Questions in design.md).
+- [ ] 5.1 Update `docs/docs/benchmarking.md` (the three-arm pre-registered spike) when phase 2 lands; `docs/docs/configuration.md` (`reranker.backend` keys) when phase 3 lands.
+- [ ] 5.2 Gate green (`bash scripts/gate.sh`, ≥80% diff coverage on changed lines) for each PR; `openspec validate add-bedrock-rerank-backend --strict` passes.

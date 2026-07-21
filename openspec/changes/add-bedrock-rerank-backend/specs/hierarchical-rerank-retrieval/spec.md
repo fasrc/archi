@@ -61,11 +61,27 @@ request a count equal to the candidate-pool size.
 - **THEN** it requests N results from the Rerank API (not the final top-N), so no candidate is
   dropped before parent mapping
 
+### Requirement: Reranker scores are ordering-only
+
+Reranker scores SHALL be treated as meaningful only for **ordering candidates within a single
+backend's response**, not as calibrated values comparable across backends. The retriever SHALL
+depend on the returned order, not on absolute score magnitudes, so a backend swap changes ranking
+quality without changing the retriever's contract.
+
+#### Scenario: Retriever uses order, not absolute scores
+
+- **WHEN** a reranker backend returns candidates with scores
+- **THEN** the retriever selects and deduplicates by the returned order alone, and no downstream
+  logic compares a score from one backend against a score from another
+
 ### Requirement: Graceful fallback when a remote reranker fails
 
 The system SHALL fall back to the local FlashRank reranker when a remote reranker backend fails
 (error, timeout, or throttling) on a query, rather than failing retrieval, and SHALL NOT
-hard-depend on a remote reranker being reachable.
+hard-depend on a remote reranker being reachable. Under sustained remote failure the system SHALL
+stop attempting the remote backend for a cooldown (circuit breaker) rather than paying the remote
+timeout on every query, and fallback events SHALL be observable (logged/traced) so the realized
+fallback rate can be measured.
 
 #### Scenario: Remote rerank error degrades to local
 
@@ -78,3 +94,15 @@ hard-depend on a remote reranker being reachable.
 - **WHEN** the `bedrock` backend is the configured primary
 - **THEN** the local fallback reranker is initialized ahead of first use, so a fallback does not
   incur the one-time model-load cost at the moment the remote backend is already failing
+
+#### Scenario: Sustained remote failure trips the circuit breaker
+
+- **WHEN** the remote reranker fails repeatedly beyond a threshold
+- **THEN** the system stops calling the remote backend for a cooldown window and serves the local
+  reranker directly, so queries do not each pay the remote timeout
+
+#### Scenario: Fallback rate is observable
+
+- **WHEN** the `bedrock` backend is running in production
+- **THEN** fallback events are recorded (logged/traced) so the realized fallback rate and its
+  effect on ranking quality can be measured

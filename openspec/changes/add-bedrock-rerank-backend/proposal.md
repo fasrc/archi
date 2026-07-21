@@ -7,40 +7,35 @@ quality meaningfully, but today there is **no seam to swap the reranker backend*
 the config `reranker.model` string only ever reaches `flashrank.Ranker(...)`, so it
 can pick a different *FlashRank* model but not a different *backend*, and there is no
 way to A/B one reranker against another. This change adds that seam and a Bedrock
-adapter behind it, gated so the current behavior is the default, and structured
-**spike-first**: prove the quality delta on the existing A/B harness before anything
-becomes a production default.
+adapter behind it, gated so current behavior stays the default, and structured
+**evidence-first**: a disposable, pre-registered spike — with a stronger-local-cross-encoder
+arm and a data-egress approval gate — must prove the quality delta before any production seam,
+dependency, or trust boundary is committed.
 
 ## What Changes
 
-- **New `Reranker` seam.** Introduce a small protocol
-  (`rerank(query, passages) -> list[(index, score)]`, sorted descending, over the
-  **full** candidate pool) inside the hierarchical retriever. Extract today's inline
-  FlashRank call (`hierarchical_retriever.py:_rerank`) behind a `FlashRankReranker`
-  adapter — no behavior change.
-- **New `BedrockReranker` adapter (raw boto3).** Calls `bedrock-agent-runtime.rerank`
-  with the Cohere Rerank 3.5 model, mapping the response's `index` + `relevanceScore`
-  directly onto the seam contract. `numberOfResults` is set to the full candidate-pool
-  size (not the final top-N) so parent-dedup is never starved. The adapter normalizes a
-  bare model id (`cohere.rerank-v3-5:0`) to the full ARN the Rerank API requires
-  (`arn:aws:bedrock:<region>::foundation-model/<id>`), so config can carry either form.
-- **New `FallbackReranker` wrapper.** Remote primary → local FlashRank on any
-  error/timeout, so a remote reranker never becomes a hard dependency on the answer path.
-- **Config backend selector.** Add `data_manager.retrievers.hierarchical_rerank.reranker.backend`
-  (`flashrank` default | `bedrock`) plus Bedrock sub-keys (`model` ARN/id, `region`,
-  `timeout_s`, `fallback`). `factory.build_vector_retriever` constructs the selected
-  backend. Default render is unchanged.
-- **Dependency + deploy.** Add `boto3` to `pyproject.toml` `dependencies` (the deploy
-  image does `pip install .`); this is archi's first AWS-SDK / SigV4 dependency.
-- **Spike-first A/B.** Add a Bedrock arm to the existing
-  `examples/benchmarking/hierarchical_rerank_ab/` harness to measure the RAGAS delta
-  vs the FlashRank baseline **before** productionizing (credential plumbing, deploy,
-  default flip are out of scope until the delta justifies them).
-- **No default behavior change.** FlashRank stays the default backend; every existing
-  deployment runs identically (same ranking). Following the existing template pattern
-  (`enabled`, `candidate_pool_size` are always rendered with Jinja defaults), the rendered
-  config gains one documented `backend: flashrank` line — so the guarantee is
-  **behavior-unchanged**, not byte-identical rendered YAML.
+- **Evidence first — a disposable spike.** Before any production code, a *throwaway* benchmark
+  reranks captured candidate pools three ways — current FlashRank `ms-marco-MiniLM-L-12-v2`, a
+  stronger/newer **local** cross-encoder, and Bedrock Cohere Rerank 3.5 — under a
+  **pre-registered, powered, paired** protocol with predeclared quality AND end-to-end latency
+  thresholds. It answers *is a managed reranker (and its egress) even necessary*, not just *does
+  Cohere win once*. No seam, no `boto3`, no config wiring in this phase.
+- **Governance gate.** Documented data-owner/security approval is a **prerequisite to any live
+  Bedrock call, including the spike** — the spike transmits real query text to AWS. Absent
+  approval, it runs only on a sanitized synthetic/public bank.
+- **Decision gate → gated production.** Only if Bedrock clears the predeclared gates *and* beats
+  the stronger-local arm: a `Reranker` seam (explicit **score semantics** — ordering-only, not
+  cross-backend-comparable — full-pool ranking, backend metadata), a `BedrockReranker` (raw
+  boto3, bare-id→ARN normalization, `numberOfResults` = full pool), a `FallbackReranker` **+
+  circuit breaker**, the `reranker.backend` config selector, and `boto3` as a dependency —
+  archi's first AWS-SDK / SigV4 use.
+- **Fail-open validation.** Productionization is further gated on an end-to-end workload with
+  injected failures, fallback-rate telemetry, and p50/p95/p99 latency budgets — realized quality
+  measured as a *function of the fallback rate*, not the fail-closed spike score.
+- **No default behavior change.** FlashRank stays the default backend *and* the fallback safety
+  net; existing deployments run identically (same ranking). The rendered config gains one
+  documented `backend: flashrank` line, so the guarantee is **behavior-unchanged**, not
+  byte-identical rendered YAML.
 
 ## Capabilities
 

@@ -75,19 +75,22 @@ call is archi's *first* boto3/SigV4 usage, though.
 ## Goals / Non-Goals
 
 **Goals:**
-- A `Reranker` seam that decouples the rerank stage from FlashRank, with FlashRank behavior
-  preserved bit-for-bit as the default.
-- A `BedrockReranker` (Cohere Rerank 3.5) adapter behind the seam, config-selectable.
-- Graceful fallback to local FlashRank when the remote reranker errors/times out.
-- A Bedrock arm in the existing A/B harness that measures the RAGAS delta vs FlashRank.
+- **Evidence first:** a *disposable* spike that measures whether a managed reranker (Cohere
+  Rerank 3.5) beats both the current local FlashRank model *and* a stronger/newer **local**
+  cross-encoder, under a pre-registered, powered, paired benchmark with predeclared quality
+  **and** end-to-end latency thresholds (D6, D7).
+- A `Reranker` seam + `BedrockReranker` adapter + graceful fallback — built as production code
+  **only if the spike clears the predeclared gates** (D6).
+- If gated in: config-selectable backend (FlashRank default), and fail-open production
+  validation — fallback-rate telemetry, circuit breaker, tail-latency budgets (D9).
 
 **Non-Goals:**
-- Making Bedrock the production default. Default stays FlashRank until the A/B justifies a flip
-  (that flip, if it happens, is a separate change).
-- Production credential plumbing / deploy / Model-Access provisioning beyond what the A/B spike
-  needs. Called out here, sequenced after the delta is proven.
+- Merging a production seam, a `boto3` dependency, or an AWS trust boundary *before* the spike
+  proves Bedrock warrants them. The spike is throwaway; production is a gated follow-on (D6).
+- Any live Bedrock call before documented data-egress approval (D8).
+- Making Bedrock the default. FlashRank stays the default *and* the fallback safety net unless
+  the gates plus a default-flip decision say otherwise.
 - Reranking parent nodes, embeddings via Bedrock, or Bedrock Knowledge Bases. Out of scope.
-- Replacing FlashRank. It stays — as default *and* as the fallback safety net.
 
 ## Decisions
 
@@ -167,11 +170,58 @@ documented `backend: flashrank` line — so the promise is *behavior-unchanged*,
 byte-identical rendered output. The TDD asserts the default backend and identical ranking, not
 byte equality of the rendered file.
 
-### D6 — Spike-first sequencing
-Ship the seam + `BedrockReranker` + a harness arm **first**; measure RAGAS delta on the FASRC
-bank; only then decide on productionization (creds, deploy, default flip). The seam refactor is
-worth doing regardless — it's what makes the A/B possible and unblocks any future reranker.
-*Why:* de-risks credential/deploy/egress work behind a proven quality win instead of ahead of it.
+### D6 — Evidence before production abstraction (disposable spike first)
+*Adversarial-review finding (medium).* The earlier sequencing landed the seam, the
+`BedrockReranker`, the `boto3` dependency, and the harness arm *before* any evidence, and
+justified the seam as "worth it regardless." That commits a permanent interface + a new AWS
+dependency + a trust boundary on one hypothetical consumer — and the base rerank feature already
+captured +19% RAGAS, so the reranker-*only* residual may be small. Re-sequenced:
+1. **Disposable spike** — a throwaway script (NOT wired into the retriever, no `boto3` in
+   `pyproject.toml`, no config) that captures the existing FlashRank candidate pools for the
+   eval bank and reranks them three ways: current FlashRank `ms-marco-MiniLM-L-12-v2`, a
+   stronger/newer **local** cross-encoder, and Bedrock Cohere. Scored under D7.
+2. **Decision gate** — Bedrock must clear the predeclared quality **and** latency gates *and*
+   beat the stronger-local arm by enough to justify egress. Else adopt the stronger local model
+   (no egress) or keep FlashRank; **discard the spike**.
+3. **Production (gated only)** — build the seam, `BedrockReranker`, `boto3` dep, fallback +
+   circuit breaker, and config *then*, deriving the interface from the demonstrated consumers
+   and specifying **score semantics** (ordering-only within one backend, not cross-backend
+   comparable), ranking completeness, and backend metadata — not a hard-coded pointwise
+   `(index, score)` with unstated semantics.
+*Why:* de-risks a permanent dependency/abstraction + a compliance boundary behind proven,
+powered evidence rather than ahead of it.
+
+### D7 — Pre-registered, powered, paired evaluation (with a stronger-local arm)
+*Adversarial-review finding (high).* "Capture a RAGAS delta and ask if it's worth it" cannot
+separate a real reranker gain from LLM-judge + sampling noise — especially a small reranker-only
+residual on a bank of unknown size. Before the spike runs:
+- **Version a privacy-safe eval bank** with committed cardinality and representativeness
+  criteria (D8 constrains *which* bank).
+- **Power/variance analysis** → a minimum detectable effect; **pre-register** paired per-query
+  metrics, confidence intervals, and a repeated-judge strategy.
+- **Predeclare thresholds:** a minimum quality improvement AND an end-to-end latency budget —
+  both must be met to pass.
+- **Three arms**, so the experiment answers *is managed egress necessary* (Bedrock vs
+  stronger-local vs current), not merely *does Cohere beat the current small model once*.
+
+### D8 — Data-egress approval gates the spike, not just productionization
+*Adversarial-review finding (high).* The spike itself transmits the (gitignored, real
+ServiceNow-ticket) query bank to AWS — it crosses the exact trust boundary the plan had deferred
+to "productionization," and a benchmark cannot legitimize an experiment that was unauthorized to
+disclose its inputs. So documented **data-owner / security approval is a prerequisite to any
+live Bedrock call, including the spike**, defining allowed datasets, AWS account/region, and
+retention/logging terms. Absent approval, the spike runs **only on a sanitized synthetic or
+public bank**.
+
+### D9 — Fail-open production must be validated as it will run
+*Adversarial-review finding (high).* The spike runs fail-*closed* (D4 exception) to measure
+Bedrock cleanly, but production runs fail-*open*: every remote timeout/throttle silently
+substitutes FlashRank after paying the remote delay, and an agent retrieves multiple times per
+turn. A clean-run score therefore says nothing about steady-state realized quality or tail
+latency. Productionization (the gated follow-on) MUST validate on an end-to-end agent workload
+with injected timeout/throttle/outage cases, **fallback-rate telemetry**, a **circuit breaker**,
+backend/fallback status exposed in traces, and p50/p95/p99 latency budgets — and report expected
+realized quality as a *function of the observed fallback rate*, not the fail-closed score.
 
 ## Risks / Trade-offs
 
@@ -191,22 +241,24 @@ worth doing regardless — it's what makes the A/B possible and unblocks any fut
 
 ## Migration Plan
 
-1. Land the seam + `FlashRankReranker` (pure refactor, no behavior change) — TDD, gate green.
-2. Add `BedrockReranker` + `FallbackReranker` + config selector, default `flashrank`. `boto3`
-   into `pyproject.toml`.
-3. Add the Bedrock A/B arm — **isolating the reranker as the only variable**. The existing
-   `hierarchical_rerank_ab` arms use distinct `DATA_PATH`s because they compare *chunking*, so
-   each re-ingests; cloning that pattern for a reranker-only comparison lets scrape/ingest drift
-   change the candidate pool independently of the reranker and confound the delta. Instead the
-   FlashRank and Bedrock arms MUST share one ingested index/snapshot (same `DATA_PATH`, no
-   re-scrape) so `hybrid_search` yields identical candidates and only the rerank step differs.
-   Run with Bedrock **fallback disabled** (D4 exception); record the RAGAS delta in an ADR.
-4. **Decision gate:** delta worth it? If no → stop; FlashRank remains, seam stays as a reusable
-   asset. If yes → separate change for creds plumbing, Model Access, deploy, and any default
-   flip. That change's IAM role needs **both** `bedrock:Rerank` and `bedrock:InvokeModel`
-   (scoped to the foundation-model ARN) plus `aws-marketplace:ViewSubscriptions` /
-   `aws-marketplace:Subscribe` for the Cohere third-party model — `bedrock:Rerank` alone
-   `AccessDenied`s.
+1. **Gate — data egress (D8).** Obtain documented data-owner/security approval (allowed
+   datasets, AWS account/region, retention/logging), OR designate a sanitized synthetic/public
+   bank. **No live Bedrock call before this.**
+2. **Pre-register (D7).** Version the eval bank (committed cardinality + representativeness);
+   power/variance → MDE; predeclare paired metrics, CIs, and quality + latency thresholds;
+   define the three arms (FlashRank / stronger-local / Bedrock). Commit the pre-registration.
+3. **Disposable spike (D6).** Capture the shared candidate pools once; rerank three ways
+   fail-closed; score. ADR records each arm against the predeclared gates.
+4. **Decision gate.** Bedrock clears quality+latency gates AND beats stronger-local enough to
+   justify egress? No → adopt stronger-local or keep FlashRank, **discard the spike**. Yes →
+   proceed to production.
+5. **Production (gated).** Seam + `BedrockReranker` + `boto3` dep + fallback + circuit breaker +
+   config, interface derived from real consumers with explicit score semantics; least-privilege
+   IAM role — **both** `bedrock:Rerank` and `bedrock:InvokeModel` (scoped to the foundation-model
+   ARN) plus `aws-marketplace:ViewSubscriptions` / `aws-marketplace:Subscribe` for the Cohere
+   third-party model (`bedrock:Rerank` alone `AccessDenied`s); creds plumbing; deploy.
+6. **Fail-open validation (D9).** End-to-end agent workload, injected failures, fallback-rate
+   telemetry, p50/p95/p99 budgets, realized-quality-as-f(fallback-rate); then any default flip.
 
 **Rollback:** set `reranker.backend: flashrank` (or omit it) and redeploy — the local path is
 untouched and always available.
@@ -215,13 +267,17 @@ untouched and always available.
 
 - **Account/region:** FASRC vs HUIT AWS account; region (lean `us-east-1` for RTT + Cohere 3.5
   support). Amazon Rerank 1.0 is *not* in `us-east-1` (forces `us-west-2` if that model is ever
-  wanted).
-- **Data-egress sign-off:** is sending query text (possibly PII) + public KB chunks to AWS
-  acceptable given HUIT's in-boundary posture? Owner decision before productionization.
-- **Fallback policy depth:** is a circuit-breaker (stop paying the 2s timeout during a sustained
-  outage) needed for v1, or is try/except fallback enough? (Leaning: enough for v1.)
-- **A/B bank:** headline run wants the operator-local ServiceNow query bank
-  (`snow_ragas_queries_pt1.json`, gitignored) staged, matching both arms.
+  wanted). Part of the D8 approval.
+- **Which stronger-local cross-encoder** is the third arm (e.g. `bge-reranker-base`/`-large`,
+  a newer MiniLM, a mxbai/jina reranker)? Pick on the quality/latency/size curve; it may make
+  Bedrock moot (no egress) — which is the point of including it (D7).
+- **Does the spike even need Bedrock?** If the stronger-local arm clears the quality gate, the
+  managed backend + egress + dependency may be unnecessary. The spike is designed to answer this.
+
+*Resolved by this revision (were open questions):* data-egress sign-off is now a hard
+prerequisite (D8), not a deferred question; the circuit breaker is required for production
+validation (D9), not "maybe v1"; the eval bank must be versioned and privacy-safe (D7/D8), not
+the gitignored ServiceNow bank used ad hoc.
 
 ## Future Exploration — ContextualCompressionRetriever + langchain-aws
 
