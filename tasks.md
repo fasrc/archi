@@ -1,1 +1,1 @@
-openspec/changes/fix-issue-112-dry-run-docker-check/tasks.md
+openspec/changes/fix-issue-118-scraper-trailing-slash/tasks.md
