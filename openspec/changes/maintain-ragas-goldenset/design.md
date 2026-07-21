@@ -9,21 +9,23 @@ questions grounded in live `docs.rc.fas.harvard.edu` KB pages and has since grow
 The bank is not maintained against the KB it mirrors. Three failure modes accrue silently:
 
 ```
-   corpus (Postgres: url + content hash)          bank rows (sources[], status, source_hash)
+   corpus (Postgres: url + source labels)         bank rows (sources[], status, source_hash)
                  │                                              │
                  └───────────────── diff ───────────────────────┘
                                      │
      ┌───────────────────────────────┼───────────────────────────────┐
      ▼                               ▼                               ▼
   COVERAGE                         DRIFT                          ORPHAN
-  corpus url in no row      locked row source_hash ≠        row url not in corpus
-  → gap; greenlit page      current corpus hash → re-fetch  → flag for prune /
-  → draft candidates        + model diff → flag stale       convert to should_refuse
+  corpus url in no row      locked row: re-fetch source,    row url not in corpus
+  → gap; greenlit page      new content hash ≠ stored →     → flag for prune /
+  → draft candidates        model diff → flag stale         convert to should_refuse
 ```
 
 Grounding is already in the data: every row carries its `sources` URL, and the ingested
-corpus stores each page's `url` and a content hash (the same hashing `BaseResource.get_hash()`
-/ `PersistenceService` already use for dedup). The harness's schema rules live in one place,
+corpus stores each page's `url` plus `source_type`/`parent` labels. (Note the corpus's own
+resource identifier `ScrapedResource.get_hash()` is **URL-only**, not a content hash — it
+hashes `self.url` and never the content — so content-change detection must hash the source
+itself; see D2.) The harness's schema rules live in one place,
 `src/utils/benchmark_schema` (`normalize_bank`, `preflight_bank_file`,
 `required_fields_for_modes`), and the existing dev-side validator
 `scripts/benchmarking/validate_queries.py` delegates to it rather than reimplementing.
@@ -59,8 +61,9 @@ runtime dependency and no redeploy trap.
 ### D1 — Confirmation state is a real field (`status` + `source_hash`), not a `notes` convention
 
 `status: draft | locked` makes confirmation queryable and drives drift detection; on lock the
-tool snapshots `source_hash` = the corpus hash of the row's grounding page. Absent `status` ⇒
-treated as `draft` (conservative: an unproven row is not authoritative). Existing rows and
+tool snapshots `source_hash` = its own content hash of the row's grounding **source** (the
+corpus identifier is URL-only, so it cannot serve here — see D2). Absent `status` ⇒ treated as
+`draft` (conservative: an unproven row is not authoritative). Existing rows and
 `anchor_questions.json` backfill to `draft`.
 
 - *Why over parsing `notes`:* the current "confirm with operator before locking" text is
@@ -71,20 +74,29 @@ treated as `draft` (conservative: an unproven row is not authoritative). Existin
 - *Alternative rejected:* a sidecar lockfile mapping row→status. Rejected — it desyncs from the
   bank under edits; co-locating the state in the row is self-describing.
 
-### D2 — Drift = `source_hash` mismatch, then LLM diff (self-contained, no external state)
+### D2 — Drift = content hash of the re-fetched **source**, then LLM diff (not the corpus hash)
 
-A locked row records the hash it was grounded against. Drift is a pure comparison of that
-stored hash against the live corpus hash for the same URL — no "last run" state file, no
-timestamps. Only on mismatch does the tool re-fetch and ask the model whether the stored
-`reference` still holds.
+A locked row stores `source_hash` = a content hash the tool computes over its grounding
+**source** at lock time. Each drift check re-fetches that source (git blob raw content / KB
+page text), re-hashes, and compares — no "last run" state file, no timestamps. Only on a
+mismatch does the tool ask the model whether the stored `reference` still holds. Draft rows are
+skipped.
 
-- *Why:* deterministic, cheap, and reproducible; the expensive LLM call fires only for pages
-  that actually changed. Draft rows are skipped (not yet authoritative).
-- *Alternative rejected — re-run retrieval:* asserts the gold source still surfaces, which
-  catches index drift but not fact drift (a stale answer whose page still retrieves passes).
-  Retrieval health is already the ingestion-verifier's job.
-- *Alternative rejected — hash-only, no LLM:* cheaper but only says "page changed," forcing a
-  human to read every changed page even when the change did not touch the answer.
+- *Why hash the source, not the corpus:* `ScrapedResource.get_hash()` is **URL-only** (it
+  hashes `self.url`, never the content), so the corpus has no content hash to compare — and
+  that same URL-keyed identity is why a plain re-ingest silently keeps stale chunks (a nuke is
+  required to overwrite). The corpus is authoritative for *which URLs exist* (coverage/orphan),
+  but the **live source** is the only oracle for *content change*.
+- *Cost:* the cheap tripwire is fetch+hash, run for every locked row each pass; the expensive
+  LLM diff fires only for sources whose hash actually moved.
+- *Alternative rejected — hash the ingested corpus content:* the URL-keyed dedup means a
+  re-ingest may not update stored content under an unchanged URL, so corpus content can lag the
+  live source; hashing it would miss real drift. A stale corpus is the ingestion-verifier's
+  concern, not the golden set's.
+- *Alternative rejected — re-run retrieval:* catches index drift, not fact drift (a stale
+  answer whose page still retrieves passes).
+- *Alternative rejected — hash-only, no LLM:* only says "source changed," forcing a human to
+  read every changed source even when the change did not touch the answer.
 
 ### D3 — Coverage is report + propose-for-greenlit, not auto-cover
 
@@ -95,6 +107,12 @@ greenlights.
 - *Why:* a golden set's value is signal-per-question, not count (it is already 105 with
   `reasoning` dominant at 73). Auto-covering every new page manufactures DRAFT debt and
   redundant questions on minor pages. The operator picks what earns coverage.
+- *Git & other per-file sources:* a git source ingests one document **per file** (blob URLs
+  like `.../User_Codes/blob/main/<path>`, ref-pinned to the branch so they are stable across
+  commits), so a single source can add hundreds of uncovered URLs. Coverage therefore
+  groups/filters by source (`source_type` / `parent`, both stored on each corpus doc) — e.g.
+  `coverage --source User_Codes` — so greenlighting is per-source or per-path, not a flat
+  firehose.
 
 ### D4 — Human-gated mutation as an invariant, split from detection
 
@@ -123,10 +141,13 @@ on the dev server runs `report` read-only, writing to `.ralph/log/`.
 
 ## Risks / Trade-offs
 
-- **Corpus hash semantics differ from page-content drift** → the stored `source_hash` must be
-  the *same* hash the corpus computes for that page; if ingest hashing changes, every locked
-  row flags at once. Mitigation: compute `source_hash` from the corpus's own hash value at lock
-  time (read it, don't recompute independently), so the two always agree by construction.
+- **The corpus identifier is URL-only** → `ScrapedResource.get_hash()` hashes only the URL, so
+  there is no corpus content hash for drift to key on (the same URL-keyed dedup is why a plain
+  re-ingest keeps stale chunks). Mitigation (D2): drift computes its own content hash over the
+  re-fetched **source**; the corpus is used only for URL-level coverage/orphan.
+- **High-volume per-file sources** → a code repo (e.g. `User_Codes`) floods coverage with
+  hundreds of blob URLs. Mitigation: group/filter coverage by `source_type`/`parent`;
+  greenlight per source or path glob, never the whole repo at once.
 - **URL slug mismatch** (the README's SOURCES-mode caveat: sitemap slugs vs stored `url`) →
   coverage/orphan diffs could mis-match a covered page as uncovered. Mitigation: normalize URLs
   (trailing slash, scheme) on both sides before diffing; surface "near-miss" URLs in the report

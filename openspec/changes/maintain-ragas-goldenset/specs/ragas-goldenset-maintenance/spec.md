@@ -18,8 +18,9 @@ present, so benchmark eligibility and scoring are unchanged.
 #### Scenario: Locking a row records its grounding hash
 
 - **WHEN** an operator confirms and locks a row
-- **THEN** the tool writes `status: locked` and a `source_hash` equal to the current corpus
-  content hash for that row's `sources` URL
+- **THEN** the tool writes `status: locked` and a `source_hash` equal to its own content hash
+  of the re-fetched authoritative source for that row's `sources` URL (not the corpus's
+  URL-only resource identifier)
 
 #### Scenario: Confirmation census is queryable
 
@@ -32,7 +33,10 @@ present, so benchmark eligibility and scoring are unchanged.
 The maintenance tool SHALL compute the set of ingested KB corpus page URLs that no bank row
 references in `sources`, and report them as coverage gaps. For a page an operator explicitly
 greenlights, the tool SHALL draft grounded candidate questions for that page as `status:
-draft`. It MUST NOT auto-add candidates for pages that were not greenlit.
+draft`. It MUST NOT auto-add candidates for pages that were not greenlit. Because a single
+source (e.g. a git repository) can contribute many per-file URLs, the report SHALL be groupable
+and filterable by source (`source_type` / `parent`) so greenlighting is per-source or per-path,
+not a flat list.
 
 #### Scenario: An uncovered page appears in the gap report
 
@@ -51,24 +55,33 @@ draft`. It MUST NOT auto-add candidates for pages that were not greenlit.
   draft`
 - **AND** it does not lock them and does not draft candidates for pages that were not greenlit
 
+#### Scenario: A high-volume git source is grouped, not dumped flat
+
+- **WHEN** a git source contributes many uncovered per-file URLs
+- **THEN** the coverage report groups them by their source (`source_type` / `parent`) and can be
+  filtered to that one source, rather than listing every file URL flat
+
 ### Requirement: Fact-drift detection against the source page
 
-The maintenance tool SHALL flag a `locked` row as drifted WHEN the live corpus content hash
-for its `sources` URL differs from the row's stored `source_hash`. On a hash mismatch the tool
-MUST re-fetch the page and compare its current content against the stored `reference`,
-reporting the suspected staleness. The tool MUST NOT edit, re-lock, or delete the row — it
-reports only. `draft` rows SHALL NOT be drift-checked, because they are not yet authoritative.
+The maintenance tool SHALL flag a `locked` row as drifted WHEN a fresh content hash it computes
+over the re-fetched authoritative source for its `sources` URL differs from the row's stored
+`source_hash`. It MUST hash the source itself, not the corpus's resource identifier (which is
+URL-only and never reflects content change). On a mismatch the tool MUST compare the re-fetched
+content against the stored `reference`, reporting the suspected staleness, and MUST NOT edit,
+re-lock, or delete the row — it reports only. `draft` rows SHALL NOT be drift-checked, because
+they are not yet authoritative.
 
 #### Scenario: A changed grounding page flags the locked row
 
-- **WHEN** a `locked` row's stored `source_hash` differs from the current corpus hash for its
-  `sources` URL
-- **THEN** the row is flagged as drifted with the re-fetched page for review
+- **WHEN** a `locked` row's stored `source_hash` differs from a fresh content hash of its
+  re-fetched source
+- **THEN** the row is flagged as drifted with the re-fetched source for review
 - **AND** the row's `reference` and `status` are left unchanged
 
 #### Scenario: An unchanged grounding page is not flagged
 
-- **WHEN** a `locked` row's stored `source_hash` matches the current corpus hash for its URL
+- **WHEN** a `locked` row's stored `source_hash` matches a fresh content hash of its re-fetched
+  source
 - **THEN** the row is not flagged as drifted
 
 #### Scenario: Draft rows are skipped by drift detection

@@ -12,18 +12,20 @@ decays relative to the KB while looking healthy.
 
 ## What Changes
 
-- **New maintenance capability** that diffs the ingested KB corpus (each doc's `url` +
-  content hash, already in Postgres) against what the bank covers and emits three
-  **human-gated** work lists: **coverage gaps** (new/uncovered pages), **fact drift** (locked
-  rows whose grounding page changed), and **orphans** (rows citing a removed page).
+- **New maintenance capability** that diffs the ingested KB corpus (each doc's `url` plus
+  `source_type`/`parent` labels, already in Postgres) against what the bank covers and emits
+  three **human-gated** work lists: **coverage gaps** (new/uncovered pages), **fact drift**
+  (locked rows whose grounding source changed), and **orphans** (rows citing a removed page).
 - **Machine-queryable confirmation state.** Bank rows gain `status: draft | locked` plus a
   `source_hash` snapshot captured at lock time. The existing 105 rows and
   `anchor_questions.json` backfill to `draft`. Fields are loader-compatible (the harness
   requires only `user_input` and already tolerates extra fields), so **no benchmark behavior
   changes**.
-- **Deterministic drift.** A locked row whose stored `source_hash` no longer matches the live
-  corpus hash for its `sources` URL is re-fetched and model-diffed against its stored
-  `reference`, then **flagged (never auto-edited)**.
+- **Deterministic drift.** `source_hash` is a content hash the tool computes over a row's
+  **source** at lock time. Drift = re-fetch the source, re-hash, and compare; on a mismatch the
+  stored `reference` is model-diffed against the current source and **flagged (never
+  auto-edited)**. The corpus's own resource identifier is URL-only (it never reflects content
+  change), so drift hashes the source itself, not the corpus.
 - **Coverage is report + propose-for-greenlit.** The tool lists uncovered corpus URLs; for the
   pages an operator greenlights, it drafts grounded candidate questions as `status: draft` for
   human confirmation. It does not auto-cover every page.
@@ -59,8 +61,10 @@ decays relative to the KB while looking healthy.
   `orphans` / `report`; **injectable** HTTP-fetch + LLM-diff clients so tests are hermetic),
   reusing `src/utils/benchmark_schema` for bank load/normalize and the existing Postgres
   access path (mirroring the read-only corpus read the ingestion-verifier uses) for corpus
-  `url` + content hash. Dev-side tooling like `validate_queries.py`; **not** shipped in the
-  `pip install .` package, so **no redeploy/dependency trap**.
+  `url`s + `source_type`/`parent` labels. Drift re-fetches the source to content-hash it (the
+  corpus resource identifier is URL-only, so it cannot detect content change). Dev-side tooling
+  like `validate_queries.py`; **not** shipped in the `pip install .` package, so **no
+  redeploy/dependency trap**.
 - **Data:** `examples/benchmarking/fasrc_ragas_queries.json` and `anchor_questions.json` gain
   `status` (backfilled `draft`) and, on lock, `source_hash`.
 - **Infra:** one **cron entry on the dev server** runs `goldenset_maintenance.py report`

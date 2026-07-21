@@ -15,11 +15,12 @@
 
 ## 2. Corpus read + coverage/orphan detection (read-only, TDD)
 
-- [ ] 2.1 TDD: a read-only corpus accessor returns `{url: content_hash}` for the ingested KB, via the existing Postgres path (mirror the ingestion-verifier read); injectable/fakeable for hermetic tests.
+- [ ] 2.1 TDD: a read-only corpus accessor returns the ingested URL set with each doc's `source_type`/`parent` labels, via the existing Postgres path (mirror the ingestion-verifier read); injectable/fakeable for hermetic tests. Do NOT rely on the corpus resource hash — `ScrapedResource.get_hash()` is URL-only.
 - [ ] 2.2 TDD: URL normalization (scheme, trailing slash) applied to both corpus URLs and row `sources` before any diff; near-miss URLs surfaced, not silently misclassified.
 - [ ] 2.3 TDD: `coverage` reports corpus URLs referenced by no row's `sources`; empty when every corpus URL is covered.
 - [ ] 2.4 TDD: `orphans` flags rows whose `sources` URL is absent from the corpus; `should_refuse` rows (empty `sources`) are never flagged; nothing is deleted.
-- [ ] 2.5 Wire `coverage` / `orphans` as subcommands of `scripts/benchmarking/goldenset_maintenance.py`, loading the bank via `benchmark_schema`.
+- [ ] 2.5 TDD: `coverage` groups and filters gaps by source (`source_type`/`parent`) so a high-volume git source (per-file blob URLs) doesn't flood the report; greenlight per source or path glob.
+- [ ] 2.6 Wire `coverage` / `orphans` as subcommands of `scripts/benchmarking/goldenset_maintenance.py`, loading the bank via `benchmark_schema`.
 
 ## 3. Coverage candidate proposal (greenlit-only, TDD)
 
@@ -29,9 +30,9 @@
 
 ## 4. Fact-drift detection (hash tripwire → LLM diff, TDD)
 
-- [ ] 4.1 TDD: a `locked` row whose stored `source_hash` differs from the current corpus hash for its URL is flagged as drifted; a matching hash is not flagged.
+- [ ] 4.1 TDD: `source_hash` is a content hash the tool computes over the re-fetched source (git blob raw / KB page text), NOT read from the corpus identifier (URL-only); a `locked` row whose stored `source_hash` differs from a fresh source hash is flagged, a matching hash is not.
 - [ ] 4.2 TDD: `draft` rows are never drift-checked, regardless of hash.
-- [ ] 4.3 TDD: on a hash mismatch the tool re-fetches the page (injected fetch) and asks the injected LLM whether the stored `reference` still holds; output is advisory; `reference`/`status` are left unchanged.
+- [ ] 4.3 TDD: on a hash mismatch the tool asks the injected LLM whether the stored `reference` still holds against the re-fetched source (injected fetch); output is advisory; `reference`/`status` are left unchanged.
 - [ ] 4.4 Wire `drift` as a subcommand; confirm no detection path writes to the bank file.
 
 ## 5. Read-only `report` + dev-server cron
