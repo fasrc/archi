@@ -33,9 +33,9 @@
 
 ## 4. Ship
 
-- [ ] 4.1 Commit (lowercase message, no `Co-Authored-By`) and push
+- [x] 4.1 Commit (lowercase message, no `Co-Authored-By`) and push
   `fix/issue-118-scraper-trailing-slash`.
-- [ ] 4.2 Open a PR against `fasrc/archi:dev` with `closes #118`
+- [x] 4.2 Open a PR against `fasrc/archi:dev` with `closes #118`
   (`gh pr create --repo fasrc/archi --base dev`). Note in the PR body that criterion 3
   (dev redeploy `dup_groups` → 0 / ~181 page drop) is a post-merge deploy-time verification,
   not part of this PR's gate.
