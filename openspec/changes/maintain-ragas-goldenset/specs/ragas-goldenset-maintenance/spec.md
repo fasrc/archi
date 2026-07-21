@@ -36,7 +36,9 @@ greenlights, the tool SHALL draft grounded candidate questions for that page as 
 draft`. It MUST NOT auto-add candidates for pages that were not greenlit. Because a single
 source (e.g. a git repository) can contribute many per-file URLs, the report SHALL be groupable
 and filterable by source (`source_type` / `parent`) so greenlighting is per-source or per-path,
-not a flat list.
+not a flat list. The tool SHALL persist which URLs an operator has declined or already
+drafted/covered, and SHALL surface as gaps only URLs not yet decided, so previously-ruled-on
+pages do not resurface on later runs.
 
 #### Scenario: An uncovered page appears in the gap report
 
@@ -60,6 +62,12 @@ not a flat list.
 - **WHEN** a git source contributes many uncovered per-file URLs
 - **THEN** the coverage report groups them by their source (`source_type` / `parent`) and can be
   filtered to that one source, rather than listing every file URL flat
+
+#### Scenario: A previously declined page does not resurface
+
+- **WHEN** an operator declined an uncovered page on an earlier run
+- **THEN** a later coverage run does not list it as a new gap, because it is recorded in the
+  decision ledger
 
 ### Requirement: Fact-drift detection against the source page
 

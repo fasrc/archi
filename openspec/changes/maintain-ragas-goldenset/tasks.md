@@ -27,6 +27,7 @@
 - [ ] 3.1 TDD: `coverage --propose <url>` drafts grounded candidate questions for a greenlit page as `status: draft`, with `sources` set and references left draft (LLM client injected/faked).
 - [ ] 3.2 TDD: `--propose` never drafts for a non-greenlit page and never locks a proposed candidate.
 - [ ] 3.3 TDD: proposals are emitted for review only — the bank JSON file is byte-unchanged by a `--propose` run (writing a candidate in is a separate human-applied step).
+- [ ] 3.4 TDD: a decision ledger records declined + drafted/covered URLs; `coverage` excludes ledgered URLs so previously-decided pages don't resurface; declining a page (operator skip) appends to the ledger.
 
 ## 4. Fact-drift detection (hash tripwire → LLM diff, TDD)
 
@@ -42,6 +43,6 @@
 
 ## 6. Skill + docs
 
-- [ ] 6.1 Author `~/.claude/skills/archi-ragas-goldenset/SKILL.md` (personal tool, NOT in this repo PR): `coverage` / `drift-confirm` / `report` modes, every mutation gated on human confirmation (add draft, lock reference, prune orphan as explicit apply steps).
+- [ ] 6.1 Author `~/.claude/skills/archi-ragas-goldenset/SKILL.md` (personal tool, NOT in this repo PR): conversational `coverage` mode (present newly-uncovered pages grouped by source, draft only the operator's greenlit picks in plain-language reply, record skips to the decision ledger), plus `drift-confirm` / `report` modes; every mutation gated on human confirmation (add draft, lock reference, prune orphan as explicit apply steps).
 - [ ] 6.2 Update `examples/benchmarking/fasrc_ragas_queries.README.md` (the `status`/`source_hash` field + draft→locked lifecycle) and `docs/docs/benchmarking.md` (the operator maintenance workflow).
 - [ ] 6.3 `openspec validate maintain-ragas-goldenset --strict` passes; each PR gate-green with ≥80% diff coverage; no `--no-verify`.

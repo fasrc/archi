@@ -114,6 +114,19 @@ greenlights.
   `coverage --source User_Codes` — so greenlighting is per-source or per-path, not a flat
   firehose.
 
+**Greenlight is conversational, not a file edit.** The operator greenlights through the skill's
+coverage mode inside a Claude Code session: it groups the *newly* uncovered pages by source,
+shows the answer-worthy shortlist, and the operator replies in plain language which to draft.
+The unattended cron `report` only *detects and surfaces* gaps (so the operator knows work is
+waiting); it never drafts. Detection is automated and asynchronous; the greenlight decision
+stays a human, in-session act. The CLI `coverage --propose <url>` is the primitive the skill
+calls under the hood (and keeps the behavior testable).
+
+**Decision ledger (idempotency).** Because a conversational interface is stateless on its own,
+the tooling persists a lightweight ledger of URLs already *declined* or *drafted/covered*, and
+`coverage` surfaces only URLs not yet ruled on. Without it, every run would re-triage the same
+skipped configs. The ledger is the durable record the conversational path otherwise lacks.
+
 ### D4 — Human-gated mutation as an invariant, split from detection
 
 Detection passes (`coverage`/`drift`/`orphans`/`report`) are pure readers that leave the bank
@@ -148,6 +161,9 @@ on the dev server runs `report` read-only, writing to `.ralph/log/`.
 - **High-volume per-file sources** → a code repo (e.g. `User_Codes`) floods coverage with
   hundreds of blob URLs. Mitigation: group/filter coverage by `source_type`/`parent`;
   greenlight per source or path glob, never the whole repo at once.
+- **Conversational greenlight could re-nag** → a stateless in-session interface would resurface
+  the same skipped pages every run. Mitigation: the decision ledger (declined + drafted URLs);
+  `coverage` shows only not-yet-decided gaps.
 - **URL slug mismatch** (the README's SOURCES-mode caveat: sitemap slugs vs stored `url`) →
   coverage/orphan diffs could mis-match a covered page as uncovered. Mitigation: normalize URLs
   (trailing slash, scheme) on both sides before diffing; surface "near-miss" URLs in the report
