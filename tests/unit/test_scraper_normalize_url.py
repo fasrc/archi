@@ -49,6 +49,17 @@ class TestQueryConsistency:
         assert "a=1" in with_slash
 
 
+class TestMatrixParams:
+
+    def test_matrix_params_not_corrupted_by_slash_strip(self):
+        scraper = _scraper()
+        # In `/x/;v=1`, the `;v=1` matrix parameter belongs to the empty trailing
+        # segment. Stripping the slash would reattach it to `x` (`/x;v=1`), which
+        # is a different resource. Skip the strip when params are present.
+        result = scraper._normalize_url("https://host/x/;v=1?a=1")
+        assert result == "https://host/x/;v=1?a=1"
+
+
 class TestPreservedContract:
 
     def test_empty_string_returns_none(self):

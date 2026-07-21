@@ -119,7 +119,12 @@ class LinkScraper:
                         "encoding": response.encoding,
                     },
                 )
-            res = self.get_links_with_same_hostname(current_url, resource)
+            # Resolve links against the response's FINAL url (after any redirect,
+            # e.g. `.../kb` -> `.../kb/`) so a directory page keeps its trailing
+            # slash for relative-link resolution; `current_url` is the collapsed
+            # dedup form and would drop that slash.
+            base_url = getattr(response, "url", None) or current_url
+            res = self.get_links_with_same_hostname(base_url, resource)
             resources.append(resource)
 
         return res, resources  # either collected via http or via authenticators method
@@ -310,8 +315,11 @@ class LinkScraper:
         # Collapse a single trailing slash on the path so `/kb/x/` and `/kb/x`
         # canonicalize identically. Only when the path is longer than the site
         # root `/` (root and empty paths are left untouched); query/params stay.
+        # Skip when matrix params are present: in `/x/;v=1` the `;v=1` belongs to
+        # the empty trailing segment, so stripping the slash would move it onto
+        # `x` and change the URL's meaning.
         path = parsed.path
-        if len(path) > 1 and path.endswith("/"):
+        if len(path) > 1 and path.endswith("/") and not parsed.params:
             path = path[:-1]
         return parsed._replace(
             scheme=parsed.scheme.lower(),
@@ -329,8 +337,13 @@ class LinkScraper:
     def get_links_with_same_hostname(self, url: str, page_data: ScrapedResource):
         """Return all links on the page that share the same hostname as `url`. For now does not support PDFs"""
 
-        base_url = self._normalize_url(url) or url
-        base_hostname = urlparse(base_url).netloc
+        # Resolve relative links against the RAW base URL so a directory page's
+        # trailing slash (e.g. after a redirect to `.../kb/`) survives urljoin;
+        # normalizing the base first would strip that slash and mis-resolve
+        # path-relative hrefs. The same-host filter still compares against the
+        # normalized (lowercased) hostname, and discovered links are normalized.
+        base_url = url or ""
+        base_hostname = urlparse(self._normalize_url(base_url) or base_url).netloc
         links = set()
         a_tags = []
 
