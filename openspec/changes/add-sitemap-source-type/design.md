@@ -1,0 +1,89 @@
+## Context
+
+Ingestion source lists are read by `ScraperManager` (`src/data_manager/collectors/scrapers/scraper_manager.py`). `_collect_urls_from_lists` (line 395) loads each configured list from `weblists/<basename>` (staged there at deploy by `src/cli/managers/templates_manager.py:854-866`), and `_extract_urls_from_file` (line 528) strips comments/blanks and splits off an optional depth suffix. `_collect_urls_from_lists_by_type` (lines 411-440) is the prefix dispatch: it peels `git-`, `sso-`, `elog-`, `indico-` prefixes into per-type buckets (with elog/indico auto-detection fallbacks at lines 430 and 436) and routes everything else to `link_urls`. It is pure list-parsing — no network I/O. The I/O happens in `collect_all_from_config` (lines 104-122), which unpacks the buckets and hands each to its collector; plain links go to `collect_links` at line 116 and are crawled by `LinkScraper.crawl_iter` (`scraper.py:160`) at `base_source_depth` (FASRC pins 1; template default at `src/cli/templates/base-config.yaml:251`), fetching pages with `session.get(url, verify=self.verify_urls)` (`scraper.py:259`).
+
+Prior art: `archi sources build` (`src/cli/tools/sources_builder.py`) already expands sitemaps — but at build time, operator-run, writing a static list. Its `expand_sitemap` (line 263) handles one level of `<sitemapindex>` nesting, `_parse_xml` (line 222) rejects DTD/entity declarations (billion-laughs guard), `_locs` (line 244) extracts `<loc>` namespace-agnostically, and `normalize_url` (line 326) collapses the trailing slash. It fails CLOSED: any fetch/parse error raises `FetchError` and aborts the whole build (module docstring, "fail-the-build-on-fetch-error"). Its tests (`tests/unit/test_sources_build.py`, `TestSitemapExpansion` at line 263) establish the fixture-XML testing pattern this change reuses.
+
+Two adjacent facts shape the design. First, the trailing-slash mismatch: KB sitemap `<loc>` values end in `/` while the 219 hand-listed lines do not; `LinkScraper._normalize_url` (`scraper.py:302-313`) does NOT collapse trailing slashes, so slash variants ingest as duplicate documents (issue #118), and the benchmark already had to canonicalize both forms to score gold sources (`src/bin/service_benchmark.py:1030-1034`). Second, the scheduled-collection path `schedule_collect_links` (`scraper_manager.py:192-207`) replays URLs from the catalog rather than re-reading the lists, so sitemap re-expansion happens only on full ingest runs (`collect_all_from_config`) — which is where FASRC re-ingests happen today (full rebuild on redeploy).
+
+## Goals / Non-Goals
+
+**Goals:**
+- A `sitemap-<url>` line in any input list is fetched at ingest time, parsed as an XML sitemap, and expanded into its `<loc>` page URLs.
+- Expanded URLs flow through the normal web-scraping path exactly as if hand-listed: appended to `link_urls` before `collect_links` (`scraper_manager.py:116`), crawled at the configured depth.
+- A `<sitemapindex>` root is recursed one level (each child sitemap fetched once; child indexes contribute nothing) — the KB sitemap is a flat `<urlset>`, but e.g. `/sitemap_index.xml` is not.
+- Fetch/parse failure on any sitemap document fails open: log a warning, contribute nothing from that document, continue the ingestion (mirrors the missing-list handling at `scraper_manager.py:404`).
+- Expanded URLs are normalized to the hand-list form (trailing slash collapsed, fragment dropped, scheme/host lowercased) so sitemap output can't reintroduce #118 slash-variant duplicates.
+- The prefix routing stays pure and the parse logic lives in small helpers with an injectable fetch, so unit tests need no network and the diff-cover ≥80% gate (`scripts/gate.sh`) is achievable.
+- Deployments with no `sitemap-` lines are byte-for-byte unaffected.
+
+**Non-Goals:**
+- No pruning/deletion of upstream-removed docs. The pipeline has no prune step today; that is separate work (the sitemap becomes the enabling authoritative "current pages" set for it).
+- No `<lastmod>`-driven incremental re-embedding. The pipeline is full-rebuild today; `<lastmod>` is ignored.
+- No crawl-depth change. Sitemap-derived URLs inherit `base_source_depth` like any hand-listed URL (at depth 1, each page is fetched once and its links are not followed).
+- No change to `archi sources build`, its spec, or the git/sso/elog/indico routing.
+- No re-expansion in `schedule_collect_links` (`scraper_manager.py:192-207`); scheduled collection keeps replaying catalog URLs (see Open Questions).
+
+## Decisions
+
+### D1. Pure-parse / isolated-I/O split across the existing seam
+
+`_collect_urls_from_lists_by_type` (`scraper_manager.py:411-440`) gains a `sitemap-` branch that peels the prefix into a new `sitemap_urls` bucket and returns a 6-tuple — it stays pure list-parsing with no network I/O, exactly as today. The expansion happens in `collect_all_from_config` (`scraper_manager.py:104-122`): a new `ScraperManager._expand_sitemaps(sitemap_urls) -> List[str]` performs the fetches and the results are appended to `link_urls` before the `collect_links(...)` call at line 116. The parse/normalize/expand logic itself lives in a new module `src/data_manager/collectors/scrapers/sitemap_source.py` — `parse_sitemap_document(text)`, `normalize_page_url(url)`, and `expand_sitemaps(sitemap_urls, fetch_text)` where `fetch_text: Callable[[str], str]` is injected — with `_expand_sitemaps` as a thin call site that supplies a `requests`-based fetch (`verify` from the existing `html_scraper.verify_urls` setting, mirroring `scraper.py:259`; timeout mirroring `_SITEMAP_TIMEOUT = 30` at `sources_builder.py:37`).
+
+This is the same "thin call site + tested helper module" pattern the project CLAUDE.md mandates for gate-hostile files (`config_fingerprint.py` precedent): every parse branch is exercised by feeding fixture XML strings and a fake fetch callable, no network, no Postgres-backed `get_global_config()` needed.
+
+**Alternatives considered:** (a) Parse inline in `ScraperManager` methods — `ScraperManager.__init__` calls `get_global_config()` (`scraper_manager.py:26`), which requires an initialized Postgres-backed config service, making direct unit tests heavy; the module split keeps the logic testable with plain constructors. (b) Expand inside `_collect_urls_from_lists_by_type` — adds network I/O to the one function in this file that is currently pure and cheaply testable; rejected.
+
+### D2. Runtime prefix complements `archi sources build`; mirror its parsing rules, don't import its code
+
+`sources_builder.py` already contains a correct sitemap expander, but reusing it directly is wrong on three counts: (1) layering — `src/data_manager` importing from `src/cli` inverts the dependency direction, and `sources_builder.py` imports `click` at module scope (line 32), pulling CLI machinery into the ingestion runtime; (2) error semantics — its `expand_sitemap` raises `FetchError` on ANY failure including a single child fetch (line 276, design D7 of `add-sources-build-command`: fail-the-build), which is correct for a build tool that must not silently shrink a committed list, but wrong for a runtime ingest that must not abort wholesale on one bad document; (3) the abort-on-first-child behavior would discard URLs from healthy sibling children.
+
+Instead, the new module mirrors its parsing RULES — namespace-agnostic `<loc>` extraction (cf. `_local_tag`/`_locs`, `sources_builder.py:167,244`), one level of `<sitemapindex>` nesting with nested indexes contributing nothing (cf. `expand_sitemap`, line 263), DTD/entity rejection before parsing (cf. `_parse_xml`, lines 222-241), and trailing-slash-collapsing normalization (cf. `normalize_url`, lines 326-343) — with runtime-appropriate fail-open semantics. The build tool remains the right choice for curated, glob-filtered, committed lists; the runtime prefix is for lists that should track the live site.
+
+**Alternatives considered:** (a) Import the pure helpers from `src.cli.tools.sources_builder` — rejected per the layering/semantics points above. (b) Hoist shared sitemap helpers into `src/utils/` and refactor `sources_builder.py` onto them — cleaner long-term, but touches a shipped tool and its 60+ tests for a change that needs ~80 lines of parse code; deferred (see Open Questions). (c) Deprecate `archi sources build` in favor of the runtime prefix — no; the build tool's globs/crawl/literal seeds and dry-run diff serve a different workflow.
+
+### D3. Fail-open per sitemap document
+
+Each sitemap document (top-level or child) that fails to fetch or parse logs a warning and contributes zero URLs; expansion continues with the remaining documents, and the ingestion run continues regardless. This mirrors how a missing input list is handled today (`logger.warning(f"Input list {list_path} not found.")` + `continue`, `scraper_manager.py:404`) and how a failed page crawl is handled (`_handle_standard_url` catches, logs, returns, `scraper_manager.py:524-525`). Consequence accepted: a transient sitemap outage means that run ingests no KB pages from that sitemap — but since the pipeline has no prune step, previously ingested documents remain in the store, so a failed expansion degrades freshness, not coverage.
+
+**Alternatives considered:** (a) Fail closed (abort ingestion) — one flaky remote sitemap would take down ingestion of every other source; rejected. (b) Fall back to the last successful expansion (cache) — adds persistent state for a rare transient; not worth it now.
+
+### D4. One level of `<sitemapindex>` recursion, bounded
+
+If the fetched root is `<urlset>`, emit its `<loc>` values. If it is `<sitemapindex>`, fetch each child `<loc>` exactly once; a child `<urlset>` contributes its pages, a child that is itself a `<sitemapindex>` contributes nothing and is not followed. Unknown root elements are treated as parse failures (fail open, D3). This matches the shipped `sources-build` capability's semantics (`openspec/specs/sources-build/spec.md`, "Sitemap expansion with one level of sitemapindex nesting") so operators get identical expansion behavior from both tools. The KB sitemap in question is a flat `<urlset>`; the recursion exists so `sitemap-https://docs.rc.fas.harvard.edu/sitemap_index.xml`-style lines also work.
+
+### D5. Normalize expanded URLs to the hand-list form (trailing slash collapsed)
+
+`normalize_page_url` drops the fragment, lowercases scheme and host, preserves the query, and collapses a single trailing path slash (root `/` preserved) — the same transform as `sources_builder.normalize_url` (`sources_builder.py:326-343`). This matters because the KB sitemap's `<loc>` values end in `/` (`.../scp/`) while all 219 hand-listed lines do not (`.../scp`), and `LinkScraper._normalize_url` (`scraper.py:302-313`) does NOT collapse slashes — so unnormalized sitemap output would ingest the KB a second time under slash-variant URLs, the exact duplicate-chunk failure of issue #118. The benchmark's `_canonical_source` comparison (`service_benchmark.py:1030-1034`) is already slash-insensitive, so gold-source matching is unaffected by the normalization direction. Expanded URLs are also deduplicated order-preservingly, both within the expansion and against the already-collected `link_urls`, as cheap insurance during any window where a hand line and the sitemap overlap.
+
+### D6. Explicit `sitemap-` prefix beats auto-detection heuristics
+
+The new branch is inserted among the explicit prefix branches in `_collect_urls_from_lists_by_type`, BEFORE the `_is_elog_url` auto-detection at `scraper_manager.py:430` — so a sitemap URL whose path happens to contain `/elog/` or `/event/` still routes to sitemap expansion. This mirrors the documented precedence rule ("Prefer the explicit 'elog-' prefix … over this auto-detection", `scraper_manager.py:444-446`). No `sitemap` auto-detection heuristic is added: `*.xml` is too weak a signal, and the explicit prefix is the established convention.
+
+## Risks / Trade-offs
+
+- [Sitemap endpoint down or malformed at ingest time → that run ingests no KB pages from it] → Fail-open logs a clear warning naming the sitemap URL; previously ingested documents remain (no prune step), so the corpus is stale, not empty. The `ingestion-verifier` audit catches an unexpectedly low web-document count post-ingest.
+- [Sitemap line AND the 219 hand lines both active → KB double-ingested under slash variants (#118 amplification)] → The config migration in this change REPLACES the hand lines with the sitemap line in the same PR — the two never coexist on `dev`. D5's normalization plus call-site dedupe neutralize residual overlap (e.g. an operator's local list copy).
+- [Hostile/oversized sitemap XML (entity expansion, multi-GB body)] → DTD/entity declarations are rejected before parsing (mirrors `_parse_xml`, `sources_builder.py:232-237`); the fetch uses a 30 s timeout and a body-size cap mirroring `_MAX_FETCH_BYTES` (`sources_builder.py:41`). All failures fail open per D3.
+- [282 pages vs 219 increases ingest time] → +63 page fetches plus one sitemap fetch is marginal against the ~50 min full re-ingest; `max_pages` (`scraper_manager.py:54-60`) remains available as a global cap.
+- [Sitemap lists URLs the crawler then re-expands outward at depth > 1] → At the FASRC-pinned depth 1 each page is fetched once with no link-following. A deployment with a deeper `base_source_depth` would crawl outward from every sitemap page — identical to how it treats hand-listed pages, so this is "exactly as if listed by hand" by construction, but worth knowing before enabling a large sitemap on a deep-crawl deployment.
+- [A `sitemap-` line in `manual-extras.list` confuses `archi sources build`] → `_EXTRA_PREFIXES` (`sources_builder.py:43`) does not include `sitemap-`, so the build tool would treat such a line as a bare URL and normalize it (`sitemap-https` parses as a URL scheme). Harmless today (nobody writes one), and the runtime scraper would still route it correctly; a one-token `_EXTRA_PREFIXES` addition is noted in Open Questions rather than expanding this change's blast radius.
+- [Scheduled collection never discovers new articles] → `schedule_collect_links` replays catalog URLs (`scraper_manager.py:199-207`) and does not re-read lists — true for every source type today, not a regression. Discovery lands on full ingest runs, which is how the FASRC deployment re-ingests (redeploy → full rebuild).
+
+## Migration Plan
+
+**Deploy:**
+1. Land the code + the `config/lists/sources.list` edit (one PR, so the sitemap line and the removal of the 219 `/kb/` lines are atomic).
+2. Redeploy dev via `deploy/fasrc-dev/scripts/redeploy.sh` (`archi create --force`) — required on both counts per the project gotchas: running config (including staged weblists) is re-seeded, and the app runs baked site-packages code, so neither the list edit nor the code change takes effect on a bare container restart.
+3. Trigger/await the full re-ingest and verify: data-manager log shows the sitemap expansion line (one fetch, ~282 URLs); web-document count for `docs.rc.fas.harvard.edu/kb/` is ~282 (up from 219); a spot-checked article absent from the old hand list is present and retrievable; no `/kb/...` vs `/kb/.../` slash-variant duplicate pairs in the catalog (the `ingestion-verifier` audit covers the last two).
+4. Watch one subsequent re-ingest for silent-failure noise (warnings from the fail-open path).
+
+**Rollback:** Single revert of the change commit restores the 219 hand lines and removes the dormant prefix code; redeploy re-seeds the old list. No DB migration to undo — the next full ingest rebuilds from the restored list. (Documents ingested from the 63 extra articles persist until that rebuild, which is benign.)
+
+## Open Questions
+
+- **Retire the build-time sitemap branch once the runtime prefix is validated?** The maintainer's stated preference is the automatic, no-human runtime path over `archi sources build`'s operator-run sitemap expansion. This change intentionally keeps both (additive, low-risk); retiring `expand_sitemap` is deferred to a separate, deliberate deprecation *after* the runtime path is proven in dev (discovers ~282 pages, ingests with no #118 slash-variant duplicates). Note `sitemap` is 1 of 3 seed types (`sitemap`/`crawl`/`literal`), covered by the shipped `sources-build` spec (`openspec/specs/sources-build/spec.md`) and ~13 tests (`test_sources_build.py::TestSitemapExpansion`), so retirement means either a scoped mode-removal with a MODIFIED `sources-build` spec change, or the extract-to-shared-parser convergence below — not a bare delete. Sequencing it after validation avoids turning this additive change into a breaking one.
+- **Should `sitemap-` be added to `_EXTRA_PREFIXES` in `sources_builder.py:43`** so `manual-extras.list` can carry runtime-expanded sitemap lines through an `archi sources build` regeneration verbatim? One-token change to a shipped tool; deferred to keep this change's surface minimal, but it is the natural follow-on.
+- **Converge the two sitemap parsers later?** Once this module exists, `sources_builder.expand_sitemap` and `sitemap_source` could share hoisted pure helpers under `src/utils/`. Deferred (D2 alternative b).
+- **Should `schedule_collect_links` re-expand sitemaps** so scheduled (non-rebuild) collection also discovers new articles? Requires distinguishing sitemap-derived catalog entries; only worth it if scheduled collection becomes the primary refresh path. Pairs naturally with the future prune work, which needs the same "authoritative current pages" fetch.
+- **Slurm sitemap follow-on**: `config/lists/slurm-sitemap.xml` (the hand snapshot) and its ~148 pasted lines could collapse to one `sitemap-https://slurm.schedmd.com/sitemap.xml`-style line if SchedMD publishes a live sitemap. Not in this change's list edit — the KB migration is the proving ground.
