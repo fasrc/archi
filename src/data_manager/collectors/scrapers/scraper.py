@@ -307,9 +307,16 @@ class LinkScraper:
         parsed = urlparse(normalized)
         if not parsed.scheme:
             return normalized
+        # Collapse a single trailing slash on the path so `/kb/x/` and `/kb/x`
+        # canonicalize identically. Only when the path is longer than the site
+        # root `/` (root and empty paths are left untouched); query/params stay.
+        path = parsed.path
+        if len(path) > 1 and path.endswith("/"):
+            path = path[:-1]
         return parsed._replace(
             scheme=parsed.scheme.lower(),
             netloc=parsed.netloc.lower(),
+            path=path,
         ).geturl()
 
     def _mark_visited(self, url: str) -> None:
