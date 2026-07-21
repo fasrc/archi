@@ -19,9 +19,11 @@ becomes a production default.
   FlashRank call (`hierarchical_retriever.py:_rerank`) behind a `FlashRankReranker`
   adapter — no behavior change.
 - **New `BedrockReranker` adapter (raw boto3).** Calls `bedrock-agent-runtime.rerank`
-  with `cohere.rerank-v3-5:0`, mapping the response's `index` + `relevanceScore`
+  with the Cohere Rerank 3.5 model, mapping the response's `index` + `relevanceScore`
   directly onto the seam contract. `numberOfResults` is set to the full candidate-pool
-  size (not the final top-N) so parent-dedup is never starved.
+  size (not the final top-N) so parent-dedup is never starved. The adapter normalizes a
+  bare model id (`cohere.rerank-v3-5:0`) to the full ARN the Rerank API requires
+  (`arn:aws:bedrock:<region>::foundation-model/<id>`), so config can carry either form.
 - **New `FallbackReranker` wrapper.** Remote primary → local FlashRank on any
   error/timeout, so a remote reranker never becomes a hard dependency on the answer path.
 - **Config backend selector.** Add `data_manager.retrievers.hierarchical_rerank.reranker.backend`
@@ -35,7 +37,10 @@ becomes a production default.
   vs the FlashRank baseline **before** productionizing (credential plumbing, deploy,
   default flip are out of scope until the delta justifies them).
 - **No default behavior change.** FlashRank stays the default backend; every existing
-  deployment renders and runs byte-for-byte as before.
+  deployment runs identically (same ranking). Following the existing template pattern
+  (`enabled`, `candidate_pool_size` are always rendered with Jinja defaults), the rendered
+  config gains one documented `backend: flashrank` line — so the guarantee is
+  **behavior-unchanged**, not byte-identical rendered YAML.
 
 ## Capabilities
 
@@ -57,9 +62,12 @@ becomes a production default.
   `requirements/` if pinned there); archi's first boto3/SigV4 usage.
 - **Infra / secrets (productionization only):** AWS credentials injected into the
   container the same way `HUIT_API_KEY` is (`~/.secrets/` → env, no EC2 instance role
-  on the on-prem FASRC box); Model Access enabled for `cohere.rerank-v3-5:0` and the
-  `bedrock:Rerank` IAM action granted; region `us-east-1` recommended (lowest RTT from
-  FASRC, Cohere 3.5 supported).
+  on the on-prem FASRC box); Model Access enabled for `cohere.rerank-v3-5:0`; IAM grants
+  **both `bedrock:Rerank` and `bedrock:InvokeModel`** (a direct Rerank call with
+  caller-owned sources needs both — `bedrock:Rerank` alone still `AccessDenied`s), plus
+  `aws-marketplace:ViewSubscriptions` + `aws-marketplace:Subscribe` for the Cohere
+  third-party model; `bedrock:InvokeModel` scoped to the foundation-model ARN. Region
+  `us-east-1` recommended (lowest RTT from FASRC, Cohere 3.5 supported).
 - **Data egress (governance):** query text + KB child chunks leave the box to AWS.
   The KB is public FASRC docs (low risk); user queries may carry PII — needs sign-off,
   since HUIT's proxy exists precisely to keep traffic in-boundary.

@@ -137,13 +137,35 @@ startup** even when Bedrock is primary, so the first fallback doesn't pay the on
 load exactly when Bedrock is already failing.
 *Alternative rejected:* hard-fail on remote error — unacceptable to make every answer depend on
 a third-party network call when a local reranker exists.
+*Benchmark exception (see Migration step 3):* the A/B arm runs the Bedrock backend with
+fallback **disabled** (fail closed). Silent fallback would let the run measure FlashRank while
+RAGAS records it as the Bedrock treatment — corrupting the exact experiment the spike exists to
+run. Fail closed, or assert zero fallback events before accepting the delta.
 
-### D5 — Config-gated, FlashRank default, additive keys
+### D5 — Config-gated, FlashRank default, backend-aware validation
 `data_manager.retrievers.hierarchical_rerank.reranker.backend` selects `flashrank` (default) or
-`bedrock`; Bedrock reads `model` (ARN/id), `region`, `timeout_s`, `fallback`.
+`bedrock`; Bedrock reads `model` (ARN or bare id), `region`, `timeout_s`, `fallback`.
 `factory.build_vector_retriever` builds the selected backend and, for Bedrock, wraps it in
-`FallbackReranker`. Omitting `backend` renders/behaves exactly as today.
-*Why:* preserves the "default render unchanged" guarantee the existing spec depends on.
+`FallbackReranker`.
+
+Two footguns the config seam must close (both were review findings):
+- **Model is backend-scoped.** Today the template renders `reranker.model` with the FlashRank
+  default (`ms-marco-MiniLM-L-12-v2`) whenever the operator omits it. Under `backend: bedrock`
+  that hands a FlashRank model name to the Bedrock adapter → an invalid ARN. So the factory
+  MUST apply a **backend-specific default** (Bedrock → `cohere.rerank-v3-5:0`) and **fail fast**
+  if a FlashRank-shaped model is configured under `bedrock` (never silently fall through to
+  FlashRank — see D4 benchmark exception).
+- **Model id → ARN normalization.** The Rerank API requires
+  `modelConfiguration.modelArn = arn:aws:bedrock:<region>::foundation-model/<id>`. The adapter
+  normalizes a bare `cohere.rerank-v3-5:0` to that ARN using the configured `region`, so a
+  config carrying either the bare id or a full ARN works; a bare id with no region fails fast.
+
+*Guarantee scope (F6):* omitting `backend` keeps retrieval **behaving** exactly as today
+(default backend flashrank, identical ranking). Because the template always renders its keys
+with Jinja defaults (as `enabled`/`candidate_pool_size` already do), the rendered YAML gains one
+documented `backend: flashrank` line — so the promise is *behavior-unchanged*, not
+byte-identical rendered output. The TDD asserts the default backend and identical ranking, not
+byte equality of the rendered file.
 
 ### D6 — Spike-first sequencing
 Ship the seam + `BedrockReranker` + a harness arm **first**; measure RAGAS delta on the FASRC
@@ -172,10 +194,19 @@ worth doing regardless — it's what makes the A/B possible and unblocks any fut
 1. Land the seam + `FlashRankReranker` (pure refactor, no behavior change) — TDD, gate green.
 2. Add `BedrockReranker` + `FallbackReranker` + config selector, default `flashrank`. `boto3`
    into `pyproject.toml`.
-3. Add the Bedrock A/B arm; run baseline vs Bedrock on the FASRC bank; record the RAGAS delta
-   in an ADR.
+3. Add the Bedrock A/B arm — **isolating the reranker as the only variable**. The existing
+   `hierarchical_rerank_ab` arms use distinct `DATA_PATH`s because they compare *chunking*, so
+   each re-ingests; cloning that pattern for a reranker-only comparison lets scrape/ingest drift
+   change the candidate pool independently of the reranker and confound the delta. Instead the
+   FlashRank and Bedrock arms MUST share one ingested index/snapshot (same `DATA_PATH`, no
+   re-scrape) so `hybrid_search` yields identical candidates and only the rerank step differs.
+   Run with Bedrock **fallback disabled** (D4 exception); record the RAGAS delta in an ADR.
 4. **Decision gate:** delta worth it? If no → stop; FlashRank remains, seam stays as a reusable
-   asset. If yes → separate change for creds plumbing, Model Access, deploy, and any default flip.
+   asset. If yes → separate change for creds plumbing, Model Access, deploy, and any default
+   flip. That change's IAM role needs **both** `bedrock:Rerank` and `bedrock:InvokeModel`
+   (scoped to the foundation-model ARN) plus `aws-marketplace:ViewSubscriptions` /
+   `aws-marketplace:Subscribe` for the Cohere third-party model — `bedrock:Rerank` alone
+   `AccessDenied`s.
 
 **Rollback:** set `reranker.backend: flashrank` (or omit it) and redeploy — the local path is
 untouched and always available.

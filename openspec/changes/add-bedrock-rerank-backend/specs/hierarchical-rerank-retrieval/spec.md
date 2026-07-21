@@ -6,8 +6,10 @@ The cross-encoder rerank stage SHALL be pluggable behind a reranker seam so the 
 backend is selectable via `data_manager.retrievers.hierarchical_rerank.reranker.backend`.
 The system SHALL support at least a local `flashrank` backend (the default) and a managed
 `bedrock` backend (Amazon Bedrock Rerank, e.g. `cohere.rerank-v3-5:0`). When `backend` is
-unset, the system SHALL behave exactly as the local FlashRank reranker did before this change,
-so an existing deployment renders and runs identically.
+unset, the system SHALL behave exactly as the local FlashRank reranker did before this change —
+the same ranking; an existing deployment SHALL run identically. The default-render guarantee is
+behavioral: the rendered config MAY carry a documented default `backend` value, but retrieval
+behavior SHALL be unchanged (byte-identical rendered output is NOT required).
 
 #### Scenario: Default backend is the local reranker
 
@@ -26,6 +28,18 @@ so an existing deployment renders and runs identically.
 - **WHEN** the reranker backend changes between `flashrank` and `bedrock`
 - **THEN** the retriever still returns deduplicated parent-context `Document` objects through the
   same `search_vectorstore_hybrid` tool seam, with no agent or prompt changes
+
+#### Scenario: Omitted model under the Bedrock backend uses a Bedrock default
+
+- **WHEN** `backend` is `bedrock` and `reranker.model` is not set
+- **THEN** the system resolves a Bedrock reranker model default (not the FlashRank model
+  default the template otherwise renders), so the Bedrock backend is actually exercised
+
+#### Scenario: A FlashRank model under the Bedrock backend is rejected
+
+- **WHEN** `backend` is `bedrock` and `reranker.model` is a FlashRank model id
+- **THEN** the system fails fast with a configuration error rather than silently reranking with
+  the local FlashRank reranker
 
 ### Requirement: Reranker ranks the full candidate pool
 
