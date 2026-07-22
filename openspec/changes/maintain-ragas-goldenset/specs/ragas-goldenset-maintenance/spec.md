@@ -139,10 +139,14 @@ rather than deleting it. Because the ingested corpus upserts by URL hash and doe
 pages that disappear from a later sitemap/source list (a plain re-ingest keeps stale rows; see
 design D2/D6), absence-from-corpus alone is NOT sufficient evidence of removal. The tool MUST
 therefore key orphan detection on a **freshly expanded live source inventory** (the current
-sitemap / source-list expansion), or require an explicit corpus prune/nuke before treating
-corpus presence as evidence a page still exists. A URL that matches only by slug near-miss MUST
-be treated as reconciliation-needed, not an orphan. `should_refuse` rows, which intentionally
-carry empty `sources`, MUST NOT be flagged as orphans.
+sitemap / source-list expansion — e.g. `sitemap_source.expand_sitemaps`), or require an explicit
+corpus prune/nuke before treating corpus presence as evidence a page still exists. Because that
+expansion fails open (a failed source document contributes zero URLs), the tool MUST treat an
+**incomplete** inventory — any source document that failed to fetch/parse, or an expansion below
+its configured floor — as an operational failure and **abstain from orphan-flagging** for that
+run, rather than reporting orphans against a partial inventory. A URL that matches only by slug
+near-miss MUST be treated as reconciliation-needed, not an orphan. `should_refuse` rows, which
+intentionally carry empty `sources`, MUST NOT be flagged as orphans.
 
 #### Scenario: A row citing a removed page is flagged even if the stale corpus still holds it
 
@@ -154,6 +158,13 @@ carry empty `sources`, MUST NOT be flagged as orphans.
 
 - **WHEN** a bank row has empty `sources` (a `should_refuse` row)
 - **THEN** it is not flagged as an orphan
+
+#### Scenario: An incomplete live inventory abstains from orphan-flagging
+
+- **WHEN** the live source-inventory expansion is incomplete (a source document failed to
+  fetch/parse, or the expansion fell below its configured floor)
+- **THEN** the tool reports an operational failure and flags no orphans for that run, rather than
+  treating the partial inventory as authoritative for removal
 
 ### Requirement: Human-gated mutation
 

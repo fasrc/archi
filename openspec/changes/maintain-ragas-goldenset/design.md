@@ -158,12 +158,18 @@ distinct, human-initiated step. The skill orchestrates but always stops at a con
 
 `scripts/benchmarking/goldenset_maintenance.py` with subcommands `coverage` / `drift` /
 `orphans` / `report`, loading the bank via `benchmark_schema` and reading corpus `url` +
-content hash through the existing read-only Postgres path (mirroring the ingestion-verifier).
-HTTP-fetch and LLM-diff clients are **injected** so tests are hermetic (fake corpus, fake
-bank, fake fetch/LLM). The model-facing `~/.claude/skills/archi-ragas-goldenset/SKILL.md`
-(personal, not in this PR) drives `coverage` / `drift-confirm` / `report` modes. A cron entry
-on the dev server runs `report` read-only, writing to `.ralph/log/`.
+`source_type`/`parent` labels through the existing read-only Postgres path (mirroring the
+ingestion-verifier — the corpus has no content hash, D2). HTTP-fetch and LLM-diff clients are
+**injected** so tests are hermetic (fake corpus, fake bank, fake fetch/LLM). The model-facing
+`~/.claude/skills/archi-ragas-goldenset/SKILL.md` (personal, not in this PR) drives `coverage` /
+`drift-confirm` / `report` modes. A cron entry on the dev server runs `report` read-only,
+writing to `.ralph/log/`.
 
+- *Reuse #133's fetch/inventory building blocks:* the live-source fetch (drift re-fetch,
+  candidate drafting) and the orphan inventory should reuse `sitemap_source`'s established
+  pattern — the injected `FetchText` callable, `fetch_sitemap_text`'s timeout/size cap, the
+  `is_url_allowed` trust filter, and `normalize_page_url` — rather than a second, divergent
+  fetch/normalize path. Same house style, same SSRF posture, one normalizer.
 - *Why scripts/ not src/:* dev/operator tooling like `validate_queries.py`; keeping it out of
   the package avoids a shipped dependency and the redeploy/`ModuleNotFoundError` trap.
 - *Why cron over the Ralph nightly loop:* the operator chose a standalone dev-server cron —
@@ -186,6 +192,24 @@ So the corpus is authoritative only for *coverage* (which URLs were ingested at 
 freshly expanded live source inventory (sitemap / source-list expansion), or requires an
 explicit prune/nuke before corpus-presence is trusted as "still exists".
 
+**The live inventory is now a first-class primitive (PR #133).** `sitemap_source.expand_sitemaps`
+(landed on `dev` in #133) parses/normalizes/trust-filters/expands a `sitemap-<url>` source into
+the page URLs the sitemap advertises *now*, with an **injected fetch** (hermetic tests, matching
+D5) and `normalize_page_url` — the *same* canonical form the hand-list and corpus use (mirrors
+`sources_builder.normalize_url`; #118). Orphan detection therefore reuses it directly:
+`orphan ⇔ row.sources ∉ expand_sitemaps(current_sources)`, apples-to-apples against the corpus
+`url` and bank `sources`. For a hand-listed (non-sitemap) source, the "expansion" is just the
+current list. Either way the oracle is *today's* source list, not the never-pruning corpus.
+
+- *Fail-open guard (a trap #133 introduces):* `expand_sitemaps` fails **open** per document (a
+  fetch/parse failure logs a WARNING and contributes zero URLs) and raises below a floor.
+  Fail-open is correct for *ingest* (ingest fewer pages), but as an **orphan oracle** it is
+  dangerous: a failed sitemap shard makes a whole block of live pages look absent → a wave of
+  **false orphans**. So orphan detection MUST treat an incomplete expansion (any document failed,
+  or below floor) as an **operational failure and abstain** from orphan-flagging that run —
+  folding into the report's existing "reserve non-zero exit for operational failure, not for
+  findings" contract. Coverage/orphan run only against a *complete* inventory.
+
 - *Why not compare drift against the persisted corpus (reviewer suggestion):* the benchmark
   answers from the corpus, so it is tempting to judge drift there. Rejected — because the corpus
   lags the live KB (above), that would silently pass a reference that is stale relative to the
@@ -194,16 +218,22 @@ explicit prune/nuke before corpus-presence is trusted as "still exists".
   — re-fetching pages the benchmark never sees — is bounded by the hash tripwire (LLM fires only
   on a moved hash) and is the correct trade for not missing drift.
 
-### D7 — Slug-aware reconciliation before coverage/orphan classification
+### D7 — Reconcile URLs with the ingest's own normalizer; near-miss → separate bucket
 
-URL matching is **slug-aware**, not merely scheme/trailing-slash. The bank README's SOURCES
-caveat is that the sitemap-driven ingest may store a page under a different slug than the bank's
-authored canonical URL. With only scheme/slash normalization, a covered page whose stored `url`
-differs by slug is classified as *both* an uncovered gap *and* an orphan — two false work items
-from one page. So the tool reconciles slugs first, and any URL that matches only by near-miss
-goes to a separate **"needs reconciliation"** bucket — never a definitive gap or orphan. That
-bucket is an explicit human signal ("these two URLs are probably the same page, confirm"), which
-is safer than silently guessing either way.
+URL matching **reuses `sitemap_source.normalize_page_url`** (PR #133) rather than a bespoke
+normalizer, so the maintenance tool canonicalizes URLs *identically* to how the ingest stored
+them — scheme/host case, fragment, and the `/x` vs `/x/` trailing-slash variant (#118) all
+collapse the same way on both sides. That removes the largest class of the README's SOURCES
+caveat (slash/case/fragment drift) by construction: post-#133, corpus `url`, sitemap output, and
+a canonicalized bank `sources` share one form.
+
+What remains is the *narrower* residual — a genuinely different **slug** (e.g. a redirect alias:
+the bank author linked `/kb/old-name`, the sitemap advertises `/kb/new-name` for the same page).
+Exact-normalized matching won't unify those, so a URL that resolves to a covered page only by
+such a near-miss goes to a separate **"needs reconciliation"** bucket — never a definitive gap or
+orphan. That bucket is an explicit human signal ("these two URLs are probably the same page,
+confirm"), safer than silently guessing either way. Reusing the ingest's normalizer also settles
+the Loop-2 fetch-parity risk (below): don't reimplement normalization or extraction — share it.
 
 ## Risks / Trade-offs
 
