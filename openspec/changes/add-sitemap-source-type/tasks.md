@@ -54,8 +54,8 @@
 ## 6. Dev deploy validation
 
 - [ ] 6.1 Redeploy dev via `deploy/fasrc-dev/scripts/redeploy.sh` (required: the staged weblist and the baked site-packages code both only update on `archi create --force`, not on container restart) and trigger the full re-ingest.
-- [ ] 6.2 Verify in the data-manager logs: exactly one fetch of `epkb_post_type_1-sitemap.xml`, an expansion report of ~282 URLs, and no fail-open warnings from the sitemap path.
-- [ ] 6.3 Post-deploy check (backstop to the in-code D9 floor, ingestion-verifier audit): `docs.rc.fas.harvard.edu/kb/` web-document count is within a sane band of ~282; at least one article absent from the old hand list is present and retrievable via chat; zero `/kb/...` vs `/kb/.../` slash-variant duplicate pairs.
+- [ ] 6.2 Verify in the data-manager logs: exactly one fetch of `epkb_post_type_1-sitemap.xml`, an expansion report of ~212 URLs, and no fail-open warnings from the sitemap path. (Count reconciled 2026-07-22: the live sitemap is a flat `<urlset>` of **212** `<loc>`s — the `/sitemap.xml` index's other children, `sitemap-misc.xml` and `epkb_post_type_2`, are empty. The plan-time "~282 / ~63 missing" figure in proposal/design/spec was a stale over-estimate.)
+- [ ] 6.3 Post-deploy check (backstop to the in-code D9 floor, ingestion-verifier audit): `docs.rc.fas.harvard.edu/kb/` web-document count is within a sane band of ~212 (`min_pages: 150` floor); at least one article absent from the old hand list (e.g. `/kb/ai-agents`) is present and retrievable via chat; zero `/kb/...` vs `/kb/.../` slash-variant duplicate pairs. (Reconciled vs the 219 hand list: 9 hand-list-only URLs are stale slugs that 301-redirect to renamed canonical pages already in the sitemap — no content lost; 2 sitemap-only pages gained.)
 - [ ] 6.4 Confirm the D9 floor is live end-to-end: point a throwaway config at a deliberately unreachable sitemap and confirm the ingest FAILS with the source-level below-floor ERROR rather than completing with an empty KB; and that an index with one bad child only WARNs and still succeeds when the net stays above floor.
 
 ## 7. Commit and PR
