@@ -33,7 +33,7 @@ Source-list lines without the `sitemap-` prefix MUST route exactly as they do to
 
 ### Requirement: Urlset expansion to page URLs
 
-For each sitemap URL, the expander SHALL fetch the document and, when its root element is `<urlset>`, emit the text of every `<loc>` child as a page URL. `<loc>` extraction MUST be namespace-agnostic (the sitemap namespace `http://www.sitemaps.org/schemas/sitemap/0.9` may or may not be declared). `<lastmod>` values SHALL be ignored. An otherwise-valid `<urlset>` with zero `<loc>` entries SHALL contribute no URLs and SHALL NOT be treated as an error.
+For each sitemap URL, the expander SHALL fetch the document and, when its root element is `<urlset>`, emit the text of every `<loc>` child as a page URL. `<loc>` extraction MUST be namespace-agnostic (the sitemap namespace `http://www.sitemaps.org/schemas/sitemap/0.9` may or may not be declared). `<lastmod>` values SHALL be ignored. An otherwise-valid `<urlset>` with zero `<loc>` entries SHALL NOT be treated as a *parse* error at the document level; the source-level consequence of a zero/low result is governed by the minimum-expansion floor requirement below.
 
 #### Scenario: Flat urlset expanded
 
@@ -63,16 +63,52 @@ When the fetched document's root element is `<sitemapindex>`, the expander SHALL
 - **AND** it contributes no page URLs
 - **AND** sibling `<urlset>` children still contribute their page URLs
 
-### Requirement: Fetch or parse failure fails open
+### Requirement: URL trust policy for emitted and child-sitemap URLs
 
-A fetch failure (connection error, timeout, non-200 status) or parse failure (malformed XML, DTD/entity declaration, unrecognized root element) on any sitemap document MUST NOT abort the ingestion run. The expander SHALL log a warning identifying the failing sitemap URL, contribute zero URLs from that document, and continue with any remaining sitemap documents. All other configured sources SHALL be collected normally.
+Because a `sitemap-` source delegates URL selection to a remote document that no human reviews before ingestion (unlike the committed, human-reviewed output of `archi sources build`), the expander SHALL constrain every URL it acts on — both child-sitemap `<loc>` values it fetches and page `<loc>` values it emits:
 
-#### Scenario: Unreachable sitemap skipped
+1. The URL scheme MUST be `http` or `https`; any other scheme (e.g. `file:`, `ftp:`, `gopher:`, `data:`) is rejected.
+2. The URL host MUST equal the configured sitemap's host, OR appear in an explicit per-source allowlist. Cross-host URLs not on the allowlist are rejected. (Exact host match — not registrable-domain — is the default to avoid a public-suffix-list dependency; the allowlist covers legitimate cross-subdomain/CDN cases.)
+3. A host that is an IP literal in a loopback, private, or link-local range (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`, `fc00::/7`, `fe80::/10`) is rejected regardless of the allowlist.
+4. The sitemap fetch MUST NOT follow a redirect to a host that fails rules 1–3.
 
-- **WHEN** the sitemap fetch raises a connection error or returns a non-200 status
-- **THEN** a warning naming the sitemap URL is logged
-- **AND** that sitemap contributes an empty URL list
-- **AND** the ingestion run continues and collects all other configured sources
+A rejected URL is dropped with a warning and never reaches the scraper. Rejected URLs count as "not emitted" for the minimum-expansion floor.
+
+#### Scenario: Non-HTTP scheme rejected
+
+- **WHEN** a `<loc>` value is `file:///etc/passwd` or `gopher://host/`
+- **THEN** the URL is dropped with a warning and is never fetched or scraped
+
+#### Scenario: Cross-host page URL rejected by default
+
+- **WHEN** a sitemap served from `docs.rc.fas.harvard.edu` emits a `<loc>` on `evil.example.com` and no allowlist entry covers it
+- **THEN** the URL is dropped and not scraped
+
+#### Scenario: Internal/metadata address rejected
+
+- **WHEN** a `<loc>` or child-sitemap URL targets a literal loopback/private/link-local address (e.g. `http://169.254.169.254/latest/meta-data/`)
+- **THEN** the URL is dropped with a warning even if it would otherwise match the host or allowlist
+
+#### Scenario: Cross-host redirect not followed
+
+- **WHEN** fetching a sitemap URL returns a redirect to a different, non-allowlisted host
+- **THEN** the redirect is not followed and the document contributes no URLs
+
+#### Scenario: Allowlisted cross-host URL permitted
+
+- **WHEN** a per-source allowlist includes `cdn.example.com` and a `<loc>` on that host passes the scheme and address-range checks
+- **THEN** the URL is emitted
+
+### Requirement: Fetch or parse failure fails open per document
+
+A fetch failure (connection error, timeout, non-200 status) or parse failure (malformed XML, DTD/entity declaration, unrecognized root element) on an individual sitemap document MUST NOT raise an unhandled exception or abort expansion of the other documents. The expander SHALL log a warning identifying the failing sitemap URL, contribute zero URLs from that document, and continue with any remaining sitemap documents. This per-document resilience governs only individual documents within a source; the source's overall success or failure is decided by the minimum-expansion floor requirement below — a below-floor net result is a deliberate, controlled ingest failure, not a crash.
+
+#### Scenario: Unreachable child document skipped, siblings survive
+
+- **WHEN** a `<sitemapindex>` has two children and exactly one child fetch raises a connection error or returns non-200
+- **THEN** a warning naming the failing child URL is logged
+- **AND** that child contributes an empty URL list while the healthy sibling's URLs are still emitted
+- **AND** no unhandled exception propagates from the expander (the source's overall pass/fail is then governed by the minimum-expansion floor)
 
 #### Scenario: Malformed XML skipped
 
@@ -84,6 +120,39 @@ A fetch failure (connection error, timeout, non-200 status) or parse failure (ma
 
 - **WHEN** two `sitemap-` lines are configured and exactly one fetch fails
 - **THEN** the page URLs from the successful sitemap are still emitted and scraped
+
+### Requirement: Collection-level maximum on emitted pages
+
+Each `sitemap-` source SHALL have a configurable maximum number of emitted page URLs, enforced across ALL documents of that source (the top-level sitemap plus every child fetched) BEFORE any expanded URL is handed to the scraper. If a source's total emitted count would exceed the maximum, the source fails deterministically — it contributes no URLs and logs an ERROR naming the source and the limit — rather than flooding the crawler. The cap MUST bound emitted pages independently of the per-seed `max_pages` crawl budget, which resets per seed and therefore cannot bound the collection.
+
+#### Scenario: Over-cap source fails deterministically
+
+- **WHEN** a sitemap source expands to more page URLs than its configured maximum
+- **THEN** the source contributes zero URLs, an ERROR naming the source and the cap is logged, and no partial or full over-cap set is scraped
+
+#### Scenario: Within-cap source expands normally
+
+- **WHEN** a sitemap source expands to a count at or below its configured maximum
+- **THEN** all emitted URLs are scraped as normal
+
+### Requirement: Minimum-expansion floor per sitemap source
+
+Each `sitemap-` source SHALL have a configurable minimum expected page count (floor). On every ingest, if the net emitted count for a sitemap source — after trust filtering, normalization, and deduplication — is below its floor (including the zero produced by a failed fetch, a malformed document, a validly-parsed empty `<urlset>`, or wholesale trust-policy rejection), the expander SHALL treat it as a source-level failure: log an ERROR and fail the ingest, rather than allow a "successful" run to replace real coverage with an empty or near-empty corpus. This guard runs on EVERY ingest — not as a one-time rollout check — so it protects fresh installs, post-`nuke` rebuilds, and automated re-ingests alike.
+
+#### Scenario: Below-floor expansion fails the ingest
+
+- **WHEN** a sitemap source configured with a floor of N expands to fewer than N page URLs (e.g. a transient outage yields zero)
+- **THEN** an ERROR is logged and the ingest fails rather than reporting success with a below-floor KB
+
+#### Scenario: Fresh deploy with a failing sitemap does not silently empty the KB
+
+- **WHEN** a first-run or post-`nuke` deploy has no prior corpus and the sitemap fetch fails (zero emitted)
+- **THEN** the ingest fails on the floor check rather than completing with an empty KB
+
+#### Scenario: At-or-above floor proceeds
+
+- **WHEN** a sitemap source expands to at least its floor
+- **THEN** the ingest proceeds normally
 
 ### Requirement: Trailing-slash normalization of expanded URLs
 
