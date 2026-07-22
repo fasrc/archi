@@ -185,6 +185,31 @@ def _as_ip(
         return None
 
 
+def _is_numeric_host(host: str) -> bool:
+    """Return whether ``host`` is a numeric IPv4 form (dotted-decimal, dotted
+    octal/hex, or a bare decimal/hex dword).
+
+    These are the shapes resolvers accept but :func:`ipaddress.ip_address` will
+    not canonicalize — e.g. ``0x7f000001``, ``2130706433``, ``0177.0.0.1``,
+    ``127.1`` all map to loopback. Every label must be all-decimal or a
+    ``0x``-prefixed hex run; a single label with any other character means it is a
+    DNS hostname (no public TLD is all-hex), so it is not treated as an IP form.
+    """
+    if not host:
+        return False
+    for label in host.split("."):
+        if not label:
+            return False
+        low = label.lower()
+        if low.startswith("0x"):
+            body = low[2:]
+            if not body or any(c not in "0123456789abcdef" for c in body):
+                return False
+        elif not label.isdigit():
+            return False
+    return True
+
+
 def _host_of(url: str) -> str:
     try:
         return (urlparse(url).hostname or "").lower()
@@ -207,11 +232,28 @@ def is_url_allowed(url: str, sitemap_host: str, allowed_hosts: List[str]) -> boo
         return False
     if parts.scheme not in ("http", "https"):
         return False
+    try:
+        port = parts.port  # non-numeric / out-of-range (>65535) raises ValueError
+    except ValueError:
+        # A malformed port makes the URL unfetchable; refuse it so it is never
+        # emitted or counted toward the floor (an unreachable page must not let a
+        # sitemap satisfy min_pages while ingesting nothing).
+        return False
+    if port == 0:
+        return False
     host = (parts.hostname or "").lower()
     if not host:
         return False
     ip = _as_ip(host)
-    if ip is not None and (ip.is_loopback or ip.is_private or ip.is_link_local):
+    if ip is not None:
+        if ip.is_loopback or ip.is_private or ip.is_link_local:
+            return False
+    elif _is_numeric_host(host):
+        # A numeric IPv4 form ipaddress could not canonicalize — hex/octal/decimal
+        # dword or short form (0x7f000001, 2130706433, 0177.0.0.1, 127.1). Resolvers
+        # still map these to loopback/internal addresses, so reject rather than
+        # guess the resolver's interpretation. The allowlist holds DNS names, never
+        # numeric hosts, so no legitimate host is lost.
         return False
     allowed = {(sitemap_host or "").lower()}
     allowed.update(h.lower() for h in (allowed_hosts or []))

@@ -123,8 +123,26 @@ class ScraperManager:
         # over-cap SitemapExpansionError is intentionally NOT caught here: it
         # propagates out and fails the ingest rather than shipping a bad corpus.
         if sitemap_urls:
+            from src.data_manager.collectors.scrapers.sitemap_source import (
+                normalize_page_url,
+            )
+
+            def _dedup_key(u: str) -> str:
+                try:
+                    return normalize_page_url(u)
+                except ValueError:
+                    return u
+
+            # Dedup expanded pages against the NORMALIZED hand-list keys, not the
+            # raw strings, so a hand-listed `/x/` and a sitemap-derived `/x` are the
+            # same page. LinkScraper does not dedup across seeds, so without this a
+            # slash/case/fragment variant would be scraped twice (#118) during the
+            # hand-list -> sitemap migration window. Expanded URLs are already
+            # normalized, so they compare directly against these keys.
+            existing_keys = {_dedup_key(u) for u in link_urls}
             for expanded in self._expand_sitemaps(sitemap_urls):
-                if expanded not in link_urls:
+                if expanded not in existing_keys:
+                    existing_keys.add(expanded)
                     link_urls.append(expanded)
 
         self.collect_links(persistence, link_urls=link_urls)

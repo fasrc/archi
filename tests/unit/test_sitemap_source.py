@@ -254,6 +254,61 @@ class TestTrustPolicy:
         # http(s) scheme but no host (e.g. "https:///path") is rejected.
         assert ss.is_url_allowed("https:///path", HOST, []) is False
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://0x7f000001/x",  # hex dword -> 127.0.0.1
+            "http://2130706433/x",  # decimal dword -> 127.0.0.1
+            "http://0177.0.0.1/x",  # dotted octal -> 127.0.0.1
+            "http://0x7f.0.0.1/x",  # dotted hex -> 127.0.0.1
+            "http://127.1/x",  # short form -> 127.0.0.1
+        ],
+    )
+    def test_obfuscated_numeric_ip_host_rejected(self, url):
+        from urllib.parse import urlparse
+
+        host = urlparse(url).hostname
+        # Even self-hosted (host == sitemap_host) and allowlisted, an obfuscated
+        # numeric IP form that resolvers map to loopback must be refused — the
+        # canonical-only ipaddress.ip_address() check does not catch these.
+        assert ss.is_url_allowed(url, host, [host]) is False
+
+    @pytest.mark.parametrize(
+        "host,expected",
+        [
+            ("0x7f000001", True),  # hex dword
+            ("2130706433", True),  # decimal dword
+            ("0177.0.0.1", True),  # dotted octal labels
+            ("127.1", True),  # short form
+            ("docs.rc.fas.harvard.edu", False),  # real DNS name
+            ("", False),  # empty host
+            ("127..1", False),  # empty label
+            ("0x", False),  # bare 0x prefix, no body
+            ("0xzz", False),  # non-hex body
+        ],
+    )
+    def test_is_numeric_host_classification(self, host, expected):
+        assert ss._is_numeric_host(host) is expected
+
+    def test_public_ip_literal_still_allowed(self):
+        # A canonical, non-internal IP literal remains allowable (v1 does not ban
+        # all IP hosts — only loopback/private/link-local and obfuscated forms).
+        assert ss.is_url_allowed("https://93.184.216.34/x", "93.184.216.34", []) is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            f"https://{HOST}:99999/kb/x",  # out-of-range port
+            f"https://{HOST}:0/kb/x",  # unroutable port 0
+            f"https://{HOST}:notaport/kb/x",  # non-numeric port
+        ],
+    )
+    def test_invalid_port_rejected(self, url):
+        # A same-host <loc> with a malformed/out-of-range port parses to the
+        # allowed hostname but is unfetchable; it must be refused so it is never
+        # emitted or counted toward the floor.
+        assert ss.is_url_allowed(url, HOST, []) is False
+
 
 # --------------------------------------------------------------------------- #
 # 1.4 expand_sitemap_source / expand_sitemaps (happy paths + fail-open)
@@ -732,6 +787,46 @@ class TestWiring:
         exp.assert_called_once_with(["https://s.xml"])
         _, kwargs = cl.call_args
         assert kwargs["link_urls"] == ["https://a", "https://b", "https://c"]
+
+    def test_expanded_url_deduped_against_slash_variant_handlist(self):
+        # A hand-listed trailing-slash variant and the normalized sitemap URL are
+        # the SAME page; only one must reach collect_links. LinkScraper does not
+        # dedup across seeds, so this guards the #118 slash-variant dup-chunk issue
+        # during the hand-list -> sitemap migration window. A malformed hand-list
+        # entry (unnormalizable) is kept verbatim as its own key.
+        mgr = self._mgr()
+        by_type = (
+            [f"https://{HOST}/kb/page/", "https://[malformed"],
+            [],
+            [],
+            [],
+            [],
+            ["https://s.xml"],
+        )
+        with patch.object(
+            ScraperManager,
+            "_expand_sitemaps",
+            return_value=[f"https://{HOST}/kb/page", f"https://{HOST}/kb/new"],
+        ), patch.object(ScraperManager, "collect_links") as cl, patch.object(
+            ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+        ), patch.object(
+            ScraperManager, "collect_sso"
+        ), patch.object(
+            ScraperManager, "collect_git"
+        ), patch.object(
+            ScraperManager, "collect_elog"
+        ), patch.object(
+            ScraperManager, "collect_indico"
+        ):
+            mgr.collect_all_from_config(MagicMock())
+        _, kwargs = cl.call_args
+        # /kb/page (normalized dup of the /kb/page/ hand-list entry) is NOT re-added;
+        # hand-list entries are preserved and only the genuinely new page is added.
+        assert kwargs["link_urls"] == [
+            f"https://{HOST}/kb/page/",
+            "https://[malformed",
+            f"https://{HOST}/kb/new",
+        ]
 
     def test_no_sitemap_bucket_skips_expand(self):
         mgr = self._mgr()
