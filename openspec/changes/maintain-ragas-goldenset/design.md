@@ -177,6 +177,16 @@ writing to `.ralph/log/`.
 
 ### D6 — The persisted corpus is not a reliable mirror; key content/removal on a fresh live signal
 
+**Status — accepted (human sign-off 2026-07-22): drift keys on a live re-fetch, not the persisted
+corpus.** The deciding factor is the asymmetry of failure — corpus-based drift fails toward
+*silent false negatives* (a stale reference passes because the equally-stale corpus agrees),
+whereas live re-fetch fails toward *cheap, human-reviewed false positives*. **Condition of the
+sign-off:** the live signal MUST be measured the way the corpus was built — reuse the ingest's
+fetch + extraction + `normalize_page_url` and hash the **normalized extracted text**, not raw
+markup — so formatting/markup churn cannot masquerade as content drift. This decision would only
+flip if the ingest were changed to overwrite content *and* prune vanished URLs (making the corpus
+a faithful mirror); as the code stands (`overwrite=False`, no prune) it does not.
+
 The ingested corpus lies to us in two directions, both rooted in the same URL-keyed identity
 (`ScrapedResource.get_hash()` = md5 of the URL, D2):
 

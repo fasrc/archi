@@ -8,7 +8,8 @@ census unless it is `locked`. Benchmark eligibility and scoring are unchanged �
 MUST continue to score every row's `reference` regardless of `status`; gating scoring on
 `locked` is a separate, deferred change (see proposal). A `locked` row that cites one or more
 `sources` SHALL record `source_hashes` — a mapping from each normalized `sources` URL to the
-content hash of that grounding page captured at lock time. A `locked` row with empty `sources`
+content hash of that grounding page's normalized extracted text (see *Fact-drift detection*),
+captured at lock time. A `locked` row with empty `sources`
 (e.g. a confirmed `should_refuse` anchor) SHALL be lockable with **no** `source_hashes` and is
 simply never drift-checked. These fields SHALL be loader-compatible: the benchmark harness
 requires only `user_input` (plus `sources` for SOURCES mode) and MUST continue to load banks
@@ -108,7 +109,10 @@ The maintenance tool SHALL flag a `locked` row as drifted WHEN, for **any** of i
 URLs, a fresh content hash it computes over the re-fetched authoritative source differs from that
 URL's entry in the row's stored `source_hashes`. It MUST hash each source itself, not the
 corpus's resource identifier (which is URL-only and never reflects content change), and MUST
-check every URL in `sources`, not only the first. On a mismatch the tool MUST compare the
+check every URL in `sources`, not only the first. The content hash MUST be computed over the
+**normalized extracted text** of the source — reusing the ingest's extraction and
+`normalize_page_url`, not raw markup — so a formatting-only change does not produce false drift.
+On a mismatch the tool MUST compare the
 re-fetched content against the stored `reference`, reporting the suspected staleness and which
 source URL moved, and MUST NOT edit, re-lock, or delete the row — it reports only. `draft` rows,
 and `locked` rows with empty `sources`, SHALL NOT be drift-checked.
