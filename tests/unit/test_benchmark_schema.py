@@ -21,10 +21,12 @@ from __future__ import annotations
 import math
 
 from src.utils.benchmark_schema import (
+    bank_status_counts,
     normalize_bank,
     normalize_record,
     required_fields_for_modes,
     row_is_eligible,
+    row_status,
     score_metrics_per_eligibility,
 )
 
@@ -101,6 +103,85 @@ def test_normalize_bank_maps_each_record():
     )
     assert [r["user_input"] for r in bank] == ["q1", "q2"]
     assert [r["reference"] for r in bank] == ["a1", "a2"]
+
+
+# --- confirmation state: status / source_hashes (maintain-ragas-goldenset) --
+
+
+def test_status_and_source_hashes_preserved_on_load():
+    """The new maintenance fields survive normalization unchanged, so the harness
+    loads a bank with them exactly as it loads one without (no scoring change)."""
+    out = normalize_record(
+        {
+            "user_input": "q",
+            "reference": "r",
+            "status": "locked",
+            "source_hashes": {"https://x": "abc123"},
+        }
+    )
+    assert out["status"] == "locked"
+    assert out["source_hashes"] == {"https://x": "abc123"}
+
+
+def test_status_and_source_hashes_survive_normalize_bank():
+    bank = normalize_bank(
+        [{"user_input": "q", "status": "locked", "source_hashes": {"https://x": "h"}}]
+    )
+    assert bank[0]["status"] == "locked"
+    assert bank[0]["source_hashes"] == {"https://x": "h"}
+
+
+def test_row_status_absent_is_draft():
+    # A row with no `status` is not authoritative -> treated as draft.
+    assert row_status({"user_input": "q"}) == "draft"
+
+
+def test_row_status_locked():
+    assert row_status({"user_input": "q", "status": "locked"}) == "locked"
+
+
+def test_row_status_non_locked_value_is_draft():
+    # Conservative: authoritative ONLY when the value is exactly "locked".
+    assert row_status({"status": "draft"}) == "draft"
+    assert row_status({"status": "whatever"}) == "draft"
+
+
+def test_bank_status_counts_reports_locked_draft_and_anchor_distribution():
+    bank = [
+        {"user_input": "a", "status": "locked", "anchor_type": "easy_retrieve"},
+        {"user_input": "b", "status": "draft", "anchor_type": "reasoning"},
+        {"user_input": "c", "anchor_type": "reasoning"},  # absent status -> draft
+        {"user_input": "d", "status": "locked", "anchor_type": "should_refuse"},
+    ]
+    counts = bank_status_counts(bank)
+    assert counts["locked"] == 2
+    assert counts["draft"] == 2
+    assert counts["total"] == 4
+    assert counts["anchor_type"] == {
+        "easy_retrieve": 1,
+        "reasoning": 2,
+        "should_refuse": 1,
+    }
+
+
+def test_bank_status_counts_buckets_missing_anchor_type():
+    counts = bank_status_counts([{"user_input": "a", "status": "locked"}])
+    assert counts["locked"] == 1
+    assert counts["anchor_type"] == {"unassigned": 1}
+
+
+def test_backfilling_status_is_scoring_neutral():
+    """Adding `status` to a row must not change per-metric eligibility (scoring
+    ignores `status`), so backfilling the live bank to `draft` is behavior-neutral."""
+    base = {"user_input": "q", "reference": "r", "retrieved_contexts": ["c"]}
+    with_status = {**base, "status": "draft"}
+    for metric in (
+        "answer_relevancy",
+        "faithfulness",
+        "context_precision",
+        "context_recall",
+    ):
+        assert row_is_eligible(base, metric) == row_is_eligible(with_status, metric)
 
 
 def test_normalize_bank_tolerates_non_dict_items():
