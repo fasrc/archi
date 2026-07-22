@@ -82,7 +82,8 @@ SSO_PASSWORD=password
 To track a site that publishes an XML sitemap, list the sitemap itself with a
 `sitemap-` prefix instead of hand-listing every page. It is expanded **at ingest
 time** — each `<loc>` becomes a page URL scraped exactly as if hand-listed — so
-newly published pages are discovered automatically on every re-ingest:
+newly published pages are discovered automatically on every **full ingest**
+(`archi create` / a redeploy, i.e. `collect_all_from_config`):
 
 ```
 sitemap-https://docs.rc.fas.harvard.edu/kb/epkb_post_type_1-sitemap.xml
@@ -93,6 +94,12 @@ A `<urlset>` contributes its pages; a `<sitemapindex>` is followed **one** level
 individual document that fails to fetch or parse is skipped with a warning
 (fail-open), and emitted URLs are normalized to the hand-list form (trailing
 slash collapsed) so they cannot create slash-variant duplicates.
+
+> **Note:** a *scheduled* `links` refresh (`data_manager.sources.links.schedule`)
+> re-scrapes the URLs already in the catalog; it does **not** re-read the input
+> lists or re-expand the sitemap. Sitemap pages published *after* the last full
+> ingest are therefore picked up only on the next full ingest/redeploy, not by the
+> scheduled refresh.
 
 Because the emitted list comes from a live remote document that no human reviews,
 expansion is trust-constrained and bounded per source — configured under

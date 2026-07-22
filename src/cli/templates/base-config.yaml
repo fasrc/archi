@@ -266,7 +266,8 @@ data_manager:
         # Trust/bounds for `sitemap-` source-list lines (expanded at ingest).
         # allowed_hosts: extra hosts (besides the sitemap's own) whose URLs may
         # be fetched/emitted; min_pages: floor below which a source fails the
-        # ingest; max_pages: cap above which a source fails deterministically.
+        # ingest (set 0 to allow an intentionally empty/optional sitemap);
+        # max_pages: cap above which a source fails deterministically.
         # Absent keys fall back to these defaults, so lists with no `sitemap-`
         # line are unaffected.
         allowed_hosts:
@@ -278,7 +279,8 @@ data_manager:
           - {{ host }}
           {%- endfor %}
           {%- endif %}
-        min_pages: {{ data_manager.sources.links.sitemap.min_pages | default(1, true) }}
+        {%- set sitemap_min = data_manager.sources.links.sitemap.min_pages %}
+        min_pages: {{ sitemap_min if sitemap_min is defined and sitemap_min is not none else 1 }}
         max_pages: {{ data_manager.sources.links.sitemap.max_pages | default(20000, true) }}
       selenium_scraper:
         enabled: {{ data_manager.sources.links.selenium_scraper.selenium_scraper.enabled | default(false, True) }}

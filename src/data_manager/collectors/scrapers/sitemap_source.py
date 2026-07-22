@@ -381,7 +381,13 @@ def expand_sitemap_source(
     if kind == "urlset":
         raw_pages.extend(locs)
     elif kind == "sitemapindex":
+        seen_children = set()
         for child_url in locs:
+            if child_url in seen_children:
+                # A repeated child <loc> (e.g. a generator bug) is fetched once,
+                # not once per occurrence — the emitted set is unchanged either way.
+                continue
+            seen_children.add(child_url)
             if not is_url_allowed(child_url, sitemap_host, policy.allowed_hosts):
                 logger.warning(
                     "sitemap: dropping untrusted child sitemap %s (source %s)",

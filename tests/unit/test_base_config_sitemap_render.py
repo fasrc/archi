@@ -64,3 +64,16 @@ def test_defaults_when_unset():
     assert sm["max_pages"] == 20000
     # allowed_hosts omitted/empty -> null or empty (falsy); runtime treats as [].
     assert not sm["allowed_hosts"]
+
+
+def test_explicit_zero_min_pages_preserved():
+    # An operator setting min_pages: 0 opts out of the floor (an intentionally
+    # empty/optional sitemap); the template must NOT silently promote 0 -> 1.
+    cfg = _render({"sources": {"links": {"sitemap": {"min_pages": 0}}}})
+    assert _sitemap(cfg)["min_pages"] == 0
+
+
+def test_null_min_pages_falls_back_to_default():
+    # A null/absent floor still defaults to 1 (only an explicit numeric survives).
+    cfg = _render({"sources": {"links": {"sitemap": {"min_pages": None}}}})
+    assert _sitemap(cfg)["min_pages"] == 1

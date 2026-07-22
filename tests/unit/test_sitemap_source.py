@@ -344,6 +344,24 @@ class TestExpand:
         assert fetch.calls.count(f"https://{HOST}/child-1.xml") == 1
         assert fetch.calls.count(f"https://{HOST}/child-2.xml") == 1
 
+    def test_duplicate_child_loc_fetched_once(self):
+        # A <sitemapindex> that repeats the same child <loc> (e.g. a generator
+        # bug) must fetch that child exactly once, not once per occurrence — a
+        # large duplicate index would otherwise cause redundant network reads.
+        url = f"https://{HOST}/index.xml"
+        child_url = f"https://{HOST}/child-2.xml"
+        dup_index = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+            f"  <sitemap><loc>{child_url}</loc></sitemap>\n"
+            f"  <sitemap><loc>{child_url}</loc></sitemap>\n"
+            "</sitemapindex>"
+        )
+        fetch = FakeFetch({url: dup_index, child_url: CHILD_2})
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert fetch.calls.count(child_url) == 1
+        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+
     def test_nested_index_contributes_nothing(self):
         url = f"https://{HOST}/index.xml"
         fetch = FakeFetch(
