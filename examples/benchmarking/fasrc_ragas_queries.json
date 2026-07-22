@@ -1,6 +1,7 @@
 [
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "How do I request a single GPU in a SLURM submission script on FASRC Cannon?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/running-jobs"
@@ -13,6 +14,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "What is the maximum run time for a job on the FASRC sapphire partition?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/running-jobs"
@@ -25,6 +27,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "How much memory does a SLURM job get on Cannon if I don't specify a memory request?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/running-jobs"
@@ -37,6 +40,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "What is the storage quota for a FASRC user home directory?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/cluster-storage"
@@ -49,6 +53,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "How much storage does a FASRC lab group directory get, and how many files?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/cluster-storage"
@@ -61,6 +66,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "Where on the Cannon filesystem do FASRC lab directories reside?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/cluster-storage"
@@ -73,6 +79,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "What hostname do I SSH to for command-line access to the FASRC cluster?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/quickstart-guide"
@@ -85,6 +92,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "What command lists the modules I currently have loaded on Cannon?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/modules-intro"
@@ -97,6 +105,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "What command shows my lab's fairshare information on FASRC?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/fairshare"
@@ -109,6 +118,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "How long are FASRC home directory snapshots kept?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/cluster-storage"
@@ -121,6 +131,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "My SLURM job on Cannon was killed for running out of memory. How do I find out how much memory it actually used, and how do I request more next time?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/running-jobs"
@@ -133,6 +144,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Is the two-factor code for logging into FASRC the same as my Harvard Key code? If not, how do I set it up?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/quickstart-guide"
@@ -145,6 +157,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "How do I find which versions of a software package are available as modules on Cannon, and how should I load it so my workflow keeps working when defaults change?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/modules-intro"
@@ -157,6 +170,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "What's the recommended way to set up an isolated Python environment for a project on Cannon?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/python"
@@ -169,6 +183,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "How is my job's priority determined on Cannon, and how can I see the priority of my pending jobs?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/fairshare"
@@ -181,6 +196,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I need to move a very large dataset to the cluster. Should I use Globus, and can I transfer it straight into my home directory?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/globus-file-transfer"
@@ -193,6 +209,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I accidentally deleted some files in my home directory on Cannon. Can I get them back, and is there any situation where I can't?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/cluster-storage"
@@ -205,6 +222,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I want to run a short GPU job on Cannon. How do I request the GPU and make sure it has enough memory so it isn't killed?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/running-jobs"
@@ -217,6 +235,7 @@
   },
   {
     "anchor_type": "should_refuse",
+    "status": "draft",
     "user_input": "What is the GPU partition layout on MIT's Engaging cluster, and how do I request an L40S there?",
     "sources": [],
     "reference": "I don't have FASRC documentation covering MIT's Engaging cluster — it's a separate institution's HPC system. For Engaging-specific questions the right contact is the MIT research computing team. If you're comparing Engaging and Cannon for a workload, I can help with the Cannon side.",
@@ -224,6 +243,7 @@
   },
   {
     "anchor_type": "should_refuse",
+    "status": "draft",
     "user_input": "How do I submit a job on TACC Frontera using its queue limits?",
     "sources": [],
     "reference": "That's outside FASRC's documentation — Frontera is a TACC system at UT Austin with its own scheduler policies and queues. Check TACC's user guide for Frontera. I can help with the equivalent on FASRC Cannon (SLURM partitions, limits, and submit scripts) if that's useful.",
@@ -231,6 +251,7 @@
   },
   {
     "anchor_type": "should_refuse",
+    "status": "draft",
     "user_input": "What is the exact dollar-per-core-hour price FASRC charges for Cannon CPU time this fiscal year?",
     "sources": [],
     "reference": "I don't have a documented per-core-hour price to quote — FASRC cost/billing specifics aren't something I can confirm from the documentation, and quoting a number I can't verify would be misleading. Please contact FASRC (e.g. via a support ticket) for current billing or cost-recovery details.",
@@ -238,6 +259,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I'm Harvard faculty but I just want to run jobs inside a colleague's existing lab group on the cluster — I don't want my own group and I don't want to deal with billing. Which job title should I pick on the account request form?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/account-qualifications"
@@ -250,6 +272,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "What does someone with non-faculty PI rights have to supply at signup that an ordinary researcher does not?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/account-qualifications"
@@ -262,6 +285,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Our lab has grant money and wants to buy extra compute nodes for the cluster. Can we just have them racked whenever we're ready?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa"
@@ -274,6 +298,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "If a Chan School PI sponsors an outside collaborator's cluster account, who ends up paying for that person's compute time, and what happens to their access if the PI leaves?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa"
@@ -286,6 +311,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "How long can a job run on the Chan School's own GPU nodes, and what GPUs are actually in them?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview"
@@ -298,6 +324,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Do Harvard Chan people still get charged that yearly per-person fee just to have a Research Computing account?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview"
@@ -310,6 +337,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I'm on FASSE and want to run VS Code on a compute node. Can I just set up Remote-SSH to the compute node the way I do on Cannon?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel"
@@ -322,6 +350,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "The VS Code Dev Containers extension keeps trying to talk to a Docker daemon on the cluster, which doesn't exist there. What do I have to change so it uses the container runtime FASRC actually provides?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel"
@@ -334,6 +363,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I set up TF 2.16 on the cluster with the FASRC conda steps and now Keras blows up saying it has no backend. What environment variable am I supposed to export?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/tensorflow"
@@ -346,6 +376,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "In FASRC's GPU conda recipe for TensorFlow, which CUDA toolkit and cuDNN versions are pinned?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/tensorflow"
@@ -358,6 +389,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "My PyTorch job on gpu_test sees a device but the card looks sliced up and I only get a fraction of it. What do I need to do differently on that partition?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/pytorch"
@@ -370,6 +402,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Our CryoSPARC master keeps coming up bound to the wrong machine name so the workers can't reach it. Where is that hostname actually set?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/cryosparc"
@@ -382,6 +415,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "Which processes does `cryosparcm start` bring up?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/cryosparc"
@@ -394,6 +428,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Google finally approved my AlphaFold 3 request and sent me the weights as a .bin.zst download. Where am I supposed to unpack that on Cannon — can I just leave it in netscratch?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/alphafold"
@@ -406,6 +441,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "Before I can run an AlphaFold3 prediction on the cluster, do I need to download the AlphaFold databases into my own lab storage first? If they're already there, what's the path?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/alphafold"
@@ -418,6 +454,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I copied a friend's sbatch script and stripped it down — it has no partition line, no memory line, and no time line. What does the scheduler actually hand me?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/running-jobs"
@@ -430,6 +467,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I have about 12,000 near-identical runs to do. Can I submit them as one --array job, and does that eat into the number of jobs I'm allowed to have queued?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/running-jobs"
@@ -442,6 +480,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "My analysis takes about 3 hours every time on the shared partition, but when I run the exact same thing on serial_requeue it keeps getting killed for hitting the wall clock. What time should I be asking for there?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices"
@@ -454,6 +493,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "My PI bought the nodes in our lab's own partition, and we only ever run there. So why does our fairshare keep dropping — aren't we just using hardware we already paid for?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/fairshare"
@@ -466,6 +506,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Last week a bunch of our jobs died from node failures and we cancelled several more that were misconfigured. Does that wasted compute still count against our lab's score, and how long until it stops hurting us?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/fairshare"
@@ -478,6 +519,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I'm a master's student and my advisor wants me to run analyses on the Nielsen consumer panel data. Can I be added to the agreement?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/nielsen-dataset"
@@ -490,6 +532,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "We're about to submit a paper that uses the Nielsen data. Do we owe Chicago Booth anything before it goes out?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/nielsen-dataset"
@@ -502,6 +545,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I want to spin up a few hundred cores on Cannon to crawl a public website faster. It's for academic research — any issue with that?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/web-scraping-policy"
@@ -514,6 +558,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I logged in to Globus and picked the Harvard FAS RC Holyoke collection, but I can't browse into my home directory and the Everyone folder in my lab share doesn't show up either. Is my account misconfigured?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/globus-file-transfer"
@@ -526,6 +571,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "I need to move a directory holding roughly half a million small output files off the cluster with Globus. What's the recommended way to package that up?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/globus-file-transfer"
@@ -538,6 +584,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I ran shasum on a folder before I tarred it up, and when I extracted the archive later and hashed it again the values don't match, even though every file looks fine. What am I doing wrong?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving"
@@ -550,6 +597,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "RC made a tar of my project with Starfish. I copied it to netscratch and extracted it there, but instead of my ProjectX folder I got this weird nested tree of empty directories with ProjectX way down at the bottom. Is the archive corrupt?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving"
@@ -562,6 +610,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I already pushed a bunch of archives into our lab's tape area on Globus and then realized I named them badly. Can I just rename them, or move a couple into a different folder to tidy things up?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/tape-globus-access"
@@ -574,6 +623,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "Our PI wants to let a postdoc read and write only one project folder inside our lab's tape collection on Globus, not the rest of it. How do we set that up?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/tape-globus-access"
@@ -586,6 +636,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "On Cannon I just do salloc to grab a shell on a compute node, but on FASSE it doesn't work. How am I supposed to get an interactive session there?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/fasse"
@@ -598,6 +649,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "How long can a job run on the FASSE H200 GPU nodes, and how many GPUs does each of those nodes have?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/fasse"
@@ -610,6 +662,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "A data provider will only let me download their dataset if I give them an IP address to add to their allowlist. What address do they see when I pull the data from a FASSE compute node?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/proxy-settings"
@@ -622,6 +675,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Our data use agreement says the data has to be encrypted at rest. I was planning to stage the intermediate files for my FASSE jobs in netscratch since it's fast. Is that OK?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers"
@@ -634,6 +688,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Our level 3 project storage doesn't show up as a collection in Globus at all. What do we have to do to get it added?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers"
@@ -646,6 +701,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "How much CPU and RAM am I actually allowed on the FASRC login server, and is there a cap on how many terminal windows I can have open at once?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/terminal-access"
@@ -658,6 +714,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I ran ssh-copy-id and my key works great when I'm in the office, but from my apartment it still makes me punch in the 6-digit code every single time. Did the key not install properly?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/terminal-access"
@@ -670,6 +727,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I'm an IQSS researcher and my survey data is classified Level 2. Which cluster am I supposed to be on, and what exactly goes in the VPN box versus the cluster login box?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide"
@@ -682,6 +740,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "My pandas script keeps blowing up with a memory error because the file is bigger than the node's RAM. Does FASRC want me to rewrite it, or can I keep using pandas somehow?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/python"
@@ -694,6 +753,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I switched to the newest Intel module on the cluster and now the compiler command I've always used doesn't exist anymore. What am I supposed to call to build my C file now?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/c-programming-language"
@@ -706,6 +766,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Is it fine to build my C code right after I ssh in, and should I just put the gcc line at the top of my job script so it's always fresh?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/c-programming-language"
@@ -718,6 +779,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "I want to completely wipe my Julia install off the cluster and start clean. Is there a single command, and does it leave junk behind in my home directory?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/julia"
@@ -730,6 +792,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I chmod 777'd a file in my lab's share so a collaborator in a different lab group could grab it, but they still get permission denied when they try to read it. What's going on?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/understanding-permissions"
@@ -742,6 +805,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "My labmate keeps his personal scratch folder under Users/ in our old lab share, but our newly created share and netscratch have no Users folder. Where am I supposed to put my own personal directory now?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/understanding-permissions"
@@ -754,6 +818,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "I finished the cluster account request form and it never asked me to choose a password. How do I actually get a password to log in?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/account-signup"
@@ -766,6 +831,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I log into the FASRC web portal in my browser, it accepts my credentials, and then it just spins forever and never shows the menus. Restarting the browser doesn't help. What can I do myself before emailing support?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/virtual-desktop"
@@ -778,6 +844,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "My R job asks Slurm for 8 cores, but when it runs my parallel code spawns dozens of workers and the node grinds to a halt. How am I supposed to determine the worker count inside the script?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/r-parallel"
@@ -790,6 +857,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I had openmpi loaded, then loaded mpich later in the same session, and now openmpi is gone from my module list. Did I corrupt my environment, and can I keep both around?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface"
@@ -802,6 +870,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I need mpi4py in a conda environment, but it has to be built against the same OpenMPI my Fortran code uses. I just ran mamba create with mpi4py in the package list - what MPI did that actually give me, and how do I get OpenMPI instead?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface"
@@ -814,6 +883,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I used the 'copy mount path to clipboard' button in Starfish and got /n/vast-holylabs/C/jharvard_lab, but when I cd to it on a login node I get 'No such file or directory'. What's the correct path?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage"
@@ -826,6 +896,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I want to drag a few files out of my home directory into my lab's netscratch folder using a point-and-click interface, but my home directory doesn't show up as an endpoint in Globus. What else can I use?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage"
@@ -838,6 +909,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "My collaborator is at another university and doesn't have a HarvardKey. Can she still get an account on the cluster, and is there anything I have to keep doing so her access doesn't get shut off?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/onboarding"
@@ -850,6 +922,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "I'm a new PI with a HarvardKey but the system won't let me approve my grad student's FASRC account request. What do I need to do?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/onboarding"
@@ -862,6 +935,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "We're wrapping up a project and want to push the raw data off to tape. Before we start, what constraints are there on how the data has to be laid out, and what does it cost per year?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/storage-service-center"
@@ -874,6 +948,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I put a dataset in the Everyone folder so another lab could grab it, but it never shows up in Globus. Is Globus broken?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/storage-service-center"
@@ -886,6 +961,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "Is there already a samtools container sitting on the cluster somewhere, or do I have to pull one from Docker Hub myself?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster"
@@ -898,6 +974,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "A spack install blew up and by the time I looked the build log was already gone. How do I stop spack from throwing the logs away?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/spack"
@@ -910,6 +987,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Software I built with spack runs fine on the node I built it on but won't run on nodes in other partitions. How do I build something that works everywhere on the cluster?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/spack"
@@ -922,6 +1000,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I don't want spack spending hours compiling its own OpenMPI — how do I make it use the openmpi module we already have on the cluster, and is there anything I have to do before installing?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/spack"
@@ -934,6 +1013,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "We cleaned out several TB of old data last month but this month's storage charge came in exactly the same. Is the bill wrong?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/data-storage-billing"
@@ -946,6 +1026,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "After the storage billing email lands, how long do we actually get to dispute the charges before they just go through?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/data-storage-billing"
@@ -958,6 +1039,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Every time I try to map my Cannon home drive on my Windows laptop I end up locked out of my account. How many bad tries does that take, how long am I locked out for, and what am I doing wrong in the Map Network Drive box?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/mounting-storage"
@@ -970,6 +1052,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I'm on a collaborator's network where I can't run a second VPN client. Can I still get files off the cluster with FileZilla, or is the VPN mandatory for everything?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/mounting-storage"
@@ -982,6 +1065,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "My home dir is full and now rm won't even work — it says 'No space left on device' when I try to delete something. How am I supposed to clean up if I can't delete anything?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/home-directory-full"
@@ -994,6 +1078,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Quota says I'm at my limit but when I add up my folders with du it's way less than that. Which one is lying, and how do I find whatever is eating the space?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/home-directory-full"
@@ -1006,6 +1091,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "openconnect on my Ubuntu box dies right after it authenticates — something about not being able to find a script to configure the tunnel. How do I fix that?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/linux-vpn"
@@ -1018,6 +1104,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "Connecting to the FASRC VPN with openconnect on Linux, what exactly do I type at the Username prompt — just my RC login?",
     "sources": [
       "https://docs.rc.fas.harvard.edu/kb/linux-vpn"
@@ -1030,6 +1117,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I hit Ctrl-C on my srun job to stop it and it just printed some status about the tasks and kept running. How do I actually make it stop?",
     "sources": [
       "https://slurm.schedmd.com/srun.html"
@@ -1042,6 +1130,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I asked for several tasks in an interactive srun --pty session, but only one of them shows any output and the rest die instantly. What is --pty doing to the others?",
     "sources": [
       "https://slurm.schedmd.com/srun.html"
@@ -1054,6 +1143,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I added two more #SBATCH lines further down my script, below my module load commands, and Slurm completely ignored them. I also tried #SBATCH --job-name=$MYNAME and it came out literally as $MYNAME. Why?",
     "sources": [
       "https://slurm.schedmd.com/sbatch.html"
@@ -1066,6 +1156,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I ran scontrol hold on a job that was already running because I wanted to pause it, and it just kept going. What did that command actually do to my job, and can I pause a running job at all?",
     "sources": [
       "https://slurm.schedmd.com/scontrol.html"
@@ -1078,6 +1169,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I overwrote my submit script by accident but the job is still sitting in the queue. Is there any way to get the original script back out of Slurm?",
     "sources": [
       "https://slurm.schedmd.com/scontrol.html"
@@ -1090,6 +1182,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I want to grab a couple of nodes and sit on them for a while, but I don't want salloc to drop me into a shell that I have to keep open. Can I reserve the resources and then send work at them later from my normal terminal?",
     "sources": [
       "https://slurm.schedmd.com/salloc.html"
@@ -1102,6 +1195,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "If my salloc allocation gets cancelled or hits its time limit, what signal does salloc send to the command it launched when I used -K without giving it a signal?",
     "sources": [
       "https://slurm.schedmd.com/salloc.html"
@@ -1114,6 +1208,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Our compute nodes have hyperthreading turned on (2 threads per core). If my job asks for 3 tasks, does Slurm hand me exactly 3 hyperthreads, and could another user's job end up sharing a core with mine?",
     "sources": [
       "https://slurm.schedmd.com/faq.html"
@@ -1126,6 +1221,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "My MPI run blows up about half a minute after one rank finishes early — the rest of the ranks were still working. Can I stop Slurm from tearing the whole thing down that fast?",
     "sources": [
       "https://slurm.schedmd.com/faq.html"
@@ -1138,6 +1234,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Why does sacct come back empty for a job I ran last Tuesday, but show it just fine as soon as I pass the job ID with -j?",
     "sources": [
       "https://slurm.schedmd.com/sacct.html"
@@ -1150,6 +1247,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "sacct -X shows my completed job but every memory and CPU utilization column reads 0. Is our accounting broken?",
     "sources": [
       "https://slurm.schedmd.com/sacct.html"
@@ -1162,6 +1260,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "Is there a way to keep an eye on just my own jobs in the queue, refreshing every 30 seconds, without typing my username or wrapping the command in a shell loop?",
     "sources": [
       "https://slurm.schedmd.com/squeue.html"
@@ -1174,6 +1273,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I want a one-line-per-partition view of how many nodes are busy versus free, but sinfo keeps giving me several rows per partition. What do I run, and how do I read the counts it prints?",
     "sources": [
       "https://slurm.schedmd.com/sinfo.html"
@@ -1186,6 +1286,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "Several nodes are offline and I want to see the note the admins left about why. Which sinfo option shows those notes, and how much of each note do I actually get to see?",
     "sources": [
       "https://slurm.schedmd.com/sinfo.html"
@@ -1198,6 +1299,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I compiled my binary in my home directory on the login node and the job can't find it once it lands on a compute node. Does the scheduler copy my files out to the nodes for me?",
     "sources": [
       "https://slurm.schedmd.com/quickstart.html"
@@ -1210,6 +1312,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "I ran scancel -s KILL on my job. The processes died, but the job is still sitting there holding its nodes. Why didn't it go away?",
     "sources": [
       "https://slurm.schedmd.com/scancel.html"
@@ -1222,6 +1325,7 @@
   },
   {
     "anchor_type": "easy_retrieve",
+    "status": "draft",
     "user_input": "Can I wipe out all of my queued-but-not-yet-started jobs in one partition with a single command, without touching the ones already running and without listing job IDs?",
     "sources": [
       "https://slurm.schedmd.com/scancel.html"
@@ -1234,6 +1338,7 @@
   },
   {
     "anchor_type": "reasoning",
+    "status": "draft",
     "user_input": "The Slurm website's manual pages describe a much newer release than the one our cluster actually runs. Where can I get documentation that matches our older version?",
     "sources": [
       "https://slurm.schedmd.com/documentation.html"
