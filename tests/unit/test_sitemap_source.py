@@ -191,6 +191,14 @@ class TestNormalize:
             == "https://docs.rc.fas.harvard.edu/kb/x?a=1&b=2"
         )
 
+    def test_matrix_params_slash_not_collapsed(self):
+        # `;v=1` belongs to the empty trailing segment; stripping the slash would
+        # move it onto `x` and change the URL (mirrors LinkScraper._normalize_url).
+        assert (
+            ss.normalize_page_url("https://example.com/x/;v=1")
+            == "https://example.com/x/;v=1"
+        )
+
 
 # --------------------------------------------------------------------------- #
 # 1.8 is_url_allowed (trust policy, v1)
@@ -804,3 +812,30 @@ class TestRobustness:
         with pytest.raises(ss.SitemapExpansionError) as exc:
             ss.expand_sitemap_source(bad, FakeFetch({}), _policy(min_pages=1))
         assert exc.value.reason == "below_floor"
+
+    def test_top_level_internal_ip_literal_not_fetched(self):
+        # A top-level sitemap URL pointing at an internal IP literal must be
+        # rejected by the trust policy BEFORE it is fetched (no SSRF request),
+        # then fail below-floor. Even if the fake would return data, it is
+        # never contacted.
+        bad = "http://169.254.169.254/latest/meta-data/"
+        fetch = FakeFetch({bad: URLSET_NS})
+        with pytest.raises(ss.SitemapExpansionError) as exc:
+            ss.expand_sitemap_source(bad, fetch, _policy(min_pages=1))
+        assert exc.value.reason == "below_floor"
+        assert fetch.calls == []  # never contacted
+
+    def test_top_level_non_http_scheme_not_fetched(self):
+        bad = "file:///etc/passwd"
+        fetch = FakeFetch({bad: URLSET_NS})
+        with pytest.raises(ss.SitemapExpansionError):
+            ss.expand_sitemap_source(bad, fetch, _policy(min_pages=1))
+        assert fetch.calls == []
+
+    def test_top_level_trusted_host_still_fetched(self):
+        # A normal first-party host is unaffected — still fetched and expanded.
+        url = f"https://{HOST}/kb/sitemap.xml"
+        fetch = FakeFetch({url: URLSET_NS})
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert fetch.calls == [url]
+        assert len(pages) == 3

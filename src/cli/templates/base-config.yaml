@@ -271,9 +271,13 @@ data_manager:
         # line are unaffected.
         allowed_hosts:
           {%- set sitemap_allowed = data_manager.sources.links.sitemap.allowed_hosts | default([], true) %}
+          {%- if sitemap_allowed is string %}
+          - {{ sitemap_allowed }}
+          {%- else %}
           {%- for host in sitemap_allowed %}
           - {{ host }}
           {%- endfor %}
+          {%- endif %}
         min_pages: {{ data_manager.sources.links.sitemap.min_pages | default(1, true) }}
         max_pages: {{ data_manager.sources.links.sitemap.max_pages | default(20000, true) }}
       selenium_scraper:

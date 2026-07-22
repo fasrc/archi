@@ -164,7 +164,10 @@ def normalize_page_url(url: str) -> str:
     scheme = parts.scheme.lower()
     netloc = parts.netloc.lower()
     path = parts.path
-    if len(path) > 1 and path.endswith("/"):
+    # Skip the collapse when matrix params are present: in `/x/;v=1` the `;v=1`
+    # belongs to the empty trailing segment, so stripping the slash would move it
+    # onto `x` and change the URL (mirrors LinkScraper._normalize_url).
+    if len(path) > 1 and path.endswith("/") and not parts.params:
         path = path.rstrip("/") or "/"
     return urlunparse((scheme, netloc, path, parts.params, parts.query, ""))
 
@@ -305,7 +308,19 @@ def expand_sitemap_source(
     sitemap_host = _host_of(sitemap_url)
 
     raw_pages: List[str] = []
-    kind, locs = _fetch_and_parse(sitemap_url, fetch_text)
+    # Validate the top-level sitemap URL BEFORE fetching it, so a bad list entry
+    # (wrong scheme, or an IP-literal loopback/private/link-local host such as the
+    # cloud-metadata address) is never contacted — the same trust policy applied
+    # to child sitemaps and emitted pages. A rejected seed contributes nothing and
+    # therefore fails the source below its floor. (Host equals its own host, so the
+    # scheme + IP-literal rules are what fire here.)
+    if not is_url_allowed(sitemap_url, sitemap_host, policy.allowed_hosts):
+        logger.warning(
+            "sitemap: refusing untrusted top-level sitemap URL %s", sitemap_url
+        )
+        kind, locs = None, []
+    else:
+        kind, locs = _fetch_and_parse(sitemap_url, fetch_text)
     if kind == "urlset":
         raw_pages.extend(locs)
     elif kind == "sitemapindex":
