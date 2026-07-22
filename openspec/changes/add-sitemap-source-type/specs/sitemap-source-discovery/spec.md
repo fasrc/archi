@@ -69,8 +69,9 @@ Because a `sitemap-` source delegates URL selection to a remote document that no
 
 1. The URL scheme MUST be `http` or `https`; any other scheme (e.g. `file:`, `ftp:`, `gopher:`, `data:`) is rejected.
 2. The URL host MUST equal the configured sitemap's host, OR appear in an explicit per-source allowlist. Cross-host URLs not on the allowlist are rejected. (Exact host match — not registrable-domain — is the default to avoid a public-suffix-list dependency; the allowlist covers legitimate cross-subdomain/CDN cases.)
-3. A host that is an IP literal in a loopback, private, or link-local range (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`, `fc00::/7`, `fe80::/10`) is rejected regardless of the allowlist.
-4. The sitemap fetch MUST NOT follow a redirect to a host that fails rules 1–3.
+3. The host MUST be resolved before connecting, and EVERY resolved address MUST be global. Any address in a loopback, private, link-local, unique-local, or otherwise reserved/non-global range (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16` including the `169.254.169.254` cloud-metadata address, `::1`, `fc00::/7`, `fe80::/10`, …) causes rejection — whether the host is an IP literal OR a DNS name that resolves to such an address. IP-literal checking alone is insufficient. **Private/offline exception:** to preserve archi's private/offline-friendly deployments, an operator MAY permit private-range addresses for a host by placing that host on the allowlist (explicit trust); loopback and the `169.254.169.254` metadata address are rejected UNCONDITIONALLY, allowlist or not.
+4. To defeat DNS rebinding (a name that passes the check but resolves elsewhere at connect time), the fetch MUST connect to the exact validated address it checked (pin the resolved IP, preserving the `Host` header) rather than re-resolving, and MUST re-apply rules 1–3 to the target host of every redirect hop.
+5. Every emitted page URL MUST pass the scheme/host/resolved-address validation (rules 1–3) BEFORE it enters the web-link collection, so a metadata/internal/off-host page can never be handed to the scraper. (Emitted URLs are later fetched by the shared scraper; closing the residual emit→scrape rebinding window for those page fetches is the shared-scraper hardening follow-on — design D7(d) / Open Questions.)
 
 A rejected URL is dropped with a warning and never reaches the scraper. Rejected URLs count as "not emitted" for the minimum-expansion floor.
 
@@ -84,10 +85,20 @@ A rejected URL is dropped with a warning and never reaches the scraper. Rejected
 - **WHEN** a sitemap served from `docs.rc.fas.harvard.edu` emits a `<loc>` on `evil.example.com` and no allowlist entry covers it
 - **THEN** the URL is dropped and not scraped
 
-#### Scenario: Internal/metadata address rejected
+#### Scenario: Cloud-metadata / loopback address rejected unconditionally
 
-- **WHEN** a `<loc>` or child-sitemap URL targets a literal loopback/private/link-local address (e.g. `http://169.254.169.254/latest/meta-data/`)
-- **THEN** the URL is dropped with a warning even if it would otherwise match the host or allowlist
+- **WHEN** a `<loc>` or child-sitemap URL targets the `169.254.169.254` metadata address or a loopback address
+- **THEN** the URL is dropped with a warning even if its host is on the allowlist
+
+#### Scenario: Non-allowlisted private-resolving host rejected
+
+- **WHEN** a `<loc>` host resolves to an RFC1918 address and is NOT on the allowlist
+- **THEN** the URL is dropped with a warning
+
+#### Scenario: Allowlisted internal host permits its private address
+
+- **WHEN** an operator allowlists an internal docs host that resolves to an RFC1918 address (a private/offline deployment)
+- **THEN** that host's URLs are permitted, while non-allowlisted private-resolving hosts remain rejected
 
 #### Scenario: Cross-host redirect not followed
 
@@ -96,8 +107,28 @@ A rejected URL is dropped with a warning and never reaches the scraper. Rejected
 
 #### Scenario: Allowlisted cross-host URL permitted
 
-- **WHEN** a per-source allowlist includes `cdn.example.com` and a `<loc>` on that host passes the scheme and address-range checks
+- **WHEN** a per-source allowlist includes `cdn.example.com` and a `<loc>` on that host passes the scheme and resolved-address checks
 - **THEN** the URL is emitted
+
+#### Scenario: DNS name resolving to a private address rejected
+
+- **WHEN** a `<loc>` or child-sitemap host is a DNS name that matches the host/allowlist but resolves to a loopback/RFC1918/link-local/metadata address
+- **THEN** the URL is rejected before any connection is made, even though the hostname passed the scheme and host checks
+
+#### Scenario: Connection pinned against rebinding
+
+- **WHEN** a validated host would re-resolve at connect time to a different, private address
+- **THEN** the fetch connects to the address that was validated (not a freshly-resolved one), so the rebind cannot redirect the connection
+
+#### Scenario: Redirect hop re-validated
+
+- **WHEN** a fetch is redirected to a host that resolves to a non-global address
+- **THEN** the redirect is not followed and the document contributes no URLs
+
+#### Scenario: Emitted page URL validated before entering the collection
+
+- **WHEN** expansion would emit a page URL whose host is off-host or resolves to a non-global address
+- **THEN** it is rejected at emit time and never enters the web-link collection handed to the scraper
 
 ### Requirement: Fetch or parse failure fails open per document
 
@@ -116,23 +147,23 @@ A fetch failure (connection error, timeout, non-200 status) or parse failure (ma
 - **THEN** a warning is logged and that document contributes no URLs
 - **AND** no exception propagates to the ingestion run
 
-#### Scenario: Partial failure yields partial results
+### Requirement: Per-source expansion work budget
 
-- **WHEN** two `sitemap-` lines are configured and exactly one fetch fails
-- **THEN** the page URLs from the successful sitemap are still emitted and scraped
+Each `sitemap-` source SHALL be bounded by a configurable work budget enforced DURING expansion (not only on the final emitted set), covering at least: (a) maximum emitted page URLs; (b) maximum child-sitemap documents fetched; (c) cumulative fetched bytes across the source's documents; (d) maximum redirect hops per fetch; (e) maximum total expansion wall-clock time for the source. Expansion SHALL stop as soon as any budget is exceeded, and the source SHALL fail deterministically — contribute zero URLs and log an ERROR naming the source and the exceeded budget — rather than keep fetching or ship a partial set. This bounds fetch work even when the emitted-page count alone would stay under the page cap (e.g. a `<sitemapindex>` referencing thousands of empty, slow, or failing children). These budgets are independent of the per-seed `max_pages` crawl budget, which resets per seed and cannot bound the collection.
 
-### Requirement: Collection-level maximum on emitted pages
-
-Each `sitemap-` source SHALL have a configurable maximum number of emitted page URLs, enforced across ALL documents of that source (the top-level sitemap plus every child fetched) BEFORE any expanded URL is handed to the scraper. If a source's total emitted count would exceed the maximum, the source fails deterministically — it contributes no URLs and logs an ERROR naming the source and the limit — rather than flooding the crawler. The cap MUST bound emitted pages independently of the per-seed `max_pages` crawl budget, which resets per seed and therefore cannot bound the collection.
-
-#### Scenario: Over-cap source fails deterministically
+#### Scenario: Over-page-cap source fails deterministically
 
 - **WHEN** a sitemap source expands to more page URLs than its configured maximum
-- **THEN** the source contributes zero URLs, an ERROR naming the source and the cap is logged, and no partial or full over-cap set is scraped
+- **THEN** the source contributes zero URLs, an ERROR naming the source and the exceeded budget is logged, and no partial or full over-budget set is scraped
 
-#### Scenario: Within-cap source expands normally
+#### Scenario: Runaway index stopped before exhausting resources
 
-- **WHEN** a sitemap source expands to a count at or below its configured maximum
+- **WHEN** a `<sitemapindex>` references more child sitemaps than the child-document budget, or the cumulative fetched bytes or total expansion time exceeds their budgets
+- **THEN** expansion stops at the first exceeded budget, the remaining children are NOT fetched, the source contributes zero URLs, and an ERROR names the exceeded budget
+
+#### Scenario: Within-budget source expands normally
+
+- **WHEN** a sitemap source stays within every budget
 - **THEN** all emitted URLs are scraped as normal
 
 ### Requirement: Minimum-expansion floor per sitemap source
@@ -153,6 +184,20 @@ Each `sitemap-` source SHALL have a configurable minimum expected page count (fl
 
 - **WHEN** a sitemap source expands to at least its floor
 - **THEN** the ingest proceeds normally
+
+### Requirement: Per-source expansion isolation
+
+When multiple `sitemap-` lines are configured, each SHALL be expanded and validated INDEPENDENTLY: its emitted count is measured against its own floor and work budget, and its trust check (host match / allowlist) uses its own sitemap host. A below-floor or over-budget result for ANY source MUST fail the ingest and MUST NOT be masked by another source's healthy count (no aggregate counting across sources); and one source's host/allowlist MUST NOT authorize another source's URLs.
+
+#### Scenario: One source below floor is not masked by a healthy source
+
+- **WHEN** source A expands to 300 URLs (≥ its floor) and source B expands to 0 (< its floor)
+- **THEN** the ingest fails on source B's below-floor result — A's healthy count does not mask it
+
+#### Scenario: Host policy is per source
+
+- **WHEN** source A is served from `a.example.com` and its document emits a `<loc>` on `b.example.com` (which is source B's host)
+- **THEN** that `<loc>` is cross-host for source A and rejected — B's host does not authorize URLs inside A's document
 
 ### Requirement: Trailing-slash normalization of expanded URLs
 
