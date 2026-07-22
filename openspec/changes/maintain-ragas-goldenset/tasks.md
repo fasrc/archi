@@ -15,12 +15,12 @@
 
 ## 1. Confirmation state: `status` / `source_hashes` field + backfill (data + schema)
 
-- [ ] 1.1 Check the `benchmark_schema` edit seam is black-clean before touching it (black-churn / diff-coverage trap); route through a new helper if not.
-- [ ] 1.2 TDD: `benchmark_schema` treats a missing `status` as `draft` and preserves `status`/`source_hashes` on load; a `locked` row may carry a `source_hashes` map (one entry per `sources` URL) or, for an empty-`sources` `should_refuse` row, none; assert the harness loads a bank with and without the fields identically (no eligibility/scoring change — `status` is not consulted by scoring).
-- [ ] 1.3 TDD: a `bank_status_counts(bank)` helper returns `locked`/`draft` counts and the `anchor_type` distribution from the field (not by parsing `notes`).
-- [ ] 1.4 Backfill `status: draft` into all rows of `examples/benchmarking/fasrc_ragas_queries.json` and `examples/benchmarking/anchor_questions.json`; land as its own commit, separate from behavior.
-- [ ] 1.5 Assert (test or scripted check) the backfilled bank scores identically to pre-backfill for a fixed fake run — field addition is behavior-neutral.
-- [ ] 1.6 **Docs (same PR):** update `examples/benchmarking/fasrc_ragas_queries.README.md` for the `status` / `source_hashes` fields and the `draft → locked` lifecycle (incl. the source-less `should_refuse` case and the "scoring is unchanged; `locked`-eligibility is deferred" note).
+- [x] 1.1 Check the `benchmark_schema` edit seam is black-clean before touching it (black-churn / diff-coverage trap); route through a new helper if not.
+- [x] 1.2 TDD: `benchmark_schema` treats a missing `status` as `draft` and preserves `status`/`source_hashes` on load; a `locked` row may carry a `source_hashes` map (one entry per `sources` URL) or, for an empty-`sources` `should_refuse` row, none; assert the harness loads a bank with and without the fields identically (no eligibility/scoring change — `status` is not consulted by scoring).
+- [x] 1.3 TDD: a `bank_status_counts(bank)` helper returns `locked`/`draft` counts and the `anchor_type` distribution from the field (not by parsing `notes`).
+- [x] 1.4 Backfill `status: draft` into all rows of `examples/benchmarking/fasrc_ragas_queries.json` and `examples/benchmarking/anchor_questions.json`; land as its own commit, separate from behavior.
+- [x] 1.5 Assert (test or scripted check) the backfilled bank scores identically to pre-backfill for a fixed fake run — field addition is behavior-neutral.
+- [x] 1.6 **Docs (same PR):** update `examples/benchmarking/fasrc_ragas_queries.README.md` for the `status` / `source_hashes` fields and the `draft → locked` lifecycle (incl. the source-less `should_refuse` case and the "scoring is unchanged; `locked`-eligibility is deferred" note).
 
 ## 2. Corpus read + coverage/orphan detection (read-only, TDD)
 
