@@ -168,7 +168,10 @@ def normalize_page_url(url: str) -> str:
     # belongs to the empty trailing segment, so stripping the slash would move it
     # onto `x` and change the URL (mirrors LinkScraper._normalize_url).
     if len(path) > 1 and path.endswith("/") and not parts.params:
-        path = path.rstrip("/") or "/"
+        # Strip exactly ONE trailing slash (like LinkScraper._normalize_url), so
+        # `/x//` stays `/x/` rather than collapsing to `/x` and diverging from the
+        # hand-listed form.
+        path = path[:-1]
     return urlunparse((scheme, netloc, path, parts.params, parts.query, ""))
 
 
@@ -272,8 +275,15 @@ def fetch_sitemap_text(
             # which raises RuntimeError after the body was streamed via
             # iter_content — a charset-less application/xml sitemap would then
             # abort ingestion instead of parsing.
+            body = b"".join(chunks)
             encoding = resp.encoding or "utf-8"
-            return b"".join(chunks).decode(encoding, errors="replace")
+            try:
+                return body.decode(encoding, errors="replace")
+            except LookupError:
+                # An unknown/misdeclared charset (e.g. `charset=bogus`) makes
+                # decode raise LookupError before errors="replace" applies; fall
+                # back to UTF-8 rather than aborting the ingest.
+                return body.decode("utf-8", errors="replace")
         except requests.exceptions.RequestException as exc:
             raise SitemapFetchError(f"failed to read {current}: {exc}")
         finally:

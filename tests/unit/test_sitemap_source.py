@@ -199,6 +199,12 @@ class TestNormalize:
             == "https://example.com/x/;v=1"
         )
 
+    def test_multiple_trailing_slashes_strips_only_one(self):
+        # LinkScraper strips exactly one trailing slash; sitemap normalization
+        # must match, so `/x//` stays `/x/` (not `/x`) and both forms of the same
+        # URL agree.
+        assert ss.normalize_page_url("https://host/x//") == "https://host/x/"
+
 
 # --------------------------------------------------------------------------- #
 # 1.8 is_url_allowed (trust policy, v1)
@@ -595,6 +601,21 @@ class TestFetchHelper:
             )
         assert text == "<urlset/>"
 
+    def test_unsupported_charset_falls_back_to_utf8(self):
+        # A response header declaring an unknown charset makes resp.encoding a
+        # bogus codec name; decode() raises LookupError (errors="replace" does not
+        # help for an unknown codec). The fetch must fall back to UTF-8, not crash.
+        resp = self._resp(chunks=(b"<urlset/>",))
+        resp.encoding = "bogus-9000"
+        with patch(
+            "src.data_manager.collectors.scrapers.sitemap_source.requests.get",
+            return_value=resp,
+        ):
+            text = ss.fetch_sitemap_text(
+                "https://docs.rc.fas.harvard.edu/s.xml", verify=False
+            )
+        assert text == "<urlset/>"
+
     def test_too_many_redirects_raises(self):
         redirect = self._resp(
             status=301,
@@ -658,6 +679,13 @@ class TestRouting:
         result = mgr._collect_urls_from_lists_by_type(["x"])
         assert result[5] == ["https://docs.rc.fas.harvard.edu/elog/epkb-sitemap.xml"]
         assert result[3] == []  # elog bucket empty
+
+    def test_tuple_return_annotation_postponed_for_py37(self):
+        # `from __future__ import annotations` keeps the 6-tuple return annotation
+        # a string, so the bare `tuple[...]` subscript never eval-breaks on import
+        # under Python 3.7/3.8 (tuple is not subscriptable before 3.9).
+        ann = ScraperManager._collect_urls_from_lists_by_type.__annotations__["return"]
+        assert isinstance(ann, str)
 
 
 # --------------------------------------------------------------------------- #
