@@ -51,6 +51,9 @@ class ScraperManager:
         if isinstance(links_config, dict):
             scraper_config = links_config.get("html_scraper", {}) or {}
         self.config = scraper_config
+        self.sitemap_config = (
+            links_config.get("sitemap", {}) if isinstance(links_config, dict) else {}
+        )
         raw_max_pages = links_config.get("max_pages")
         self.max_pages = None
         if raw_max_pages not in (None, ""):
@@ -103,7 +106,7 @@ class ScraperManager:
 
     def collect_all_from_config(self, persistence: PersistenceService) -> None:
         """Run the configured scrapers and persist their output."""
-        link_urls, git_urls, sso_urls, elog_urls, indico_urls = (
+        link_urls, git_urls, sso_urls, elog_urls, indico_urls, sitemap_urls = (
             self._collect_urls_from_lists_by_type(self.input_lists)
         )
 
@@ -112,6 +115,15 @@ class ScraperManager:
         if sso_urls:
             self.sso_enabled = True
             self._ensure_sso_defaults()
+
+        # Expand any `sitemap-` sources into page URLs and append (dedup,
+        # order-preserving) before standard link collection. A below-floor /
+        # over-cap SitemapExpansionError is intentionally NOT caught here: it
+        # propagates out and fails the ingest rather than shipping a bad corpus.
+        if sitemap_urls:
+            for expanded in self._expand_sitemaps(sitemap_urls):
+                if expanded not in link_urls:
+                    link_urls.append(expanded)
 
         self.collect_links(persistence, link_urls=link_urls)
         self.collect_sso(persistence, sso_urls=sso_urls)
@@ -410,19 +422,27 @@ class ScraperManager:
 
     def _collect_urls_from_lists_by_type(
         self, input_lists: List[str]
-    ) -> tuple[List[str], List[str], List[str], List[str], List[str]]:
+    ) -> tuple[List[str], List[str], List[str], List[str], List[str], List[str]]:
         """All types of URLs are in the same input lists, separate them via prefixes or auto-detection."""
         link_urls: List[str] = []
         git_urls: List[str] = []
         sso_urls: List[str] = []
         elog_urls: List[str] = []
         indico_urls: List[str] = []
+        sitemap_urls: List[str] = []
         for raw_url in self._collect_urls_from_lists(input_lists):
             if raw_url.startswith("git-"):
                 git_urls.append(raw_url.split("git-", 1)[1])
                 continue
             if raw_url.startswith("sso-"):
                 sso_urls.append(raw_url.split("sso-", 1)[1])
+                continue
+            # Explicit `sitemap-` prefix is peeled before the elog/indico
+            # auto-detection heuristics below, so a sitemap URL whose path
+            # happens to contain `/elog/` or `/event/` still routes to sitemap
+            # expansion (mirrors the explicit-prefix-beats-heuristic rule).
+            if raw_url.startswith("sitemap-"):
+                sitemap_urls.append(raw_url.split("sitemap-", 1)[1])
                 continue
             if raw_url.startswith("elog-"):
                 elog_urls.append(raw_url.split("elog-", 1)[1])
@@ -437,7 +457,43 @@ class ScraperManager:
                 indico_urls.append(raw_url)
                 continue
             link_urls.append(raw_url)
-        return link_urls, git_urls, sso_urls, elog_urls, indico_urls
+        return link_urls, git_urls, sso_urls, elog_urls, indico_urls, sitemap_urls
+
+    def _expand_sitemaps(self, sitemap_urls: List[str]) -> List[str]:
+        """Expand ``sitemap-`` source URLs into page URLs at ingest time.
+
+        Thin call site over :mod:`sitemap_source`: builds the trust/bounds policy
+        from the ``sources.links.sitemap`` config sub-block plus a ``requests``
+        fetch, then delegates. A source-level ``SitemapExpansionError``
+        (below-floor / over-cap) is allowed to propagate so it FAILS the ingest
+        rather than shipping an empty or runaway corpus.
+        """
+        from functools import partial
+
+        from src.data_manager.collectors.scrapers import sitemap_source
+
+        def _as_int(value, default: int) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        cfg = self.sitemap_config if isinstance(self.sitemap_config, dict) else {}
+        raw_hosts = cfg.get("allowed_hosts", []) or []
+        # A YAML scalar (`allowed_hosts: cdn.example.com`) must be treated as a
+        # single host, not char-exploded by list("host").
+        if isinstance(raw_hosts, str):
+            raw_hosts = [raw_hosts]
+        policy = sitemap_source.SitemapPolicy(
+            allowed_hosts=[str(host) for host in raw_hosts],
+            min_pages=_as_int(cfg.get("min_pages"), 1),
+            max_pages=_as_int(cfg.get("max_pages"), 20000),
+        )
+        fetch = partial(
+            sitemap_source.fetch_sitemap_text,
+            verify=self.config.get("verify_urls", False),
+        )
+        return sitemap_source.expand_sitemaps(sitemap_urls, fetch, policy)
 
     @staticmethod
     def _is_elog_url(url: str) -> bool:

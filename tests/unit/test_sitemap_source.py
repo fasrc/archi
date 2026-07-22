@@ -1,0 +1,806 @@
+from __future__ import annotations
+
+import logging
+from unittest.mock import MagicMock, patch
+
+import pytest
+import requests
+
+from src.data_manager.collectors.scrapers import sitemap_source as ss
+from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
+
+# --------------------------------------------------------------------------- #
+# Fixture XML documents (namespaced + un-namespaced urlset, index, malformed)
+# --------------------------------------------------------------------------- #
+HOST = "docs.rc.fas.harvard.edu"
+
+URLSET_NS = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/copying-data-to-and-from-cluster-using-scp/</loc><lastmod>2026-01-01</lastmod></url>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/running-jobs</loc><lastmod>2026-01-02</lastmod></url>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/fairshare</loc><lastmod>2026-01-03</lastmod></url>
+</urlset>"""
+
+URLSET_NONS = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/one</loc></url>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/two</loc></url>
+</urlset>"""
+
+EMPTY_URLSET = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>"""
+
+URLSET_STRAY = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <comment>a direct child that is not a &lt;url&gt; is ignored</comment>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/only</loc></url>
+</urlset>"""
+
+SITEMAPINDEX = """<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>https://docs.rc.fas.harvard.edu/child-1.xml</loc></sitemap>
+  <sitemap><loc>https://docs.rc.fas.harvard.edu/child-2.xml</loc></sitemap>
+</sitemapindex>"""
+
+CHILD_1 = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/1a</loc></url>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/1b</loc></url>
+</urlset>"""
+
+CHILD_2 = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/2a</loc></url>
+</urlset>"""
+
+NESTED_INDEX = """<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>https://docs.rc.fas.harvard.edu/grandchild.xml</loc></sitemap>
+</sitemapindex>"""
+
+MALFORMED = "<urlset <<< not well formed"
+
+DOCTYPE_BODY = """<?xml version="1.0"?>
+<!DOCTYPE urlset [ <!ENTITY lol "lol"> ]>
+<urlset><url><loc>https://docs.rc.fas.harvard.edu/kb/x</loc></url></urlset>"""
+
+ENTITY_BODY = """<?xml version="1.0"?>
+<!ENTITY foo "bar">
+<urlset><url><loc>https://docs.rc.fas.harvard.edu/kb/x</loc></url></urlset>"""
+
+RSS_BODY = """<?xml version="1.0"?>
+<rss version="2.0"><channel><title>not a sitemap</title></channel></rss>"""
+
+
+class FakeFetch:
+    """Injectable ``fetch_text`` callable backed by a URL->body dict.
+
+    A missing URL raises ``SitemapFetchError`` (simulating an unreachable
+    document); a body that is an ``Exception`` instance is raised as-is.
+    """
+
+    def __init__(self, bodies):
+        self.bodies = bodies
+        self.calls = []
+
+    def __call__(self, url):
+        self.calls.append(url)
+        if url not in self.bodies:
+            raise ss.SitemapFetchError(f"no body for {url}")
+        body = self.bodies[url]
+        if isinstance(body, Exception):
+            raise body
+        return body
+
+
+def _policy(allowed_hosts=None, min_pages=1, max_pages=20000):
+    return ss.SitemapPolicy(
+        allowed_hosts=list(allowed_hosts or []),
+        min_pages=min_pages,
+        max_pages=max_pages,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 1.2 parse_sitemap_document
+# --------------------------------------------------------------------------- #
+class TestParse:
+    def test_namespaced_urlset(self):
+        kind, locs = ss.parse_sitemap_document(URLSET_NS)
+        assert kind == "urlset"
+        assert locs == [
+            "https://docs.rc.fas.harvard.edu/kb/copying-data-to-and-from-cluster-using-scp/",
+            "https://docs.rc.fas.harvard.edu/kb/running-jobs",
+            "https://docs.rc.fas.harvard.edu/kb/fairshare",
+        ]
+
+    def test_unnamespaced_urlset_parsed_identically(self):
+        kind, locs = ss.parse_sitemap_document(URLSET_NONS)
+        assert kind == "urlset"
+        assert locs == [
+            "https://docs.rc.fas.harvard.edu/kb/one",
+            "https://docs.rc.fas.harvard.edu/kb/two",
+        ]
+
+    def test_sitemapindex(self):
+        kind, locs = ss.parse_sitemap_document(SITEMAPINDEX)
+        assert kind == "sitemapindex"
+        assert locs == [
+            "https://docs.rc.fas.harvard.edu/child-1.xml",
+            "https://docs.rc.fas.harvard.edu/child-2.xml",
+        ]
+
+    def test_empty_urlset_is_not_a_parse_error(self):
+        kind, locs = ss.parse_sitemap_document(EMPTY_URLSET)
+        assert kind == "urlset"
+        assert locs == []
+
+    def test_malformed_raises(self):
+        with pytest.raises(ss.SitemapParseError):
+            ss.parse_sitemap_document(MALFORMED)
+
+    def test_doctype_rejected(self):
+        with pytest.raises(ss.SitemapParseError):
+            ss.parse_sitemap_document(DOCTYPE_BODY)
+
+    def test_entity_rejected(self):
+        with pytest.raises(ss.SitemapParseError):
+            ss.parse_sitemap_document(ENTITY_BODY)
+
+    def test_unknown_root_raises(self):
+        with pytest.raises(ss.SitemapParseError):
+            ss.parse_sitemap_document(RSS_BODY)
+
+    def test_stray_non_url_child_ignored(self):
+        kind, locs = ss.parse_sitemap_document(URLSET_STRAY)
+        assert kind == "urlset"
+        assert locs == ["https://docs.rc.fas.harvard.edu/kb/only"]
+
+
+# --------------------------------------------------------------------------- #
+# 1.3 normalize_page_url
+# --------------------------------------------------------------------------- #
+class TestNormalize:
+    def test_trailing_slash_collapsed(self):
+        assert (
+            ss.normalize_page_url("https://docs.rc.fas.harvard.edu/kb/scp/")
+            == "https://docs.rc.fas.harvard.edu/kb/scp"
+        )
+
+    def test_root_slash_preserved(self):
+        assert (
+            ss.normalize_page_url("https://docs.rc.fas.harvard.edu/")
+            == "https://docs.rc.fas.harvard.edu/"
+        )
+
+    def test_fragment_dropped(self):
+        assert (
+            ss.normalize_page_url("https://docs.rc.fas.harvard.edu/kb/x#frag")
+            == "https://docs.rc.fas.harvard.edu/kb/x"
+        )
+
+    def test_scheme_and_host_lowercased(self):
+        assert (
+            ss.normalize_page_url("HTTPS://Docs.RC.FAS.Harvard.edu/kb/X")
+            == "https://docs.rc.fas.harvard.edu/kb/X"
+        )
+
+    def test_query_preserved(self):
+        assert (
+            ss.normalize_page_url("https://docs.rc.fas.harvard.edu/kb/x?a=1&b=2")
+            == "https://docs.rc.fas.harvard.edu/kb/x?a=1&b=2"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# 1.8 is_url_allowed (trust policy, v1)
+# --------------------------------------------------------------------------- #
+class TestTrustPolicy:
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "file:///etc/passwd",
+            "gopher://docs.rc.fas.harvard.edu/",
+            "data:text/plain;base64,AA==",
+            "ftp://docs.rc.fas.harvard.edu/x",
+        ],
+    )
+    def test_non_http_scheme_rejected(self, url):
+        assert ss.is_url_allowed(url, HOST, []) is False
+
+    def test_same_host_allowed(self):
+        assert ss.is_url_allowed(f"https://{HOST}/kb/x", HOST, []) is True
+
+    def test_cross_host_rejected_by_default(self):
+        assert ss.is_url_allowed("https://evil.example.com/x", HOST, []) is False
+
+    def test_allowlisted_host_allowed(self):
+        assert (
+            ss.is_url_allowed("https://cdn.example.com/x", HOST, ["cdn.example.com"])
+            is True
+        )
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1/x",
+            "http://10.0.0.5/x",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[::1]/x",
+        ],
+    )
+    def test_ip_literal_internal_rejected_even_if_allowlisted(self, url):
+        from urllib.parse import urlparse
+
+        host = urlparse(url).hostname
+        # Allowlisting the internal literal must NOT bypass the IP-range reject.
+        assert ss.is_url_allowed(url, host, [host]) is False
+
+    def test_empty_host_rejected(self):
+        # http(s) scheme but no host (e.g. "https:///path") is rejected.
+        assert ss.is_url_allowed("https:///path", HOST, []) is False
+
+
+# --------------------------------------------------------------------------- #
+# 1.4 expand_sitemap_source / expand_sitemaps (happy paths + fail-open)
+# --------------------------------------------------------------------------- #
+class TestExpand:
+    def test_flat_urlset_normalized(self):
+        url = f"https://{HOST}/kb/sitemap.xml"
+        fetch = FakeFetch({url: URLSET_NS})
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == [
+            "https://docs.rc.fas.harvard.edu/kb/copying-data-to-and-from-cluster-using-scp",
+            "https://docs.rc.fas.harvard.edu/kb/running-jobs",
+            "https://docs.rc.fas.harvard.edu/kb/fairshare",
+        ]
+        assert fetch.calls == [url]
+
+    def test_sitemapindex_children_fetched_once(self):
+        url = f"https://{HOST}/index.xml"
+        fetch = FakeFetch(
+            {
+                url: SITEMAPINDEX,
+                f"https://{HOST}/child-1.xml": CHILD_1,
+                f"https://{HOST}/child-2.xml": CHILD_2,
+            }
+        )
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == [
+            "https://docs.rc.fas.harvard.edu/kb/1a",
+            "https://docs.rc.fas.harvard.edu/kb/1b",
+            "https://docs.rc.fas.harvard.edu/kb/2a",
+        ]
+        # index + 2 children, each exactly once
+        assert fetch.calls.count(f"https://{HOST}/child-1.xml") == 1
+        assert fetch.calls.count(f"https://{HOST}/child-2.xml") == 1
+
+    def test_nested_index_contributes_nothing(self):
+        url = f"https://{HOST}/index.xml"
+        fetch = FakeFetch(
+            {
+                url: SITEMAPINDEX,
+                f"https://{HOST}/child-1.xml": NESTED_INDEX,
+                f"https://{HOST}/child-2.xml": CHILD_2,
+            }
+        )
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        # grandchild is never followed
+        assert f"https://{HOST}/grandchild.xml" not in fetch.calls
+
+    def test_failed_child_fails_open_siblings_survive(self, caplog):
+        url = f"https://{HOST}/index.xml"
+        fetch = FakeFetch(
+            {
+                url: SITEMAPINDEX,
+                # child-1 missing -> FakeFetch raises SitemapFetchError
+                f"https://{HOST}/child-2.xml": CHILD_2,
+            }
+        )
+        with caplog.at_level(logging.WARNING):
+            pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        assert any(rec.levelno == logging.WARNING for rec in caplog.records)
+
+    def test_duplicate_locs_emitted_once_order_preserving(self):
+        dup = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/x/</loc></url>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/x</loc></url>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/y</loc></url>
+</urlset>"""
+        url = f"https://{HOST}/s.xml"
+        pages = ss.expand_sitemap_source(url, FakeFetch({url: dup}), _policy())
+        assert pages == [
+            "https://docs.rc.fas.harvard.edu/kb/x",
+            "https://docs.rc.fas.harvard.edu/kb/y",
+        ]
+
+    def test_expand_sitemaps_merges_and_dedupes_across_sources(self):
+        a = f"https://{HOST}/a.xml"
+        b = f"https://{HOST}/b.xml"
+        body_a = """<?xml version="1.0"?>
+<urlset><url><loc>https://docs.rc.fas.harvard.edu/kb/shared</loc></url>
+<url><loc>https://docs.rc.fas.harvard.edu/kb/only-a</loc></url></urlset>"""
+        body_b = """<?xml version="1.0"?>
+<urlset><url><loc>https://docs.rc.fas.harvard.edu/kb/shared</loc></url>
+<url><loc>https://docs.rc.fas.harvard.edu/kb/only-b</loc></url></urlset>"""
+        fetch = FakeFetch({a: body_a, b: body_b})
+        pages = ss.expand_sitemaps([a, b], fetch, _policy())
+        assert pages == [
+            "https://docs.rc.fas.harvard.edu/kb/shared",
+            "https://docs.rc.fas.harvard.edu/kb/only-a",
+            "https://docs.rc.fas.harvard.edu/kb/only-b",
+        ]
+
+
+# --------------------------------------------------------------------------- #
+# 1.9 emitted-page validation at emit time
+# --------------------------------------------------------------------------- #
+class TestEmitValidation:
+    def test_off_host_and_internal_loc_dropped(self, caplog):
+        body = """<?xml version="1.0"?>
+<urlset>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/good</loc></url>
+  <url><loc>https://evil.example.com/x</loc></url>
+  <url><loc>http://169.254.169.254/latest/meta-data/</loc></url>
+</urlset>"""
+        url = f"https://{HOST}/s.xml"
+        with caplog.at_level(logging.WARNING):
+            pages = ss.expand_sitemap_source(url, FakeFetch({url: body}), _policy())
+        assert pages == ["https://docs.rc.fas.harvard.edu/kb/good"]
+
+    def test_off_host_child_sitemap_not_fetched(self):
+        index = """<?xml version="1.0"?>
+<sitemapindex>
+  <sitemap><loc>https://evil.example.com/child.xml</loc></sitemap>
+  <sitemap><loc>https://docs.rc.fas.harvard.edu/child-2.xml</loc></sitemap>
+</sitemapindex>"""
+        url = f"https://{HOST}/index.xml"
+        fetch = FakeFetch({url: index, f"https://{HOST}/child-2.xml": CHILD_2})
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        assert "https://evil.example.com/child.xml" not in fetch.calls
+
+
+# --------------------------------------------------------------------------- #
+# 1.10 per-source cap  /  1.11 floor
+# --------------------------------------------------------------------------- #
+class TestCapAndFloor:
+    def test_over_cap_fails_zero_urls(self, caplog):
+        url = f"https://{HOST}/s.xml"
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(ss.SitemapExpansionError) as exc:
+                ss.expand_sitemap_source(
+                    url, FakeFetch({url: URLSET_NS}), _policy(max_pages=2)
+                )
+        assert exc.value.reason == "over_cap"
+        assert any(rec.levelno == logging.ERROR for rec in caplog.records)
+
+    def test_at_cap_ok(self):
+        url = f"https://{HOST}/s.xml"
+        pages = ss.expand_sitemap_source(
+            url, FakeFetch({url: URLSET_NS}), _policy(max_pages=3)
+        )
+        assert len(pages) == 3
+
+    def test_cap_measured_across_index_children(self):
+        url = f"https://{HOST}/index.xml"
+        fetch = FakeFetch(
+            {
+                url: SITEMAPINDEX,
+                f"https://{HOST}/child-1.xml": CHILD_1,  # 2 pages
+                f"https://{HOST}/child-2.xml": CHILD_2,  # 1 page  -> 3 total
+            }
+        )
+        with pytest.raises(ss.SitemapExpansionError) as exc:
+            ss.expand_sitemap_source(url, fetch, _policy(max_pages=2))
+        assert exc.value.reason == "over_cap"
+
+    @pytest.mark.parametrize("body", [EMPTY_URLSET, MALFORMED])
+    def test_below_floor_fails(self, body, caplog):
+        url = f"https://{HOST}/s.xml"
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(ss.SitemapExpansionError) as exc:
+                ss.expand_sitemap_source(
+                    url, FakeFetch({url: body}), _policy(min_pages=1)
+                )
+        assert exc.value.reason == "below_floor"
+
+    def test_fetch_failure_is_below_floor_not_crash(self):
+        url = f"https://{HOST}/s.xml"
+        # missing body -> fetch raises -> zero pages -> below floor
+        with pytest.raises(ss.SitemapExpansionError) as exc:
+            ss.expand_sitemap_source(url, FakeFetch({}), _policy(min_pages=1))
+        assert exc.value.reason == "below_floor"
+
+    def test_wholesale_trust_rejection_is_below_floor(self):
+        body = """<?xml version="1.0"?>
+<urlset><url><loc>https://evil.example.com/x</loc></url></urlset>"""
+        url = f"https://{HOST}/s.xml"
+        with pytest.raises(ss.SitemapExpansionError) as exc:
+            ss.expand_sitemap_source(url, FakeFetch({url: body}), _policy(min_pages=1))
+        assert exc.value.reason == "below_floor"
+
+    def test_at_or_above_floor_ok(self):
+        url = f"https://{HOST}/s.xml"
+        pages = ss.expand_sitemap_source(
+            url, FakeFetch({url: URLSET_NS}), _policy(min_pages=3)
+        )
+        assert len(pages) == 3
+
+
+# --------------------------------------------------------------------------- #
+# 1.12 per-source isolation
+# --------------------------------------------------------------------------- #
+class TestIsolation:
+    def test_one_source_below_floor_not_masked(self):
+        a = f"https://{HOST}/a.xml"
+        b = f"https://{HOST}/b.xml"
+        fetch = FakeFetch({a: URLSET_NS, b: EMPTY_URLSET})
+        with pytest.raises(ss.SitemapExpansionError) as exc:
+            ss.expand_sitemaps([a, b], fetch, _policy(min_pages=1))
+        assert exc.value.reason == "below_floor"
+
+    def test_host_policy_is_per_source(self):
+        # Source A on a.example.com; its document emits a <loc> on b.example.com
+        # (source B's host). That is cross-host for A and must be rejected.
+        assert (
+            ss.is_url_allowed("https://b.example.com/x", "a.example.com", []) is False
+        )
+
+
+# --------------------------------------------------------------------------- #
+# 1.7 fetch helper (requests-backed)
+# --------------------------------------------------------------------------- #
+class TestFetchHelper:
+    def _resp(self, *, status=200, chunks=(b"<urlset/>",), headers=None, url=None):
+        resp = MagicMock()
+        resp.status_code = status
+        resp.headers = headers or {}
+        resp.url = url or "https://docs.rc.fas.harvard.edu/s.xml"
+        resp.encoding = "utf-8"
+        resp.apparent_encoding = "utf-8"
+        resp.iter_content.return_value = iter(chunks)
+        return resp
+
+    def test_get_uses_verify_and_timeout_and_raise_for_status(self):
+        resp = self._resp()
+        with patch(
+            "src.data_manager.collectors.scrapers.sitemap_source.requests.get",
+            return_value=resp,
+        ) as get:
+            text = ss.fetch_sitemap_text(
+                "https://docs.rc.fas.harvard.edu/s.xml", verify=True
+            )
+        assert text == "<urlset/>"
+        _, kwargs = get.call_args
+        assert kwargs["verify"] is True
+        assert "timeout" in kwargs
+        assert resp.raise_for_status.called
+
+    def test_body_size_cap_enforced(self):
+        big = self._resp(chunks=(b"x" * 10, b"y" * 10))
+        with patch(
+            "src.data_manager.collectors.scrapers.sitemap_source.requests.get",
+            return_value=big,
+        ):
+            with pytest.raises(ss.SitemapFetchError):
+                ss.fetch_sitemap_text(
+                    "https://docs.rc.fas.harvard.edu/s.xml",
+                    verify=False,
+                    max_bytes=5,
+                )
+
+    def test_cross_host_redirect_not_followed(self):
+        redirect = self._resp(
+            status=301,
+            headers={"Location": "https://evil.example.com/x"},
+            url="https://docs.rc.fas.harvard.edu/s.xml",
+        )
+        with patch(
+            "src.data_manager.collectors.scrapers.sitemap_source.requests.get",
+            return_value=redirect,
+        ) as get:
+            with pytest.raises(ss.SitemapFetchError):
+                ss.fetch_sitemap_text(
+                    "https://docs.rc.fas.harvard.edu/s.xml", verify=False
+                )
+        # the redirect target on a different host is never fetched
+        assert get.call_count == 1
+
+    def test_connection_error_raises_fetch_error(self):
+        with patch(
+            "src.data_manager.collectors.scrapers.sitemap_source.requests.get",
+            side_effect=requests.exceptions.ConnectionError("boom"),
+        ):
+            with pytest.raises(ss.SitemapFetchError):
+                ss.fetch_sitemap_text(
+                    "https://docs.rc.fas.harvard.edu/s.xml", verify=False
+                )
+
+    def test_read_error_raises_fetch_error(self):
+        resp = self._resp()
+        resp.iter_content.side_effect = requests.exceptions.ChunkedEncodingError(
+            "mid-stream"
+        )
+        with patch(
+            "src.data_manager.collectors.scrapers.sitemap_source.requests.get",
+            return_value=resp,
+        ):
+            with pytest.raises(ss.SitemapFetchError):
+                ss.fetch_sitemap_text(
+                    "https://docs.rc.fas.harvard.edu/s.xml", verify=False
+                )
+
+    def test_same_host_redirect_followed(self):
+        redirect = self._resp(
+            status=301,
+            headers={"Location": "https://docs.rc.fas.harvard.edu/final.xml"},
+            url="https://docs.rc.fas.harvard.edu/s.xml",
+        )
+        # an empty chunk is skipped, then the body is read
+        ok = self._resp(
+            chunks=(b"", b"<urlset/>"), url="https://docs.rc.fas.harvard.edu/final.xml"
+        )
+        with patch(
+            "src.data_manager.collectors.scrapers.sitemap_source.requests.get",
+            side_effect=[redirect, ok],
+        ) as get:
+            text = ss.fetch_sitemap_text(
+                "https://docs.rc.fas.harvard.edu/s.xml", verify=False
+            )
+        assert text == "<urlset/>"
+        assert get.call_count == 2
+
+    def test_too_many_redirects_raises(self):
+        redirect = self._resp(
+            status=301,
+            headers={"Location": "https://docs.rc.fas.harvard.edu/loop.xml"},
+            url="https://docs.rc.fas.harvard.edu/loop.xml",
+        )
+        with patch(
+            "src.data_manager.collectors.scrapers.sitemap_source.requests.get",
+            return_value=redirect,
+        ) as get:
+            with pytest.raises(ss.SitemapFetchError):
+                ss.fetch_sitemap_text(
+                    "https://docs.rc.fas.harvard.edu/s.xml", verify=False
+                )
+        assert get.call_count == ss._MAX_REDIRECTS + 1
+
+
+# --------------------------------------------------------------------------- #
+# 1.5 ScraperManager._collect_urls_from_lists_by_type routing
+# --------------------------------------------------------------------------- #
+class TestRouting:
+    def _mgr(self, lines):
+        mgr = ScraperManager.__new__(ScraperManager)
+        mgr.indico_enabled = False
+        mgr.indico_config = {}
+        mgr._collect_urls_from_lists = lambda input_lists: list(lines)
+        return mgr
+
+    def test_sitemap_line_peeled_into_bucket(self):
+        mgr = self._mgr(
+            [
+                "https://plain.example.com/page",
+                "git-https://github.com/fasrc/User_Codes",
+                "sso-https://sso.example.com/x",
+                "elog-https://elog.example.com/x",
+                "indico-https://indico.example.com/event/1",
+                "sitemap-https://docs.rc.fas.harvard.edu/kb/epkb_post_type_1-sitemap.xml",
+            ]
+        )
+        (
+            link_urls,
+            git_urls,
+            sso_urls,
+            elog_urls,
+            indico_urls,
+            sitemap_urls,
+        ) = mgr._collect_urls_from_lists_by_type(["x"])
+        assert sitemap_urls == [
+            "https://docs.rc.fas.harvard.edu/kb/epkb_post_type_1-sitemap.xml"
+        ]
+        assert git_urls == ["https://github.com/fasrc/User_Codes"]
+        assert sso_urls == ["https://sso.example.com/x"]
+        assert elog_urls == ["https://elog.example.com/x"]
+        assert indico_urls == ["https://indico.example.com/event/1"]
+        assert link_urls == ["https://plain.example.com/page"]
+
+    def test_sitemap_prefix_beats_elog_autodetect(self):
+        mgr = self._mgr(
+            ["sitemap-https://docs.rc.fas.harvard.edu/elog/epkb-sitemap.xml"]
+        )
+        result = mgr._collect_urls_from_lists_by_type(["x"])
+        assert result[5] == ["https://docs.rc.fas.harvard.edu/elog/epkb-sitemap.xml"]
+        assert result[3] == []  # elog bucket empty
+
+
+# --------------------------------------------------------------------------- #
+# 1.6 / 3.7 ScraperManager.collect_all_from_config wiring
+# --------------------------------------------------------------------------- #
+class TestWiring:
+    def _mgr(self):
+        mgr = ScraperManager.__new__(ScraperManager)
+        mgr.input_lists = ["x"]
+        mgr.git_enabled = False
+        mgr.sso_enabled = False
+        return mgr
+
+    def _patches(self, by_type, expand):
+        return [
+            patch.object(
+                ScraperManager,
+                "_collect_urls_from_lists_by_type",
+                return_value=by_type,
+            ),
+            patch.object(ScraperManager, "collect_sso"),
+            patch.object(ScraperManager, "collect_git"),
+            patch.object(ScraperManager, "collect_elog"),
+            patch.object(ScraperManager, "collect_indico"),
+        ] + expand
+
+    def test_expand_called_and_urls_appended(self):
+        mgr = self._mgr()
+        by_type = (["https://a"], [], [], [], [], ["https://s.xml"])
+        with patch.object(
+            ScraperManager, "_expand_sitemaps", return_value=["https://b", "https://c"]
+        ) as exp, patch.object(ScraperManager, "collect_links") as cl, patch.object(
+            ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+        ), patch.object(
+            ScraperManager, "collect_sso"
+        ), patch.object(
+            ScraperManager, "collect_git"
+        ), patch.object(
+            ScraperManager, "collect_elog"
+        ), patch.object(
+            ScraperManager, "collect_indico"
+        ):
+            mgr.collect_all_from_config(MagicMock())
+        exp.assert_called_once_with(["https://s.xml"])
+        _, kwargs = cl.call_args
+        assert kwargs["link_urls"] == ["https://a", "https://b", "https://c"]
+
+    def test_no_sitemap_bucket_skips_expand(self):
+        mgr = self._mgr()
+        by_type = (["https://a"], [], [], [], [], [])
+        with patch.object(ScraperManager, "_expand_sitemaps") as exp, patch.object(
+            ScraperManager, "collect_links"
+        ) as cl, patch.object(
+            ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+        ), patch.object(
+            ScraperManager, "collect_sso"
+        ), patch.object(
+            ScraperManager, "collect_git"
+        ), patch.object(
+            ScraperManager, "collect_elog"
+        ), patch.object(
+            ScraperManager, "collect_indico"
+        ):
+            mgr.collect_all_from_config(MagicMock())
+        exp.assert_not_called()
+        _, kwargs = cl.call_args
+        assert kwargs["link_urls"] == ["https://a"]
+
+    def test_expansion_error_propagates_and_fails_ingest(self):
+        mgr = self._mgr()
+        by_type = ([], [], [], [], [], ["https://s.xml"])
+        with patch.object(
+            ScraperManager,
+            "_expand_sitemaps",
+            side_effect=ss.SitemapExpansionError("boom", reason="below_floor"),
+        ), patch.object(ScraperManager, "collect_links"), patch.object(
+            ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+        ), patch.object(
+            ScraperManager, "collect_sso"
+        ), patch.object(
+            ScraperManager, "collect_git"
+        ), patch.object(
+            ScraperManager, "collect_elog"
+        ), patch.object(
+            ScraperManager, "collect_indico"
+        ):
+            with pytest.raises(ss.SitemapExpansionError):
+                mgr.collect_all_from_config(MagicMock())
+
+    def test_expand_sitemaps_builds_policy_and_delegates(self):
+        mgr = ScraperManager.__new__(ScraperManager)
+        mgr.config = {"verify_urls": True}
+        mgr.sitemap_config = {
+            "allowed_hosts": ["cdn.example.com"],
+            "min_pages": 2,
+            "max_pages": 50,
+        }
+        captured = {}
+
+        def fake_expand(sitemap_urls, fetch, policy):
+            captured["urls"] = sitemap_urls
+            captured["policy"] = policy
+            captured["fetch"] = fetch
+            return ["https://docs.rc.fas.harvard.edu/kb/x"]
+
+        with patch.object(ss, "expand_sitemaps", side_effect=fake_expand):
+            out = mgr._expand_sitemaps(["https://s.xml"])
+
+        assert out == ["https://docs.rc.fas.harvard.edu/kb/x"]
+        assert captured["urls"] == ["https://s.xml"]
+        assert captured["policy"].allowed_hosts == ["cdn.example.com"]
+        assert captured["policy"].min_pages == 2
+        assert captured["policy"].max_pages == 50
+        # verify flag is bound into the injected fetch callable
+        assert captured["fetch"].keywords.get("verify") is True
+
+    def test_scalar_allowed_hosts_coerced_to_list(self):
+        # A YAML scalar (not a list) must not char-explode via list("host").
+        mgr = ScraperManager.__new__(ScraperManager)
+        mgr.config = {}
+        mgr.sitemap_config = {"allowed_hosts": "cdn.example.com"}
+        captured = {}
+
+        def fake(urls, fetch, policy):
+            captured["policy"] = policy
+            return []
+
+        with patch.object(ss, "expand_sitemaps", side_effect=fake):
+            mgr._expand_sitemaps(["https://s.xml"])
+        assert captured["policy"].allowed_hosts == ["cdn.example.com"]
+
+    def test_null_or_empty_bounds_fall_back_to_defaults(self):
+        mgr = ScraperManager.__new__(ScraperManager)
+        mgr.config = {}
+        mgr.sitemap_config = {"min_pages": None, "max_pages": ""}
+        captured = {}
+
+        def fake(urls, fetch, policy):
+            captured["policy"] = policy
+            return []
+
+        with patch.object(ss, "expand_sitemaps", side_effect=fake):
+            mgr._expand_sitemaps(["https://s.xml"])
+        assert captured["policy"].min_pages == 1
+        assert captured["policy"].max_pages == 20000
+
+
+# --------------------------------------------------------------------------- #
+# Robustness: a malformed <loc> must fail open per document, never crash ingest
+# --------------------------------------------------------------------------- #
+class TestRobustness:
+    def test_is_url_allowed_false_on_unparseable(self):
+        assert (
+            ss.is_url_allowed("https://docs.rc.fas.harvard.edu[evil/x", HOST, [])
+            is False
+        )
+
+    def test_unparseable_page_loc_dropped_fails_open(self, caplog):
+        body = """<?xml version="1.0"?>
+<urlset>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/good</loc></url>
+  <url><loc>https://docs.rc.fas.harvard.edu[evil.example.com/x</loc></url>
+</urlset>"""
+        url = f"https://{HOST}/s.xml"
+        with caplog.at_level(logging.WARNING):
+            pages = ss.expand_sitemap_source(url, FakeFetch({url: body}), _policy())
+        assert pages == ["https://docs.rc.fas.harvard.edu/kb/good"]
+
+    def test_unparseable_child_sitemap_loc_dropped(self):
+        index = """<?xml version="1.0"?>
+<sitemapindex>
+  <sitemap><loc>https://docs.rc.fas.harvard.edu[bad/child.xml</loc></sitemap>
+  <sitemap><loc>https://docs.rc.fas.harvard.edu/child-2.xml</loc></sitemap>
+</sitemapindex>"""
+        url = f"https://{HOST}/index.xml"
+        fetch = FakeFetch({url: index, f"https://{HOST}/child-2.xml": CHILD_2})
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        assert "https://docs.rc.fas.harvard.edu[bad/child.xml" not in fetch.calls
+
+    def test_malformed_sitemap_url_is_below_floor_not_crash(self):
+        # A malformed top-level sitemap URL (stray `[`) must not crash the run:
+        # _host_of yields "" and the source emits nothing -> controlled below_floor.
+        bad = "https://docs.rc.fas.harvard.edu[bad/sitemap.xml"
+        with pytest.raises(ss.SitemapExpansionError) as exc:
+            ss.expand_sitemap_source(bad, FakeFetch({}), _policy(min_pages=1))
+        assert exc.value.reason == "below_floor"
