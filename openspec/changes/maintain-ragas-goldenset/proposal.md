@@ -16,19 +16,28 @@ decays relative to the KB while looking healthy.
   `source_type`/`parent` labels, already in Postgres) against what the bank covers and emits
   three **human-gated** work lists: **coverage gaps** (new/uncovered pages), **fact drift**
   (locked rows whose grounding source changed), and **orphans** (rows citing a removed page).
-- **Machine-queryable confirmation state.** Bank rows gain `status: draft | locked` plus a
-  `source_hash` snapshot captured at lock time. The existing 105 rows and
-  `anchor_questions.json` backfill to `draft`. Fields are loader-compatible (the harness
-  requires only `user_input` and already tolerates extra fields), so **no benchmark behavior
-  changes**.
-- **Deterministic drift.** `source_hash` is a content hash the tool computes over a row's
-  **source** at lock time. Drift = re-fetch the source, re-hash, and compare; on a mismatch the
-  stored `reference` is model-diffed against the current source and **flagged (never
-  auto-edited)**. The corpus's own resource identifier is URL-only (it never reflects content
-  change), so drift hashes the source itself, not the corpus.
-- **Coverage is report + propose-for-greenlit.** The tool lists uncovered corpus URLs; for the
-  pages an operator greenlights, it drafts grounded candidate questions as `status: draft` for
-  human confirmation. It does not auto-cover every page.
+- **Machine-queryable confirmation state.** Bank rows gain `status: draft | locked`; a `locked`
+  row that cites sources also gains `source_hashes` — **one content hash per `sources` URL**,
+  snapshotted at lock time (a map, because rows are already multi-source). A `locked`
+  `should_refuse` row has empty `sources` and carries no hash. `status` governs the
+  **maintenance tooling only** — the benchmark harness keeps scoring every row's `reference`
+  regardless of status, so backfilling the existing 105 rows and `anchor_questions.json` to
+  `draft` changes **no benchmark behavior** (gating scoring on `locked` is deferred). Fields are
+  loader-compatible (the harness requires only `user_input` and already tolerates extra fields).
+- **Deterministic drift.** `source_hashes` are content hashes the tool computes over **each** of
+  a row's sources at lock time. Drift = re-fetch every source URL, re-hash, and compare each; on
+  any mismatch the stored `reference` is model-diffed against the changed source and **flagged
+  (never auto-edited)**. The corpus's own resource identifier is URL-only (it never reflects
+  content change), so drift hashes the live source itself, not the corpus.
+- **Coverage is report + propose-for-greenlit.** The tool lists uncovered corpus URLs (matched
+  **slug-aware**; near-misses go to a separate *needs-reconciliation* bucket, never a false
+  gap/orphan); for the pages an operator greenlights, it drafts grounded candidate questions as
+  `status: draft` for human confirmation. *Covered* is re-derived from the current bank each run,
+  so a greenlit-but-unapplied page stays a gap; the decision ledger records **declines only**.
+- **Orphans key on the live KB, not the stale corpus.** Because the corpus upserts by URL and
+  never prunes removed pages, orphan detection compares each row's `sources` against a freshly
+  expanded live source inventory (or requires a prune/nuke first) — absence-from-corpus alone is
+  not treated as removal.
 - **One dev-side tool** `scripts/benchmarking/goldenset_maintenance.py` (subcommands
   `coverage` / `drift` / `orphans` / `report`), flag-only, reusing the harness's
   single-source-of-truth `src/utils/benchmark_schema`. A **cron job on the dev server** runs
@@ -45,12 +54,12 @@ decays relative to the KB while looking healthy.
 ### New Capabilities
 - `ragas-goldenset-maintenance`: keep the RAGAS golden-set bank aligned to a moving KB —
   coverage-gap, fact-drift, and orphan detection driven by the ingested-corpus diff; a
-  machine-queryable `draft`/`locked` confirmation state with a `source_hash` drift tripwire;
+  machine-queryable `draft`/`locked` confirmation state with a per-source `source_hashes` drift tripwire;
   human-gated proposals (never unattended mutation); and a cron-driven read-only report on the
   dev server.
 
 ### Modified Capabilities
-<!-- none — the bank's optional status/source_hash fields are loader-compatible with
+<!-- none — the bank's optional status/source_hashes fields are loader-compatible with
      benchmark-bank-preflight (which already tolerates extra fields), and benchmark
      eligibility/scoring is unchanged. Gating eligibility on `locked` is deferred to a
      future change, out of scope here. -->
@@ -66,12 +75,12 @@ decays relative to the KB while looking healthy.
   like `validate_queries.py`; **not** shipped in the `pip install .` package, so **no
   redeploy/dependency trap**.
 - **Data:** `examples/benchmarking/fasrc_ragas_queries.json` and `anchor_questions.json` gain
-  `status` (backfilled `draft`) and, on lock, `source_hash`.
+  `status` (backfilled `draft`) and, on lock, `source_hashes` (one hash per source URL).
 - **Infra:** one **cron entry on the dev server** runs `goldenset_maintenance.py report`
   read-only, writing a coverage/drift/orphan report (e.g. under `.ralph/log/`); no mutation,
   no deploy coupling, no coupling to the Ralph nightly loop.
 - **Skill:** `~/.claude/skills/archi-ragas-goldenset/SKILL.md` — global personal tool,
   authored in Loop 2, **not part of this PR**.
-- **Docs:** `examples/benchmarking/fasrc_ragas_queries.README.md` (the `status`/`source_hash`
+- **Docs:** `examples/benchmarking/fasrc_ragas_queries.README.md` (the `status`/`source_hashes`
   field + the maintenance loop) and `docs/docs/benchmarking.md` (the operator workflow),
   updated in the same change.

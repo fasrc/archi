@@ -9,7 +9,7 @@ questions grounded in live `docs.rc.fas.harvard.edu` KB pages and has since grow
 The bank is not maintained against the KB it mirrors. Three failure modes accrue silently:
 
 ```
-   corpus (Postgres: url + source labels)         bank rows (sources[], status, source_hash)
+   corpus (Postgres: url + source labels)         bank rows (sources[], status, source_hashes)
                  │                                              │
                  └───────────────── diff ───────────────────────┘
                                      │
@@ -42,7 +42,7 @@ runtime dependency and no redeploy trap.
   orphans — from the ingested-corpus diff.
 - Make "is this reference authoritative?" machine-queryable (`status: draft|locked`) instead of
   free-text `notes`.
-- Make drift deterministic and cheap via a `source_hash` tripwire, escalating to an LLM diff
+- Make drift deterministic and cheap via a per-source `source_hashes` tripwire, escalating to an LLM diff
   only on a hash mismatch.
 - Keep every mutation human-gated: the tool and skill propose; a human disposes.
 - Run a read-only report unattended via cron on the dev server.
@@ -58,14 +58,25 @@ runtime dependency and no redeploy trap.
 
 ## Decisions
 
-### D1 — Confirmation state is a real field (`status` + `source_hash`), not a `notes` convention
+### D1 — Confirmation state is a real field (`status` + `source_hashes`), not a `notes` convention
 
 `status: draft | locked` makes confirmation queryable and drives drift detection; on lock the
-tool snapshots `source_hash` = its own content hash of the row's grounding **source** (the
-corpus identifier is URL-only, so it cannot serve here — see D2). Absent `status` ⇒ treated as
-`draft` (conservative: an unproven row is not authoritative). Existing rows and
-`anchor_questions.json` backfill to `draft`.
+tool snapshots `source_hashes` = a **map from each normalized `sources` URL to its own content
+hash of that grounding source** (the corpus identifier is URL-only, so it cannot serve here — see
+D2). A map, not a scalar, because rows are already multi-source — the MPI anchor in
+`anchor_questions.json` cites both `running-jobs` and `mpi-message-passing-interface`; a single
+per-row hash would silently miss drift in whichever page it didn't track. A `locked`
+`should_refuse` row has empty `sources` and therefore records **no** `source_hashes` (nothing to
+drift against) — locking must not require a grounding hash. Absent `status` ⇒ treated as `draft`
+(conservative: an unproven row is not authoritative). Existing rows and `anchor_questions.json`
+backfill to `draft`.
 
+- *Scope of "not authoritative":* this governs the **maintenance tooling only** (drift/census).
+  The benchmark harness is untouched — it keeps scoring every row's `reference` regardless of
+  `status`. So backfilling 105 rows to `draft` changes no scores; the known-stale references
+  keep scoring exactly as today and are surfaced by the new drift pass for an operator, not
+  silently dropped. Gating scoring eligibility on `locked` is a **separate, deferred** change
+  (Non-Goals) — attempting it here would change benchmark behavior, which this change forbids.
 - *Why over parsing `notes`:* the current "confirm with operator before locking" text is
   unqueryable and phrasing-fragile; a field lets a census and drift logic be exact.
 - *Why loader-safe:* the harness requires only `user_input` (+ `sources` for SOURCES) and
@@ -76,11 +87,11 @@ corpus identifier is URL-only, so it cannot serve here — see D2). Absent `stat
 
 ### D2 — Drift = content hash of the re-fetched **source**, then LLM diff (not the corpus hash)
 
-A locked row stores `source_hash` = a content hash the tool computes over its grounding
-**source** at lock time. Each drift check re-fetches that source (git blob raw content / KB
-page text), re-hashes, and compares — no "last run" state file, no timestamps. Only on a
-mismatch does the tool ask the model whether the stored `reference` still holds. Draft rows are
-skipped.
+A locked row stores `source_hashes` = a map of content hashes the tool computes over **each** of
+its grounding sources at lock time. Each drift check re-fetches every `sources` URL (git blob raw
+content / KB page text), re-hashes, and compares each against its stored entry — no "last run"
+state file, no timestamps. Only on a mismatch does the tool ask the model whether the stored
+`reference` still holds. Draft rows, and locked source-less `should_refuse` rows, are skipped.
 
 - *Why hash the source, not the corpus:* `ScrapedResource.get_hash()` is **URL-only** (it
   hashes `self.url`, never the content), so the corpus has no content hash to compare — and
@@ -123,9 +134,15 @@ stays a human, in-session act. The CLI `coverage --propose <url>` is the primiti
 calls under the hood (and keeps the behavior testable).
 
 **Decision ledger (idempotency).** Because a conversational interface is stateless on its own,
-the tooling persists a lightweight ledger of URLs already *declined* or *drafted/covered*, and
-`coverage` surfaces only URLs not yet ruled on. Without it, every run would re-triage the same
-skipped configs. The ledger is the durable record the conversational path otherwise lacks.
+the tooling persists a lightweight ledger of URLs an operator has explicitly **declined**, and
+`coverage` suppresses only those. Crucially, the ledger records *declines only* — it does **not**
+record "drafted/covered". *Covered* is re-derived from the current bank on every run (a URL is
+covered iff some current bank row's `sources` references it after reconciliation). If the ledger
+also suppressed "drafted" URLs, a page whose candidates were proposed but then abandoned or
+rejected — never applied to the bank — would vanish from later coverage reports and read as
+falsely clean. Re-deriving covered-ness from the bank keeps a greenlit-but-unapplied page
+visible as a gap until a row actually lands. The ledger is the durable record of *declines* the
+conversational path otherwise lacks.
 
 ### D4 — Human-gated mutation as an invariant, split from detection
 
@@ -152,22 +169,59 @@ on the dev server runs `report` read-only, writing to `.ralph/log/`.
 - *Why cron over the Ralph nightly loop:* the operator chose a standalone dev-server cron —
   decoupled from the nightly automation's rails, read-only, no deploy coupling.
 
+### D6 — The persisted corpus is not a reliable mirror; key content/removal on a fresh live signal
+
+The ingested corpus lies to us in two directions, both rooted in the same URL-keyed identity
+(`ScrapedResource.get_hash()` = md5 of the URL, D2):
+
+- **It lags on edits.** A page edited in place keeps its URL, so a plain re-ingest may not
+  overwrite stored content (a nuke is required). Corpus content can therefore be *staler* than
+  the live page → hashing the corpus would **miss** real drift.
+- **It keeps removed pages.** The collection path upserts by URL hash and does not prune URLs
+  that vanish from a later sitemap/source list. A deleted page still appears in `documents` →
+  absence-from-corpus would **miss** real orphans.
+
+So the corpus is authoritative only for *coverage* (which URLs were ingested at least once).
+**Content change (drift)** keys on a re-fetch of the live source; **removal (orphan)** keys on a
+freshly expanded live source inventory (sitemap / source-list expansion), or requires an
+explicit prune/nuke before corpus-presence is trusted as "still exists".
+
+- *Why not compare drift against the persisted corpus (reviewer suggestion):* the benchmark
+  answers from the corpus, so it is tempting to judge drift there. Rejected — because the corpus
+  lags the live KB (above), that would silently pass a reference that is stale relative to the
+  authoritative page. The intended drift semantic is *reference vs. authoritative live KB*;
+  corpus staleness is the ingestion-verifier's concern, not the golden set's. The one real cost
+  — re-fetching pages the benchmark never sees — is bounded by the hash tripwire (LLM fires only
+  on a moved hash) and is the correct trade for not missing drift.
+
+### D7 — Slug-aware reconciliation before coverage/orphan classification
+
+URL matching is **slug-aware**, not merely scheme/trailing-slash. The bank README's SOURCES
+caveat is that the sitemap-driven ingest may store a page under a different slug than the bank's
+authored canonical URL. With only scheme/slash normalization, a covered page whose stored `url`
+differs by slug is classified as *both* an uncovered gap *and* an orphan — two false work items
+from one page. So the tool reconciles slugs first, and any URL that matches only by near-miss
+goes to a separate **"needs reconciliation"** bucket — never a definitive gap or orphan. That
+bucket is an explicit human signal ("these two URLs are probably the same page, confirm"), which
+is safer than silently guessing either way.
+
 ## Risks / Trade-offs
 
 - **The corpus identifier is URL-only** → `ScrapedResource.get_hash()` hashes only the URL, so
   there is no corpus content hash for drift to key on (the same URL-keyed dedup is why a plain
-  re-ingest keeps stale chunks). Mitigation (D2): drift computes its own content hash over the
-  re-fetched **source**; the corpus is used only for URL-level coverage/orphan.
+  re-ingest keeps stale chunks *and* keeps removed pages). Mitigation (D2/D6): drift computes its
+  own content hash over the re-fetched **source**, and orphan detection keys on a freshly
+  expanded live source inventory; the corpus is trusted only for "which URLs were ingested".
 - **High-volume per-file sources** → a code repo (e.g. `User_Codes`) floods coverage with
   hundreds of blob URLs. Mitigation: group/filter coverage by `source_type`/`parent`;
   greenlight per source or path glob, never the whole repo at once.
 - **Conversational greenlight could re-nag** → a stateless in-session interface would resurface
   the same skipped pages every run. Mitigation: the decision ledger (declined + drafted URLs);
   `coverage` shows only not-yet-decided gaps.
-- **URL slug mismatch** (the README's SOURCES-mode caveat: sitemap slugs vs stored `url`) →
-  coverage/orphan diffs could mis-match a covered page as uncovered. Mitigation: normalize URLs
-  (trailing slash, scheme) on both sides before diffing; surface "near-miss" URLs in the report
-  rather than silently classifying.
+- **URL slug mismatch** (the README's SOURCES-mode caveat: sitemap slugs vs stored `url`) → a
+  covered page could be mis-classified as *both* an uncovered gap *and* an orphan. Mitigation
+  (D7): slug-aware reconciliation before classification, and any near-miss goes to a separate
+  "needs reconciliation" bucket — never silently classified as a definitive gap or orphan.
 - **LLM drift-diff false positives/negatives** → the model may over- or under-flag. Mitigation:
   drift output is advisory and human-reviewed (never auto-edits); the hash tripwire bounds the
   LLM to only changed pages.

@@ -1,48 +1,60 @@
 > **Sequencing:** each numbered group is a separate, gate-green PR. Data backfill (group 1) is
 > mechanical and lands before behavior. Detection subcommands (groups 2–4) are read-only and
-> TDD'd with injected fetch/LLM + fixture corpus/bank. The cron (group 5) and skill (group 6)
-> land last; the skill is a personal tool and rides **no** repo PR. Every code group is TDD:
-> failing test first → minimum code → refactor; gate green (`bash scripts/gate.sh`, ≥80% diff
-> coverage) before commit; branch from `origin/dev`, PR to `fasrc/archi:dev`.
+> TDD'd with injected fetch/LLM + fixture corpus/bank. The cron (group 5) lands last; the skill
+> (group 6) is a personal tool and rides **no** repo PR.
+>
+> **Docs ride the surface they document** (per repo rule: user-facing behavior/CLI flags update
+> `docs/` in the **same** change). So each PR that lands a field or an operator-invocable
+> subcommand ships its own doc update — the `status`/`source_hashes` field doc rides group 1, and
+> each `coverage`/`orphans`/`--propose`/`drift`/`report` surface documents itself in the group
+> that introduces it. No group lands user-facing surface without docs.
+>
+> Every code group is TDD: failing test first → minimum code → refactor; gate green
+> (`bash scripts/gate.sh`, ≥80% diff coverage) before commit; branch from `origin/dev`, PR to
+> `fasrc/archi:dev`.
 
-## 1. Confirmation state: `status` / `source_hash` field + backfill (data + schema)
+## 1. Confirmation state: `status` / `source_hashes` field + backfill (data + schema)
 
 - [ ] 1.1 Check the `benchmark_schema` edit seam is black-clean before touching it (black-churn / diff-coverage trap); route through a new helper if not.
-- [ ] 1.2 TDD: `benchmark_schema` treats a missing `status` as `draft` and preserves `status`/`source_hash` on load; assert the harness loads a bank with and without the fields identically (no eligibility/scoring change).
+- [ ] 1.2 TDD: `benchmark_schema` treats a missing `status` as `draft` and preserves `status`/`source_hashes` on load; a `locked` row may carry a `source_hashes` map (one entry per `sources` URL) or, for an empty-`sources` `should_refuse` row, none; assert the harness loads a bank with and without the fields identically (no eligibility/scoring change — `status` is not consulted by scoring).
 - [ ] 1.3 TDD: a `bank_status_counts(bank)` helper returns `locked`/`draft` counts and the `anchor_type` distribution from the field (not by parsing `notes`).
 - [ ] 1.4 Backfill `status: draft` into all rows of `examples/benchmarking/fasrc_ragas_queries.json` and `examples/benchmarking/anchor_questions.json`; land as its own commit, separate from behavior.
 - [ ] 1.5 Assert (test or scripted check) the backfilled bank scores identically to pre-backfill for a fixed fake run — field addition is behavior-neutral.
+- [ ] 1.6 **Docs (same PR):** update `examples/benchmarking/fasrc_ragas_queries.README.md` for the `status` / `source_hashes` fields and the `draft → locked` lifecycle (incl. the source-less `should_refuse` case and the "scoring is unchanged; `locked`-eligibility is deferred" note).
 
 ## 2. Corpus read + coverage/orphan detection (read-only, TDD)
 
 - [ ] 2.1 TDD: a read-only corpus accessor returns the ingested URL set with each doc's `source_type`/`parent` labels, via the existing Postgres path (mirror the ingestion-verifier read); injectable/fakeable for hermetic tests. Do NOT rely on the corpus resource hash — `ScrapedResource.get_hash()` is URL-only.
-- [ ] 2.2 TDD: URL normalization (scheme, trailing slash) applied to both corpus URLs and row `sources` before any diff; near-miss URLs surfaced, not silently misclassified.
-- [ ] 2.3 TDD: `coverage` reports corpus URLs referenced by no row's `sources`; empty when every corpus URL is covered.
-- [ ] 2.4 TDD: `orphans` flags rows whose `sources` URL is absent from the corpus; `should_refuse` rows (empty `sources`) are never flagged; nothing is deleted.
+- [ ] 2.2 TDD: **slug-aware** URL reconciliation (scheme + trailing slash **and** slug differences per the README SOURCES caveat) applied to both corpus URLs and row `sources` before any diff; a match found only by near-miss goes to a separate "needs reconciliation" bucket, never classified as a definitive gap or orphan.
+- [ ] 2.3 TDD: `coverage` reports corpus URLs referenced by no row's `sources`; empty when every corpus URL is covered; covered-ness is derived from the current bank, not any ledger.
+- [ ] 2.4 TDD: `orphans` flags rows whose `sources` URL is absent from a **freshly expanded live source inventory** (sitemap/source-list expansion), NOT from corpus-absence alone (the corpus never prunes removed pages) — a stale corpus row for a removed URL must still yield an orphan; `should_refuse` rows (empty `sources`) are never flagged; nothing is deleted.
 - [ ] 2.5 TDD: `coverage` groups and filters gaps by source (`source_type`/`parent`) so a high-volume git source (per-file blob URLs) doesn't flood the report; greenlight per source or path glob.
 - [ ] 2.6 Wire `coverage` / `orphans` as subcommands of `scripts/benchmarking/goldenset_maintenance.py`, loading the bank via `benchmark_schema`.
+- [ ] 2.7 **Docs (same PR):** document the `coverage` / `orphans` operator usage (incl. slug near-miss bucket and the live-inventory orphan basis) in `docs/docs/benchmarking.md`.
 
 ## 3. Coverage candidate proposal (greenlit-only, TDD)
 
 - [ ] 3.1 TDD: `coverage --propose <url>` drafts grounded candidate questions for a greenlit page as `status: draft`, with `sources` set and references left draft (LLM client injected/faked).
 - [ ] 3.2 TDD: `--propose` never drafts for a non-greenlit page and never locks a proposed candidate.
 - [ ] 3.3 TDD: proposals are emitted for review only — the bank JSON file is byte-unchanged by a `--propose` run (writing a candidate in is a separate human-applied step).
-- [ ] 3.4 TDD: a decision ledger records declined + drafted/covered URLs; `coverage` excludes ledgered URLs so previously-decided pages don't resurface; declining a page (operator skip) appends to the ledger.
+- [ ] 3.4 TDD: the decision ledger records **declines only**; `coverage` suppresses declined URLs but re-derives *covered* from the current bank, so a greenlit-but-unapplied page (candidates drafted, no bank row added) still appears as a gap; declining a page (operator skip) appends to the ledger.
+- [ ] 3.5 **Docs (same PR):** document `coverage --propose`, the greenlight flow, and the declines-only ledger in `docs/docs/benchmarking.md`.
 
 ## 4. Fact-drift detection (hash tripwire → LLM diff, TDD)
 
-- [ ] 4.1 TDD: `source_hash` is a content hash the tool computes over the re-fetched source (git blob raw / KB page text), NOT read from the corpus identifier (URL-only); a `locked` row whose stored `source_hash` differs from a fresh source hash is flagged, a matching hash is not.
-- [ ] 4.2 TDD: `draft` rows are never drift-checked, regardless of hash.
+- [ ] 4.1 TDD: `source_hashes` are content hashes the tool computes over **each** re-fetched source URL (git blob raw / KB page text), NOT read from the corpus identifier (URL-only); a `locked` row is flagged when **any** of its `sources` URLs has a fresh hash differing from its stored `source_hashes` entry (naming the changed URL), and not flagged when all match.
+- [ ] 4.2 TDD: `draft` rows, and `locked` source-less `should_refuse` rows, are never drift-checked, regardless of hash.
 - [ ] 4.3 TDD: on a hash mismatch the tool asks the injected LLM whether the stored `reference` still holds against the re-fetched source (injected fetch); output is advisory; `reference`/`status` are left unchanged.
 - [ ] 4.4 Wire `drift` as a subcommand; confirm no detection path writes to the bank file.
+- [ ] 4.5 **Docs (same PR):** document `drift` (hash tripwire → LLM diff, advisory-only) in `docs/docs/benchmarking.md`.
 
 ## 5. Read-only `report` + dev-server cron
 
 - [ ] 5.1 TDD: `report` prints coverage gaps, drift flags, and orphans, modifies no file, and exits zero when findings exist — reserving non-zero for operational failure (unreachable corpus).
 - [ ] 5.2 Add the dev-server cron entry running `report` read-only, writing to `.ralph/log/`; document install + rollback (remove the line).
+- [ ] 5.3 **Docs (same PR):** document the `report` subcommand + cron install/rollback in `docs/docs/benchmarking.md`.
 
-## 6. Skill + docs
+## 6. Skill (personal tool — no repo PR)
 
 - [ ] 6.1 Author `~/.claude/skills/archi-ragas-goldenset/SKILL.md` (personal tool, NOT in this repo PR): conversational `coverage` mode (present newly-uncovered pages grouped by source, draft only the operator's greenlit picks in plain-language reply, record skips to the decision ledger), plus `drift-confirm` / `report` modes; every mutation gated on human confirmation (add draft, lock reference, prune orphan as explicit apply steps).
-- [ ] 6.2 Update `examples/benchmarking/fasrc_ragas_queries.README.md` (the `status`/`source_hash` field + draft→locked lifecycle) and `docs/docs/benchmarking.md` (the operator maintenance workflow).
-- [ ] 6.3 `openspec validate maintain-ragas-goldenset --strict` passes; each PR gate-green with ≥80% diff coverage; no `--no-verify`.
+- [ ] 6.2 `openspec validate maintain-ragas-goldenset --strict` passes; each PR gate-green with ≥80% diff coverage; no `--no-verify`. (Per-surface docs land with their own group — 1.6 / 2.7 / 3.5 / 4.5 / 5.3 — not deferred here.)
