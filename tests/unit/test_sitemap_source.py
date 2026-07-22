@@ -562,6 +562,39 @@ class TestFetchHelper:
         assert text == "<urlset/>"
         assert get.call_count == 2
 
+    def test_missing_charset_does_not_probe_apparent_encoding(self):
+        # application/xml with no charset -> resp.encoding is None. Accessing
+        # resp.apparent_encoding AFTER streaming reads resp.content, which the
+        # real requests.Response raises RuntimeError on (already consumed). The
+        # fetch must decode with a fixed fallback and never touch it.
+        class _Resp:
+            status_code = 200
+            headers: dict = {}
+            url = "https://docs.rc.fas.harvard.edu/s.xml"
+            encoding = None
+
+            @property
+            def apparent_encoding(self):
+                raise RuntimeError("content already consumed")
+
+            def raise_for_status(self):
+                return None
+
+            def iter_content(self, chunk_size=65536):
+                return iter((b"<urlset/>",))
+
+            def close(self):
+                return None
+
+        with patch(
+            "src.data_manager.collectors.scrapers.sitemap_source.requests.get",
+            return_value=_Resp(),
+        ):
+            text = ss.fetch_sitemap_text(
+                "https://docs.rc.fas.harvard.edu/s.xml", verify=False
+            )
+        assert text == "<urlset/>"
+
     def test_too_many_redirects_raises(self):
         redirect = self._resp(
             status=301,

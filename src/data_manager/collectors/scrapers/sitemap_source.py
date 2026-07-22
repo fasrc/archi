@@ -267,7 +267,12 @@ def fetch_sitemap_text(
                         f"body from {current} exceeds the {max_bytes}-byte cap"
                     )
                 chunks.append(chunk)
-            encoding = resp.encoding or resp.apparent_encoding or "utf-8"
+            # Use the header charset if present, else default to UTF-8 (the XML
+            # default). Do NOT probe resp.apparent_encoding: it reads resp.content,
+            # which raises RuntimeError after the body was streamed via
+            # iter_content — a charset-less application/xml sitemap would then
+            # abort ingestion instead of parsing.
+            encoding = resp.encoding or "utf-8"
             return b"".join(chunks).decode(encoding, errors="replace")
         except requests.exceptions.RequestException as exc:
             raise SitemapFetchError(f"failed to read {current}: {exc}")
