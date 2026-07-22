@@ -262,6 +262,26 @@ data_manager:
         reset_data: {{ data_manager.sources.links.html_scraper.reset_data | default(true, true) }}
         verify_urls: {{ data_manager.sources.links.html_scraper.verify_urls | default(false, true) }}
         enable_warnings: {{ data_manager.sources.links.html_scraper.enable_warnings | default(false, true) }}
+      sitemap:
+        # Trust/bounds for `sitemap-` source-list lines (expanded at ingest).
+        # allowed_hosts: extra hosts (besides the sitemap's own) whose URLs may
+        # be fetched/emitted; min_pages: floor below which a source fails the
+        # ingest (set 0 to allow an intentionally empty/optional sitemap);
+        # max_pages: cap above which a source fails deterministically.
+        # Absent keys fall back to these defaults, so lists with no `sitemap-`
+        # line are unaffected.
+        allowed_hosts:
+          {%- set sitemap_allowed = data_manager.sources.links.sitemap.allowed_hosts | default([], true) %}
+          {%- if sitemap_allowed is string %}
+          - {{ sitemap_allowed }}
+          {%- else %}
+          {%- for host in sitemap_allowed %}
+          - {{ host }}
+          {%- endfor %}
+          {%- endif %}
+        {%- set sitemap_min = data_manager.sources.links.sitemap.min_pages %}
+        min_pages: {{ sitemap_min if sitemap_min is defined and sitemap_min is not none else 1 }}
+        max_pages: {{ data_manager.sources.links.sitemap.max_pages | default(20000, true) }}
       selenium_scraper:
         enabled: {{ data_manager.sources.links.selenium_scraper.selenium_scraper.enabled | default(false, True) }}
         visible: {{ data_manager.sources.links.selenium_scraper.selenium_scraper.visible | default(false, true) }}

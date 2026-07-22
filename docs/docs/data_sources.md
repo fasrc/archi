@@ -77,6 +77,59 @@ SSO_USERNAME=username
 SSO_PASSWORD=password
 ```
 
+### Sitemap sources
+
+To track a site that publishes an XML sitemap, list the sitemap itself with a
+`sitemap-` prefix instead of hand-listing every page. It is expanded **at ingest
+time** — each `<loc>` becomes a page URL scraped exactly as if hand-listed — so
+newly published pages are discovered automatically on every **full ingest**
+(`archi create` / a redeploy, i.e. `collect_all_from_config`):
+
+```
+sitemap-https://docs.rc.fas.harvard.edu/kb/epkb_post_type_1-sitemap.xml
+```
+
+A `<urlset>` contributes its pages; a `<sitemapindex>` is followed **one** level
+(each child fetched once; a child that is itself an index is not followed). An
+individual document that fails to fetch or parse is skipped with a warning
+(fail-open), and emitted URLs are normalized to the hand-list form (trailing
+slash collapsed) so they cannot create slash-variant duplicates.
+
+> **Note:** a *scheduled* `links` refresh (`data_manager.sources.links.schedule`)
+> re-scrapes the URLs already in the catalog; it does **not** re-read the input
+> lists or re-expand the sitemap. Sitemap pages published *after* the last full
+> ingest are therefore picked up only on the next full ingest/redeploy, not by the
+> scheduled refresh.
+
+Because the emitted list comes from a live remote document that no human reviews,
+expansion is trust-constrained and bounded per source — configured under
+`data_manager.sources.links.sitemap`:
+
+```yaml
+data_manager:
+  sources:
+    links:
+      sitemap:
+        allowed_hosts: []      # extra hosts (besides the sitemap's own) allowed
+        min_pages: 1           # floor: a source below this FAILS the ingest
+        max_pages: 20000       # cap: a source above this FAILS deterministically
+```
+
+Only `http`/`https` URLs on the sitemap's own host (or an `allowed_hosts` entry)
+are fetched or emitted; IP-literal loopback/private/link-local targets and
+cross-host redirects are rejected. The `min_pages` floor runs on **every** ingest
+— a transient sitemap outage fails the run loudly rather than silently shipping
+an empty knowledge base (this matters most on a fresh install or after a `nuke`).
+
+> **Scope (v1):** these defaults target a **trusted first-party** sitemap. Before
+> pointing `sitemap-` at any untrusted/third-party sitemap, adopt the stronger
+> SSRF defenses (DNS resolve-to-global + connection pinning) and fetch-work
+> budgets described in the change's design *§Deferred hardening (v2)*.
+
+The `sitemap-` prefix (runtime, automatic) and `archi sources build`'s
+build-time `sitemap` seed (operator-run, writes a committed list) are
+complementary — see [Building a `sources.list` from a manifest](#building-a-sourceslist-from-a-manifest).
+
 ### Running
 
 Link scraping is controlled by your config (`data_manager.sources.links.enabled`).
