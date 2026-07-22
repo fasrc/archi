@@ -94,6 +94,15 @@ data_manager:
         # The nested config/ checkout (fasrc/archi-config), provisioned by
         # ensure_config on every scripted deploy. Use an ABSOLUTE path.
         - <REPO_ROOT>/config/lists/sources.list
+      # When the KB is ingested via a `sitemap-` line in sources.list (archi #133),
+      # the sitemap is expanded at ingest into its page URLs. min_pages is a floor
+      # that FAILS the ingest loudly if a broken/unreachable sitemap would otherwise
+      # rebuild a near-empty KB (fail-open -> 0 emitted -> below the floor). Size it
+      # well under the sitemap's real page count (the FASRC KB advertises ~212).
+      # WITHOUT this block the template default is 1, which only catches an
+      # exactly-empty sitemap — set a real floor per deployment.
+      sitemap:
+        min_pages: 150
   embedding_name: HuggingFaceEmbeddings
   # --- ingest processing: HTML->Markdown (default-on) + optional LLM categorization ---
   # Categorization makes one LLM call per doc at ingest, writing a single-token
