@@ -25,9 +25,9 @@
 
 ## 4. Per-worker crawler isolation
 
-- [ ] 4.1 Write a failing test that two concurrent crawls each yield exactly their own URLs and neither observes the other's `visited_urls`/`seen_urls` reset — the race that a single shared `self.web_scraper` (`scraper_manager.py:100`) would cause against the per-call state reset at `scraper.py:194-196`.
-- [ ] 4.2 Write a failing test that each per-worker `LinkScraper` is constructed with the manager's own `verify_urls` / `enable_warnings` values.
-- [ ] 4.3 Implement a scraper-factory seam on `ScraperManager` that returns a fresh `LinkScraper` per seed crawl, and route the parallel path through it. Leave `self.web_scraper` in place for the existing sequential/selenium callers.
+- [x] 4.1 Write a failing test that two concurrent crawls each yield exactly their own URLs and neither observes the other's `visited_urls`/`seen_urls` reset — the race that a single shared `self.web_scraper` (`scraper_manager.py:100`) would cause against the per-call state reset at `scraper.py:194-196`.
+- [x] 4.2 Write a failing test that each per-worker `LinkScraper` is constructed with the manager's own `verify_urls` / `enable_warnings` values.
+- [x] 4.3 Implement a scraper-factory seam on `ScraperManager` that returns a fresh `LinkScraper` per seed crawl, and route the parallel path through it. Leave `self.web_scraper` in place for the existing sequential/selenium callers.
 
 ## 5. Wire the pool into the standard link path
 

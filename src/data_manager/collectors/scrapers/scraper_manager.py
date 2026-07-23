@@ -131,14 +131,30 @@ class ScraperManager:
 
         self.data_path.mkdir(parents=True, exist_ok=True)
 
-        self.web_scraper = LinkScraper(
+        # Shared scraper for the sequential and selenium/SSO paths. The parallel
+        # link path must NOT reuse this instance: crawl_iter resets and mutates
+        # per-instance state, so concurrent seeds each need their own scraper
+        # from _new_link_scraper() (issue #136).
+        self.web_scraper = self._new_link_scraper()
+        self._git_scraper: Optional["GitScraper"] = None
+        self._indico_scraper: Optional["IndicoScraper"] = None
+
+    def _new_link_scraper(self) -> LinkScraper:
+        """Build a fresh LinkScraper for a single seed crawl.
+
+        Each concurrent crawl in the parallel link path gets its own instance:
+        crawl_iter resets and mutates per-instance ``visited_urls`` /
+        ``seen_urls`` / ``page_data`` for the duration of a crawl, so sharing one
+        instance across threads would let one seed's reset corrupt another's
+        in-flight state (issue #136). The construction args mirror the shared
+        sequential ``self.web_scraper`` so per-worker scrapers behave identically.
+        """
+        return LinkScraper(
             verify_urls=self.config.get(
                 "verify_urls", False
             ),  # Default to False for broader compatibility
             enable_warnings=self.config.get("enable_warnings", False),
         )
-        self._git_scraper: Optional["GitScraper"] = None
-        self._indico_scraper: Optional["IndicoScraper"] = None
 
     def collect_all_from_config(self, persistence: PersistenceService) -> None:
         """Run the configured scrapers and persist their output."""
