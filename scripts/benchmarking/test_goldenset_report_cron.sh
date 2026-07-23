@@ -22,6 +22,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CRON="$SCRIPT_DIR/goldenset_report_cron.sh"
+
+# Hermetic against the developer's own cron config. Every knob below is one the
+# wrapper honours, and it gives an ambient export precedence over the fake
+# `python` on PATH and over these tests' defaults — so a shell that exported,
+# say, GOLDENSET_PYTHON=/bin/false or a real GOLDENSET_ENV_FILE would make the
+# gate source a real env file, run the real maintenance command, or just fail,
+# none of which is this suite's contract. Clear them once so the sandbox is the
+# only source of configuration; the env-file cases set GOLDENSET_ENV_FILE fresh.
+unset GOLDENSET_ENV_FILE GOLDENSET_BANK GOLDENSET_PG_DSN GOLDENSET_CORPUS_JSON \
+  GOLDENSET_SOURCES GOLDENSET_ALLOWED_HOSTS GOLDENSET_MIN_PAGES GOLDENSET_MAX_PAGES \
+  GOLDENSET_LEDGER GOLDENSET_MODEL GOLDENSET_LOG_DIR GOLDENSET_PYTHON \
+  GOLDENSET_LOG_MAX_BYTES
+
 PASS=0; FAIL=0
 ok()    { printf 'ok - %s\n' "$1"; PASS=$((PASS + 1)); }
 notok() { printf 'not ok - %s\n' "$1"; FAIL=$((FAIL + 1)); }
@@ -282,6 +295,19 @@ out="$( ( STUB_SUMMARY="$DEGRADED" GOLDENSET_PG_DSN="postgresql://x" run_cron "$
 case "$out" in
   *"49 unchecked"*) ok "a degraded run notifies even with nothing drifted" ;;
   *) notok "a degraded run notifies even with nothing drifted (got: $out)" ;;
+esac
+
+# 18b. `notify` can fire on a slug near-miss alone (needs_reconciliation), a
+#      bucket the digest first omitted — so the mail paged with an all-zeros
+#      line and no named cause, forcing the operator to open the log to learn
+#      why it spoke. The digest must name the reconciliation count.
+sb="$(new_sandbox)"
+RECON='{"gaps":0,"orphans":0,"drifted":0,"unchecked_sources":0,"needs_reconciliation":2,"orphans_needs_reconciliation":1,"refused_sources":0,"failed_passes":[],"notify":true}'
+out="$( ( STUB_SUMMARY="$RECON" GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) \
+  2>/dev/null || true )"
+case "$out" in
+  *"3 reconcile"*) ok "a reconciliation-only notify names the reconcile bucket" ;;
+  *) notok "a reconciliation-only notify names the reconcile bucket (got: $out)" ;;
 esac
 
 # 19. the flag is authoritative — the wrapper does not re-derive the policy from

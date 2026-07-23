@@ -164,8 +164,20 @@ if [ ! -t 1 ]; then
     notify="$(tr -d ' \n' < "$SUMMARY" | grep -o '"notify":[a-z]*' | head -1 |
               cut -d: -f2)"
     if [ "$notify" = "true" ]; then
-      printf 'goldenset report: %s gaps | %s orphans | %s drifted | %s unchecked | %s refused\n' \
+      # Both slug-near-miss buckets fold into one `reconcile` field. `notify` can
+      # fire on reconciliation alone (both are in report's _NOTIFY_ON), and a
+      # digest that omits them pages with an all-zeros line and no named cause —
+      # the operator then has to open the log just to learn why it spoke.
+      # `|| true`: read_num is a grep pipeline under `set -o pipefail`, so a
+      # summary without these keys makes the assignment itself non-zero and
+      # `set -e` would abort before the digest ever prints. The printf args below
+      # tolerate a missing key already (a failed command substitution there does
+      # not trip set -e); a bare assignment does not.
+      nr="$(read_num needs_reconciliation || true)"
+      onr="$(read_num orphans_needs_reconciliation || true)"
+      printf 'goldenset report: %s gaps | %s orphans | %s drifted | %s reconcile | %s unchecked | %s refused\n' \
         "$(read_num gaps)" "$(read_num orphans)" "$(read_num drifted)" \
+        "$(( ${nr:-0} + ${onr:-0} ))" \
         "$(read_num unchecked_sources)" "$(read_num refused_sources)"
       printf 'full report: %s\n' "$LOG"
     fi
