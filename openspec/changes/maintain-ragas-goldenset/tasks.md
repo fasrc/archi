@@ -24,14 +24,15 @@
 
 ## 2. Corpus read + coverage/orphan detection (read-only, TDD)
 
-- [ ] 2.1 TDD: a read-only corpus accessor returns the ingested URL set with each doc's `source_type`/`parent` labels, via the existing Postgres path (mirror the ingestion-verifier read); injectable/fakeable for hermetic tests. Do NOT rely on the corpus resource hash — `ScrapedResource.get_hash()` is URL-only.
-- [ ] 2.2 TDD: URL reconciliation **reuses `sitemap_source.normalize_page_url`** (PR #133) on both corpus URLs and row `sources` — same canonical form the ingest stores (scheme/host case, fragment, `/x` vs `/x/` #118), no bespoke normalizer. The residual redirect-alias slug near-miss goes to a separate "needs reconciliation" bucket, never classified as a definitive gap or orphan.
-- [ ] 2.3 TDD: `coverage` reports corpus URLs referenced by no row's `sources`; empty when every corpus URL is covered; covered-ness is derived from the current bank, not any ledger.
-- [ ] 2.4 TDD: `orphans` flags rows whose `sources` URL is absent from a **freshly expanded live source inventory** (reuse `sitemap_source.expand_sitemaps` for `sitemap-` sources; the list itself for hand-listed), NOT from corpus-absence alone (the corpus never prunes) — a stale corpus row for a removed URL must still yield an orphan; `should_refuse` rows (empty `sources`) are never flagged; nothing is deleted.
-- [ ] 2.4a TDD: an **incomplete** inventory (any source document failed to fetch/parse — `expand_sitemaps` fails open — or expansion below its configured floor) is treated as an operational failure that **abstains** from orphan-flagging that run (no false orphans against a partial inventory).
-- [ ] 2.5 TDD: `coverage` groups and filters gaps by source (`source_type`/`parent`) so a high-volume git source (per-file blob URLs) doesn't flood the report; greenlight per source or path glob.
-- [ ] 2.6 Wire `coverage` / `orphans` as subcommands of `scripts/benchmarking/goldenset_maintenance.py`, loading the bank via `benchmark_schema`.
-- [ ] 2.7 **Docs (same PR):** document the `coverage` / `orphans` operator usage (incl. slug near-miss bucket and the live-inventory orphan basis) in `docs/docs/benchmarking.md`.
+- [x] 2.1 TDD: a read-only corpus accessor returns the ingested URL set with each doc's `source_type`/`parent` labels, via the existing Postgres path (mirror the ingestion-verifier read); injectable/fakeable for hermetic tests. Do NOT rely on the corpus resource hash — `ScrapedResource.get_hash()` is URL-only.
+- [x] 2.2 TDD: URL reconciliation **reuses `sitemap_source.normalize_page_url`** (PR #133) on both corpus URLs and row `sources` — same canonical form the ingest stores (scheme/host case, fragment, `/x` vs `/x/` #118), no bespoke normalizer. The residual redirect-alias slug near-miss goes to a separate "needs reconciliation" bucket, never classified as a definitive gap or orphan.
+- [x] 2.3 TDD: `coverage` reports corpus URLs referenced by no row's `sources`; empty when every corpus URL is covered; covered-ness is derived from the current bank, not any ledger.
+- [x] 2.4 TDD: `orphans` flags rows whose `sources` URL is absent from a **freshly expanded live source inventory** (reuse `sitemap_source.expand_sitemaps` for `sitemap-` sources; the list itself for hand-listed), NOT from corpus-absence alone (the corpus never prunes) — a stale corpus row for a removed URL must still yield an orphan; `should_refuse` rows (empty `sources`) are never flagged; nothing is deleted.
+- [x] 2.4a TDD: an **incomplete** inventory (any source document failed to fetch/parse — `expand_sitemaps` fails open — or expansion below its configured floor) is treated as an operational failure that **abstains** from orphan-flagging that run (no false orphans against a partial inventory).
+- [x] 2.4b TDD: the live inventory is authoritative only for the hosts it actually contains — a `sources` URL on any other host (an external authority the KB never ingested, e.g. the 18 `slurm.schedmd.com` rows in the FASRC bank) is reported **out of scope**, never as an orphan. Found during 2.4: without this guard the first run false-flags 17% of the bank.
+- [x] 2.5 TDD: `coverage` groups and filters gaps by source (`source_type`/`parent`) so a high-volume git source (per-file blob URLs) doesn't flood the report; greenlight per source or path glob.
+- [x] 2.6 Wire `coverage` / `orphans` as subcommands of `scripts/benchmarking/goldenset_maintenance.py`, loading the bank via `benchmark_schema`.
+- [x] 2.7 **Docs (same PR):** document the `coverage` / `orphans` operator usage (incl. slug near-miss bucket and the live-inventory orphan basis) in `docs/docs/benchmarking.md`.
 
 ## 3. Coverage candidate proposal (greenlit-only, TDD)
 

@@ -388,3 +388,117 @@ See `docs/eval/rubric.md` for the four-widget annotation rubric (winner / qualit
 ### Inter-rater reliability
 
 The analysis notebook computes pairwise Cohen's kappa (per pair of graders), Fleiss' kappa (overall), and per-grader bias distribution. Aim for κ ≥ 0.4 ("moderate agreement") before treating round-N's winner as decisive.
+
+---
+
+## Maintaining the golden set (`coverage` / `orphans`)
+
+The question bank drifts away from the knowledge base in two directions: the KB grows pages
+nobody wrote a question for, and it removes pages some question still cites. Two read-only
+subcommands find each drift:
+
+```bash
+# Which ingested pages does no bank row ground against?
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn "postgresql://archi@localhost/archi-db"
+
+# Which bank rows cite a page the live KB no longer publishes?
+python scripts/benchmarking/goldenset_maintenance.py orphans \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --sources config/lists/sources.list \
+    --min-pages 150
+```
+
+`--min-pages` is the sitemap **completeness floor** and must match the deployment's
+`data_manager.sources.links.sitemap.min_pages` (FASRC: 150). It is **required** whenever the
+source list contains a `sitemap-` line, and the command refuses to run without it: the library
+default is 1, under which a truncated sitemap expands "successfully" and every bank URL absent
+from that partial response is reported as an orphan. `--max-pages` and `--allowed-hosts` take
+the same values as the deployment config.
+
+**Both are proposal-only.** They print work lists and leave the bank file byte-unchanged;
+adding a question, locking a reference, or pruning an orphan is a separate step you take
+deliberately. Findings **exit zero** — a gap is work to do, not a broken run — so a cron job
+only alarms on an operational failure: an unreadable bank, corpus, or source list, a missing
+sitemap floor, or an **abstained** run (below).
+
+### `coverage` — pages with no question
+
+Coverage is re-derived from the bank on **every** run. Drafting candidate questions for a page
+does not mark it covered; only an applied bank row citing that URL does. So a page you
+greenlit but never finished writing up keeps showing as a gap, which is the honest answer.
+
+Gaps are grouped by **parent source** (the host for a web source, the repository for a git
+one) and can be narrowed, so one large git source contributing thousands of per-file URLs
+does not bury a handful of real KB gaps:
+
+```bash
+--source-type web                     # only web sources
+--parent https://docs.rc.fas.harvard.edu
+--path-glob 'https://docs.rc.fas.harvard.edu/kb/*'
+```
+
+Coverage reads only **retrievable** documents — not soft-deleted, and
+`ingestion_status = 'embedded'`. A document still `pending`/`embedding`, or one that `failed`,
+has no chunks for the retriever, so a golden question written against it would be unanswerable
+and would score as a benchmark failure. A page stuck outside `embedded` is an *ingestion*
+problem, not a golden-set gap.
+
+Use `--corpus-json <file>` instead of `--pg-dsn` to run against a JSON dump of the
+`documents` rows — useful offline, or to reproduce a report without database access. **Both
+inputs apply the same retrievability filter**, so an offline run reproduces the live one rather
+than inventing gaps the live report never shows. A dumped row that omits `ingestion_status`
+entirely is *kept*: the column cannot be judged if it isn't there, and dropping such rows would
+empty the report and read as "fully covered" — a silent false clean. Dump the column if you want
+the offline run filtered.
+
+### `orphans` — questions whose page is gone
+
+Orphan detection compares the bank against a **freshly expanded live source inventory**, not
+against the ingested corpus. This matters: the ingest never prunes. A page deleted upstream
+still has a corpus row forever, so "it's still in the corpus" is no evidence the page exists,
+and "it's missing from the corpus" is no evidence it was removed. `sitemap-` lines in the
+source list are expanded live (the same expansion the ingest uses); every other line is a
+hand-listed page. A `URL,depth` suffix is stripped exactly as the ingest strips it, so the
+oracle and the corpus agree on what a source line means — otherwise a line like `…/kb/a,2`
+would inventory a URL the corpus never stored and its bank row would read as removed.
+
+The full set of typed source prefixes is mirrored from the ingest's router. `sitemap-` expands;
+`sso-` is stripped (it only tells the ingest to authenticate, so the line is still one page).
+`git-`, `elog-` and `indico-` — plus an unprefixed ELOG/Indico URL the ingest would auto-detect
+— **fan out** into many sub-documents (a git source ingests one document *per file*) that this
+read-only tool cannot enumerate without cloning or crawling. Those sources contribute no URLs
+and are reported as **not enumerable**, which keeps their hosts out of scope so their bank rows
+are never proposed for prune. Without that, `git-https://github.com/org/repo` would parse as
+host `github.com`, put that host in scope, and turn every bank row citing the repo into a false
+orphan.
+
+Three guards keep the pass from crying wolf. Each shows up as its own bucket in the output:
+
+- **Abstention.** Sitemap expansion *fails open* — a sitemap that will not fetch or parse
+  contributes zero URLs with only a warning. If any source document failed, the expansion fell
+  below its configured floor (`--min-pages`), or the inventory came back empty, the run reports
+  `ABSTAINED` on stderr and flags nothing. A partial inventory would make every unlisted page
+  look deleted. Abstention **exits non-zero**: no analysis happened, so it is an operational
+  failure, not a clean bill of health — a cron that treated it as success would hide a broken
+  inventory indefinitely.
+- **Out of scope.** The inventory can only speak for the hosts it actually contains. A row
+  citing an external authority the KB never ingested — the upstream Slurm docs, say — was
+  never in the KB to be removed, so it is listed as out of scope rather than judged.
+- **Needs reconciliation.** A URL that matches only by *slug near-miss* — **same host**, plus the
+  same final page name after ignoring the path prefix, an `.html` extension, and a
+  WordPress-style `-2` collision suffix — is neither an orphan nor a gap. A page that merely moved
+  (`/kb/x` → `/docs/x`) or picked up an alias lands here for a human to confirm. A genuine rename
+  (`running-jobs` → `submitting-jobs`) deliberately does *not* match, so it stays visible as
+  real work.
+
+    The **same-host** requirement matters: the bank cites external authorities (the upstream
+    Slurm docs). Without it, `slurm.schedmd.com/mpi` would "reconcile" a KB page `…/kb/mpi` and
+    hide a genuine coverage gap behind a bogus pairing — `coverage` has no scope guard of its
+    own, unlike `orphans`. When several same-host pages share a leaf slug, **every** candidate is
+    listed rather than the pairing being narrowed to one: that ambiguity is exactly what a human
+    is being asked to settle.
+
+Nothing is ever deleted. An orphan is reported with its row index and the removed URL so you
+can decide whether to re-ground the question, rewrite it, or drop it.
