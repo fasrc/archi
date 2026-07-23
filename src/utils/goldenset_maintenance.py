@@ -157,8 +157,16 @@ def reconcile(
     the `/x` vs `/x/` split (#118) can never masquerade as a difference.
     Unparseable URLs are dropped on either side rather than crashing a read-only
     report. Subject order is preserved and duplicates collapse.
+
+    A near-miss additionally requires the **same normalized host**. The slug key
+    alone is far too weak across hosts: the bank cites external authorities (the
+    upstream Slurm docs), so an unscoped key would let `slurm.schedmd.com/mpi`
+    "reconcile" a KB page `…/kb/mpi` and hide a genuine coverage gap behind a
+    bogus pairing. Coverage has no scope guard of its own — `find_orphans` filters
+    foreign hosts before calling this, but `find_coverage_gaps` does not — so the
+    constraint lives here, where both passes get it.
     """
-    by_key: Dict[str, List[str]] = {}
+    by_key: Dict[Tuple[str, str], List[str]] = {}
     reference: Set[str] = set()
     for raw in reference_urls:
         url = canonical_url(raw)
@@ -167,7 +175,7 @@ def reconcile(
         reference.add(url)
         key = reconciliation_key(url)
         if key is not None:
-            by_key.setdefault(key, []).append(url)
+            by_key.setdefault((_host_of(url), key), []).append(url)
 
     matched: List[str] = []
     near_misses: List[NearMiss] = []
@@ -182,7 +190,7 @@ def reconcile(
             matched.append(url)
             continue
         key = reconciliation_key(url)
-        candidates = by_key.get(key) if key is not None else None
+        candidates = by_key.get((_host_of(url), key)) if key is not None else None
         if key is not None and candidates:
             near_misses.append(
                 NearMiss(url=url, candidates=tuple(sorted(candidates)), key=key)

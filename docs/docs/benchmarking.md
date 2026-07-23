@@ -463,12 +463,19 @@ Three guards keep the pass from crying wolf. Each shows up as its own bucket in 
 - **Out of scope.** The inventory can only speak for the hosts it actually contains. A row
   citing an external authority the KB never ingested — the upstream Slurm docs, say — was
   never in the KB to be removed, so it is listed as out of scope rather than judged.
-- **Needs reconciliation.** A URL that matches only by *slug near-miss* — same final page name
-  after ignoring the path prefix, an `.html` extension, and a WordPress-style `-2` collision
-  suffix — is neither an orphan nor a gap. A page that merely moved (`/kb/x` → `/docs/x`) or
-  picked up an alias lands here for a human to confirm. A genuine rename
+- **Needs reconciliation.** A URL that matches only by *slug near-miss* — **same host**, plus the
+  same final page name after ignoring the path prefix, an `.html` extension, and a
+  WordPress-style `-2` collision suffix — is neither an orphan nor a gap. A page that merely moved
+  (`/kb/x` → `/docs/x`) or picked up an alias lands here for a human to confirm. A genuine rename
   (`running-jobs` → `submitting-jobs`) deliberately does *not* match, so it stays visible as
   real work.
+
+    The **same-host** requirement matters: the bank cites external authorities (the upstream
+    Slurm docs). Without it, `slurm.schedmd.com/mpi` would "reconcile" a KB page `…/kb/mpi` and
+    hide a genuine coverage gap behind a bogus pairing — `coverage` has no scope guard of its
+    own, unlike `orphans`. When several same-host pages share a leaf slug, **every** candidate is
+    listed rather than the pairing being narrowed to one: that ambiguity is exactly what a human
+    is being asked to settle.
 
 Nothing is ever deleted. An orphan is reported with its row index and the removed URL so you
 can decide whether to re-ground the question, rewrite it, or drop it.

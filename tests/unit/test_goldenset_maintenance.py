@@ -334,6 +334,32 @@ class TestReconcile:
 
         assert result.unmatched == (f"{KB}/kb/removed",)
 
+    def test_a_cross_host_slug_match_is_not_a_near_miss(self):
+        # A near-miss claims "these may be the same page under a moved slug".
+        # Two different hosts are never the same page, so pairing them would
+        # suppress a real gap/orphan behind a bogus candidate.
+        result = reconcile([f"{KB}/kb/install"], ["https://vendor.example/install"])
+
+        assert result.near_misses == ()
+        assert result.unmatched == (f"{KB}/kb/install",)
+
+    def test_same_host_duplicate_slugs_are_all_listed_as_candidates(self):
+        # Distinct same-host pages sharing a leaf slug are genuinely ambiguous.
+        # Every candidate is shown so the operator adjudicates; the pairing is
+        # never silently narrowed to one.
+        result = reconcile(
+            [f"{KB}/kb/install"],
+            [f"{KB}/docs/a/install", f"{KB}/docs/b/install"],
+        )
+
+        assert result.near_misses == (
+            NearMiss(
+                url=f"{KB}/kb/install",
+                candidates=(f"{KB}/docs/a/install", f"{KB}/docs/b/install"),
+                key="install",
+            ),
+        )
+
 
 def _doc(path, source_type="web", host=KB):
     """A corpus doc at `host + path`, with the parent label derived like the read."""
@@ -416,6 +442,18 @@ class TestFindCoverageGaps:
 
         assert report.gaps == ()
         assert [near.url for near in report.needs_reconciliation] == [f"{KB}/docs/a"]
+
+    def test_a_cross_host_bank_source_does_not_mask_a_coverage_gap(self):
+        # The bank cites external authorities (18 upstream Slurm-docs rows
+        # today). Coverage has no scope guard of its own, so without a host
+        # constraint in `reconcile` a foreign URL ending in the same slug would
+        # "reconcile" a KB page and hide a real gap behind a bogus pairing.
+        report = find_coverage_gaps(
+            [_doc("/kb/mpi")], [_row("https://slurm.schedmd.com/mpi")]
+        )
+
+        assert [doc.url for doc in report.gaps] == [f"{KB}/kb/mpi"]
+        assert report.needs_reconciliation == ()
 
     def test_a_bank_source_absent_from_the_corpus_is_not_a_coverage_gap(self):
         # That is the orphan question, asked against the live inventory instead.
