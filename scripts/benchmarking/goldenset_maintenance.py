@@ -105,10 +105,41 @@ def read_source_lines(path: str) -> List[str]:
         raise OperationalError(f"cannot read {path}: {exc}") from exc
 
 
-def _print_group(title: str, lines: Sequence[str]) -> None:
-    print(f"\n{title}")
+def _print_group(title: str, lines: Sequence[str], stream=sys.stdout) -> None:
+    print(f"\n{title}", file=stream)
     for line in lines:
-        print(f"  {line}")
+        print(f"  {line}", file=stream)
+
+
+def _sitemap_policy(args: argparse.Namespace, source_lines: Sequence[str]):
+    """Build the sitemap policy the live-inventory expansion runs under.
+
+    The floor is the completeness guard, so it must match the deployment's.
+    ``SitemapPolicy``'s own default is ``min_pages=1``: under it a truncated
+    sitemap (a handful of pages instead of a few hundred) expands
+    "successfully", the inventory reads as complete, and every bank URL missing
+    from that partial response is reported as an orphan. FASRC configures 150.
+    So when the source list actually contains a ``sitemap-`` line, refuse to run
+    without an explicit floor rather than silently judging against 1.
+    """
+    from src.data_manager.collectors.scrapers.sitemap_source import SitemapPolicy
+
+    has_sitemap = any(line.strip().startswith("sitemap-") for line in source_lines)
+    if has_sitemap and args.min_pages is None:
+        raise OperationalError(
+            "refusing to judge orphans against a sitemap without an explicit "
+            "--min-pages floor (match the deployment's sitemap.min_pages). The "
+            "default floor is 1, so a truncated sitemap would read as complete "
+            "and every unlisted bank row would look deleted."
+        )
+    policy = SitemapPolicy()
+    if args.min_pages is not None:
+        policy.min_pages = args.min_pages
+    if args.max_pages is not None:
+        policy.max_pages = args.max_pages
+    if args.allowed_hosts:
+        policy.allowed_hosts = list(args.allowed_hosts)
+    return policy
 
 
 def run_coverage(args: argparse.Namespace) -> int:
@@ -147,19 +178,23 @@ def run_orphans(args: argparse.Namespace) -> int:
     from src.data_manager.collectors.scrapers.sitemap_source import fetch_sitemap_text
 
     bank = load_bank(args.bank)
-    inventory = build_live_inventory(
-        read_source_lines(args.sources), fetch_sitemap_text
-    )
+    source_lines = read_source_lines(args.sources)
+    policy = _sitemap_policy(args, source_lines)
+    inventory = build_live_inventory(source_lines, fetch_sitemap_text, policy)
     report = find_orphans(bank, inventory)
 
     if report.abstained:
+        # An incomplete inventory is an OPERATIONAL failure, not a finding: no
+        # orphan analysis happened. Exiting zero here would let a cron read
+        # "nothing was flagged" as healthy and hide a broken inventory forever.
         print(
             "ABSTAINED — the live source inventory is incomplete, so nothing was "
             "flagged. Orphan detection needs a complete inventory: a partial one "
-            "would make every unlisted page look deleted."
+            "would make every unlisted page look deleted.",
+            file=sys.stderr,
         )
-        _print_group("why", report.reasons)
-        return 0
+        _print_group("why", report.reasons, stream=sys.stderr)
+        return 1
 
     print(
         f"live inventory: {len(inventory.urls)} URLs | {len(report.orphans)} orphans | "
@@ -218,6 +253,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--sources",
         required=True,
         help="Source list; `sitemap-` lines are expanded live.",
+    )
+    orphans.add_argument(
+        "--min-pages",
+        type=int,
+        help=(
+            "Sitemap completeness floor — match the deployment's "
+            "data_manager.sources.links.sitemap.min_pages (FASRC: 150). Required "
+            "when the source list contains a `sitemap-` line; without it a "
+            "truncated sitemap reads as complete and yields false orphans."
+        ),
+    )
+    orphans.add_argument(
+        "--max-pages",
+        type=int,
+        help="Sitemap cap — match the deployment's sitemap.max_pages.",
+    )
+    orphans.add_argument(
+        "--allowed-hosts",
+        nargs="*",
+        help="Extra hosts the sitemap may emit — the deployment's allowed_hosts.",
     )
     orphans.set_defaults(func=run_orphans)
     return parser

@@ -406,13 +406,22 @@ python scripts/benchmarking/goldenset_maintenance.py coverage \
 # Which bank rows cite a page the live KB no longer publishes?
 python scripts/benchmarking/goldenset_maintenance.py orphans \
     --bank examples/benchmarking/fasrc_ragas_queries.json \
-    --sources deploy/fasrc-dev/sources.list
+    --sources deploy/fasrc-dev/sources.list \
+    --min-pages 150
 ```
+
+`--min-pages` is the sitemap **completeness floor** and must match the deployment's
+`data_manager.sources.links.sitemap.min_pages` (FASRC: 150). It is **required** whenever the
+source list contains a `sitemap-` line, and the command refuses to run without it: the library
+default is 1, under which a truncated sitemap expands "successfully" and every bank URL absent
+from that partial response is reported as an orphan. `--max-pages` and `--allowed-hosts` take
+the same values as the deployment config.
 
 **Both are proposal-only.** They print work lists and leave the bank file byte-unchanged;
 adding a question, locking a reference, or pruning an orphan is a separate step you take
 deliberately. Findings **exit zero** — a gap is work to do, not a broken run — so a cron job
-only alarms on an operational failure (unreadable bank, corpus, or source list).
+only alarms on an operational failure: an unreadable bank, corpus, or source list, a missing
+sitemap floor, or an **abstained** run (below).
 
 ### `coverage` — pages with no question
 
@@ -446,8 +455,11 @@ Three guards keep the pass from crying wolf. Each shows up as its own bucket in 
 
 - **Abstention.** Sitemap expansion *fails open* — a sitemap that will not fetch or parse
   contributes zero URLs with only a warning. If any source document failed, the expansion fell
-  below its configured floor, or the inventory came back empty, the run reports `ABSTAINED`
-  and flags nothing. A partial inventory would make every unlisted page look deleted.
+  below its configured floor (`--min-pages`), or the inventory came back empty, the run reports
+  `ABSTAINED` on stderr and flags nothing. A partial inventory would make every unlisted page
+  look deleted. Abstention **exits non-zero**: no analysis happened, so it is an operational
+  failure, not a clean bill of health — a cron that treated it as success would hide a broken
+  inventory indefinitely.
 - **Out of scope.** The inventory can only speak for the hosts it actually contains. A row
   citing an external authority the KB never ingested — the upstream Slurm docs, say — was
   never in the KB to be removed, so it is listed as out of scope rather than judged.

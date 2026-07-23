@@ -150,20 +150,74 @@ class TestOrphansSubcommand:
         assert code == 0
         assert f"{KB}/kb/removed" in out
 
-    def test_abstains_on_an_incomplete_inventory_without_failing_the_run(
-        self, tmp_path, capsys
-    ):
+    def test_an_incomplete_inventory_abstains_and_exits_nonzero(self, tmp_path, capsys):
         script = _load_script()
         bank = _bank(tmp_path, _row(f"{KB}/kb/removed"))
         sources = tmp_path / "sources.list"
         sources.write_text("", encoding="utf-8")
 
         code = script.main(["orphans", "--bank", str(bank), "--sources", str(sources)])
-        out = capsys.readouterr().out
+        captured = capsys.readouterr()
 
-        assert code == 0
-        assert "abstain" in out.lower()
-        assert f"{KB}/kb/removed" not in out
+        # Abstention is an OPERATIONAL failure, not a healthy run: a cron reading
+        # exit 0 would treat "no analysis happened" as "nothing is wrong" and hide
+        # a broken inventory indefinitely. Findings still exit zero; this is not a
+        # finding.
+        assert code != 0
+        assert "abstain" in captured.err.lower()
+        assert f"{KB}/kb/removed" not in captured.out
+
+    def test_a_sitemap_source_without_an_explicit_floor_fails_fast(
+        self, tmp_path, capsys
+    ):
+        script = _load_script()
+        bank = _bank(tmp_path, _row(f"{KB}/kb/a"))
+        sources = tmp_path / "sources.list"
+        sources.write_text(f"sitemap-{KB}/sitemap.xml\n", encoding="utf-8")
+
+        code = script.main(["orphans", "--bank", str(bank), "--sources", str(sources)])
+
+        # Without an explicit floor the library default is min_pages=1, so a
+        # truncated sitemap reads as complete and every unlisted bank row looks
+        # deleted. Refuse to guess rather than emit false orphans.
+        assert code == 1
+        assert "min-pages" in capsys.readouterr().err.lower()
+
+    def test_a_truncated_sitemap_below_the_configured_floor_abstains(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        from src.data_manager.collectors.scrapers import sitemap_source
+
+        script = _load_script()
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            f"<url><loc>{KB}/kb/only-one</loc></url>"
+            "</urlset>"
+        )
+        monkeypatch.setattr(sitemap_source, "fetch_sitemap_text", lambda url: xml)
+
+        bank = _bank(tmp_path, _row(f"{KB}/kb/removed"))
+        sources = tmp_path / "sources.list"
+        sources.write_text(f"sitemap-{KB}/sitemap.xml\n", encoding="utf-8")
+
+        code = script.main(
+            [
+                "orphans",
+                "--bank",
+                str(bank),
+                "--sources",
+                str(sources),
+                "--min-pages",
+                "150",
+            ]
+        )
+        captured = capsys.readouterr()
+
+        # The deployment floor is 150; this sitemap returned 1 page. That is an
+        # incomplete inventory, so the bank row must NOT be called an orphan.
+        assert code != 0
+        assert f"{KB}/kb/removed" not in captured.out
 
     def test_an_out_of_scope_host_is_reported_separately(self, tmp_path, capsys):
         script = _load_script()
