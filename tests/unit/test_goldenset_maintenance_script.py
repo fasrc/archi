@@ -15,6 +15,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import threading
+import time
 from pathlib import Path
 
 _SCRIPT = (
@@ -929,3 +931,52 @@ class TestLedgerDurability:
 
         assert code == 0
         assert ledger.exists()
+
+    def test_two_declines_that_race_both_survive(self, tmp_path):
+        # The lost-update case: a second writer starts while the first still
+        # holds the ledger. Without a lock covering read-merge-write, the second
+        # reads the pre-write state and its atomic replace erases the first
+        # decline -- silently, with both commands reporting success.
+        module = _load_script()
+        ledger = tmp_path / "ledger.json"
+        bank = _bank(tmp_path, _row())
+        result = {}
+
+        def second_writer():
+            result["code"] = module.main(
+                [
+                    "coverage",
+                    "--bank",
+                    str(bank),
+                    "--decline",
+                    f"{KB}/kb/second",
+                    "--ledger",
+                    str(ledger),
+                ]
+            )
+
+        with module.ledger_lock(str(ledger)):
+            worker = threading.Thread(target=second_writer)
+            worker.start()
+            time.sleep(0.2)
+            # The second writer is parked on the lock, so nothing landed yet.
+            assert not ledger.exists()
+            module.write_ledger(str(ledger), [{"url": f"{KB}/kb/first"}])
+
+        worker.join(timeout=10)
+        assert not worker.is_alive()
+        assert result["code"] == 0
+        urls = {e["url"] for e in json.loads(ledger.read_text(encoding="utf-8"))}
+        assert urls == {f"{KB}/kb/first", f"{KB}/kb/second"}
+
+    def test_the_lock_is_a_sidecar_not_the_ledger_itself(self, tmp_path):
+        # `write_ledger` swaps the ledger's inode via os.replace, so a lock held
+        # on the ledger file would be a lock on a file the next writer never
+        # opens -- the lock must live on a path that is never replaced.
+        module = _load_script()
+        ledger = tmp_path / "ledger.json"
+
+        with module.ledger_lock(str(ledger)):
+            module.write_ledger(str(ledger), [{"url": f"{KB}/kb/a"}])
+
+        assert (tmp_path / "ledger.json.lock").exists()

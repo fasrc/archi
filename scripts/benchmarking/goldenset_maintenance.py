@@ -36,9 +36,15 @@ import json
 import os
 import sys
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional, Sequence
+
+try:
+    import fcntl  # POSIX-only; the ledger lock degrades loudly without it.
+except ImportError:  # pragma: no cover - non-POSIX
+    fcntl = None  # type: ignore[assignment]
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -116,6 +122,49 @@ def corpus_rows_from_postgres(dsn: str):
             raise OperationalError(f"cannot read the corpus: {exc}") from exc
 
     return fetch
+
+
+@contextmanager
+def ledger_lock(path: str):
+    """Serialize the ledger read-modify-write across processes.
+
+    Atomicity alone does not make the update safe: two writers can each read the
+    same ledger, append a different URL, and replace the file — the second
+    replacement silently erases the first decline, which then resurfaces as a
+    coverage gap while both commands report success. The lock covers read, merge
+    and replace as one transaction.
+
+    The lock lives on a **sidecar** path, never on the ledger itself:
+    `write_ledger` swaps the ledger's inode via `os.replace`, so a lock taken on
+    the ledger file would be a lock on a file the next writer never opens.
+
+    `fcntl` is POSIX-only. Where it is unavailable the update still runs, but it
+    says so rather than pretending to be serialized.
+    """
+    lock_path = Path(f"{path}.lock")
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OperationalError(f"cannot create ledger lock {lock_path}: {exc}") from exc
+
+    if fcntl is None:  # pragma: no cover - POSIX-only in this deployment
+        print(
+            f"warning: file locking is unavailable here; a concurrent decline "
+            f"could overwrite {path}",
+            file=sys.stderr,
+        )
+        yield
+        return
+
+    try:
+        handle = open(lock_path, "a+", encoding="utf-8")
+    except OSError as exc:
+        raise OperationalError(f"cannot open ledger lock {lock_path}: {exc}") from exc
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        handle.close()  # releases the flock
 
 
 def read_ledger(path: Optional[str]) -> List[Any]:
@@ -278,23 +327,23 @@ def _sitemap_policy(args: argparse.Namespace, source_lines: Sequence[str]):
 def run_decline(args: argparse.Namespace) -> int:
     """Record an operator's dismissal of a page. Touches the ledger, not the bank.
 
-    The ledger is re-read immediately before the merge so the read-modify-write
-    window is two adjacent statements: a decline another session recorded in the
-    meantime is merged rather than clobbered.
+    The whole read-merge-write runs under an exclusive lock, so a decline
+    another session records in the meantime is merged rather than clobbered.
     """
     if not args.ledger:
         raise OperationalError("--decline needs --ledger <path> to record the decision")
-    entries = read_ledger(args.ledger)
-    stamped = with_decline(
-        entries,
-        args.decline,
-        reason=args.reason or "",
-        at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    )
-    if len(stamped) == len(entries):
-        print(f"already declined: {args.decline}")
-        return 0
-    write_ledger(args.ledger, stamped)
+    with ledger_lock(args.ledger):
+        entries = read_ledger(args.ledger)
+        stamped = with_decline(
+            entries,
+            args.decline,
+            reason=args.reason or "",
+            at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        if len(stamped) == len(entries):
+            print(f"already declined: {args.decline}")
+            return 0
+        write_ledger(args.ledger, stamped)
     print(f"declined: {args.decline} -> {args.ledger}")
     return 0
 

@@ -524,12 +524,20 @@ without saying so reads as clean when it isn't. Declining is idempotent (declini
 the first entry and its reason), and an explicit `--propose` on a declined page still works and
 says so: you changed your mind, and the tool names the earlier decision rather than arguing.
 
-The ledger is the **only** file this tool ever writes, and it is written **atomically** — to a
-temp file in the same directory, fsynced, then `os.replace`d over the target. A truncate-then-write
-would lose every decline it held if the write were interrupted, and unlike coverage, a decline
-cannot be re-derived from anything. A missing ledger reads as "nothing declined yet"; a *corrupt*
-one is an operational failure, because reading it as empty would resurface every page you ever
-dismissed.
+The ledger is the **only** file this tool ever writes, and unlike coverage a decline cannot be
+re-derived from anything, so the update is protected twice over:
+
+- **Atomic** — written to a temp file in the same directory, fsynced, then `os.replace`d over the
+  target. A truncate-then-write would lose every decline the file held if the write were
+  interrupted.
+- **Locked** — read, merge and replace run under an exclusive lock on a `<ledger>.lock` sidecar,
+  so two operators (or two agent sessions) declining at once cannot each read the same state and
+  have the second replacement erase the first. The lock is a sidecar rather than the ledger itself
+  because `os.replace` swaps the ledger's inode, and a lock on the old inode would not block the
+  next writer.
+
+A missing ledger reads as "nothing declined yet"; a *corrupt* one is an operational failure,
+because reading it as empty would resurface every page you ever dismissed.
 
 ### `orphans` — questions whose page is gone
 
