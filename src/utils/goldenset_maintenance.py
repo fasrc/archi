@@ -1094,6 +1094,10 @@ def without_decline(entries: Any, url: str) -> List[Dict[str, str]]:
 #: values let an unrecognized rule be reported as *incomparable* instead.
 HASH_ALGORITHM = "sha256"
 
+#: Hex characters in a sha256 digest. A stored value carrying the label but not
+#: this shape is malformed, not a baseline — see :func:`is_comparable_digest`.
+_SHA256_HEX_LENGTH = 64
+
 #: What the LLM diff may conclude. Imposed, never read from the model.
 DRIFT_VERDICTS = ("holds", "broken", "unclear")
 UNCLEAR_VERDICT = "unclear"
@@ -1144,6 +1148,26 @@ def content_digest(text: str) -> str:
     """Return the algorithm-labeled digest of already-normalized text."""
     encoded = text.encode("utf-8")
     return f"{HASH_ALGORITHM}:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def is_comparable_digest(stored: str) -> bool:
+    """Whether a stored baseline is a value a fresh digest could ever equal.
+
+    The `sha256:` label alone is not enough. A hand-edited or half-pasted value
+    keeps the label but loses the digest (`sha256:9f86d0818`), and that can never
+    equal a real hash — so comparing it reports a page that did not move, and
+    with `--model` buys an LLM call to explain a change that never happened. A
+    baseline that is not a well-formed digest is not a baseline; it belongs in
+    the `incomparable` bucket with the unrecognized algorithms, which is where
+    the report already says "this was not checked".
+    """
+    prefix = f"{HASH_ALGORITHM}:"
+    if not stored.startswith(prefix):
+        return False
+    digest = stored[len(prefix) :]
+    return len(digest) == _SHA256_HEX_LENGTH and all(
+        c in "0123456789abcdefABCDEF" for c in digest
+    )
 
 
 def extract_page_text(html: str) -> str:
@@ -1472,15 +1496,15 @@ def _check_source(
         )
     if not stored:
         return SourceCheck(url=url, state=DRIFT_UNBASELINED, fresh=fresh)
-    if not stored.startswith(f"{HASH_ALGORITHM}:"):
+    if not is_comparable_digest(stored):
         return SourceCheck(
             url=url,
             state=DRIFT_INCOMPARABLE,
             stored=stored,
             fresh=fresh,
             detail=(
-                f"the stored hash is not a {HASH_ALGORITHM}: digest, so it cannot "
-                "be compared with a freshly computed one"
+                f"the stored hash is not a well-formed {HASH_ALGORITHM}: digest, "
+                "so it cannot be compared with a freshly computed one"
             ),
         )
     if stored == fresh:

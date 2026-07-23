@@ -798,7 +798,10 @@ gets its own bucket in the report:
 
 - **No baseline recorded** — the row is locked but has no `source_hashes` entry for that URL.
   Nothing to compare against, so it is neither drifted nor clean.
-- **Incomparable baseline** — the stored value is not a `sha256:` digest (see above).
+- **Incomparable baseline** — the stored value is not a well-formed `sha256:` digest (see above):
+  an unrecognized algorithm label, or a hand-edited value that kept the label but lost the digest
+  (`sha256:9f86d0818`). Either way there is nothing a fresh hash could equal, so it is reported as
+  unchecked rather than as a change.
 - **Unreachable** — the fetch failed. Explicitly *not* evidence the page is unchanged.
 - **Refused** — the URL was rejected by the fetch policy above, so it was never contacted.
 - **Stale baselines** — a `source_hashes` entry for a URL the row no longer cites, left behind

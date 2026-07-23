@@ -1654,6 +1654,51 @@ class TestDriftAgainstAHandEditedBank:
 
         assert [c.url for c in report.rows[0].checks] == [url]
 
+    def test_a_truncated_digest_is_incomparable_not_drift(self):
+        # A half-pasted `sha256:` value keeps the label but loses the digest. It
+        # can never equal a fresh hash, so treating it as comparable reports a
+        # page that did not move — and, with --model, buys an LLM call to
+        # explain a change that never happened.
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: "sha256:9f86d0818"})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert report.drifted == ()
+        assert [c.url for c in report.incomparable] == [url]
+
+    def test_a_non_hex_digest_of_the_right_length_is_incomparable(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: "sha256:" + "z" * 64})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert [c.url for c in report.incomparable] == [url]
+
+    def test_a_malformed_digest_is_never_shown_to_the_model(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: "sha256:9f86d0818"})]
+        prompts = []
+
+        _drift(
+            bank,
+            _fetcher_for({url: KB_HTML}),
+            ask_llm=_recording_llm(prompts, '{"verdict": "broken"}'),
+        )
+
+        assert prompts == []
+
+    def test_a_well_formed_digest_still_compares(self):
+        # The guard must reject only malformed values, not tighten what counts
+        # as a real baseline.
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert report.incomparable == ()
+        assert report.drifted == ()
+
     def test_a_json_reply_that_is_not_an_object_is_unclear(self):
         assert parse_drift_verdict('["holds"]').verdict == "unclear"
 
