@@ -1466,6 +1466,58 @@ class TestFindDrift:
 
         assert report.rows[0].stale_baselines == (dropped,)
 
+    def test_emptying_sources_entirely_still_reports_the_stale_baselines(self):
+        # The maximal case of the bucket above: `sources` was cleared but the
+        # map was left behind, so every recorded confirmation now refers to a
+        # page the row no longer cites. Skipping the row as "source-less" hides
+        # exactly the hand edit this bucket exists to catch.
+        dropped = f"{KB}/kb/gone"
+        bank = [_locked(hashes={dropped: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({}))
+
+        assert [row.stale_baselines for row in report.rows] == [(dropped,)]
+
+    def test_a_row_with_only_stale_baselines_counts_as_skipped_not_checked(self):
+        # Nothing was fetched or compared, so the census must not imply it was.
+        dropped = f"{KB}/kb/gone"
+        bank = [_locked(hashes={dropped: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({}))
+
+        assert report.checked_rows == 0
+        assert report.skipped_rows == 1
+        assert report.rows[0].checks == ()
+
+    def test_a_legitimate_source_less_locked_row_produces_no_row(self):
+        # A confirmed `should_refuse` anchor: empty `sources`, no baselines. The
+        # spec makes this lockable on purpose, so it must stay silent.
+        report = _drift([_locked()], _fetcher_for({}))
+
+        assert report.rows == ()
+        assert report.skipped_rows == 1
+
+    def test_unusable_sources_do_not_hide_stale_baselines_either(self):
+        # Same hole one branch further down: the sources list is non-empty but
+        # every entry is junk, so no check is produced and the row would fall
+        # through before the baselines were read.
+        dropped = f"{KB}/kb/gone"
+        bank = [_locked("", None, hashes={dropped: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({}))
+
+        assert [row.stale_baselines for row in report.rows] == [(dropped,)]
+
+    def test_a_draft_row_with_baselines_is_still_not_reported(self):
+        # Drift is locked-only. A draft row's map is not a confirmation history,
+        # so it is not a stale one either.
+        dropped = f"{KB}/kb/gone"
+        bank = [_locked(hashes={dropped: page_digest(KB_HTML)}, status="draft")]
+
+        report = _drift(bank, _fetcher_for({}))
+
+        assert report.rows == ()
+
     def test_every_source_url_is_fetched_once_per_run(self):
         url = f"{KB}/kb/gpu"
         digest = page_digest(KB_HTML)

@@ -806,7 +806,9 @@ gets its own bucket in the report:
 - **Refused** — the URL was rejected by the fetch policy above, so it was never contacted.
 - **Stale baselines** — a `source_hashes` entry for a URL the row no longer cites, left behind
   when someone edited `sources`. Harmless on its own, but it means a recorded confirmation
-  refers to a page that is no longer part of that question.
+  refers to a page that is no longer part of that question. Reported even when `sources` was
+  emptied *completely*, which is the largest version of the same edit — that row is still counted
+  as skipped, because nothing was fetched or compared, but its orphaned baselines are named.
 
 #### Recording a baseline
 

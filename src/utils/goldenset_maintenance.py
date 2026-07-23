@@ -1543,6 +1543,11 @@ def find_drift(
     locked row with no `sources` (the `should_refuse` shape) has nothing to
     check either; locking one must not require a grounding hash.
 
+    A row that was checked over nothing is still read for **stale baselines**,
+    though. `source_hashes` left behind when someone emptied `sources` is the
+    largest version of that finding, and it would otherwise be filed under
+    "source-less" — the one shape the report is supposed to call out.
+
     A row is flagged when **any** of its sources moved, and the changed URL is
     named: a row grounded in three pages where one was rewritten is exactly as
     stale as one grounded in a single rewritten page.
@@ -1567,14 +1572,11 @@ def find_drift(
         if not isinstance(record, dict) or row_status(record) != "locked":
             skipped += 1
             continue
-        sources = record.get("sources")
-        if not isinstance(sources, list) or not sources:
-            skipped += 1
-            continue
         baselines = _baselines(record)
+        sources = record.get("sources")
         cited: List[str] = []
         checks: List[SourceCheck] = []
-        for raw in sources:
+        for raw in sources if isinstance(sources, list) else ():
             if not isinstance(raw, str) or not raw:
                 continue
             url = canonical_url(raw)
@@ -1606,19 +1608,25 @@ def find_drift(
                     allowed_hosts,
                 )
             )
-        if not checks:
-            skipped += 1
-            continue
-        checked += 1
-        rows.append(
-            RowDrift(
-                row_index=index,
-                user_input=str(record.get("user_input") or ""),
-                reference=str(record.get("reference") or ""),
-                checks=tuple(checks),
-                stale_baselines=tuple(u for u in baselines if u not in cited),
-            )
+        row = RowDrift(
+            row_index=index,
+            user_input=str(record.get("user_input") or ""),
+            reference=str(record.get("reference") or ""),
+            checks=tuple(checks),
+            stale_baselines=tuple(u for u in baselines if u not in cited),
         )
+        if checks:
+            checked += 1
+            rows.append(row)
+            continue
+        # Nothing was compared, so the row counts as skipped. But a row whose
+        # `sources` was emptied while its map was left behind is the *maximal*
+        # case of a stale baseline — every recorded confirmation now points at a
+        # page the row no longer cites — and returning early here would hide the
+        # one edit that bucket exists to catch, filed under "source-less".
+        skipped += 1
+        if row.stale_baselines:
+            rows.append(row)
 
     attempted = [check for row in rows for check in row.checks]
     unread = [check for check in attempted if check.state in _UNREAD_STATES]
