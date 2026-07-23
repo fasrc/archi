@@ -578,7 +578,9 @@ re-derived from anything, so the update is protected twice over:
   so two operators (or two agent sessions) declining at once cannot each read the same state and
   have the second replacement erase the first. The lock is a sidecar rather than the ledger itself
   because `os.replace` swaps the ledger's inode, and a lock on the old inode would not block the
-  next writer.
+  next writer. Where the platform cannot provide that lock (`fcntl` is POSIX-only), `--decline`
+  and `--undecline` **refuse** rather than proceed with a warning — the lost update would happen
+  either way and you would have no way to notice. The read-only passes are unaffected.
 
 A missing ledger reads as "nothing declined yet". Anything **malformed fails the run** — bad JSON,
 not an array, or a single entry without a usable `url`. That includes one broken entry among good

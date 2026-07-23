@@ -168,8 +168,11 @@ def ledger_lock(path: str):
     `write_ledger` swaps the ledger's inode via `os.replace`, so a lock taken on
     the ledger file would be a lock on a file the next writer never opens.
 
-    `fcntl` is POSIX-only. Where it is unavailable the update still runs, but it
-    says so rather than pretending to be serialized.
+    `fcntl` is POSIX-only, and where it is missing this **refuses** rather than
+    proceeding with a warning. A warning is not a mitigation — the lost update
+    happens either way, and the operator has no way to notice. Only ledger
+    mutation takes this path; coverage, orphans and `--propose` are read-only and
+    still run.
     """
     lock_path = Path(f"{path}.lock")
     try:
@@ -177,14 +180,13 @@ def ledger_lock(path: str):
     except OSError as exc:
         raise OperationalError(f"cannot create ledger lock {lock_path}: {exc}") from exc
 
-    if fcntl is None:  # pragma: no cover - POSIX-only in this deployment
-        print(
-            f"warning: file locking is unavailable here; a concurrent decline "
-            f"could overwrite {path}",
-            file=sys.stderr,
+    if fcntl is None:
+        raise OperationalError(
+            f"refusing to modify {path}: an exclusive file lock is required and "
+            "`fcntl` is unavailable on this platform. Without it a concurrent "
+            "decline is silently lost, and a decline cannot be rebuilt from the "
+            "bank. Read-only passes (coverage, orphans, --propose) still work."
         )
-        yield
-        return
 
     try:
         handle = open(lock_path, "a+", encoding="utf-8")

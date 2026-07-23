@@ -1201,6 +1201,58 @@ class TestLedgerDurability:
         urls = {e["url"] for e in json.loads(ledger.read_text(encoding="utf-8"))}
         assert urls == {f"{KB}/kb/first", f"{KB}/kb/second"}
 
+    def test_ledger_mutation_is_refused_without_locking_support(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        # Warning and proceeding is not a mitigation: the lost-update race is
+        # exactly what the lock exists to stop, and a decline cannot be
+        # reconstructed from the bank. Refuse the mutation instead.
+        module = _load_script()
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/keep"})
+        before = ledger.read_bytes()
+        monkeypatch.setattr(module, "fcntl", None)
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, f"{KB}/kb/a")),
+                "--decline",
+                f"{KB}/kb/a",
+                "--ledger",
+                str(ledger),
+            ]
+        )
+
+        assert code == 1
+        assert ledger.read_bytes() == before
+        assert "lock" in capsys.readouterr().err
+
+    def test_read_only_passes_still_work_without_locking_support(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        # Only ledger *mutation* needs the lock; refusing the whole tool would
+        # be a bigger loss than the guarantee is worth.
+        module = _load_script()
+        monkeypatch.setattr(module, "fcntl", None)
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, f"{KB}/kb/a")),
+                "--ledger",
+                str(_ledger(tmp_path)),
+            ]
+        )
+
+        assert code == 0
+        assert f"{KB}/kb/a" in capsys.readouterr().out
+
     def test_the_lock_is_a_sidecar_not_the_ledger_itself(self, tmp_path):
         # `write_ledger` swaps the ledger's inode via os.replace, so a lock held
         # on the ledger file would be a lock on a file the next writer never
