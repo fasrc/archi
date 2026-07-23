@@ -83,7 +83,21 @@ from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
 
 
 class OperationalError(Exception):
-    """A failure of the run itself (unreadable input), not a finding."""
+    """A failure of the run itself (unreadable input), not a finding.
+
+    Its implicit promise is "nothing was changed" — every raise site must be on
+    the safe side of any commit point, so an operator can retry.
+    """
+
+
+class LedgerNotDurable(OperationalError):
+    """The ledger WAS replaced, but the change could not be confirmed durable.
+
+    Deliberately breaks the base class's "nothing happened" reading, which is
+    why it is a distinct type: the mutation is committed and in effect. Telling
+    the operator the write failed would have them redo a decision that already
+    landed.
+    """
 
 
 def _load_json(path: str) -> Any:
@@ -215,6 +229,18 @@ def write_ledger(path: str, entries: List[Any]) -> None:
     synced, so a crash right after a successful-looking run could resurrect every
     dismissed page. The temp file is removed on any failure so a failed run
     leaves no litter.
+
+    `os.replace` is the commit point, and the error a caller sees has to match
+    which side of it failed:
+
+    - **before** it — nothing was mutated, so this raises `OperationalError` and
+      the operator can safely retry. The directory handle is opened up front for
+      exactly this reason: a directory that cannot be synced at all then fails
+      while the old ledger is still intact, rather than after the swap.
+    - **after** it — the new ledger *is* the ledger. Only durability is in
+      question, so this raises `LedgerNotDurable`. Reporting that as "cannot
+      write" would tell the operator nothing happened and invite them to redo a
+      change that already took effect.
     """
     target = Path(path)
     try:
@@ -225,7 +251,9 @@ def write_ledger(path: str, entries: List[Any]) -> None:
     payload = json.dumps(entries, indent=2, ensure_ascii=False) + "\n"
     handle = None
     tmp_name = ""
+    dir_fd = None
     try:
+        dir_fd = _open_directory(target.parent)
         fd, tmp_name = tempfile.mkstemp(
             dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
         )
@@ -236,7 +264,6 @@ def write_ledger(path: str, entries: List[Any]) -> None:
         handle.close()
         handle = None
         os.replace(tmp_name, target)
-        _fsync_directory(target.parent)
     except OSError as exc:
         if handle is not None:
             handle.close()
@@ -245,22 +272,34 @@ def write_ledger(path: str, entries: List[Any]) -> None:
                 os.unlink(tmp_name)
             except OSError:  # pragma: no cover - already gone
                 pass
+        if dir_fd is not None:
+            os.close(dir_fd)
         raise OperationalError(f"cannot write ledger {path}: {exc}") from exc
 
+    # --- committed. Everything below is durability, never "did it happen". ---
+    if dir_fd is None:  # pragma: no cover - non-POSIX
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError as exc:
+        raise LedgerNotDurable(
+            f"the ledger {path} WAS updated, but its directory entry could not be "
+            f"synced ({exc}). The change is in effect now and may not survive a "
+            "host crash. Do not retry it — check the storage instead."
+        ) from exc
+    finally:
+        os.close(dir_fd)
 
-def _fsync_directory(directory: Path) -> None:
-    """Persist a directory entry so a completed rename survives a host crash.
 
-    Skipped where directories cannot be opened for reading (non-POSIX), which is
-    the same platform boundary the ledger lock draws.
+def _open_directory(directory: Path) -> Optional[int]:
+    """Open a directory for fsync, or None where that is not a thing.
+
+    Non-POSIX platforms cannot open a directory for reading — the same boundary
+    the ledger lock draws.
     """
     if not hasattr(os, "O_DIRECTORY"):  # pragma: no cover - non-POSIX
-        return
-    fd = os.open(str(directory), os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+        return None
+    return os.open(str(directory), os.O_RDONLY)
 
 
 def read_persisted_document(doc, data_path: Optional[str]) -> str:

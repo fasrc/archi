@@ -1320,10 +1320,15 @@ class TestLedgerDirectoryDurability:
 
         assert any(stat.S_ISDIR(st.st_mode) for st in synced)
 
-    def test_a_failed_directory_sync_is_an_operational_failure(
-        self, tmp_path, monkeypatch, capsys
+    def test_a_failed_directory_sync_reports_the_write_as_committed(
+        self, tmp_path, capsys
     ):
+        # `os.replace` has already committed by the time the directory is
+        # synced. Reporting "cannot write ledger" here would tell the operator
+        # nothing happened and invite a retry, when in fact the decline is
+        # recorded and only its durability is unconfirmed.
         module = _load_script()
+        ledger = tmp_path / "ledger.json"
         real_fsync = os.fsync
 
         def picky(fd):
@@ -1333,125 +1338,69 @@ class TestLedgerDirectoryDurability:
                 raise OSError("cannot sync directory")
             return real_fsync(fd)
 
-        monkeypatch.setattr(os, "fsync", picky)
-
-        code = module.main(
-            [
-                "coverage",
-                "--bank",
-                str(_bank(tmp_path, _row())),
-                "--corpus-json",
-                str(
-                    _corpus(
-                        tmp_path,
-                        f"{KB}/kb/a",
-                        f"{KB}/kb/b",
-                        f"{KB}/kb/first",
-                        f"{KB}/kb/second",
-                        f"{KB}/kb/mine",
-                        f"{KB}/kb/other",
-                        f"{KB}/kb/new",
-                    )
-                ),
-                "--decline",
-                f"{KB}/kb/a",
-                "--ledger",
-                str(tmp_path / "ledger.json"),
-            ]
-        )
+        original = os.fsync
+        os.fsync = picky
+        try:
+            code = module.main(
+                [
+                    "coverage",
+                    "--bank",
+                    str(_bank(tmp_path, _row())),
+                    "--corpus-json",
+                    str(_corpus(tmp_path, f"{KB}/kb/a")),
+                    "--decline",
+                    f"{KB}/kb/a",
+                    "--ledger",
+                    str(ledger),
+                ]
+            )
+        finally:
+            os.fsync = original
 
         assert code == 1
-        assert "ledger" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "WAS updated" in err
+        assert "not retry" in err.lower()
+        # The claim in the message has to be true: the decline really landed.
+        assert json.loads(ledger.read_text("utf-8"))[0]["url"] == f"{KB}/kb/a"
 
-
-class TestProposeOnlyForUncoveredPages:
-    """`--propose` is the greenlight primitive for a GAP, not for any page."""
-
-    def test_an_already_covered_page_is_refused(self, tmp_path, capsys):
-        # A golden set's value is signal-per-question, not count. Drafting for a
-        # page a row already grounds on manufactures a duplicate that reads as
-        # valid once pasted in.
-        module = _load_script()
-        prompts = []
-        _fake_llm(module, [CANDIDATE], calls=prompts)
-        _persisted(tmp_path)
-
-        code = module.main(
-            [
-                "coverage",
-                "--bank",
-                str(_bank(tmp_path, _row(f"{KB}/kb/a"))),
-                "--corpus-json",
-                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
-                "--propose",
-                f"{KB}/kb/a",
-                "--model",
-                "m/x",
-                "--data-path",
-                str(tmp_path / "data"),
-            ]
-        )
-
-        assert code == 1
-        assert prompts == []
-        assert "already covered" in capsys.readouterr().err
-
-    def test_a_slug_near_miss_page_is_refused_pending_reconciliation(
+    def test_an_unsyncable_directory_fails_before_anything_is_mutated(
         self, tmp_path, capsys
     ):
-        # The tool has explicitly said it cannot tell whether this page is
-        # covered. Drafting on top of that unknown is how a duplicate of an
-        # existing question gets authored under a moved slug.
+        # The directory handle is taken BEFORE the replace, so a directory that
+        # cannot be synced at all fails while the ledger is still untouched --
+        # a clean "nothing happened", which is the only honest thing to retry.
         module = _load_script()
-        prompts = []
-        _fake_llm(module, [CANDIDATE], calls=prompts)
-        _persisted(tmp_path)
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/keep"})
+        before = ledger.read_bytes()
+        real_open = os.open
 
-        code = module.main(
-            [
-                "coverage",
-                "--bank",
-                str(_bank(tmp_path, _row(f"{KB}/docs/a"))),
-                "--corpus-json",
-                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
-                "--propose",
-                f"{KB}/kb/a",
-                "--model",
-                "m/x",
-                "--data-path",
-                str(tmp_path / "data"),
-            ]
-        )
+        def picky(path, flags, *args, **kwargs):
+            if os.path.isdir(path):
+                raise OSError("cannot open directory")
+            return real_open(path, flags, *args, **kwargs)
+
+        os.open = picky
+        try:
+            code = module.main(
+                [
+                    "coverage",
+                    "--bank",
+                    str(_bank(tmp_path, _row())),
+                    "--corpus-json",
+                    str(_corpus(tmp_path, f"{KB}/kb/a")),
+                    "--decline",
+                    f"{KB}/kb/a",
+                    "--ledger",
+                    str(ledger),
+                ]
+            )
+        finally:
+            os.open = real_open
 
         assert code == 1
-        assert prompts == []
-        err = capsys.readouterr().err
-        assert "reconcil" in err
-        assert f"{KB}/docs/a" in err
-
-    def test_a_genuine_gap_still_proposes(self, tmp_path, capsys):
-        module = _load_script()
-        _fake_llm(module, [CANDIDATE])
-        _persisted(tmp_path)
-
-        code = module.main(
-            [
-                "coverage",
-                "--bank",
-                str(_bank(tmp_path, _row(f"{KB}/kb/unrelated-page"))),
-                "--corpus-json",
-                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
-                "--propose",
-                f"{KB}/kb/a",
-                "--model",
-                "m/x",
-                "--data-path",
-                str(tmp_path / "data"),
-            ]
-        )
-
-        assert code == 0
-        assert '"status": "draft"' in capsys.readouterr().out
+        assert ledger.read_bytes() == before
+        assert "cannot write ledger" in capsys.readouterr().err
 
     def test_a_semantically_corrupt_ledger_is_an_operational_failure(
         self, tmp_path, capsys

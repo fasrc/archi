@@ -571,7 +571,9 @@ re-derived from anything, so the update is protected twice over:
   over the target, and then the parent directory is fsynced too. A truncate-then-write would lose
   every decline the file held if the write were interrupted; syncing only the file leaves the
   *rename* unpersisted, so a host crash right after an apparently successful run could resurrect
-  every dismissed page.
+  every dismissed page. Errors are reported relative to that commit point: a failure **before**
+  the replace says the ledger could not be written and is safe to retry, while a failure to sync
+  the directory **after** it says the change *was* made but is unconfirmed — do not redo it.
 - **Locked** — read, merge and replace run under an exclusive lock on a `<ledger>.lock` sidecar,
   so two operators (or two agent sessions) declining at once cannot each read the same state and
   have the second replacement erase the first. The lock is a sidecar rather than the ledger itself
