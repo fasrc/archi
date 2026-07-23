@@ -44,7 +44,7 @@
 ## 7. Determinism guarantee
 
 - [x] 7.1 Write a failing test scraping the same fixture seeds twice — once at `scrape_workers=1`, once at `scrape_workers=8` — asserting the **set of persisted resource URLs is identical** and both return the same total.
-- [ ] 7.2 Write a test asserting no resource is dropped or duplicated under concurrency (persisted URL multiset has no unexpected repeats).
+- [x] 7.2 Write a test asserting no resource is dropped or duplicated under concurrency (persisted URL multiset has no unexpected repeats).
 - [ ] 7.3 Verify the pre-loop sitemap dedup (`collect_all_from_config`, `:125-147`) is unaffected — the pool receives an already-deduped list and does not re-dedup.
 
 ## 8. Gate, docs, and PR
