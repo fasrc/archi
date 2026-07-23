@@ -453,6 +453,142 @@ entirely is *kept*: the column cannot be judged if it isn't there, and dropping 
 empty the report and read as "fully covered" — a silent false clean. Dump the column if you want
 the offline run filtered.
 
+### `coverage --propose` — draft questions for one greenlit page
+
+A gap is a suggestion, not an order. Nothing drafts a question until you name a page — **one page
+per invocation, deliberately**. The filters above narrow what you *review*; they never batch a
+decision. Drafting for every page under a path glob is the auto-covering this design rejects: a
+golden set's value is signal per question, not count, and a hundred machine-drafted rows on a
+low-value source is debt someone has to read. Working through a large source is a loop over
+single greenlights — which is what the conversational skill does on your behalf.
+
+```bash
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn "postgresql://archi@localhost/archi-db" \
+    --propose https://docs.rc.fas.harvard.edu/kb/running-jobs \
+    --model anthropic/claude-sonnet-5 \
+    --data-path ~/.archi/archi-fasrc-dev/data \
+    --count 3
+```
+
+Candidates are grounded in the **persisted document** — the converted text on disk at
+`documents.file_path`, which is what got chunked, embedded, and is served at query time — and
+**never in a live re-fetch**. That distinction is the whole point: ingestion is URL-keyed and
+skips the content write for a page it already holds, so the live page can be *ahead* of the
+index. Grounding in live text would author a question about a fact the retriever cannot serve —
+the same unanswerable-question trap the retrievability filter closes, one layer down. `--data-path`
+is the deployment's data root, which `file_path` resolves against; `--propose` refuses without it
+rather than falling back to a fetch.
+
+The drafts print as a JSON array ready to paste into the bank — **the run writes nothing**.
+Applying a candidate is your edit, and reviewing it before that edit is the point.
+
+Three properties are imposed by the tool, not accepted from the model:
+
+- **`status` is always `draft`.** There is no code path that emits a locked candidate, so a
+  confused or hostile reply cannot smuggle one in. Locking stays a human act on an applied row.
+- **`sources` is always the page you greenlit.** Whatever URL the model cites, the row cites
+  the page you named — grounding is the tool's guarantee.
+- **`anchor_type` must be `easy_retrieve` or `reasoning`.** Anything else is rejected with a
+  reason printed to stderr rather than silently relabeled. `should_refuse` is rejected too: those
+  rows carry **no** `sources` by design, so one "grounded in" a page is a contradiction.
+
+`--propose` drafts for a **gap**, and refuses anything else:
+
+- a URL **already covered** by a bank row — a second question on a covered page adds count, not
+  signal, and reads as valid once pasted in;
+- a URL that is a **slug near-miss** for a covered one — the tool has said it cannot tell whether
+  the page is covered, so drafting on top of that unknown is how a duplicate gets authored under
+  the moved slug. Reconcile first;
+- a URL not in the **retrievable** corpus, one whose row carries no `file_path`, and one whose
+  persisted document is missing or empty.
+
+Every one of those refusals exits non-zero instead of degrading to a live fetch.
+
+It also refuses any `file_path` that resolves **outside `--data-path`** — absolute, `..`-relative,
+or via a symlink — before reading a byte. `file_path` comes from the catalog or from a
+`--corpus-json` dump you were handed, and its contents are sent to an external model provider, so
+an unchecked path is a file-disclosure channel off the machine. The same check catches the dull
+case: a stale path that would silently ground a question in an unrelated file. Absolute paths
+*inside* the data root are still fine, matching what the catalog itself stores.
+
+If every candidate is rejected the run also exits **non-zero** — a propose run that produced
+nothing is a failed run, not a finding, which is the opposite of how gaps and orphans exit.
+
+### The decision ledger — declines only
+
+Some pages will never earn a question. Record that once instead of re-reading it every run:
+
+```bash
+# dismiss a page
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn "postgresql://archi@localhost/archi-db" \
+    --decline https://docs.rc.fas.harvard.edu/kb/contact \
+    --reason "contact page — nothing to ask" \
+    --ledger .ralph/log/goldenset-declines.json
+
+# change your mind — the supported reversal
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --undecline https://docs.rc.fas.harvard.edu/kb/contact \
+    --ledger .ralph/log/goldenset-declines.json
+
+# later runs suppress it
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn "postgresql://archi@localhost/archi-db" \
+    --ledger .ralph/log/goldenset-declines.json
+```
+
+`--decline` obeys the **same gap rule as `--propose`**: it needs a corpus, and it refuses a page
+that is already covered, is a slug near-miss, or is not in the retrievable corpus. The two flags
+are the two dispositions of one decision — "this gap earns a question" and "it does not" — and
+neither is a claim you are in a position to make about a page you never reviewed as a gap.
+Recording a typo'd or covered URL would sit in the ledger and silently suppress that page if it
+ever *became* a gap.
+
+`--propose` **refuses** a page whose decline still stands, pointing you at `--undecline`.
+Overriding the decline for just that one run would be worse than useless: the
+drafts start out unapplied, so nothing covers the page, and the stale entry would keep hiding it
+from every later report — a permanent false-clean with no recovery but hand-editing the file.
+
+The ledger records **declines only** — never "drafted" or "covered". That asymmetry is
+deliberate: covered-ness is re-derived from the bank every run, so a page whose candidates you
+drafted and then abandoned stays a visible gap until a row actually lands. A ledger that also
+suppressed drafted URLs would make that abandoned page read as clean forever.
+
+Suppressed pages are **counted and listed**, not silently filtered — a report that hides pages
+without saying so reads as clean when it isn't. Declining is idempotent (declining twice keeps
+the first entry and its reason), and undeclining a page that was never declined is a no-op that
+says so.
+
+The ledger is the **only** file this tool ever writes, and unlike coverage a decline cannot be
+re-derived from anything, so the update is protected twice over:
+
+- **Atomic and durable** — written to a temp file in the same directory, fsynced, `os.replace`d
+  over the target, and then the parent directory is fsynced too. A truncate-then-write would lose
+  every decline the file held if the write were interrupted; syncing only the file leaves the
+  *rename* unpersisted, so a host crash right after an apparently successful run could resurrect
+  every dismissed page. Errors are reported relative to that commit point: a failure **before**
+  the replace says the ledger could not be written and is safe to retry, while a failure to sync
+  the directory **after** it says the change *was* made but is unconfirmed — do not redo it.
+- **Locked** — read, merge and replace run under an exclusive lock on a `<ledger>.lock` sidecar,
+  so two operators (or two agent sessions) declining at once cannot each read the same state and
+  have the second replacement erase the first. The lock is a sidecar rather than the ledger itself
+  because `os.replace` swaps the ledger's inode, and a lock on the old inode would not block the
+  next writer. Where the platform cannot provide that lock (`fcntl` is POSIX-only), `--decline`
+  and `--undecline` **refuse** rather than proceed with a warning — the lost update would happen
+  either way and you would have no way to notice. The read-only passes are unaffected.
+
+A missing ledger reads as "nothing declined yet". Anything **malformed fails the run** — bad JSON,
+not an array, or a single entry without a usable `url`. That includes one broken entry among good
+ones: a dropped decline fails in the visible direction (the page just reappears as a gap) but it
+does so silently on an otherwise green run, and a decline is the one record here that cannot be
+re-derived from the bank. Declining into a ledger the tool cannot fully read is refused for the
+same reason.
+
 ### `orphans` — questions whose page is gone
 
 Orphan detection compares the bank against a **freshly expanded live source inventory**, not

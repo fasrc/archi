@@ -36,11 +36,11 @@
 
 ## 3. Coverage candidate proposal (greenlit-only, TDD)
 
-- [ ] 3.1 TDD: `coverage --propose <url>` drafts grounded candidate questions for a greenlit page as `status: draft`, with `sources` set and references left draft (LLM client injected/faked).
-- [ ] 3.2 TDD: `--propose` never drafts for a non-greenlit page and never locks a proposed candidate.
-- [ ] 3.3 TDD: proposals are emitted for review only — the bank JSON file is byte-unchanged by a `--propose` run (writing a candidate in is a separate human-applied step).
-- [ ] 3.4 TDD: the decision ledger records **declines only**; `coverage` suppresses declined URLs but re-derives *covered* from the current bank, so a greenlit-but-unapplied page (candidates drafted, no bank row added) still appears as a gap; declining a page (operator skip) appends to the ledger.
-- [ ] 3.5 **Docs (same PR):** document `coverage --propose`, the greenlight flow, and the declines-only ledger in `docs/docs/benchmarking.md`.
+- [x] 3.1 TDD: `coverage --propose <url>` drafts grounded candidate questions for a greenlit page as `status: draft`, with `sources` set and references left draft (LLM client injected/faked).
+- [x] 3.2 TDD: `--propose` never drafts for a non-greenlit page and never locks a proposed candidate.
+- [x] 3.3 TDD: proposals are emitted for review only — the bank JSON file is byte-unchanged by a `--propose` run (writing a candidate in is a separate human-applied step).
+- [x] 3.4 TDD: the decision ledger records **declines only**; `coverage` suppresses declined URLs but re-derives *covered* from the current bank, so a greenlit-but-unapplied page (candidates drafted, no bank row added) still appears as a gap; declining a page (operator skip) appends to the ledger.
+- [x] 3.5 **Docs (same PR):** document `coverage --propose`, the greenlight flow, and the declines-only ledger in `docs/docs/benchmarking.md`.
 
 ## 4. Fact-drift detection (hash tripwire → LLM diff, TDD)
 

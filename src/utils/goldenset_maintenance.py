@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 from urllib.parse import urlparse
 
@@ -64,12 +65,17 @@ class CorpusDoc:
 
     `url` is normalized with the ingest's own `normalize_page_url`. `parent` is
     the grouping label (host for web, repo for git) used to keep the coverage
-    report per-source rather than a flat dump.
+    report per-source rather than a flat dump. `file_path` is the persisted
+    document — the *converted* text that was chunked and embedded, which is what
+    the retriever actually serves and therefore the only honest thing to ground
+    a golden question in. It defaults to empty so a JSON dump that omits the
+    column still produces a gap report.
     """
 
     url: str
     source_type: str
     parent: str
+    file_path: str = ""
 
 
 def parent_source(url: str, source_type: str) -> str:
@@ -245,14 +251,51 @@ def read_corpus_docs(fetch_rows: CorpusRowFetcher) -> List[CorpusDoc]:
             continue
         seen.add(url)
         source_type = row.get("source_type") or ""
+        file_path = row.get("file_path")
         docs.append(
             CorpusDoc(
                 url=url,
                 source_type=source_type,
                 parent=parent_source(url, source_type),
+                file_path=file_path if isinstance(file_path, str) else "",
             )
         )
     return docs
+
+
+def resolve_persisted_path(file_path: str, data_path: str) -> Optional[Path]:
+    """Locate the persisted document on disk, contained under the data root.
+
+    `documents.file_path` is stored relative to the deployment's data path — or
+    absolute, which `catalog_postgres._resolve_path` accepts as already resolved.
+    Both forms are honored here, but the **resolved** path must sit under the
+    resolved data root or this raises.
+
+    Containment is not optional politeness. `file_path` arrives from the catalog
+    or from an operator-supplied `--corpus-json` dump, and the file it names is
+    read and sent to an external model provider — so an unchecked `..` or
+    absolute path is a file-disclosure channel out of the machine. The same check
+    catches the boring case: a stale path that would silently ground a golden
+    question in an unrelated file.
+
+    Both sides are `resolve()`d, so a symlink inside the data root that points
+    out of it is caught too, and containment is compared by path component so a
+    sibling root (`/srv/data-old` against `/srv/data`) is not mistaken for a
+    child. Returns None only when the row carries no path at all.
+    """
+    if not file_path:
+        return None
+    root = Path(data_path).resolve()
+    candidate = Path(file_path)
+    resolved = (candidate if candidate.is_absolute() else root / candidate).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        raise ValueError(
+            f"persisted document {file_path!r} resolves to {resolved}, outside the "
+            f"data root {root} — refusing to read it"
+        ) from None
+    return resolved
 
 
 def bank_source_urls(bank: Iterable[Any]) -> List[str]:
@@ -284,15 +327,23 @@ def bank_source_urls(bank: Iterable[Any]) -> List[str]:
 
 @dataclass(frozen=True)
 class CoverageReport:
-    """Which ingested pages the bank does and does not ground against."""
+    """Which ingested pages the bank does and does not ground against.
+
+    `suppressed` is reported rather than filtered away: a report that silently
+    hides pages reads as clean when it is not.
+    """
 
     gaps: Tuple[CorpusDoc, ...]
     covered: Tuple[CorpusDoc, ...]
     needs_reconciliation: Tuple[NearMiss, ...]
+    suppressed: Tuple[CorpusDoc, ...] = ()
 
 
 def find_coverage_gaps(
-    corpus_docs: Iterable[CorpusDoc], bank: Iterable[Any]
+    corpus_docs: Iterable[CorpusDoc],
+    bank: Iterable[Any],
+    *,
+    declined: Iterable[str] = (),
 ) -> CoverageReport:
     """Report ingested pages that no current bank row references in `sources`.
 
@@ -300,14 +351,23 @@ def find_coverage_gaps(
     candidates for a page never marks it covered — only an applied bank row
     citing it does. A page that matches a bank source only by slug near-miss is
     reported for reconciliation instead of being called a gap.
+
+    `declined` holds URLs an operator explicitly dismissed (the decision
+    ledger). They move to `suppressed` rather than to `covered`: a declined page
+    has no question and never will, so calling it covered would overstate the
+    bank's reach. A decline is only ever consulted for a page that is *still* a
+    gap — once a row cites the page it is covered, decline or not.
     """
     docs = list(corpus_docs)
     by_url = {doc.url: doc for doc in docs}
     result = reconcile(by_url, bank_source_urls(bank))
+    skip = {url for url in (canonical_url(raw) for raw in declined) if url}
+    gaps = [by_url[url] for url in result.unmatched if url in by_url]
     return CoverageReport(
-        gaps=tuple(by_url[url] for url in result.unmatched if url in by_url),
+        gaps=tuple(doc for doc in gaps if doc.url not in skip),
         covered=tuple(by_url[url] for url in result.matched if url in by_url),
         needs_reconciliation=result.near_misses,
+        suppressed=tuple(doc for doc in gaps if doc.url in skip),
     )
 
 
@@ -627,3 +687,364 @@ def find_orphans(bank: Iterable[Any], inventory: LiveInventory) -> OrphanReport:
         abstained=False,
         reasons=(),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Decision ledger — DECLINES only (design D3)
+# --------------------------------------------------------------------------- #
+# The ledger records the one decision the conversational greenlight path cannot
+# otherwise remember: "I looked at this page and it does not earn a question."
+# It deliberately does NOT record "drafted" or "covered". Covered-ness is
+# re-derived from the bank every run, so a page whose candidates were proposed
+# and then abandoned stays a visible gap until a row actually lands. A ledger
+# that also suppressed "drafted" URLs would make that abandoned page read as
+# clean forever — the silent-false-negative failure this whole module avoids.
+
+
+@dataclass(frozen=True)
+class Decline:
+    """One operator dismissal of an uncovered page.
+
+    `url` is stored canonical, so a ledger hand-edited with a trailing slash
+    still matches the corpus — a decline that silently stops working is worse
+    than no decline at all.
+    """
+
+    url: str
+    reason: str = ""
+    at: str = ""
+
+
+def read_declines(entries: Any) -> Tuple[Decline, ...]:
+    """Parse ledger entries, failing closed on anything malformed.
+
+    Every entry must be a JSON object with a `url` that canonicalizes. A bad one
+    raises, naming its index, rather than being skipped.
+
+    Skipping looked defensible — a dropped decline fails in the *visible*
+    direction, since the page simply reappears as a gap. But it fails silently,
+    on an otherwise green run, and a decline is the one record here that cannot
+    be re-derived from the bank. A corrupt ledger *file* is already an
+    operational failure for exactly that reason; a corrupt *entry* is the same
+    failure at a finer grain, and treating them differently was a threshold set
+    by count rather than by principle.
+
+    This is deliberately stricter than `bank_source_urls`, which does skip
+    mangled rows: the bank is large, hand-authored, and a skipped row only
+    over-reports a gap. The ledger is small and machine-written, so a malformed
+    entry means something is actually wrong.
+    """
+    if not isinstance(entries, list):
+        raise ValueError("ledger is not a list of decline entries")
+    declines: List[Decline] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise ValueError(f"ledger entry {index} is not a JSON object")
+        url = entry.get("url")
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError(f"ledger entry {index} has no usable `url`")
+        canonical = canonical_url(url)
+        if canonical is None:
+            raise ValueError(f"ledger entry {index} has an unparseable url {url!r}")
+        declines.append(
+            Decline(
+                url=canonical,
+                reason=str(entry.get("reason") or ""),
+                at=str(entry.get("at") or ""),
+            )
+        )
+    return tuple(declines)
+
+
+def declined_urls(declines: Iterable[Decline]) -> Set[str]:
+    """The canonical URL set to suppress.
+
+    Canonicalization happens in `read_declines`, so nothing can be dropped here.
+    """
+    return {decline.url for decline in declines}
+
+
+def with_decline(
+    entries: Any, url: str, *, reason: str = "", at: str = ""
+) -> List[Dict[str, str]]:
+    """Return the ledger entries plus `url`, without mutating the input.
+
+    Idempotent by canonical URL: declining the same page twice keeps the first
+    entry (and its reason), so a repeated dismissal never grows the file.
+
+    Raises if the existing ledger is malformed — appending to a ledger the tool
+    cannot fully read would present the surviving subset as authoritative while
+    carrying the broken entries forward unnoticed.
+    """
+    existing = list(entries) if isinstance(entries, list) else []
+    read_declines(existing)
+    canonical = canonical_url(url)
+    if canonical is None:
+        raise ValueError(f"cannot decline an unusable URL: {url!r}")
+    if canonical in declined_urls(read_declines(existing)):
+        return existing
+    entry: Dict[str, str] = {"url": canonical}
+    if reason:
+        entry["reason"] = reason
+    if at:
+        entry["at"] = at
+    return existing + [entry]
+
+
+# --------------------------------------------------------------------------- #
+# Greenlit-only candidate proposal (design D3 / D4)
+# --------------------------------------------------------------------------- #
+#: Anchor types a page-grounded candidate may carry. `should_refuse` is absent
+#: on purpose: those rows carry NO `sources` by design (they test that the agent
+#: declines rather than that it retrieves), so one "grounded in" a page is a
+#: contradiction in terms.
+GROUNDED_ANCHOR_TYPES = ("easy_retrieve", "reasoning")
+
+#: Every proposed candidate is a draft. There is no locked path here at all —
+#: locking is a human act on an applied row (group 1's `status` lifecycle).
+DRAFT_STATUS = "draft"
+
+#: Page text handed to the model, in characters. A KB article is a few thousand;
+#: the cap exists so a pathological page cannot blow the context window (and the
+#: request budget) on a run an operator expects to be cheap.
+MAX_PROMPT_PAGE_CHARS = 24_000
+
+#: Takes a prompt, returns the model's raw reply. Injected so tests need no LLM.
+AskLLM = Callable[[str], str]
+
+
+class ProposalError(Exception):
+    """The proposal run itself failed — not "this page yielded nothing"."""
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """A proposed bank row, always a draft, always grounded in one page.
+
+    `status` is deliberately NOT a field: there is no way to express a locked
+    candidate, so a confused or hostile model reply cannot smuggle one through a
+    validation gap. `sources` is set by the tool from the greenlit URL, never
+    read from the model, so "grounded" is a property of the type rather than a
+    promise the model is trusted to keep.
+    """
+
+    user_input: str
+    reference: str
+    anchor_type: str
+    sources: Tuple[str, ...]
+    notes: str = ""
+
+    def as_row(self) -> Dict[str, Any]:
+        """The bank-shaped dict, in the field order the bank file uses."""
+        return {
+            "anchor_type": self.anchor_type,
+            "status": DRAFT_STATUS,
+            "user_input": self.user_input,
+            "sources": list(self.sources),
+            "reference": self.reference,
+            "source_match_field": ["url"],
+            "notes": self.notes,
+        }
+
+
+@dataclass(frozen=True)
+class RejectedCandidate:
+    """A model-proposed candidate the sanitizer refused, and why."""
+
+    reason: str
+    raw: Any
+
+
+@dataclass(frozen=True)
+class Proposal:
+    """The outcome of one `--propose` run over one greenlit page."""
+
+    url: str
+    candidates: Tuple[Candidate, ...]
+    rejected: Tuple[RejectedCandidate, ...]
+
+
+_PROMPT_TEMPLATE = """\
+You are drafting candidate questions for a RAG benchmark's golden-answer set.
+
+Write {count} question/answer pairs that are answerable ONLY from the page below.
+Rules:
+- The answer must be stated in the page text. Do not use outside knowledge.
+- Keep each answer to one or two sentences, quoting the page's own specifics
+  (flag names, paths, commands) rather than paraphrasing them away.
+- `anchor_type` is one of: {types}.
+  Use "easy_retrieve" when one passage answers it outright; use "reasoning" when
+  answering requires combining two or more parts of the page.
+- Skip anything the page does not actually settle. Fewer good pairs beats
+  padding.
+
+Page URL: {url}
+Page text:
+---
+{page_text}
+---
+
+Reply with ONLY a JSON array of objects, each with the keys "user_input",
+"reference", "anchor_type", and an optional short "notes". No prose, no fences.
+"""
+
+
+def build_candidate_prompt(url: str, page_text: str, *, count: int = 3) -> str:
+    """Compose the grounding prompt for one page."""
+    text = page_text.strip()
+    if len(text) > MAX_PROMPT_PAGE_CHARS:
+        text = text[:MAX_PROMPT_PAGE_CHARS] + "\n[... page truncated ...]"
+    return _PROMPT_TEMPLATE.format(
+        count=count,
+        types=", ".join(f'"{t}"' for t in GROUNDED_ANCHOR_TYPES),
+        url=url,
+        page_text=text,
+    )
+
+
+def _strip_code_fence(raw: str) -> str:
+    """Drop a ```json fence a model may wrap its reply in."""
+    text = raw.strip()
+    if not text.startswith("```"):
+        return text
+    lines = text.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def _candidate_records(raw: str) -> List[Any]:
+    """Parse the model reply into a list of candidate records.
+
+    Raises rather than returning `[]` on unparseable output: zero candidates
+    from a broken reply must not read as "this page has nothing worth asking".
+    """
+    import json
+
+    try:
+        parsed = json.loads(_strip_code_fence(raw))
+    except ValueError as exc:
+        raise ProposalError(f"model reply was not JSON: {exc}") from exc
+    if isinstance(parsed, dict):
+        parsed = parsed.get("candidates")
+    if not isinstance(parsed, list):
+        raise ProposalError("model reply was not a JSON array of candidates")
+    return parsed
+
+
+def parse_candidates(raw: str, url: str) -> Proposal:
+    """Sanitize a model reply into grounded draft candidates.
+
+    Everything that matters is imposed by this function, not accepted from the
+    model: the source URL, the draft status, and the anchor-type vocabulary. The
+    model contributes only the question and the answer text. Rejected records
+    are returned with a reason rather than dropped, so a run that quietly
+    produced nothing is distinguishable from one that produced nothing useful.
+    """
+    source = canonical_url(url)
+    if source is None:
+        raise ProposalError(f"cannot ground candidates in an unusable URL: {url!r}")
+
+    candidates: List[Candidate] = []
+    rejected: List[RejectedCandidate] = []
+    for record in _candidate_records(raw):
+        if not isinstance(record, dict):
+            rejected.append(RejectedCandidate("not a JSON object", record))
+            continue
+        anchor_type = record.get("anchor_type")
+        if anchor_type == "should_refuse":
+            rejected.append(
+                RejectedCandidate(
+                    "should_refuse rows carry no sources and cannot be grounded "
+                    "in a page",
+                    record,
+                )
+            )
+            continue
+        if anchor_type not in GROUNDED_ANCHOR_TYPES:
+            rejected.append(
+                RejectedCandidate(
+                    f"anchor_type {anchor_type!r} is not one of "
+                    f"{', '.join(GROUNDED_ANCHOR_TYPES)}",
+                    record,
+                )
+            )
+            continue
+        user_input = str(record.get("user_input") or "").strip()
+        reference = str(record.get("reference") or "").strip()
+        if not user_input:
+            rejected.append(RejectedCandidate("blank user_input", record))
+            continue
+        if not reference:
+            rejected.append(RejectedCandidate("blank reference", record))
+            continue
+        notes = str(record.get("notes") or "").strip()
+        candidates.append(
+            Candidate(
+                user_input=user_input,
+                reference=reference,
+                anchor_type=anchor_type,
+                sources=(source,),
+                notes=_provenance_note(notes, source),
+            )
+        )
+    return Proposal(url=source, candidates=tuple(candidates), rejected=tuple(rejected))
+
+
+def _provenance_note(model_note: str, source: str) -> str:
+    """Stamp where a candidate came from, keeping any note the model wrote.
+
+    The bank's convention is that `notes` carries the DRAFT provenance a human
+    needs in order to confirm a row later, so an unreviewed machine draft must
+    be self-identifying rather than indistinguishable from an authored row.
+    """
+    stamp = f"DRAFT — proposed by goldenset_maintenance from {source}; unreviewed."
+    return f"{model_note} {stamp}".strip() if model_note else stamp
+
+
+def propose_candidates(
+    url: str, page_text: str, ask_llm: AskLLM, *, count: int = 3
+) -> Proposal:
+    """Draft grounded candidates for one greenlit page. Writes nothing.
+
+    "Greenlit" is the fact that a caller named this URL: nothing here scans for
+    pages to propose against, so there is no path by which an unattended run
+    drafts anything. The bank file is never opened.
+
+    Both preconditions are checked BEFORE the model is called, so a run that
+    cannot possibly produce a grounded candidate does not spend a request first.
+    The canonical URL is what reaches the prompt, so the page the model is told
+    it is reading is the same one the resulting row cites.
+    """
+    source = canonical_url(url)
+    if source is None:
+        raise ProposalError(f"cannot ground candidates in an unusable URL: {url!r}")
+    if not page_text or not page_text.strip():
+        raise ProposalError(
+            f"no page text extracted for {source} — cannot ground a candidate in "
+            "an empty page"
+        )
+    return parse_candidates(
+        ask_llm(build_candidate_prompt(source, page_text, count=count)), source
+    )
+
+
+def without_decline(entries: Any, url: str) -> List[Dict[str, str]]:
+    """Return the ledger entries minus `url`, without mutating the input.
+
+    The reversal a decline otherwise has no path back from. Matching is by
+    canonical URL, so an entry written under a different slash form is still
+    found — a reversal that silently misses is how a page stays suppressed while
+    the operator believes they cleared it.
+    """
+    existing = list(entries) if isinstance(entries, list) else []
+    canonical = canonical_url(url)
+    if canonical is None:
+        raise ValueError(f"cannot undecline an unusable URL: {url!r}")
+    kept: List[Dict[str, str]] = []
+    for entry, decline in zip(existing, read_declines(existing)):
+        if decline.url != canonical:
+            kept.append(entry)
+    return kept

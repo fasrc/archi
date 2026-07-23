@@ -22,6 +22,9 @@ Postgres or the network.
 from __future__ import annotations
 
 import copy
+from pathlib import Path
+
+import pytest
 
 from src.data_manager.collectors.scrapers.sitemap_source import (
     SitemapFetchError,
@@ -29,18 +32,27 @@ from src.data_manager.collectors.scrapers.sitemap_source import (
 )
 from src.utils.goldenset_maintenance import (
     CorpusDoc,
+    Decline,
     LiveInventory,
     NearMiss,
+    ProposalError,
     bank_source_urls,
     build_live_inventory,
+    declined_urls,
     filter_docs,
     find_coverage_gaps,
     find_orphans,
     group_by_parent,
     parent_source,
+    parse_candidates,
+    propose_candidates,
     read_corpus_docs,
+    read_declines,
     reconcile,
     reconciliation_key,
+    resolve_persisted_path,
+    with_decline,
+    without_decline,
 )
 
 
@@ -855,3 +867,390 @@ class TestFindOrphans:
         find_orphans(bank, _inventory(f"{KB}/kb/a"))
 
         assert bank == before
+
+
+# --------------------------------------------------------------------------- #
+# Group 3 — decision ledger + greenlit-only candidate proposal
+# --------------------------------------------------------------------------- #
+class TestDeclineLedger:
+    """3.4 — the ledger records DECLINES only; covered-ness comes from the bank."""
+
+    def test_reads_entries_into_declines(self):
+        declines = read_declines(
+            [{"url": f"{KB}/kb/a", "reason": "minor page", "at": "2026-07-22"}]
+        )
+
+        assert declines == (
+            Decline(url=f"{KB}/kb/a", reason="minor page", at="2026-07-22"),
+        )
+
+    def test_a_malformed_entry_fails_the_run_instead_of_vanishing(self):
+        # A dropped decline is a dropped operator decision. It fails in the
+        # visible direction (the page resurfaces as a gap) but it fails
+        # SILENTLY, on a green run — and a decline cannot be reconstructed from
+        # anything. A corrupt *file* is already fatal; a corrupt *entry* is the
+        # same failure at a finer grain and gets the same treatment.
+        with pytest.raises(ValueError) as caught:
+            read_declines([{"url": f"{KB}/kb/a"}, "not-an-object"])
+
+        assert "1" in str(caught.value)
+
+    def test_an_entry_without_a_usable_url_fails_the_run(self):
+        with pytest.raises(ValueError):
+            read_declines([{"no_url": 1}])
+        with pytest.raises(ValueError):
+            read_declines([{"url": "   "}])
+
+    def test_an_entry_whose_url_will_not_parse_fails_the_run(self):
+        # Silently dropping this one was the subtler leak: the entry looks fine
+        # until canonicalization, which used to warn and move on.
+        with pytest.raises(ValueError):
+            read_declines([{"url": "http://["}])
+
+    def test_a_non_list_ledger_fails_the_run(self):
+        with pytest.raises(ValueError):
+            read_declines({"url": f"{KB}/kb/a"})
+        with pytest.raises(ValueError):
+            read_declines(None)
+
+    def test_an_empty_ledger_is_fine(self):
+        assert read_declines([]) == ()
+
+    def test_declined_urls_are_canonicalized_like_every_other_url(self):
+        # A ledger hand-edited with a trailing slash must still suppress the
+        # canonical corpus URL — otherwise a decline silently stops working.
+        declines = read_declines([{"url": f"{KB}/kb/a/"}])
+
+        assert declined_urls(declines) == {f"{KB}/kb/a"}
+
+    def test_appending_a_decline_leaves_the_original_entries_untouched(self):
+        entries = [{"url": f"{KB}/kb/a"}]
+
+        appended = with_decline(entries, f"{KB}/kb/b", reason="thin", at="2026-07-22")
+
+        assert entries == [{"url": f"{KB}/kb/a"}]
+        assert appended == [
+            {"url": f"{KB}/kb/a"},
+            {"url": f"{KB}/kb/b", "reason": "thin", "at": "2026-07-22"},
+        ]
+
+    def test_declining_the_same_page_twice_does_not_duplicate_it(self):
+        entries = with_decline([], f"{KB}/kb/a", reason="first")
+
+        again = with_decline(entries, f"{KB}/kb/a/", reason="second")
+
+        assert again == entries
+
+    def test_declining_an_unusable_url_is_refused(self):
+        # Writing a URL the tool cannot canonicalize would create a ledger entry
+        # that can never match anything — a decline that silently does nothing.
+        with pytest.raises(ValueError):
+            with_decline([], "http://[")
+
+    def test_removing_a_decline_drops_only_that_entry(self):
+        entries = [{"url": f"{KB}/kb/a"}, {"url": f"{KB}/kb/b", "reason": "keep"}]
+
+        assert without_decline(entries, f"{KB}/kb/a/") == [
+            {"url": f"{KB}/kb/b", "reason": "keep"}
+        ]
+        assert len(entries) == 2
+
+    def test_removing_a_decline_that_is_not_there_is_a_no_op(self):
+        entries = [{"url": f"{KB}/kb/a"}]
+
+        assert without_decline(entries, f"{KB}/kb/b") == entries
+
+    def test_undeclining_an_unusable_url_is_refused(self):
+        with pytest.raises(ValueError):
+            without_decline([], "http://[")
+
+    def test_a_declined_page_is_suppressed_from_the_gap_list(self):
+        docs = [_doc("/kb/a"), _doc("/kb/b")]
+
+        report = find_coverage_gaps(docs, [], declined={f"{KB}/kb/a"})
+
+        assert [d.url for d in report.gaps] == [f"{KB}/kb/b"]
+
+    def test_a_suppressed_page_is_reported_not_silently_dropped(self):
+        # A report that hides pages without saying so reads as clean when it is
+        # not — the suppressed set is part of the output, not a silent filter.
+        docs = [_doc("/kb/a")]
+
+        report = find_coverage_gaps(docs, [], declined={f"{KB}/kb/a"})
+
+        assert [d.url for d in report.suppressed] == [f"{KB}/kb/a"]
+        assert report.covered == ()
+
+    def test_a_declined_page_that_a_bank_row_covers_is_covered_not_suppressed(self):
+        docs = [_doc("/kb/a")]
+
+        report = find_coverage_gaps(docs, [_row(f"{KB}/kb/a")], declined={f"{KB}/kb/a"})
+
+        assert [d.url for d in report.covered] == [f"{KB}/kb/a"]
+        assert report.suppressed == ()
+
+    def test_a_greenlit_but_unapplied_page_is_still_a_gap(self):
+        # Proposing candidates must NOT mark a page covered: covered-ness is
+        # re-derived from the bank, so a page whose candidates were drafted and
+        # then abandoned stays visible until a row actually lands.
+        docs = [_doc("/kb/a")]
+        propose_candidates(f"{KB}/kb/a", "body", _llm_returning([_candidate()]))
+
+        report = find_coverage_gaps(docs, [], declined=set())
+
+        assert [d.url for d in report.gaps] == [f"{KB}/kb/a"]
+
+
+def _candidate(**extra):
+    candidate = {
+        "user_input": "How do I request a GPU?",
+        "reference": "Add #SBATCH --gpus=1.",
+        "anchor_type": "easy_retrieve",
+    }
+    candidate.update(extra)
+    return candidate
+
+
+def _llm_returning(payload):
+    """An injected LLM that answers with `payload` serialized as JSON."""
+    import json as _json
+
+    text = payload if isinstance(payload, str) else _json.dumps(payload)
+    return lambda prompt: text
+
+
+class TestProposeCandidates:
+    """3.1-3.3 — grounded drafts for a greenlit page, never locked, never applied."""
+
+    def test_drafts_a_candidate_grounded_in_the_greenlit_page(self):
+        proposal = propose_candidates(
+            f"{KB}/kb/a", "GPU body text", _llm_returning([_candidate()])
+        )
+
+        assert len(proposal.candidates) == 1
+        row = proposal.candidates[0].as_row()
+        assert row["status"] == "draft"
+        assert row["sources"] == [f"{KB}/kb/a"]
+        assert row["user_input"] == "How do I request a GPU?"
+        assert row["reference"] == "Add #SBATCH --gpus=1."
+        assert row["anchor_type"] == "easy_retrieve"
+
+    def test_a_candidate_can_never_be_constructed_locked(self):
+        # `status` is not a field: there is no way to express a locked candidate,
+        # so a compromised or confused model cannot smuggle one through.
+        proposal = propose_candidates(
+            f"{KB}/kb/a", "body", _llm_returning([_candidate(status="locked")])
+        )
+
+        assert proposal.candidates[0].as_row()["status"] == "draft"
+
+    def test_model_supplied_sources_are_replaced_by_the_greenlit_url(self):
+        # Grounding is the tool's guarantee, not the model's: whatever URL the
+        # model cites, the row it produces cites the page the operator greenlit.
+        proposal = propose_candidates(
+            f"{KB}/kb/a",
+            "body",
+            _llm_returning([_candidate(sources=["https://evil.example/x"])]),
+        )
+
+        assert proposal.candidates[0].as_row()["sources"] == [f"{KB}/kb/a"]
+
+    def test_the_url_is_canonicalized_before_it_becomes_the_source(self):
+        proposal = propose_candidates(
+            f"{KB}/kb/a/", "body", _llm_returning([_candidate()])
+        )
+
+        assert proposal.candidates[0].as_row()["sources"] == [f"{KB}/kb/a"]
+
+    def test_an_unknown_anchor_type_is_rejected_with_a_reason(self):
+        proposal = propose_candidates(
+            f"{KB}/kb/a", "body", _llm_returning([_candidate(anchor_type="trivia")])
+        )
+
+        assert proposal.candidates == ()
+        assert len(proposal.rejected) == 1
+        assert "anchor_type" in proposal.rejected[0].reason
+
+    def test_a_should_refuse_candidate_is_rejected_as_ungroundable(self):
+        # `should_refuse` rows carry NO sources by design; one "grounded in" a
+        # page is a contradiction, so it is rejected rather than relabeled.
+        proposal = propose_candidates(
+            f"{KB}/kb/a",
+            "body",
+            _llm_returning([_candidate(anchor_type="should_refuse")]),
+        )
+
+        assert proposal.candidates == ()
+        assert "should_refuse" in proposal.rejected[0].reason
+
+    def test_a_blank_question_or_answer_is_rejected(self):
+        proposal = propose_candidates(
+            f"{KB}/kb/a",
+            "body",
+            _llm_returning(
+                [_candidate(user_input="  "), _candidate(reference=""), _candidate()]
+            ),
+        )
+
+        assert len(proposal.candidates) == 1
+        assert len(proposal.rejected) == 2
+
+    def test_a_non_object_candidate_is_rejected_not_crashed_on(self):
+        proposal = propose_candidates(
+            f"{KB}/kb/a", "body", _llm_returning(["just a string", _candidate()])
+        )
+
+        assert len(proposal.candidates) == 1
+        assert len(proposal.rejected) == 1
+
+    def test_a_fenced_json_reply_is_parsed(self):
+        import json as _json
+
+        fenced = "```json\n" + _json.dumps([_candidate()]) + "\n```"
+
+        proposal = propose_candidates(f"{KB}/kb/a", "body", _llm_returning(fenced))
+
+        assert len(proposal.candidates) == 1
+
+    def test_a_candidates_object_wrapper_is_accepted(self):
+        proposal = propose_candidates(
+            f"{KB}/kb/a", "body", _llm_returning({"candidates": [_candidate()]})
+        )
+
+        assert len(proposal.candidates) == 1
+
+    def test_unparseable_model_output_raises_rather_than_returning_nothing(self):
+        # Zero candidates from a broken reply must not look like "this page has
+        # nothing worth asking" — that is an operational failure of the run.
+        with pytest.raises(ProposalError):
+            propose_candidates(f"{KB}/kb/a", "body", _llm_returning("not json at all"))
+
+    def test_a_json_scalar_reply_raises(self):
+        with pytest.raises(ProposalError):
+            propose_candidates(f"{KB}/kb/a", "body", _llm_returning("42"))
+
+    def test_the_prompt_carries_the_page_text_and_the_url(self):
+        seen = {}
+
+        def ask(prompt):
+            seen["prompt"] = prompt
+            import json as _json
+
+            return _json.dumps([_candidate()])
+
+        propose_candidates(f"{KB}/kb/a", "UNIQUE BODY MARKER", ask, count=2)
+
+        assert "UNIQUE BODY MARKER" in seen["prompt"]
+        assert f"{KB}/kb/a" in seen["prompt"]
+        assert "2" in seen["prompt"]
+
+    def test_the_page_text_is_bounded_so_a_huge_page_cannot_blow_the_context(self):
+        seen = {}
+
+        def ask(prompt):
+            seen["prompt"] = prompt
+            import json as _json
+
+            return _json.dumps([_candidate()])
+
+        propose_candidates(f"{KB}/kb/a", "x" * 500_000, ask)
+
+        assert len(seen["prompt"]) < 200_000
+
+    def test_an_empty_page_refuses_to_ask_the_model_at_all(self):
+        # Proposing from an empty extraction would produce ungrounded questions.
+        called = []
+
+        with pytest.raises(ProposalError):
+            propose_candidates(f"{KB}/kb/a", "   ", lambda p: called.append(p) or "[]")
+
+        assert called == []
+
+    def test_an_unusable_page_url_is_refused_before_the_model_is_called(self):
+        called = []
+
+        with pytest.raises(ProposalError):
+            propose_candidates("http://[", "body", lambda p: called.append(p) or "[]")
+
+        assert called == []
+
+    def test_the_sanitizer_refuses_an_unusable_url_on_its_own(self):
+        # `parse_candidates` is a public entry point, so it re-checks rather than
+        # trusting that every caller validated the URL first.
+        with pytest.raises(ProposalError):
+            parse_candidates("[]", "http://[")
+
+    def test_proposing_never_touches_the_bank(self):
+        bank = [_row(f"{KB}/kb/other")]
+        before = copy.deepcopy(bank)
+
+        propose_candidates(f"{KB}/kb/a", "body", _llm_returning([_candidate()]))
+
+        assert bank == before
+
+
+class TestPersistedDocumentPath:
+    """The retriever serves the PERSISTED file, so grounding must read that."""
+
+    def test_a_relative_file_path_resolves_under_the_data_path(self):
+        assert resolve_persisted_path("web/docs/a.md", "/srv/archi/data") == Path(
+            "/srv/archi/data/web/docs/a.md"
+        )
+
+    def test_an_absolute_path_inside_the_root_is_allowed(self, tmp_path):
+        # Parity with `catalog_postgres._resolve_path`, which stores absolute
+        # paths for some deployments — those are fine as long as they are in the
+        # data root.
+        root = tmp_path / "data"
+        root.mkdir()
+
+        assert (
+            resolve_persisted_path(str(root / "a.md"), str(root))
+            == (root / "a.md").resolve()
+        )
+
+    def test_an_absolute_path_outside_the_root_is_refused(self):
+        # `file_path` comes from the catalog or an operator-supplied JSON dump,
+        # and its contents are sent to an external model provider. An escape here
+        # is a file-disclosure channel, so containment is enforced before any
+        # read — and it also stops a stale `..` path grounding a question in an
+        # unrelated file.
+        with pytest.raises(ValueError):
+            resolve_persisted_path("/etc/passwd", "/srv/archi/data")
+
+    def test_a_relative_path_escaping_the_root_is_refused(self):
+        with pytest.raises(ValueError):
+            resolve_persisted_path("../../etc/passwd", "/srv/archi/data")
+
+    def test_a_symlink_pointing_out_of_the_root_is_refused(self, tmp_path):
+        root = tmp_path / "data"
+        root.mkdir()
+        outside = tmp_path / "secret.md"
+        outside.write_text("secret", encoding="utf-8")
+        (root / "link.md").symlink_to(outside)
+
+        with pytest.raises(ValueError):
+            resolve_persisted_path("link.md", str(root))
+
+    def test_a_sibling_root_prefix_is_not_treated_as_contained(self, tmp_path):
+        # `/srv/data-old/x` starts with `/srv/data` as a string but is a
+        # different directory; containment is by path component, not prefix.
+        with pytest.raises(ValueError):
+            resolve_persisted_path("/srv/data-old/x.md", "/srv/data")
+
+    def test_a_row_without_a_file_path_has_no_persisted_document(self):
+        assert resolve_persisted_path("", "/srv/archi/data") is None
+
+    def test_the_corpus_read_carries_the_persisted_file_path(self):
+        docs = read_corpus_docs(
+            _rows({"url": f"{KB}/kb/a", "source_type": "web", "file_path": "web/a.md"})
+        )
+
+        assert docs[0].file_path == "web/a.md"
+
+    def test_a_row_without_a_file_path_still_reads(self):
+        # A JSON dump that omits the column must not crash the gap report; only
+        # `--propose` needs the path, and it refuses when it is absent.
+        docs = read_corpus_docs(_rows({"url": f"{KB}/kb/a", "source_type": "web"}))
+
+        assert docs[0].file_path == ""
