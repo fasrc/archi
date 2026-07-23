@@ -8,10 +8,10 @@
 
 ## 2. Per-host semaphore registry (new helper module)
 
-- [ ] 2.1 Write a failing test for a `HostLimiter` in `src/data_manager/collectors/scrapers/scrape_pool.py`: N threads acquiring the same host never exceed the cap (assert an observed-peak counter, not wall-clock).
-- [ ] 2.2 Write a failing test that distinct hosts do not contend — with cap 1 and 4 distinct hosts, all 4 hold slots simultaneously.
-- [ ] 2.3 Write a failing test that the slot is released when the guarded callable raises, so a later acquirer for that host still proceeds (no leak, no deadlock).
-- [ ] 2.4 Implement `HostLimiter` (a lock-guarded `dict[str, threading.Semaphore]` plus a context manager keyed by hostname) to turn 2.1–2.3 green.
+- [x] 2.1 Write a failing test for a `HostLimiter` in `src/data_manager/collectors/scrapers/scrape_pool.py`: N threads acquiring the same host never exceed the cap (assert an observed-peak counter, not wall-clock).
+- [x] 2.2 Write a failing test that distinct hosts do not contend — with cap 1 and 4 distinct hosts, all 4 hold slots simultaneously.
+- [x] 2.3 Write a failing test that the slot is released when the guarded callable raises, so a later acquirer for that host still proceeds (no leak, no deadlock).
+- [x] 2.4 Implement `HostLimiter` (a lock-guarded `dict[str, threading.Semaphore]` plus a context manager keyed by hostname) to turn 2.1–2.3 green.
 
 ## 3. Bounded seed pool (new helper module)
 
