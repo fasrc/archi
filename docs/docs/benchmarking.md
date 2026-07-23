@@ -901,6 +901,14 @@ whenever it finds something teaches its reader to ignore the alert, which is wor
 alert. Non-zero is reserved for a pass that **could not run** — an unreadable corpus or bank, a
 missing source list, or a live inventory too incomplete to judge orphans against.
 
+One case the exit code deliberately does **not** fail on is a *partly* complete drift pass: `drift`
+abstains (non-zero) only when nothing at all was read, so a run that reached 1 source of 50 still
+exits zero (see [Abstention](#abstention) above). That incompleteness is not lost — it is counted
+in `--summary-json` as `unchecked_sources` and mailed in the nightly digest — but an **external**
+monitor must read those summary counts, not the process exit code, or it will record a
+barely-completed run as healthy. The exit code answers "did a pass break?"; the summary answers
+"how much did it actually check?", and only the second distinguishes a thorough run from a thin one.
+
 #### One broken pass does not hide the other two
 
 The three passes read three independent things: the corpus catalog, the live source inventory, and

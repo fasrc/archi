@@ -1053,7 +1053,10 @@ def run_report(args: argparse.Namespace) -> int:
     summary["failed_passes"] = failures
     # Decided here rather than in the cron wrapper: which buckets deserve to
     # wake someone is a judgement about the domain, and it belongs where it can
-    # be tested. `refused_sources` is excluded on purpose (see `run_drift`).
+    # be tested. `refused_sources` is included on purpose (see `run_drift`): a
+    # host missing from `--allowed-hosts` is an omission, not a standing
+    # decision, so an unchecked source notifies whether the page or the
+    # allowlist is the reason it went unchecked.
     summary["notify"] = any(summary[key] > 0 for key in _NOTIFY_ON)
     if args.summary_json:
         # Written on every path, including the failing one: a wrapper that finds
