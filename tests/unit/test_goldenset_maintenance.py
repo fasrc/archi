@@ -707,6 +707,37 @@ class TestBuildLiveInventory:
         assert report.orphans == ()
         assert report.out_of_scope == ("https://github.com/org/repo/blob/main/x.py",)
 
+    def test_a_fan_out_source_sharing_a_host_still_yields_no_orphans(self):
+        # Host-level scope is not enough: a hand-listed page puts `github.com` in
+        # scope while the git source contributes nothing, so every per-file bank
+        # URL under the repo would be judged against an inventory that cannot
+        # contain it — and proposed for prune.
+        inv = build_live_inventory(
+            [
+                "https://github.com/org/repo/releases",
+                "git-https://github.com/org/repo",
+            ],
+            _fetcher({}),
+        )
+        report = find_orphans([_row("https://github.com/org/repo/blob/main/x.py")], inv)
+
+        assert report.orphans == ()
+        assert report.out_of_scope == ("https://github.com/org/repo/blob/main/x.py",)
+
+    def test_a_sibling_path_outside_the_fan_out_scope_is_still_judged(self):
+        # The fan-out source owns its own subtree, not the whole host. `…/repo2`
+        # is a different project, so exempting it would trade a false orphan for a
+        # silently missed one.
+        inv = build_live_inventory(
+            ["https://github.com/org/repo2/page", "git-https://github.com/org/repo"],
+            _fetcher({}),
+        )
+        report = find_orphans([_row("https://github.com/org/repo2/gone")], inv)
+
+        assert [orphan.urls for orphan in report.orphans] == [
+            ("https://github.com/org/repo2/gone",)
+        ]
+
     def test_an_expansion_below_its_floor_marks_the_inventory_incomplete(self):
         inv = build_live_inventory(
             [f"sitemap-{SM}"],

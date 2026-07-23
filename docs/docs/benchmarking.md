@@ -406,7 +406,7 @@ python scripts/benchmarking/goldenset_maintenance.py coverage \
 # Which bank rows cite a page the live KB no longer publishes?
 python scripts/benchmarking/goldenset_maintenance.py orphans \
     --bank examples/benchmarking/fasrc_ragas_queries.json \
-    --sources deploy/fasrc-dev/sources.list \
+    --sources config/lists/sources.list \
     --min-pages 150
 ```
 

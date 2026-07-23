@@ -392,15 +392,34 @@ class LiveInventory:
     inventory, because every unlisted page would look deleted.
 
     `unsupported` lists source lines whose type fans out into sub-documents this
-    tool cannot enumerate (git/elog/indico). They contribute no URLs, so their
-    hosts stay out of scope rather than generating false orphans — recorded so
+    tool cannot enumerate (git/elog/indico). They contribute no URLs — recorded so
     that a skipped source is visible instead of silently ignored.
+
+    `unsupported_scopes` is the canonical URL subtree each of those sources owns.
+    Host-level scope alone is not enough: a hand-listed page can put a host in
+    scope while a fan-out source on the SAME host contributes nothing, and every
+    per-file URL under it would then be judged against an inventory that cannot
+    contain it. Scoping by subtree keeps those rows out of the orphan pass while
+    still judging unrelated paths on the same host.
     """
 
     urls: Tuple[str, ...]
     complete: bool
     failures: Tuple[str, ...]
     unsupported: Tuple[str, ...] = ()
+    unsupported_scopes: Tuple[str, ...] = ()
+
+
+def _in_unsupported_scope(url: str, scopes: Iterable[str]) -> bool:
+    """True when `url` falls under a source the inventory cannot enumerate.
+
+    Matched on a path boundary so `…/org/repo` never swallows `…/org/repo2`:
+    exempting a whole host would trade a false orphan for a silently missed one.
+    """
+    for scope in scopes:
+        if url == scope or url.startswith(scope.rstrip("/") + "/"):
+            return True
+    return False
 
 
 def build_live_inventory(
@@ -445,6 +464,7 @@ def build_live_inventory(
     hand_listed: List[str] = []
     sitemap_urls: List[str] = []
     unsupported: List[str] = []
+    unsupported_scopes: List[str] = []
     for raw_line in source_lines:
         line = (raw_line or "").strip()
         if not line or line.startswith("#"):
@@ -468,6 +488,14 @@ def build_live_inventory(
             hand_listed.append(line[len(SSO_PREFIX) :])
         elif line.startswith(FANOUT_PREFIXES) or _is_fanout_url(line):
             unsupported.append(line)
+            bare = line
+            for prefix in FANOUT_PREFIXES:
+                if bare.startswith(prefix):
+                    bare = bare[len(prefix) :]
+                    break
+            scope = canonical_url(bare)
+            if scope is not None:
+                unsupported_scopes.append(scope)
         else:
             hand_listed.append(line)
 
@@ -494,6 +522,7 @@ def build_live_inventory(
         complete=not failures,
         failures=tuple(failures),
         unsupported=tuple(unsupported),
+        unsupported_scopes=tuple(unsupported_scopes),
     )
 
 
@@ -570,7 +599,9 @@ def find_orphans(bank: Iterable[Any], inventory: LiveInventory) -> OrphanReport:
             url = canonical_url(raw)
             if url is None:
                 continue
-            if _host_of(url) not in in_scope_hosts:
+            if _in_unsupported_scope(url, inventory.unsupported_scopes) or (
+                _host_of(url) not in in_scope_hosts
+            ):
                 if url not in seen_out:
                     seen_out.add(url)
                     out_of_scope.append(url)
