@@ -151,5 +151,52 @@ case "$(cat "$sb/calls")" in
   *) ok "omits --min-pages when unset" ;;
 esac
 
+# 9. cron mails on ANY output, not on exit status — so a healthy unattended run
+#    has to be completely silent or the nightly job mails its own report every
+#    night and the operator learns to filter it.
+sb="$(new_sandbox)"
+out="$( ( GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) 2>"$sb/err" || true )"
+if [ -z "$out" ] && [ ! -s "$sb/err" ]; then
+  ok "a healthy unattended run is silent"
+else
+  notok "a healthy unattended run is silent (stdout: $out; stderr: $(cat "$sb/err"))"
+fi
+
+# 10. a failure must still reach the operator, which is what cron mail is for
+sb="$(new_sandbox)"
+( STUB_EXIT=1 GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) \
+  >/dev/null 2>"$sb/err" || true
+if grep -q "fake report output" "$sb/err"; then
+  ok "a failing unattended run reports on stderr"
+else
+  notok "a failing unattended run reports on stderr (got: $(cat "$sb/err"))"
+fi
+
+# 11. an env file supplies the configuration, so the crontab line stays short
+#     (crontab has no line continuation — the entry ends at the newline)
+sb="$(new_sandbox)"
+cat > "$sb/report.env" <<EOF
+GOLDENSET_PG_DSN=postgresql://from-file
+GOLDENSET_MIN_PAGES=150
+EOF
+( GOLDENSET_ENV_FILE="$sb/report.env" run_cron "$sb" ) >/dev/null 2>&1 || true
+case "$(cat "$sb/calls" 2>/dev/null || true)" in
+  *"--pg-dsn postgresql://from-file"*"--min-pages 150"*)
+    ok "reads configuration from an env file" ;;
+  *) notok "reads configuration from an env file (got: $(cat "$sb/calls" 2>/dev/null))" ;;
+esac
+
+# 12. and it is found by convention, so the cron entry needs no environment at all
+sb="$(new_sandbox)"
+mkdir -p "$sb/home/.ralph"
+cat > "$sb/home/.ralph/goldenset-report.env" <<EOF
+GOLDENSET_PG_DSN=postgresql://by-convention
+EOF
+( HOME="$sb/home" GOLDENSET_PG_DSN="" run_cron "$sb" ) >/dev/null 2>&1 || true
+case "$(cat "$sb/calls" 2>/dev/null || true)" in
+  *"--pg-dsn postgresql://by-convention"*) ok "finds the default env file under HOME" ;;
+  *) notok "finds the default env file under HOME (got: $(cat "$sb/calls" 2>/dev/null))" ;;
+esac
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

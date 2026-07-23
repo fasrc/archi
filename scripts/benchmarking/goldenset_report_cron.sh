@@ -12,8 +12,15 @@
 #      inventory too incomplete to judge orphans against
 #   2  this wrapper is misconfigured (checked before anything is invoked)
 #
-# Configure with environment variables, not flags, so the crontab line stays one
-# short entry and the settings live somewhere a human can read them:
+# Configure with an environment file, not flags, because crontab has no line
+# continuation — an entry ends at the newline, and a trailing backslash does not
+# join the next line. So the settings live in a file a human can read and the
+# crontab entry stays a single short line with no environment on it at all:
+#
+#   GOLDENSET_ENV_FILE      env file to source (default: ~/.ralph/goldenset-report.env)
+#
+# Values in that file win over anything already in the environment, the way
+# systemd's EnvironmentFile= behaves. Recognized settings:
 #
 #   GOLDENSET_BANK          bank JSON       (default: examples/benchmarking/…)
 #   GOLDENSET_PG_DSN        live catalog DSN     ) exactly one
@@ -35,6 +42,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Sourced before anything is read, so the crontab entry can carry no environment.
+ENV_FILE="${GOLDENSET_ENV_FILE:-$HOME/.ralph/goldenset-report.env}"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
 
 BANK="${GOLDENSET_BANK:-$REPO_ROOT/examples/benchmarking/fasrc_ragas_queries.json}"
 LOG_DIR="${GOLDENSET_LOG_DIR:-$HOME/.ralph/log}"
@@ -81,10 +97,26 @@ mkdir -p "$LOG_DIR"
 
 # Appended, never truncated: the value of this log is the history, which is how
 # a slow drift (a page edited a little each month) becomes visible at all.
-# `tee` keeps an interactive run readable, so PIPESTATUS carries the real status.
+#
+# What reaches stdout depends on whether a human is watching, because cron mails
+# on ANY output and pays no attention to the exit status. A nightly job that
+# prints its report every night mails its report every night, and an operator
+# who gets mail on every healthy run stops reading the mail — which costs
+# exactly the failure the job exists to surface.
 set +e
-"$PYTHON" "${args[@]}" 2>&1 | tee -a "$LOG"
-status=${PIPESTATUS[0]}
+if [ -t 1 ]; then
+  # Interactive: stream, so a slow drift pass is visible while it runs.
+  "$PYTHON" "${args[@]}" 2>&1 | tee -a "$LOG"
+  status=${PIPESTATUS[0]}
+else
+  # Unattended: silent when healthy, loud when not.
+  run_out="$(mktemp)"
+  "$PYTHON" "${args[@]}" > "$run_out" 2>&1
+  status=$?
+  cat "$run_out" >> "$LOG"
+  [ "$status" -ne 0 ] && cat "$run_out" >&2
+  rm -f "$run_out"
+fi
 set -e
 
 printf '===== exit %d =====\n' "$status" >> "$LOG"
