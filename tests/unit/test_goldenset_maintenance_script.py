@@ -1698,3 +1698,87 @@ class TestDriftVerdictCli:
 
         assert url in out
         assert "holds" in out
+
+
+class TestDriftFetchPolicyCli:
+    """A bank-controlled URL must not become an unrestricted outbound request."""
+
+    def test_a_loopback_source_is_refused_and_reported(self, tmp_path, capsys):
+        script = _load_script()
+        url = "http://127.0.0.1:9000/admin"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: "sha256:" + "0" * 64}))
+        fetched = []
+
+        def build():
+            def fetch(target):
+                fetched.append(target)
+                return GPU_HTML
+
+            return fetch
+
+        script.build_fetch_html = build
+
+        code = script.main(["drift", "--bank", str(bank)])
+        out = capsys.readouterr().out
+
+        assert fetched == []
+        assert code == 0
+        assert "refused" in out.lower()
+        assert url in out
+
+    def test_allowed_hosts_narrows_what_drift_will_contact(self, tmp_path, capsys):
+        script = _load_script()
+        listed, other = f"{KB}/kb/gpu", "https://slurm.schedmd.com/mpi"
+        bank = _bank(
+            tmp_path,
+            _locked_row(listed, hashes={listed: page_digest(GPU_HTML)}),
+            _locked_row(other, hashes={other: page_digest(GPU_HTML)}),
+        )
+        _fake_pages(script, {listed: GPU_HTML, other: GPU_HTML})
+
+        code = script.main(
+            [
+                "drift",
+                "--bank",
+                str(bank),
+                "--allowed-hosts",
+                "docs.rc.fas.harvard.edu",
+            ]
+        )
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert "slurm.schedmd.com" in out
+        assert "refused" in out.lower()
+
+
+class TestDriftEvidence:
+    """A verdict about text the operator cannot see is not reviewable."""
+
+    def test_show_text_prints_the_page_the_model_judged(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML_CHANGED})
+        _fake_llm(script, {"verdict": "broken", "explanation": "says 2"})
+
+        script.main(
+            ["drift", "--bank", str(bank), "--model", "anthropic/x", "--show-text"]
+        )
+        out = capsys.readouterr().out
+
+        assert "--gpus=2" in out
+
+    def test_the_default_report_points_at_the_flag_instead_of_dumping_pages(
+        self, tmp_path, capsys
+    ):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML_CHANGED})
+
+        script.main(["drift", "--bank", str(bank)])
+        out = capsys.readouterr().out
+
+        assert "--gpus=2" not in out
+        assert "--show-text" in out

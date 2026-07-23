@@ -707,6 +707,50 @@ changed nav or footer can still move the hash. That is the cost of the direction
 a false positive is one page for a human to glance at, while a false negative is a wrong answer
 that stays in the benchmark scoring as correct. The LLM diff exists to make those glances cheap.
 
+#### What `drift` will and will not fetch
+
+`drift` is the one pass that turns a `sources` value into an outbound request, and `sources` is
+data read out of a file. So every URL is checked against the ingest's own trust filter
+(`is_url_allowed`) *before* it is dialled. Refused unconditionally:
+
+- any scheme that is not `http`/`https`
+- a loopback, private, or link-local address (`127.0.0.1`, `10.0.0.5`, `169.254.169.254`)
+- an obfuscated numeric host that resolvers still map to those (`2130706433`, `0177.0.0.1`)
+- a malformed or zero port
+
+A refused URL is **never contacted and never shown to a model** — it is reported in its own
+bucket, not counted as clean. This matters because reusing the ingest's *fetcher* does not
+inherit the ingest's *target policy*: `fetch_sitemap_text` enforces transport limits (no
+cross-host redirects, a bounded body, a timeout), while the trust filter lives in
+`expand_sitemaps`. Drift applies it itself.
+
+`--allowed-hosts` narrows further to an explicit list. Without it, any public host a row cites is
+fetched — the bank legitimately grounds some questions in external authorities such as the
+upstream Slurm docs.
+
+```bash
+python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com
+```
+
+DNS-rebinding-resistant connection pinning is *not* implemented here; it is deferred for
+`fetch_sitemap_text` itself (§Deferred hardening v2/H1), and drift contacts a small subset of
+what the ingest already fetches continuously.
+
+#### Seeing the evidence
+
+`--show-text` prints the fetched page text behind each finding, delimited per URL:
+
+```bash
+python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank <bank.json> --model anthropic/claude-sonnet-5 --show-text
+```
+
+It is opt-in because the report is a work list and a page body per changed row would bury it —
+but with `--model` you would otherwise be reading a one-sentence verdict about text you cannot
+see, which is not a review. Note this is the **new** page, not a diff: the tool stores only a
+hash of the old one, which is exactly what lets it keep no state between runs.
+
 #### Stored hashes carry their algorithm
 
 A `source_hashes` value looks like `sha256:9f86d081…`, not a bare hex string. The label is what
@@ -724,6 +768,7 @@ gets its own bucket in the report:
   Nothing to compare against, so it is neither drifted nor clean.
 - **Incomparable baseline** — the stored value is not a `sha256:` digest (see above).
 - **Unreachable** — the fetch failed. Explicitly *not* evidence the page is unchanged.
+- **Refused** — the URL was rejected by the fetch policy above, so it was never contacted.
 - **Stale baselines** — a `source_hashes` entry for a URL the row no longer cites, left behind
   when someone edited `sources`. Harmless on its own, but it means a recorded confirmation
   refers to a page that is no longer part of that question.

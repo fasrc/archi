@@ -31,6 +31,7 @@ from src.data_manager.collectors.scrapers.sitemap_source import (
     SitemapPolicy,
 )
 from src.utils.goldenset_maintenance import (
+    MAX_PROMPT_PAGE_CHARS,
     CorpusDoc,
     Decline,
     DriftExtractionError,
@@ -1655,3 +1656,120 @@ class TestDriftAgainstAHandEditedBank:
 
         assert "page truncated" in prompt
         assert len(prompt) < 40_000
+
+
+class TestDriftFetchPolicy:
+    """A `sources` URL is data, and drift turns it into an outbound request.
+
+    The ingest's trust filter (`is_url_allowed`) lives in `expand_sitemaps`, NOT
+    in `fetch_sitemap_text` — so reusing the ingest's *fetcher* inherits its
+    redirect and size limits but none of its target policy. Drift has to apply
+    the filter itself or it becomes a way to reach internal services from
+    whatever host the tool runs on, and (with `--model`) to forward what they
+    return to an external provider.
+    """
+
+    def test_a_loopback_source_is_refused_and_never_fetched(self):
+        url = "http://127.0.0.1:8000/admin"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        report = find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+        assert [c.url for c in report.refused] == [url]
+        assert report.drifted == ()
+
+    def test_a_link_local_metadata_endpoint_is_refused(self):
+        url = "http://169.254.169.254/latest/meta-data/iam/security-credentials"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+
+    def test_a_private_range_source_is_refused(self):
+        url = "http://10.0.0.5/internal"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+
+    def test_an_obfuscated_numeric_host_is_refused(self):
+        # 2130706433 == 127.0.0.1; resolvers accept it, ipaddress will not
+        # canonicalize it, so the ingest's filter rejects the whole shape.
+        url = "http://2130706433/admin"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+
+    def test_a_non_http_scheme_is_refused(self):
+        url = "file:///etc/passwd"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+
+    def test_a_refused_source_is_never_shown_to_the_model(self):
+        url = "http://127.0.0.1:8000/admin"
+        bank = [_locked(url, hashes={url: "sha256:" + "0" * 64})]
+        prompts = []
+
+        find_drift(
+            bank,
+            _fetcher_for({url: KB_HTML}),
+            ask_llm=_recording_llm(prompts, '{"verdict": "broken"}'),
+        )
+
+        assert prompts == []
+
+    def test_a_public_host_is_allowed_by_default(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == [url]
+
+    def test_an_allowlist_restricts_which_hosts_drift_will_contact(self):
+        listed, other = f"{KB}/kb/gpu", "https://slurm.schedmd.com/mpi"
+        bank = [
+            _locked(listed, hashes={listed: page_digest(KB_HTML)}),
+            _locked(other, hashes={other: page_digest(KB_HTML)}),
+        ]
+        calls = []
+
+        report = find_drift(
+            bank,
+            _fetcher_for({listed: KB_HTML, other: KB_HTML}, calls=calls),
+            allowed_hosts=["docs.rc.fas.harvard.edu"],
+        )
+
+        assert calls == [listed]
+        assert [c.url for c in report.refused] == [other]
+
+
+class TestDriftRetainsBoundedText:
+    """The tripwire runs over a whole bank; retained text has to be bounded."""
+
+    def test_a_huge_page_is_hashed_whole_but_retained_truncated(self):
+        url = f"{KB}/kb/big"
+        html = "<html><body><p>" + ("word " * 40_000) + "</p></body></html>"
+        bank = [_locked(url, hashes={url: "sha256:" + "0" * 64})]
+
+        report = find_drift(bank, _fetcher_for({url: html}))
+        check = report.drifted[0].changed[0]
+
+        # The digest must cover the WHOLE page — truncating before hashing would
+        # make every edit past the cut invisible.
+        assert check.fresh == page_digest(html)
+        assert len(check.fresh_text) <= MAX_PROMPT_PAGE_CHARS

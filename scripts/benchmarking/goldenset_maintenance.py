@@ -45,7 +45,8 @@ Usage:
 
     # fact drift: re-fetch every locked row's sources and report what moved
     python scripts/benchmarking/goldenset_maintenance.py drift \\
-        --bank <bank.json> [--model anthropic/claude-sonnet-5] [--print-hashes]
+        --bank <bank.json> [--model anthropic/claude-sonnet-5] \\
+        [--allowed-hosts docs.rc.fas.harvard.edu] [--show-text] [--print-hashes]
 """
 
 from __future__ import annotations
@@ -70,6 +71,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.utils.benchmark_schema import normalize_bank  # noqa: E402  # isort: skip
 from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
     DRIFT_INCOMPARABLE,
+    DRIFT_REFUSED,
     DRIFT_UNBASELINED,
     DRIFT_UNREACHABLE,
     ProposalError,
@@ -90,6 +92,12 @@ from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
     with_decline,
     without_decline,
 )
+
+
+#: Body cap for a drift re-fetch. A KB article is a few hundred KB; the ingest's
+#: own 64 MiB ceiling exists for whole-site sitemap indexes and is far too much
+#: headroom for a pass that fetches every source in the bank.
+MAX_PAGE_BYTES = 8 * 1024 * 1024
 
 
 class OperationalError(Exception):
@@ -379,13 +387,23 @@ def build_ask_llm(model: str):
 def build_fetch_html():
     """The page fetcher drift re-fetches sources with.
 
-    Reuses the ingest's own fetch, so drift inherits its SSRF containment (no
-    cross-host redirects, a body-size cap) rather than opening a second, laxer
-    path to arbitrary URLs read out of a bank file.
+    Reuses the ingest's own fetch for its transport limits — no cross-host
+    redirects, a bounded body, a timeout. Those are the ONLY protections it
+    carries: the ingest's *target* policy (`is_url_allowed`) lives in
+    `expand_sitemaps`, not here, so `find_drift` applies it itself before
+    handing any URL to this callable.
+
+    The body cap is tightened well below the ingest's 64 MiB. That ceiling is
+    sized for a sitemap index of a whole site; a KB article is a few hundred KB,
+    and this runs across a whole bank, so the ingest's headroom is only an
+    availability risk here.
     """
     from src.data_manager.collectors.scrapers.sitemap_source import fetch_sitemap_text
 
-    return fetch_sitemap_text
+    def fetch(url: str) -> str:
+        return fetch_sitemap_text(url, max_bytes=MAX_PAGE_BYTES)
+
+    return fetch
 
 
 def read_source_lines(path: str) -> List[str]:
@@ -701,7 +719,12 @@ def run_drift(args: argparse.Namespace) -> int:
     """
     bank = load_bank(args.bank)
     ask_llm = build_ask_llm(args.model) if args.model else None
-    report = find_drift(bank, build_fetch_html(), ask_llm=ask_llm)
+    report = find_drift(
+        bank,
+        build_fetch_html(),
+        ask_llm=ask_llm,
+        allowed_hosts=args.allowed_hosts or (),
+    )
 
     if report.abstained:
         # Every fetch failed, so no page was actually read. Reporting "no drift"
@@ -749,6 +772,11 @@ def run_drift(args: argparse.Namespace) -> int:
         DRIFT_UNREACHABLE,
         "unreachable this run (NOT evidence the page is unchanged)",
     )
+    _print_state(
+        report,
+        DRIFT_REFUSED,
+        "refused by the fetch policy (never contacted, never sent to a model)",
+    )
 
     stale = [
         f"row {row.row_index}: {', '.join(row.stale_baselines)}"
@@ -760,6 +788,13 @@ def run_drift(args: argparse.Namespace) -> int:
             "baselines kept for URLs the row no longer cites (edit `sources`?)", stale
         )
 
+    if args.show_text:
+        _print_evidence(report)
+    elif report.drifted:
+        print(
+            "\nRe-run with --show-text to see the page text behind each finding "
+            "(and, with --model, the text the verdict was formed on)."
+        )
     if args.print_hashes:
         _print_hashes(report)
     elif report.unbaselined or report.incomparable:
@@ -780,6 +815,25 @@ def _print_state(report, state: str, title: str) -> None:
     ]
     if lines:
         _print_group(title, lines)
+
+
+def _print_evidence(report) -> None:
+    """Print the fetched text behind each finding, bounded and delimited.
+
+    Opt-in rather than default: the report is a work list, and a page body per
+    changed row would bury it. But a verdict formed on text the operator cannot
+    see is not reviewable — the model gets the page and the human gets a
+    sentence — so the text has to be reachable in one flag.
+
+    The tool stores only a hash of the old page, never its text, so this is the
+    NEW page rather than a diff. That is the deliberate cost of keeping no state
+    file between runs.
+    """
+    for row in report.drifted:
+        for check in row.changed:
+            print(f"\n--- {check.url} (as fetched now) ---")
+            print(check.fresh_text)
+            print(f"--- end {check.url} ---")
 
 
 def _print_hashes(report) -> None:
@@ -907,6 +961,23 @@ def build_parser() -> argparse.ArgumentParser:
             "`provider/model` asked whether the stored reference still holds, for "
             "sources whose hash moved. Optional: without it the run is the cheap "
             "hash tripwire alone, which is still a real finding."
+        ),
+    )
+    drift.add_argument(
+        "--allowed-hosts",
+        nargs="*",
+        help=(
+            "Restrict which hosts drift may contact. Without it, any public host "
+            "a row cites is fetched; loopback/private/link-local and non-http(s) "
+            "targets are always refused."
+        ),
+    )
+    drift.add_argument(
+        "--show-text",
+        action="store_true",
+        help=(
+            "Print the fetched page text behind each finding. The tool keeps no "
+            "old text, so this is the new page, not a diff."
         ),
     )
     drift.add_argument(

@@ -50,6 +50,7 @@ from src.data_manager.collectors.scrapers.sitemap_source import (
     SitemapParseError,
     SitemapPolicy,
     expand_sitemaps,
+    is_url_allowed,
     normalize_page_url,
     parse_sitemap_document,
 )
@@ -1100,6 +1101,7 @@ DRIFT_CHANGED = "changed"
 DRIFT_UNBASELINED = "unbaselined"
 DRIFT_INCOMPARABLE = "incomparable"
 DRIFT_UNREACHABLE = "unreachable"
+DRIFT_REFUSED = "refused"
 
 _INLINE_WHITESPACE = re.compile(r"[ \t]+")
 _BLANK_LINE_RUN = re.compile(r"\n{3,}")
@@ -1232,6 +1234,10 @@ class DriftReport:
     def unreachable(self) -> Tuple[SourceCheck, ...]:
         return self._in_state(DRIFT_UNREACHABLE)
 
+    @property
+    def refused(self) -> Tuple[SourceCheck, ...]:
+        return self._in_state(DRIFT_REFUSED)
+
 
 _DRIFT_PROMPT = """\
 A question in a RAG benchmark's golden-answer set was confirmed against a page.
@@ -1311,6 +1317,40 @@ def _ask_drift(
         return DriftVerdict(UNCLEAR_VERDICT, f"the model could not be reached: {exc}")
 
 
+def is_fetchable_source(url: str, allowed_hosts: Iterable[str] = ()) -> bool:
+    """Whether drift may turn this `sources` value into an outbound request.
+
+    A `sources` entry is *data* read out of a bank file, and drift is the one
+    pass that dials it. The ingest's trust filter lives in `expand_sitemaps`,
+    not in `fetch_sitemap_text`, so reusing the ingest's fetcher inherits its
+    redirect and size limits and **none** of its target policy. Without this
+    check the tool would fetch `http://169.254.169.254/…` from whatever host it
+    runs on and — with `--model` and any hash mismatch — forward the response to
+    an external provider.
+
+    Delegates to the ingest's own `is_url_allowed` rather than restating its
+    rules, so the two cannot diverge: non-http(s) schemes, malformed ports, and
+    loopback/private/link-local or obfuscated-numeric hosts are refused.
+
+    With no `allowed_hosts`, a URL's own host stands in as the allowed one, so
+    only the unconditional rules apply and any public host is reachable — the
+    bank legitimately cites external authorities (the upstream Slurm docs).
+    Passing `allowed_hosts` narrows that to an explicit list.
+
+    Not a substitute for DNS-rebinding-resistant connection pinning, which
+    `fetch_sitemap_text` defers (its "§Deferred hardening v2/H1"). Drift is no
+    more exposed than the ingest that fetches these hosts continuously.
+    """
+    hosts = [host for host in allowed_hosts if host]
+    if hosts:
+        return is_url_allowed(url, "", hosts)
+    try:
+        own_host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return bool(own_host) and is_url_allowed(url, own_host, [])
+
+
 def _fetch_extract(
     url: str, cache: Dict[str, Tuple[str, str, str]], fetch_html: FetchText
 ) -> Tuple[str, str, str]:
@@ -1320,12 +1360,19 @@ def _fetch_extract(
     uncached failure would re-request a dead URL once per row — turning one
     unreachable page into a burst of traffic at the KB, and one slow timeout into
     many.
+
+    The digest is taken over the **whole** extracted page; only the retained copy
+    is truncated, and only to the length a prompt could actually use. Hashing the
+    truncation instead would make every edit past the cut invisible — a silent
+    false clean on exactly the long pages hardest to review by eye. Retaining the
+    whole thing is the opposite trap: this cache lives for the length of the run,
+    so a bank with many large sources would grow it without bound.
     """
     if url in cache:
         return cache[url]
     try:
         text = extract_page_text(fetch_html(url))
-        result = (text, content_digest(text), "")
+        result = (text[:MAX_PROMPT_PAGE_CHARS], content_digest(text), "")
     except Exception as exc:  # noqa: BLE001 - fetcher is injected; any failure is local
         result = ("", "", str(exc))
     cache[url] = result
@@ -1359,12 +1406,25 @@ def _check_source(
     cache: Dict[str, Tuple[str, str, str]],
     fetch_html: FetchText,
     ask_llm: Optional[AskLLM],
+    allowed_hosts: Iterable[str] = (),
 ) -> SourceCheck:
     """Compare one grounding URL against its baseline, escalating on a mismatch.
 
-    The LLM call lives here, behind the mismatch branch, so "the model fires only
-    on a moved hash" is structural rather than a rule some caller has to honor.
+    The policy check and the LLM call both live here, on either side of the
+    fetch, so "never dial a refused target" and "the model fires only on a moved
+    hash" are structural rather than rules some caller has to honor.
     """
+    if not is_fetchable_source(url, allowed_hosts):
+        return SourceCheck(
+            url=url,
+            state=DRIFT_REFUSED,
+            stored=stored or "",
+            detail=(
+                "refused by the fetch policy (not http/https, a loopback/private/"
+                "link-local address, or a host outside --allowed-hosts) — not "
+                "fetched, and never shown to a model"
+            ),
+        )
     text, fresh, error = _fetch_extract(url, cache, fetch_html)
     if error:
         return SourceCheck(
@@ -1405,7 +1465,11 @@ def _check_source(
 
 
 def find_drift(
-    bank: Iterable[Any], fetch_html: FetchText, *, ask_llm: Optional[AskLLM] = None
+    bank: Iterable[Any],
+    fetch_html: FetchText,
+    *,
+    ask_llm: Optional[AskLLM] = None,
+    allowed_hosts: Iterable[str] = (),
 ) -> DriftReport:
     """Re-hash every locked row's grounding pages and report what moved.
 
@@ -1455,7 +1519,13 @@ def find_drift(
             cited.append(url)
             checks.append(
                 _check_source(
-                    url, baselines.get(url), record, cache, fetch_html, ask_llm
+                    url,
+                    baselines.get(url),
+                    record,
+                    cache,
+                    fetch_html,
+                    ask_llm,
+                    allowed_hosts,
                 )
             )
         if not checks:
