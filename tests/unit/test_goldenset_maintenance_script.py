@@ -137,6 +137,18 @@ class TestCoverageSubcommand:
         assert "error" in capsys.readouterr().err.lower()
 
 
+class TestCorpusQuery:
+    def test_the_corpus_query_reads_only_retrievable_documents(self):
+        # `ingestion_status` is one of pending/embedding/embedded/failed, and rows
+        # are inserted as `pending`. Only `embedded` has retrievable chunks, so
+        # anything else would have coverage ask for a golden question about a page
+        # the agent cannot actually retrieve.
+        script = _load_script()
+
+        assert "NOT is_deleted" in script.CORPUS_SQL
+        assert "ingestion_status = 'embedded'" in script.CORPUS_SQL
+
+
 class TestOrphansSubcommand:
     def test_flags_a_row_whose_page_left_the_live_inventory(self, tmp_path, capsys):
         script = _load_script()

@@ -439,6 +439,12 @@ does not bury a handful of real KB gaps:
 --path-glob 'https://docs.rc.fas.harvard.edu/kb/*'
 ```
 
+Coverage reads only **retrievable** documents — `NOT is_deleted AND ingestion_status =
+'embedded'`. A document still `pending`/`embedding`, or one that `failed`, has no chunks for
+the retriever, so a golden question written against it would be unanswerable and would score
+as a benchmark failure. A page stuck outside `embedded` is an *ingestion* problem, not a
+golden-set gap.
+
 Use `--corpus-json <file>` instead of `--pg-dsn` to run against a JSON dump of the
 `documents` rows — useful offline, or to reproduce a report without database access.
 
@@ -449,7 +455,9 @@ against the ingested corpus. This matters: the ingest never prunes. A page delet
 still has a corpus row forever, so "it's still in the corpus" is no evidence the page exists,
 and "it's missing from the corpus" is no evidence it was removed. `sitemap-` lines in the
 source list are expanded live (the same expansion the ingest uses); every other line is a
-hand-listed page.
+hand-listed page. A `URL,depth` suffix is stripped exactly as the ingest strips it, so the
+oracle and the corpus agree on what a source line means — otherwise a line like `…/kb/a,2`
+would inventory a URL the corpus never stored and its bank row would read as removed.
 
 Three guards keep the pass from crying wolf. Each shows up as its own bucket in the output:
 

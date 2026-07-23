@@ -78,6 +78,18 @@ def corpus_rows_from_json(path: str):
     return lambda: rows
 
 
+# Coverage asks "which RETRIEVABLE pages have no question?", so the corpus read is
+# restricted to documents the RAG pipeline can actually serve. `ingestion_status` is
+# one of pending/embedding/embedded/failed and rows are inserted as `pending`; only
+# `embedded` has chunks. Without the filter, coverage asks an operator to author a
+# golden question for a page the agent cannot retrieve — an unanswerable question
+# that would then score as a benchmark failure.
+CORPUS_SQL = (
+    "SELECT url, source_type FROM documents "
+    "WHERE NOT is_deleted AND ingestion_status = 'embedded'"
+)
+
+
 def corpus_rows_from_postgres(dsn: str):
     """Row fetcher over the live catalog, mirroring the ingestion-verifier read."""
 
@@ -88,9 +100,7 @@ def corpus_rows_from_postgres(dsn: str):
         try:
             with psycopg2.connect(dsn) as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute(
-                        "SELECT url, source_type FROM documents WHERE NOT is_deleted"
-                    )
+                    cur.execute(CORPUS_SQL)
                     return [dict(row) for row in cur.fetchall()]
         except Exception as exc:  # pragma: no cover - needs a live database
             raise OperationalError(f"cannot read the corpus: {exc}") from exc

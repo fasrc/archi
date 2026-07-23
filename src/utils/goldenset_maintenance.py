@@ -398,6 +398,15 @@ def build_live_inventory(
         line = (raw_line or "").strip()
         if not line or line.startswith("#"):
             continue
+        # `sources.list` supports a `URL,depth` suffix. The ingest drops it in
+        # `ScraperManager._extract_urls_from_file` BEFORE prefix routing, so the
+        # oracle must parse identically — otherwise the inventory holds
+        # `…/kb/a,2` while the corpus holds `…/kb/a`, and every bank row citing a
+        # still-published page reads as removed (and `sitemap-…/x.xml,2` would
+        # fetch a URL that cannot exist, failing the run into abstention).
+        line = line.split(",", 1)[0].strip()
+        if not line:
+            continue
         if line.startswith(SITEMAP_PREFIX):
             sitemap_urls.append(line[len(SITEMAP_PREFIX) :])
         else:

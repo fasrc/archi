@@ -582,6 +582,25 @@ class TestBuildLiveInventory:
         assert inv.urls == (f"{KB}/kb/a", f"{KB}/kb/b")
         assert inv.complete is True
 
+    def test_a_depth_suffix_is_stripped_like_the_ingest_does(self):
+        # `sources.list` supports `URL,depth`, and the ingest drops the suffix in
+        # `ScraperManager._extract_urls_from_file` BEFORE prefix routing. The live
+        # oracle must parse identically: otherwise the inventory holds `…/kb/a,2`
+        # while the corpus holds `…/kb/a`, and a bank row citing the still-live
+        # page reads as removed.
+        inv = build_live_inventory([f"{KB}/kb/a,2"], _fetcher({}))
+
+        assert inv.urls == (f"{KB}/kb/a",)
+        assert inv.complete is True
+
+    def test_a_sitemap_line_with_a_depth_suffix_fetches_the_bare_url(self):
+        inv = build_live_inventory(
+            [f"sitemap-{SM},2"], _fetcher({SM: _urlset(f"{KB}/kb/a")})
+        )
+
+        assert inv.urls == (f"{KB}/kb/a",)
+        assert inv.complete is True
+
     def test_a_failed_sitemap_fetch_marks_the_inventory_incomplete(self):
         # expand_sitemaps fails OPEN here — it returns zero URLs with only a
         # WARNING, which an unguarded caller would read as "the KB is empty".
