@@ -391,7 +391,7 @@ The analysis notebook computes pairwise Cohen's kappa (per pair of graders), Fle
 
 ---
 
-## Maintaining the golden set (`coverage` / `orphans` / `drift`)
+## Maintaining the golden set (`coverage` / `orphans` / `drift` / `report`)
 
 The question bank falls out of step with the knowledge base in three directions: the KB grows
 pages nobody wrote a question for, it removes pages some question still cites, and it rewrites
@@ -869,3 +869,51 @@ twenty.
 a row from the report. The hash mismatch is the fact; the verdict only tells you how urgently to
 look. A `holds` reply still leaves the row listed — putting a model in charge of whether a real
 change gets reviewed is exactly the failure the tripwire exists to prevent.
+
+### `report` — all three passes, for a cron
+
+`report` runs `coverage`, `orphans` and `drift` in one read-only pass and prints the three work
+lists together. It is the shape meant for an unattended nightly job:
+
+```bash
+python scripts/benchmarking/goldenset_maintenance.py report \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn "postgresql://archi@localhost/archi-db" \
+    --sources config/lists/sources.list \
+    --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com \
+    --min-pages 150 \
+    --ledger .ralph/goldenset-declines.json
+```
+
+`--allowed-hosts` serves both passes that need one — the hosts `drift` may contact and the extra
+hosts the sitemap may emit — because in practice they are the same list: hosts the operator
+vouched for.
+
+#### Findings exit zero; only a broken pass exits non-zero
+
+A gap, an orphan and a drifted row are work to do, not a failed run. A cron that exits non-zero
+whenever it finds something teaches its reader to ignore the alert, which is worse than having no
+alert. Non-zero is reserved for a pass that **could not run** — an unreadable corpus or bank, a
+missing source list, or a live inventory too incomplete to judge orphans against.
+
+#### One broken pass does not hide the other two
+
+The three passes read three independent things: the corpus catalog, the live source inventory, and
+the source pages themselves. If the corpus is unreachable, orphans and drift are still perfectly
+answerable, so `report` runs all three regardless and collects the failures. It prints them
+together at the end, under `passes that could not run`, and exits non-zero — so the exit code and
+the output agree about what happened. Stopping at the first failure would throw away two working
+checks in order to report one broken one.
+
+#### No model is called unless you name one
+
+`--model` is accepted but omitted by default, so the nightly run is the cheap hash tripwire alone.
+That is still a real finding: the mismatch is the fact, and the LLM diff only triages how urgently
+to look. Paying a provider for every drifted row, every night, unattended, should be something an
+operator opts into rather than inherits.
+
+#### Read-only, like every other pass
+
+`report` writes nothing — not the bank, not the corpus, not the source list. The decision ledger
+is passed so that pages already declined stay suppressed from the nightly gap list; `report` reads
+it and never appends to it, because declining a page is an interactive decision.

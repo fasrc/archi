@@ -7,6 +7,8 @@ Answers three questions an operator otherwise has to eyeball by hand:
 - ``orphans`` — which bank rows cite a page the live KB no longer publishes?
 - ``drift`` — which confirmed rows were grounded in a page that has since changed?
 
+and ``report``, which runs all three in one unattended pass for a cron.
+
 Every pass is **proposal-only**: they print work lists and leave the bank file
 byte-unchanged. Adding a question, locking a reference, re-baselining a drifted
 row, or pruning an orphan is a separate, explicitly human-initiated step.
@@ -47,6 +49,11 @@ Usage:
     python scripts/benchmarking/goldenset_maintenance.py drift \\
         --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \\
         [--model anthropic/claude-sonnet-5] [--show-text] [--print-hashes]
+
+    # all three passes in one read-only run (the cron line)
+    python scripts/benchmarking/goldenset_maintenance.py report \\
+        --bank <bank.json> --pg-dsn <dsn> --sources config/lists/sources.list \\
+        --allowed-hosts docs.rc.fas.harvard.edu --min-pages 150 --ledger <ledger.json>
 """
 
 from __future__ import annotations
@@ -903,11 +910,56 @@ def _print_hashes(report) -> None:
         )
 
 
+#: The three detection passes, in the order the report prints them.
+_REPORT_PASSES = (
+    ("coverage", "ingested pages no bank row grounds on", run_coverage),
+    ("orphans", "rows whose grounding page left the live KB", run_orphans),
+    ("drift", "locked rows whose grounding page changed", run_drift),
+)
+
+
+def run_report(args: argparse.Namespace) -> int:
+    """Run all three passes as one unattended summary (design: cron contract).
+
+    **Findings exit zero.** Gaps, orphans and drift are work to do, not a broken
+    run — a nightly job that alerts on its own output trains its reader to
+    ignore the alert, which is worse than no alert. Non-zero is reserved for a
+    pass that *could not run*: an unreadable corpus, a missing source list, an
+    inventory too incomplete to judge against.
+
+    **Every pass runs even after an earlier one fails.** The passes are
+    independent — the corpus, the live inventory and the source pages are three
+    separate reads — so stopping at the first failure would throw away two
+    working checks to report one broken one. Failures are collected and
+    reprinted together at the end, because on a cron the summary line is the
+    part a human actually reads.
+    """
+    failures: List[str] = []
+    for name, blurb, run in _REPORT_PASSES:
+        print(f"\n{'=' * 70}\n== {name} — {blurb}\n{'=' * 70}")
+        try:
+            if run(args) != 0:
+                # The pass already explained itself on stderr; record that it
+                # did not complete so the exit code and the tail agree.
+                failures.append(f"{name}: did not complete (see above)")
+        except OperationalError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            failures.append(f"{name}: {exc}")
+    if failures:
+        _print_group(
+            "passes that could not run (this is what makes the run non-zero)",
+            failures,
+            stream=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Read-only coverage / orphan detection for the RAGAS golden-set bank. "
-            "Never writes the bank."
+            "Read-only coverage / orphan / drift detection for the RAGAS "
+            "golden-set bank. Never writes the bank."
         )
     )
     sub = parser.add_subparsers(dest="command")
@@ -1047,13 +1099,84 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     drift.set_defaults(func=run_drift)
+
+    report = sub.add_parser(
+        "report",
+        help="All three passes in one read-only run, for an unattended cron.",
+    )
+    add_bank(report)
+    report_source = report.add_mutually_exclusive_group(required=True)
+    report_source.add_argument("--corpus-json", help="JSON dump of `documents` rows.")
+    report_source.add_argument("--pg-dsn", help="Postgres DSN for the live catalog.")
+    report.add_argument(
+        "--sources",
+        required=True,
+        help="Source list; `sitemap-` lines are expanded live.",
+    )
+    report.add_argument(
+        "--allowed-hosts",
+        nargs="+",
+        required=True,
+        metavar="HOST",
+        help=(
+            "REQUIRED — hosts the operator vouches for. Serves both passes that "
+            "need one: the hosts `drift` may contact, and the extra hosts the "
+            "sitemap may emit. There is no allow-everything default."
+        ),
+    )
+    report.add_argument(
+        "--min-pages",
+        type=int,
+        help=(
+            "Sitemap completeness floor — match the deployment's "
+            "sitemap.min_pages (FASRC: 150). Required when the source list "
+            "contains a `sitemap-` line."
+        ),
+    )
+    report.add_argument(
+        "--max-pages", type=int, help="Sitemap cap — match sitemap.max_pages."
+    )
+    report.add_argument(
+        "--ledger",
+        help="Decision-ledger JSON, so declined pages stay suppressed nightly.",
+    )
+    report.add_argument(
+        "--model",
+        help=(
+            "OPTIONAL `provider/model` for the advisory drift diff. Omitted by "
+            "default: the hash tripwire is the finding, and an unattended job "
+            "should not spend a provider call per drifted row without being asked."
+        ),
+    )
+    # The passes are reused verbatim, so the flags they read but `report` does not
+    # expose have to exist with their inert values. Named here rather than
+    # defaulted inside each runner, so a reader can see in one place exactly which
+    # interactive behaviours a cron run cannot reach.
+    report.set_defaults(
+        func=run_report,
+        propose=None,
+        decline=None,
+        undecline=None,
+        reason=None,
+        source_type=None,
+        parent=None,
+        path_glob=None,
+        data_path=None,
+        count=3,
+        show_text=False,
+        print_hashes=False,
+    )
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     if not getattr(args, "func", None):
-        print("error: a subcommand is required (coverage | orphans)", file=sys.stderr)
+        print(
+            "error: a subcommand is required "
+            "(coverage | orphans | drift | report)",
+            file=sys.stderr,
+        )
         return 2
     try:
         return args.func(args)

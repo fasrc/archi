@@ -1966,3 +1966,140 @@ class TestPrintHashesNeverLosesABaseline:
 
         assert "INCOMPLETE" in out
         assert dead in out
+
+
+def _report_argv(bank, corpus, sources, *extra):
+    """`report` argv: one cron line covering all three passes."""
+    return [
+        "report",
+        "--bank",
+        str(bank),
+        "--corpus-json",
+        str(corpus),
+        "--sources",
+        str(sources),
+        "--allowed-hosts",
+        KB_HOST,
+        *extra,
+    ]
+
+
+def _sources_list(tmp_path, *urls):
+    path = tmp_path / "sources.list"
+    path.write_text("".join(f"{u}\n" for u in urls), encoding="utf-8")
+    return path
+
+
+class TestReportSubcommand:
+    """5.1 — one unattended pass emitting all three work lists."""
+
+    def test_prints_all_three_work_lists(self, tmp_path, capsys):
+        script = _load_script()
+        live, gone, uncovered = f"{KB}/kb/live", f"{KB}/kb/gone", f"{KB}/kb/uncovered"
+        bank = _bank(
+            tmp_path,
+            _locked_row(live, hashes={live: page_digest(GPU_HTML)}),
+            _row(gone),
+        )
+        corpus = _corpus(tmp_path, live, uncovered)
+        sources = _sources_list(tmp_path, live, uncovered)
+        _fake_pages(script, {live: GPU_HTML_CHANGED})
+
+        code = script.main(_report_argv(bank, corpus, sources))
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert uncovered in out  # coverage gap
+        assert gone in out  # orphan
+        assert live in out  # drift
+
+    def test_findings_do_not_fail_the_cron_job(self, tmp_path, capsys):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live, f"{KB}/kb/uncovered")
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML_CHANGED})
+
+        # A gap and a drifted row are work to do, not a broken run. A cron that
+        # exits non-zero on findings trains its reader to ignore the alert.
+        assert script.main(_report_argv(bank, corpus, sources)) == 0
+
+    def test_modifies_no_file(self, tmp_path):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live, f"{KB}/kb/uncovered")
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML_CHANGED})
+        before = (bank.read_bytes(), corpus.read_bytes(), sources.read_bytes())
+
+        script.main(_report_argv(bank, corpus, sources))
+
+        assert (bank.read_bytes(), corpus.read_bytes(), sources.read_bytes()) == before
+
+    def test_an_unreachable_corpus_exits_nonzero(self, tmp_path, capsys):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+
+        # The one thing that MUST page someone: the report could not read what it
+        # is reporting on.
+        code = script.main(_report_argv(bank, tmp_path / "nope.json", sources))
+
+        assert code == 1
+        assert "corpus" in capsys.readouterr().err.lower()
+
+    def test_a_broken_pass_does_not_suppress_the_others(self, tmp_path, capsys):
+        script = _load_script()
+        live, gone = f"{KB}/kb/live", f"{KB}/kb/gone"
+        bank = _bank(
+            tmp_path,
+            _locked_row(live, hashes={live: page_digest(GPU_HTML)}),
+            _row(gone),
+        )
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML_CHANGED})
+
+        # Corpus unreadable, so coverage cannot run — but a nightly report that
+        # stops at its first broken pass tells its reader strictly less than one
+        # that says which passes did work.
+        code = script.main(_report_argv(bank, tmp_path / "nope.json", sources))
+        captured = capsys.readouterr()
+
+        assert code == 1
+        assert gone in captured.out  # orphans still ran
+        assert live in captured.out  # drift still ran
+
+    def test_an_abstaining_inventory_exits_nonzero(self, tmp_path, capsys):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path)
+        _fake_pages(script, {live: GPU_HTML})
+
+        # An empty inventory means orphan detection never happened; reporting
+        # "no orphans" would be a clean bill of health for a check that did not run.
+        code = script.main(_report_argv(bank, corpus, sources))
+
+        assert code == 1
+        assert "ABSTAINED" in capsys.readouterr().err
+
+    def test_no_model_is_called_unless_one_is_named(self, tmp_path):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML_CHANGED})
+        calls = []
+        _fake_llm(script, {"verdict": "broken"}, calls=calls)
+
+        script.main(_report_argv(bank, corpus, sources))
+
+        # Unattended by definition. The hash tripwire is the finding; paying a
+        # provider per drifted row every night is opt-in.
+        assert calls == []
