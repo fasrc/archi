@@ -1844,6 +1844,24 @@ class TestDriftTransport:
 
         assert seen["max_bytes"] == script.MAX_PAGE_BYTES
 
+    def test_the_fetcher_refuses_to_leave_https(self, monkeypatch):
+        script = _load_script()
+        from src.data_manager.collectors.scrapers import sitemap_source
+
+        seen = {}
+
+        def fake(url, **kwargs):
+            seen.update(kwargs)
+            return GPU_HTML
+
+        monkeypatch.setattr(sitemap_source, "fetch_sitemap_text", fake)
+        script.build_fetch_html()(f"{KB}/kb/gpu")
+
+        # `verify=True` is only worth anything while the connection stays TLS.
+        # A same-host https -> http redirect passes the fetcher's host check, so
+        # the downgrade has to be refused at the transport itself.
+        assert seen["require_https"] is True
+
     def test_an_all_refused_run_exits_nonzero(self, tmp_path, capsys):
         script = _load_script()
         url = "http://127.0.0.1:9000/admin"

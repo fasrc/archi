@@ -1776,6 +1776,30 @@ class TestDriftFetchPolicy:
         assert calls == [listed]
         assert [c.url for c in report.refused] == [other]
 
+    def test_a_plaintext_source_is_refused_even_on_an_allowlisted_host(self):
+        # The ingest's filter permits http, and TLS verification buys nothing on
+        # a plaintext hop: anyone on the network path can substitute the page,
+        # manufacture a drift finding, steer the advisory verdict, and — with
+        # --model — choose the text sent to the provider. That is the exact risk
+        # the fetcher verifies TLS to avoid, so drift must not dial the scheme
+        # that defeats it.
+        url = f"http://{KB_HOST}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+        assert [c.url for c in report.refused] == [url]
+
+    def test_the_plaintext_refusal_names_the_scheme(self):
+        # A refused URL is only useful if the report says which rule refused it.
+        url = f"http://{KB_HOST}/kb/gpu"
+
+        report = _drift([_locked(url)], _fetcher_for({url: KB_HTML}))
+
+        assert "https" in report.refused[0].detail
+
 
 class TestDriftRetainsBoundedText:
     """The tripwire runs over a whole bank; retained text has to be bounded."""

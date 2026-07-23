@@ -1371,9 +1371,22 @@ def is_fetchable_source(url: str, allowed_hosts: Iterable[str] = ()) -> bool:
     belongs in `fetch_sitemap_text` (its "§Deferred hardening v2/H1"), where
     `expand_sitemaps` — which fetches URLs read out of a *remote* document, less
     trusted than a repo-committed bank — needs it just as much. Tracked in #143.
+
+    **Plaintext is refused even on an allowlisted host.** `is_url_allowed`
+    permits `http`, which is right for the ingest but not here: TLS verification
+    buys nothing on a plaintext hop, so anyone on the network path could
+    substitute the page — manufacturing a drift finding, steering the advisory
+    verdict, and choosing the text `--model` forwards to the provider. `sources`
+    is repo-committed data an operator can simply write as `https`, so the cost
+    of requiring it is a one-character edit. The transport refuses the downgrade
+    this layer cannot see (an https URL that redirects to http on the same host);
+    naming it here as well means the report shows the URL rather than an opaque
+    fetch failure.
     """
     hosts = [host for host in allowed_hosts if host]
     if not hosts:
+        return False
+    if urlparse(url).scheme.lower() != "https":
         return False
     return is_url_allowed(url, "", hosts)
 
@@ -1447,8 +1460,8 @@ def _check_source(
             state=DRIFT_REFUSED,
             stored=stored or "",
             detail=(
-                "refused by the fetch policy (host not in --allowed-hosts, or not "
-                "http/https, or a loopback/private/link-local address) — not "
+                "refused by the fetch policy (host not in --allowed-hosts, not "
+                "https, or a loopback/private/link-local address) — not "
                 "fetched, and never shown to a model"
             ),
         )

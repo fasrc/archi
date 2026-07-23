@@ -726,7 +726,7 @@ so the list is usually more than one host — but naming them is the operator's 
 file's. Every URL is then checked against the ingest's own trust filter (`is_url_allowed`)
 *before* it is dialled. Refused unconditionally, allowlisted or not:
 
-- any scheme that is not `http`/`https`
+- any scheme that is not `https` (see **TLS** below — the ingest permits `http`; drift does not)
 - a loopback, private, or link-local address (`127.0.0.1`, `10.0.0.5`, `169.254.169.254`)
 - an obfuscated numeric host that resolvers still map to those (`2130706433`, `0177.0.0.1`)
 - a malformed or zero port
@@ -737,11 +737,20 @@ inherit the ingest's *target policy*: `fetch_sitemap_text` enforces transport li
 cross-host redirects, a bounded body, a timeout), while the trust filter lives in
 `expand_sitemaps`. Drift applies it itself.
 
-**TLS is verified.** The ingest's fetcher defaults to `verify=False`; drift overrides that. A
-network attacker who could substitute page content would otherwise be able to manufacture drift
-findings, steer the advisory verdict, and put text of their choosing into a prompt sent to the
-model provider. There is deliberately no flag to turn verification off — such a flag ends up in
-the cron line. A deployment with a private CA sets `REQUESTS_CA_BUNDLE`.
+**TLS is verified, and the connection may never leave HTTPS.** The ingest's fetcher defaults to
+`verify=False`; drift overrides that. A network attacker who could substitute page content would
+otherwise be able to manufacture drift findings, steer the advisory verdict, and put text of their
+choosing into a prompt sent to the model provider. There is deliberately no flag to turn
+verification off — such a flag ends up in the cron line. A deployment with a private CA sets
+`REQUESTS_CA_BUNDLE`.
+
+Verification only protects a hop that is still TLS, so two plaintext routes are closed alongside
+it. A `sources` URL written as `http://` is refused by the policy above and named in the report,
+even on an allowlisted host — `sources` is repo-committed data, so writing `https` is a
+one-character edit. And an `https://` page that redirects to `http://` **on its own host** passes
+the fetcher's host check, which compares hosts and not schemes; drift refuses that downgrade at
+the transport. Ingestion is unaffected — it still follows such redirects, because it forwards
+nothing to a model provider.
 
 **Not covered:** DNS-rebinding-resistant connection pinning. This layer sees only a *hostname* —
 nothing resolves DNS or inspects the address actually connected to — so a name that passes the

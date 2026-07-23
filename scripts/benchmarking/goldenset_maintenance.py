@@ -401,6 +401,12 @@ def build_fetch_html():
       putting text of their choosing into a prompt sent to the model provider.
       A private CA goes in `REQUESTS_CA_BUNDLE`; there is deliberately no flag to
       turn verification off, because such a flag ends up in the cron line.
+    - **The connection may never leave HTTPS.** Verification only protects a hop
+      that is still TLS, and the fetcher's redirect guard compares hosts, not
+      schemes — so an allowlisted page that redirects to `http://` on its own
+      host would be read in the clear with `verify=True` still set. `find_drift`
+      refuses a plaintext `sources` URL before dialing; this closes the redirect
+      the policy layer cannot see.
     - **The body cap drops to `MAX_PAGE_BYTES`.** The ingest's 64 MiB ceiling is
       sized for a whole site's sitemap index; a KB article is a few hundred KB,
       and this runs across a whole bank.
@@ -408,7 +414,9 @@ def build_fetch_html():
     from src.data_manager.collectors.scrapers.sitemap_source import fetch_sitemap_text
 
     def fetch(url: str) -> str:
-        return fetch_sitemap_text(url, verify=True, max_bytes=MAX_PAGE_BYTES)
+        return fetch_sitemap_text(
+            url, verify=True, max_bytes=MAX_PAGE_BYTES, require_https=True
+        )
 
     return fetch
 

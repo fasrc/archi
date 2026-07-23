@@ -269,6 +269,7 @@ def fetch_sitemap_text(
     verify: bool = False,
     timeout: int = _SITEMAP_TIMEOUT,
     max_bytes: int = _MAX_FETCH_BYTES,
+    require_https: bool = False,
 ) -> str:
     """GET ``url`` and return the decoded body text.
 
@@ -278,7 +279,17 @@ def fetch_sitemap_text(
     without ever requesting the off-host target (v1 SSRF containment; DNS-resolve
     + connection pinning is §Deferred hardening v2/H1). Raises
     :class:`SitemapFetchError` on any connection/timeout/status/over-size failure.
+
+    ``require_https`` refuses to read anything over plaintext, start URL or
+    redirect target alike. The host check above cannot see a downgrade — the host
+    matches, only the scheme drops — so a caller that passes ``verify=True``
+    still ends up reading hop two in the clear without this. Off by default so
+    ingestion behaviour is unchanged; callers that forward fetched text to a
+    model provider (drift detection) turn it on, because there a substituted page
+    both manufactures a finding and chooses what leaves the network.
     """
+    if require_https and urlparse(url).scheme.lower() != "https":
+        raise SitemapFetchError(f"refusing to fetch {url} over plaintext")
     current = url
     for _hop in range(_MAX_REDIRECTS + 1):
         try:
@@ -297,6 +308,10 @@ def fetch_sitemap_text(
                 if _host_of(target) != _host_of(current):
                     raise SitemapFetchError(
                         f"refusing cross-host redirect {current} -> {target}"
+                    )
+                if require_https and urlparse(target).scheme.lower() != "https":
+                    raise SitemapFetchError(
+                        f"refusing plaintext redirect {current} -> {target}"
                     )
                 current = target
                 continue
