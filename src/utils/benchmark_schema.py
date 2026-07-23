@@ -115,6 +115,49 @@ def normalize_bank(records: Any) -> Any:
     return [normalize_record(r) for r in records]
 
 
+# --- confirmation state: draft/locked census (maintain-ragas-goldenset) ------
+# A row is authoritative ground truth for the maintenance tooling ONLY when its
+# ``status`` is exactly ``"locked"``; anything else — absent, ``"draft"``, or an
+# unexpected value — is treated as a non-authoritative draft. These readers back
+# the census and drift gating and NEVER touch benchmark scoring (the harness
+# scores every row's ``reference`` regardless of ``status``). ``status`` and the
+# ``source_hashes`` map are extension fields, already preserved verbatim by
+# ``normalize_record`` (it copies every key), so loading is unchanged.
+
+
+def row_status(record: Any) -> str:
+    """Return a row's confirmation status: ``"locked"`` iff it is exactly
+    ``"locked"``, else ``"draft"`` (absent or any other value is not
+    authoritative)."""
+    if isinstance(record, dict) and record.get("status") == "locked":
+        return "locked"
+    return "draft"
+
+
+def bank_status_counts(bank: Any) -> Dict[str, Any]:
+    """Census a bank by confirmation state, read from the field (not by parsing
+    ``notes``): ``locked`` / ``draft`` counts, ``total``, and the ``anchor_type``
+    distribution (rows without an ``anchor_type`` counted under
+    ``"unassigned"``)."""
+    rows = bank if isinstance(bank, list) else []
+    locked = 0
+    anchor_type: Dict[str, int] = {}
+    for record in rows:
+        if row_status(record) == "locked":
+            locked += 1
+        key = "unassigned"
+        if isinstance(record, dict):
+            key = record.get("anchor_type") or "unassigned"
+        anchor_type[key] = anchor_type.get(key, 0) + 1
+    total = len(rows)
+    return {
+        "locked": locked,
+        "draft": total - locked,
+        "total": total,
+        "anchor_type": anchor_type,
+    }
+
+
 def required_fields_for_modes(benchmarking_configs: Any) -> List[str]:
     """Schema-validation field set for the modes being run.
 

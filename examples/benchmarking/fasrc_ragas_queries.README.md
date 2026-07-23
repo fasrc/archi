@@ -36,12 +36,30 @@ loading.
 | `sources`            | list[str]   | SOURCES mode | Reference source URLs the answer should be grounded in. |
 | `source_match_field` | list[str]   | with `sources` | How each source is matched, e.g. `["url"]`. |
 | `notes`              | str         | no       | Authoring notes (e.g. "confirm with operator"). Not scored, not shown to graders. |
+| `status`             | str         | no       | Confirmation state: `draft` or `locked`. Absent ⇒ treated as `draft`. Consulted only by the maintenance tooling — **never** by scoring. |
+| `source_hashes`      | dict        | on `locked` | Map of each `sources` URL → the content hash of that page's normalized extracted text, captured at lock time. The drift tripwire. Absent on `draft` rows and on source-less `should_refuse` rows. |
 
 ¹ `reference` is **not required at load** — an empty `reference` is a valid draft
 row. Load validation requires only `user_input` (plus `sources` for SOURCES mode),
 kept separate from metric eligibility. A draft row is simply skipped by the context
 metrics (`context_precision`/`context_recall`, which need a ground truth) while
 `answer_relevancy`/`faithfulness` still score it.
+
+### Confirmation state (`draft` / `locked`)
+
+`status` makes "is this reference trustworthy?" a machine-queryable field instead of
+free text in `notes`. A row is authoritative ground truth for the maintenance tooling
+**only** when `status` is exactly `locked`; anything else — absent, `draft`, or an
+unexpected value — is a non-authoritative `draft`. Every row is currently backfilled to
+`draft`; an operator promotes one to `locked` after confirming its answer against the
+live source, at which point the tool records `source_hashes` (one content hash per
+`sources` URL). A locked `should_refuse` row has empty `sources` and so carries no
+`source_hashes`.
+
+**This does not change benchmark behavior.** The harness scores every row's `reference`
+regardless of `status` (an empty `reference` is still skipped by the context metrics as
+above). Gating scoring on `locked` — only scoring confirmed references — is a separate,
+deferred change.
 
 `retrieved_contexts` is **not** authored here — the harness fills it from the
 agent's retrieved `source_documents` at run time, then hands the full
