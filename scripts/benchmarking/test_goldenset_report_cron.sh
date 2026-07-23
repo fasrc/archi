@@ -283,7 +283,10 @@ case "$out" in
   *) notok "a degraded run notifies even with nothing drifted (got: $out)" ;;
 esac
 
-# 19. and the flag is authoritative: counts alone do not make it speak
+# 19. the flag is authoritative — the wrapper does not re-derive the policy from
+#     the counters. A deliberately contradictory summary (counts set, notify
+#     false) pins that: which buckets deserve to wake someone is decided in
+#     `report`, where it has tests, not in shell string-matching.
 sb="$(new_sandbox)"
 QUIET='{"gaps":0,"orphans":0,"drifted":0,"unchecked_sources":0,"refused_sources":7,"failed_passes":[],"notify":false}'
 out="$( ( STUB_SUMMARY="$QUIET" GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) \

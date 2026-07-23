@@ -799,9 +799,13 @@ def run_drift(args: argparse.Namespace) -> int:
         unchecked_sources=(
             len(report.unbaselined) + len(report.incomparable) + len(report.unreachable)
         ),
-        # Separate, and deliberately NOT notified on: a refusal is the operator's
-        # own allowlist doing its job, not a check that failed. Nagging nightly
-        # about a standing decision is what makes the real signal unreadable.
+        # Counted separately from `unchecked_sources` because the remedy differs
+        # — fix the allowlist, not the page — but it notifies just the same. A
+        # host absent from `--allowed-hosts` is OMISSION, not intent: the
+        # operator listed the hosts they thought of, and a row added later
+        # citing a new host would then go unchecked forever with nobody told.
+        # Reading "not listed" as "do not check" would be silence-by-omission,
+        # which is the failure every other bucket here exists to prevent.
         refused_sources=len(report.refused),
     )
     print(
@@ -963,6 +967,7 @@ _NOTIFY_ON = (
     "orphans_needs_reconciliation",
     "drifted",
     "unchecked_sources",
+    "refused_sources",
 )
 
 #: The three detection passes, in the order the report prints them.
@@ -1014,9 +1019,7 @@ def run_report(args: argparse.Namespace) -> int:
     # Decided here rather than in the cron wrapper: which buckets deserve to
     # wake someone is a judgement about the domain, and it belongs where it can
     # be tested. `refused_sources` is excluded on purpose (see `run_drift`).
-    summary["notify"] = any(
-        summary[key] > 0 for key in _NOTIFY_ON
-    )
+    summary["notify"] = any(summary[key] > 0 for key in _NOTIFY_ON)
     if args.summary_json:
         # Written on every path, including the failing one: a wrapper that finds
         # no file after a broken run cannot tell it from a clean one, which is

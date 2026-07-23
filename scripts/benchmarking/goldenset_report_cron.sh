@@ -152,9 +152,9 @@ if [ ! -t 1 ]; then
     notify="$(tr -d ' \n' < "$SUMMARY" | grep -o '"notify":[a-z]*' | head -1 |
               cut -d: -f2)"
     if [ "$notify" = "true" ]; then
-      printf 'goldenset report: %s gaps | %s orphans | %s drifted | %s unchecked\n' \
+      printf 'goldenset report: %s gaps | %s orphans | %s drifted | %s unchecked | %s refused\n' \
         "$(read_num gaps)" "$(read_num orphans)" "$(read_num drifted)" \
-        "$(read_num unchecked_sources)"
+        "$(read_num unchecked_sources)" "$(read_num refused_sources)"
       printf 'full report: %s\n' "$LOG"
     fi
   fi

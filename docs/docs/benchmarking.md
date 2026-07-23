@@ -990,9 +990,18 @@ Three properties make it safe unattended, each pinned by
     | Outcome | Exit | What cron mails |
     | --- | --- | --- |
     | Clean | 0 | nothing |
-    | Findings (gaps, orphans, drift) | 0 | a one-line digest plus the log path |
+    | Findings | 0 | a one-line digest plus the log path |
     | A pass could not run | 1 | the full report on stderr |
     | The wrapper is misconfigured | 2 | the error, *before* anything is invoked |
+
+    "Findings" is wider than gaps, orphans and drifted rows: it also covers every source the
+    drift pass could **not** check — no baseline, a malformed baseline, unreachable, or refused
+    by the allowlist. `drift` only abstains when *nothing* was read, so one readable page makes
+    the pass succeed; counting drifted rows alone would let a run that checked 1 source of 50
+    summarise as perfectly clean. Refusals count too, because a host missing from
+    `--allowed-hosts` is an omission rather than a decision — the operator listed the hosts they
+    thought of, and a row added later citing a new host would otherwise go unchecked forever
+    with nobody told.
 
     Findings exiting zero is the cron contract, so notification cannot key on the exit status —
     that would bury every actionable result in a log nobody tails, and the job would detect

@@ -2262,11 +2262,13 @@ class TestReportNotifiesOnDegradedRuns:
         assert summary["unchecked_sources"] == 1
         assert summary["notify"] is True
 
-    def test_a_policy_refusal_is_counted_but_does_not_notify(self, tmp_path):
-        # Distinct from the three above: a refused host is the operator's OWN
-        # declared allowlist, not something the tool tried and failed to do.
-        # Nagging nightly about a standing decision is the alert fatigue that
-        # makes the real signal unreadable.
+    def test_a_policy_refusal_notifies_too(self, tmp_path):
+        # An absent host is OMISSION, not intent: the operator listed the hosts
+        # they thought of, and a row added later citing a new host is refused
+        # forever without anyone saying so. Reading "not listed" as "do not
+        # check" is silence-by-omission — and for drift there is no reason not
+        # to allowlist every host the bank cites, so a refusal always means
+        # either a stale allowlist or a permanently unverifiable row.
         script = _load_script()
         url, off_host = f"{KB}/kb/ok", "https://slurm.schedmd.com/mpi"
         bank = _bank(
@@ -2282,7 +2284,7 @@ class TestReportNotifiesOnDegradedRuns:
 
         assert summary["refused_sources"] == 1
         assert summary["unchecked_sources"] == 0
-        assert summary["notify"] is False
+        assert summary["notify"] is True
 
     def test_a_clean_run_does_not_notify(self, tmp_path):
         script = _load_script()
