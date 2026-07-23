@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, List, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
+from urllib.parse import urlparse
 
 from src.data_manager.collectors.scrapers.sitemap_source import normalize_page_url
 from src.utils.logging import get_logger
@@ -37,6 +38,12 @@ logger = get_logger(__name__)
 # what keeps a large repo from flooding the coverage report.
 _WEB_PARENT = re.compile(r"^(https?://[^/]+)")
 _GIT_PARENT = re.compile(r"^(https?://[^/]+/[^/]+/[^/]+)")
+
+# Near-miss slug normalization. `-\d+$` strips the collision suffix a WordPress
+# KB appends when a slug is reused (`running-jobs-2`); it cannot erase a slug
+# that is itself numeric (`/kb/2024`) because that has no leading hyphen.
+_HTML_SUFFIX = re.compile(r"\.html?$")
+_ALIAS_SUFFIX = re.compile(r"-\d+$")
 
 #: Returns the live `documents` rows — injected so tests need no Postgres.
 CorpusRowFetcher = Callable[[], Iterable[Mapping[str, Any]]]
@@ -83,6 +90,101 @@ def canonical_url(url: str) -> Optional[str]:
     except ValueError:
         logger.warning("goldenset: dropping unparseable URL %r", url)
         return None
+
+
+def reconciliation_key(url: str) -> Optional[str]:
+    """Return the near-miss grouping key for a URL, or None if it has no slug.
+
+    The key is the final path segment, lowercased, with an `.html` extension and
+    a WordPress-style `-N` collision suffix stripped — so a page that merely
+    moved prefix (`/kb/x` -> `/docs/x`) or picked up an alias (`/kb/x-2`) shares
+    a key with its original. A genuine rename (`running-jobs` ->
+    `submitting-jobs`) deliberately does NOT share a key: that is a real gap or
+    orphan and the operator must see it, not have it hidden in a review bucket.
+
+    A URL with no path segment (a bare host) has no key and pairs with nothing.
+    """
+    try:
+        path = urlparse(url.strip()).path
+    except ValueError:
+        return None
+    slug = path.rstrip("/").rsplit("/", 1)[-1].lower()
+    slug = _ALIAS_SUFFIX.sub("", _HTML_SUFFIX.sub("", slug))
+    return slug or None
+
+
+@dataclass(frozen=True)
+class NearMiss:
+    """A URL that matches the other side only by reconciliation key.
+
+    Reported for human review and never classified as a definitive coverage gap
+    or orphan — the pair may be the same page under a moved slug, or two genuinely
+    different pages, and only a human can tell.
+    """
+
+    url: str
+    candidates: Tuple[str, ...]
+    key: str
+
+
+@dataclass(frozen=True)
+class Reconciliation:
+    """Partition of subject URLs against a reference set of URLs."""
+
+    matched: Tuple[str, ...]
+    near_misses: Tuple[NearMiss, ...]
+    unmatched: Tuple[str, ...]
+
+
+def reconcile(
+    subject_urls: Iterable[str], reference_urls: Iterable[str]
+) -> Reconciliation:
+    """Classify each subject URL against a reference set: exact / near / absent.
+
+    Direction-agnostic, so both passes share one rule: coverage runs corpus URLs
+    against the bank's `sources`, orphan detection runs the bank's `sources`
+    against the freshly expanded live inventory. Both sides are canonicalized
+    with the ingest's own normalizer first, so scheme/host case, fragments and
+    the `/x` vs `/x/` split (#118) can never masquerade as a difference.
+    Unparseable URLs are dropped on either side rather than crashing a read-only
+    report. Subject order is preserved and duplicates collapse.
+    """
+    by_key: Dict[str, List[str]] = {}
+    reference: Set[str] = set()
+    for raw in reference_urls:
+        url = canonical_url(raw)
+        if url is None or url in reference:
+            continue
+        reference.add(url)
+        key = reconciliation_key(url)
+        if key is not None:
+            by_key.setdefault(key, []).append(url)
+
+    matched: List[str] = []
+    near_misses: List[NearMiss] = []
+    unmatched: List[str] = []
+    seen = set()
+    for raw in subject_urls:
+        url = canonical_url(raw)
+        if url is None or url in seen:
+            continue
+        seen.add(url)
+        if url in reference:
+            matched.append(url)
+            continue
+        key = reconciliation_key(url)
+        candidates = by_key.get(key) if key is not None else None
+        if key is not None and candidates:
+            near_misses.append(
+                NearMiss(url=url, candidates=tuple(sorted(candidates)), key=key)
+            )
+        else:
+            unmatched.append(url)
+    return Reconciliation(
+        matched=tuple(matched),
+        near_misses=tuple(near_misses),
+        unmatched=tuple(unmatched),
+    )
 
 
 def read_corpus_docs(fetch_rows: CorpusRowFetcher) -> List[CorpusDoc]:

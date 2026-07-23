@@ -21,7 +21,14 @@ Postgres or the network.
 
 from __future__ import annotations
 
-from src.utils.goldenset_maintenance import CorpusDoc, parent_source, read_corpus_docs
+from src.utils.goldenset_maintenance import (
+    CorpusDoc,
+    NearMiss,
+    parent_source,
+    read_corpus_docs,
+    reconcile,
+    reconciliation_key,
+)
 
 
 def _rows(*rows):
@@ -170,3 +177,141 @@ class TestParentSource:
 
     def test_url_that_does_not_match_the_pattern_is_its_own_parent(self):
         assert parent_source("https://github.com", "git") == "https://github.com"
+
+
+KB = "https://docs.rc.fas.harvard.edu"
+
+
+class TestReconciliationKey:
+    """2.2 — the near-miss grouping key: final slug, minus a WP `-N` alias."""
+
+    def test_key_is_the_final_path_segment(self):
+        assert reconciliation_key(f"{KB}/kb/running-jobs") == "running-jobs"
+
+    def test_key_ignores_the_path_prefix_so_a_moved_page_still_pairs(self):
+        assert reconciliation_key(f"{KB}/kb/running-jobs") == reconciliation_key(
+            f"{KB}/docs/running-jobs"
+        )
+
+    def test_key_strips_a_wordpress_collision_suffix(self):
+        assert reconciliation_key(f"{KB}/kb/running-jobs-2") == "running-jobs"
+
+    def test_key_strips_an_html_extension(self):
+        assert reconciliation_key(f"{KB}/faq.html") == reconciliation_key(
+            f"{KB}/kb/faq"
+        )
+
+    def test_key_is_case_insensitive_and_slash_tolerant(self):
+        assert reconciliation_key(f"{KB}/kb/Running-Jobs/") == "running-jobs"
+
+    def test_distinct_slugs_do_not_share_a_key(self):
+        # A rename is a real gap/orphan, not a near-miss — the operator must see
+        # it, so the rule deliberately stops short of fuzzy matching.
+        assert reconciliation_key(f"{KB}/kb/running-jobs") != reconciliation_key(
+            f"{KB}/kb/submitting-jobs"
+        )
+        assert reconciliation_key(f"{KB}/kb/python") != reconciliation_key(
+            f"{KB}/kb/python-packages"
+        )
+
+    def test_a_url_with_no_path_segment_has_no_key(self):
+        # A bare host cannot be paired with anything by slug.
+        assert reconciliation_key(f"{KB}/") is None
+        assert reconciliation_key(KB) is None
+
+    def test_an_all_numeric_slug_keeps_its_digits(self):
+        # Stripping `-\d+` must not erase a slug that IS a number, or every
+        # numeric page would collapse onto one empty key.
+        assert reconciliation_key(f"{KB}/kb/2024") == "2024"
+
+
+class TestReconcile:
+    """2.2 — exact / near-miss / unmatched partition, used by both passes."""
+
+    def test_exact_match_after_canonicalization_is_matched_not_a_near_miss(self):
+        result = reconcile(
+            [f"{KB}/kb/running-jobs"],
+            [f"{KB}/kb/running-jobs"],
+        )
+
+        assert result.matched == (f"{KB}/kb/running-jobs",)
+        assert result.near_misses == ()
+        assert result.unmatched == ()
+
+    def test_moved_prefix_is_a_near_miss_not_an_unmatched_url(self):
+        result = reconcile([f"{KB}/docs/running-jobs"], [f"{KB}/kb/running-jobs"])
+
+        assert result.matched == ()
+        assert result.unmatched == ()
+        assert result.near_misses == (
+            NearMiss(
+                url=f"{KB}/docs/running-jobs",
+                candidates=(f"{KB}/kb/running-jobs",),
+                key="running-jobs",
+            ),
+        )
+
+    def test_wordpress_alias_is_a_near_miss(self):
+        result = reconcile([f"{KB}/kb/running-jobs-2"], [f"{KB}/kb/running-jobs"])
+
+        assert [near.url for near in result.near_misses] == [f"{KB}/kb/running-jobs-2"]
+
+    def test_a_genuinely_absent_url_is_unmatched(self):
+        result = reconcile([f"{KB}/kb/brand-new-page"], [f"{KB}/kb/running-jobs"])
+
+        assert result.unmatched == (f"{KB}/kb/brand-new-page",)
+        assert result.near_misses == ()
+
+    def test_all_candidates_sharing_a_key_are_listed_once_sorted(self):
+        result = reconcile(
+            [f"{KB}/docs/python"],
+            [f"{KB}/kb/python-2", f"{KB}/kb/python"],
+        )
+
+        assert result.near_misses == (
+            NearMiss(
+                url=f"{KB}/docs/python",
+                candidates=(f"{KB}/kb/python", f"{KB}/kb/python-2"),
+                key="python",
+            ),
+        )
+
+    def test_input_order_is_preserved_and_duplicates_collapse(self):
+        result = reconcile(
+            [f"{KB}/kb/b", f"{KB}/kb/a/", f"{KB}/kb/a"],
+            [f"{KB}/kb/a"],
+        )
+
+        assert result.matched == (f"{KB}/kb/a",)
+        assert result.unmatched == (f"{KB}/kb/b",)
+
+    def test_a_path_case_variant_is_a_near_miss_not_an_exact_match(self):
+        # The ingest does NOT fold path case (`/kb/A` and `/kb/a` are distinct
+        # resources on a case-sensitive server), but the slug key does — so the
+        # pair lands in the review bucket instead of being silently merged or
+        # reported as a spurious gap.
+        result = reconcile([f"{KB}/kb/Python"], [f"{KB}/kb/python"])
+
+        assert result.matched == ()
+        assert [near.url for near in result.near_misses] == [f"{KB}/kb/Python"]
+
+    def test_unparseable_urls_are_dropped_rather_than_crashing_the_report(self):
+        result = reconcile(["http://["], [f"{KB}/kb/a", "http://["])
+
+        assert result.matched == ()
+        assert result.near_misses == ()
+        assert result.unmatched == ()
+
+    def test_keyless_urls_never_pair_with_each_other(self):
+        # Two bare hosts have no slug; they must not be reported as reconcilable.
+        result = reconcile([f"{KB}/"], ["https://example.org/"])
+
+        assert result.unmatched == (f"{KB}/",)
+        assert result.near_misses == ()
+
+    def test_reconcile_is_direction_agnostic(self):
+        # Orphan detection runs the same primitive with bank sources as the
+        # subject and the live inventory as the reference.
+        result = reconcile([f"{KB}/kb/removed"], [f"{KB}/kb/still-here"])
+
+        assert result.unmatched == (f"{KB}/kb/removed",)
