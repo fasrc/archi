@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from src.data_manager.collectors.persistence import PersistenceService
+from src.data_manager.collectors.scrapers.scrape_pool import run_seeds
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 from src.data_manager.collectors.scrapers.scraper import LinkScraper
 from src.utils.config_access import get_global_config
@@ -391,20 +392,31 @@ class ScraperManager:
             if authenticator_class is not None:
                 authenticator = authenticator_class(**kwargs)
 
-        total_count = 0
+        depth = max_depth if max_depth is not None else self.base_depth
+
+        def _scrape_one_seed(seed: str) -> int:
+            # For standard link collection, don't use selenium for scraping (SSO
+            # urls are handled separately via collect_sso). Each concurrent seed
+            # crawl gets its own LinkScraper from the factory seam so that the
+            # per-instance state crawl_iter resets is never shared across threads
+            # (issue #136).
+            return self._handle_standard_url(
+                seed,
+                persistence,
+                output_dir,
+                max_depth=depth,
+                client=None,
+                use_client_for_scraping=False,
+                scraper=self._new_link_scraper(),
+            )
+
         try:
-            for url in urls:
-                # For standard link collection, don't use selenium for scraping
-                # (SSO urls are handled separately via collect_sso)
-                count = self._handle_standard_url(
-                    url,
-                    persistence,
-                    output_dir,
-                    max_depth=max_depth if max_depth is not None else self.base_depth,
-                    client=None,
-                    use_client_for_scraping=False,
-                )
-                total_count += count
+            total_count = run_seeds(
+                urls,
+                _scrape_one_seed,
+                workers=self.scrape_workers,
+                per_host_workers=self.scrape_per_host_workers,
+            )
         finally:
             if authenticator is not None:
                 authenticator.close()  # Close the authenticator properly and free the resources
@@ -633,11 +645,15 @@ class ScraperManager:
         max_depth: int,
         client=None,
         use_client_for_scraping: bool = False,
+        scraper: Optional[LinkScraper] = None,
     ) -> int:
         """Scrape a URL and persist resources. Returns count of resources scraped."""
+        # Parallel seed crawls pass their own per-worker scraper; the sequential
+        # and selenium/SSO callers fall back to the shared ``self.web_scraper``.
+        scraper = scraper if scraper is not None else self.web_scraper
         count = 0
         try:
-            for resource in self.web_scraper.crawl_iter(
+            for resource in scraper.crawl_iter(
                 url,
                 browserclient=client,
                 max_depth=max_depth,
