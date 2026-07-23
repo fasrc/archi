@@ -207,12 +207,24 @@ def reconcile(
 def read_corpus_docs(fetch_rows: CorpusRowFetcher) -> List[CorpusDoc]:
     """Read the ingested corpus as canonical `CorpusDoc`s, deduped by URL.
 
-    Mirrors the ingestion-verifier read (`SELECT url, source_type FROM documents
-    WHERE NOT is_deleted`) but takes the fetcher as an argument so the pure
-    shaping logic is unit-testable without a database. Rows are skipped when
-    they carry no usable URL, when the URL will not parse, or when they are
-    soft-deleted; slash/case/fragment variants of one page collapse to a single
-    doc, in first-seen order.
+    Mirrors the ingestion-verifier read but takes the fetcher as an argument so
+    the pure shaping logic is unit-testable without a database. Rows are skipped
+    when they carry no usable URL, when the URL will not parse, when they are
+    soft-deleted, or when they are not **retrievable**; slash/case/fragment
+    variants of one page collapse to a single doc, in first-seen order.
+
+    Retrievability lives here rather than in either fetcher so both corpus
+    inputs — the live `--pg-dsn` query and an offline `--corpus-json` dump —
+    agree by construction. `ingestion_status` is one of
+    pending/embedding/embedded/failed and rows are inserted as `pending`; only
+    `embedded` has chunks the retriever can serve, so anything else would have
+    coverage ask for a golden question the agent cannot answer.
+
+    A row that declares **no** `ingestion_status` is kept: a dump omitting the
+    column cannot be judged, and dropping those rows would empty the report and
+    read as "fully covered" — a silent false clean, the same failure class the
+    orphan abstention guard exists to prevent. Over-reporting a gap is visible
+    and cheap; under-reporting hides work.
 
     The row's `resource_hash` is deliberately ignored: it is `md5(url)`, so it
     changes only when the URL does and never signals a content change.
@@ -221,6 +233,9 @@ def read_corpus_docs(fetch_rows: CorpusRowFetcher) -> List[CorpusDoc]:
     seen = set()
     for row in fetch_rows():
         if row.get("is_deleted"):
+            continue
+        status = row.get("ingestion_status")
+        if status is not None and status != "embedded":
             continue
         raw_url = row.get("url")
         if not raw_url:

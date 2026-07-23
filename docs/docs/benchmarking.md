@@ -439,14 +439,19 @@ does not bury a handful of real KB gaps:
 --path-glob 'https://docs.rc.fas.harvard.edu/kb/*'
 ```
 
-Coverage reads only **retrievable** documents — `NOT is_deleted AND ingestion_status =
-'embedded'`. A document still `pending`/`embedding`, or one that `failed`, has no chunks for
-the retriever, so a golden question written against it would be unanswerable and would score
-as a benchmark failure. A page stuck outside `embedded` is an *ingestion* problem, not a
-golden-set gap.
+Coverage reads only **retrievable** documents — not soft-deleted, and
+`ingestion_status = 'embedded'`. A document still `pending`/`embedding`, or one that `failed`,
+has no chunks for the retriever, so a golden question written against it would be unanswerable
+and would score as a benchmark failure. A page stuck outside `embedded` is an *ingestion*
+problem, not a golden-set gap.
 
 Use `--corpus-json <file>` instead of `--pg-dsn` to run against a JSON dump of the
-`documents` rows — useful offline, or to reproduce a report without database access.
+`documents` rows — useful offline, or to reproduce a report without database access. **Both
+inputs apply the same retrievability filter**, so an offline run reproduces the live one rather
+than inventing gaps the live report never shows. A dumped row that omits `ingestion_status`
+entirely is *kept*: the column cannot be judged if it isn't there, and dropping such rows would
+empty the report and read as "fully covered" — a silent false clean. Dump the column if you want
+the offline run filtered.
 
 ### `orphans` — questions whose page is gone
 

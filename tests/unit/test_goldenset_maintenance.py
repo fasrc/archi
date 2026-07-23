@@ -70,6 +70,31 @@ class TestReadCorpusDocs:
             )
         ]
 
+    def test_non_retrievable_documents_are_skipped(self):
+        # Only `embedded` documents have chunks the retriever can serve. Coverage
+        # asks "which RETRIEVABLE page has no question?", so a pending/embedding/
+        # failed row must not become a gap — the resulting golden question would
+        # be unanswerable and would score as a benchmark failure.
+        docs = read_corpus_docs(
+            _rows(
+                {"url": f"{KB}/kb/ok", "ingestion_status": "embedded"},
+                {"url": f"{KB}/kb/pending", "ingestion_status": "pending"},
+                {"url": f"{KB}/kb/embedding", "ingestion_status": "embedding"},
+                {"url": f"{KB}/kb/failed", "ingestion_status": "failed"},
+            )
+        )
+
+        assert [doc.url for doc in docs] == [f"{KB}/kb/ok"]
+
+    def test_a_row_with_no_status_is_kept(self):
+        # A dump that omits the column cannot be judged. Dropping those rows would
+        # empty the report and read as "fully covered" — a silent false clean, the
+        # same failure class the orphan abstention guard exists to prevent.
+        # Over-reporting a gap is visible and cheap; under-reporting hides work.
+        docs = read_corpus_docs(_rows({"url": f"{KB}/kb/a", "source_type": "web"}))
+
+        assert [doc.url for doc in docs] == [f"{KB}/kb/a"]
+
     def test_normalizes_urls_and_dedupes_slash_variants(self):
         # The ingest stored both slash forms before #118; after normalization
         # they are one page, and coverage must not report the same gap twice.

@@ -137,6 +137,43 @@ class TestCoverageSubcommand:
         assert "error" in capsys.readouterr().err.lower()
 
 
+class TestCorpusParity:
+    def test_json_corpus_applies_the_same_retrievability_filter_as_sql(
+        self, tmp_path, capsys
+    ):
+        # `--corpus-json` is the documented way to reproduce a report offline, so
+        # it must agree with `--pg-dsn`. A raw `documents` dump carries pending /
+        # failed / deleted rows; if only the SQL path filtered them, the offline
+        # run would invent gaps the live run never reports.
+        script = _load_script()
+        bank = _bank(tmp_path, _row(f"{KB}/kb/covered"))
+        corpus = _write(
+            tmp_path,
+            "corpus.json",
+            [
+                {"url": f"{KB}/kb/covered", "ingestion_status": "embedded"},
+                {"url": f"{KB}/kb/gap", "ingestion_status": "embedded"},
+                {"url": f"{KB}/kb/pending", "ingestion_status": "pending"},
+                {"url": f"{KB}/kb/failed", "ingestion_status": "failed"},
+                {
+                    "url": f"{KB}/kb/gone",
+                    "ingestion_status": "embedded",
+                    "is_deleted": True,
+                },
+            ],
+        )
+
+        code = script.main(
+            ["coverage", "--bank", str(bank), "--corpus-json", str(corpus)]
+        )
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert f"{KB}/kb/gap" in out
+        for hidden in ("pending", "failed", "gone"):
+            assert f"{KB}/kb/{hidden}" not in out
+
+
 class TestCorpusQuery:
     def test_the_corpus_query_reads_only_retrievable_documents(self):
         # `ingestion_status` is one of pending/embedding/embedded/failed, and rows
