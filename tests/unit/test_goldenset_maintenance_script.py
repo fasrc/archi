@@ -786,11 +786,16 @@ class TestDeclineLedgerCli:
         assert len(entries) == 1
         assert entries[0]["reason"] == "first"
 
-    def test_proposing_a_declined_page_still_works_and_says_so(self, tmp_path, capsys):
-        # An explicit greenlight overrides an earlier decline: the operator
-        # changed their mind, and the CLI names the earlier decision.
+    def test_proposing_a_declined_page_is_refused_until_it_is_undeclined(
+        self, tmp_path, capsys
+    ):
+        # Drafting while the decline stands would leave the page suppressed
+        # forever: the candidates are unapplied, so nothing covers the page, and
+        # the stale entry keeps hiding it from every later run. Refuse, and name
+        # the recovery.
         module = _load_script()
-        _fake_llm(module, [CANDIDATE])
+        prompts = []
+        _fake_llm(module, [CANDIDATE], calls=prompts)
         _persisted(tmp_path)
         ledger = _ledger(tmp_path, {"url": f"{KB}/kb/a"})
 
@@ -812,8 +817,201 @@ class TestDeclineLedgerCli:
             ]
         )
 
+        assert code == 1
+        assert prompts == []
+        assert "--undecline" in capsys.readouterr().err
+
+
+class TestUndecline:
+    """The supported reversal — without it a decline is permanent."""
+
+    def test_undeclining_removes_the_entry_and_the_page_is_a_gap_again(
+        self, tmp_path, capsys
+    ):
+        module = _load_script()
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/a"}, {"url": f"{KB}/kb/keep"})
+        bank = _bank(tmp_path, _row())
+        corpus = _corpus(tmp_path, f"{KB}/kb/a", f"{KB}/kb/keep")
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(bank),
+                "--corpus-json",
+                str(corpus),
+                "--undecline",
+                f"{KB}/kb/a",
+                "--ledger",
+                str(ledger),
+            ]
+        )
         assert code == 0
-        assert "previously declined" in capsys.readouterr().out
+        assert {e["url"] for e in json.loads(ledger.read_text("utf-8"))} == {
+            f"{KB}/kb/keep"
+        }
+
+        module.main(
+            [
+                "coverage",
+                "--bank",
+                str(bank),
+                "--corpus-json",
+                str(corpus),
+                "--ledger",
+                str(ledger),
+            ]
+        )
+
+        assert f"{KB}/kb/a" in capsys.readouterr().out
+
+    def test_a_declined_then_undeclined_then_greenlit_page_stays_a_gap(
+        self, tmp_path, capsys
+    ):
+        # The end-to-end invariant: drafting candidates never marks a page
+        # covered, and no ledger state left over from the decline hides it.
+        module = _load_script()
+        _fake_llm(module, [CANDIDATE])
+        _persisted(tmp_path)
+        bank = _bank(tmp_path, _row())
+        corpus = _corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))
+        ledger = tmp_path / "ledger.json"
+        common = ["coverage", "--bank", str(bank), "--corpus-json", str(corpus)]
+
+        module.main(common + ["--decline", f"{KB}/kb/a", "--ledger", str(ledger)])
+        module.main(common + ["--undecline", f"{KB}/kb/a", "--ledger", str(ledger)])
+        assert (
+            module.main(
+                common
+                + [
+                    "--propose",
+                    f"{KB}/kb/a",
+                    "--model",
+                    "m/x",
+                    "--data-path",
+                    str(tmp_path / "data"),
+                    "--ledger",
+                    str(ledger),
+                ]
+            )
+            == 0
+        )
+        capsys.readouterr()
+
+        module.main(common + ["--ledger", str(ledger)])
+
+        out = capsys.readouterr().out
+        assert "1 gaps" in out
+        assert f"{KB}/kb/a" in out
+
+    def test_undeclining_a_page_that_was_never_declined_says_so(self, tmp_path, capsys):
+        module = _load_script()
+        ledger = _ledger(tmp_path)
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, f"{KB}/kb/a")),
+                "--undecline",
+                f"{KB}/kb/a",
+                "--ledger",
+                str(ledger),
+            ]
+        )
+
+        assert code == 0
+        assert "not declined" in capsys.readouterr().out
+
+    def test_undeclining_requires_a_ledger(self, tmp_path, capsys):
+        module = _load_script()
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, f"{KB}/kb/a")),
+                "--undecline",
+                f"{KB}/kb/a",
+            ]
+        )
+
+        assert code == 1
+        assert "--ledger" in capsys.readouterr().err
+
+
+class TestDeclineTargetsGapsOnly:
+    """A decline is a disposition of a reviewed gap, not a free-text note."""
+
+    def test_declining_a_covered_page_is_refused(self, tmp_path, capsys):
+        module = _load_script()
+        ledger = tmp_path / "ledger.json"
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row(f"{KB}/kb/a"))),
+                "--corpus-json",
+                str(_corpus(tmp_path, f"{KB}/kb/a")),
+                "--decline",
+                f"{KB}/kb/a",
+                "--ledger",
+                str(ledger),
+            ]
+        )
+
+        assert code == 1
+        assert not ledger.exists()
+        assert "already covered" in capsys.readouterr().err
+
+    def test_declining_a_slug_near_miss_is_refused(self, tmp_path, capsys):
+        module = _load_script()
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row(f"{KB}/docs/a"))),
+                "--corpus-json",
+                str(_corpus(tmp_path, f"{KB}/kb/a")),
+                "--decline",
+                f"{KB}/kb/a",
+                "--ledger",
+                str(tmp_path / "ledger.json"),
+            ]
+        )
+
+        assert code == 1
+        assert "reconcil" in capsys.readouterr().err
+
+    def test_declining_a_url_the_corpus_does_not_hold_is_refused(
+        self, tmp_path, capsys
+    ):
+        # A typo'd or not-yet-ingested URL would sit in the ledger and silently
+        # suppress that page if it ever became a real gap.
+        module = _load_script()
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, f"{KB}/kb/a")),
+                "--decline",
+                f"{KB}/kb/typoo",
+                "--ledger",
+                str(tmp_path / "ledger.json"),
+            ]
+        )
+
+        assert code == 1
+        assert "retrievable corpus" in capsys.readouterr().err
 
 
 class TestLedgerDurability:
@@ -839,6 +1037,19 @@ class TestLedgerDurability:
                 "coverage",
                 "--bank",
                 str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(
+                    _corpus(
+                        tmp_path,
+                        f"{KB}/kb/a",
+                        f"{KB}/kb/b",
+                        f"{KB}/kb/first",
+                        f"{KB}/kb/second",
+                        f"{KB}/kb/mine",
+                        f"{KB}/kb/other",
+                        f"{KB}/kb/new",
+                    )
+                ),
                 "--decline",
                 f"{KB}/kb/b",
                 "--ledger",
@@ -863,6 +1074,19 @@ class TestLedgerDurability:
                 "coverage",
                 "--bank",
                 str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(
+                    _corpus(
+                        tmp_path,
+                        f"{KB}/kb/a",
+                        f"{KB}/kb/b",
+                        f"{KB}/kb/first",
+                        f"{KB}/kb/second",
+                        f"{KB}/kb/mine",
+                        f"{KB}/kb/other",
+                        f"{KB}/kb/new",
+                    )
+                ),
                 "--decline",
                 f"{KB}/kb/b",
                 "--ledger",
@@ -882,6 +1106,7 @@ class TestLedgerDurability:
         module = _load_script()
         ledger = _ledger(tmp_path)
         bank = _bank(tmp_path, _row())
+        corpus = _corpus(tmp_path, f"{KB}/kb/mine", f"{KB}/kb/other")
         real_read = module.read_ledger
 
         def racing_read(path):
@@ -900,6 +1125,8 @@ class TestLedgerDurability:
                     "coverage",
                     "--bank",
                     str(bank),
+                    "--corpus-json",
+                    str(corpus),
                     "--decline",
                     f"{KB}/kb/mine",
                     "--ledger",
@@ -912,10 +1139,12 @@ class TestLedgerDurability:
         urls = {e["url"] for e in json.loads(ledger.read_text(encoding="utf-8"))}
         assert urls == {f"{KB}/kb/other", f"{KB}/kb/mine"}
 
-    def test_declining_needs_no_corpus(self, tmp_path):
-        # Bookkeeping does not read the catalog, so it must not demand one.
+    def test_declining_needs_a_corpus(self, tmp_path, capsys):
+        # A decline means "I reviewed this GAP and it earns no question" — a
+        # claim the operator can only make about a page the corpus shows as a
+        # gap. Same rule `--propose` obeys; they are the two dispositions of one
+        # decision.
         module = _load_script()
-        ledger = tmp_path / "ledger.json"
 
         code = module.main(
             [
@@ -925,12 +1154,12 @@ class TestLedgerDurability:
                 "--decline",
                 f"{KB}/kb/a",
                 "--ledger",
-                str(ledger),
+                str(tmp_path / "ledger.json"),
             ]
         )
 
-        assert code == 0
-        assert ledger.exists()
+        assert code == 1
+        assert "corpus" in capsys.readouterr().err
 
     def test_two_declines_that_race_both_survive(self, tmp_path):
         # The lost-update case: a second writer starts while the first still
@@ -940,6 +1169,7 @@ class TestLedgerDurability:
         module = _load_script()
         ledger = tmp_path / "ledger.json"
         bank = _bank(tmp_path, _row())
+        corpus = _corpus(tmp_path, f"{KB}/kb/first", f"{KB}/kb/second")
         result = {}
 
         def second_writer():
@@ -948,6 +1178,8 @@ class TestLedgerDurability:
                     "coverage",
                     "--bank",
                     str(bank),
+                    "--corpus-json",
+                    str(corpus),
                     "--decline",
                     f"{KB}/kb/second",
                     "--ledger",
@@ -1064,6 +1296,19 @@ class TestLedgerDirectoryDurability:
                 "coverage",
                 "--bank",
                 str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(
+                    _corpus(
+                        tmp_path,
+                        f"{KB}/kb/a",
+                        f"{KB}/kb/b",
+                        f"{KB}/kb/first",
+                        f"{KB}/kb/second",
+                        f"{KB}/kb/mine",
+                        f"{KB}/kb/other",
+                        f"{KB}/kb/new",
+                    )
+                ),
                 "--decline",
                 f"{KB}/kb/a",
                 "--ledger",
@@ -1095,6 +1340,19 @@ class TestLedgerDirectoryDurability:
                 "coverage",
                 "--bank",
                 str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(
+                    _corpus(
+                        tmp_path,
+                        f"{KB}/kb/a",
+                        f"{KB}/kb/b",
+                        f"{KB}/kb/first",
+                        f"{KB}/kb/second",
+                        f"{KB}/kb/mine",
+                        f"{KB}/kb/other",
+                        f"{KB}/kb/new",
+                    )
+                ),
                 "--decline",
                 f"{KB}/kb/a",
                 "--ledger",
@@ -1231,6 +1489,19 @@ class TestProposeOnlyForUncoveredPages:
                 "coverage",
                 "--bank",
                 str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(
+                    _corpus(
+                        tmp_path,
+                        f"{KB}/kb/a",
+                        f"{KB}/kb/b",
+                        f"{KB}/kb/first",
+                        f"{KB}/kb/second",
+                        f"{KB}/kb/mine",
+                        f"{KB}/kb/other",
+                        f"{KB}/kb/new",
+                    )
+                ),
                 "--decline",
                 f"{KB}/kb/new",
                 "--ledger",

@@ -65,6 +65,7 @@ from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
     reconcile,
     resolve_persisted_path,
     with_decline,
+    without_decline,
 )
 
 
@@ -355,7 +356,43 @@ def _sitemap_policy(args: argparse.Namespace, source_lines: Sequence[str]):
     return policy
 
 
-def run_decline(args: argparse.Namespace) -> int:
+def require_gap(url: str, docs, bank, action: str):
+    """Resolve a URL to the corpus doc for a page that is a *current gap*.
+
+    Both dispositions of a reviewed gap go through here. `--propose` says "this
+    page earns a question" and `--decline` says "it does not"; neither statement
+    is one an operator is in a position to make about a page that is already
+    covered, that the tool cannot classify, or that the corpus does not hold.
+    Recording either would put a claim in the ledger — or a duplicate row in the
+    bank — that nobody actually reviewed.
+
+    Reuses `reconcile`, so this guard, the coverage report and orphan detection
+    cannot disagree about what "already covered" means.
+    """
+    canonical = canonical_url(url)
+    doc = {d.url: d for d in docs}.get(canonical) if canonical else None
+    if doc is None or canonical is None:
+        raise OperationalError(
+            f"{url} is not in the retrievable corpus, so it is not a gap to "
+            f"{action} (is it ingested and embedded?)"
+        )
+    against_bank = reconcile([canonical], bank_source_urls(bank))
+    if against_bank.matched:
+        raise OperationalError(
+            f"{canonical} is already covered by a bank row — `--{action}` is a "
+            "decision about a gap."
+        )
+    if against_bank.near_misses:
+        near = against_bank.near_misses[0]
+        raise OperationalError(
+            f"{canonical} is a slug near-miss for {', '.join(near.candidates)} — "
+            f"reconcile it before you {action} it; the tool cannot tell yet "
+            "whether this page is already covered."
+        )
+    return doc
+
+
+def run_decline(args: argparse.Namespace, docs, bank) -> int:
     """Record an operator's dismissal of a page. Touches the ledger, not the bank.
 
     The whole read-merge-write runs under an exclusive lock, so a decline
@@ -363,6 +400,7 @@ def run_decline(args: argparse.Namespace) -> int:
     """
     if not args.ledger:
         raise OperationalError("--decline needs --ledger <path> to record the decision")
+    require_gap(args.decline, docs, bank, "decline")
     with ledger_lock(args.ledger):
         entries = read_ledger(args.ledger)
         try:
@@ -382,6 +420,31 @@ def run_decline(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_undecline(args: argparse.Namespace) -> int:
+    """Reverse a decline. Without this a dismissal is permanent.
+
+    Deliberately does NOT require the URL to be a gap: the point is to undo a
+    record, and a page whose status has since changed is exactly the one an
+    operator needs to be able to clear.
+    """
+    if not args.ledger:
+        raise OperationalError(
+            "--undecline needs --ledger <path> — the record to clear lives there"
+        )
+    with ledger_lock(args.ledger):
+        entries = read_ledger(args.ledger)
+        try:
+            kept = without_decline(entries, args.undecline)
+        except ValueError as exc:
+            raise OperationalError(f"cannot clear the decline: {exc}") from exc
+        if len(kept) == len(entries):
+            print(f"not declined: {args.undecline} — nothing to clear")
+            return 0
+        write_ledger(args.ledger, kept)
+    print(f"undeclined: {args.undecline} -> {args.ledger}")
+    return 0
+
+
 def run_propose(args: argparse.Namespace, docs, bank, declined) -> int:
     """Draft candidates for the one page the operator greenlit by naming it.
 
@@ -393,39 +456,21 @@ def run_propose(args: argparse.Namespace, docs, bank, declined) -> int:
     """
     if not args.model:
         raise OperationalError("--propose needs --model <provider/model> to draft with")
-    by_url = {doc.url: doc for doc in docs}
-    canonical = canonical_url(args.propose)
-    doc = by_url.get(canonical) if canonical else None
-    if doc is None or canonical is None:
-        # Same trap the retrievability filter closes for the gap report: a
-        # question about a page the agent cannot retrieve is a guaranteed
-        # benchmark failure, not coverage.
+    doc = require_gap(args.propose, docs, bank, "propose")
+    if doc.url in declined:
+        # Drafting while the decline stands would leave the page suppressed for
+        # good: the candidates are unapplied, so nothing covers the page, and the
+        # stale entry keeps hiding it from every later run.
         raise OperationalError(
-            f"{args.propose} is not in the retrievable corpus — nothing to ground "
-            "a question in (is it ingested and embedded?)"
+            f"{doc.url} is declined in the ledger. Clear it first with "
+            f"`--undecline {doc.url}` — otherwise the drafts go unapplied and the "
+            "page stays suppressed."
         )
-    # One reconciliation rule for coverage, orphans and this guard — same
-    # normalizer, same near-miss definition, so they cannot disagree.
-    against_bank = reconcile([canonical], bank_source_urls(bank))
-    if against_bank.matched:
-        raise OperationalError(
-            f"{canonical} is already covered by a bank row — `--propose` drafts for "
-            "gaps. A second question on a covered page adds count, not signal."
-        )
-    if against_bank.near_misses:
-        near = against_bank.near_misses[0]
-        raise OperationalError(
-            f"{canonical} is a slug near-miss for {', '.join(near.candidates)} — "
-            "reconcile it before proposing, or the draft duplicates the question "
-            "that already covers this page under the other slug."
-        )
-    if canonical in declined:
-        print(f"note: {canonical} was previously declined; greenlight overrides it")
 
     page_text = read_persisted_document(doc, args.data_path)
     try:
         proposal = propose_candidates(
-            canonical, page_text, build_ask_llm(args.model), count=args.count
+            doc.url, page_text, build_ask_llm(args.model), count=args.count
         )
     except ProposalError as exc:
         raise OperationalError(str(exc)) from exc
@@ -438,13 +483,13 @@ def run_propose(args: argparse.Namespace, docs, bank, declined) -> int:
         )
     if not proposal.candidates:
         print(
-            f"no usable candidate survived for {canonical} — nothing proposed.",
+            f"no usable candidate survived for {doc.url} — nothing proposed.",
             file=sys.stderr,
         )
         return 1
 
     print(
-        f"\n{len(proposal.candidates)} draft candidate(s) for {canonical} — review, "
+        f"\n{len(proposal.candidates)} draft candidate(s) for {doc.url} — review, "
         "then paste into the bank by hand. This run wrote nothing."
     )
     print(json.dumps([c.as_row() for c in proposal.candidates], indent=2))
@@ -453,10 +498,9 @@ def run_propose(args: argparse.Namespace, docs, bank, declined) -> int:
 
 def run_coverage(args: argparse.Namespace) -> int:
     bank = load_bank(args.bank)
-    if args.decline:
-        # Pure bookkeeping: no corpus read, and the ledger is read inside so the
-        # read-modify-write stays adjacent.
-        return run_decline(args)
+    if args.undecline:
+        # Pure reversal: no corpus needed to clear a record.
+        return run_undecline(args)
     declined = declined_urls(read_declines(read_ledger(args.ledger)))
 
     if not args.corpus_json and not args.pg_dsn:
@@ -466,6 +510,8 @@ def run_coverage(args: argparse.Namespace) -> int:
     else:
         fetch_rows = corpus_rows_from_postgres(args.pg_dsn)
     corpus = read_corpus_docs(fetch_rows)
+    if args.decline:
+        return run_decline(args, corpus, bank)
     if args.propose:
         return run_propose(args, corpus, bank, declined)
 
@@ -594,7 +640,15 @@ def build_parser() -> argparse.ArgumentParser:
     decision.add_argument(
         "--decline",
         metavar="URL",
-        help="Record that this page does not earn a question; needs --ledger.",
+        help=(
+            "Record that this gap does not earn a question; needs --ledger and a "
+            "corpus. Refused for a page that is covered, a near-miss, or absent."
+        ),
+    )
+    decision.add_argument(
+        "--undecline",
+        metavar="URL",
+        help="Clear an earlier decline so the page becomes a gap again.",
     )
     coverage.add_argument("--reason", help="Why the page was declined (free text).")
     coverage.add_argument(

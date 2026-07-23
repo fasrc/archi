@@ -518,8 +518,15 @@ Some pages will never earn a question. Record that once instead of re-reading it
 # dismiss a page
 python scripts/benchmarking/goldenset_maintenance.py coverage \
     --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn "postgresql://archi@localhost/archi-db" \
     --decline https://docs.rc.fas.harvard.edu/kb/contact \
     --reason "contact page — nothing to ask" \
+    --ledger .ralph/log/goldenset-declines.json
+
+# change your mind — the supported reversal
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --undecline https://docs.rc.fas.harvard.edu/kb/contact \
     --ledger .ralph/log/goldenset-declines.json
 
 # later runs suppress it
@@ -528,6 +535,18 @@ python scripts/benchmarking/goldenset_maintenance.py coverage \
     --pg-dsn "postgresql://archi@localhost/archi-db" \
     --ledger .ralph/log/goldenset-declines.json
 ```
+
+`--decline` obeys the **same gap rule as `--propose`**: it needs a corpus, and it refuses a page
+that is already covered, is a slug near-miss, or is not in the retrievable corpus. The two flags
+are the two dispositions of one decision — "this gap earns a question" and "it does not" — and
+neither is a claim you are in a position to make about a page you never reviewed as a gap.
+Recording a typo'd or covered URL would sit in the ledger and silently suppress that page if it
+ever *became* a gap.
+
+`--undecline` is the reversal, and `--propose` **refuses** a page whose decline still stands,
+pointing you at it. Overriding the decline for just that one run would be worse than useless: the
+drafts start out unapplied, so nothing covers the page, and the stale entry would keep hiding it
+from every later report — a permanent false-clean with no recovery but hand-editing the file.
 
 The ledger records **declines only** — never "drafted" or "covered". That asymmetry is
 deliberate: covered-ness is re-derived from the bank every run, so a page whose candidates you

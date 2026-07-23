@@ -52,6 +52,7 @@ from src.utils.goldenset_maintenance import (
     reconciliation_key,
     resolve_persisted_path,
     with_decline,
+    without_decline,
 )
 
 
@@ -945,6 +946,23 @@ class TestDeclineLedger:
         # that can never match anything — a decline that silently does nothing.
         with pytest.raises(ValueError):
             with_decline([], "http://[")
+
+    def test_removing_a_decline_drops_only_that_entry(self):
+        entries = [{"url": f"{KB}/kb/a"}, {"url": f"{KB}/kb/b", "reason": "keep"}]
+
+        assert without_decline(entries, f"{KB}/kb/a/") == [
+            {"url": f"{KB}/kb/b", "reason": "keep"}
+        ]
+        assert len(entries) == 2
+
+    def test_removing_a_decline_that_is_not_there_is_a_no_op(self):
+        entries = [{"url": f"{KB}/kb/a"}]
+
+        assert without_decline(entries, f"{KB}/kb/b") == entries
+
+    def test_undeclining_an_unusable_url_is_refused(self):
+        with pytest.raises(ValueError):
+            without_decline([], "http://[")
 
     def test_a_declined_page_is_suppressed_from_the_gap_list(self):
         docs = [_doc("/kb/a"), _doc("/kb/b")]

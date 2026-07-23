@@ -1029,3 +1029,22 @@ def propose_candidates(
     return parse_candidates(
         ask_llm(build_candidate_prompt(source, page_text, count=count)), source
     )
+
+
+def without_decline(entries: Any, url: str) -> List[Dict[str, str]]:
+    """Return the ledger entries minus `url`, without mutating the input.
+
+    The reversal a decline otherwise has no path back from. Matching is by
+    canonical URL, so an entry written under a different slash form is still
+    found — a reversal that silently misses is how a page stays suppressed while
+    the operator believes they cleared it.
+    """
+    existing = list(entries) if isinstance(entries, list) else []
+    canonical = canonical_url(url)
+    if canonical is None:
+        raise ValueError(f"cannot undecline an unusable URL: {url!r}")
+    kept: List[Dict[str, str]] = []
+    for entry, decline in zip(existing, read_declines(existing)):
+        if decline.url != canonical:
+            kept.append(entry)
+    return kept
