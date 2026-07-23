@@ -1512,3 +1512,189 @@ class TestLedgerDirectoryDurability:
 
         assert code == 1
         assert ledger.read_bytes() == before
+
+
+# --------------------------------------------------------------------------- #
+# `drift` — hash tripwire, then LLM diff (group 4)
+# --------------------------------------------------------------------------- #
+
+from src.utils.goldenset_maintenance import page_digest  # noqa: E402
+
+GPU_HTML = "<html><body><p>Add #SBATCH --gpus=1 for one GPU.</p></body></html>"
+GPU_HTML_CHANGED = "<html><body><p>Add #SBATCH --gpus=2 for one GPU.</p></body></html>"
+
+
+def _locked_row(*sources, hashes=None, **extra):
+    row = {
+        "user_input": "How many GPUs?",
+        "reference": "Add #SBATCH --gpus=1.",
+        "sources": list(sources),
+        "status": "locked",
+    }
+    if hashes is not None:
+        row["source_hashes"] = hashes
+    row.update(extra)
+    return row
+
+
+def _fake_pages(module, pages, errors=None):
+    """Replace the CLI's page fetcher with a canned one (no network)."""
+
+    def build():
+        def fetch(url):
+            if errors and url in errors:
+                raise RuntimeError(errors[url])
+            return pages[url]
+
+        return fetch
+
+    module.build_fetch_html = build
+
+
+class TestDriftSubcommand:
+    """4.1 / 4.4 — the tripwire, wired, and provably read-only."""
+
+    def test_reports_a_changed_source_and_exits_zero(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML_CHANGED})
+
+        code = script.main(["drift", "--bank", str(bank)])
+        out = capsys.readouterr().out
+
+        # A finding is work to do, not a broken run (the cron contract).
+        assert code == 0
+        assert url in out
+
+    def test_leaves_the_bank_byte_unchanged(self, tmp_path):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        before = bank.read_bytes()
+        _fake_pages(script, {url: GPU_HTML_CHANGED})
+
+        script.main(["drift", "--bank", str(bank)])
+
+        assert bank.read_bytes() == before
+
+    def test_a_matching_hash_reports_no_drift(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML})
+
+        code = script.main(["drift", "--bank", str(bank)])
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert "0 drifted" in out
+
+    def test_a_missing_baseline_is_named_not_silently_passed(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url))
+        _fake_pages(script, {url: GPU_HTML})
+
+        code = script.main(["drift", "--bank", str(bank)])
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert "no baseline" in out.lower()
+        assert url in out
+
+    def test_all_sources_unreachable_abstains_and_exits_nonzero(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {}, errors={url: "connection timed out"})
+
+        code = script.main(["drift", "--bank", str(bank)])
+        captured = capsys.readouterr()
+
+        # Nothing was read, so "no drift" would be a false clean over the bank.
+        assert code == 1
+        assert "abstain" in captured.err.lower()
+
+    def test_a_bank_with_no_locked_rows_says_so_rather_than_reading_clean(
+        self, tmp_path, capsys
+    ):
+        script = _load_script()
+        bank = _bank(tmp_path, _row(f"{KB}/kb/gpu"))
+        _fake_pages(script, {})
+
+        code = script.main(["drift", "--bank", str(bank)])
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert "0 checked" in out
+
+    def test_print_hashes_emits_a_paste_ready_baseline(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url))
+        _fake_pages(script, {url: GPU_HTML})
+
+        script.main(["drift", "--bank", str(bank), "--print-hashes"])
+        out = capsys.readouterr().out
+
+        # Without a way to obtain a hash, `source_hashes` could never be filled in
+        # and drift would sit inert forever.
+        assert page_digest(GPU_HTML) in out
+        assert '"source_hashes"' in out
+
+
+class TestDriftVerdictCli:
+    """4.3 — the model diff is advisory and fires only on a moved hash."""
+
+    def test_the_model_is_not_called_when_nothing_moved(self, tmp_path):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML})
+        calls = []
+        _fake_llm(script, {"verdict": "broken"}, calls=calls)
+
+        script.main(["drift", "--bank", str(bank), "--model", "anthropic/x"])
+
+        assert calls == []
+
+    def test_a_verdict_is_printed_beside_the_finding(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML_CHANGED})
+        _fake_llm(script, {"verdict": "broken", "explanation": "it says 2 now"})
+
+        code = script.main(["drift", "--bank", str(bank), "--model", "anthropic/x"])
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert "broken" in out
+        assert "it says 2 now" in out
+
+    def test_without_a_model_the_finding_still_stands(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML_CHANGED})
+
+        code = script.main(["drift", "--bank", str(bank)])
+        out = capsys.readouterr().out
+
+        # Hash-only is the cheap cron mode: the tripwire alone is a real finding.
+        assert code == 0
+        assert url in out
+
+    def test_a_holds_verdict_does_not_hide_the_row(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML_CHANGED})
+        _fake_llm(script, {"verdict": "holds", "explanation": "unrelated edit"})
+
+        script.main(["drift", "--bank", str(bank), "--model", "anthropic/x"])
+        out = capsys.readouterr().out
+
+        assert url in out
+        assert "holds" in out

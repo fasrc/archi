@@ -1,16 +1,18 @@
 #!/usr/bin/env python
 """Read-only maintenance passes over the RAGAS golden-set question bank.
 
-Answers two questions an operator otherwise has to eyeball by hand:
+Answers three questions an operator otherwise has to eyeball by hand:
 
 - ``coverage`` — which ingested KB pages does no bank row ground against?
 - ``orphans`` — which bank rows cite a page the live KB no longer publishes?
+- ``drift`` — which confirmed rows were grounded in a page that has since changed?
 
-Both passes are **proposal-only**: they print work lists and leave the bank file
-byte-unchanged. Adding a question, locking a reference, or pruning an orphan is a
-separate, explicitly human-initiated step. ``--propose`` drafts candidates for one
-greenlit gap and prints them; ``--decline``/``--undecline`` record and reverse the
-operator's dismissal of a gap in a decision ledger, which is the only file written.
+Every pass is **proposal-only**: they print work lists and leave the bank file
+byte-unchanged. Adding a question, locking a reference, re-baselining a drifted
+row, or pruning an orphan is a separate, explicitly human-initiated step.
+``--propose`` drafts candidates for one greenlit gap and prints them;
+``--decline``/``--undecline`` record and reverse the operator's dismissal of a gap
+in a decision ledger, which is the only file this tool writes.
 
 Exit codes follow the cron contract: **0 even when there are findings** (gaps and
 orphans are work to do, not a broken run), non-zero only on operational failure —
@@ -40,6 +42,10 @@ Usage:
         --bank <bank.json> --pg-dsn <dsn> --decline <url> --ledger <ledger.json>
     python scripts/benchmarking/goldenset_maintenance.py coverage \\
         --bank <bank.json> --undecline <url> --ledger <ledger.json>
+
+    # fact drift: re-fetch every locked row's sources and report what moved
+    python scripts/benchmarking/goldenset_maintenance.py drift \\
+        --bank <bank.json> [--model anthropic/claude-sonnet-5] [--print-hashes]
 """
 
 from __future__ import annotations
@@ -63,6 +69,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.utils.benchmark_schema import normalize_bank  # noqa: E402  # isort: skip
 from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
+    DRIFT_INCOMPARABLE,
+    DRIFT_UNBASELINED,
+    DRIFT_UNREACHABLE,
     ProposalError,
     bank_source_urls,
     build_live_inventory,
@@ -70,6 +79,7 @@ from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
     declined_urls,
     filter_docs,
     find_coverage_gaps,
+    find_drift,
     find_orphans,
     group_by_parent,
     propose_candidates,
@@ -366,6 +376,18 @@ def build_ask_llm(model: str):
     return ask
 
 
+def build_fetch_html():
+    """The page fetcher drift re-fetches sources with.
+
+    Reuses the ingest's own fetch, so drift inherits its SSRF containment (no
+    cross-host redirects, a body-size cap) rather than opening a second, laxer
+    path to arbitrary URLs read out of a bank file.
+    """
+    from src.data_manager.collectors.scrapers.sitemap_source import fetch_sitemap_text
+
+    return fetch_sitemap_text
+
+
 def read_source_lines(path: str) -> List[str]:
     try:
         return Path(path).read_text(encoding="utf-8").splitlines()
@@ -659,6 +681,122 @@ def run_orphans(args: argparse.Namespace) -> int:
     return 0
 
 
+def _drift_label(check) -> str:
+    """One line describing a source check, with any advisory verdict attached."""
+    line = check.url
+    if check.verdict is not None:
+        line += f"  [{check.verdict.verdict}]"
+        if check.verdict.explanation:
+            line += f" {check.verdict.explanation}"
+    return line
+
+
+def run_drift(args: argparse.Namespace) -> int:
+    """Re-hash every locked row's sources and report what moved.
+
+    Advisory end to end: the bank file is opened read-only, and neither
+    `reference` nor `status` nor `source_hashes` is ever rewritten. A confirmed
+    row that drifted is a question for a human, and re-confirming it is the same
+    human act as locking it was.
+    """
+    bank = load_bank(args.bank)
+    ask_llm = build_ask_llm(args.model) if args.model else None
+    report = find_drift(bank, build_fetch_html(), ask_llm=ask_llm)
+
+    if report.abstained:
+        # Every fetch failed, so no page was actually read. Reporting "no drift"
+        # would be a clean bill of health nothing was checked for.
+        print(
+            "ABSTAINED — every source fetch failed, so nothing was checked. "
+            "Reporting no drift here would be a false clean over the whole bank.",
+            file=sys.stderr,
+        )
+        _print_group("why", report.reasons, stream=sys.stderr)
+        return 1
+
+    print(
+        f"locked rows: {report.checked_rows} checked | {report.skipped_rows} skipped "
+        f"(draft or source-less) | {len(report.drifted)} drifted | "
+        f"{len(report.unbaselined)} without a baseline | "
+        f"{len(report.incomparable)} incomparable | "
+        f"{len(report.unreachable)} unreachable"
+    )
+
+    if report.drifted:
+        _print_group(
+            "drift (source changed since the reference was confirmed — advisory)",
+            [
+                f"row {row.row_index}: {_drift_label(c)}  — {row.user_input[:60]}"
+                for row in report.drifted
+                for c in row.changed
+            ],
+        )
+    # Each bucket below is a source the tool could NOT judge. They are printed
+    # separately, and never folded into "unchanged", because a page that failed
+    # to be checked must not read as a page that is fine.
+    _print_state(
+        report,
+        DRIFT_UNBASELINED,
+        "no baseline recorded (locked, but no source_hashes entry — not checked)",
+    )
+    _print_state(
+        report,
+        DRIFT_INCOMPARABLE,
+        "incomparable baseline (stored hash is not a sha256: digest — not checked)",
+    )
+    _print_state(
+        report,
+        DRIFT_UNREACHABLE,
+        "unreachable this run (NOT evidence the page is unchanged)",
+    )
+
+    stale = [
+        f"row {row.row_index}: {', '.join(row.stale_baselines)}"
+        for row in report.rows
+        if row.stale_baselines
+    ]
+    if stale:
+        _print_group(
+            "baselines kept for URLs the row no longer cites (edit `sources`?)", stale
+        )
+
+    if args.print_hashes:
+        _print_hashes(report)
+    elif report.unbaselined or report.incomparable:
+        print(
+            "\nRe-run with --print-hashes to get paste-ready `source_hashes` blocks "
+            "for the rows above."
+        )
+    return 0
+
+
+def _print_state(report, state: str, title: str) -> None:
+    """Print every check in one unjudgeable state, tagged with its row."""
+    lines = [
+        f"row {row.row_index}: {c.url}" + (f" — {c.detail}" if c.detail else "")
+        for row in report.rows
+        for c in row.checks
+        if c.state == state
+    ]
+    if lines:
+        _print_group(title, lines)
+
+
+def _print_hashes(report) -> None:
+    """Emit a paste-ready `source_hashes` block for every row with a fresh hash.
+
+    The bank is never written, so this is the whole path by which a baseline gets
+    recorded: the tool computes, a human pastes. Without it `source_hashes` could
+    never be populated and the tripwire would sit inert.
+    """
+    for row in report.rows:
+        fresh = {c.url: c.fresh for c in row.checks if c.fresh}
+        if not fresh:
+            continue
+        print(f"\nrow {row.row_index} — {row.user_input[:60]}")
+        print(json.dumps({"source_hashes": fresh}, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -760,6 +898,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Extra hosts the sitemap may emit — the deployment's allowed_hosts.",
     )
     orphans.set_defaults(func=run_orphans)
+
+    drift = sub.add_parser("drift", help="Locked rows whose grounding page changed.")
+    add_bank(drift)
+    drift.add_argument(
+        "--model",
+        help=(
+            "`provider/model` asked whether the stored reference still holds, for "
+            "sources whose hash moved. Optional: without it the run is the cheap "
+            "hash tripwire alone, which is still a real finding."
+        ),
+    )
+    drift.add_argument(
+        "--print-hashes",
+        action="store_true",
+        help=(
+            "Print a paste-ready `source_hashes` block per row. The tool never "
+            "writes the bank, so this is how a baseline gets recorded."
+        ),
+    )
+    drift.set_defaults(func=run_drift)
     return parser
 
 
