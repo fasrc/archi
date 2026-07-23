@@ -37,7 +37,7 @@
 
 ## 6. Selenium/SSO stays sequential
 
-- [ ] 6.1 Write a failing test that a shared authenticator is never used from two threads at once during SSO collection (assert observed peak concurrent authenticator use is 1).
+- [x] 6.1 Write a failing test that a shared authenticator is never used from two threads at once during SSO collection (assert observed peak concurrent authenticator use is 1).
 - [ ] 6.2 Write a test that the authenticator is closed exactly once per run, including when a seed raises.
 - [ ] 6.3 Confirm by test that `_collect_sso_from_urls` (`:363-404`) is untouched by the pool and remains a plain sequential loop.
 
