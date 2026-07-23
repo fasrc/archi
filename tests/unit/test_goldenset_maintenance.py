@@ -24,6 +24,10 @@ from __future__ import annotations
 from src.utils.goldenset_maintenance import (
     CorpusDoc,
     NearMiss,
+    bank_source_urls,
+    filter_docs,
+    find_coverage_gaps,
+    group_by_parent,
     parent_source,
     read_corpus_docs,
     reconcile,
@@ -219,6 +223,11 @@ class TestReconciliationKey:
         assert reconciliation_key(f"{KB}/") is None
         assert reconciliation_key(KB) is None
 
+    def test_a_malformed_url_has_no_key(self):
+        # The key is a public entry point, so it must be safe on a raw URL that
+        # has not already been through `canonical_url`.
+        assert reconciliation_key("http://[") is None
+
     def test_an_all_numeric_slug_keeps_its_digits(self):
         # Stripping `-\d+` must not erase a slug that IS a number, or every
         # numeric page would collapse onto one empty key.
@@ -315,3 +324,153 @@ class TestReconcile:
         result = reconcile([f"{KB}/kb/removed"], [f"{KB}/kb/still-here"])
 
         assert result.unmatched == (f"{KB}/kb/removed",)
+
+
+def _doc(path, source_type="web", host=KB):
+    """A corpus doc at `host + path`, with the parent label derived like the read."""
+    url = f"{host}{path}"
+    return CorpusDoc(
+        url=url, source_type=source_type, parent=parent_source(url, source_type)
+    )
+
+
+def _row(*sources, **extra):
+    """A minimal bank row citing `sources`."""
+    row = {"user_input": "q?", "reference": "a", "sources": list(sources)}
+    row.update(extra)
+    return row
+
+
+class TestBankSourceUrls:
+    """2.3 — the bank's own view of what it grounds against."""
+
+    def test_collects_sources_across_rows(self):
+        bank = [_row(f"{KB}/kb/a"), _row(f"{KB}/kb/b", f"{KB}/kb/c")]
+
+        assert bank_source_urls(bank) == [f"{KB}/kb/a", f"{KB}/kb/b", f"{KB}/kb/c"]
+
+    def test_source_less_refusal_rows_contribute_nothing(self):
+        bank = [_row(anchor_type="should_refuse"), _row(f"{KB}/kb/a")]
+
+        assert bank_source_urls(bank) == [f"{KB}/kb/a"]
+
+    def test_tolerates_rows_with_a_missing_or_malformed_sources_field(self):
+        bank = [{"user_input": "q?"}, {"sources": None}, {"sources": "not-a-list"}]
+
+        assert bank_source_urls(bank) == []
+
+    def test_duplicates_across_rows_collapse_in_order(self):
+        bank = [_row(f"{KB}/kb/a"), _row(f"{KB}/kb/a/"), _row(f"{KB}/kb/b")]
+
+        assert bank_source_urls(bank) == [f"{KB}/kb/a", f"{KB}/kb/b"]
+
+
+class TestFindCoverageGaps:
+    """2.3 — corpus pages no bank row grounds against."""
+
+    def test_an_uncovered_page_is_a_gap(self):
+        report = find_coverage_gaps(
+            [_doc("/kb/a"), _doc("/kb/b")], [_row(f"{KB}/kb/a")]
+        )
+
+        assert [doc.url for doc in report.gaps] == [f"{KB}/kb/b"]
+        assert [doc.url for doc in report.covered] == [f"{KB}/kb/a"]
+
+    def test_a_fully_covered_corpus_produces_no_gaps(self):
+        corpus = [_doc("/kb/a"), _doc("/kb/b")]
+        bank = [_row(f"{KB}/kb/a"), _row(f"{KB}/kb/b")]
+
+        assert find_coverage_gaps(corpus, bank).gaps == ()
+
+    def test_coverage_is_re_derived_from_the_current_bank_every_run(self):
+        # 2.3/3.4: drafting candidates for a page does NOT make it covered — only
+        # an actual bank row citing it does. With the row removed it is a gap again.
+        corpus = [_doc("/kb/a")]
+
+        assert find_coverage_gaps(corpus, [_row(f"{KB}/kb/a")]).gaps == ()
+        assert [d.url for d in find_coverage_gaps(corpus, []).gaps] == [f"{KB}/kb/a"]
+
+    def test_slash_and_case_variants_still_count_as_covered(self):
+        report = find_coverage_gaps([_doc("/kb/a")], [_row(f"{KB.upper()}/kb/a/#top")])
+
+        assert report.gaps == ()
+
+    def test_a_slug_near_miss_is_reconciliation_not_a_gap(self):
+        report = find_coverage_gaps([_doc("/docs/a")], [_row(f"{KB}/kb/a")])
+
+        assert report.gaps == ()
+        assert [near.url for near in report.needs_reconciliation] == [f"{KB}/docs/a"]
+
+    def test_a_bank_source_absent_from_the_corpus_is_not_a_coverage_gap(self):
+        # That is the orphan question, asked against the live inventory instead.
+        report = find_coverage_gaps(
+            [_doc("/kb/a")], [_row(f"{KB}/kb/a", f"{KB}/kb/zzz")]
+        )
+
+        assert report.gaps == ()
+
+    def test_many_rows_citing_one_page_cover_it_once(self):
+        report = find_coverage_gaps(
+            [_doc("/kb/a")], [_row(f"{KB}/kb/a"), _row(f"{KB}/kb/a")]
+        )
+
+        assert report.gaps == ()
+        assert len(report.covered) == 1
+
+
+class TestGroupAndFilter:
+    """2.5 — keep a high-volume source from flooding the report."""
+
+    def test_group_by_parent_buckets_docs_in_first_seen_order(self):
+        docs = [
+            _doc("/kb/a"),
+            _doc("/fasrc/archi/blob/dev/x.py", "git", "https://github.com"),
+            _doc("/kb/b"),
+        ]
+
+        grouped = group_by_parent(docs)
+
+        assert list(grouped) == [KB, "https://github.com/fasrc/archi"]
+        assert [d.url for d in grouped[KB]] == [f"{KB}/kb/a", f"{KB}/kb/b"]
+
+    def test_filter_by_source_type(self):
+        docs = [
+            _doc("/kb/a"),
+            _doc("/fasrc/archi/blob/dev/x.py", "git", "https://github.com"),
+        ]
+
+        assert [d.url for d in filter_docs(docs, source_type="git")] == [
+            "https://github.com/fasrc/archi/blob/dev/x.py"
+        ]
+
+    def test_filter_by_parent(self):
+        docs = [
+            _doc("/kb/a"),
+            _doc("/fasrc/archi/blob/dev/x.py", "git", "https://github.com"),
+        ]
+
+        assert [d.url for d in filter_docs(docs, parent=KB)] == [f"{KB}/kb/a"]
+
+    def test_filter_by_path_glob_against_the_full_url(self):
+        docs = [_doc("/kb/a"), _doc("/docs/b"), _doc("/kb/c")]
+
+        assert [d.url for d in filter_docs(docs, path_glob=f"{KB}/kb/*")] == [
+            f"{KB}/kb/a",
+            f"{KB}/kb/c",
+        ]
+
+    def test_filters_combine_conjunctively(self):
+        docs = [
+            _doc("/kb/a"),
+            _doc("/kb/b", "git"),
+            _doc("/fasrc/archi/blob/dev/x.py", "git", "https://github.com"),
+        ]
+
+        assert [
+            d.url for d in filter_docs(docs, source_type="git", path_glob=f"{KB}/*")
+        ] == [f"{KB}/kb/b"]
+
+    def test_no_filters_returns_everything_unchanged(self):
+        docs = [_doc("/kb/a"), _doc("/kb/b")]
+
+        assert filter_docs(docs) == tuple(docs)

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 from urllib.parse import urlparse
 
@@ -221,3 +222,97 @@ def read_corpus_docs(fetch_rows: CorpusRowFetcher) -> List[CorpusDoc]:
             )
         )
     return docs
+
+
+def bank_source_urls(bank: Iterable[Any]) -> List[str]:
+    """Return every URL the bank grounds against, canonicalized and deduped.
+
+    Rows with no `sources` — a `should_refuse` row intentionally carries none —
+    contribute nothing, and a row whose `sources` is missing or not a list is
+    skipped rather than raising: a read-only report must survive a hand-edited
+    bank.
+    """
+    urls: List[str] = []
+    seen = set()
+    for record in bank or []:
+        if not isinstance(record, dict):
+            continue
+        sources = record.get("sources")
+        if not isinstance(sources, list):
+            continue
+        for raw in sources:
+            if not isinstance(raw, str) or not raw:
+                continue
+            url = canonical_url(raw)
+            if url is None or url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+    return urls
+
+
+@dataclass(frozen=True)
+class CoverageReport:
+    """Which ingested pages the bank does and does not ground against."""
+
+    gaps: Tuple[CorpusDoc, ...]
+    covered: Tuple[CorpusDoc, ...]
+    needs_reconciliation: Tuple[NearMiss, ...]
+
+
+def find_coverage_gaps(
+    corpus_docs: Iterable[CorpusDoc], bank: Iterable[Any]
+) -> CoverageReport:
+    """Report ingested pages that no current bank row references in `sources`.
+
+    Covered-ness is re-derived from the bank on every run, so drafting
+    candidates for a page never marks it covered — only an applied bank row
+    citing it does. A page that matches a bank source only by slug near-miss is
+    reported for reconciliation instead of being called a gap.
+    """
+    docs = list(corpus_docs)
+    by_url = {doc.url: doc for doc in docs}
+    result = reconcile(by_url, bank_source_urls(bank))
+    return CoverageReport(
+        gaps=tuple(by_url[url] for url in result.unmatched if url in by_url),
+        covered=tuple(by_url[url] for url in result.matched if url in by_url),
+        needs_reconciliation=result.near_misses,
+    )
+
+
+def group_by_parent(docs: Iterable[CorpusDoc]) -> Dict[str, Tuple[CorpusDoc, ...]]:
+    """Bucket docs by their parent source, in first-seen order.
+
+    A single git source can contribute thousands of per-file URLs; grouping is
+    what lets an operator greenlight or dismiss a whole source at once instead of
+    reading a flat dump.
+    """
+    grouped: Dict[str, List[CorpusDoc]] = {}
+    for doc in docs:
+        grouped.setdefault(doc.parent, []).append(doc)
+    return {parent: tuple(items) for parent, items in grouped.items()}
+
+
+def filter_docs(
+    docs: Iterable[CorpusDoc],
+    *,
+    source_type: Optional[str] = None,
+    parent: Optional[str] = None,
+    path_glob: Optional[str] = None,
+) -> Tuple[CorpusDoc, ...]:
+    """Narrow docs to one source or path. Filters combine conjunctively.
+
+    `path_glob` is matched case-sensitively against the **full URL**, so an
+    operator can paste a prefix straight from the report
+    (`https://github.com/org/repo/blob/dev/docs/*`).
+    """
+    selected: List[CorpusDoc] = []
+    for doc in docs:
+        if source_type is not None and doc.source_type != source_type:
+            continue
+        if parent is not None and doc.parent != parent:
+            continue
+        if path_glob is not None and not fnmatchcase(doc.url, path_glob):
+            continue
+        selected.append(doc)
+    return tuple(selected)
