@@ -15,13 +15,13 @@
 
 ## 3. Bounded seed pool (new helper module)
 
-- [ ] 3.1 Write a failing test for a `run_seeds` function in `scrape_pool.py`: with workers=8 and an injected blocking fake fetch over 8 independent seeds, observed peak concurrency is > 1.
-- [ ] 3.2 Write a failing test that the pool is bounded — workers=2 over 8 seeds never exceeds 2 in flight.
-- [ ] 3.3 Write a failing test combining both bounds: workers=8, per-host cap 4, 8 seeds on one host → peak per-host concurrency ≤ 4.
-- [ ] 3.4 Write a failing test for per-seed fail-open: one of 4 seeds raises → the other 3 still run, the failure is logged, and the returned total is the sum of the 3 successes. Add the all-seeds-raise case returning 0.
-- [ ] 3.5 Write a failing test that the total is accumulated without loss across many concurrent seeds (exact sum of per-seed counts).
-- [ ] 3.6 Write a failing test that `workers=1` runs seeds strictly one at a time **in input order** (record call order; peak concurrency is 1).
-- [ ] 3.7 Implement `run_seeds` (a `ThreadPoolExecutor` bounded by `workers`, each task wrapped in the `HostLimiter`, results summed on the calling thread via `as_completed`) to turn 3.1–3.6 green.
+- [x] 3.1 Write a failing test for a `run_seeds` function in `scrape_pool.py`: with workers=8 and an injected blocking fake fetch over 8 independent seeds, observed peak concurrency is > 1.
+- [x] 3.2 Write a failing test that the pool is bounded — workers=2 over 8 seeds never exceeds 2 in flight.
+- [x] 3.3 Write a failing test combining both bounds: workers=8, per-host cap 4, 8 seeds on one host → peak per-host concurrency ≤ 4.
+- [x] 3.4 Write a failing test for per-seed fail-open: one of 4 seeds raises → the other 3 still run, the failure is logged, and the returned total is the sum of the 3 successes. Add the all-seeds-raise case returning 0.
+- [x] 3.5 Write a failing test that the total is accumulated without loss across many concurrent seeds (exact sum of per-seed counts).
+- [x] 3.6 Write a failing test that `workers=1` runs seeds strictly one at a time **in input order** (record call order; peak concurrency is 1).
+- [x] 3.7 Implement `run_seeds` (a `ThreadPoolExecutor` bounded by `workers`, each task wrapped in the `HostLimiter`, results summed on the calling thread via `as_completed`) to turn 3.1–3.6 green.
 
 ## 4. Per-worker crawler isolation
 

@@ -12,9 +12,10 @@ exposing a context manager keyed by hostname: entering ``acquire(host)`` blocks
 until a slot for that host is free, and leaving it releases the slot.
 """
 
+import logging
 import threading
 
-from src.data_manager.collectors.scrapers.scrape_pool import HostLimiter
+from src.data_manager.collectors.scrapers.scrape_pool import HostLimiter, run_seeds
 
 
 class _PeakTracker:
@@ -140,3 +141,127 @@ class TestHostLimiterPerHostCap:
         assert (
             acquired.is_set()
         ), "slot was not released after exception; acquirer deadlocked"
+
+
+class TestRunSeedsBounds:
+    """``run_seeds`` fans seeds across a bounded pool, capped per host.
+
+    The concurrency assertions use a ``threading.Barrier`` sized to the expected
+    in-flight count so overlap is *forced* rather than hoped for: a pool that
+    fails to reach that many concurrent crawls leaves a thread stuck at the
+    barrier until it times out, which surfaces as a clean failure instead of a
+    flaky one. Upper-bound assertions then confirm the pool never exceeds its
+    global or per-host limit.
+    """
+
+    def test_independent_seeds_run_in_parallel(self):
+        """workers=8 over 8 independent seeds: peak in-flight fetch exceeds 1."""
+        seeds = [f"https://host{i}.example.edu/" for i in range(8)]
+        all_in_flight = threading.Barrier(len(seeds), timeout=5)
+        tracker = _PeakTracker(hold_iters=0)
+
+        def scrape_one(seed):
+            with tracker.enter():
+                all_in_flight.wait()
+            return 1
+
+        total = run_seeds(seeds, scrape_one, workers=8, per_host_workers=8)
+
+        assert total == 8
+        assert tracker.peak > 1
+
+    def test_pool_is_bounded_to_worker_count(self):
+        """workers=2 over 8 seeds never exceeds 2 crawls in flight at once."""
+        seeds = [f"https://host{i}.example.edu/" for i in range(8)]
+        pair = threading.Barrier(2, timeout=5)
+        tracker = _PeakTracker(hold_iters=0)
+
+        def scrape_one(seed):
+            with tracker.enter():
+                pair.wait()
+            return 1
+
+        total = run_seeds(seeds, scrape_one, workers=2, per_host_workers=8)
+
+        assert total == 8
+        assert 1 <= tracker.peak <= 2
+
+    def test_per_host_cap_bounds_single_host(self):
+        """workers=8 but per-host cap 4 over 8 same-host seeds: peak per host <= 4."""
+        seeds = [f"https://docs.example.edu/page{i}" for i in range(8)]
+        quad = threading.Barrier(4, timeout=5)
+        tracker = _PeakTracker(hold_iters=0)
+
+        def scrape_one(seed):
+            with tracker.enter():
+                quad.wait()
+            return 1
+
+        total = run_seeds(seeds, scrape_one, workers=8, per_host_workers=4)
+
+        assert total == 8
+        assert 1 <= tracker.peak <= 4
+
+    def test_one_failing_seed_does_not_abort_batch(self, caplog):
+        """One raising seed is isolated: the other three still run and are summed."""
+        seeds = [
+            "https://a.example.edu/",
+            "https://b.example.edu/",
+            "https://c.example.edu/",
+            "https://boom.example.edu/",
+        ]
+
+        def scrape_one(seed):
+            if "boom" in seed:
+                raise RuntimeError("kaboom")
+            return 5
+
+        with caplog.at_level(logging.WARNING):
+            total = run_seeds(seeds, scrape_one, workers=4, per_host_workers=4)
+
+        assert total == 15
+        assert "boom.example.edu" in caplog.text
+
+    def test_all_seeds_failing_returns_zero(self, caplog):
+        """Every seed raising returns 0 rather than propagating; each is logged."""
+        seeds = [f"https://host{i}.example.edu/" for i in range(3)]
+
+        def scrape_one(seed):
+            raise RuntimeError("nope")
+
+        with caplog.at_level(logging.WARNING):
+            total = run_seeds(seeds, scrape_one, workers=3, per_host_workers=3)
+
+        assert total == 0
+        assert sum("seed scrape failed" in r.getMessage() for r in caplog.records) == 3
+
+    def test_total_accumulated_without_loss(self):
+        """Concurrent seeds contribute their exact per-seed counts to the total."""
+        seeds = [f"https://host{i % 5}.example.edu/page{i}" for i in range(50)]
+        counts = {seed: i + 1 for i, seed in enumerate(seeds)}
+
+        def scrape_one(seed):
+            return counts[seed]
+
+        total = run_seeds(seeds, scrape_one, workers=8, per_host_workers=4)
+
+        assert total == sum(counts.values())
+
+    def test_workers_one_runs_seeds_serially_in_input_order(self):
+        """workers=1 visits seeds strictly one at a time in their input order."""
+        seeds = [f"https://host{i}.example.edu/" for i in range(6)]
+        calls = []
+        calls_lock = threading.Lock()
+        tracker = _PeakTracker()
+
+        def scrape_one(seed):
+            with tracker.enter():
+                with calls_lock:
+                    calls.append(seed)
+            return 1
+
+        total = run_seeds(seeds, scrape_one, workers=1, per_host_workers=4)
+
+        assert total == 6
+        assert calls == seeds
+        assert tracker.peak == 1
