@@ -1103,6 +1103,12 @@ DRIFT_INCOMPARABLE = "incomparable"
 DRIFT_UNREACHABLE = "unreachable"
 DRIFT_REFUSED = "refused"
 
+#: States in which no page was actually read. Abstention keys on these rather
+#: than on fetch failures alone: a refusal never reaches the fetcher, so a
+#: fetch-shaped rule reported a fully-refused run — a mistyped allowlist, say —
+#: as a clean zero-drift pass.
+_UNREAD_STATES = (DRIFT_UNREACHABLE, DRIFT_REFUSED)
+
 _INLINE_WHITESPACE = re.compile(r"[ \t]+")
 _BLANK_LINE_RUN = re.compile(r"\n{3,}")
 
@@ -1483,13 +1489,13 @@ def find_drift(
     named: a row grounded in three pages where one was rewritten is exactly as
     stale as one grounded in a single rewritten page.
 
-    Abstains only when every fetch failed. That is deliberately weaker than the
-    orphan pass, which abstains on a *single* inventory failure — there, one
-    missing sitemap makes unrelated rows look deleted, so the damage spreads. A
-    failure here is local: it affects only the rows citing that URL, and those
-    rows are individually reported as unchecked rather than as clean. When
-    nothing at all could be read, though, "no drift" would be a false clean over
-    the entire bank, so the run says so instead.
+    Abstains only when **no source was read at all** — every one unreachable or
+    refused by the fetch policy. That is deliberately weaker than the orphan
+    pass, which abstains on a *single* inventory failure: there, one missing
+    sitemap makes unrelated rows look deleted, so the damage spreads. A failure
+    here is local, affecting only the rows citing that URL, and those rows are
+    individually reported as unchecked rather than as clean. When nothing could
+    be read, though, "no drift" would be a false clean over the entire bank.
 
     Read-only: the bank is never mutated, and `source_hashes` is never rewritten.
     Re-baselining a row is a human act, like locking it in the first place.
@@ -1542,12 +1548,17 @@ def find_drift(
             )
         )
 
-    failures = tuple(f"{url}: {r[2]}" for url, r in cache.items() if r[2])
-    abstained = bool(cache) and len(failures) == len(cache)
+    attempted = [check for row in rows for check in row.checks]
+    unread = [check for check in attempted if check.state in _UNREAD_STATES]
+    abstained = bool(attempted) and len(unread) == len(attempted)
     return DriftReport(
         rows=tuple(rows),
         checked_rows=checked,
         skipped_rows=skipped,
         abstained=abstained,
-        reasons=failures if abstained else (),
+        reasons=(
+            tuple(f"{check.url}: {check.detail}" for check in unread)
+            if abstained
+            else ()
+        ),
     )

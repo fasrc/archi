@@ -733,9 +733,18 @@ python scripts/benchmarking/goldenset_maintenance.py drift \
     --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com
 ```
 
-DNS-rebinding-resistant connection pinning is *not* implemented here; it is deferred for
-`fetch_sitemap_text` itself (§Deferred hardening v2/H1), and drift contacts a small subset of
-what the ingest already fetches continuously.
+**TLS is verified.** The ingest's fetcher defaults to `verify=False`; drift overrides that. A
+network attacker who could substitute page content would otherwise be able to manufacture drift
+findings, steer the advisory verdict, and put text of their choosing into a prompt sent to the
+model provider. There is deliberately no flag to turn verification off — such a flag ends up in
+the cron line. A deployment with a private CA sets `REQUESTS_CA_BUNDLE`.
+
+**Not covered:** DNS-rebinding-resistant connection pinning. A hostname that passes the filter
+but *resolves* to an internal address is not caught. That hardening is docketed against
+`fetch_sitemap_text` itself (§Deferred hardening v2/H1) rather than reimplemented here, because
+the same gap applies to `expand_sitemaps` — which fetches URLs it read out of a **remote**
+document, a strictly less trusted source than a repo-committed bank — and a second, divergent
+fetch path is the failure mode this module is built to avoid.
 
 #### Seeing the evidence
 
@@ -798,8 +807,10 @@ read it.
 
 #### Abstention
 
-If **every** fetch fails, the run reports `ABSTAINED` on stderr and **exits non-zero**. Nothing
-was read, so "no drift" would be a clean bill of health for a check that never happened.
+If **no source was read at all** — every one unreachable or refused — the run reports `ABSTAINED`
+on stderr and **exits non-zero**. Nothing was read, so "no drift" would be a clean bill of health
+for a check that never happened. Refusals count here too: a mistyped `--allowed-hosts` rejects
+every source, and that must not exit zero.
 
 A *single* unreachable page does not abstain — unlike the orphan pass, where one missing sitemap
 makes unrelated rows look deleted. A failure here is local: it affects only the rows citing that

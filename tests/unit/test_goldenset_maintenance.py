@@ -1779,3 +1779,49 @@ class TestDriftRetainsBoundedText:
         # `urlparse(...).hostname` raises on an unclosed IPv6 bracket. A read-only
         # pass must refuse it, not die on one bad row in a hand-edited bank.
         assert is_fetchable_source("http://[::1/admin") is False
+
+
+class TestDriftAbstainsWhenNothingWasRead:
+    """Abstention keys on "no page was read", not on how the reading failed.
+
+    A refusal never reaches the fetch cache, so a cache-shaped rule reported a
+    fully-refused run — a mistyped `--allowed-hosts`, say — as a clean zero-drift
+    pass. The honest question is whether any source was actually read.
+    """
+
+    def test_every_source_refused_abstains(self):
+        url = "http://127.0.0.1:9000/admin"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+
+        report = find_drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert report.abstained is True
+
+    def test_a_mix_of_refused_and_unreachable_with_no_reads_abstains(self):
+        refused, dead = "http://10.0.0.5/x", f"{KB}/kb/gone"
+        bank = [
+            _locked(refused, hashes={refused: page_digest(KB_HTML)}),
+            _locked(dead, hashes={dead: page_digest(KB_HTML)}),
+        ]
+
+        report = find_drift(bank, _fetcher_for({}, errors={dead: "timeout"}))
+
+        assert report.abstained is True
+        assert len(report.reasons) == 2
+
+    def test_one_successful_read_is_enough_not_to_abstain(self):
+        good, refused = f"{KB}/kb/a", "http://10.0.0.5/x"
+        bank = [
+            _locked(good, hashes={good: page_digest(KB_HTML)}),
+            _locked(refused, hashes={refused: page_digest(KB_HTML)}),
+        ]
+
+        report = find_drift(bank, _fetcher_for({good: KB_HTML}))
+
+        assert report.abstained is False
+
+    def test_a_bank_with_nothing_to_check_does_not_abstain(self):
+        # No locked rows is "nothing to do", not "the run failed".
+        report = find_drift([_row(f"{KB}/kb/a")], _fetcher_for({}))
+
+        assert report.abstained is False

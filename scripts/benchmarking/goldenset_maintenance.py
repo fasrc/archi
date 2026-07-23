@@ -393,15 +393,22 @@ def build_fetch_html():
     `expand_sitemaps`, not here, so `find_drift` applies it itself before
     handing any URL to this callable.
 
-    The body cap is tightened well below the ingest's 64 MiB. That ceiling is
-    sized for a sitemap index of a whole site; a KB article is a few hundred KB,
-    and this runs across a whole bank, so the ingest's headroom is only an
-    availability risk here.
+    Two of that fetcher's defaults are overridden rather than inherited:
+
+    - **TLS is verified.** `fetch_sitemap_text` defaults to `verify=False`.
+      Inheriting that would let anyone on the network path substitute page
+      content — manufacturing drift findings, steering the advisory verdict, and
+      putting text of their choosing into a prompt sent to the model provider.
+      A private CA goes in `REQUESTS_CA_BUNDLE`; there is deliberately no flag to
+      turn verification off, because such a flag ends up in the cron line.
+    - **The body cap drops to `MAX_PAGE_BYTES`.** The ingest's 64 MiB ceiling is
+      sized for a whole site's sitemap index; a KB article is a few hundred KB,
+      and this runs across a whole bank.
     """
     from src.data_manager.collectors.scrapers.sitemap_source import fetch_sitemap_text
 
     def fetch(url: str) -> str:
-        return fetch_sitemap_text(url, max_bytes=MAX_PAGE_BYTES)
+        return fetch_sitemap_text(url, verify=True, max_bytes=MAX_PAGE_BYTES)
 
     return fetch
 
@@ -730,8 +737,9 @@ def run_drift(args: argparse.Namespace) -> int:
         # Every fetch failed, so no page was actually read. Reporting "no drift"
         # would be a clean bill of health nothing was checked for.
         print(
-            "ABSTAINED — every source fetch failed, so nothing was checked. "
-            "Reporting no drift here would be a false clean over the whole bank.",
+            "ABSTAINED — no source was read at all (every one was unreachable or "
+            "refused by the fetch policy), so nothing was checked. Reporting no "
+            "drift here would be a false clean over the whole bank.",
             file=sys.stderr,
         )
         _print_group("why", report.reasons, stream=sys.stderr)

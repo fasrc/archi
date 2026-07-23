@@ -1706,7 +1706,14 @@ class TestDriftFetchPolicyCli:
     def test_a_loopback_source_is_refused_and_reported(self, tmp_path, capsys):
         script = _load_script()
         url = "http://127.0.0.1:9000/admin"
-        bank = _bank(tmp_path, _locked_row(url, hashes={url: "sha256:" + "0" * 64}))
+        # A second, readable row so this exercises a refusal inside an otherwise
+        # normal run rather than the all-refused abstention path.
+        ok = f"{KB}/kb/gpu"
+        bank = _bank(
+            tmp_path,
+            _locked_row(url, hashes={url: "sha256:" + "0" * 64}),
+            _locked_row(ok, hashes={ok: page_digest(GPU_HTML)}),
+        )
         fetched = []
 
         def build():
@@ -1721,7 +1728,7 @@ class TestDriftFetchPolicyCli:
         code = script.main(["drift", "--bank", str(bank)])
         out = capsys.readouterr().out
 
-        assert fetched == []
+        assert fetched == [ok]
         assert code == 0
         assert "refused" in out.lower()
         assert url in out
@@ -1782,3 +1789,53 @@ class TestDriftEvidence:
 
         assert "--gpus=2" not in out
         assert "--show-text" in out
+
+
+class TestDriftTransport:
+    """What the drift fetch actually does on the wire."""
+
+    def test_the_fetcher_verifies_tls(self, monkeypatch):
+        script = _load_script()
+        from src.data_manager.collectors.scrapers import sitemap_source
+
+        seen = {}
+
+        def fake(url, **kwargs):
+            seen.update(kwargs)
+            return GPU_HTML
+
+        monkeypatch.setattr(sitemap_source, "fetch_sitemap_text", fake)
+        script.build_fetch_html()(f"{KB}/kb/gpu")
+
+        # The ingest defaults to verify=False. Inheriting that here would let a
+        # network attacker manufacture drift findings and put chosen text into
+        # the prompt sent to the model provider.
+        assert seen["verify"] is True
+
+    def test_the_fetcher_caps_the_body_below_the_ingest_ceiling(self, monkeypatch):
+        script = _load_script()
+        from src.data_manager.collectors.scrapers import sitemap_source
+
+        seen = {}
+
+        def fake(url, **kwargs):
+            seen.update(kwargs)
+            return GPU_HTML
+
+        monkeypatch.setattr(sitemap_source, "fetch_sitemap_text", fake)
+        script.build_fetch_html()(f"{KB}/kb/gpu")
+
+        assert seen["max_bytes"] == script.MAX_PAGE_BYTES
+
+    def test_an_all_refused_run_exits_nonzero(self, tmp_path, capsys):
+        script = _load_script()
+        url = "http://127.0.0.1:9000/admin"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML})
+
+        code = script.main(["drift", "--bank", str(bank)])
+        captured = capsys.readouterr()
+
+        # A mistyped --allowed-hosts must not read as a clean bill of health.
+        assert code == 1
+        assert "abstain" in captured.err.lower()
