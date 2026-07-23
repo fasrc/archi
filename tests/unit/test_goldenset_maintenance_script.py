@@ -1659,6 +1659,30 @@ class TestDriftSubcommand:
         assert page_digest(GPU_HTML) in out
         assert '"source_hashes"' in out
 
+    def test_print_hashes_says_why_it_emitted_nothing(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, status="draft"))
+        _fake_pages(script, {url: GPU_HTML})
+
+        script.main([*_drift_head(bank), "--print-hashes"])
+        out = capsys.readouterr().out
+
+        # Baselines are produced for `locked` rows only — declaring the lock is
+        # the human act, and the hash records what was vouched for. An operator
+        # asking for a draft row's baseline is in the right place at the wrong
+        # step, and silence reads as "the tool is broken".
+        assert "no `source_hashes` blocks" in out
+        assert "status: locked" in out
+
+    def test_a_bank_with_nothing_to_print_still_exits_zero(self, tmp_path):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, status="draft"))
+        _fake_pages(script, {url: GPU_HTML})
+
+        assert script.main([*_drift_head(bank), "--print-hashes"]) == 0
+
 
 class TestDriftVerdictCli:
     """4.3 — the model diff is advisory and fires only on a moved hash."""

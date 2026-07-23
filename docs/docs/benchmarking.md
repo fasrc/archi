@@ -828,10 +828,21 @@ python scripts/benchmarking/goldenset_maintenance.py drift \
 }
 ```
 
-Paste it into the row you are locking. Do the same after reviewing a drifted row and deciding the
-answer still holds — that re-baselines it so the next run is quiet again. Both are human acts, on
-purpose: a tool that re-baselined a drifted row by itself would erase the finding before anyone
-read it.
+**Declare the lock first, then take the baseline.** Blocks are produced for `locked` rows only, so
+locking a confirmed candidate is two edits to the same row:
+
+1. set `status: locked` on the row (this is the human act — you are vouching for the reference
+   against that page),
+2. run the command above and paste the block it prints for that row.
+
+Between the two the row is locked with no baseline, which is a state the report already names
+(*no baseline recorded*) rather than a broken one. The order is deliberate: a baseline is a record
+of a confirmation, so producing one for a `draft` row would manufacture the evidence of a
+confirmation that has not happened. A run that prints no blocks says so and names this reason.
+
+Do the same after reviewing a drifted row and deciding the answer still holds — that re-baselines
+it so the next run is quiet again. Both are human acts, on purpose: a tool that re-baselined a
+drifted row by itself would erase the finding before anyone read it.
 
 Pasting replaces the row's whole map, so each block is **complete for its row**: a source that
 could not be read this run carries its existing baseline forward rather than vanishing. Where a

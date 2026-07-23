@@ -870,13 +870,20 @@ def _print_hashes(report) -> None:
     Baselines for URLs the row no longer cites are deliberately NOT carried
     forward; they are reported separately as stale, and dropping them is the
     point of pasting.
+
+    Emitting nothing is explained rather than left silent. Blocks come from the
+    same locked-only pass as the rest of drift, so asking for a draft row's
+    baseline produces an empty run — right place, wrong step — and unexplained
+    silence reads as a broken tool.
     """
+    emitted = 0
     for row in report.rows:
         carried = {
             c.url: (c.fresh or c.stored) for c in row.checks if c.fresh or c.stored
         }
         if not carried:
             continue
+        emitted += 1
         missing = [c.url for c in row.checks if not (c.fresh or c.stored)]
         print(f"\nrow {row.row_index} — {row.user_input[:60]}")
         if missing:
@@ -887,6 +894,13 @@ def _print_hashes(report) -> None:
                 "they are reachable."
             )
         print(json.dumps({"source_hashes": carried}, indent=2))
+    if not emitted:
+        print(
+            "\nno `source_hashes` blocks — baselines come from `locked` rows only. "
+            "A draft row has no confirmation to record yet, so declaring the lock "
+            "comes first: set `status: locked` on the row, then re-run this to get "
+            "its block."
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
