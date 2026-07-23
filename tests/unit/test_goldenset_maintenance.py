@@ -47,6 +47,7 @@ from src.utils.goldenset_maintenance import (
     find_drift,
     find_orphans,
     group_by_parent,
+    is_fetchable_source,
     normalize_extracted_text,
     page_digest,
     parent_source,
@@ -1773,3 +1774,8 @@ class TestDriftRetainsBoundedText:
         # make every edit past the cut invisible.
         assert check.fresh == page_digest(html)
         assert len(check.fresh_text) <= MAX_PROMPT_PAGE_CHARS
+
+    def test_a_malformed_url_is_refused_rather_than_raising(self):
+        # `urlparse(...).hostname` raises on an unclosed IPv6 bracket. A read-only
+        # pass must refuse it, not die on one bad row in a hand-edited bank.
+        assert is_fetchable_source("http://[::1/admin") is False
