@@ -45,8 +45,8 @@ Usage:
 
     # fact drift: re-fetch every locked row's sources and report what moved
     python scripts/benchmarking/goldenset_maintenance.py drift \\
-        --bank <bank.json> [--model anthropic/claude-sonnet-5] \\
-        [--allowed-hosts docs.rc.fas.harvard.edu] [--show-text] [--print-hashes]
+        --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \\
+        [--model anthropic/claude-sonnet-5] [--show-text] [--print-hashes]
 """
 
 from __future__ import annotations
@@ -730,7 +730,7 @@ def run_drift(args: argparse.Namespace) -> int:
         bank,
         build_fetch_html(),
         ask_llm=ask_llm,
-        allowed_hosts=args.allowed_hosts or (),
+        allowed_hosts=args.allowed_hosts,
     )
 
     if report.abstained:
@@ -973,11 +973,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     drift.add_argument(
         "--allowed-hosts",
-        nargs="*",
+        nargs="+",
+        required=True,
+        metavar="HOST",
         help=(
-            "Restrict which hosts drift may contact. Without it, any public host "
-            "a row cites is fetched; loopback/private/link-local and non-http(s) "
-            "targets are always refused."
+            "REQUIRED — the hosts drift is authorized to contact (e.g. "
+            "docs.rc.fas.harvard.edu slurm.schedmd.com). A `sources` value is "
+            "data, and this pass dials it; anything not listed is refused "
+            "unfetched, as are loopback/private/link-local and non-http(s) "
+            "targets. There is no allow-everything default: this check sees only "
+            "a hostname, so a public-looking name that resolves somewhere "
+            "internal would pass it."
         ),
     )
     drift.add_argument(

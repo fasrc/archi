@@ -1295,6 +1295,15 @@ def _fetcher_for(pages, calls=None, errors=None):
     return fetch
 
 
+KB_HOST = "docs.rc.fas.harvard.edu"
+
+
+def _drift(bank, fetch, **kwargs):
+    """`find_drift` with an allowlist — an empty one authorizes nothing."""
+    kwargs.setdefault("allowed_hosts", [KB_HOST, "slurm.schedmd.com"])
+    return find_drift(bank, fetch, **kwargs)
+
+
 def _locked(*sources, hashes=None, **extra):
     """A locked bank row citing `sources`, optionally with stored baselines."""
     row = {
@@ -1345,7 +1354,7 @@ class TestFindDrift:
         url = f"{KB}/kb/gpu"
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
 
-        report = find_drift(bank, _fetcher_for({url: KB_HTML}))
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
 
         assert report.drifted == ()
         assert report.checked_rows == 1
@@ -1354,7 +1363,7 @@ class TestFindDrift:
         url = f"{KB}/kb/gpu"
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
 
-        report = find_drift(bank, _fetcher_for({url: KB_HTML_CHANGED}))
+        report = _drift(bank, _fetcher_for({url: KB_HTML_CHANGED}))
 
         assert [row.row_index for row in report.drifted] == [0]
         assert [c.url for c in report.drifted[0].changed] == [url]
@@ -1369,9 +1378,7 @@ class TestFindDrift:
             )
         ]
 
-        report = find_drift(
-            bank, _fetcher_for({stable: KB_HTML, moved: KB_HTML_CHANGED})
-        )
+        report = _drift(bank, _fetcher_for({stable: KB_HTML, moved: KB_HTML_CHANGED}))
 
         assert [c.url for c in report.drifted[0].changed] == [moved]
         states = {c.url: c.state for c in report.drifted[0].checks}
@@ -1382,7 +1389,7 @@ class TestFindDrift:
         bank = [_row(url, status="draft", source_hashes={url: page_digest(KB_HTML)})]
         calls = []
 
-        report = find_drift(bank, _fetcher_for({url: KB_HTML_CHANGED}, calls=calls))
+        report = _drift(bank, _fetcher_for({url: KB_HTML_CHANGED}, calls=calls))
 
         assert report.drifted == ()
         assert report.checked_rows == 0
@@ -1392,7 +1399,7 @@ class TestFindDrift:
         url = f"{KB}/kb/gpu"
         bank = [_row(url, source_hashes={url: page_digest(KB_HTML)})]
 
-        report = find_drift(bank, _fetcher_for({url: KB_HTML_CHANGED}))
+        report = _drift(bank, _fetcher_for({url: KB_HTML_CHANGED}))
 
         assert report.drifted == ()
 
@@ -1401,7 +1408,7 @@ class TestFindDrift:
         # against, and locking it must not require a grounding hash.
         bank = [_locked(anchor_type="should_refuse")]
 
-        report = find_drift(bank, _fetcher_for({}))
+        report = _drift(bank, _fetcher_for({}))
 
         assert report.drifted == ()
         assert report.checked_rows == 0
@@ -1410,7 +1417,7 @@ class TestFindDrift:
         url = f"{KB}/kb/gpu"
         bank = [_locked(url)]
 
-        report = find_drift(bank, _fetcher_for({url: KB_HTML}))
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
 
         assert report.drifted == ()
         assert [c.url for c in report.unbaselined] == [url]
@@ -1419,7 +1426,7 @@ class TestFindDrift:
         url = f"{KB}/kb/gpu"
         bank = [_locked(url, hashes={url: "crc32:deadbeef"})]
 
-        report = find_drift(bank, _fetcher_for({url: KB_HTML}))
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
 
         assert report.drifted == ()
         assert [c.url for c in report.incomparable] == [url]
@@ -1430,7 +1437,7 @@ class TestFindDrift:
         url = f"{KB}/kb/gpu"
         bank = [_locked(url, hashes={url: "a" * 64})]
 
-        report = find_drift(bank, _fetcher_for({url: KB_HTML}))
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
 
         assert [c.url for c in report.incomparable] == [url]
 
@@ -1438,7 +1445,7 @@ class TestFindDrift:
         url = f"{KB}/kb/gpu"
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
 
-        report = find_drift(bank, _fetcher_for({}, errors={url: "connection reset"}))
+        report = _drift(bank, _fetcher_for({}, errors={url: "connection reset"}))
 
         assert report.drifted == ()
         assert [c.url for c in report.unreachable] == [url]
@@ -1453,7 +1460,7 @@ class TestFindDrift:
             )
         ]
 
-        report = find_drift(bank, _fetcher_for({current: KB_HTML}))
+        report = _drift(bank, _fetcher_for({current: KB_HTML}))
 
         assert report.rows[0].stale_baselines == (dropped,)
 
@@ -1463,7 +1470,7 @@ class TestFindDrift:
         bank = [_locked(url, hashes={url: digest}) for _ in range(3)]
         calls = []
 
-        find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
 
         assert calls == [url]
 
@@ -1472,7 +1479,7 @@ class TestFindDrift:
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)}) for _ in range(3)]
         calls = []
 
-        find_drift(bank, _fetcher_for({}, calls=calls, errors={url: "timeout"}))
+        _drift(bank, _fetcher_for({}, calls=calls, errors={url: "timeout"}))
 
         assert calls == [url]
 
@@ -1485,7 +1492,7 @@ class TestFindDrift:
             _locked(b, hashes={b: page_digest(KB_HTML)}),
         ]
 
-        report = find_drift(bank, _fetcher_for({}, errors={a: "timeout", b: "timeout"}))
+        report = _drift(bank, _fetcher_for({}, errors={a: "timeout", b: "timeout"}))
 
         assert report.abstained is True
 
@@ -1498,9 +1505,7 @@ class TestFindDrift:
             _locked(bad, hashes={bad: page_digest(KB_HTML)}),
         ]
 
-        report = find_drift(
-            bank, _fetcher_for({good: KB_HTML}, errors={bad: "timeout"})
-        )
+        report = _drift(bank, _fetcher_for({good: KB_HTML}, errors={bad: "timeout"}))
 
         assert report.abstained is False
         assert [row.row_index for row in report.drifted] == [0]
@@ -1511,7 +1516,7 @@ class TestFindDrift:
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
         before = copy.deepcopy(bank)
 
-        find_drift(bank, _fetcher_for({url: KB_HTML_CHANGED}))
+        _drift(bank, _fetcher_for({url: KB_HTML_CHANGED}))
 
         assert bank == before
 
@@ -1530,7 +1535,7 @@ class TestDriftVerdict:
         ]
         prompts = []
 
-        find_drift(
+        _drift(
             bank,
             _fetcher_for({stable: KB_HTML, moved: KB_HTML_CHANGED}),
             ask_llm=_recording_llm(
@@ -1547,7 +1552,7 @@ class TestDriftVerdict:
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
         prompts = []
 
-        find_drift(
+        _drift(
             bank,
             _fetcher_for({url: KB_HTML_CHANGED}),
             ask_llm=_recording_llm(prompts, '{"verdict": "broken"}'),
@@ -1561,7 +1566,7 @@ class TestDriftVerdict:
         url = f"{KB}/kb/gpu"
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
 
-        report = find_drift(bank, _fetcher_for({url: KB_HTML_CHANGED}))
+        report = _drift(bank, _fetcher_for({url: KB_HTML_CHANGED}))
 
         assert report.drifted[0].changed[0].verdict is None
 
@@ -1572,7 +1577,7 @@ class TestDriftVerdict:
         url = f"{KB}/kb/gpu"
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
 
-        report = find_drift(
+        report = _drift(
             bank,
             _fetcher_for({url: KB_HTML_CHANGED}),
             ask_llm=_recording_llm([], '{"verdict": "holds", "explanation": "same"}'),
@@ -1597,9 +1602,7 @@ class TestDriftVerdict:
         def exploding(_prompt):
             raise RuntimeError("provider 503")
 
-        report = find_drift(
-            bank, _fetcher_for({url: KB_HTML_CHANGED}), ask_llm=exploding
-        )
+        report = _drift(bank, _fetcher_for({url: KB_HTML_CHANGED}), ask_llm=exploding)
 
         assert [row.row_index for row in report.drifted] == [0]
         assert report.drifted[0].changed[0].verdict.verdict == "unclear"
@@ -1621,7 +1624,7 @@ class TestDriftAgainstAHandEditedBank:
         url = f"{KB}/kb/gpu"
         bank = [_locked(url, hashes={url: 12345})]
 
-        report = find_drift(bank, _fetcher_for({url: KB_HTML}))
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
 
         assert [c.url for c in report.unbaselined] == [url]
 
@@ -1629,14 +1632,14 @@ class TestDriftAgainstAHandEditedBank:
         url = f"{KB}/kb/gpu"
         bank = [_locked("", None, url, hashes={url: page_digest(KB_HTML)})]
 
-        report = find_drift(bank, _fetcher_for({url: KB_HTML}))
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
 
         assert [c.url for c in report.rows[0].checks] == [url]
 
     def test_a_row_whose_sources_are_all_unusable_is_skipped(self):
         bank = [_locked("", None)]
 
-        report = find_drift(bank, _fetcher_for({}))
+        report = _drift(bank, _fetcher_for({}))
 
         assert report.checked_rows == 0
         assert report.skipped_rows == 1
@@ -1645,7 +1648,7 @@ class TestDriftAgainstAHandEditedBank:
         url = f"{KB}/kb/gpu"
         bank = [_locked(url, f"{url}/", hashes={url: page_digest(KB_HTML)})]
 
-        report = find_drift(bank, _fetcher_for({url: KB_HTML}))
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
 
         assert [c.url for c in report.rows[0].checks] == [url]
 
@@ -1675,7 +1678,7 @@ class TestDriftFetchPolicy:
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
         calls = []
 
-        report = find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+        report = _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
 
         assert calls == []
         assert [c.url for c in report.refused] == [url]
@@ -1686,7 +1689,7 @@ class TestDriftFetchPolicy:
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
         calls = []
 
-        find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
 
         assert calls == []
 
@@ -1695,7 +1698,7 @@ class TestDriftFetchPolicy:
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
         calls = []
 
-        find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
 
         assert calls == []
 
@@ -1706,7 +1709,7 @@ class TestDriftFetchPolicy:
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
         calls = []
 
-        find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
 
         assert calls == []
 
@@ -1715,7 +1718,7 @@ class TestDriftFetchPolicy:
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
         calls = []
 
-        find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
 
         assert calls == []
 
@@ -1724,7 +1727,7 @@ class TestDriftFetchPolicy:
         bank = [_locked(url, hashes={url: "sha256:" + "0" * 64})]
         prompts = []
 
-        find_drift(
+        _drift(
             bank,
             _fetcher_for({url: KB_HTML}),
             ask_llm=_recording_llm(prompts, '{"verdict": "broken"}'),
@@ -1732,14 +1735,27 @@ class TestDriftFetchPolicy:
 
         assert prompts == []
 
-    def test_a_public_host_is_allowed_by_default(self):
+    def test_an_allowlisted_host_is_fetched(self):
         url = f"{KB}/kb/gpu"
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
         calls = []
 
-        find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
 
         assert calls == [url]
+
+    def test_no_allowlist_authorizes_nothing(self):
+        # Fail closed. Hostname policy cannot survive DNS rebinding, so the set
+        # of hosts drift will dial has to be one an operator actually vouched
+        # for — not "whatever the bank happens to name".
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        report = find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+        assert [c.url for c in report.refused] == [url]
 
     def test_an_allowlist_restricts_which_hosts_drift_will_contact(self):
         listed, other = f"{KB}/kb/gpu", "https://slurm.schedmd.com/mpi"
@@ -1749,7 +1765,7 @@ class TestDriftFetchPolicy:
         ]
         calls = []
 
-        report = find_drift(
+        report = _drift(
             bank,
             _fetcher_for({listed: KB_HTML, other: KB_HTML}, calls=calls),
             allowed_hosts=["docs.rc.fas.harvard.edu"],
@@ -1767,7 +1783,7 @@ class TestDriftRetainsBoundedText:
         html = "<html><body><p>" + ("word " * 40_000) + "</p></body></html>"
         bank = [_locked(url, hashes={url: "sha256:" + "0" * 64})]
 
-        report = find_drift(bank, _fetcher_for({url: html}))
+        report = _drift(bank, _fetcher_for({url: html}))
         check = report.drifted[0].changed[0]
 
         # The digest must cover the WHOLE page — truncating before hashing would
@@ -1793,7 +1809,7 @@ class TestDriftAbstainsWhenNothingWasRead:
         url = "http://127.0.0.1:9000/admin"
         bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
 
-        report = find_drift(bank, _fetcher_for({url: KB_HTML}))
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
 
         assert report.abstained is True
 
@@ -1804,7 +1820,7 @@ class TestDriftAbstainsWhenNothingWasRead:
             _locked(dead, hashes={dead: page_digest(KB_HTML)}),
         ]
 
-        report = find_drift(bank, _fetcher_for({}, errors={dead: "timeout"}))
+        report = _drift(bank, _fetcher_for({}, errors={dead: "timeout"}))
 
         assert report.abstained is True
         assert len(report.reasons) == 2
@@ -1816,12 +1832,12 @@ class TestDriftAbstainsWhenNothingWasRead:
             _locked(refused, hashes={refused: page_digest(KB_HTML)}),
         ]
 
-        report = find_drift(bank, _fetcher_for({good: KB_HTML}))
+        report = _drift(bank, _fetcher_for({good: KB_HTML}))
 
         assert report.abstained is False
 
     def test_a_bank_with_nothing_to_check_does_not_abstain(self):
         # No locked rows is "nothing to do", not "the run failed".
-        report = find_drift([_row(f"{KB}/kb/a")], _fetcher_for({}))
+        report = _drift([_row(f"{KB}/kb/a")], _fetcher_for({}))
 
         assert report.abstained is False

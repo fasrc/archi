@@ -710,8 +710,18 @@ that stays in the benchmark scoring as correct. The LLM diff exists to make thos
 #### What `drift` will and will not fetch
 
 `drift` is the one pass that turns a `sources` value into an outbound request, and `sources` is
-data read out of a file. So every URL is checked against the ingest's own trust filter
-(`is_url_allowed`) *before* it is dialled. Refused unconditionally:
+data read out of a file. So `--allowed-hosts` is **required** — it is the list of hosts drift is
+authorized to contact, and there is no allow-everything default:
+
+```bash
+python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com
+```
+
+The bank legitimately grounds some questions in external authorities (the upstream Slurm docs),
+so the list is usually more than one host — but naming them is the operator's call, not the bank
+file's. Every URL is then checked against the ingest's own trust filter (`is_url_allowed`)
+*before* it is dialled. Refused unconditionally, allowlisted or not:
 
 - any scheme that is not `http`/`https`
 - a loopback, private, or link-local address (`127.0.0.1`, `10.0.0.5`, `169.254.169.254`)
@@ -724,27 +734,23 @@ inherit the ingest's *target policy*: `fetch_sitemap_text` enforces transport li
 cross-host redirects, a bounded body, a timeout), while the trust filter lives in
 `expand_sitemaps`. Drift applies it itself.
 
-`--allowed-hosts` narrows further to an explicit list. Without it, any public host a row cites is
-fetched — the bank legitimately grounds some questions in external authorities such as the
-upstream Slurm docs.
-
-```bash
-python scripts/benchmarking/goldenset_maintenance.py drift \
-    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com
-```
-
 **TLS is verified.** The ingest's fetcher defaults to `verify=False`; drift overrides that. A
 network attacker who could substitute page content would otherwise be able to manufacture drift
 findings, steer the advisory verdict, and put text of their choosing into a prompt sent to the
 model provider. There is deliberately no flag to turn verification off — such a flag ends up in
 the cron line. A deployment with a private CA sets `REQUESTS_CA_BUNDLE`.
 
-**Not covered:** DNS-rebinding-resistant connection pinning. A hostname that passes the filter
-but *resolves* to an internal address is not caught. That hardening is docketed against
-`fetch_sitemap_text` itself (§Deferred hardening v2/H1) rather than reimplemented here, because
-the same gap applies to `expand_sitemaps` — which fetches URLs it read out of a **remote**
-document, a strictly less trusted source than a repo-committed bank — and a second, divergent
-fetch path is the failure mode this module is built to avoid.
+**Not covered:** DNS-rebinding-resistant connection pinning. This layer sees only a *hostname* —
+nothing resolves DNS or inspects the address actually connected to — so a name that passes the
+filter but resolves to an internal address is not caught. That is precisely why the allowlist is
+mandatory: it narrows the exposure from "any name the bank happens to contain" to "a host the
+operator vouched for", which is the part a hostname check can enforce.
+
+The real fix is docketed against `fetch_sitemap_text` itself
+([#143](https://github.com/fasrc/archi/issues/143), §Deferred hardening v2/H1) rather than
+reimplemented here, because the same gap applies to `expand_sitemaps` — which fetches URLs it
+read out of a **remote** document, a strictly less trusted source than a repo-committed bank —
+and a second, divergent fetch path is the failure mode this module is built to avoid.
 
 #### Seeing the evidence
 

@@ -1338,23 +1338,25 @@ def is_fetchable_source(url: str, allowed_hosts: Iterable[str] = ()) -> bool:
     rules, so the two cannot diverge: non-http(s) schemes, malformed ports, and
     loopback/private/link-local or obfuscated-numeric hosts are refused.
 
-    With no `allowed_hosts`, a URL's own host stands in as the allowed one, so
-    only the unconditional rules apply and any public host is reachable — the
-    bank legitimately cites external authorities (the upstream Slurm docs).
-    Passing `allowed_hosts` narrows that to an explicit list.
+    **Fails closed: an empty `allowed_hosts` authorizes nothing.** The obvious
+    alternative — let any syntactically public host through — reads as
+    convenient (the bank legitimately cites external authorities like the
+    upstream Slurm docs) but it is not a policy, because this check can only see
+    a *hostname*. Nothing here resolves DNS or inspects the address actually
+    connected to, so a public-looking name that resolves to loopback or a
+    metadata endpoint passes. Requiring the operator to name the hosts collapses
+    that from "any name the bank contains" to "a host someone vouched for",
+    which is the part this layer can actually enforce.
 
-    Not a substitute for DNS-rebinding-resistant connection pinning, which
-    `fetch_sitemap_text` defers (its "§Deferred hardening v2/H1"). Drift is no
-    more exposed than the ingest that fetches these hosts continuously.
+    It is a narrowing, not a fix. DNS-rebinding-resistant connection pinning
+    belongs in `fetch_sitemap_text` (its "§Deferred hardening v2/H1"), where
+    `expand_sitemaps` — which fetches URLs read out of a *remote* document, less
+    trusted than a repo-committed bank — needs it just as much. Tracked in #143.
     """
     hosts = [host for host in allowed_hosts if host]
-    if hosts:
-        return is_url_allowed(url, "", hosts)
-    try:
-        own_host = (urlparse(url).hostname or "").lower()
-    except ValueError:
+    if not hosts:
         return False
-    return bool(own_host) and is_url_allowed(url, own_host, [])
+    return is_url_allowed(url, "", hosts)
 
 
 def _fetch_extract(
@@ -1426,8 +1428,8 @@ def _check_source(
             state=DRIFT_REFUSED,
             stored=stored or "",
             detail=(
-                "refused by the fetch policy (not http/https, a loopback/private/"
-                "link-local address, or a host outside --allowed-hosts) — not "
+                "refused by the fetch policy (host not in --allowed-hosts, or not "
+                "http/https, or a loopback/private/link-local address) — not "
                 "fetched, and never shown to a model"
             ),
         )

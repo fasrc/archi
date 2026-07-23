@@ -19,6 +19,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 _SCRIPT = (
     Path(__file__).resolve().parents[2]
     / "scripts"
@@ -1524,6 +1526,20 @@ GPU_HTML = "<html><body><p>Add #SBATCH --gpus=1 for one GPU.</p></body></html>"
 GPU_HTML_CHANGED = "<html><body><p>Add #SBATCH --gpus=2 for one GPU.</p></body></html>"
 
 
+KB_HOST = "docs.rc.fas.harvard.edu"
+
+
+def _drift_head(bank, *hosts):
+    """`drift` argv with its required allowlist — an empty one authorizes nothing."""
+    return [
+        "drift",
+        "--bank",
+        str(bank),
+        "--allowed-hosts",
+        *(hosts or (KB_HOST, "slurm.schedmd.com")),
+    ]
+
+
 def _locked_row(*sources, hashes=None, **extra):
     row = {
         "user_input": "How many GPUs?",
@@ -1560,7 +1576,7 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
         _fake_pages(script, {url: GPU_HTML_CHANGED})
 
-        code = script.main(["drift", "--bank", str(bank)])
+        code = script.main([*_drift_head(bank)])
         out = capsys.readouterr().out
 
         # A finding is work to do, not a broken run (the cron contract).
@@ -1574,7 +1590,7 @@ class TestDriftSubcommand:
         before = bank.read_bytes()
         _fake_pages(script, {url: GPU_HTML_CHANGED})
 
-        script.main(["drift", "--bank", str(bank)])
+        script.main([*_drift_head(bank)])
 
         assert bank.read_bytes() == before
 
@@ -1584,7 +1600,7 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
         _fake_pages(script, {url: GPU_HTML})
 
-        code = script.main(["drift", "--bank", str(bank)])
+        code = script.main([*_drift_head(bank)])
         out = capsys.readouterr().out
 
         assert code == 0
@@ -1596,7 +1612,7 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _locked_row(url))
         _fake_pages(script, {url: GPU_HTML})
 
-        code = script.main(["drift", "--bank", str(bank)])
+        code = script.main([*_drift_head(bank)])
         out = capsys.readouterr().out
 
         assert code == 0
@@ -1609,7 +1625,7 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
         _fake_pages(script, {}, errors={url: "connection timed out"})
 
-        code = script.main(["drift", "--bank", str(bank)])
+        code = script.main([*_drift_head(bank)])
         captured = capsys.readouterr()
 
         # Nothing was read, so "no drift" would be a false clean over the bank.
@@ -1623,7 +1639,7 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _row(f"{KB}/kb/gpu"))
         _fake_pages(script, {})
 
-        code = script.main(["drift", "--bank", str(bank)])
+        code = script.main([*_drift_head(bank)])
         out = capsys.readouterr().out
 
         assert code == 0
@@ -1635,7 +1651,7 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _locked_row(url))
         _fake_pages(script, {url: GPU_HTML})
 
-        script.main(["drift", "--bank", str(bank), "--print-hashes"])
+        script.main([*_drift_head(bank), "--print-hashes"])
         out = capsys.readouterr().out
 
         # Without a way to obtain a hash, `source_hashes` could never be filled in
@@ -1655,7 +1671,7 @@ class TestDriftVerdictCli:
         calls = []
         _fake_llm(script, {"verdict": "broken"}, calls=calls)
 
-        script.main(["drift", "--bank", str(bank), "--model", "anthropic/x"])
+        script.main([*_drift_head(bank), "--model", "anthropic/x"])
 
         assert calls == []
 
@@ -1666,7 +1682,7 @@ class TestDriftVerdictCli:
         _fake_pages(script, {url: GPU_HTML_CHANGED})
         _fake_llm(script, {"verdict": "broken", "explanation": "it says 2 now"})
 
-        code = script.main(["drift", "--bank", str(bank), "--model", "anthropic/x"])
+        code = script.main([*_drift_head(bank), "--model", "anthropic/x"])
         out = capsys.readouterr().out
 
         assert code == 0
@@ -1679,7 +1695,7 @@ class TestDriftVerdictCli:
         bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
         _fake_pages(script, {url: GPU_HTML_CHANGED})
 
-        code = script.main(["drift", "--bank", str(bank)])
+        code = script.main([*_drift_head(bank)])
         out = capsys.readouterr().out
 
         # Hash-only is the cheap cron mode: the tripwire alone is a real finding.
@@ -1693,7 +1709,7 @@ class TestDriftVerdictCli:
         _fake_pages(script, {url: GPU_HTML_CHANGED})
         _fake_llm(script, {"verdict": "holds", "explanation": "unrelated edit"})
 
-        script.main(["drift", "--bank", str(bank), "--model", "anthropic/x"])
+        script.main([*_drift_head(bank), "--model", "anthropic/x"])
         out = capsys.readouterr().out
 
         assert url in out
@@ -1725,7 +1741,7 @@ class TestDriftFetchPolicyCli:
 
         script.build_fetch_html = build
 
-        code = script.main(["drift", "--bank", str(bank)])
+        code = script.main([*_drift_head(bank)])
         out = capsys.readouterr().out
 
         assert fetched == [ok]
@@ -1743,20 +1759,23 @@ class TestDriftFetchPolicyCli:
         )
         _fake_pages(script, {listed: GPU_HTML, other: GPU_HTML})
 
-        code = script.main(
-            [
-                "drift",
-                "--bank",
-                str(bank),
-                "--allowed-hosts",
-                "docs.rc.fas.harvard.edu",
-            ]
-        )
+        code = script.main(_drift_head(bank, "docs.rc.fas.harvard.edu"))
         out = capsys.readouterr().out
 
         assert code == 0
         assert "slurm.schedmd.com" in out
         assert "refused" in out.lower()
+
+    def test_the_allowlist_is_required(self, tmp_path):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+
+        # No allow-everything default: this tool already refuses to guess a
+        # sitemap floor for the same reason — a convenient default that quietly
+        # produces the wrong answer is worse than a required flag.
+        with pytest.raises(SystemExit):
+            script.main(["drift", "--bank", str(bank)])
 
 
 class TestDriftEvidence:
@@ -1769,9 +1788,7 @@ class TestDriftEvidence:
         _fake_pages(script, {url: GPU_HTML_CHANGED})
         _fake_llm(script, {"verdict": "broken", "explanation": "says 2"})
 
-        script.main(
-            ["drift", "--bank", str(bank), "--model", "anthropic/x", "--show-text"]
-        )
+        script.main([*_drift_head(bank), "--model", "anthropic/x", "--show-text"])
         out = capsys.readouterr().out
 
         assert "--gpus=2" in out
@@ -1784,7 +1801,7 @@ class TestDriftEvidence:
         bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
         _fake_pages(script, {url: GPU_HTML_CHANGED})
 
-        script.main(["drift", "--bank", str(bank)])
+        script.main([*_drift_head(bank)])
         out = capsys.readouterr().out
 
         assert "--gpus=2" not in out
@@ -1833,7 +1850,7 @@ class TestDriftTransport:
         bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
         _fake_pages(script, {url: GPU_HTML})
 
-        code = script.main(["drift", "--bank", str(bank)])
+        code = script.main([*_drift_head(bank)])
         captured = capsys.readouterr()
 
         # A mistyped --allowed-hosts must not read as a clean bill of health.
