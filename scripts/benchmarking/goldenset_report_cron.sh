@@ -124,7 +124,19 @@ else
   RUN_OUT="$(mktemp)"
   "$PYTHON" "${args[@]}" > "$RUN_OUT" 2>&1
   status=$?
-  cat "$RUN_OUT" >> "$LOG"
+  # Rotating before the run bounds what was already there, not what is about to
+  # arrive. Coverage prints every gap and drift can span the whole bank, so ONE
+  # run can be enormous — and an unbounded append fills the disk long before the
+  # next night's rotation, taking the logging down with it. Cap the appended
+  # copy; the full text still goes to stderr when the run failed, so nothing
+  # diagnostic is lost at the moment it matters.
+  if [ "$(wc -c < "$RUN_OUT")" -gt "$LOG_MAX_BYTES" ]; then
+    head -c "$LOG_MAX_BYTES" "$RUN_OUT" >> "$LOG"
+    printf '\n[... truncated at %s bytes; raise GOLDENSET_LOG_MAX_BYTES to keep more ...]\n' \
+      "$LOG_MAX_BYTES" >> "$LOG"
+  else
+    cat "$RUN_OUT" >> "$LOG"
+  fi
 fi
 set -e
 

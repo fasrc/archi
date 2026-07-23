@@ -795,6 +795,11 @@ def run_drift(args: argparse.Namespace) -> int:
     _record(
         args,
         drifted=len(report.drifted),
+        # Which question the run actually answered. A hash mismatch says the
+        # bytes moved; whether the recorded ANSWER is now wrong is a different
+        # question, and without a model nothing asked it. Recording that keeps a
+        # tripwire-only run from reading as a completed staleness check.
+        drift_check="reference-compared" if ask_llm is not None else "hash-only",
         # A source the tool WANTED to check and could not. `find_drift` abstains
         # only when nothing at all was read, so one readable page makes the pass
         # "succeed" — and counting drifted rows alone would let a run that
@@ -862,6 +867,15 @@ def run_drift(args: argparse.Namespace) -> int:
             "baselines kept for URLs the row no longer cites (edit `sources`?)", stale
         )
 
+    if report.drifted and ask_llm is None:
+        # Beside the findings it qualifies, not on every run: a clean report has
+        # nothing to be uncertain about.
+        print(
+            "\nNOTE: the stored `reference` was NOT compared against the new page — "
+            "this run was the hash tripwire only. It establishes that the source "
+            "moved, not that the recorded answer is now wrong. Re-run with "
+            "--model <provider/model> for that, or review by hand with --show-text."
+        )
     if args.show_text:
         _print_evidence(report)
     elif report.drifted:
@@ -1007,6 +1021,7 @@ def run_report(args: argparse.Namespace) -> int:
         "drifted": 0,
         "unchecked_sources": 0,
         "refused_sources": 0,
+        "drift_check": "hash-only",
     }
     args.summary_sink = summary
     # Composition, printed once up front: the spec asks the reporting surface to

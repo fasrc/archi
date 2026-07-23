@@ -2375,10 +2375,69 @@ class TestReportConfirmationCensus:
         _fake_pages(script, {live: GPU_HTML})
         out = tmp_path / "summary.json"
 
-        script.main(
-            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
-        )
+        script.main([*_report_argv(bank, corpus, sources), "--summary-json", str(out)])
         summary = json.loads(out.read_text())
 
         assert summary["census"]["draft"] == 1
         assert summary["notify"] is False
+
+
+class TestReportSaysWhenItOnlyRanTheTripwire:
+    """A hash-only drift run must not read as a completed staleness check.
+
+    `--model` is optional by design (the mismatch is the fact; the verdict only
+    triages urgency), and the nightly cron deliberately runs without one. But a
+    report that lists drifted rows and says nothing else implies the reference
+    was compared against the new page. It was not — only the bytes were.
+    """
+
+    def _drifted_run(self, tmp_path, script, extra=()):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML_CHANGED})
+        return script.main([*_report_argv(bank, corpus, sources), *extra])
+
+    def test_a_hash_only_run_says_the_reference_was_not_compared(
+        self, tmp_path, capsys
+    ):
+        script = _load_script()
+
+        self._drifted_run(tmp_path, script)
+        out = capsys.readouterr().out
+
+        assert "NOT compared" in out
+        assert "--model" in out
+
+    def test_the_summary_records_which_kind_of_drift_check_ran(self, tmp_path):
+        script = _load_script()
+        out = tmp_path / "summary.json"
+
+        self._drifted_run(tmp_path, script, ("--summary-json", str(out)))
+
+        assert json.loads(out.read_text())["drift_check"] == "hash-only"
+
+    def test_a_configured_model_records_the_full_check(self, tmp_path):
+        script = _load_script()
+        _fake_llm(script, {"verdict": "holds", "explanation": "same number"})
+        out = tmp_path / "summary.json"
+
+        self._drifted_run(
+            tmp_path, script, ("--summary-json", str(out), "--model", "anthropic/x")
+        )
+
+        assert json.loads(out.read_text())["drift_check"] == "reference-compared"
+
+    def test_a_clean_run_does_not_nag_about_the_model(self, tmp_path, capsys):
+        # The caveat belongs beside a finding it qualifies, not on every run.
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+
+        script.main(_report_argv(bank, corpus, sources))
+
+        assert "NOT compared" not in capsys.readouterr().out

@@ -45,6 +45,7 @@ for a in "\$@"; do
   prev="\$a"
 done
 echo "fake report output"
+if [ -n "\${STUB_BYTES:-}" ]; then head -c "\$STUB_BYTES" /dev/zero | tr '\\0' 'y'; echo; fi
 exit \${STUB_EXIT:-0}
 EOF
   chmod +x "$sb/bin/python"
@@ -311,6 +312,40 @@ case "$(cat "$sb/calls" 2>/dev/null || true)" in
     ok "a quoted multi-host allowlist survives the env file" ;;
   *) notok "a quoted multi-host allowlist survives the env file (got: $(cat "$sb/calls" 2>/dev/null))" ;;
 esac
+
+# 21. rotation before the run does not bound anything on its own: coverage
+#     prints every gap and drift can span the whole bank, so ONE run can append
+#     far more than the cap and fill the disk before the next rotation.
+sb="$(new_sandbox)"
+( STUB_BYTES=20000 GOLDENSET_PG_DSN="postgresql://x" GOLDENSET_LOG_MAX_BYTES=2048 \
+  run_cron "$sb" ) >/dev/null 2>&1 || true
+size="$(wc -c < "$sb/log/goldenset-report.log")"
+if [ "$size" -le 4096 ]; then
+  ok "a single oversized run cannot blow past the cap (log is $size bytes)"
+else
+  notok "a single oversized run cannot blow past the cap (log is $size bytes)"
+fi
+
+# 22. and the truncation is announced, so nobody reads a cut log as a whole one
+sb="$(new_sandbox)"
+( STUB_BYTES=20000 GOLDENSET_PG_DSN="postgresql://x" GOLDENSET_LOG_MAX_BYTES=2048 \
+  run_cron "$sb" ) >/dev/null 2>&1 || true
+if grep -q "truncated" "$sb/log/goldenset-report.log"; then
+  ok "a truncated log says so"
+else
+  notok "a truncated log says so"
+fi
+
+# 23. a normal-sized run is not truncated
+sb="$(new_sandbox)"
+( GOLDENSET_PG_DSN="postgresql://x" GOLDENSET_LOG_MAX_BYTES=1048576 run_cron "$sb" ) \
+  >/dev/null 2>&1 || true
+if grep -q "fake report output" "$sb/log/goldenset-report.log" \
+   && ! grep -q "truncated" "$sb/log/goldenset-report.log"; then
+  ok "a normal run is written whole"
+else
+  notok "a normal run is written whole"
+fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

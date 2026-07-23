@@ -1015,9 +1015,18 @@ Three properties make it safe unattended, each pinned by
     mail, which costs the one case that matters. A misconfigured wrapper refuses up front
     because a half-run report reads exactly like a clean one.
 
-- **The log is appended, never truncated — but bounded.** The history is the point: a page edited
-  a little each month only becomes visible across runs. It rotates once past
-  `GOLDENSET_LOG_MAX_BYTES` (default 5 MiB) to `…log.1`, so a long-lived deployment cannot fill
-  the filesystem — at which point the first thing to break would be the logging itself. One
-  rotation, not a logrotate unit, so rollback stays "delete the cron line".
+- **The log is a bounded history.** Keeping it is the point — a page edited a little each month
+  only becomes visible across runs — but a nightly append with no ceiling eventually fills the
+  filesystem, and the first thing to break would be the logging itself. Two bounds, because
+  rotation alone is not one: the log rotates to `…log.1` once it passes
+  `GOLDENSET_LOG_MAX_BYTES` (default 5 MiB), *and* any single run's output is truncated to that
+  size before being appended, with a marker saying so. Coverage prints every gap and drift can
+  span the whole bank, so one run really can be enormous. When a run fails, its full output still
+  goes to stderr untruncated — nothing diagnostic is lost at the moment it matters. One rotation,
+  not a logrotate unit, so rollback stays "delete the cron line".
+- **A hash-only run says so.** The nightly job runs the cheap tripwire, which establishes that a
+  source *moved* — not that the recorded answer is now wrong. When such a run lists drifted rows
+  it prints a note to that effect and records `"drift_check": "hash-only"` in the summary, so a
+  tripwire result is never mistaken for a completed staleness check. Set `GOLDENSET_MODEL` to have
+  the run compare each changed page against the stored `reference`.
 - **No provider calls unless `GOLDENSET_MODEL` is set.**
