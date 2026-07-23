@@ -14,6 +14,29 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+
+def _parse_worker_knob(value: Any, name: str, default: int) -> int:
+    """Coerce a scrape-concurrency knob to an int, tolerating junk.
+
+    Falls back to ``default`` with a logged warning when ``value`` is unset or not a
+    valid integer, then clamps the result to a minimum of 1.
+    """
+    if value is None:
+        resolved = default
+    else:
+        try:
+            resolved = int(value)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid '%s' value %r. Falling back to default %d.",
+                name,
+                value,
+                default,
+            )
+            resolved = default
+    return max(1, resolved)
+
+
 if TYPE_CHECKING:
     from src.data_manager.collectors.scrapers.integrations.git_scraper import GitScraper
     from src.data_manager.collectors.scrapers.integrations.indico_scraper import (
@@ -63,6 +86,17 @@ class ScraperManager:
                 self.max_pages = int(raw_max_pages)
             except (TypeError, ValueError):
                 logger.warning(f"Invalid max_pages value {raw_max_pages}; ignoring.")
+
+        # Scrape-phase concurrency knobs (issue #136). Independent of the embedding
+        # phase's `parallel_workers`. Tolerant parse mirrors VectorStoreManager: coerce
+        # to int, fall back to the default with a logged warning on junk, clamp to >= 1.
+        dm = dm_config or {}
+        self.scrape_workers = _parse_worker_knob(
+            dm.get("scrape_workers"), "scrape_workers", 8
+        )
+        self.scrape_per_host_workers = _parse_worker_knob(
+            dm.get("scrape_per_host_workers"), "scrape_per_host_workers", 4
+        )
 
         self.links_enabled = True
         self.git_enabled = (

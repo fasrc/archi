@@ -1,10 +1,10 @@
 ## 1. Config knobs
 
-- [ ] 1.1 Write a failing test in `tests/unit/` asserting `ScraperManager` resolves `scrape_workers` to 8 and `scrape_per_host_workers` to 4 when `data_manager` config omits both.
-- [ ] 1.2 Write failing tests asserting invalid values (`"many"`, `None`-like junk) fall back to the defaults **and log a warning**, and that `0` / negative values clamp to 1. Mirror the tolerant-parse pattern at `src/data_manager/vectorstore/manager.py:148-160`.
-- [ ] 1.3 Implement the two-knob parsing in `ScraperManager.__init__` to turn 1.1 and 1.2 green. Keep the diff to `scraper_manager.py` minimal.
-- [ ] 1.4 Document both knobs in `src/cli/templates/base-config.yaml` next to the existing `parallel_workers` entry (`:212`), including the comment that raising `scrape_workers` above the Postgres pool max (20, `src/utils/connection_pool.py`) requires raising that pool in tandem.
-- [ ] 1.5 Add a test asserting the embedding `parallel_workers` value and behavior are unchanged when `scrape_workers` is set (no knob cross-talk).
+- [x] 1.1 Write a failing test in `tests/unit/` asserting `ScraperManager` resolves `scrape_workers` to 8 and `scrape_per_host_workers` to 4 when `data_manager` config omits both.
+- [x] 1.2 Write failing tests asserting invalid values (`"many"`, `None`-like junk) fall back to the defaults **and log a warning**, and that `0` / negative values clamp to 1. Mirror the tolerant-parse pattern at `src/data_manager/vectorstore/manager.py:148-160`.
+- [x] 1.3 Implement the two-knob parsing in `ScraperManager.__init__` to turn 1.1 and 1.2 green. Keep the diff to `scraper_manager.py` minimal.
+- [x] 1.4 Document both knobs in `src/cli/templates/base-config.yaml` next to the existing `parallel_workers` entry (`:212`), including the comment that raising `scrape_workers` above the Postgres pool max (20, `src/utils/connection_pool.py`) requires raising that pool in tandem.
+- [x] 1.5 Add a test asserting the embedding `parallel_workers` value and behavior are unchanged when `scrape_workers` is set (no knob cross-talk).
 
 ## 2. Per-host semaphore registry (new helper module)
 

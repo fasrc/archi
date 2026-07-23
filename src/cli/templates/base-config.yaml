@@ -210,6 +210,15 @@ data_manager:
     child_chunk_size: {{ data_manager.chunking.child_chunk_size }}
 {%- endif %}
   parallel_workers: {{ data_manager.parallel_workers | default(32, true) }}
+  # Scrape-phase concurrency (issue #136), independent of the embedding-phase
+  # `parallel_workers` above. `scrape_workers` bounds how many seed URLs are crawled
+  # in parallel; `scrape_per_host_workers` caps concurrent in-flight requests to any
+  # single host so one host is not hammered. Both coerce to int, fall back to their
+  # defaults on junk, and clamp to a minimum of 1. NOTE: raising `scrape_workers` above
+  # the Postgres connection pool max (20, see src/utils/connection_pool.py) requires
+  # raising that pool in tandem, or scrape workers will block on connection checkout.
+  scrape_workers: {{ data_manager.scrape_workers | default(8, true) }}
+  scrape_per_host_workers: {{ data_manager.scrape_per_host_workers | default(4, true) }}
   reset_collection: {{ data_manager.reset_collection | default(true, true) }}
   stemming:
     enabled: {{ data_manager.stemming.enabled | default(false, true) }}
