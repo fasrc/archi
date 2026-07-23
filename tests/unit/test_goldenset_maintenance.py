@@ -1158,12 +1158,46 @@ class TestPersistedDocumentPath:
             "/srv/archi/data/web/docs/a.md"
         )
 
-    def test_an_absolute_file_path_is_used_as_is(self):
-        # Mirrors the catalog's own `_resolve_path`: an absolute stored path is
-        # already resolved and must not be re-rooted under the data path.
-        assert resolve_persisted_path("/mnt/other/a.md", "/srv/archi/data") == Path(
-            "/mnt/other/a.md"
+    def test_an_absolute_path_inside_the_root_is_allowed(self, tmp_path):
+        # Parity with `catalog_postgres._resolve_path`, which stores absolute
+        # paths for some deployments — those are fine as long as they are in the
+        # data root.
+        root = tmp_path / "data"
+        root.mkdir()
+
+        assert (
+            resolve_persisted_path(str(root / "a.md"), str(root))
+            == (root / "a.md").resolve()
         )
+
+    def test_an_absolute_path_outside_the_root_is_refused(self):
+        # `file_path` comes from the catalog or an operator-supplied JSON dump,
+        # and its contents are sent to an external model provider. An escape here
+        # is a file-disclosure channel, so containment is enforced before any
+        # read — and it also stops a stale `..` path grounding a question in an
+        # unrelated file.
+        with pytest.raises(ValueError):
+            resolve_persisted_path("/etc/passwd", "/srv/archi/data")
+
+    def test_a_relative_path_escaping_the_root_is_refused(self):
+        with pytest.raises(ValueError):
+            resolve_persisted_path("../../etc/passwd", "/srv/archi/data")
+
+    def test_a_symlink_pointing_out_of_the_root_is_refused(self, tmp_path):
+        root = tmp_path / "data"
+        root.mkdir()
+        outside = tmp_path / "secret.md"
+        outside.write_text("secret", encoding="utf-8")
+        (root / "link.md").symlink_to(outside)
+
+        with pytest.raises(ValueError):
+            resolve_persisted_path("link.md", str(root))
+
+    def test_a_sibling_root_prefix_is_not_treated_as_contained(self, tmp_path):
+        # `/srv/data-old/x` starts with `/srv/data` as a string but is a
+        # different directory; containment is by path component, not prefix.
+        with pytest.raises(ValueError):
+            resolve_persisted_path("/srv/data-old/x.md", "/srv/data")
 
     def test_a_row_without_a_file_path_has_no_persisted_document(self):
         assert resolve_persisted_path("", "/srv/archi/data") is None

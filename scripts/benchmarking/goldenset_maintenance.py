@@ -188,10 +188,14 @@ def write_ledger(path: str, entries: List[Any]) -> None:
     """Atomically persist the ledger — the ONLY file this tool writes.
 
     Written to a same-directory temp file, flushed and fsynced, then
-    `os.replace`d over the target. A plain `write_text` truncates first, so a
-    crash or a full disk mid-write would leave a mangled ledger and lose every
-    decline it held — the one record that cannot be re-derived from the bank.
-    The temp file is removed on any failure so a failed run leaves no litter.
+    `os.replace`d over the target, then the parent directory is fsynced. A plain
+    `write_text` truncates first, so a crash or a full disk mid-write would leave
+    a mangled ledger and lose every decline it held — the one record that cannot
+    be re-derived from the bank. Syncing the file alone is not enough either:
+    POSIX does not guarantee the *rename* is durable until the directory entry is
+    synced, so a crash right after a successful-looking run could resurrect every
+    dismissed page. The temp file is removed on any failure so a failed run
+    leaves no litter.
     """
     target = Path(path)
     try:
@@ -213,6 +217,7 @@ def write_ledger(path: str, entries: List[Any]) -> None:
         handle.close()
         handle = None
         os.replace(tmp_name, target)
+        _fsync_directory(target.parent)
     except OSError as exc:
         if handle is not None:
             handle.close()
@@ -222,6 +227,21 @@ def write_ledger(path: str, entries: List[Any]) -> None:
             except OSError:  # pragma: no cover - already gone
                 pass
         raise OperationalError(f"cannot write ledger {path}: {exc}") from exc
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Persist a directory entry so a completed rename survives a host crash.
+
+    Skipped where directories cannot be opened for reading (non-POSIX), which is
+    the same platform boundary the ledger lock draws.
+    """
+    if not hasattr(os, "O_DIRECTORY"):  # pragma: no cover - non-POSIX
+        return
+    fd = os.open(str(directory), os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def read_persisted_document(doc, data_path: Optional[str]) -> str:
@@ -246,7 +266,13 @@ def read_persisted_document(doc, data_path: Optional[str]) -> str:
             f"{doc.url} has no file_path in the corpus — nothing to ground in. "
             "(A `--corpus-json` dump must include the column.)"
         )
-    path = resolve_persisted_path(doc.file_path, data_path)
+    try:
+        path = resolve_persisted_path(doc.file_path, data_path)
+    except ValueError as exc:
+        # Containment failure: the row points outside the data root. Refuse here,
+        # before any read and long before the model call -- the contents would
+        # otherwise leave the machine for an external provider.
+        raise OperationalError(str(exc)) from exc
     if path is None:  # pragma: no cover - guarded by the file_path check above
         raise OperationalError(f"{doc.url} has no resolvable persisted document")
     try:

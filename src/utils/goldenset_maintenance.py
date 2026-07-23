@@ -264,17 +264,38 @@ def read_corpus_docs(fetch_rows: CorpusRowFetcher) -> List[CorpusDoc]:
 
 
 def resolve_persisted_path(file_path: str, data_path: str) -> Optional[Path]:
-    """Locate the persisted document on disk, mirroring the catalog's resolver.
+    """Locate the persisted document on disk, contained under the data root.
 
-    `documents.file_path` is stored relative to the deployment's data path (or
-    absolute, in which case it is already resolved) — see
-    `catalog_postgres._resolve_path`. Returns None when the row carries no path,
-    so the caller can refuse rather than guess at a filename.
+    `documents.file_path` is stored relative to the deployment's data path — or
+    absolute, which `catalog_postgres._resolve_path` accepts as already resolved.
+    Both forms are honored here, but the **resolved** path must sit under the
+    resolved data root or this raises.
+
+    Containment is not optional politeness. `file_path` arrives from the catalog
+    or from an operator-supplied `--corpus-json` dump, and the file it names is
+    read and sent to an external model provider — so an unchecked `..` or
+    absolute path is a file-disclosure channel out of the machine. The same check
+    catches the boring case: a stale path that would silently ground a golden
+    question in an unrelated file.
+
+    Both sides are `resolve()`d, so a symlink inside the data root that points
+    out of it is caught too, and containment is compared by path component so a
+    sibling root (`/srv/data-old` against `/srv/data`) is not mistaken for a
+    child. Returns None only when the row carries no path at all.
     """
     if not file_path:
         return None
-    path = Path(file_path)
-    return path if path.is_absolute() else Path(data_path) / path
+    root = Path(data_path).resolve()
+    candidate = Path(file_path)
+    resolved = (candidate if candidate.is_absolute() else root / candidate).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        raise ValueError(
+            f"persisted document {file_path!r} resolves to {resolved}, outside the "
+            f"data root {root} — refusing to read it"
+        ) from None
+    return resolved
 
 
 def bank_source_urls(bank: Iterable[Any]) -> List[str]:

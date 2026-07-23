@@ -980,3 +980,127 @@ class TestLedgerDurability:
             module.write_ledger(str(ledger), [{"url": f"{KB}/kb/a"}])
 
         assert (tmp_path / "ledger.json.lock").exists()
+
+
+class TestProposePathContainment:
+    """A poisoned `file_path` must never reach a read, let alone a provider."""
+
+    def test_a_traversal_path_is_refused_before_the_model_is_called(
+        self, tmp_path, capsys
+    ):
+        module = _load_script()
+        prompts = []
+        _fake_llm(module, [CANDIDATE], calls=prompts)
+        (tmp_path / "secret.md").write_text("SECRET", encoding="utf-8")
+        (tmp_path / "data").mkdir()
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "../secret.md"))),
+                "--propose",
+                f"{KB}/kb/a",
+                "--model",
+                "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
+            ]
+        )
+
+        assert code == 1
+        assert prompts == []
+        assert "outside the data root" in capsys.readouterr().err
+
+    def test_an_absolute_escape_is_refused_before_the_model_is_called(
+        self, tmp_path, capsys
+    ):
+        module = _load_script()
+        prompts = []
+        _fake_llm(module, [CANDIDATE], calls=prompts)
+        secret = tmp_path / "secret.md"
+        secret.write_text("SECRET", encoding="utf-8")
+        (tmp_path / "data").mkdir()
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", str(secret)))),
+                "--propose",
+                f"{KB}/kb/a",
+                "--model",
+                "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
+            ]
+        )
+
+        assert code == 1
+        assert prompts == []
+        assert "SECRET" not in capsys.readouterr().out
+
+
+class TestLedgerDirectoryDurability:
+    def test_the_parent_directory_is_fsynced_after_the_replace(
+        self, tmp_path, monkeypatch
+    ):
+        # fsyncing only the temp file leaves the *rename* unpersisted on
+        # filesystems that need a directory sync — a crash after the command
+        # reports success would resurrect every dismissed page.
+        module = _load_script()
+        synced = []
+        real_fsync = os.fsync
+        monkeypatch.setattr(
+            os, "fsync", lambda fd: (synced.append(os.fstat(fd)), real_fsync(fd))[1]
+        )
+
+        module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--decline",
+                f"{KB}/kb/a",
+                "--ledger",
+                str(tmp_path / "ledger.json"),
+            ]
+        )
+
+        import stat
+
+        assert any(stat.S_ISDIR(st.st_mode) for st in synced)
+
+    def test_a_failed_directory_sync_is_an_operational_failure(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        module = _load_script()
+        real_fsync = os.fsync
+
+        def picky(fd):
+            import stat
+
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
+                raise OSError("cannot sync directory")
+            return real_fsync(fd)
+
+        monkeypatch.setattr(os, "fsync", picky)
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--decline",
+                f"{KB}/kb/a",
+                "--ledger",
+                str(tmp_path / "ledger.json"),
+            ]
+        )
+
+        assert code == 1
+        assert "ledger" in capsys.readouterr().err

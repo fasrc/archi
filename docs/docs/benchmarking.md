@@ -491,7 +491,14 @@ Three properties are imposed by the tool, not accepted from the model:
 
 `--propose` refuses a URL that is not in the **retrievable** corpus, one whose row carries no
 `file_path`, and one whose persisted document is missing or empty. Every one of those refusals
-exits non-zero instead of degrading to a live fetch. If every candidate is rejected the run also
+exits non-zero instead of degrading to a live fetch.
+
+It also refuses any `file_path` that resolves **outside `--data-path`** — absolute, `..`-relative,
+or via a symlink — before reading a byte. `file_path` comes from the catalog or from a
+`--corpus-json` dump you were handed, and its contents are sent to an external model provider, so
+an unchecked path is a file-disclosure channel off the machine. The same check catches the dull
+case: a stale path that would silently ground a question in an unrelated file. Absolute paths
+*inside* the data root are still fine, matching what the catalog itself stores. If every candidate is rejected the run also
 exits **non-zero** — a propose run that produced nothing is a failed run, not a finding, which is
 the opposite of how gaps and orphans exit.
 
@@ -527,9 +534,11 @@ says so: you changed your mind, and the tool names the earlier decision rather t
 The ledger is the **only** file this tool ever writes, and unlike coverage a decline cannot be
 re-derived from anything, so the update is protected twice over:
 
-- **Atomic** — written to a temp file in the same directory, fsynced, then `os.replace`d over the
-  target. A truncate-then-write would lose every decline the file held if the write were
-  interrupted.
+- **Atomic and durable** — written to a temp file in the same directory, fsynced, `os.replace`d
+  over the target, and then the parent directory is fsynced too. A truncate-then-write would lose
+  every decline the file held if the write were interrupted; syncing only the file leaves the
+  *rename* unpersisted, so a host crash right after an apparently successful run could resurrect
+  every dismissed page.
 - **Locked** — read, merge and replace run under an exclusive lock on a `<ledger>.lock` sidecar,
   so two operators (or two agent sessions) declining at once cannot each read the same state and
   have the second replacement erase the first. The lock is a sidecar rather than the ledger itself
