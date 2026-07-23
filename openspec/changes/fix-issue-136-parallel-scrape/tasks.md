@@ -33,7 +33,7 @@
 
 - [x] 5.1 Write a failing test that `_collect_links_from_urls` dispatches the standard non-selenium path through `run_seeds` with the configured worker and per-host values.
 - [x] 5.2 Replace the `for url in urls:` loop at `scraper_manager.py:346` with the `run_seeds` call. Preserve the existing `try/finally` authenticator close and the per-seed `try/except` fail-open already in `_handle_standard_url` (`:589-601`).
-- [ ] 5.3 Write a failing test then implement the one-line completion summary: seed count, effective workers, effective per-host cap, elapsed wall-clock — logged exactly once after the pool drains.
+- [x] 5.3 Write a failing test then implement the one-line completion summary: seed count, effective workers, effective per-host cap, elapsed wall-clock — logged exactly once after the pool drains.
 
 ## 6. Selenium/SSO stays sequential
 

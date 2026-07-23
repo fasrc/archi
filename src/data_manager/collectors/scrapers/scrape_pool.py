@@ -20,6 +20,7 @@ while every other seed still runs.
 """
 
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from urllib.parse import urlsplit
@@ -82,10 +83,15 @@ def run_seeds(seeds, scrape_one, workers, per_host_workers):
     returned total is the exact sum of the successful per-seed counts, accumulated
     on the calling thread as futures complete. With ``workers`` of 1 the seeds run
     one at a time in their input order, reproducing the sequential path.
+
+    Exactly one summary line is logged once the pool drains, reporting the seed
+    count, the effective (clamped) worker count and per-host cap, and the elapsed
+    wall-clock time — regardless of whether any seed failed.
     """
     seeds = list(seeds)
     workers = max(1, int(workers))
     limiter = HostLimiter(per_host_workers)
+    started = time.perf_counter()
 
     def _work(seed):
         host = urlsplit(seed).netloc
@@ -101,4 +107,13 @@ def run_seeds(seeds, scrape_one, workers, per_host_workers):
                 total += future.result()
             except Exception:
                 logger.warning("seed scrape failed: %s", seed, exc_info=True)
+
+    elapsed = time.perf_counter() - started
+    logger.info(
+        "link scrape phase complete: %d seeds, %d workers, per-host cap %d, %.2fs elapsed",
+        len(seeds),
+        workers,
+        limiter._per_host,
+        elapsed,
+    )
     return total

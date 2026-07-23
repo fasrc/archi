@@ -265,3 +265,63 @@ class TestRunSeedsBounds:
         assert total == 6
         assert calls == seeds
         assert tracker.peak == 1
+
+
+class TestRunSeedsSummary:
+    """``run_seeds`` logs exactly one completion summary after the pool drains."""
+
+    def _summary_records(self, caplog):
+        return [
+            r
+            for r in caplog.records
+            if "scrape phase complete" in r.getMessage().lower()
+        ]
+
+    def test_summary_logged_exactly_once_with_all_fields(self, caplog):
+        """One summary line reports seed count, workers, per-host cap, elapsed time."""
+        seeds = [f"https://host{i}.example.edu/" for i in range(5)]
+
+        def scrape_one(seed):
+            return 1
+
+        with caplog.at_level(logging.INFO):
+            run_seeds(seeds, scrape_one, workers=3, per_host_workers=2)
+
+        records = self._summary_records(caplog)
+        assert len(records) == 1
+        message = records[0].getMessage()
+        # seed count, worker count, per-host cap all present
+        assert "5" in message
+        assert "3" in message
+        assert "2" in message
+        # elapsed wall-clock reported in seconds
+        assert "s" in message.lower()
+
+    def test_summary_reports_effective_clamped_values(self, caplog):
+        """The summary reflects the clamped effective workers / per-host cap."""
+        seeds = ["https://only.example.edu/"]
+
+        def scrape_one(seed):
+            return 1
+
+        with caplog.at_level(logging.INFO):
+            run_seeds(seeds, scrape_one, workers=0, per_host_workers=-4)
+
+        records = self._summary_records(caplog)
+        assert len(records) == 1
+        message = records[0].getMessage()
+        # workers=0 and per_host_workers=-4 both clamp to 1
+        assert "1 seed" in message
+        assert "1 worker" in message
+
+    def test_summary_emitted_even_when_all_seeds_fail(self, caplog):
+        """The summary still fires once after a batch where every seed raised."""
+        seeds = [f"https://host{i}.example.edu/" for i in range(3)]
+
+        def scrape_one(seed):
+            raise RuntimeError("nope")
+
+        with caplog.at_level(logging.INFO):
+            run_seeds(seeds, scrape_one, workers=3, per_host_workers=3)
+
+        assert len(self._summary_records(caplog)) == 1
