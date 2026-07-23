@@ -7,6 +7,8 @@ Answers three questions an operator otherwise has to eyeball by hand:
 - ``orphans`` — which bank rows cite a page the live KB no longer publishes?
 - ``drift`` — which confirmed rows were grounded in a page that has since changed?
 
+and ``report``, which runs all three in one unattended pass for a cron.
+
 Every pass is **proposal-only**: they print work lists and leave the bank file
 byte-unchanged. Adding a question, locking a reference, re-baselining a drifted
 row, or pruning an orphan is a separate, explicitly human-initiated step.
@@ -47,6 +49,11 @@ Usage:
     python scripts/benchmarking/goldenset_maintenance.py drift \\
         --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \\
         [--model anthropic/claude-sonnet-5] [--show-text] [--print-hashes]
+
+    # all three passes in one read-only run (the cron line)
+    python scripts/benchmarking/goldenset_maintenance.py report \\
+        --bank <bank.json> --pg-dsn <dsn> --sources config/lists/sources.list \\
+        --allowed-hosts docs.rc.fas.harvard.edu --min-pages 150 --ledger <ledger.json>
 """
 
 from __future__ import annotations
@@ -68,7 +75,10 @@ except ImportError:  # pragma: no cover - non-POSIX
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.utils.benchmark_schema import normalize_bank  # noqa: E402  # isort: skip
+from src.utils.benchmark_schema import (  # noqa: E402  # isort: skip
+    bank_status_counts,
+    normalize_bank,
+)
 from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
     DRIFT_INCOMPARABLE,
     DRIFT_REFUSED,
@@ -434,6 +444,23 @@ def _print_group(title: str, lines: Sequence[str], stream=sys.stdout) -> None:
         print(f"  {line}", file=stream)
 
 
+def _record(args: argparse.Namespace, **counts: Any) -> None:
+    """Note a pass's finding counts for `report --summary-json`, if asked.
+
+    The exit code carries only two states — the run happened, or it broke — and
+    the cron contract pins findings to zero. So a wrapper keying notification on
+    the exit status cannot tell "clean" from "there is work to do", which is the
+    one state the job exists to surface. This is that third signal, kept
+    machine-readable so nothing has to parse the human report.
+
+    A no-op unless `report` asked for it: the single-pass subcommands are
+    unaffected and write nothing.
+    """
+    sink = getattr(args, "summary_sink", None)
+    if sink is not None:
+        sink.update(counts)
+
+
 def _sitemap_policy(args: argparse.Namespace, source_lines: Sequence[str]):
     """Build the sitemap policy the live-inventory expansion runs under.
 
@@ -631,6 +658,11 @@ def run_coverage(args: argparse.Namespace) -> int:
         path_glob=args.path_glob,
     )
     report = find_coverage_gaps(docs, bank, declined=declined)
+    _record(
+        args,
+        gaps=len(report.gaps),
+        needs_reconciliation=len(report.needs_reconciliation),
+    )
 
     print(
         f"corpus: {len(docs)} pages | covered: {len(report.covered)} | "
@@ -679,6 +711,13 @@ def run_orphans(args: argparse.Namespace) -> int:
         _print_group("why", report.reasons, stream=sys.stderr)
         return 1
 
+    _record(
+        args,
+        orphans=len(report.orphans),
+        # Its own key: coverage records a near-miss bucket too, and one
+        # `update()` overwriting the other would silently drop a finding.
+        orphans_needs_reconciliation=len(report.needs_reconciliation),
+    )
     print(
         f"live inventory: {len(inventory.urls)} URLs | {len(report.orphans)} orphans | "
         f"{len(report.out_of_scope)} out of scope | "
@@ -753,6 +792,30 @@ def run_drift(args: argparse.Namespace) -> int:
         _print_group("why", report.reasons, stream=sys.stderr)
         return 1
 
+    _record(
+        args,
+        drifted=len(report.drifted),
+        # Which question the run actually answered. A hash mismatch says the
+        # bytes moved; whether the recorded ANSWER is now wrong is a different
+        # question, and without a model nothing asked it. Recording that keeps a
+        # tripwire-only run from reading as a completed staleness check.
+        drift_check="reference-compared" if ask_llm is not None else "hash-only",
+        # A source the tool WANTED to check and could not. `find_drift` abstains
+        # only when nothing at all was read, so one readable page makes the pass
+        # "succeed" — and counting drifted rows alone would let a run that
+        # checked 1 of 50 sources summarise as clean.
+        unchecked_sources=(
+            len(report.unbaselined) + len(report.incomparable) + len(report.unreachable)
+        ),
+        # Counted separately from `unchecked_sources` because the remedy differs
+        # — fix the allowlist, not the page — but it notifies just the same. A
+        # host absent from `--allowed-hosts` is OMISSION, not intent: the
+        # operator listed the hosts they thought of, and a row added later
+        # citing a new host would then go unchecked forever with nobody told.
+        # Reading "not listed" as "do not check" would be silence-by-omission,
+        # which is the failure every other bucket here exists to prevent.
+        refused_sources=len(report.refused),
+    )
     print(
         f"locked rows: {report.checked_rows} checked | {report.skipped_rows} skipped "
         f"(draft or source-less) | {len(report.drifted)} drifted | "
@@ -804,6 +867,15 @@ def run_drift(args: argparse.Namespace) -> int:
             "baselines kept for URLs the row no longer cites (edit `sources`?)", stale
         )
 
+    if report.drifted and ask_llm is None:
+        # Beside the findings it qualifies, not on every run: a clean report has
+        # nothing to be uncertain about.
+        print(
+            "\nNOTE: the stored `reference` was NOT compared against the new page — "
+            "this run was the hash tripwire only. It establishes that the source "
+            "moved, not that the recorded answer is now wrong. Re-run with "
+            "--model <provider/model> for that, or review by hand with --show-text."
+        )
     if args.show_text:
         _print_evidence(report)
     elif report.drifted:
@@ -903,11 +975,114 @@ def _print_hashes(report) -> None:
         )
 
 
+#: Summary counters that mean "a human should look". Everything the report can
+#: count is recorded, but only these decide whether an unattended run speaks up.
+_NOTIFY_ON = (
+    "gaps",
+    "needs_reconciliation",
+    "orphans",
+    "orphans_needs_reconciliation",
+    "drifted",
+    "unchecked_sources",
+    "refused_sources",
+)
+
+#: The three detection passes, in the order the report prints them.
+_REPORT_PASSES = (
+    ("coverage", "ingested pages no bank row grounds on", run_coverage),
+    ("orphans", "rows whose grounding page left the live KB", run_orphans),
+    ("drift", "locked rows whose grounding page changed", run_drift),
+)
+
+
+def run_report(args: argparse.Namespace) -> int:
+    """Run all three passes as one unattended summary (design: cron contract).
+
+    **Findings exit zero.** Gaps, orphans and drift are work to do, not a broken
+    run — a nightly job that alerts on its own output trains its reader to
+    ignore the alert, which is worse than no alert. Non-zero is reserved for a
+    pass that *could not run*: an unreadable corpus, a missing source list, an
+    inventory too incomplete to judge against.
+
+    **Every pass runs even after an earlier one fails.** The passes are
+    independent — the corpus, the live inventory and the source pages are three
+    separate reads — so stopping at the first failure would throw away two
+    working checks to report one broken one. Failures are collected and
+    reprinted together at the end, because on a cron the summary line is the
+    part a human actually reads.
+    """
+    census = bank_status_counts(load_bank(args.bank))
+    summary: dict = {
+        "census": census,
+        "gaps": 0,
+        "needs_reconciliation": 0,
+        "orphans": 0,
+        "orphans_needs_reconciliation": 0,
+        "drifted": 0,
+        "unchecked_sources": 0,
+        "refused_sources": 0,
+        "drift_check": "hash-only",
+    }
+    args.summary_sink = summary
+    # Composition, printed once up front: the spec asks the reporting surface to
+    # answer "how much of this bank has anyone actually vouched for?" from the
+    # `status` field rather than by parsing `notes`. It is deliberately NOT a
+    # notification trigger — a mostly-draft bank is a project status, not a
+    # nightly alarm.
+    print(
+        f"bank: {census['total']} rows | {census['locked']} locked | "
+        f"{census['draft']} draft"
+    )
+    if census["anchor_type"]:
+        _print_group(
+            "anchor_type distribution",
+            [f"{k}: {v}" for k, v in sorted(census["anchor_type"].items())],
+        )
+
+    failures: List[str] = []
+    for name, blurb, run in _REPORT_PASSES:
+        print(f"\n{'=' * 70}\n== {name} — {blurb}\n{'=' * 70}")
+        try:
+            if run(args) != 0:
+                # The pass already explained itself on stderr; record that it
+                # did not complete so the exit code and the tail agree.
+                failures.append(f"{name}: did not complete (see above)")
+        except OperationalError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            failures.append(f"{name}: {exc}")
+    summary["failed_passes"] = failures
+    # Decided here rather than in the cron wrapper: which buckets deserve to
+    # wake someone is a judgement about the domain, and it belongs where it can
+    # be tested. `refused_sources` is included on purpose (see `run_drift`): a
+    # host missing from `--allowed-hosts` is an omission, not a standing
+    # decision, so an unchecked source notifies whether the page or the
+    # allowlist is the reason it went unchecked.
+    summary["notify"] = any(summary[key] > 0 for key in _NOTIFY_ON)
+    if args.summary_json:
+        # Written on every path, including the failing one: a wrapper that finds
+        # no file after a broken run cannot tell it from a clean one, which is
+        # the exact confusion this file exists to remove.
+        try:
+            with open(args.summary_json, "w", encoding="utf-8") as handle:
+                json.dump(summary, handle, indent=2)
+        except OSError as exc:
+            raise OperationalError(f"cannot write {args.summary_json}: {exc}") from exc
+
+    if failures:
+        _print_group(
+            "passes that could not run (this is what makes the run non-zero)",
+            failures,
+            stream=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Read-only coverage / orphan detection for the RAGAS golden-set bank. "
-            "Never writes the bank."
+            "Read-only coverage / orphan / drift detection for the RAGAS "
+            "golden-set bank. Never writes the bank."
         )
     )
     sub = parser.add_subparsers(dest="command")
@@ -1047,13 +1222,100 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     drift.set_defaults(func=run_drift)
+
+    report = sub.add_parser(
+        "report",
+        help="All three passes in one read-only run, for an unattended cron.",
+    )
+    add_bank(report)
+    report_source = report.add_mutually_exclusive_group(required=True)
+    report_source.add_argument("--corpus-json", help="JSON dump of `documents` rows.")
+    report_source.add_argument("--pg-dsn", help="Postgres DSN for the live catalog.")
+    report.add_argument(
+        "--sources",
+        required=True,
+        help="Source list; `sitemap-` lines are expanded live.",
+    )
+    report.add_argument(
+        "--allowed-hosts",
+        nargs="+",
+        required=True,
+        metavar="HOST",
+        help=(
+            "REQUIRED — hosts the operator vouches for. Serves both passes that "
+            "need one: the hosts `drift` may contact, and the extra hosts the "
+            "sitemap may emit. There is no allow-everything default."
+        ),
+    )
+    report.add_argument(
+        "--min-pages",
+        type=int,
+        help=(
+            "Sitemap completeness floor — match the deployment's "
+            "sitemap.min_pages (FASRC: 150). Required when the source list "
+            "contains a `sitemap-` line."
+        ),
+    )
+    report.add_argument(
+        "--max-pages", type=int, help="Sitemap cap — match sitemap.max_pages."
+    )
+    report.add_argument(
+        "--ledger",
+        help="Decision-ledger JSON, so declined pages stay suppressed nightly.",
+    )
+    report.add_argument(
+        "--model",
+        help=(
+            "OPTIONAL `provider/model` for the advisory drift diff. Omitted by "
+            "default: the hash tripwire is the finding, and an unattended job "
+            "should not spend a provider call per drifted row without being asked."
+        ),
+    )
+    report.add_argument(
+        "--summary-json",
+        metavar="PATH",
+        help=(
+            "Write per-pass finding counts and any failed passes here, as JSON. "
+            "The exit code carries only ran/broke, and findings exit zero, so an "
+            "unattended wrapper needs this to tell a clean run from one with "
+            "work to do. Written on every path, including a failing run."
+        ),
+    )
+    # The passes are reused verbatim, so the flags they read but `report` does not
+    # expose have to exist with their inert values. Named here rather than
+    # defaulted inside each runner, so a reader can see in one place exactly which
+    # interactive behaviours a cron run cannot reach.
+    report.set_defaults(
+        func=run_report,
+        propose=None,
+        decline=None,
+        undecline=None,
+        reason=None,
+        source_type=None,
+        parent=None,
+        path_glob=None,
+        data_path=None,
+        count=3,
+        # ON here, unlike the interactive `drift` where it is opt-in. The spec
+        # asks for a drifted row to be flagged "with the re-fetched content for
+        # review", and interactively that is a re-run away. Unattended there is
+        # nobody to re-run it: this log is the whole artifact, and by the time
+        # someone reads "3 drifted" the page may have moved again — so the
+        # evidence has to be captured when it is detected. The wrapper's size
+        # cap is what makes that safe to do nightly.
+        show_text=True,
+        print_hashes=False,
+    )
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     if not getattr(args, "func", None):
-        print("error: a subcommand is required (coverage | orphans)", file=sys.stderr)
+        print(
+            "error: a subcommand is required " "(coverage | orphans | drift | report)",
+            file=sys.stderr,
+        )
         return 2
     try:
         return args.func(args)

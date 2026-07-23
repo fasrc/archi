@@ -52,9 +52,12 @@
 
 ## 5. Read-only `report` + dev-server cron
 
-- [ ] 5.1 TDD: `report` prints coverage gaps, drift flags, and orphans, modifies no file, and exits zero when findings exist — reserving non-zero for operational failure (unreachable corpus).
-- [ ] 5.2 Add the dev-server cron entry running `report` read-only, writing to `.ralph/log/`; document install + rollback (remove the line).
-- [ ] 5.3 **Docs (same PR):** document the `report` subcommand + cron install/rollback in `docs/docs/benchmarking.md`.
+- [x] 5.1 TDD: `report` prints coverage gaps, drift flags, and orphans, modifies no file, and exits zero when findings exist — reserving non-zero for operational failure (unreachable corpus).
+- [x] 5.2 **Repo mechanism (this PR):** the tracked cron wrapper `scripts/benchmarking/goldenset_report_cron.sh` — read-only, writing only to `.ralph/log/` — with a hermetic self-test, an env-file config (crontab has no line continuation), a one-line crontab entry, and documented install + rollback (remove the line). This delivers the *means* to run `report` nightly; it does **not** install anything.
+- [ ] 5.2a **Deploy (tracked follow-up, not a repo change): install + end-to-end validate the cron on fasrc-dev** — tracked in fasrc/archi#148. No repo PR can create or validate a crontab, resolve the live DSN/source list, or exercise cron's minimal `PATH` and the mail digest on a machine it does not touch; those are machine facts verifiable only on the target. This box stays open until #148 confirms a live hand-run exits zero, all three passes complete against the live corpus, and the bank is left byte-unchanged.
+- [x] 5.3 **Docs (same PR):** document the `report` subcommand + cron install/rollback in `docs/docs/benchmarking.md`.
+- [x] 5.4 The confirmation census (task 1.3's `bank_status_counts`) is printed by `report` — the spec's "WHEN the tool reports on the bank" scenario had a helper but no CLI surface until now.
+- [x] 5.5 `scripts/gate.sh` runs the wrapper's shell self-test, so a contract that lives entirely in bash cannot break with every required check still green.
 
 ## 6. Skill (personal tool — no repo PR)
 

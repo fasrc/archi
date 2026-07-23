@@ -391,7 +391,7 @@ The analysis notebook computes pairwise Cohen's kappa (per pair of graders), Fle
 
 ---
 
-## Maintaining the golden set (`coverage` / `orphans` / `drift`)
+## Maintaining the golden set (`coverage` / `orphans` / `drift` / `report`)
 
 The question bank falls out of step with the knowledge base in three directions: the KB grows
 pages nobody wrote a question for, it removes pages some question still cites, and it rewrites
@@ -869,3 +869,177 @@ twenty.
 a row from the report. The hash mismatch is the fact; the verdict only tells you how urgently to
 look. A `holds` reply still leaves the row listed — putting a model in charge of whether a real
 change gets reviewed is exactly the failure the tripwire exists to prevent.
+
+### `report` — all three passes, for a cron
+
+`report` runs `coverage`, `orphans` and `drift` in one read-only pass and prints the three work
+lists together. It is the shape meant for an unattended nightly job:
+
+```bash
+python scripts/benchmarking/goldenset_maintenance.py report \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn "postgresql://archi@localhost/archi-db" \
+    --sources config/lists/sources.list \
+    --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com \
+    --min-pages 150 \
+    --ledger .ralph/goldenset-declines.json
+```
+
+It opens with a **confirmation census** — how many rows are `locked` versus `draft`, and the
+`anchor_type` distribution — read from the `status` field rather than by parsing `notes`. That is
+composition, not a finding: a mostly-draft bank is a project status, so it never triggers a
+notification on its own.
+
+`--allowed-hosts` serves both passes that need one — the hosts `drift` may contact and the extra
+hosts the sitemap may emit — because in practice they are the same list: hosts the operator
+vouched for.
+
+#### Findings exit zero; only a broken pass exits non-zero
+
+A gap, an orphan and a drifted row are work to do, not a failed run. A cron that exits non-zero
+whenever it finds something teaches its reader to ignore the alert, which is worse than having no
+alert. Non-zero is reserved for a pass that **could not run** — an unreadable corpus or bank, a
+missing source list, or a live inventory too incomplete to judge orphans against.
+
+One case the exit code deliberately does **not** fail on is a *partly* complete drift pass: `drift`
+abstains (non-zero) only when nothing at all was read, so a run that reached 1 source of 50 still
+exits zero (see [Abstention](#abstention) above). That incompleteness is not lost — it is counted
+in `--summary-json` as `unchecked_sources` and mailed in the nightly digest — but an **external**
+monitor must read those summary counts, not the process exit code, or it will record a
+barely-completed run as healthy. The exit code answers "did a pass break?"; the summary answers
+"how much did it actually check?", and only the second distinguishes a thorough run from a thin one.
+
+#### One broken pass does not hide the other two
+
+The three passes read three independent things: the corpus catalog, the live source inventory, and
+the source pages themselves. If the corpus is unreachable, orphans and drift are still perfectly
+answerable, so `report` runs all three regardless and collects the failures. It prints them
+together at the end, under `passes that could not run`, and exits non-zero — so the exit code and
+the output agree about what happened. Stopping at the first failure would throw away two working
+checks in order to report one broken one.
+
+#### No model is called unless you name one
+
+`--model` is accepted but omitted by default, so the nightly run is the cheap hash tripwire alone.
+That is still a real finding: the mismatch is the fact, and the LLM diff only triages how urgently
+to look. Paying a provider for every drifted row, every night, unattended, should be something an
+operator opts into rather than inherits.
+
+#### Read-only, like every other pass
+
+`report` writes nothing — not the bank, not the corpus, not the source list. The decision ledger
+is passed so that pages already declined stay suppressed from the nightly gap list; `report` reads
+it and never appends to it, because declining a page is an interactive decision.
+
+#### Running it nightly
+
+`scripts/benchmarking/goldenset_report_cron.sh` wraps the command above for cron. The settings
+live in an **environment file**, not on the cron line, because crontab has no line continuation:
+an entry ends at the newline, and a trailing backslash does not join the next line. A multi-line
+cron block would install as one truncated command plus several invalid records.
+
+Write `~/.ralph/goldenset-report.env` (the wrapper's default location — override with
+`GOLDENSET_ENV_FILE`):
+
+```bash
+GOLDENSET_PG_DSN=postgresql://archi@localhost/archi-db
+GOLDENSET_SOURCES=/home/archi/archi/config/lists/sources.list
+GOLDENSET_ALLOWED_HOSTS="docs.rc.fas.harvard.edu slurm.schedmd.com"
+GOLDENSET_MIN_PAGES=150
+GOLDENSET_LEDGER=/home/archi/.ralph/goldenset-declines.json
+```
+
+**Quote any value containing spaces.** The file is *sourced* by the wrapper, so an unquoted
+`GOLDENSET_ALLOWED_HOSTS=host-a host-b` is read by the shell as "run the command `host-b` with
+`GOLDENSET_ALLOWED_HOSTS=host-a`" — the allowlist is normally the only multi-value setting, and
+so the only one this bites. It fails loudly (`command not found`, exit 127) rather than running
+with half a list.
+
+| Variable | Meaning |
+| --- | --- |
+| `GOLDENSET_BANK` | Bank JSON (defaults to `examples/benchmarking/fasrc_ragas_queries.json`) |
+| `GOLDENSET_PG_DSN` / `GOLDENSET_CORPUS_JSON` | The corpus — exactly one of the two |
+| `GOLDENSET_SOURCES` | Source list the KB ingests from (**required**) |
+| `GOLDENSET_ALLOWED_HOSTS` | Space-separated hosts to contact (**required**) |
+| `GOLDENSET_MIN_PAGES` / `GOLDENSET_MAX_PAGES` | Sitemap floor/cap — match the deployment |
+| `GOLDENSET_LEDGER` | Decision ledger, so declined pages stay suppressed |
+| `GOLDENSET_MODEL` | Optional advisory drift diff; unset means no provider calls |
+| `GOLDENSET_LOG_DIR` | Where to append (default `~/.ralph/log`) |
+| `GOLDENSET_LOG_MAX_BYTES` | Rotate the log once past this size (default 5 MiB) |
+| `GOLDENSET_PYTHON` | Interpreter, if `python` is not on cron's minimal `PATH` |
+
+Values in the file win over anything already in the environment, the way systemd's
+`EnvironmentFile=` behaves.
+
+**Install** — one line, no environment on it:
+
+```bash
+crontab -e
+```
+
+```cron
+# nightly RAGAS golden-set maintenance report (read-only)
+15 6 * * * /home/archi/archi/scripts/benchmarking/goldenset_report_cron.sh
+```
+
+Use absolute paths: cron does not expand `$HOME` or `~` in the command, and runs with a minimal
+`PATH`. If `python` is not on that `PATH`, set `GOLDENSET_PYTHON` in the env file to the
+interpreter's full path.
+
+**Rollback** — delete that line (`crontab -e`, remove, save). The wrapper holds no state, installs
+no unit, and writes only its log, so removing the line is the whole rollback. The env file and
+`~/.ralph/log/goldenset-report.log` can be deleted too, or left as a record.
+
+**Verify without waiting for the timer** by running the wrapper by hand. On a terminal it streams
+the full report; under cron it does not.
+
+Three properties make it safe unattended, each pinned by
+`scripts/benchmarking/test_goldenset_report_cron.sh`:
+
+- **You hear about findings, and only about findings.** There are three outcomes but cron gives
+  only two signals — it mails on *any* output and ignores the exit status entirely. So the
+  wrapper decides what to say:
+
+    | Outcome | Exit | What cron mails |
+    | --- | --- | --- |
+    | Clean | 0 | nothing |
+    | Findings | 0 | a one-line digest plus the log path |
+    | A pass could not run | 1 | the full report on stderr |
+    | The wrapper is misconfigured | 2 | the error, *before* anything is invoked |
+
+    "Findings" is wider than gaps, orphans and drifted rows: it also covers every source the
+    drift pass could **not** check — no baseline, a malformed baseline, unreachable, or refused
+    by the allowlist. `drift` only abstains when *nothing* was read, so one readable page makes
+    the pass succeed; counting drifted rows alone would let a run that checked 1 source of 50
+    summarise as perfectly clean. Refusals count too, because a host missing from
+    `--allowed-hosts` is an omission rather than a decision — the operator listed the hosts they
+    thought of, and a row added later citing a new host would otherwise go unchecked forever
+    with nobody told.
+
+    Findings exiting zero is the cron contract, so notification cannot key on the exit status —
+    that would bury every actionable result in a log nobody tails, and the job would detect
+    stale benchmark data indefinitely while telling no one. The wrapper reads `--summary-json`
+    instead. Equally, mailing the whole report nightly is how an operator learns to filter the
+    mail, which costs the one case that matters. A misconfigured wrapper refuses up front
+    because a half-run report reads exactly like a clean one.
+
+- **The log is a bounded history.** Keeping it is the point — a page edited a little each month
+  only becomes visible across runs — but a nightly append with no ceiling eventually fills the
+  filesystem, and the first thing to break would be the logging itself. Two bounds, because
+  rotation alone is not one: the log rotates to `…log.1` once it passes
+  `GOLDENSET_LOG_MAX_BYTES` (default 5 MiB), *and* any single run's output is truncated to that
+  size before being appended, with a marker saying so. Coverage prints every gap and drift can
+  span the whole bank, so one run really can be enormous. When a run fails, its full output still
+  goes to stderr untruncated — nothing diagnostic is lost at the moment it matters. One rotation,
+  not a logrotate unit, so rollback stays "delete the cron line".
+- **The evidence is captured when it is detected.** Unlike the interactive `drift` pass, where
+  page text is behind `--show-text`, `report` always includes the re-fetched content for each
+  drifted row. Interactively you can re-run to see it; unattended you cannot, and by the time
+  someone reads "3 drifted" the page may have moved again. The size cap above is what makes this
+  safe to do nightly.
+- **A hash-only run says so.** The nightly job runs the cheap tripwire, which establishes that a
+  source *moved* — not that the recorded answer is now wrong. When such a run lists drifted rows
+  it prints a note to that effect and records `"drift_check": "hash-only"` in the summary, so a
+  tripwire result is never mistaken for a completed staleness check. Set `GOLDENSET_MODEL` to have
+  the run compare each changed page against the stored `reference`.
+- **No provider calls unless `GOLDENSET_MODEL` is set.**
