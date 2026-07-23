@@ -917,3 +917,53 @@ operator opts into rather than inherits.
 `report` writes nothing — not the bank, not the corpus, not the source list. The decision ledger
 is passed so that pages already declined stay suppressed from the nightly gap list; `report` reads
 it and never appends to it, because declining a page is an interactive decision.
+
+#### Running it nightly
+
+`scripts/benchmarking/goldenset_report_cron.sh` wraps the command above for cron. It is
+configured by environment variables rather than flags, so the crontab line stays one short entry
+and the settings live somewhere a human can read them:
+
+| Variable | Meaning |
+| --- | --- |
+| `GOLDENSET_BANK` | Bank JSON (defaults to `examples/benchmarking/fasrc_ragas_queries.json`) |
+| `GOLDENSET_PG_DSN` / `GOLDENSET_CORPUS_JSON` | The corpus — exactly one of the two |
+| `GOLDENSET_SOURCES` | Source list the KB ingests from (**required**) |
+| `GOLDENSET_ALLOWED_HOSTS` | Space-separated hosts to contact (**required**) |
+| `GOLDENSET_MIN_PAGES` / `GOLDENSET_MAX_PAGES` | Sitemap floor/cap — match the deployment |
+| `GOLDENSET_LEDGER` | Decision ledger, so declined pages stay suppressed |
+| `GOLDENSET_MODEL` | Optional advisory drift diff; unset means no provider calls |
+| `GOLDENSET_LOG_DIR` | Where to append (default `~/.ralph/log`) |
+
+**Install** — one crontab line on the dev server:
+
+```bash
+crontab -e
+```
+
+```cron
+# nightly RAGAS golden-set maintenance report (read-only)
+15 6 * * * GOLDENSET_PG_DSN="postgresql://archi@localhost/archi-db" \
+  GOLDENSET_SOURCES="$HOME/archi/config/lists/sources.list" \
+  GOLDENSET_ALLOWED_HOSTS="docs.rc.fas.harvard.edu slurm.schedmd.com" \
+  GOLDENSET_MIN_PAGES=150 \
+  GOLDENSET_LEDGER="$HOME/.ralph/goldenset-declines.json" \
+  $HOME/archi/scripts/benchmarking/goldenset_report_cron.sh
+```
+
+**Rollback** — delete that line (`crontab -e`, remove, save). The wrapper holds no state, installs
+no unit, and writes only its log, so removing the line is the whole rollback. Deleting
+`~/.ralph/log/goldenset-report.log` is optional.
+
+**Verify without waiting for the timer** by running the wrapper by hand with the same variables;
+it prints to the terminal as well as the log.
+
+Three properties make it safe unattended, each pinned by
+`scripts/benchmarking/test_goldenset_report_cron.sh`:
+
+- **Only a broken run mails you.** Findings exit zero; a pass that could not run exits 1, and a
+  misconfigured wrapper exits 2 *before* invoking anything — a half-run report reads exactly like
+  a clean one.
+- **The log is appended, never truncated.** The history is the point: a page edited a little each
+  month only becomes visible across runs.
+- **No provider calls unless `GOLDENSET_MODEL` is set.**

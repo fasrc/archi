@@ -53,8 +53,8 @@
 ## 5. Read-only `report` + dev-server cron
 
 - [x] 5.1 TDD: `report` prints coverage gaps, drift flags, and orphans, modifies no file, and exits zero when findings exist — reserving non-zero for operational failure (unreachable corpus).
-- [ ] 5.2 Add the dev-server cron entry running `report` read-only, writing to `.ralph/log/`; document install + rollback (remove the line).
-- [ ] 5.3 **Docs (same PR):** document the `report` subcommand + cron install/rollback in `docs/docs/benchmarking.md`.
+- [x] 5.2 Add the dev-server cron entry running `report` read-only, writing to `.ralph/log/`; document install + rollback (remove the line).
+- [x] 5.3 **Docs (same PR):** document the `report` subcommand + cron install/rollback in `docs/docs/benchmarking.md`.
 
 ## 6. Skill (personal tool — no repo PR)
 

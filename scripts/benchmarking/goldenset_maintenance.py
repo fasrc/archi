@@ -1173,8 +1173,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     if not getattr(args, "func", None):
         print(
-            "error: a subcommand is required "
-            "(coverage | orphans | drift | report)",
+            "error: a subcommand is required " "(coverage | orphans | drift | report)",
             file=sys.stderr,
         )
         return 2
