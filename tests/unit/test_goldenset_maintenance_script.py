@@ -2103,3 +2103,100 @@ class TestReportSubcommand:
         # Unattended by definition. The hash tripwire is the finding; paying a
         # provider per drifted row every night is opt-in.
         assert calls == []
+
+
+class TestReportSummaryJson:
+    """5.1 — a machine-readable signal, so a cron can tell three states apart.
+
+    The exit code only carries two (`0` ran, `1` broke), and the spec pins
+    findings to zero. A wrapper that keys notification on the exit code
+    therefore cannot distinguish "clean" from "there is work to do" — which is
+    the state the whole job exists to surface.
+    """
+
+    def _run(self, tmp_path, script, bank, corpus, sources, out):
+        return script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+
+    def test_counts_the_findings_of_every_pass(self, tmp_path):
+        script = _load_script()
+        live, gone, uncovered = f"{KB}/kb/live", f"{KB}/kb/gone", f"{KB}/kb/uncovered"
+        bank = _bank(
+            tmp_path,
+            _locked_row(live, hashes={live: page_digest(GPU_HTML)}),
+            _row(gone),
+        )
+        corpus = _corpus(tmp_path, live, uncovered)
+        sources = _sources_list(tmp_path, live, uncovered)
+        _fake_pages(script, {live: GPU_HTML_CHANGED})
+        out = tmp_path / "summary.json"
+
+        code = self._run(tmp_path, script, bank, corpus, sources, out)
+        summary = json.loads(out.read_text())
+
+        assert code == 0
+        assert summary["gaps"] == 1  # uncovered
+        assert summary["orphans"] == 1  # gone
+        assert summary["drifted"] == 1  # live moved
+        assert summary["failed_passes"] == []
+
+    def test_a_clean_bank_reports_zero_findings(self, tmp_path):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+
+        self._run(tmp_path, script, bank, corpus, sources, out)
+        summary = json.loads(out.read_text())
+
+        # Distinguishable from the case above by counts alone — no text parsing.
+        assert summary["gaps"] == 0
+        assert summary["orphans"] == 0
+        assert summary["drifted"] == 0
+        assert summary["failed_passes"] == []
+
+    def test_a_broken_pass_is_named_in_the_summary(self, tmp_path):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+
+        code = self._run(
+            tmp_path, script, bank, tmp_path / "nope.json", sources, out
+        )
+        summary = json.loads(out.read_text())
+
+        assert code == 1
+        assert any("coverage" in f for f in summary["failed_passes"])
+
+    def test_the_summary_is_written_even_when_a_pass_broke(self, tmp_path):
+        # The wrapper reads this file to decide what to say; if a broken run
+        # left no file, the failure path would look like a clean one.
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+
+        self._run(tmp_path, script, bank, tmp_path / "nope.json", sources, out)
+
+        assert out.exists()
+
+    def test_no_summary_file_is_written_unless_asked(self, tmp_path):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+
+        script.main(_report_argv(bank, corpus, sources))
+
+        assert list(tmp_path.glob("*summary*")) == []

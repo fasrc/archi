@@ -10,6 +10,13 @@
 #    6. a missing required setting fails before running anything
 #    7. no model is passed unless GOLDENSET_MODEL is set
 #    8. --min-pages is passed through when set, omitted when not
+#    9-10. unattended: silent when healthy, stderr when broken (cron mails on
+#          ANY output and ignores the exit status)
+#   11-12. configuration comes from an env file, found by convention under HOME
+#          (crontab has no line continuation, so the entry must carry no env)
+#   13-15. the third state: findings exit ZERO, so notification cannot key on
+#          the exit status — a concise digest, not the whole report
+#   16-17. the append-only log is rotated once past a size cap
 # Run: bash scripts/benchmarking/test_goldenset_report_cron.sh
 set -euo pipefail
 
@@ -29,6 +36,14 @@ make_stub() { # $1 = sandbox
   cat > "$sb/bin/python" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$sb/calls"
+# Emulate \`report --summary-json\`: write whatever the test asked for.
+prev=""
+for a in "\$@"; do
+  if [ "\$prev" = "--summary-json" ]; then
+    printf '%s' "\${STUB_SUMMARY:-{\"gaps\":0,\"needs_reconciliation\":0,\"orphans\":0,\"drifted\":0,\"failed_passes\":[]}}" > "\$a"
+  fi
+  prev="\$a"
+done
 echo "fake report output"
 exit \${STUB_EXIT:-0}
 EOF
@@ -197,6 +212,63 @@ case "$(cat "$sb/calls" 2>/dev/null || true)" in
   *"--pg-dsn postgresql://by-convention"*) ok "finds the default env file under HOME" ;;
   *) notok "finds the default env file under HOME (got: $(cat "$sb/calls" 2>/dev/null))" ;;
 esac
+
+# 13. a genuinely CLEAN unattended run stays silent
+sb="$(new_sandbox)"
+out="$( ( GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) 2>"$sb/err" || true )"
+if [ -z "$out" ] && [ ! -s "$sb/err" ]; then
+  ok "a clean unattended run is silent"
+else
+  notok "a clean unattended run is silent (stdout: $out; stderr: $(cat "$sb/err"))"
+fi
+
+# 14. findings exit ZERO by design, so keying notification on the exit status
+#     would hide every actionable result. The wrapper reads the summary instead.
+sb="$(new_sandbox)"
+FINDINGS='{"gaps":2,"needs_reconciliation":0,"orphans":1,"drifted":3,"failed_passes":[]}'
+out="$( ( STUB_SUMMARY="$FINDINGS" GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) \
+  2>"$sb/err" || true )"
+case "$out" in
+  *"2 gap"*"1 orphan"*"3 drifted"*) ok "findings notify even though the run exits zero" ;;
+  *) notok "findings notify even though the run exits zero (got: $out)" ;;
+esac
+
+# 15. ...but concisely. Mailing the whole report nightly is the alert fatigue
+#     that made routine output log-only in the first place.
+case "$out" in
+  *"fake report output"*) notok "the findings notice is a digest, not the report" ;;
+  *) ok "the findings notice is a digest, not the report" ;;
+esac
+case "$out" in
+  *goldenset-report.log*) ok "the findings notice points at the log" ;;
+  *) notok "the findings notice points at the log (got: $out)" ;;
+esac
+
+# 16. an unbounded nightly append eventually fills the filesystem
+sb="$(new_sandbox)"
+mkdir -p "$sb/log"
+head -c 4096 /dev/zero | tr '\0' 'x' > "$sb/log/goldenset-report.log"
+( GOLDENSET_PG_DSN="postgresql://x" GOLDENSET_LOG_MAX_BYTES=1024 run_cron "$sb" ) \
+  >/dev/null 2>&1 || true
+if [ -f "$sb/log/goldenset-report.log.1" ] \
+   && [ "$(wc -c < "$sb/log/goldenset-report.log")" -lt 4096 ]; then
+  ok "an oversized log is rotated before appending"
+else
+  notok "an oversized log is rotated before appending"
+fi
+
+# 17. and a log under the cap is left alone
+sb="$(new_sandbox)"
+mkdir -p "$sb/log"
+echo "PREVIOUS RUN" > "$sb/log/goldenset-report.log"
+( GOLDENSET_PG_DSN="postgresql://x" GOLDENSET_LOG_MAX_BYTES=1048576 run_cron "$sb" ) \
+  >/dev/null 2>&1 || true
+if [ ! -f "$sb/log/goldenset-report.log.1" ] \
+   && grep -q "PREVIOUS RUN" "$sb/log/goldenset-report.log"; then
+  ok "a log under the cap is not rotated"
+else
+  notok "a log under the cap is not rotated"
+fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

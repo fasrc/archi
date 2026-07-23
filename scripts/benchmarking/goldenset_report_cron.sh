@@ -89,35 +89,70 @@ args+=(--allowed-hosts ${GOLDENSET_ALLOWED_HOSTS})
 [ -n "${GOLDENSET_LEDGER:-}" ] && args+=(--ledger "$GOLDENSET_LEDGER")
 [ -n "${GOLDENSET_MODEL:-}" ] && args+=(--model "$GOLDENSET_MODEL")
 
+SUMMARY="$(mktemp)"
+trap 'rm -f "$SUMMARY" "${RUN_OUT:-}"' EXIT
+args+=(--summary-json "$SUMMARY")
+
 mkdir -p "$LOG_DIR"
 
-{
-  printf '\n===== goldenset report %s =====\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-} >> "$LOG"
+# A nightly append with no ceiling eventually fills the filesystem, and the
+# first thing to break is the logging itself — so the failure that finally
+# needs reading is the one that cannot be written. One rotation is enough: the
+# log is a history to skim, not an archive to audit, and a hard 2x bound needs
+# no logrotate unit, which keeps rollback "delete the cron line".
+LOG_MAX_BYTES="${GOLDENSET_LOG_MAX_BYTES:-5242880}"
+if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -ge "$LOG_MAX_BYTES" ]; then
+  mv -f "$LOG" "$LOG.1"
+fi
+
+if ! printf '\n===== goldenset report %s =====\n' \
+     "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$LOG"; then
+  die "cannot write $LOG"
+fi
 
 # Appended, never truncated: the value of this log is the history, which is how
 # a slow drift (a page edited a little each month) becomes visible at all.
-#
-# What reaches stdout depends on whether a human is watching, because cron mails
-# on ANY output and pays no attention to the exit status. A nightly job that
-# prints its report every night mails its report every night, and an operator
-# who gets mail on every healthy run stops reading the mail — which costs
-# exactly the failure the job exists to surface.
 set +e
 if [ -t 1 ]; then
   # Interactive: stream, so a slow drift pass is visible while it runs.
   "$PYTHON" "${args[@]}" 2>&1 | tee -a "$LOG"
   status=${PIPESTATUS[0]}
 else
-  # Unattended: silent when healthy, loud when not.
-  run_out="$(mktemp)"
-  "$PYTHON" "${args[@]}" > "$run_out" 2>&1
+  RUN_OUT="$(mktemp)"
+  "$PYTHON" "${args[@]}" > "$RUN_OUT" 2>&1
   status=$?
-  cat "$run_out" >> "$LOG"
-  [ "$status" -ne 0 ] && cat "$run_out" >&2
-  rm -f "$run_out"
+  cat "$RUN_OUT" >> "$LOG"
 fi
 set -e
 
 printf '===== exit %d =====\n' "$status" >> "$LOG"
+
+# Three states, and cron only gives us two signals — it mails on ANY output and
+# ignores the exit status entirely. So the wrapper has to choose what to say:
+#
+#   broken   -> the whole report on stderr. Someone must look now.
+#   findings -> a one-line digest. `report` exits ZERO on findings by design
+#               (the cron contract), so keying on the exit status would bury
+#               every actionable result in a log nobody tails — the job would
+#               detect stale benchmark data indefinitely and tell no one.
+#   clean    -> nothing. Mailing a wall of text nightly is how an operator
+#               learns to filter the mail, which costs the broken case above.
+if [ ! -t 1 ]; then
+  if [ "$status" -ne 0 ]; then
+    cat "${RUN_OUT:-/dev/null}" >&2
+  else
+    count_of() { tr -d ' \n' < "$SUMMARY" | grep -o "\"$1\":[0-9]*" | head -1 |
+                 cut -d: -f2; }
+    gaps="$(count_of gaps)";       gaps="${gaps:-0}"
+    orphans="$(count_of orphans)"; orphans="${orphans:-0}"
+    drifted="$(count_of drifted)"; drifted="${drifted:-0}"
+    recon="$(count_of needs_reconciliation)"; recon="${recon:-0}"
+    if [ $((gaps + orphans + drifted + recon)) -gt 0 ]; then
+      printf 'goldenset report: %s gaps | %s orphans | %s drifted | %s need reconciliation\n' \
+        "$gaps" "$orphans" "$drifted" "$recon"
+      printf 'full report: %s\n' "$LOG"
+    fi
+  fi
+fi
+
 exit "$status"

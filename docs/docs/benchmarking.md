@@ -946,6 +946,8 @@ GOLDENSET_LEDGER=/home/archi/.ralph/goldenset-declines.json
 | `GOLDENSET_LEDGER` | Decision ledger, so declined pages stay suppressed |
 | `GOLDENSET_MODEL` | Optional advisory drift diff; unset means no provider calls |
 | `GOLDENSET_LOG_DIR` | Where to append (default `~/.ralph/log`) |
+| `GOLDENSET_LOG_MAX_BYTES` | Rotate the log once past this size (default 5 MiB) |
+| `GOLDENSET_PYTHON` | Interpreter, if `python` is not on cron's minimal `PATH` |
 
 Values in the file win over anything already in the environment, the way systemd's
 `EnvironmentFile=` behaves.
@@ -975,13 +977,27 @@ the full report; under cron it does not.
 Three properties make it safe unattended, each pinned by
 `scripts/benchmarking/test_goldenset_report_cron.sh`:
 
-- **Only a broken run mails you.** Cron mails on *any* output and ignores the exit status, so a
-  job that prints its report nightly mails it nightly — and an operator who gets mail on every
-  healthy run stops reading the mail, which costs exactly the failure the job exists to surface.
-  When stdout is not a terminal the wrapper writes to the log only, and emits to stderr just when
-  a pass failed. Findings still exit zero; a pass that could not run exits 1; a misconfigured
-  wrapper exits 2 *before* invoking anything, because a half-run report reads exactly like a
-  clean one.
-- **The log is appended, never truncated.** The history is the point: a page edited a little each
-  month only becomes visible across runs.
+- **You hear about findings, and only about findings.** There are three outcomes but cron gives
+  only two signals — it mails on *any* output and ignores the exit status entirely. So the
+  wrapper decides what to say:
+
+    | Outcome | Exit | What cron mails |
+    | --- | --- | --- |
+    | Clean | 0 | nothing |
+    | Findings (gaps, orphans, drift) | 0 | a one-line digest plus the log path |
+    | A pass could not run | 1 | the full report on stderr |
+    | The wrapper is misconfigured | 2 | the error, *before* anything is invoked |
+
+    Findings exiting zero is the cron contract, so notification cannot key on the exit status —
+    that would bury every actionable result in a log nobody tails, and the job would detect
+    stale benchmark data indefinitely while telling no one. The wrapper reads `--summary-json`
+    instead. Equally, mailing the whole report nightly is how an operator learns to filter the
+    mail, which costs the one case that matters. A misconfigured wrapper refuses up front
+    because a half-run report reads exactly like a clean one.
+
+- **The log is appended, never truncated — but bounded.** The history is the point: a page edited
+  a little each month only becomes visible across runs. It rotates once past
+  `GOLDENSET_LOG_MAX_BYTES` (default 5 MiB) to `…log.1`, so a long-lived deployment cannot fill
+  the filesystem — at which point the first thing to break would be the logging itself. One
+  rotation, not a logrotate unit, so rollback stays "delete the cron line".
 - **No provider calls unless `GOLDENSET_MODEL` is set.**

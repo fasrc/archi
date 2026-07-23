@@ -441,6 +441,23 @@ def _print_group(title: str, lines: Sequence[str], stream=sys.stdout) -> None:
         print(f"  {line}", file=stream)
 
 
+def _record(args: argparse.Namespace, **counts: int) -> None:
+    """Note a pass's finding counts for `report --summary-json`, if asked.
+
+    The exit code carries only two states — the run happened, or it broke — and
+    the cron contract pins findings to zero. So a wrapper keying notification on
+    the exit status cannot tell "clean" from "there is work to do", which is the
+    one state the job exists to surface. This is that third signal, kept
+    machine-readable so nothing has to parse the human report.
+
+    A no-op unless `report` asked for it: the single-pass subcommands are
+    unaffected and write nothing.
+    """
+    sink = getattr(args, "summary_sink", None)
+    if sink is not None:
+        sink.update(counts)
+
+
 def _sitemap_policy(args: argparse.Namespace, source_lines: Sequence[str]):
     """Build the sitemap policy the live-inventory expansion runs under.
 
@@ -638,6 +655,11 @@ def run_coverage(args: argparse.Namespace) -> int:
         path_glob=args.path_glob,
     )
     report = find_coverage_gaps(docs, bank, declined=declined)
+    _record(
+        args,
+        gaps=len(report.gaps),
+        needs_reconciliation=len(report.needs_reconciliation),
+    )
 
     print(
         f"corpus: {len(docs)} pages | covered: {len(report.covered)} | "
@@ -686,6 +708,7 @@ def run_orphans(args: argparse.Namespace) -> int:
         _print_group("why", report.reasons, stream=sys.stderr)
         return 1
 
+    _record(args, orphans=len(report.orphans))
     print(
         f"live inventory: {len(inventory.urls)} URLs | {len(report.orphans)} orphans | "
         f"{len(report.out_of_scope)} out of scope | "
@@ -760,6 +783,7 @@ def run_drift(args: argparse.Namespace) -> int:
         _print_group("why", report.reasons, stream=sys.stderr)
         return 1
 
+    _record(args, drifted=len(report.drifted))
     print(
         f"locked rows: {report.checked_rows} checked | {report.skipped_rows} skipped "
         f"(draft or source-less) | {len(report.drifted)} drifted | "
@@ -934,6 +958,8 @@ def run_report(args: argparse.Namespace) -> int:
     reprinted together at the end, because on a cron the summary line is the
     part a human actually reads.
     """
+    summary: dict = {"gaps": 0, "needs_reconciliation": 0, "orphans": 0, "drifted": 0}
+    args.summary_sink = summary
     failures: List[str] = []
     for name, blurb, run in _REPORT_PASSES:
         print(f"\n{'=' * 70}\n== {name} — {blurb}\n{'=' * 70}")
@@ -945,6 +971,17 @@ def run_report(args: argparse.Namespace) -> int:
         except OperationalError as exc:
             print(f"error: {exc}", file=sys.stderr)
             failures.append(f"{name}: {exc}")
+    summary["failed_passes"] = failures
+    if args.summary_json:
+        # Written on every path, including the failing one: a wrapper that finds
+        # no file after a broken run cannot tell it from a clean one, which is
+        # the exact confusion this file exists to remove.
+        try:
+            with open(args.summary_json, "w", encoding="utf-8") as handle:
+                json.dump(summary, handle, indent=2)
+        except OSError as exc:
+            raise OperationalError(f"cannot write {args.summary_json}: {exc}") from exc
+
     if failures:
         _print_group(
             "passes that could not run (this is what makes the run non-zero)",
@@ -1146,6 +1183,16 @@ def build_parser() -> argparse.ArgumentParser:
             "OPTIONAL `provider/model` for the advisory drift diff. Omitted by "
             "default: the hash tripwire is the finding, and an unattended job "
             "should not spend a provider call per drifted row without being asked."
+        ),
+    )
+    report.add_argument(
+        "--summary-json",
+        metavar="PATH",
+        help=(
+            "Write per-pass finding counts and any failed passes here, as JSON. "
+            "The exit code carries only ran/broke, and findings exit zero, so an "
+            "unattended wrapper needs this to tell a clean run from one with "
+            "work to do. Written on every path, including a failing run."
         ),
     )
     # The passes are reused verbatim, so the flags they read but `report` does not
