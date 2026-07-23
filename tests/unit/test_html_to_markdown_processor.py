@@ -8,6 +8,7 @@ from src.data_manager.collectors.processing import (
     HtmlToMarkdownProcessor,
     ResourcePipeline,
     _slice_kb_article,
+    html_to_markdown,
 )
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 
@@ -309,3 +310,40 @@ def test_slice_helper_blank_between_keeps_original():
 def test_slice_helper_no_start_keeps_original():
     md = "some\nmarkdown with Bookmarkable Links only"
     assert _slice_kb_article(md) == md
+
+
+# --------------------------------------------------------------------------- #
+# The extraction seam (openspec `maintain-ragas-goldenset`, task 4.1)
+# --------------------------------------------------------------------------- #
+# Drift detection hashes the *extracted* text of a re-fetched page, and design
+# D6's sign-off condition is that the live signal be measured exactly the way the
+# corpus was built. `html_to_markdown` is that shared rule: the processor and the
+# drift pass both call it, so an extraction change can never make the two
+# disagree about what a page "says".
+
+
+def test_extraction_seam_matches_what_the_processor_persists():
+    html = "<h1>Title</h1><p>Add <code>--gpus=1</code>.</p>"
+
+    persisted = HtmlToMarkdownProcessor().process(_html_resource(content=html))
+
+    assert html_to_markdown(html) == persisted.get_content()
+
+
+def test_extraction_seam_slices_a_kb_article_like_the_processor():
+    html = (
+        "<html><body><div class='eckb-article-toc'>chrome</div>"
+        "<div>Table of Contents</div><p>BODY LINE</p>"
+        "<div>Bookmarkable Links</div><p>footer</p></body></html>"
+    )
+
+    extracted = html_to_markdown(html)
+
+    assert "BODY LINE" in extracted
+    assert "footer" not in extracted
+
+
+def test_extraction_seam_reports_blank_conversion_as_empty():
+    # The processor keeps the original HTML on a blank conversion; the seam says
+    # so by returning "" rather than inventing text to hash.
+    assert html_to_markdown("<!-- nothing -->") == ""

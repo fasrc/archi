@@ -391,11 +391,11 @@ The analysis notebook computes pairwise Cohen's kappa (per pair of graders), Fle
 
 ---
 
-## Maintaining the golden set (`coverage` / `orphans`)
+## Maintaining the golden set (`coverage` / `orphans` / `drift`)
 
-The question bank drifts away from the knowledge base in two directions: the KB grows pages
-nobody wrote a question for, and it removes pages some question still cites. Two read-only
-subcommands find each drift:
+The question bank falls out of step with the knowledge base in three directions: the KB grows
+pages nobody wrote a question for, it removes pages some question still cites, and it rewrites
+pages a confirmed answer was checked against. Three read-only subcommands find each:
 
 ```bash
 # Which ingested pages does no bank row ground against?
@@ -408,6 +408,11 @@ python scripts/benchmarking/goldenset_maintenance.py orphans \
     --bank examples/benchmarking/fasrc_ragas_queries.json \
     --sources config/lists/sources.list \
     --min-pages 150
+
+# Which confirmed rows were grounded in a page that has since changed?
+python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com
 ```
 
 `--min-pages` is the sitemap **completeness floor** and must match the deployment's
@@ -417,11 +422,28 @@ default is 1, under which a truncated sitemap expands "successfully" and every b
 from that partial response is reported as an orphan. `--max-pages` and `--allowed-hosts` take
 the same values as the deployment config.
 
-**Both are proposal-only.** They print work lists and leave the bank file byte-unchanged;
-adding a question, locking a reference, or pruning an orphan is a separate step you take
-deliberately. Findings **exit zero** — a gap is work to do, not a broken run — so a cron job
-only alarms on an operational failure: an unreadable bank, corpus, or source list, a missing
-sitemap floor, or an **abstained** run (below).
+**All three are proposal-only.** They print work lists and leave the bank file byte-unchanged;
+adding a question, locking a reference, re-baselining a drifted row, or pruning an orphan is a
+separate step you take deliberately. Findings **exit zero** — a gap is work to do, not a broken
+run — so a cron job only alarms on an operational failure: an unreadable bank, corpus, or source
+list, a missing sitemap floor, or an **abstained** run (below).
+
+### Why the three passes read different sources
+
+They look inconsistent side by side, and the difference is deliberate — each pass asks a
+different question, and the right oracle follows from the question:
+
+| Pass | Reads | Because |
+| --- | --- | --- |
+| `coverage`, `--propose` | the **persisted corpus** | A golden question must be answerable from the text the retriever actually serves. |
+| `orphans` | the **live source inventory** | The corpus never prunes, so a removed page still has a row in it. |
+| `drift` | a **live re-fetch** | The corpus lags in-place edits, so it would agree with a stale reference and call it clean. |
+
+The corpus is trustworthy for *which URLs were ingested* and for *what the index holds*, and for
+nothing else. Ingestion is URL-keyed and skips the content write for a page it already has
+(`persist_resource(..., overwrite=False)`), so a page edited in place keeps its old stored text
+until someone forces a re-ingest. That single fact is why `drift` must re-fetch and why
+`--propose` must not.
 
 ### `coverage` — pages with no question
 
@@ -638,3 +660,212 @@ Three guards keep the pass from crying wolf. Each shows up as its own bucket in 
 
 Nothing is ever deleted. An orphan is reported with its row index and the removed URL so you
 can decide whether to re-ground the question, rewrite it, or drop it.
+
+### `drift` — confirmed answers whose page changed
+
+A `locked` row is one a human read and vouched for against a specific page. `drift` asks whether
+that page still says what it said. It works in two stages, cheap first:
+
+1. **Hash tripwire.** Re-fetch every `sources` URL of every locked row, extract the text, and
+   compare a hash of it against the row's stored `source_hashes` entry. Pure fetch-and-compare —
+   no model, no state file, no timestamps.
+2. **LLM diff.** *Only* for a source whose hash moved, ask a model whether the recorded
+   `reference` still holds against the page as it reads now. The verdict is advisory.
+
+```bash
+# tripwire only — cheap enough to run on a schedule
+python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu
+
+# escalate every moved hash to a model for triage
+python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \
+    --model anthropic/claude-sonnet-5
+```
+
+`--model` is optional. Without it you get the tripwire alone, which is already a real finding:
+"this page changed" is worth knowing even before anyone decides whether the answer broke.
+
+#### What gets checked
+
+Only **`locked`** rows. A `draft` row is unconfirmed by definition — no one ever vouched for its
+answer against a page — so there is nothing for a hash to be a baseline *of*, and its sources are
+not even fetched. A locked row with no `sources` (the `should_refuse` shape) has nothing to check
+either; locking one must never require a grounding hash.
+
+A row is flagged when **any** of its sources moved, and the report names which one. A row
+grounded in three pages where one was rewritten is exactly as stale as a row grounded in a single
+rewritten page.
+
+#### Hashes are taken over extracted text, not markup
+
+The hash is computed over the page's text *after* the ingest's own HTML→Markdown extraction
+(`processing.html_to_markdown`, the same function the scraper persists through), then normalized
+for line endings, Unicode composition form, runs of spaces, and runs of blank lines. Wording,
+case and punctuation are left exactly as written — those are the content.
+
+This is what keeps a theme change, a reflowed paragraph, or a re-indented list from reading as a
+fact change. It is not perfect: on a **non-KB** page the extraction keeps site chrome, so a
+changed nav or footer can still move the hash. That is the cost of the direction this errs in —
+a false positive is one page for a human to glance at, while a false negative is a wrong answer
+that stays in the benchmark scoring as correct. The LLM diff exists to make those glances cheap.
+
+#### What `drift` will and will not fetch
+
+`drift` is the one pass that turns a `sources` value into an outbound request, and `sources` is
+data read out of a file. So `--allowed-hosts` is **required** — it is the list of hosts drift is
+authorized to contact, and there is no allow-everything default:
+
+```bash
+python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com
+```
+
+The bank legitimately grounds some questions in external authorities (the upstream Slurm docs),
+so the list is usually more than one host — but naming them is the operator's call, not the bank
+file's. Every URL is then checked against the ingest's own trust filter (`is_url_allowed`)
+*before* it is dialled. Refused unconditionally, allowlisted or not:
+
+- any scheme that is not `https` (see **TLS** below — the ingest permits `http`; drift does not)
+- a loopback, private, or link-local address (`127.0.0.1`, `10.0.0.5`, `169.254.169.254`)
+- an obfuscated numeric host that resolvers still map to those (`2130706433`, `0177.0.0.1`)
+- a malformed or zero port
+
+A refused URL is **never contacted and never shown to a model** — it is reported in its own
+bucket, not counted as clean. This matters because reusing the ingest's *fetcher* does not
+inherit the ingest's *target policy*: `fetch_sitemap_text` enforces transport limits (no
+cross-host redirects, a bounded body, a timeout), while the trust filter lives in
+`expand_sitemaps`. Drift applies it itself.
+
+**TLS is verified, and the connection may never leave HTTPS.** The ingest's fetcher defaults to
+`verify=False`; drift overrides that. A network attacker who could substitute page content would
+otherwise be able to manufacture drift findings, steer the advisory verdict, and put text of their
+choosing into a prompt sent to the model provider. There is deliberately no flag to turn
+verification off — such a flag ends up in the cron line. A deployment with a private CA sets
+`REQUESTS_CA_BUNDLE`.
+
+Verification only protects a hop that is still TLS, so two plaintext routes are closed alongside
+it. A `sources` URL written as `http://` is refused by the policy above and named in the report,
+even on an allowlisted host — `sources` is repo-committed data, so writing `https` is a
+one-character edit. And an `https://` page that redirects to `http://` **on its own host** passes
+the fetcher's host check, which compares hosts and not schemes; drift refuses that downgrade at
+the transport. Ingestion is unaffected — it still follows such redirects, because it forwards
+nothing to a model provider.
+
+**Not covered:** DNS-rebinding-resistant connection pinning. This layer sees only a *hostname* —
+nothing resolves DNS or inspects the address actually connected to — so a name that passes the
+filter but resolves to an internal address is not caught. That is precisely why the allowlist is
+mandatory: it narrows the exposure from "any name the bank happens to contain" to "a host the
+operator vouched for", which is the part a hostname check can enforce.
+
+The real fix is docketed against `fetch_sitemap_text` itself
+([#143](https://github.com/fasrc/archi/issues/143), §Deferred hardening v2/H1) rather than
+reimplemented here, because the same gap applies to `expand_sitemaps` — which fetches URLs it
+read out of a **remote** document, a strictly less trusted source than a repo-committed bank —
+and a second, divergent fetch path is the failure mode this module is built to avoid.
+
+#### Seeing the evidence
+
+`--show-text` prints the fetched page text behind each finding, delimited per URL:
+
+```bash
+python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \
+    --model anthropic/claude-sonnet-5 --show-text
+```
+
+It is opt-in because the report is a work list and a page body per changed row would bury it —
+but with `--model` you would otherwise be reading a one-sentence verdict about text you cannot
+see, which is not a review. Note this is the **new** page, not a diff: the tool stores only a
+hash of the old one, which is exactly what lets it keep no state between runs.
+
+A very long page is cut, and the cut is marked with `[... page truncated ...]`. The hash still
+covers the whole page — only the text kept for review is capped — but the model sees the same
+truncated copy you do, so a verdict on a long page is a verdict on its opening section.
+
+#### Stored hashes carry their algorithm
+
+A `source_hashes` value looks like `sha256:9f86d081…`, not a bare hex string. The label is what
+lets the tool tell "this baseline was computed a different way" from "this page changed" — a bare
+digest cannot say how it was made, and guessing would either flag the whole bank at once or,
+worse, agree by coincidence. A stored value the tool does not recognize is reported as
+**incomparable** and is never counted as clean.
+
+#### Everything that isn't `unchanged` or `changed` is reported
+
+A page the tool could not check must never read as a page that is fine, so each unjudgeable state
+gets its own bucket in the report:
+
+- **No baseline recorded** — the row is locked but has no `source_hashes` entry for that URL.
+  Nothing to compare against, so it is neither drifted nor clean.
+- **Incomparable baseline** — the stored value is not a well-formed `sha256:` digest (see above):
+  an unrecognized algorithm label, or a hand-edited value that kept the label but lost the digest
+  (`sha256:9f86d0818`). Either way there is nothing a fresh hash could equal, so it is reported as
+  unchecked rather than as a change.
+- **Unreachable** — the fetch failed. Explicitly *not* evidence the page is unchanged.
+- **Refused** — the URL was rejected by the fetch policy above, so it was never contacted.
+- **Stale baselines** — a `source_hashes` entry for a URL the row no longer cites, left behind
+  when someone edited `sources`. Harmless on its own, but it means a recorded confirmation
+  refers to a page that is no longer part of that question. Reported even when `sources` was
+  emptied *completely*, which is the largest version of the same edit — that row is still counted
+  as skipped, because nothing was fetched or compared, but its orphaned baselines are named.
+
+#### Recording a baseline
+
+The tool never writes the bank, so `--print-hashes` is how a baseline gets recorded: it prints a
+paste-ready block per row.
+
+```bash
+python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu --print-hashes
+```
+
+```json
+{
+  "source_hashes": {
+    "https://docs.rc.fas.harvard.edu/kb/gpu-computing": "sha256:9f86d081884c7d65…"
+  }
+}
+```
+
+**Declare the lock first, then take the baseline.** Blocks are produced for `locked` rows only, so
+locking a confirmed candidate is two edits to the same row:
+
+1. set `status: locked` on the row (this is the human act — you are vouching for the reference
+   against that page),
+2. run the command above and paste the block it prints for that row.
+
+Between the two the row is locked with no baseline, which is a state the report already names
+(*no baseline recorded*) rather than a broken one. The order is deliberate: a baseline is a record
+of a confirmation, so producing one for a `draft` row would manufacture the evidence of a
+confirmation that has not happened. A run that prints no blocks says so and names this reason.
+
+Do the same after reviewing a drifted row and deciding the answer still holds — that re-baselines
+it so the next run is quiet again. Both are human acts, on purpose: a tool that re-baselined a
+drifted row by itself would erase the finding before anyone read it.
+
+Pasting replaces the row's whole map, so each block is **complete for its row**: a source that
+could not be read this run carries its existing baseline forward rather than vanishing. Where a
+source has neither a fresh nor a stored hash there is nothing to carry, and the block is labelled
+`INCOMPLETE` — pasting it as-is would drop that source. Baselines for URLs the row no longer
+cites are deliberately not carried forward; they are reported separately as stale.
+
+#### Abstention
+
+If **no source was read at all** — every one unreachable or refused — the run reports `ABSTAINED`
+on stderr and **exits non-zero**. Nothing was read, so "no drift" would be a clean bill of health
+for a check that never happened. Refusals count here too: a mistyped `--allowed-hosts` rejects
+every source, and that must not exit zero.
+
+A *single* unreachable page does not abstain — unlike the orphan pass, where one missing sitemap
+makes unrelated rows look deleted. A failure here is local: it affects only the rows citing that
+URL, and those rows are individually reported as unchecked. Each URL is fetched at most once per
+run, failures included, so a bank citing one page from twenty rows makes one request rather than
+twenty.
+
+#### Advisory, always
+
+`drift` never edits `reference`, `status`, or `source_hashes`, and a model verdict never removes
+a row from the report. The hash mismatch is the fact; the verdict only tells you how urgently to
+look. A `holds` reply still leaves the row listed — putting a model in charge of whether a real
+change gets reviewed is exactly the failure the tripwire exists to prevent.

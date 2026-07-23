@@ -641,6 +641,78 @@ class TestFetchHelper:
         assert text == "<urlset/>"
         assert get.call_count == 2
 
+    def test_same_host_downgrade_redirect_followed_by_default(self):
+        # The ingest's behaviour is unchanged: `require_https` is opt-in, so this
+        # PR cannot alter what a running ingest fetches.
+        redirect = self._resp(
+            status=301,
+            headers={"Location": "http://docs.rc.fas.harvard.edu/final.xml"},
+            url="https://docs.rc.fas.harvard.edu/s.xml",
+        )
+        ok = self._resp(url="http://docs.rc.fas.harvard.edu/final.xml")
+        with patch(
+            "src.data_manager.collectors.scrapers.sitemap_source.requests.get",
+            side_effect=[redirect, ok],
+        ) as get:
+            text = ss.fetch_sitemap_text(
+                "https://docs.rc.fas.harvard.edu/s.xml", verify=False
+            )
+        assert text == "<urlset/>"
+        assert get.call_count == 2
+
+    def test_require_https_refuses_a_same_host_downgrade_redirect(self):
+        # The host check cannot see this: the target host matches, only the
+        # scheme drops. A caller that verifies TLS on hop one still ends up
+        # reading hop two in the clear unless the redirect itself is refused.
+        redirect = self._resp(
+            status=301,
+            headers={"Location": "http://docs.rc.fas.harvard.edu/final.xml"},
+            url="https://docs.rc.fas.harvard.edu/s.xml",
+        )
+        with patch(
+            "src.data_manager.collectors.scrapers.sitemap_source.requests.get",
+            return_value=redirect,
+        ) as get:
+            with pytest.raises(ss.SitemapFetchError):
+                ss.fetch_sitemap_text(
+                    "https://docs.rc.fas.harvard.edu/s.xml",
+                    verify=True,
+                    require_https=True,
+                )
+        # the plaintext target is never requested
+        assert get.call_count == 1
+
+    def test_require_https_refuses_a_plaintext_start_url_without_dialing(self):
+        with patch(
+            "src.data_manager.collectors.scrapers.sitemap_source.requests.get"
+        ) as get:
+            with pytest.raises(ss.SitemapFetchError):
+                ss.fetch_sitemap_text(
+                    "http://docs.rc.fas.harvard.edu/s.xml",
+                    verify=True,
+                    require_https=True,
+                )
+        assert get.call_count == 0
+
+    def test_require_https_still_follows_a_same_host_https_redirect(self):
+        redirect = self._resp(
+            status=301,
+            headers={"Location": "https://docs.rc.fas.harvard.edu/final.xml"},
+            url="https://docs.rc.fas.harvard.edu/s.xml",
+        )
+        ok = self._resp(url="https://docs.rc.fas.harvard.edu/final.xml")
+        with patch(
+            "src.data_manager.collectors.scrapers.sitemap_source.requests.get",
+            side_effect=[redirect, ok],
+        ) as get:
+            text = ss.fetch_sitemap_text(
+                "https://docs.rc.fas.harvard.edu/s.xml",
+                verify=True,
+                require_https=True,
+            )
+        assert text == "<urlset/>"
+        assert get.call_count == 2
+
     def test_missing_charset_does_not_probe_apparent_encoding(self):
         # application/xml with no charset -> resp.encoding is None. Accessing
         # resp.apparent_encoding AFTER streaming reads resp.content, which the

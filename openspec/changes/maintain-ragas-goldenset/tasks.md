@@ -44,11 +44,11 @@
 
 ## 4. Fact-drift detection (hash tripwire → LLM diff, TDD)
 
-- [ ] 4.1 TDD: `source_hashes` are content hashes the tool computes over the **normalized extracted text** of **each** re-fetched source URL (reuse the ingest's extraction + `normalize_page_url`, not raw markup — D6 sign-off condition, so formatting-only changes don't false-flag), NOT read from the corpus identifier (URL-only); a `locked` row is flagged when **any** of its `sources` URLs has a fresh hash differing from its stored `source_hashes` entry (naming the changed URL), and not flagged when all match.
-- [ ] 4.2 TDD: `draft` rows, and `locked` source-less `should_refuse` rows, are never drift-checked, regardless of hash.
-- [ ] 4.3 TDD: on a hash mismatch the tool asks the injected LLM whether the stored `reference` still holds against the re-fetched source (injected fetch); output is advisory; `reference`/`status` are left unchanged.
-- [ ] 4.4 Wire `drift` as a subcommand; confirm no detection path writes to the bank file.
-- [ ] 4.5 **Docs (same PR):** document `drift` (hash tripwire → LLM diff, advisory-only) in `docs/docs/benchmarking.md`.
+- [x] 4.1 TDD: `source_hashes` are content hashes the tool computes over the **normalized extracted text** of **each** re-fetched source URL (reuse the ingest's extraction + `normalize_page_url`, not raw markup — D6 sign-off condition, so formatting-only changes don't false-flag), NOT read from the corpus identifier (URL-only); a `locked` row is flagged when **any** of its `sources` URLs has a fresh hash differing from its stored `source_hashes` entry (naming the changed URL), and not flagged when all match.
+- [x] 4.2 TDD: `draft` rows, and `locked` source-less `should_refuse` rows, are never drift-checked, regardless of hash.
+- [x] 4.3 TDD: on a hash mismatch the tool asks the injected LLM whether the stored `reference` still holds against the re-fetched source (injected fetch); output is advisory; `reference`/`status` are left unchanged.
+- [x] 4.4 Wire `drift` as a subcommand; confirm no detection path writes to the bank file.
+- [x] 4.5 **Docs (same PR):** document `drift` (hash tripwire → LLM diff, advisory-only) in `docs/docs/benchmarking.md`.
 
 ## 5. Read-only `report` + dev-server cron
 

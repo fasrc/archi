@@ -1,16 +1,18 @@
 #!/usr/bin/env python
 """Read-only maintenance passes over the RAGAS golden-set question bank.
 
-Answers two questions an operator otherwise has to eyeball by hand:
+Answers three questions an operator otherwise has to eyeball by hand:
 
 - ``coverage`` — which ingested KB pages does no bank row ground against?
 - ``orphans`` — which bank rows cite a page the live KB no longer publishes?
+- ``drift`` — which confirmed rows were grounded in a page that has since changed?
 
-Both passes are **proposal-only**: they print work lists and leave the bank file
-byte-unchanged. Adding a question, locking a reference, or pruning an orphan is a
-separate, explicitly human-initiated step. ``--propose`` drafts candidates for one
-greenlit gap and prints them; ``--decline``/``--undecline`` record and reverse the
-operator's dismissal of a gap in a decision ledger, which is the only file written.
+Every pass is **proposal-only**: they print work lists and leave the bank file
+byte-unchanged. Adding a question, locking a reference, re-baselining a drifted
+row, or pruning an orphan is a separate, explicitly human-initiated step.
+``--propose`` drafts candidates for one greenlit gap and prints them;
+``--decline``/``--undecline`` record and reverse the operator's dismissal of a gap
+in a decision ledger, which is the only file this tool writes.
 
 Exit codes follow the cron contract: **0 even when there are findings** (gaps and
 orphans are work to do, not a broken run), non-zero only on operational failure —
@@ -40,6 +42,11 @@ Usage:
         --bank <bank.json> --pg-dsn <dsn> --decline <url> --ledger <ledger.json>
     python scripts/benchmarking/goldenset_maintenance.py coverage \\
         --bank <bank.json> --undecline <url> --ledger <ledger.json>
+
+    # fact drift: re-fetch every locked row's sources and report what moved
+    python scripts/benchmarking/goldenset_maintenance.py drift \\
+        --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \\
+        [--model anthropic/claude-sonnet-5] [--show-text] [--print-hashes]
 """
 
 from __future__ import annotations
@@ -63,6 +70,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.utils.benchmark_schema import normalize_bank  # noqa: E402  # isort: skip
 from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
+    DRIFT_INCOMPARABLE,
+    DRIFT_REFUSED,
+    DRIFT_UNBASELINED,
+    DRIFT_UNREACHABLE,
     ProposalError,
     bank_source_urls,
     build_live_inventory,
@@ -70,6 +81,7 @@ from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
     declined_urls,
     filter_docs,
     find_coverage_gaps,
+    find_drift,
     find_orphans,
     group_by_parent,
     propose_candidates,
@@ -80,6 +92,12 @@ from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
     with_decline,
     without_decline,
 )
+
+
+#: Body cap for a drift re-fetch. A KB article is a few hundred KB; the ingest's
+#: own 64 MiB ceiling exists for whole-site sitemap indexes and is far too much
+#: headroom for a pass that fetches every source in the bank.
+MAX_PAGE_BYTES = 8 * 1024 * 1024
 
 
 class OperationalError(Exception):
@@ -364,6 +382,43 @@ def build_ask_llm(model: str):
         return content if isinstance(content, str) else str(content)
 
     return ask
+
+
+def build_fetch_html():
+    """The page fetcher drift re-fetches sources with.
+
+    Reuses the ingest's own fetch for its transport limits — no cross-host
+    redirects, a bounded body, a timeout. Those are the ONLY protections it
+    carries: the ingest's *target* policy (`is_url_allowed`) lives in
+    `expand_sitemaps`, not here, so `find_drift` applies it itself before
+    handing any URL to this callable.
+
+    Two of that fetcher's defaults are overridden rather than inherited:
+
+    - **TLS is verified.** `fetch_sitemap_text` defaults to `verify=False`.
+      Inheriting that would let anyone on the network path substitute page
+      content — manufacturing drift findings, steering the advisory verdict, and
+      putting text of their choosing into a prompt sent to the model provider.
+      A private CA goes in `REQUESTS_CA_BUNDLE`; there is deliberately no flag to
+      turn verification off, because such a flag ends up in the cron line.
+    - **The connection may never leave HTTPS.** Verification only protects a hop
+      that is still TLS, and the fetcher's redirect guard compares hosts, not
+      schemes — so an allowlisted page that redirects to `http://` on its own
+      host would be read in the clear with `verify=True` still set. `find_drift`
+      refuses a plaintext `sources` URL before dialing; this closes the redirect
+      the policy layer cannot see.
+    - **The body cap drops to `MAX_PAGE_BYTES`.** The ingest's 64 MiB ceiling is
+      sized for a whole site's sitemap index; a KB article is a few hundred KB,
+      and this runs across a whole bank.
+    """
+    from src.data_manager.collectors.scrapers.sitemap_source import fetch_sitemap_text
+
+    def fetch(url: str) -> str:
+        return fetch_sitemap_text(
+            url, verify=True, max_bytes=MAX_PAGE_BYTES, require_https=True
+        )
+
+    return fetch
 
 
 def read_source_lines(path: str) -> List[str]:
@@ -659,6 +714,195 @@ def run_orphans(args: argparse.Namespace) -> int:
     return 0
 
 
+def _drift_label(check) -> str:
+    """One line describing a source check, with any advisory verdict attached."""
+    line = check.url
+    if check.verdict is not None:
+        line += f"  [{check.verdict.verdict}]"
+        if check.verdict.explanation:
+            line += f" {check.verdict.explanation}"
+    return line
+
+
+def run_drift(args: argparse.Namespace) -> int:
+    """Re-hash every locked row's sources and report what moved.
+
+    Advisory end to end: the bank file is opened read-only, and neither
+    `reference` nor `status` nor `source_hashes` is ever rewritten. A confirmed
+    row that drifted is a question for a human, and re-confirming it is the same
+    human act as locking it was.
+    """
+    bank = load_bank(args.bank)
+    ask_llm = build_ask_llm(args.model) if args.model else None
+    report = find_drift(
+        bank,
+        build_fetch_html(),
+        ask_llm=ask_llm,
+        allowed_hosts=args.allowed_hosts,
+    )
+
+    if report.abstained:
+        # Every fetch failed, so no page was actually read. Reporting "no drift"
+        # would be a clean bill of health nothing was checked for.
+        print(
+            "ABSTAINED — no source was read at all (every one was unreachable or "
+            "refused by the fetch policy), so nothing was checked. Reporting no "
+            "drift here would be a false clean over the whole bank.",
+            file=sys.stderr,
+        )
+        _print_group("why", report.reasons, stream=sys.stderr)
+        return 1
+
+    print(
+        f"locked rows: {report.checked_rows} checked | {report.skipped_rows} skipped "
+        f"(draft or source-less) | {len(report.drifted)} drifted | "
+        f"{len(report.unbaselined)} without a baseline | "
+        f"{len(report.incomparable)} incomparable | "
+        f"{len(report.unreachable)} unreachable"
+    )
+
+    if report.drifted:
+        _print_group(
+            "drift (source changed since the reference was confirmed — advisory)",
+            [
+                f"row {row.row_index}: {_drift_label(c)}  — {row.user_input[:60]}"
+                for row in report.drifted
+                for c in row.changed
+            ],
+        )
+    # Each bucket below is a source the tool could NOT judge. They are printed
+    # separately, and never folded into "unchanged", because a page that failed
+    # to be checked must not read as a page that is fine.
+    _print_state(
+        report,
+        DRIFT_UNBASELINED,
+        "no baseline recorded (locked, but no source_hashes entry — not checked)",
+    )
+    _print_state(
+        report,
+        DRIFT_INCOMPARABLE,
+        "incomparable baseline (stored hash is not a sha256: digest — not checked)",
+    )
+    _print_state(
+        report,
+        DRIFT_UNREACHABLE,
+        "unreachable this run (NOT evidence the page is unchanged)",
+    )
+    _print_state(
+        report,
+        DRIFT_REFUSED,
+        "refused by the fetch policy (never contacted, never sent to a model)",
+    )
+
+    stale = [
+        f"row {row.row_index}: {', '.join(row.stale_baselines)}"
+        for row in report.rows
+        if row.stale_baselines
+    ]
+    if stale:
+        _print_group(
+            "baselines kept for URLs the row no longer cites (edit `sources`?)", stale
+        )
+
+    if args.show_text:
+        _print_evidence(report)
+    elif report.drifted:
+        print(
+            "\nRe-run with --show-text to see the page text behind each finding "
+            "(and, with --model, the text the verdict was formed on)."
+        )
+    if args.print_hashes:
+        _print_hashes(report)
+    elif report.unbaselined or report.incomparable:
+        print(
+            "\nRe-run with --print-hashes to get paste-ready `source_hashes` blocks "
+            "for the rows above."
+        )
+    return 0
+
+
+def _print_state(report, state: str, title: str) -> None:
+    """Print every check in one unjudgeable state, tagged with its row."""
+    lines = [
+        f"row {row.row_index}: {c.url}" + (f" — {c.detail}" if c.detail else "")
+        for row in report.rows
+        for c in row.checks
+        if c.state == state
+    ]
+    if lines:
+        _print_group(title, lines)
+
+
+def _print_evidence(report) -> None:
+    """Print the fetched text behind each finding, bounded and delimited.
+
+    Opt-in rather than default: the report is a work list, and a page body per
+    changed row would bury it. But a verdict formed on text the operator cannot
+    see is not reviewable — the model gets the page and the human gets a
+    sentence — so the text has to be reachable in one flag.
+
+    The tool stores only a hash of the old page, never its text, so this is the
+    NEW page rather than a diff. That is the deliberate cost of keeping no state
+    file between runs.
+    """
+    for row in report.drifted:
+        for check in row.changed:
+            print(f"\n--- {check.url} (as fetched now) ---")
+            print(check.fresh_text)
+            print(f"--- end {check.url} ---")
+
+
+def _print_hashes(report) -> None:
+    """Emit a paste-ready `source_hashes` block for every row with a fresh hash.
+
+    The bank is never written, so this is the whole path by which a baseline gets
+    recorded: the tool computes, a human pastes. Without it `source_hashes` could
+    never be populated and the tripwire would sit inert.
+
+    A block must therefore be **complete for the row**, because pasting it
+    replaces the whole map. A source that could not be read this run carries its
+    existing baseline forward; emitting only the sources that happened to answer
+    would quietly delete the others' confirmation history — from output that
+    invited the paste. Where a source has neither a fresh nor a stored hash there
+    is nothing to carry, so the block is labelled INCOMPLETE rather than
+    presented as safe.
+
+    Baselines for URLs the row no longer cites are deliberately NOT carried
+    forward; they are reported separately as stale, and dropping them is the
+    point of pasting.
+
+    Emitting nothing is explained rather than left silent. Blocks come from the
+    same locked-only pass as the rest of drift, so asking for a draft row's
+    baseline produces an empty run — right place, wrong step — and unexplained
+    silence reads as a broken tool.
+    """
+    emitted = 0
+    for row in report.rows:
+        carried = {
+            c.url: (c.fresh or c.stored) for c in row.checks if c.fresh or c.stored
+        }
+        if not carried:
+            continue
+        emitted += 1
+        missing = [c.url for c in row.checks if not (c.fresh or c.stored)]
+        print(f"\nrow {row.row_index} — {row.user_input[:60]}")
+        if missing:
+            print(
+                "  # INCOMPLETE — no hash available for: "
+                + ", ".join(missing)
+                + "\n  # Pasting this as-is would drop those sources. Re-run once "
+                "they are reachable."
+            )
+        print(json.dumps({"source_hashes": carried}, indent=2))
+    if not emitted:
+        print(
+            "\nno `source_hashes` blocks — baselines come from `locked` rows only. "
+            "A draft row has no confirmation to record yet, so declaring the lock "
+            "comes first: set `status: locked` on the row, then re-run this to get "
+            "its block."
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -760,6 +1004,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Extra hosts the sitemap may emit — the deployment's allowed_hosts.",
     )
     orphans.set_defaults(func=run_orphans)
+
+    drift = sub.add_parser("drift", help="Locked rows whose grounding page changed.")
+    add_bank(drift)
+    drift.add_argument(
+        "--model",
+        help=(
+            "`provider/model` asked whether the stored reference still holds, for "
+            "sources whose hash moved. Optional: without it the run is the cheap "
+            "hash tripwire alone, which is still a real finding."
+        ),
+    )
+    drift.add_argument(
+        "--allowed-hosts",
+        nargs="+",
+        required=True,
+        metavar="HOST",
+        help=(
+            "REQUIRED — the hosts drift is authorized to contact (e.g. "
+            "docs.rc.fas.harvard.edu slurm.schedmd.com). A `sources` value is "
+            "data, and this pass dials it; anything not listed is refused "
+            "unfetched, as are loopback/private/link-local and non-http(s) "
+            "targets. There is no allow-everything default: this check sees only "
+            "a hostname, so a public-looking name that resolves somewhere "
+            "internal would pass it."
+        ),
+    )
+    drift.add_argument(
+        "--show-text",
+        action="store_true",
+        help=(
+            "Print the fetched page text behind each finding. The tool keeps no "
+            "old text, so this is the new page, not a diff."
+        ),
+    )
+    drift.add_argument(
+        "--print-hashes",
+        action="store_true",
+        help=(
+            "Print a paste-ready `source_hashes` block per row. The tool never "
+            "writes the bank, so this is how a baseline gets recorded."
+        ),
+    )
+    drift.set_defaults(func=run_drift)
     return parser
 
 
