@@ -506,9 +506,10 @@ or via a symlink — before reading a byte. `file_path` comes from the catalog o
 `--corpus-json` dump you were handed, and its contents are sent to an external model provider, so
 an unchecked path is a file-disclosure channel off the machine. The same check catches the dull
 case: a stale path that would silently ground a question in an unrelated file. Absolute paths
-*inside* the data root are still fine, matching what the catalog itself stores. If every candidate is rejected the run also
-exits **non-zero** — a propose run that produced nothing is a failed run, not a finding, which is
-the opposite of how gaps and orphans exit.
+*inside* the data root are still fine, matching what the catalog itself stores.
+
+If every candidate is rejected the run also exits **non-zero** — a propose run that produced
+nothing is a failed run, not a finding, which is the opposite of how gaps and orphans exit.
 
 ### The decision ledger — declines only
 
@@ -543,8 +544,8 @@ neither is a claim you are in a position to make about a page you never reviewed
 Recording a typo'd or covered URL would sit in the ledger and silently suppress that page if it
 ever *became* a gap.
 
-`--undecline` is the reversal, and `--propose` **refuses** a page whose decline still stands,
-pointing you at it. Overriding the decline for just that one run would be worse than useless: the
+`--propose` **refuses** a page whose decline still stands, pointing you at `--undecline`.
+Overriding the decline for just that one run would be worse than useless: the
 drafts start out unapplied, so nothing covers the page, and the stale entry would keep hiding it
 from every later report — a permanent false-clean with no recovery but hand-editing the file.
 
@@ -555,8 +556,8 @@ suppressed drafted URLs would make that abandoned page read as clean forever.
 
 Suppressed pages are **counted and listed**, not silently filtered — a report that hides pages
 without saying so reads as clean when it isn't. Declining is idempotent (declining twice keeps
-the first entry and its reason), and an explicit `--propose` on a declined page still works and
-says so: you changed your mind, and the tool names the earlier decision rather than arguing.
+the first entry and its reason), and undeclining a page that was never declined is a no-op that
+says so.
 
 The ledger is the **only** file this tool ever writes, and unlike coverage a decline cannot be
 re-derived from anything, so the update is protected twice over:

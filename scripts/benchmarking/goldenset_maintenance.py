@@ -8,7 +8,9 @@ Answers two questions an operator otherwise has to eyeball by hand:
 
 Both passes are **proposal-only**: they print work lists and leave the bank file
 byte-unchanged. Adding a question, locking a reference, or pruning an orphan is a
-separate, explicitly human-initiated step.
+separate, explicitly human-initiated step. ``--propose`` drafts candidates for one
+greenlit gap and prints them; ``--decline``/``--undecline`` record and reverse the
+operator's dismissal of a gap in a decision ledger, which is the only file written.
 
 Exit codes follow the cron contract: **0 even when there are findings** (gaps and
 orphans are work to do, not a broken run), non-zero only on operational failure —
@@ -26,7 +28,18 @@ Usage:
 
     # orphans against the current source list (sitemap- lines are expanded live)
     python scripts/benchmarking/goldenset_maintenance.py orphans \\
-        --bank <bank.json> --sources deploy/fasrc-dev/sources.list
+        --bank <bank.json> --sources config/lists/sources.list --min-pages 150
+
+    # draft candidates for one greenlit gap, grounded in the persisted document
+    python scripts/benchmarking/goldenset_maintenance.py coverage \\
+        --bank <bank.json> --pg-dsn <dsn> --propose <url> \\
+        --model anthropic/claude-sonnet-5 --data-path <data-root>
+
+    # dismiss a gap, and undo that
+    python scripts/benchmarking/goldenset_maintenance.py coverage \\
+        --bank <bank.json> --pg-dsn <dsn> --decline <url> --ledger <ledger.json>
+    python scripts/benchmarking/goldenset_maintenance.py coverage \\
+        --bank <bank.json> --undecline <url> --ledger <ledger.json>
 """
 
 from __future__ import annotations
