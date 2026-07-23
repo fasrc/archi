@@ -23,24 +23,34 @@ from __future__ import annotations
 
 import copy
 
+import pytest
+
 from src.data_manager.collectors.scrapers.sitemap_source import (
     SitemapFetchError,
     SitemapPolicy,
 )
 from src.utils.goldenset_maintenance import (
     CorpusDoc,
+    Decline,
     LiveInventory,
     NearMiss,
+    ProposalError,
     bank_source_urls,
     build_live_inventory,
+    declined_urls,
+    extract_page_text,
     filter_docs,
     find_coverage_gaps,
     find_orphans,
     group_by_parent,
     parent_source,
+    parse_candidates,
+    propose_candidates,
     read_corpus_docs,
+    read_declines,
     reconcile,
     reconciliation_key,
+    with_decline,
 )
 
 
@@ -855,3 +865,299 @@ class TestFindOrphans:
         find_orphans(bank, _inventory(f"{KB}/kb/a"))
 
         assert bank == before
+
+
+# --------------------------------------------------------------------------- #
+# Group 3 — decision ledger + greenlit-only candidate proposal
+# --------------------------------------------------------------------------- #
+class TestDeclineLedger:
+    """3.4 — the ledger records DECLINES only; covered-ness comes from the bank."""
+
+    def test_reads_entries_into_declines(self):
+        declines = read_declines(
+            [{"url": f"{KB}/kb/a", "reason": "minor page", "at": "2026-07-22"}]
+        )
+
+        assert declines == (Decline(url=f"{KB}/kb/a", reason="minor page", at="2026-07-22"),)
+
+    def test_survives_a_hand_edited_ledger(self):
+        declines = read_declines(
+            ["not-an-object", {"no_url": 1}, {"url": ""}, {"url": f"{KB}/kb/a"}]
+        )
+
+        assert [d.url for d in declines] == [f"{KB}/kb/a"]
+
+    def test_a_non_list_ledger_reads_as_empty(self):
+        assert read_declines({"url": f"{KB}/kb/a"}) == ()
+        assert read_declines(None) == ()
+
+    def test_declined_urls_are_canonicalized_like_every_other_url(self):
+        # A ledger hand-edited with a trailing slash must still suppress the
+        # canonical corpus URL — otherwise a decline silently stops working.
+        declines = read_declines([{"url": f"{KB}/kb/a/"}])
+
+        assert declined_urls(declines) == {f"{KB}/kb/a"}
+
+    def test_appending_a_decline_leaves_the_original_entries_untouched(self):
+        entries = [{"url": f"{KB}/kb/a"}]
+
+        appended = with_decline(entries, f"{KB}/kb/b", reason="thin", at="2026-07-22")
+
+        assert entries == [{"url": f"{KB}/kb/a"}]
+        assert appended == [
+            {"url": f"{KB}/kb/a"},
+            {"url": f"{KB}/kb/b", "reason": "thin", "at": "2026-07-22"},
+        ]
+
+    def test_declining_the_same_page_twice_does_not_duplicate_it(self):
+        entries = with_decline([], f"{KB}/kb/a", reason="first")
+
+        again = with_decline(entries, f"{KB}/kb/a/", reason="second")
+
+        assert again == entries
+
+    def test_declining_an_unusable_url_is_refused(self):
+        # Writing a URL the tool cannot canonicalize would create a ledger entry
+        # that can never match anything — a decline that silently does nothing.
+        with pytest.raises(ValueError):
+            with_decline([], "http://[")
+
+    def test_a_declined_page_is_suppressed_from_the_gap_list(self):
+        docs = [_doc("/kb/a"), _doc("/kb/b")]
+
+        report = find_coverage_gaps(docs, [], declined={f"{KB}/kb/a"})
+
+        assert [d.url for d in report.gaps] == [f"{KB}/kb/b"]
+
+    def test_a_suppressed_page_is_reported_not_silently_dropped(self):
+        # A report that hides pages without saying so reads as clean when it is
+        # not — the suppressed set is part of the output, not a silent filter.
+        docs = [_doc("/kb/a")]
+
+        report = find_coverage_gaps(docs, [], declined={f"{KB}/kb/a"})
+
+        assert [d.url for d in report.suppressed] == [f"{KB}/kb/a"]
+        assert report.covered == ()
+
+    def test_a_declined_page_that_a_bank_row_covers_is_covered_not_suppressed(self):
+        docs = [_doc("/kb/a")]
+
+        report = find_coverage_gaps(docs, [_row(f"{KB}/kb/a")], declined={f"{KB}/kb/a"})
+
+        assert [d.url for d in report.covered] == [f"{KB}/kb/a"]
+        assert report.suppressed == ()
+
+    def test_a_greenlit_but_unapplied_page_is_still_a_gap(self):
+        # Proposing candidates must NOT mark a page covered: covered-ness is
+        # re-derived from the bank, so a page whose candidates were drafted and
+        # then abandoned stays visible until a row actually lands.
+        docs = [_doc("/kb/a")]
+        propose_candidates(f"{KB}/kb/a", "body", _llm_returning([_candidate()]))
+
+        report = find_coverage_gaps(docs, [], declined=set())
+
+        assert [d.url for d in report.gaps] == [f"{KB}/kb/a"]
+
+
+def _candidate(**extra):
+    candidate = {
+        "user_input": "How do I request a GPU?",
+        "reference": "Add #SBATCH --gpus=1.",
+        "anchor_type": "easy_retrieve",
+    }
+    candidate.update(extra)
+    return candidate
+
+
+def _llm_returning(payload):
+    """An injected LLM that answers with `payload` serialized as JSON."""
+    import json as _json
+
+    text = payload if isinstance(payload, str) else _json.dumps(payload)
+    return lambda prompt: text
+
+
+class TestProposeCandidates:
+    """3.1-3.3 — grounded drafts for a greenlit page, never locked, never applied."""
+
+    def test_drafts_a_candidate_grounded_in_the_greenlit_page(self):
+        proposal = propose_candidates(
+            f"{KB}/kb/a", "GPU body text", _llm_returning([_candidate()])
+        )
+
+        assert len(proposal.candidates) == 1
+        row = proposal.candidates[0].as_row()
+        assert row["status"] == "draft"
+        assert row["sources"] == [f"{KB}/kb/a"]
+        assert row["user_input"] == "How do I request a GPU?"
+        assert row["reference"] == "Add #SBATCH --gpus=1."
+        assert row["anchor_type"] == "easy_retrieve"
+
+    def test_a_candidate_can_never_be_constructed_locked(self):
+        # `status` is not a field: there is no way to express a locked candidate,
+        # so a compromised or confused model cannot smuggle one through.
+        proposal = propose_candidates(
+            f"{KB}/kb/a", "body", _llm_returning([_candidate(status="locked")])
+        )
+
+        assert proposal.candidates[0].as_row()["status"] == "draft"
+
+    def test_model_supplied_sources_are_replaced_by_the_greenlit_url(self):
+        # Grounding is the tool's guarantee, not the model's: whatever URL the
+        # model cites, the row it produces cites the page the operator greenlit.
+        proposal = propose_candidates(
+            f"{KB}/kb/a",
+            "body",
+            _llm_returning([_candidate(sources=["https://evil.example/x"])]),
+        )
+
+        assert proposal.candidates[0].as_row()["sources"] == [f"{KB}/kb/a"]
+
+    def test_the_url_is_canonicalized_before_it_becomes_the_source(self):
+        proposal = propose_candidates(
+            f"{KB}/kb/a/", "body", _llm_returning([_candidate()])
+        )
+
+        assert proposal.candidates[0].as_row()["sources"] == [f"{KB}/kb/a"]
+
+    def test_an_unknown_anchor_type_is_rejected_with_a_reason(self):
+        proposal = propose_candidates(
+            f"{KB}/kb/a", "body", _llm_returning([_candidate(anchor_type="trivia")])
+        )
+
+        assert proposal.candidates == ()
+        assert len(proposal.rejected) == 1
+        assert "anchor_type" in proposal.rejected[0].reason
+
+    def test_a_should_refuse_candidate_is_rejected_as_ungroundable(self):
+        # `should_refuse` rows carry NO sources by design; one "grounded in" a
+        # page is a contradiction, so it is rejected rather than relabeled.
+        proposal = propose_candidates(
+            f"{KB}/kb/a", "body", _llm_returning([_candidate(anchor_type="should_refuse")])
+        )
+
+        assert proposal.candidates == ()
+        assert "should_refuse" in proposal.rejected[0].reason
+
+    def test_a_blank_question_or_answer_is_rejected(self):
+        proposal = propose_candidates(
+            f"{KB}/kb/a",
+            "body",
+            _llm_returning(
+                [_candidate(user_input="  "), _candidate(reference=""), _candidate()]
+            ),
+        )
+
+        assert len(proposal.candidates) == 1
+        assert len(proposal.rejected) == 2
+
+    def test_a_non_object_candidate_is_rejected_not_crashed_on(self):
+        proposal = propose_candidates(
+            f"{KB}/kb/a", "body", _llm_returning(["just a string", _candidate()])
+        )
+
+        assert len(proposal.candidates) == 1
+        assert len(proposal.rejected) == 1
+
+    def test_a_fenced_json_reply_is_parsed(self):
+        import json as _json
+
+        fenced = "```json\n" + _json.dumps([_candidate()]) + "\n```"
+
+        proposal = propose_candidates(f"{KB}/kb/a", "body", _llm_returning(fenced))
+
+        assert len(proposal.candidates) == 1
+
+    def test_a_candidates_object_wrapper_is_accepted(self):
+        proposal = propose_candidates(
+            f"{KB}/kb/a", "body", _llm_returning({"candidates": [_candidate()]})
+        )
+
+        assert len(proposal.candidates) == 1
+
+    def test_unparseable_model_output_raises_rather_than_returning_nothing(self):
+        # Zero candidates from a broken reply must not look like "this page has
+        # nothing worth asking" — that is an operational failure of the run.
+        with pytest.raises(ProposalError):
+            propose_candidates(f"{KB}/kb/a", "body", _llm_returning("not json at all"))
+
+    def test_a_json_scalar_reply_raises(self):
+        with pytest.raises(ProposalError):
+            propose_candidates(f"{KB}/kb/a", "body", _llm_returning("42"))
+
+    def test_the_prompt_carries_the_page_text_and_the_url(self):
+        seen = {}
+
+        def ask(prompt):
+            seen["prompt"] = prompt
+            import json as _json
+
+            return _json.dumps([_candidate()])
+
+        propose_candidates(f"{KB}/kb/a", "UNIQUE BODY MARKER", ask, count=2)
+
+        assert "UNIQUE BODY MARKER" in seen["prompt"]
+        assert f"{KB}/kb/a" in seen["prompt"]
+        assert "2" in seen["prompt"]
+
+    def test_the_page_text_is_bounded_so_a_huge_page_cannot_blow_the_context(self):
+        seen = {}
+
+        def ask(prompt):
+            seen["prompt"] = prompt
+            import json as _json
+
+            return _json.dumps([_candidate()])
+
+        propose_candidates(f"{KB}/kb/a", "x" * 500_000, ask)
+
+        assert len(seen["prompt"]) < 200_000
+
+    def test_an_empty_page_refuses_to_ask_the_model_at_all(self):
+        # Proposing from an empty extraction would produce ungrounded questions.
+        called = []
+
+        with pytest.raises(ProposalError):
+            propose_candidates(f"{KB}/kb/a", "   ", lambda p: called.append(p) or "[]")
+
+        assert called == []
+
+    def test_an_unusable_page_url_is_refused_before_the_model_is_called(self):
+        called = []
+
+        with pytest.raises(ProposalError):
+            propose_candidates("http://[", "body", lambda p: called.append(p) or "[]")
+
+        assert called == []
+
+    def test_the_sanitizer_refuses_an_unusable_url_on_its_own(self):
+        # `parse_candidates` is a public entry point, so it re-checks rather than
+        # trusting that every caller validated the URL first.
+        with pytest.raises(ProposalError):
+            parse_candidates("[]", "http://[")
+
+    def test_proposing_never_touches_the_bank(self):
+        bank = [_row(f"{KB}/kb/other")]
+        before = copy.deepcopy(bank)
+
+        propose_candidates(f"{KB}/kb/a", "body", _llm_returning([_candidate()]))
+
+        assert bank == before
+
+
+class TestExtractPageText:
+    """3.1 — grounding uses the same extraction the ingest persisted."""
+
+    def test_a_kb_page_is_reduced_to_the_article_body_like_the_ingest_does(self):
+        html = (
+            "<div class='eckb-article-content'><p>Table of Contents</p>"
+            "<p>THE BODY</p><p>Last Updated 2026</p></div>"
+        )
+
+        text = extract_page_text(html)
+
+        assert "THE BODY" in text
+        assert "Last Updated" not in text
+
+    def test_a_plain_page_converts_to_markdown(self):
+        assert "# Title" in extract_page_text("<h1>Title</h1>")

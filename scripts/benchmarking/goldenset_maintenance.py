@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional, Sequence
 
@@ -41,12 +42,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.utils.benchmark_schema import normalize_bank  # noqa: E402  # isort: skip
 from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
+    ProposalError,
     build_live_inventory,
+    declined_urls,
+    extract_page_text,
     filter_docs,
     find_coverage_gaps,
     find_orphans,
     group_by_parent,
+    propose_candidates,
     read_corpus_docs,
+    read_declines,
+    with_decline,
 )
 
 
@@ -108,6 +115,74 @@ def corpus_rows_from_postgres(dsn: str):
     return fetch
 
 
+def read_ledger(path: Optional[str]) -> List[Any]:
+    """Load the decision ledger, or an empty one when the file does not exist.
+
+    A *missing* ledger legitimately means "nothing declined yet". A *corrupt*
+    one does not: reading it as empty would resurface every page an operator
+    ever dismissed, so it is an operational failure.
+    """
+    if not path:
+        return []
+    if not Path(path).exists():
+        return []
+    entries = _load_json(path)
+    if not isinstance(entries, list):
+        raise OperationalError(f"ledger {path} is not a list of decline entries")
+    return entries
+
+
+def write_ledger(path: str, entries: List[Any]) -> None:
+    """Persist the ledger. The ONLY file this tool ever writes — never the bank."""
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(
+            json.dumps(entries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        raise OperationalError(f"cannot write ledger {path}: {exc}") from exc
+
+
+def fetch_page_html(url: str) -> str:
+    """GET a KB page, reusing the inventory's hardened fetch.
+
+    `fetch_sitemap_text` is a plain bounded GET that refuses cross-host
+    redirects — the same SSRF containment the sitemap expansion runs under,
+    which is exactly what a tool that fetches operator-named URLs wants.
+    """
+    from src.data_manager.collectors.scrapers.sitemap_source import (
+        SitemapFetchError,
+        fetch_sitemap_text,
+    )
+
+    try:
+        return fetch_sitemap_text(url)
+    except SitemapFetchError as exc:
+        raise OperationalError(f"cannot fetch {url}: {exc}") from exc
+
+
+def build_ask_llm(model: str):
+    """Build the `prompt -> reply text` callable from a `provider/model` string."""
+    if "/" not in model:
+        raise OperationalError(
+            f"--model must be 'provider/model' (e.g. anthropic/claude-sonnet-5), got {model!r}"
+        )
+    provider, _, model_name = model.partition("/")
+
+    def ask(prompt: str) -> str:
+        from src.archi.providers import get_model
+
+        try:
+            chat = get_model(provider, model_name, {})
+            reply = chat.invoke(prompt)
+        except Exception as exc:  # pragma: no cover - needs a live provider
+            raise OperationalError(f"cannot reach {model}: {exc}") from exc
+        content = getattr(reply, "content", reply)
+        return content if isinstance(content, str) else str(content)
+
+    return ask
+
+
 def read_source_lines(path: str) -> List[str]:
     try:
         return Path(path).read_text(encoding="utf-8").splitlines()
@@ -152,23 +227,102 @@ def _sitemap_policy(args: argparse.Namespace, source_lines: Sequence[str]):
     return policy
 
 
+def run_decline(args: argparse.Namespace, entries: List[Any]) -> int:
+    """Record an operator's dismissal of a page. Touches the ledger, not the bank."""
+    if not args.ledger:
+        raise OperationalError("--decline needs --ledger <path> to record the decision")
+    stamped = with_decline(
+        entries,
+        args.decline,
+        reason=args.reason or "",
+        at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+    if stamped is entries or len(stamped) == len(entries):
+        print(f"already declined: {args.decline}")
+        return 0
+    write_ledger(args.ledger, stamped)
+    print(f"declined: {args.decline} -> {args.ledger}")
+    return 0
+
+
+def run_propose(args: argparse.Namespace, docs, declined) -> int:
+    """Draft candidates for the one page the operator greenlit by naming it."""
+    if not args.model:
+        raise OperationalError("--propose needs --model <provider/model> to draft with")
+    known = {doc.url for doc in docs}
+    proposal_url = args.propose
+    from src.utils.goldenset_maintenance import canonical_url
+
+    canonical = canonical_url(proposal_url)
+    if canonical is None or canonical not in known:
+        # Same trap the retrievability filter closes for the gap report: a
+        # question about a page the agent cannot retrieve is a guaranteed
+        # benchmark failure, not coverage.
+        raise OperationalError(
+            f"{proposal_url} is not in the retrievable corpus — nothing to ground "
+            "a question in (is it ingested and embedded?)"
+        )
+    if canonical in declined:
+        print(f"note: {canonical} was previously declined; greenlight overrides it")
+
+    page_text = extract_page_text(fetch_page_html(canonical))
+    try:
+        proposal = propose_candidates(
+            canonical, page_text, build_ask_llm(args.model), count=args.count
+        )
+    except ProposalError as exc:
+        raise OperationalError(str(exc)) from exc
+
+    if proposal.rejected:
+        _print_group(
+            "rejected candidates (not written anywhere)",
+            [f"{r.reason}: {json.dumps(r.raw)[:120]}" for r in proposal.rejected],
+            stream=sys.stderr,
+        )
+    if not proposal.candidates:
+        print(
+            f"no usable candidate survived for {canonical} — nothing proposed.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        f"\n{len(proposal.candidates)} draft candidate(s) for {canonical} — review, "
+        "then paste into the bank by hand. This run wrote nothing."
+    )
+    print(json.dumps([c.as_row() for c in proposal.candidates], indent=2))
+    return 0
+
+
 def run_coverage(args: argparse.Namespace) -> int:
     bank = load_bank(args.bank)
+    ledger = read_ledger(args.ledger)
+    declined = declined_urls(read_declines(ledger))
+    if args.decline:
+        return run_decline(args, ledger)
+
+    if not args.corpus_json and not args.pg_dsn:
+        raise OperationalError("coverage needs --corpus-json or --pg-dsn")
     if args.corpus_json:
         fetch_rows = corpus_rows_from_json(args.corpus_json)
     else:
         fetch_rows = corpus_rows_from_postgres(args.pg_dsn)
+    corpus = read_corpus_docs(fetch_rows)
+    if args.propose:
+        return run_propose(args, corpus, declined)
+
     docs = filter_docs(
-        read_corpus_docs(fetch_rows),
+        corpus,
         source_type=args.source_type,
         parent=args.parent,
         path_glob=args.path_glob,
     )
-    report = find_coverage_gaps(docs, bank)
+    report = find_coverage_gaps(docs, bank, declined=declined)
 
     print(
         f"corpus: {len(docs)} pages | covered: {len(report.covered)} | "
-        f"{len(report.gaps)} gaps | {len(report.needs_reconciliation)} need reconciliation"
+        f"{len(report.gaps)} gaps | {len(report.needs_reconciliation)} need "
+        f"reconciliation | {len(report.suppressed)} declined (suppressed)"
     )
     if report.gaps:
         for parent, group in group_by_parent(report.gaps).items():
@@ -180,6 +334,12 @@ def run_coverage(args: argparse.Namespace) -> int:
                 f"{near.url}  ~  {', '.join(near.candidates)}"
                 for near in report.needs_reconciliation
             ],
+        )
+    if report.suppressed:
+        # Named, never silently filtered: a hidden page reads as a clean report.
+        _print_group(
+            "declined earlier (suppressed from gaps — in the ledger)",
+            [d.url for d in report.suppressed],
         )
     return 0
 
@@ -255,12 +415,47 @@ def build_parser() -> argparse.ArgumentParser:
 
     coverage = sub.add_parser("coverage", help="Ingested pages no bank row grounds on.")
     add_bank(coverage)
-    source = coverage.add_mutually_exclusive_group(required=True)
+    # Not `required=True`: `--decline` is pure bookkeeping and needs no corpus.
+    # `run_coverage` enforces the requirement for the passes that do read one.
+    source = coverage.add_mutually_exclusive_group()
     source.add_argument("--corpus-json", help="JSON dump of `documents` rows.")
     source.add_argument("--pg-dsn", help="Postgres DSN for the live catalog.")
     coverage.add_argument("--source-type", help="Only this source_type (web/git/…).")
     coverage.add_argument("--parent", help="Only this parent source (host or repo).")
     coverage.add_argument("--path-glob", help="Only URLs matching this glob.")
+    decision = coverage.add_mutually_exclusive_group()
+    decision.add_argument(
+        "--propose",
+        metavar="URL",
+        help=(
+            "Draft candidate questions for this ONE greenlit page and print them "
+            "for review. Writes nothing — pasting a candidate into the bank is a "
+            "separate human step."
+        ),
+    )
+    decision.add_argument(
+        "--decline",
+        metavar="URL",
+        help="Record that this page does not earn a question; needs --ledger.",
+    )
+    coverage.add_argument("--reason", help="Why the page was declined (free text).")
+    coverage.add_argument(
+        "--ledger",
+        help=(
+            "Decision-ledger JSON. Records DECLINES only — covered-ness is always "
+            "re-derived from the bank, so a drafted-but-unapplied page stays a gap."
+        ),
+    )
+    coverage.add_argument(
+        "--model",
+        help="`provider/model` used to draft candidates. Required with --propose.",
+    )
+    coverage.add_argument(
+        "--count",
+        type=int,
+        default=3,
+        help="How many candidates to ask for per greenlit page (default 3).",
+    )
     coverage.set_defaults(func=run_coverage)
 
     orphans = sub.add_parser("orphans", help="Rows whose grounding page is gone.")

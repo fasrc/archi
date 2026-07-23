@@ -453,6 +453,73 @@ entirely is *kept*: the column cannot be judged if it isn't there, and dropping 
 empty the report and read as "fully covered" — a silent false clean. Dump the column if you want
 the offline run filtered.
 
+### `coverage --propose` — draft questions for one greenlit page
+
+A gap is a suggestion, not an order. Nothing drafts a question until you name a page:
+
+```bash
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn "postgresql://archi@localhost/archi-db" \
+    --propose https://docs.rc.fas.harvard.edu/kb/running-jobs \
+    --model anthropic/claude-sonnet-5 \
+    --count 3
+```
+
+The page is re-fetched live and reduced with **the ingest's own HTML→Markdown conversion**, so
+the candidates are grounded in the text the retriever actually indexed rather than in a second
+conversion that could drift from it. The drafts print as a JSON array ready to paste into the
+bank — **the run writes nothing**. Applying a candidate is your edit, and reviewing it before
+that edit is the point.
+
+Three properties are imposed by the tool, not accepted from the model:
+
+- **`status` is always `draft`.** There is no code path that emits a locked candidate, so a
+  confused or hostile reply cannot smuggle one in. Locking stays a human act on an applied row.
+- **`sources` is always the page you greenlit.** Whatever URL the model cites, the row cites
+  the page you named — grounding is the tool's guarantee.
+- **`anchor_type` must be `easy_retrieve` or `reasoning`.** Anything else is rejected with a
+  reason printed to stderr rather than silently relabeled. `should_refuse` is rejected too: those
+  rows carry **no** `sources` by design, so one "grounded in" a page is a contradiction.
+
+`--propose` refuses a URL that is not in the **retrievable** corpus: a question about a page the
+agent cannot retrieve is a guaranteed benchmark failure, not coverage. If every candidate is
+rejected the run exits **non-zero** — a propose run that produced nothing is a failed run, not a
+finding, which is the opposite of how gaps and orphans exit.
+
+### The decision ledger — declines only
+
+Some pages will never earn a question. Record that once instead of re-reading it every run:
+
+```bash
+# dismiss a page
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --decline https://docs.rc.fas.harvard.edu/kb/contact \
+    --reason "contact page — nothing to ask" \
+    --ledger .ralph/log/goldenset-declines.json
+
+# later runs suppress it
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn "postgresql://archi@localhost/archi-db" \
+    --ledger .ralph/log/goldenset-declines.json
+```
+
+The ledger records **declines only** — never "drafted" or "covered". That asymmetry is
+deliberate: covered-ness is re-derived from the bank every run, so a page whose candidates you
+drafted and then abandoned stays a visible gap until a row actually lands. A ledger that also
+suppressed drafted URLs would make that abandoned page read as clean forever.
+
+Suppressed pages are **counted and listed**, not silently filtered — a report that hides pages
+without saying so reads as clean when it isn't. Declining is idempotent (declining twice keeps
+the first entry and its reason), and an explicit `--propose` on a declined page still works and
+says so: you changed your mind, and the tool names the earlier decision rather than arguing.
+
+The ledger is the **only** file this tool ever writes. A missing ledger reads as "nothing
+declined yet"; a *corrupt* one is an operational failure, because reading it as empty would
+resurface every page you ever dismissed.
+
 ### `orphans` — questions whose page is gone
 
 Orphan detection compares the bank against a **freshly expanded live source inventory**, not

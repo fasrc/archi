@@ -8,6 +8,7 @@ from src.data_manager.collectors.processing import (
     HtmlToMarkdownProcessor,
     ResourcePipeline,
     _slice_kb_article,
+    html_to_markdown,
 )
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 
@@ -309,3 +310,26 @@ def test_slice_helper_blank_between_keeps_original():
 def test_slice_helper_no_start_keeps_original():
     md = "some\nmarkdown with Bookmarkable Links only"
     assert _slice_kb_article(md) == md
+
+
+def test_html_to_markdown_matches_what_the_processor_persists():
+    """The public seam and the persist-time processor must not drift.
+
+    Golden-set maintenance grounds proposed questions in page text; grounding
+    them in a conversion the ingest never stored would author questions about
+    text the retriever cannot serve.
+    """
+    html = (
+        "<div class='eckb-article-content'><h1>T</h1><p>Table of Contents</p>"
+        "<p>THE BODY</p><p>Last Updated 2026</p></div>"
+    )
+
+    persisted = HtmlToMarkdownProcessor().process(_html_resource(content=html))
+
+    assert html_to_markdown(html) == persisted.get_content()
+
+
+def test_html_to_markdown_slices_only_echo_kb_pages():
+    plain = "<h1>T</h1><p>Table of Contents</p><p>BODY</p><p>Last Updated</p>"
+
+    assert "Last Updated" in html_to_markdown(plain)
