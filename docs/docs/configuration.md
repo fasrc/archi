@@ -180,9 +180,18 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 | `embedding_name` | string | `OpenAIEmbeddings` | Embedding backend |
 | `chunk_size` | int | `1000` | Max characters per text chunk |
 | `chunk_overlap` | int | `0` | Overlapping characters between chunks |
-| `parallel_workers` | int | `32` | Parallel ingestion workers |
+| `parallel_workers` | int | `32` | Parallel **embedding**-phase ingestion workers |
+| `scrape_workers` | int | `8` | Parallel **scrape**-phase workers: how many seed URLs are crawled concurrently |
+| `scrape_per_host_workers` | int | `4` | Cap on concurrent in-flight requests to any single host |
 | `reset_collection` | bool | `true` | Wipe collection on startup |
 | `distance_metric` | string | `cosine` | Similarity metric: `cosine`, `l2`, `ip` |
+
+> **Note:** `scrape_workers` and `scrape_per_host_workers` control the **scrape
+> phase** only and are independent of `parallel_workers`, which governs the
+> **embedding phase**. Both scrape knobs coerce to `int`, fall back to their
+> defaults on invalid values, and clamp to a minimum of `1`. Raising
+> `scrape_workers` above the Postgres connection pool max (`20`) requires raising
+> that pool in tandem, or scrape workers will block on connection checkout.
 
 ### Retrieval Settings
 
