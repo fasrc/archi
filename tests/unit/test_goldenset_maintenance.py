@@ -626,6 +626,44 @@ class TestBuildLiveInventory:
         assert inv.urls == (f"{KB}/kb/a",)
         assert inv.complete is True
 
+    def test_a_git_source_is_not_enumerable_and_stays_out_of_the_inventory(self):
+        # A git source ingests one document PER FILE; the inventory cannot list
+        # those without cloning. Worse, the raw line parses as scheme `git-https`
+        # with host `github.com`, which would put that host in scope and make
+        # every bank row citing the repo a false orphan — on a report whose
+        # proposed action is "prune or convert".
+        inv = build_live_inventory(
+            [f"{KB}/kb/a", "git-https://github.com/org/repo"], _fetcher({})
+        )
+
+        assert inv.urls == (f"{KB}/kb/a",)
+        assert inv.unsupported == ("git-https://github.com/org/repo",)
+
+    def test_an_sso_prefix_is_stripped_and_the_page_is_inventoried(self):
+        # `sso-` only tells the ingest to authenticate; the line is still exactly
+        # one page, so it is enumerable.
+        inv = build_live_inventory([f"sso-{KB}/kb/private"], _fetcher({}))
+
+        assert inv.urls == (f"{KB}/kb/private",)
+        assert inv.unsupported == ()
+
+    def test_elog_and_indico_sources_are_not_enumerable(self):
+        inv = build_live_inventory(
+            ["elog-https://elog.example/elog/", "indico-https://indico.example/"],
+            _fetcher({}),
+        )
+
+        assert inv.urls == ()
+        assert len(inv.unsupported) == 2
+
+    def test_an_unprefixed_elog_url_is_detected_like_the_ingest_does(self):
+        # The ingest auto-detects an unprefixed ELOG index by path; mirroring it
+        # keeps an un-enumerable fan-out source out of the inventory.
+        inv = build_live_inventory(["https://logs.example/elog/demo"], _fetcher({}))
+
+        assert inv.urls == ()
+        assert inv.unsupported == ("https://logs.example/elog/demo",)
+
     def test_a_failed_sitemap_fetch_marks_the_inventory_incomplete(self):
         # expand_sitemaps fails OPEN here — it returns zero URLs with only a
         # WARNING, which an unguarded caller would read as "the KB is empty".
@@ -657,6 +695,17 @@ class TestBuildLiveInventory:
         assert inv.urls == (f"{KB}/kb/a", f"{KB}/kb/b")
         assert inv.complete is False
         assert any(child_bad in reason for reason in inv.failures)
+
+    def test_a_bank_row_on_a_git_source_host_is_out_of_scope_not_an_orphan(self):
+        # End to end: the git source must not lend its host to `in_scope_hosts`,
+        # or every per-file bank URL becomes a proposed prune.
+        inv = build_live_inventory(
+            [f"{KB}/kb/a", "git-https://github.com/org/repo"], _fetcher({})
+        )
+        report = find_orphans([_row("https://github.com/org/repo/blob/main/x.py")], inv)
+
+        assert report.orphans == ()
+        assert report.out_of_scope == ("https://github.com/org/repo/blob/main/x.py",)
 
     def test_an_expansion_below_its_floor_marks_the_inventory_incomplete(self):
         inv = build_live_inventory(

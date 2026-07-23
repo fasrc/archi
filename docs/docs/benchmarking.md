@@ -464,6 +464,16 @@ hand-listed page. A `URL,depth` suffix is stripped exactly as the ingest strips 
 oracle and the corpus agree on what a source line means — otherwise a line like `…/kb/a,2`
 would inventory a URL the corpus never stored and its bank row would read as removed.
 
+The full set of typed source prefixes is mirrored from the ingest's router. `sitemap-` expands;
+`sso-` is stripped (it only tells the ingest to authenticate, so the line is still one page).
+`git-`, `elog-` and `indico-` — plus an unprefixed ELOG/Indico URL the ingest would auto-detect
+— **fan out** into many sub-documents (a git source ingests one document *per file*) that this
+read-only tool cannot enumerate without cloning or crawling. Those sources contribute no URLs
+and are reported as **not enumerable**, which keeps their hosts out of scope so their bank rows
+are never proposed for prune. Without that, `git-https://github.com/org/repo` would parse as
+host `github.com`, put that host in scope, and turn every bank row citing the repo into a false
+orphan.
+
 Three guards keep the pass from crying wolf. Each shows up as its own bucket in the output:
 
 - **Abstention.** Sitemap expansion *fails open* — a sitemap that will not fetch or parse

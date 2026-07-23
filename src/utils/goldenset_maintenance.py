@@ -350,6 +350,35 @@ def filter_docs(
 
 
 SITEMAP_PREFIX = "sitemap-"
+SSO_PREFIX = "sso-"
+
+# Source types that fan out into MANY sub-documents at ingest: a git source
+# ingests one document per file, and elog/indico expand into per-entry pages.
+# The inventory cannot enumerate those without cloning or crawling, so such a
+# source is recorded as unsupported and its host is deliberately kept OUT of the
+# inventory. `find_orphans` scopes itself to hosts the inventory actually
+# contains, so bank rows on those hosts are reported out-of-scope instead of
+# being proposed for prune. Mirrors `ScraperManager._collect_urls_from_lists_by_type`.
+FANOUT_PREFIXES = ("git-", "elog-", "indico-")
+
+
+def _is_fanout_url(url: str) -> bool:
+    """Mirror the ingest's UNPREFIXED elog/indico auto-detection.
+
+    `ScraperManager._is_elog_url` matches `/elog/` or `/elogs/` in the path, and
+    `_is_indico_url` matches `/event/` on an Indico host. Both expand into many
+    per-entry documents, so the inventory cannot enumerate them.
+
+    The ingest's Indico check also consults the configured `indico.base_url`,
+    which is not available to this read-only tool; an Indico instance whose host
+    does not contain "indico" must therefore use the explicit `indico-` prefix to
+    be recognized here.
+    """
+    parts = urlparse(url)
+    path = (parts.path or "").lower()
+    if "/elog/" in path or "/elogs/" in path:
+        return True
+    return "/event/" in path and "indico" in (parts.netloc or "").lower()
 
 
 @dataclass(frozen=True)
@@ -361,11 +390,17 @@ class LiveInventory:
     only a WARNING — so a healthy-looking expansion can silently be missing a
     whole branch of the KB. Orphan detection must never run against a partial
     inventory, because every unlisted page would look deleted.
+
+    `unsupported` lists source lines whose type fans out into sub-documents this
+    tool cannot enumerate (git/elog/indico). They contribute no URLs, so their
+    hosts stay out of scope rather than generating false orphans — recorded so
+    that a skipped source is visible instead of silently ignored.
     """
 
     urls: Tuple[str, ...]
     complete: bool
     failures: Tuple[str, ...]
+    unsupported: Tuple[str, ...] = ()
 
 
 def build_live_inventory(
@@ -409,6 +444,7 @@ def build_live_inventory(
 
     hand_listed: List[str] = []
     sitemap_urls: List[str] = []
+    unsupported: List[str] = []
     for raw_line in source_lines:
         line = (raw_line or "").strip()
         if not line or line.startswith("#"):
@@ -422,8 +458,16 @@ def build_live_inventory(
         line = line.split(",", 1)[0].strip()
         if not line:
             continue
+        # Mirror the ingest's prefix routing. `sitemap-` is peeled FIRST so a
+        # sitemap URL whose path happens to contain `/elog/` still expands as a
+        # sitemap (the ingest's explicit-prefix-beats-heuristic rule). `sso-` only
+        # tells the ingest to authenticate, so the line is still exactly one page.
         if line.startswith(SITEMAP_PREFIX):
             sitemap_urls.append(line[len(SITEMAP_PREFIX) :])
+        elif line.startswith(SSO_PREFIX):
+            hand_listed.append(line[len(SSO_PREFIX) :])
+        elif line.startswith(FANOUT_PREFIXES) or _is_fanout_url(line):
+            unsupported.append(line)
         else:
             hand_listed.append(line)
 
@@ -446,7 +490,10 @@ def build_live_inventory(
     if not urls:
         failures.append("live inventory is empty")
     return LiveInventory(
-        urls=tuple(urls), complete=not failures, failures=tuple(failures)
+        urls=tuple(urls),
+        complete=not failures,
+        failures=tuple(failures),
+        unsupported=tuple(unsupported),
     )
 
 

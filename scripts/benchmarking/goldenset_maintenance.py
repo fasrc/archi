@@ -209,8 +209,14 @@ def run_orphans(args: argparse.Namespace) -> int:
     print(
         f"live inventory: {len(inventory.urls)} URLs | {len(report.orphans)} orphans | "
         f"{len(report.out_of_scope)} out of scope | "
-        f"{len(report.needs_reconciliation)} need reconciliation"
+        f"{len(report.needs_reconciliation)} need reconciliation | "
+        f"{len(inventory.unsupported)} source(s) not enumerable"
     )
+    if inventory.unsupported:
+        _print_group(
+            "not enumerable (fan-out source — rows on these hosts are never judged)",
+            inventory.unsupported,
+        )
     if report.orphans:
         _print_group(
             "orphans (grounding page gone from the live KB — propose, never delete)",
