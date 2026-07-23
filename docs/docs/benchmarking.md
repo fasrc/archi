@@ -388,3 +388,75 @@ See `docs/eval/rubric.md` for the four-widget annotation rubric (winner / qualit
 ### Inter-rater reliability
 
 The analysis notebook computes pairwise Cohen's kappa (per pair of graders), Fleiss' kappa (overall), and per-grader bias distribution. Aim for κ ≥ 0.4 ("moderate agreement") before treating round-N's winner as decisive.
+
+---
+
+## Maintaining the golden set (`coverage` / `orphans`)
+
+The question bank drifts away from the knowledge base in two directions: the KB grows pages
+nobody wrote a question for, and it removes pages some question still cites. Two read-only
+subcommands find each drift:
+
+```bash
+# Which ingested pages does no bank row ground against?
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn "postgresql://archi@localhost/archi-db"
+
+# Which bank rows cite a page the live KB no longer publishes?
+python scripts/benchmarking/goldenset_maintenance.py orphans \
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --sources deploy/fasrc-dev/sources.list
+```
+
+**Both are proposal-only.** They print work lists and leave the bank file byte-unchanged;
+adding a question, locking a reference, or pruning an orphan is a separate step you take
+deliberately. Findings **exit zero** — a gap is work to do, not a broken run — so a cron job
+only alarms on an operational failure (unreadable bank, corpus, or source list).
+
+### `coverage` — pages with no question
+
+Coverage is re-derived from the bank on **every** run. Drafting candidate questions for a page
+does not mark it covered; only an applied bank row citing that URL does. So a page you
+greenlit but never finished writing up keeps showing as a gap, which is the honest answer.
+
+Gaps are grouped by **parent source** (the host for a web source, the repository for a git
+one) and can be narrowed, so one large git source contributing thousands of per-file URLs
+does not bury a handful of real KB gaps:
+
+```bash
+--source-type web                     # only web sources
+--parent https://docs.rc.fas.harvard.edu
+--path-glob 'https://docs.rc.fas.harvard.edu/kb/*'
+```
+
+Use `--corpus-json <file>` instead of `--pg-dsn` to run against a JSON dump of the
+`documents` rows — useful offline, or to reproduce a report without database access.
+
+### `orphans` — questions whose page is gone
+
+Orphan detection compares the bank against a **freshly expanded live source inventory**, not
+against the ingested corpus. This matters: the ingest never prunes. A page deleted upstream
+still has a corpus row forever, so "it's still in the corpus" is no evidence the page exists,
+and "it's missing from the corpus" is no evidence it was removed. `sitemap-` lines in the
+source list are expanded live (the same expansion the ingest uses); every other line is a
+hand-listed page.
+
+Three guards keep the pass from crying wolf. Each shows up as its own bucket in the output:
+
+- **Abstention.** Sitemap expansion *fails open* — a sitemap that will not fetch or parse
+  contributes zero URLs with only a warning. If any source document failed, the expansion fell
+  below its configured floor, or the inventory came back empty, the run reports `ABSTAINED`
+  and flags nothing. A partial inventory would make every unlisted page look deleted.
+- **Out of scope.** The inventory can only speak for the hosts it actually contains. A row
+  citing an external authority the KB never ingested — the upstream Slurm docs, say — was
+  never in the KB to be removed, so it is listed as out of scope rather than judged.
+- **Needs reconciliation.** A URL that matches only by *slug near-miss* — same final page name
+  after ignoring the path prefix, an `.html` extension, and a WordPress-style `-2` collision
+  suffix — is neither an orphan nor a gap. A page that merely moved (`/kb/x` → `/docs/x`) or
+  picked up an alias lands here for a human to confirm. A genuine rename
+  (`running-jobs` → `submitting-jobs`) deliberately does *not* match, so it stays visible as
+  real work.
+
+Nothing is ever deleted. An orphan is reported with its row index and the removed URL so you
+can decide whether to re-ground the question, rewrite it, or drop it.

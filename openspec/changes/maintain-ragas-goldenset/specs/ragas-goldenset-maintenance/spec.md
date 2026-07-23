@@ -148,7 +148,11 @@ corpus prune/nuke before treating corpus presence as evidence a page still exist
 expansion fails open (a failed source document contributes zero URLs), the tool MUST treat an
 **incomplete** inventory — any source document that failed to fetch/parse, or an expansion below
 its configured floor — as an operational failure and **abstain from orphan-flagging** for that
-run, rather than reporting orphans against a partial inventory. A URL that matches only by slug
+run, rather than reporting orphans against a partial inventory. The inventory is authoritative
+only for the hosts it actually contains: a `sources` URL on any other host — an external
+authority the KB never ingested, such as the upstream Slurm documentation — was never in the KB
+to be removed, so the tool MUST report it as **out of scope** and MUST NOT flag it as an orphan.
+A URL that matches only by slug
 near-miss MUST be treated as reconciliation-needed, not an orphan. `should_refuse` rows, which
 intentionally carry empty `sources`, MUST NOT be flagged as orphans.
 
@@ -162,6 +166,13 @@ intentionally carry empty `sources`, MUST NOT be flagged as orphans.
 
 - **WHEN** a bank row has empty `sources` (a `should_refuse` row)
 - **THEN** it is not flagged as an orphan
+
+#### Scenario: A source on a host the inventory never covers is out of scope
+
+- **WHEN** a bank row cites a `sources` URL whose host appears nowhere in the freshly expanded
+  live inventory (an external authority the KB does not ingest)
+- **THEN** the tool reports that URL as out of scope and does not flag the row as an orphan,
+  because the inventory carries no evidence either way about a page it was never going to list
 
 #### Scenario: An incomplete live inventory abstains from orphan-flagging
 
