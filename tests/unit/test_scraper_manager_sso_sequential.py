@@ -162,3 +162,62 @@ class TestAuthenticatorLifecycle:
 
         # The ``finally`` released the browser session exactly once despite the raise.
         assert authenticator.closed == 1
+
+
+class TestSsoUntouchedByPool:
+    """SSO collection is a plain sequential loop, not the pool (issue #136, task 6.3).
+
+    Spec ``parallel-scraping`` > "The selenium/SSO path remains sequential":
+
+        SSO collection and any selenium-backed standard collection SHALL continue
+        to run one URL at a time against a single authenticator instance.
+
+    Only the standard non-selenium link path (``_collect_links_from_urls``) is
+    routed through ``run_seeds`` (the bounded worker pool). ``_collect_sso_from_urls``
+    must remain a plain ``for url in urls`` loop that never dispatches through the
+    pool. These tests lock in that ``run_seeds`` is never called during SSO
+    collection and that seeds are handled strictly in input order.
+    """
+
+    def _make_sso_manager(self, make_manager, monkeypatch):
+        manager = make_manager(
+            {"sources": {"links": {"selenium_scraper": {"enabled": True}}}}
+        )
+        monkeypatch.setattr(sm_module, "read_secret", lambda name: "present")
+        monkeypatch.setattr(
+            manager, "_resolve_scraper", lambda: (_FakeAuthenticator, {})
+        )
+        return manager
+
+    def test_run_seeds_is_never_called(self, make_manager, monkeypatch, tmp_path):
+        manager = self._make_sso_manager(make_manager, monkeypatch)
+        monkeypatch.setattr(manager, "_handle_standard_url", lambda *a, **k: 0)
+
+        calls = []
+
+        def spy_run_seeds(*args, **kwargs):
+            calls.append((args, kwargs))
+            raise AssertionError("SSO collection must not route through run_seeds")
+
+        monkeypatch.setattr(sm_module, "run_seeds", spy_run_seeds)
+
+        urls = [f"https://sso{i}.example.edu/" for i in range(5)]
+        manager._collect_sso_from_urls(urls, persistence=object(), output_dir=tmp_path)
+
+        assert calls == []
+
+    def test_seeds_handled_in_input_order(self, make_manager, monkeypatch, tmp_path):
+        manager = self._make_sso_manager(make_manager, monkeypatch)
+
+        order = []
+
+        def record(url, *args, **kwargs):
+            order.append(url)
+            return 0
+
+        monkeypatch.setattr(manager, "_handle_standard_url", record)
+
+        urls = [f"https://sso{i}.example.edu/" for i in range(5)]
+        manager._collect_sso_from_urls(urls, persistence=object(), output_dir=tmp_path)
+
+        assert order == urls
