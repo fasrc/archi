@@ -51,6 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.utils.benchmark_schema import normalize_bank  # noqa: E402  # isort: skip
 from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
     ProposalError,
+    bank_source_urls,
     build_live_inventory,
     canonical_url,
     declined_urls,
@@ -61,6 +62,7 @@ from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
     propose_candidates,
     read_corpus_docs,
     read_declines,
+    reconcile,
     resolve_persisted_path,
     with_decline,
 )
@@ -374,8 +376,15 @@ def run_decline(args: argparse.Namespace) -> int:
     return 0
 
 
-def run_propose(args: argparse.Namespace, docs, declined) -> int:
-    """Draft candidates for the one page the operator greenlit by naming it."""
+def run_propose(args: argparse.Namespace, docs, bank, declined) -> int:
+    """Draft candidates for the one page the operator greenlit by naming it.
+
+    Greenlighting is a decision about a *gap*. A page a row already grounds on,
+    or one the tool cannot classify because of a slug near-miss, is refused: the
+    first manufactures a duplicate question that reads as valid once pasted in,
+    and the second drafts on top of an unknown that may already be covered under
+    the moved slug. Both refusals name the row so the refusal is actionable.
+    """
     if not args.model:
         raise OperationalError("--propose needs --model <provider/model> to draft with")
     by_url = {doc.url: doc for doc in docs}
@@ -388,6 +397,21 @@ def run_propose(args: argparse.Namespace, docs, declined) -> int:
         raise OperationalError(
             f"{args.propose} is not in the retrievable corpus — nothing to ground "
             "a question in (is it ingested and embedded?)"
+        )
+    # One reconciliation rule for coverage, orphans and this guard — same
+    # normalizer, same near-miss definition, so they cannot disagree.
+    against_bank = reconcile([canonical], bank_source_urls(bank))
+    if against_bank.matched:
+        raise OperationalError(
+            f"{canonical} is already covered by a bank row — `--propose` drafts for "
+            "gaps. A second question on a covered page adds count, not signal."
+        )
+    if against_bank.near_misses:
+        near = against_bank.near_misses[0]
+        raise OperationalError(
+            f"{canonical} is a slug near-miss for {', '.join(near.candidates)} — "
+            "reconcile it before proposing, or the draft duplicates the question "
+            "that already covers this page under the other slug."
         )
     if canonical in declined:
         print(f"note: {canonical} was previously declined; greenlight overrides it")
@@ -437,7 +461,7 @@ def run_coverage(args: argparse.Namespace) -> int:
         fetch_rows = corpus_rows_from_postgres(args.pg_dsn)
     corpus = read_corpus_docs(fetch_rows)
     if args.propose:
-        return run_propose(args, corpus, declined)
+        return run_propose(args, corpus, bank, declined)
 
     docs = filter_docs(
         corpus,

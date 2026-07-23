@@ -489,9 +489,17 @@ Three properties are imposed by the tool, not accepted from the model:
   reason printed to stderr rather than silently relabeled. `should_refuse` is rejected too: those
   rows carry **no** `sources` by design, so one "grounded in" a page is a contradiction.
 
-`--propose` refuses a URL that is not in the **retrievable** corpus, one whose row carries no
-`file_path`, and one whose persisted document is missing or empty. Every one of those refusals
-exits non-zero instead of degrading to a live fetch.
+`--propose` drafts for a **gap**, and refuses anything else:
+
+- a URL **already covered** by a bank row — a second question on a covered page adds count, not
+  signal, and reads as valid once pasted in;
+- a URL that is a **slug near-miss** for a covered one — the tool has said it cannot tell whether
+  the page is covered, so drafting on top of that unknown is how a duplicate gets authored under
+  the moved slug. Reconcile first;
+- a URL not in the **retrievable** corpus, one whose row carries no `file_path`, and one whose
+  persisted document is missing or empty.
+
+Every one of those refusals exits non-zero instead of degrading to a live fetch.
 
 It also refuses any `file_path` that resolves **outside `--data-path`** — absolute, `..`-relative,
 or via a symlink — before reading a byte. `file_path` comes from the catalog or from a

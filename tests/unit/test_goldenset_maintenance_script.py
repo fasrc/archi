@@ -1104,3 +1104,93 @@ class TestLedgerDirectoryDurability:
 
         assert code == 1
         assert "ledger" in capsys.readouterr().err
+
+
+class TestProposeOnlyForUncoveredPages:
+    """`--propose` is the greenlight primitive for a GAP, not for any page."""
+
+    def test_an_already_covered_page_is_refused(self, tmp_path, capsys):
+        # A golden set's value is signal-per-question, not count. Drafting for a
+        # page a row already grounds on manufactures a duplicate that reads as
+        # valid once pasted in.
+        module = _load_script()
+        prompts = []
+        _fake_llm(module, [CANDIDATE], calls=prompts)
+        _persisted(tmp_path)
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row(f"{KB}/kb/a"))),
+                "--corpus-json",
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
+                "--propose",
+                f"{KB}/kb/a",
+                "--model",
+                "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
+            ]
+        )
+
+        assert code == 1
+        assert prompts == []
+        assert "already covered" in capsys.readouterr().err
+
+    def test_a_slug_near_miss_page_is_refused_pending_reconciliation(
+        self, tmp_path, capsys
+    ):
+        # The tool has explicitly said it cannot tell whether this page is
+        # covered. Drafting on top of that unknown is how a duplicate of an
+        # existing question gets authored under a moved slug.
+        module = _load_script()
+        prompts = []
+        _fake_llm(module, [CANDIDATE], calls=prompts)
+        _persisted(tmp_path)
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row(f"{KB}/docs/a"))),
+                "--corpus-json",
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
+                "--propose",
+                f"{KB}/kb/a",
+                "--model",
+                "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
+            ]
+        )
+
+        assert code == 1
+        assert prompts == []
+        err = capsys.readouterr().err
+        assert "reconcil" in err
+        assert f"{KB}/docs/a" in err
+
+    def test_a_genuine_gap_still_proposes(self, tmp_path, capsys):
+        module = _load_script()
+        _fake_llm(module, [CANDIDATE])
+        _persisted(tmp_path)
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row(f"{KB}/kb/unrelated-page"))),
+                "--corpus-json",
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
+                "--propose",
+                f"{KB}/kb/a",
+                "--model",
+                "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
+            ]
+        )
+
+        assert code == 0
+        assert '"status": "draft"' in capsys.readouterr().out
