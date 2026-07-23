@@ -49,7 +49,7 @@
 
 ## 8. Gate, docs, and PR
 
-- [ ] 8.1 Confirm the embedding phase is untouched: no diff to `src/data_manager/vectorstore/manager.py`, and no diff to `src/data_manager/collectors/scrapers/scraper.py` internals.
+- [x] 8.1 Confirm the embedding phase is untouched: no diff to `src/data_manager/vectorstore/manager.py`, and no diff to `src/data_manager/collectors/scrapers/scraper.py` internals.
 - [ ] 8.2 Update `docs/` for the two new user-facing config knobs (project convention: user-facing config changes ship docs in the same change).
 - [ ] 8.3 Run `bash scripts/gate.sh` (black 24.10.0 + isort 6.0.1, `pytest tests/unit/`, diff-cover `--fail-under=80` vs `origin/dev`) and confirm exit 0 before every commit. Never `--no-verify`.
 - [ ] 8.4 Open a PR against `fasrc/archi:dev` with `closes #136`. No `Co-Authored-By` trailers. Do not merge.
