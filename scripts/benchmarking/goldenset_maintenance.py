@@ -33,7 +33,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional, Sequence
@@ -44,8 +46,8 @@ from src.utils.benchmark_schema import normalize_bank  # noqa: E402  # isort: sk
 from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
     ProposalError,
     build_live_inventory,
+    canonical_url,
     declined_urls,
-    extract_page_text,
     filter_docs,
     find_coverage_gaps,
     find_orphans,
@@ -53,6 +55,7 @@ from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
     propose_candidates,
     read_corpus_docs,
     read_declines,
+    resolve_persisted_path,
     with_decline,
 )
 
@@ -92,7 +95,7 @@ def corpus_rows_from_json(path: str):
 # golden question for a page the agent cannot retrieve — an unanswerable question
 # that would then score as a benchmark failure.
 CORPUS_SQL = (
-    "SELECT url, source_type FROM documents "
+    "SELECT url, source_type, file_path FROM documents "
     "WHERE NOT is_deleted AND ingestion_status = 'embedded'"
 )
 
@@ -133,32 +136,77 @@ def read_ledger(path: Optional[str]) -> List[Any]:
 
 
 def write_ledger(path: str, entries: List[Any]) -> None:
-    """Persist the ledger. The ONLY file this tool ever writes — never the bank."""
+    """Atomically persist the ledger — the ONLY file this tool writes.
+
+    Written to a same-directory temp file, flushed and fsynced, then
+    `os.replace`d over the target. A plain `write_text` truncates first, so a
+    crash or a full disk mid-write would leave a mangled ledger and lose every
+    decline it held — the one record that cannot be re-derived from the bank.
+    The temp file is removed on any failure so a failed run leaves no litter.
+    """
+    target = Path(path)
     try:
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_text(
-            json.dumps(entries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-        )
+        target.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise OperationalError(f"cannot write ledger {path}: {exc}") from exc
 
-
-def fetch_page_html(url: str) -> str:
-    """GET a KB page, reusing the inventory's hardened fetch.
-
-    `fetch_sitemap_text` is a plain bounded GET that refuses cross-host
-    redirects — the same SSRF containment the sitemap expansion runs under,
-    which is exactly what a tool that fetches operator-named URLs wants.
-    """
-    from src.data_manager.collectors.scrapers.sitemap_source import (
-        SitemapFetchError,
-        fetch_sitemap_text,
-    )
-
+    payload = json.dumps(entries, indent=2, ensure_ascii=False) + "\n"
+    handle = None
+    tmp_name = ""
     try:
-        return fetch_sitemap_text(url)
-    except SitemapFetchError as exc:
-        raise OperationalError(f"cannot fetch {url}: {exc}") from exc
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+        )
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+        handle.close()
+        handle = None
+        os.replace(tmp_name, target)
+    except OSError as exc:
+        if handle is not None:
+            handle.close()
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:  # pragma: no cover - already gone
+                pass
+        raise OperationalError(f"cannot write ledger {path}: {exc}") from exc
+
+
+def read_persisted_document(doc, data_path: Optional[str]) -> str:
+    """Read the persisted text for a corpus doc — what the retriever serves.
+
+    Grounding must use the *indexed* body, not a live re-fetch. Ingestion is
+    URL-keyed and skips the content write for a page it already holds
+    (`persist_resource(..., overwrite=False)`), so the live page can be ahead of
+    the index. A candidate grounded in live-only text would ask about a fact the
+    retriever cannot serve — the very failure the retrievability filter exists to
+    prevent, reintroduced one layer down. Every failure here refuses the run
+    rather than falling back to a fetch.
+    """
+    if not data_path:
+        raise OperationalError(
+            "--propose needs --data-path <dir> — the deployment's data root, where "
+            "`documents.file_path` resolves. Candidates are grounded in the "
+            "persisted (indexed) text, never in a live re-fetch."
+        )
+    if not doc.file_path:
+        raise OperationalError(
+            f"{doc.url} has no file_path in the corpus — nothing to ground in. "
+            "(A `--corpus-json` dump must include the column.)"
+        )
+    path = resolve_persisted_path(doc.file_path, data_path)
+    if path is None:  # pragma: no cover - guarded by the file_path check above
+        raise OperationalError(f"{doc.url} has no resolvable persisted document")
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise OperationalError(f"cannot read the persisted document {path}: {exc}")
+    if not text.strip():
+        raise OperationalError(f"the persisted document {path} is empty")
+    return text
 
 
 def build_ask_llm(model: str):
@@ -227,17 +275,23 @@ def _sitemap_policy(args: argparse.Namespace, source_lines: Sequence[str]):
     return policy
 
 
-def run_decline(args: argparse.Namespace, entries: List[Any]) -> int:
-    """Record an operator's dismissal of a page. Touches the ledger, not the bank."""
+def run_decline(args: argparse.Namespace) -> int:
+    """Record an operator's dismissal of a page. Touches the ledger, not the bank.
+
+    The ledger is re-read immediately before the merge so the read-modify-write
+    window is two adjacent statements: a decline another session recorded in the
+    meantime is merged rather than clobbered.
+    """
     if not args.ledger:
         raise OperationalError("--decline needs --ledger <path> to record the decision")
+    entries = read_ledger(args.ledger)
     stamped = with_decline(
         entries,
         args.decline,
         reason=args.reason or "",
         at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
-    if stamped is entries or len(stamped) == len(entries):
+    if len(stamped) == len(entries):
         print(f"already declined: {args.decline}")
         return 0
     write_ledger(args.ledger, stamped)
@@ -249,23 +303,21 @@ def run_propose(args: argparse.Namespace, docs, declined) -> int:
     """Draft candidates for the one page the operator greenlit by naming it."""
     if not args.model:
         raise OperationalError("--propose needs --model <provider/model> to draft with")
-    known = {doc.url for doc in docs}
-    proposal_url = args.propose
-    from src.utils.goldenset_maintenance import canonical_url
-
-    canonical = canonical_url(proposal_url)
-    if canonical is None or canonical not in known:
+    by_url = {doc.url: doc for doc in docs}
+    canonical = canonical_url(args.propose)
+    doc = by_url.get(canonical) if canonical else None
+    if doc is None or canonical is None:
         # Same trap the retrievability filter closes for the gap report: a
         # question about a page the agent cannot retrieve is a guaranteed
         # benchmark failure, not coverage.
         raise OperationalError(
-            f"{proposal_url} is not in the retrievable corpus — nothing to ground "
+            f"{args.propose} is not in the retrievable corpus — nothing to ground "
             "a question in (is it ingested and embedded?)"
         )
     if canonical in declined:
         print(f"note: {canonical} was previously declined; greenlight overrides it")
 
-    page_text = extract_page_text(fetch_page_html(canonical))
+    page_text = read_persisted_document(doc, args.data_path)
     try:
         proposal = propose_candidates(
             canonical, page_text, build_ask_llm(args.model), count=args.count
@@ -296,10 +348,11 @@ def run_propose(args: argparse.Namespace, docs, declined) -> int:
 
 def run_coverage(args: argparse.Namespace) -> int:
     bank = load_bank(args.bank)
-    ledger = read_ledger(args.ledger)
-    declined = declined_urls(read_declines(ledger))
     if args.decline:
-        return run_decline(args, ledger)
+        # Pure bookkeeping: no corpus read, and the ledger is read inside so the
+        # read-modify-write stays adjacent.
+        return run_decline(args)
+    declined = declined_urls(read_declines(read_ledger(args.ledger)))
 
     if not args.corpus_json and not args.pg_dsn:
         raise OperationalError("coverage needs --corpus-json or --pg-dsn")
@@ -449,6 +502,14 @@ def build_parser() -> argparse.ArgumentParser:
     coverage.add_argument(
         "--model",
         help="`provider/model` used to draft candidates. Required with --propose.",
+    )
+    coverage.add_argument(
+        "--data-path",
+        help=(
+            "Deployment data root that `documents.file_path` resolves against. "
+            "Required with --propose: candidates are grounded in the persisted "
+            "(indexed) document, never in a live re-fetch."
+        ),
     )
     coverage.add_argument(
         "--count",

@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 from urllib.parse import urlparse
 
@@ -64,12 +65,17 @@ class CorpusDoc:
 
     `url` is normalized with the ingest's own `normalize_page_url`. `parent` is
     the grouping label (host for web, repo for git) used to keep the coverage
-    report per-source rather than a flat dump.
+    report per-source rather than a flat dump. `file_path` is the persisted
+    document — the *converted* text that was chunked and embedded, which is what
+    the retriever actually serves and therefore the only honest thing to ground
+    a golden question in. It defaults to empty so a JSON dump that omits the
+    column still produces a gap report.
     """
 
     url: str
     source_type: str
     parent: str
+    file_path: str = ""
 
 
 def parent_source(url: str, source_type: str) -> str:
@@ -245,14 +251,30 @@ def read_corpus_docs(fetch_rows: CorpusRowFetcher) -> List[CorpusDoc]:
             continue
         seen.add(url)
         source_type = row.get("source_type") or ""
+        file_path = row.get("file_path")
         docs.append(
             CorpusDoc(
                 url=url,
                 source_type=source_type,
                 parent=parent_source(url, source_type),
+                file_path=file_path if isinstance(file_path, str) else "",
             )
         )
     return docs
+
+
+def resolve_persisted_path(file_path: str, data_path: str) -> Optional[Path]:
+    """Locate the persisted document on disk, mirroring the catalog's resolver.
+
+    `documents.file_path` is stored relative to the deployment's data path (or
+    absolute, in which case it is already resolved) — see
+    `catalog_postgres._resolve_path`. Returns None when the row carries no path,
+    so the caller can refuse rather than guess at a filename.
+    """
+    if not file_path:
+        return None
+    path = Path(file_path)
+    return path if path.is_absolute() else Path(data_path) / path
 
 
 def bank_source_urls(bank: Iterable[Any]) -> List[str]:
@@ -966,15 +988,3 @@ def propose_candidates(
     return parse_candidates(
         ask_llm(build_candidate_prompt(source, page_text, count=count)), source
     )
-
-
-def extract_page_text(html: str) -> str:
-    """Reduce fetched page HTML to the text the ingest actually persisted.
-
-    Delegates to the ingest's own converter so a proposed question is grounded
-    in the body the retriever indexed, not in a second conversion that could
-    drift from it.
-    """
-    from src.data_manager.collectors.processing import html_to_markdown
-
-    return html_to_markdown(html)

@@ -230,7 +230,7 @@ class HtmlToMarkdownProcessor:
             return resource
 
         try:
-            markdown = html_to_markdown(content)
+            markdown = _markdownify_deep_safe(content)
         except Exception as exc:
             logger.warning(
                 "HTML->Markdown conversion failed for %s; keeping original HTML: %s",
@@ -247,33 +247,18 @@ class HtmlToMarkdownProcessor:
             )
             return resource
 
+        # Strip KB page chrome to the article body — ONLY for Echo-KB pages (gated on
+        # their raw-HTML signature), so an arbitrary non-KB page that merely contains
+        # "Table of Contents"/"Last Updated" is never truncated.
+        if _is_echo_kb_page(content):
+            markdown = _slice_kb_article(markdown)
+
         resource.content = markdown
         resource.suffix = "md"
         _rewrite_path_field(resource, "file_name")
         _rewrite_path_field(resource, "relative_path")
         resource.set_metadata_field("converted_from", "html")
         return resource
-
-
-def html_to_markdown(html: str) -> str:
-    """Convert page HTML to the Markdown body the ingest persists.
-
-    The public seam over the conversion the persist-time processor applies:
-    markdownify, then — for Echo-KB pages only, gated on their raw-HTML
-    signature so an arbitrary page containing "Table of Contents" is never
-    truncated — slice to the article body.
-
-    Callers outside ingestion (golden-set maintenance grounds proposed questions
-    and, later, drift hashes in page text) need *this* text and not their own
-    conversion: grounding a golden question in a body the retriever never
-    indexed would author a question the agent cannot answer. Raises whatever
-    ``markdownify`` raises; the processor catches and falls back to the original
-    HTML.
-    """
-    markdown = _markdownify_deep_safe(html)
-    if _is_echo_kb_page(html):
-        markdown = _slice_kb_article(markdown)
-    return markdown
 
 
 def _markdownify_deep_safe(content: str) -> str:

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 _SCRIPT = (
@@ -75,7 +76,7 @@ class TestCoverageSubcommand:
     def test_a_fully_covered_corpus_says_so(self, tmp_path, capsys):
         script = _load_script()
         bank = _bank(tmp_path, _row(f"{KB}/kb/a"))
-        corpus = _corpus(tmp_path, f"{KB}/kb/a")
+        corpus = _corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))
 
         assert (
             script.main(["coverage", "--bank", str(bank), "--corpus-json", str(corpus)])
@@ -302,7 +303,7 @@ class TestCli:
         script = _load_script()
         bank = tmp_path / "bank.json"
         bank.write_text("{not json", encoding="utf-8")
-        corpus = _corpus(tmp_path, f"{KB}/kb/a")
+        corpus = _corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))
 
         code = script.main(
             ["coverage", "--bank", str(bank), "--corpus-json", str(corpus)]
@@ -333,8 +334,20 @@ def _fake_llm(module, payload, calls=None):
     module.build_ask_llm = build
 
 
-def _fake_page(module, html="<h1>GPU</h1><p>Add --gpus=1.</p>"):
-    module.fetch_page_html = lambda url: html
+def _persisted(tmp_path, name="web/a.md", text="Add #SBATCH --gpus=1 for one GPU."):
+    """Write the persisted document the retriever actually serves."""
+    path = tmp_path / "data" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _corpus_with_files(tmp_path, *pairs):
+    return _write(
+        tmp_path,
+        "corpus.json",
+        [{"url": u, "source_type": "web", "file_path": f} for u, f in pairs],
+    )
 
 
 CANDIDATE = {
@@ -348,9 +361,9 @@ class TestProposeSubcommand:
     def test_drafts_candidates_for_the_greenlit_page(self, tmp_path, capsys):
         module = _load_script()
         _fake_llm(module, [CANDIDATE])
-        _fake_page(module)
+        _persisted(tmp_path)
         bank = _bank(tmp_path, _row(f"{KB}/kb/other"))
-        corpus = _corpus(tmp_path, f"{KB}/kb/a")
+        corpus = _corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))
 
         code = module.main(
             [
@@ -363,6 +376,8 @@ class TestProposeSubcommand:
                 f"{KB}/kb/a",
                 "--model",
                 "anthropic/claude-sonnet-5",
+                "--data-path",
+                str(tmp_path / "data"),
             ]
         )
 
@@ -374,7 +389,7 @@ class TestProposeSubcommand:
     def test_leaves_the_bank_file_byte_unchanged(self, tmp_path):
         module = _load_script()
         _fake_llm(module, [CANDIDATE])
-        _fake_page(module)
+        _persisted(tmp_path)
         bank = _bank(tmp_path, _row(f"{KB}/kb/other"))
         before = bank.read_bytes()
 
@@ -384,11 +399,13 @@ class TestProposeSubcommand:
                 "--bank",
                 str(bank),
                 "--corpus-json",
-                str(_corpus(tmp_path, f"{KB}/kb/a")),
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
                 "--propose",
                 f"{KB}/kb/a",
                 "--model",
                 "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
             ]
         )
 
@@ -400,7 +417,7 @@ class TestProposeSubcommand:
         # closes for coverage.
         module = _load_script()
         _fake_llm(module, [CANDIDATE])
-        _fake_page(module)
+        _persisted(tmp_path)
 
         code = module.main(
             [
@@ -408,11 +425,13 @@ class TestProposeSubcommand:
                 "--bank",
                 str(_bank(tmp_path, _row())),
                 "--corpus-json",
-                str(_corpus(tmp_path, f"{KB}/kb/a")),
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
                 "--propose",
                 f"{KB}/kb/gone",
                 "--model",
                 "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
             ]
         )
 
@@ -428,7 +447,7 @@ class TestProposeSubcommand:
                 "--bank",
                 str(_bank(tmp_path, _row())),
                 "--corpus-json",
-                str(_corpus(tmp_path, f"{KB}/kb/a")),
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
                 "--propose",
                 f"{KB}/kb/a",
             ]
@@ -440,7 +459,7 @@ class TestProposeSubcommand:
     def test_a_run_where_every_candidate_is_rejected_fails(self, tmp_path, capsys):
         module = _load_script()
         _fake_llm(module, [dict(CANDIDATE, anchor_type="trivia")])
-        _fake_page(module)
+        _persisted(tmp_path)
 
         code = module.main(
             [
@@ -448,11 +467,13 @@ class TestProposeSubcommand:
                 "--bank",
                 str(_bank(tmp_path, _row())),
                 "--corpus-json",
-                str(_corpus(tmp_path, f"{KB}/kb/a")),
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
                 "--propose",
                 f"{KB}/kb/a",
                 "--model",
                 "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
             ]
         )
 
@@ -463,7 +484,7 @@ class TestProposeSubcommand:
     def test_proposing_skips_the_gap_report(self, tmp_path, capsys):
         module = _load_script()
         _fake_llm(module, [CANDIDATE])
-        _fake_page(module)
+        _persisted(tmp_path)
 
         module.main(
             [
@@ -471,7 +492,63 @@ class TestProposeSubcommand:
                 "--bank",
                 str(_bank(tmp_path, _row())),
                 "--corpus-json",
-                str(_corpus(tmp_path, f"{KB}/kb/a", f"{KB}/kb/b")),
+                str(
+                    _corpus_with_files(
+                        tmp_path, (f"{KB}/kb/a", "web/a.md"), (f"{KB}/kb/b", "web/b.md")
+                    )
+                ),
+                "--propose",
+                f"{KB}/kb/a",
+                "--model",
+                "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
+            ]
+        )
+
+        assert "gaps —" not in capsys.readouterr().out
+
+    def test_grounds_in_the_persisted_document_not_the_live_page(self, tmp_path):
+        # The retriever serves the PERSISTED text. Ingestion is URL-keyed and
+        # skips the content write for a page it already holds, so the live page
+        # can be ahead of the index; a question grounded in live-only text would
+        # be unanswerable — exactly the failure the retrievability guard exists
+        # to prevent. Nothing in this path touches the network.
+        module = _load_script()
+        prompts = []
+        _fake_llm(module, [CANDIDATE], calls=prompts)
+        _persisted(tmp_path, text="ONLY IN THE PERSISTED DOCUMENT")
+
+        module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
+                "--propose",
+                f"{KB}/kb/a",
+                "--model",
+                "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
+            ]
+        )
+
+        assert "ONLY IN THE PERSISTED DOCUMENT" in prompts[0]
+
+    def test_propose_requires_a_data_path(self, tmp_path, capsys):
+        module = _load_script()
+        _fake_llm(module, [CANDIDATE])
+        _persisted(tmp_path)
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
                 "--propose",
                 f"{KB}/kb/a",
                 "--model",
@@ -479,18 +556,42 @@ class TestProposeSubcommand:
             ]
         )
 
-        assert "gaps —" not in capsys.readouterr().out
+        assert code == 1
+        assert "--data-path" in capsys.readouterr().err
 
-    def test_a_page_that_cannot_be_fetched_is_an_operational_failure(
+    def test_a_missing_persisted_document_is_an_operational_failure(
+        self, tmp_path, capsys
+    ):
+        # The catalog row says the page is embedded but its file is gone: the
+        # tool refuses rather than falling back to a live fetch, because that
+        # fallback is precisely how an unanswerable question gets authored.
+        module = _load_script()
+        _fake_llm(module, [CANDIDATE])
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/gone.md"))),
+                "--propose",
+                f"{KB}/kb/a",
+                "--model",
+                "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
+            ]
+        )
+
+        assert code == 1
+        assert "persisted document" in capsys.readouterr().err
+
+    def test_a_corpus_row_without_a_file_path_cannot_be_proposed_against(
         self, tmp_path, capsys
     ):
         module = _load_script()
         _fake_llm(module, [CANDIDATE])
-
-        def boom(url):
-            raise module.OperationalError(f"cannot fetch {url}: connection refused")
-
-        module.fetch_page_html = boom
 
         code = module.main(
             [
@@ -503,11 +604,37 @@ class TestProposeSubcommand:
                 f"{KB}/kb/a",
                 "--model",
                 "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
             ]
         )
 
         assert code == 1
-        assert "cannot fetch" in capsys.readouterr().err
+        assert "file_path" in capsys.readouterr().err
+
+    def test_an_empty_persisted_document_is_refused(self, tmp_path, capsys):
+        module = _load_script()
+        _fake_llm(module, [CANDIDATE])
+        _persisted(tmp_path, text="   ")
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
+                "--propose",
+                f"{KB}/kb/a",
+                "--model",
+                "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
+            ]
+        )
+
+        assert code == 1
+        assert capsys.readouterr().err
 
 
 class TestDeclineLedgerCli:
@@ -662,7 +789,7 @@ class TestDeclineLedgerCli:
         # changed their mind, and the CLI names the earlier decision.
         module = _load_script()
         _fake_llm(module, [CANDIDATE])
-        _fake_page(module)
+        _persisted(tmp_path)
         ledger = _ledger(tmp_path, {"url": f"{KB}/kb/a"})
 
         code = module.main(
@@ -671,11 +798,13 @@ class TestDeclineLedgerCli:
                 "--bank",
                 str(_bank(tmp_path, _row())),
                 "--corpus-json",
-                str(_corpus(tmp_path, f"{KB}/kb/a")),
+                str(_corpus_with_files(tmp_path, (f"{KB}/kb/a", "web/a.md"))),
                 "--propose",
                 f"{KB}/kb/a",
                 "--model",
                 "m/x",
+                "--data-path",
+                str(tmp_path / "data"),
                 "--ledger",
                 str(ledger),
             ]
@@ -683,3 +812,120 @@ class TestDeclineLedgerCli:
 
         assert code == 0
         assert "previously declined" in capsys.readouterr().out
+
+
+class TestLedgerDurability:
+    """The ledger is the only durable record of a decline — and the only file
+    this tool writes. A half-written one loses decisions permanently."""
+
+    def test_an_interrupted_write_leaves_the_previous_ledger_intact(
+        self, tmp_path, monkeypatch
+    ):
+        # Truncate-then-write would leave a mangled file here; an atomic replace
+        # leaves the previous ledger byte-identical.
+        module = _load_script()
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/a", "reason": "keep me"})
+        before = ledger.read_bytes()
+
+        def boom(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(os, "replace", boom)
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--decline",
+                f"{KB}/kb/b",
+                "--ledger",
+                str(ledger),
+            ]
+        )
+
+        assert code == 1
+        assert ledger.read_bytes() == before
+
+    def test_a_failed_write_leaves_no_temp_file_behind(self, tmp_path, monkeypatch):
+        module = _load_script()
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/a"})
+
+        def boom(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(os, "replace", boom)
+
+        module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--decline",
+                f"{KB}/kb/b",
+                "--ledger",
+                str(ledger),
+            ]
+        )
+
+        assert [
+            p.name for p in tmp_path.iterdir() if p.name.startswith(".ledger")
+        ] == []
+
+    def test_the_decline_is_merged_against_the_ledger_as_it_is_at_write_time(
+        self, tmp_path
+    ):
+        # The read-modify-write reads immediately before writing, so a decline
+        # another session recorded in between is not silently clobbered.
+        module = _load_script()
+        ledger = _ledger(tmp_path)
+        bank = _bank(tmp_path, _row())
+        real_read = module.read_ledger
+
+        def racing_read(path):
+            entries = real_read(path)
+            if not entries:
+                # Another operator's decline lands between our two reads.
+                module.write_ledger(str(ledger), [{"url": f"{KB}/kb/other"}])
+                module.read_ledger = real_read
+                return real_read(path)
+            return entries
+
+        module.read_ledger = racing_read
+        try:
+            module.main(
+                [
+                    "coverage",
+                    "--bank",
+                    str(bank),
+                    "--decline",
+                    f"{KB}/kb/mine",
+                    "--ledger",
+                    str(ledger),
+                ]
+            )
+        finally:
+            module.read_ledger = real_read
+
+        urls = {e["url"] for e in json.loads(ledger.read_text(encoding="utf-8"))}
+        assert urls == {f"{KB}/kb/other", f"{KB}/kb/mine"}
+
+    def test_declining_needs_no_corpus(self, tmp_path):
+        # Bookkeeping does not read the catalog, so it must not demand one.
+        module = _load_script()
+        ledger = tmp_path / "ledger.json"
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--decline",
+                f"{KB}/kb/a",
+                "--ledger",
+                str(ledger),
+            ]
+        )
+
+        assert code == 0
+        assert ledger.exists()

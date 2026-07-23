@@ -463,14 +463,21 @@ python scripts/benchmarking/goldenset_maintenance.py coverage \
     --pg-dsn "postgresql://archi@localhost/archi-db" \
     --propose https://docs.rc.fas.harvard.edu/kb/running-jobs \
     --model anthropic/claude-sonnet-5 \
+    --data-path ~/.archi/archi-fasrc-dev/data \
     --count 3
 ```
 
-The page is re-fetched live and reduced with **the ingest's own HTML→Markdown conversion**, so
-the candidates are grounded in the text the retriever actually indexed rather than in a second
-conversion that could drift from it. The drafts print as a JSON array ready to paste into the
-bank — **the run writes nothing**. Applying a candidate is your edit, and reviewing it before
-that edit is the point.
+Candidates are grounded in the **persisted document** — the converted text on disk at
+`documents.file_path`, which is what got chunked, embedded, and is served at query time — and
+**never in a live re-fetch**. That distinction is the whole point: ingestion is URL-keyed and
+skips the content write for a page it already holds, so the live page can be *ahead* of the
+index. Grounding in live text would author a question about a fact the retriever cannot serve —
+the same unanswerable-question trap the retrievability filter closes, one layer down. `--data-path`
+is the deployment's data root, which `file_path` resolves against; `--propose` refuses without it
+rather than falling back to a fetch.
+
+The drafts print as a JSON array ready to paste into the bank — **the run writes nothing**.
+Applying a candidate is your edit, and reviewing it before that edit is the point.
 
 Three properties are imposed by the tool, not accepted from the model:
 
@@ -482,10 +489,11 @@ Three properties are imposed by the tool, not accepted from the model:
   reason printed to stderr rather than silently relabeled. `should_refuse` is rejected too: those
   rows carry **no** `sources` by design, so one "grounded in" a page is a contradiction.
 
-`--propose` refuses a URL that is not in the **retrievable** corpus: a question about a page the
-agent cannot retrieve is a guaranteed benchmark failure, not coverage. If every candidate is
-rejected the run exits **non-zero** — a propose run that produced nothing is a failed run, not a
-finding, which is the opposite of how gaps and orphans exit.
+`--propose` refuses a URL that is not in the **retrievable** corpus, one whose row carries no
+`file_path`, and one whose persisted document is missing or empty. Every one of those refusals
+exits non-zero instead of degrading to a live fetch. If every candidate is rejected the run also
+exits **non-zero** — a propose run that produced nothing is a failed run, not a finding, which is
+the opposite of how gaps and orphans exit.
 
 ### The decision ledger — declines only
 
@@ -516,9 +524,12 @@ without saying so reads as clean when it isn't. Declining is idempotent (declini
 the first entry and its reason), and an explicit `--propose` on a declined page still works and
 says so: you changed your mind, and the tool names the earlier decision rather than arguing.
 
-The ledger is the **only** file this tool ever writes. A missing ledger reads as "nothing
-declined yet"; a *corrupt* one is an operational failure, because reading it as empty would
-resurface every page you ever dismissed.
+The ledger is the **only** file this tool ever writes, and it is written **atomically** — to a
+temp file in the same directory, fsynced, then `os.replace`d over the target. A truncate-then-write
+would lose every decline it held if the write were interrupted, and unlike coverage, a decline
+cannot be re-derived from anything. A missing ledger reads as "nothing declined yet"; a *corrupt*
+one is an operational failure, because reading it as empty would resurface every page you ever
+dismissed.
 
 ### `orphans` — questions whose page is gone
 

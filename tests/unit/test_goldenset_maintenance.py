@@ -22,6 +22,7 @@ Postgres or the network.
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import pytest
 
@@ -38,7 +39,6 @@ from src.utils.goldenset_maintenance import (
     bank_source_urls,
     build_live_inventory,
     declined_urls,
-    extract_page_text,
     filter_docs,
     find_coverage_gaps,
     find_orphans,
@@ -50,6 +50,7 @@ from src.utils.goldenset_maintenance import (
     read_declines,
     reconcile,
     reconciliation_key,
+    resolve_persisted_path,
     with_decline,
 )
 
@@ -878,7 +879,9 @@ class TestDeclineLedger:
             [{"url": f"{KB}/kb/a", "reason": "minor page", "at": "2026-07-22"}]
         )
 
-        assert declines == (Decline(url=f"{KB}/kb/a", reason="minor page", at="2026-07-22"),)
+        assert declines == (
+            Decline(url=f"{KB}/kb/a", reason="minor page", at="2026-07-22"),
+        )
 
     def test_survives_a_hand_edited_ledger(self):
         declines = read_declines(
@@ -1033,7 +1036,9 @@ class TestProposeCandidates:
         # `should_refuse` rows carry NO sources by design; one "grounded in" a
         # page is a contradiction, so it is rejected rather than relabeled.
         proposal = propose_candidates(
-            f"{KB}/kb/a", "body", _llm_returning([_candidate(anchor_type="should_refuse")])
+            f"{KB}/kb/a",
+            "body",
+            _llm_returning([_candidate(anchor_type="should_refuse")]),
         )
 
         assert proposal.candidates == ()
@@ -1145,19 +1150,34 @@ class TestProposeCandidates:
         assert bank == before
 
 
-class TestExtractPageText:
-    """3.1 — grounding uses the same extraction the ingest persisted."""
+class TestPersistedDocumentPath:
+    """The retriever serves the PERSISTED file, so grounding must read that."""
 
-    def test_a_kb_page_is_reduced_to_the_article_body_like_the_ingest_does(self):
-        html = (
-            "<div class='eckb-article-content'><p>Table of Contents</p>"
-            "<p>THE BODY</p><p>Last Updated 2026</p></div>"
+    def test_a_relative_file_path_resolves_under_the_data_path(self):
+        assert resolve_persisted_path("web/docs/a.md", "/srv/archi/data") == Path(
+            "/srv/archi/data/web/docs/a.md"
         )
 
-        text = extract_page_text(html)
+    def test_an_absolute_file_path_is_used_as_is(self):
+        # Mirrors the catalog's own `_resolve_path`: an absolute stored path is
+        # already resolved and must not be re-rooted under the data path.
+        assert resolve_persisted_path("/mnt/other/a.md", "/srv/archi/data") == Path(
+            "/mnt/other/a.md"
+        )
 
-        assert "THE BODY" in text
-        assert "Last Updated" not in text
+    def test_a_row_without_a_file_path_has_no_persisted_document(self):
+        assert resolve_persisted_path("", "/srv/archi/data") is None
 
-    def test_a_plain_page_converts_to_markdown(self):
-        assert "# Title" in extract_page_text("<h1>Title</h1>")
+    def test_the_corpus_read_carries_the_persisted_file_path(self):
+        docs = read_corpus_docs(
+            _rows({"url": f"{KB}/kb/a", "source_type": "web", "file_path": "web/a.md"})
+        )
+
+        assert docs[0].file_path == "web/a.md"
+
+    def test_a_row_without_a_file_path_still_reads(self):
+        # A JSON dump that omits the column must not crash the gap report; only
+        # `--propose` needs the path, and it refuses when it is absent.
+        docs = read_corpus_docs(_rows({"url": f"{KB}/kb/a", "source_type": "web"}))
+
+        assert docs[0].file_path == ""
