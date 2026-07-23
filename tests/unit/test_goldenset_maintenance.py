@@ -21,12 +21,21 @@ Postgres or the network.
 
 from __future__ import annotations
 
+import copy
+
+from src.data_manager.collectors.scrapers.sitemap_source import (
+    SitemapFetchError,
+    SitemapPolicy,
+)
 from src.utils.goldenset_maintenance import (
     CorpusDoc,
+    LiveInventory,
     NearMiss,
     bank_source_urls,
+    build_live_inventory,
     filter_docs,
     find_coverage_gaps,
+    find_orphans,
     group_by_parent,
     parent_source,
     read_corpus_docs,
@@ -359,6 +368,13 @@ class TestBankSourceUrls:
 
         assert bank_source_urls(bank) == []
 
+    def test_tolerates_a_non_dict_row_and_non_string_sources_entries(self):
+        # A hand-edited bank can hold anything; a read-only report must survive
+        # it rather than raising partway through the census.
+        bank = ["oops", None, _row(None, "", 42, f"{KB}/kb/a")]
+
+        assert bank_source_urls(bank) == [f"{KB}/kb/a"]
+
     def test_duplicates_across_rows_collapse_in_order(self):
         bank = [_row(f"{KB}/kb/a"), _row(f"{KB}/kb/a/"), _row(f"{KB}/kb/b")]
 
@@ -474,3 +490,206 @@ class TestGroupAndFilter:
         docs = [_doc("/kb/a"), _doc("/kb/b")]
 
         assert filter_docs(docs) == tuple(docs)
+
+
+SM = "https://docs.rc.fas.harvard.edu/sitemap.xml"
+NS = 'xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
+
+
+def _urlset(*locs):
+    body = "".join(f"<url><loc>{loc}</loc></url>" for loc in locs)
+    return f'<?xml version="1.0"?><urlset {NS}>{body}</urlset>'
+
+
+def _index(*locs):
+    body = "".join(f"<sitemap><loc>{loc}</loc></sitemap>" for loc in locs)
+    return f'<?xml version="1.0"?><sitemapindex {NS}>{body}</sitemapindex>'
+
+
+def _fetcher(docs):
+    """Fetch callable over a {url: text} map; anything else fails like the real one."""
+
+    def fetch(url):
+        if url not in docs:
+            raise SitemapFetchError(f"404 {url}")
+        return docs[url]
+
+    return fetch
+
+
+class TestBuildLiveInventory:
+    """2.4a — the live inventory, and knowing when it cannot be trusted."""
+
+    def test_hand_listed_urls_are_the_inventory(self):
+        inv = build_live_inventory([f"{KB}/kb/a/", f"{KB}/kb/b"], _fetcher({}))
+
+        assert inv.urls == (f"{KB}/kb/a", f"{KB}/kb/b")
+        assert inv.complete is True
+        assert inv.failures == ()
+
+    def test_a_sitemap_line_is_expanded(self):
+        inv = build_live_inventory(
+            [f"sitemap-{SM}"], _fetcher({SM: _urlset(f"{KB}/kb/a", f"{KB}/kb/b")})
+        )
+
+        assert inv.urls == (f"{KB}/kb/a", f"{KB}/kb/b")
+        assert inv.complete is True
+
+    def test_hand_listed_and_expanded_urls_merge_and_dedupe(self):
+        inv = build_live_inventory(
+            [f"{KB}/kb/a/", f"sitemap-{SM}"],
+            _fetcher({SM: _urlset(f"{KB}/kb/a", f"{KB}/kb/b")}),
+        )
+
+        assert inv.urls == (f"{KB}/kb/a", f"{KB}/kb/b")
+        assert inv.complete is True
+
+    def test_a_failed_sitemap_fetch_marks_the_inventory_incomplete(self):
+        # expand_sitemaps fails OPEN here — it returns zero URLs with only a
+        # WARNING, which an unguarded caller would read as "the KB is empty".
+        inv = build_live_inventory([f"sitemap-{SM}"], _fetcher({}))
+
+        assert inv.complete is False
+        assert any(SM in reason for reason in inv.failures)
+
+    def test_an_unparseable_sitemap_marks_the_inventory_incomplete(self):
+        inv = build_live_inventory([f"sitemap-{SM}"], _fetcher({SM: "<not-xml"}))
+
+        assert inv.complete is False
+        assert any(SM in reason for reason in inv.failures)
+
+    def test_one_failed_child_of_an_index_marks_the_whole_inventory_incomplete(self):
+        # The dangerous case: siblings expand fine, so the count looks healthy
+        # and stays above the floor — the partial loss is silent without this.
+        child_ok, child_bad = f"{KB}/sitemap-1.xml", f"{KB}/sitemap-2.xml"
+        inv = build_live_inventory(
+            [f"sitemap-{SM}"],
+            _fetcher(
+                {
+                    SM: _index(child_ok, child_bad),
+                    child_ok: _urlset(f"{KB}/kb/a", f"{KB}/kb/b"),
+                }
+            ),
+        )
+
+        assert inv.urls == (f"{KB}/kb/a", f"{KB}/kb/b")
+        assert inv.complete is False
+        assert any(child_bad in reason for reason in inv.failures)
+
+    def test_an_expansion_below_its_floor_marks_the_inventory_incomplete(self):
+        inv = build_live_inventory(
+            [f"sitemap-{SM}"],
+            _fetcher({SM: _urlset(f"{KB}/kb/a")}),
+            policy=SitemapPolicy(min_pages=5),
+        )
+
+        assert inv.complete is False
+        assert any("below_floor" in reason for reason in inv.failures)
+
+    def test_an_expansion_over_its_cap_marks_the_inventory_incomplete(self):
+        inv = build_live_inventory(
+            [f"sitemap-{SM}"],
+            _fetcher({SM: _urlset(f"{KB}/kb/a", f"{KB}/kb/b")}),
+            policy=SitemapPolicy(max_pages=1),
+        )
+
+        assert inv.complete is False
+        assert any("over_cap" in reason for reason in inv.failures)
+
+    def test_an_empty_inventory_is_never_treated_as_complete(self):
+        # Nothing to compare against must never mean "everything was removed".
+        assert build_live_inventory([], _fetcher({})).complete is False
+
+    def test_blank_and_commented_source_lines_are_ignored(self):
+        inv = build_live_inventory(
+            ["", "   ", "# a comment", f"{KB}/kb/a"], _fetcher({})
+        )
+
+        assert inv.urls == (f"{KB}/kb/a",)
+        assert inv.complete is True
+
+
+def _inventory(*urls, complete=True):
+    return LiveInventory(urls=tuple(urls), complete=complete, failures=())
+
+
+class TestFindOrphans:
+    """2.4 — rows whose grounding page is gone from the LIVE source inventory."""
+
+    def test_a_row_citing_a_removed_page_is_an_orphan(self):
+        bank = [_row(f"{KB}/kb/removed", user_input="why?")]
+
+        report = find_orphans(bank, _inventory(f"{KB}/kb/still-here"))
+
+        assert report.abstained is False
+        assert [(o.row_index, o.urls) for o in report.orphans] == [
+            (0, (f"{KB}/kb/removed",))
+        ]
+
+    def test_a_live_page_is_not_an_orphan(self):
+        report = find_orphans([_row(f"{KB}/kb/a")], _inventory(f"{KB}/kb/a"))
+
+        assert report.orphans == ()
+
+    def test_a_should_refuse_row_is_never_an_orphan(self):
+        bank = [_row(anchor_type="should_refuse")]
+
+        assert find_orphans(bank, _inventory(f"{KB}/kb/a")).orphans == ()
+
+    def test_only_the_removed_url_of_a_multi_source_row_is_named(self):
+        bank = [_row(f"{KB}/kb/a", f"{KB}/kb/removed")]
+
+        report = find_orphans(bank, _inventory(f"{KB}/kb/a"))
+
+        assert [o.urls for o in report.orphans] == [(f"{KB}/kb/removed",)]
+
+    def test_a_url_on_a_host_the_inventory_never_covers_is_out_of_scope(self):
+        # 18 of the 105 FASRC bank rows cite slurm.schedmd.com, which the KB
+        # sitemap will never contain. Those pages were not removed — the
+        # inventory simply cannot speak to them.
+        bank = [_row("https://slurm.schedmd.com/sbatch.html")]
+
+        report = find_orphans(bank, _inventory(f"{KB}/kb/a"))
+
+        assert report.orphans == ()
+        assert report.out_of_scope == ("https://slurm.schedmd.com/sbatch.html",)
+
+    def test_a_slug_near_miss_is_reconciliation_not_an_orphan(self):
+        bank = [_row(f"{KB}/kb/running-jobs")]
+
+        report = find_orphans(bank, _inventory(f"{KB}/docs/running-jobs"))
+
+        assert report.orphans == ()
+        assert [n.url for n in report.needs_reconciliation] == [f"{KB}/kb/running-jobs"]
+
+    def test_an_incomplete_inventory_abstains_from_flagging_anything(self):
+        bank = [_row(f"{KB}/kb/removed")]
+        inventory = LiveInventory(
+            urls=(f"{KB}/kb/a",), complete=False, failures=("sitemap.xml: 404",)
+        )
+
+        report = find_orphans(bank, inventory)
+
+        assert report.abstained is True
+        assert report.orphans == ()
+        assert report.reasons == ("sitemap.xml: 404",)
+
+    def test_survives_a_hand_edited_bank_and_a_junk_inventory_url(self):
+        # A malformed entry on either side must degrade to "skip that entry",
+        # never to a crash or - worse - a spurious orphan.
+        bank = ["oops", _row(None, "", "http://[", f"{KB}/kb/removed")]
+        inventory = LiveInventory(
+            urls=(f"{KB}/kb/a", "http://["), complete=True, failures=()
+        )
+
+        report = find_orphans(bank, inventory)
+
+        assert [o.urls for o in report.orphans] == [(f"{KB}/kb/removed",)]
+
+    def test_detection_never_mutates_the_bank(self):
+        bank = [_row(f"{KB}/kb/removed"), _row(anchor_type="should_refuse")]
+        before = copy.deepcopy(bank)
+
+        find_orphans(bank, _inventory(f"{KB}/kb/a"))
+
+        assert bank == before

@@ -28,7 +28,15 @@ from fnmatch import fnmatchcase
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 from urllib.parse import urlparse
 
-from src.data_manager.collectors.scrapers.sitemap_source import normalize_page_url
+from src.data_manager.collectors.scrapers.sitemap_source import (
+    FetchText,
+    SitemapExpansionError,
+    SitemapParseError,
+    SitemapPolicy,
+    expand_sitemaps,
+    normalize_page_url,
+    parse_sitemap_document,
+)
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -316,3 +324,196 @@ def filter_docs(
             continue
         selected.append(doc)
     return tuple(selected)
+
+
+SITEMAP_PREFIX = "sitemap-"
+
+
+@dataclass(frozen=True)
+class LiveInventory:
+    """The set of URLs the configured sources currently advertise.
+
+    `complete` is the load-bearing field. `expand_sitemaps` fails **open** per
+    document — a sitemap that will not fetch or parse contributes zero URLs with
+    only a WARNING — so a healthy-looking expansion can silently be missing a
+    whole branch of the KB. Orphan detection must never run against a partial
+    inventory, because every unlisted page would look deleted.
+    """
+
+    urls: Tuple[str, ...]
+    complete: bool
+    failures: Tuple[str, ...]
+
+
+def build_live_inventory(
+    source_lines: Iterable[str],
+    fetch_text: FetchText,
+    policy: Optional[SitemapPolicy] = None,
+) -> LiveInventory:
+    """Expand the current source list into the live URL inventory.
+
+    `sitemap-<url>` lines are expanded with the ingest's own `expand_sitemaps`;
+    every other non-blank, non-comment line is a hand-listed page and is its own
+    inventory entry. The fetch callable is injected, so this is testable with
+    fixture XML and no network.
+
+    Completeness is tracked because the expander cannot report it: the injected
+    fetch is wrapped so a failed fetch is recorded, and each returned document is
+    re-parsed here so a document the expander silently dropped as unparseable is
+    recorded too. A source-level `SitemapExpansionError` (below floor / over cap)
+    and an empty inventory also mark the run incomplete — nothing to compare
+    against must never be read as "everything was removed".
+    """
+    policy = policy or SitemapPolicy()
+    failures: List[str] = []
+
+    def recording_fetch(url: str) -> str:
+        """Fetch as normal, but record what the expander is about to swallow."""
+        try:
+            text = fetch_text(url)
+        except Exception as exc:
+            # Re-raised so the expander's own fail-open path still runs, but
+            # recorded so the caller can tell that a fail-open ran at all.
+            failures.append(f"{url}: {exc}")
+            raise
+        try:
+            parse_sitemap_document(text)
+        except SitemapParseError as exc:
+            # The expander drops an unparseable document per-document; without
+            # recording it here, a partially-expanded index looks complete.
+            failures.append(f"{url}: {exc}")
+        return text
+
+    hand_listed: List[str] = []
+    sitemap_urls: List[str] = []
+    for raw_line in source_lines:
+        line = (raw_line or "").strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith(SITEMAP_PREFIX):
+            sitemap_urls.append(line[len(SITEMAP_PREFIX) :])
+        else:
+            hand_listed.append(line)
+
+    expanded: List[str] = []
+    if sitemap_urls:
+        try:
+            expanded = expand_sitemaps(sitemap_urls, recording_fetch, policy)
+        except SitemapExpansionError as exc:
+            failures.append(f"{exc.source_url}: {exc.reason} ({exc.count} pages)")
+
+    urls: List[str] = []
+    seen = set()
+    for raw in list(hand_listed) + expanded:
+        url = canonical_url(raw)
+        if url is None or url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+
+    if not urls:
+        failures.append("live inventory is empty")
+    return LiveInventory(
+        urls=tuple(urls), complete=not failures, failures=tuple(failures)
+    )
+
+
+@dataclass(frozen=True)
+class Orphan:
+    """A bank row whose grounding page is gone from the live KB."""
+
+    row_index: int
+    user_input: str
+    urls: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class OrphanReport:
+    """Rows to propose for prune or conversion — never deleted automatically."""
+
+    orphans: Tuple[Orphan, ...]
+    out_of_scope: Tuple[str, ...]
+    needs_reconciliation: Tuple[NearMiss, ...]
+    abstained: bool
+    reasons: Tuple[str, ...]
+
+
+def _host_of(url: str) -> str:
+    try:
+        return urlparse(url).netloc.lower()
+    except ValueError:
+        return ""
+
+
+def find_orphans(bank: Iterable[Any], inventory: LiveInventory) -> OrphanReport:
+    """Flag rows whose `sources` URL is absent from the LIVE source inventory.
+
+    Keyed on the live inventory rather than the corpus, because the corpus never
+    prunes: a page removed upstream still has a corpus row, so corpus presence
+    proves nothing (design D6).
+
+    Two guards keep the pass honest:
+
+    - **Abstention.** If the inventory is incomplete, nothing is flagged at all.
+    - **Scope.** The inventory is authoritative only for the hosts it actually
+      contains. A `sources` URL on any other host (an external authority such as
+      the upstream Slurm docs) was never in the KB to be removed, so it is
+      reported as out-of-scope rather than judged.
+
+    A slug near-miss is reconciliation-needed, and a `should_refuse` row's empty
+    `sources` yields nothing. Read-only: the bank is never mutated.
+    """
+    if not inventory.complete:
+        return OrphanReport(
+            orphans=(),
+            out_of_scope=(),
+            needs_reconciliation=(),
+            abstained=True,
+            reasons=inventory.failures,
+        )
+
+    in_scope_hosts = {_host_of(url) for url in inventory.urls}
+    out_of_scope: List[str] = []
+    seen_out = set()
+    near_by_url: Dict[str, NearMiss] = {}
+    orphans: List[Orphan] = []
+
+    for index, record in enumerate(bank):
+        if not isinstance(record, dict):
+            continue
+        sources = record.get("sources")
+        if not isinstance(sources, list) or not sources:
+            continue
+        judged: List[str] = []
+        for raw in sources:
+            if not isinstance(raw, str) or not raw:
+                continue
+            url = canonical_url(raw)
+            if url is None:
+                continue
+            if _host_of(url) not in in_scope_hosts:
+                if url not in seen_out:
+                    seen_out.add(url)
+                    out_of_scope.append(url)
+                continue
+            judged.append(url)
+        if not judged:
+            continue
+        result = reconcile(judged, inventory.urls)
+        for near in result.near_misses:
+            near_by_url.setdefault(near.url, near)
+        if result.unmatched:
+            orphans.append(
+                Orphan(
+                    row_index=index,
+                    user_input=str(record.get("user_input") or ""),
+                    urls=result.unmatched,
+                )
+            )
+    return OrphanReport(
+        orphans=tuple(orphans),
+        out_of_scope=tuple(out_of_scope),
+        needs_reconciliation=tuple(near_by_url.values()),
+        abstained=False,
+        reasons=(),
+    )
