@@ -99,3 +99,66 @@ class TestSsoStaysSequential:
         assert len(clients) == len(urls)
         assert len({id(c) for c in clients}) == 1
         assert isinstance(clients[0], _FakeAuthenticator)
+
+
+class TestAuthenticatorLifecycle:
+    """Authenticator closed exactly once per run (issue #136, task 6.2).
+
+    Spec ``parallel-scraping`` > "The selenium/SSO path remains sequential" >
+    scenario "Authenticator lifecycle is preserved":
+
+        it is closed exactly once when the run finishes, including when a seed
+        raises
+
+    ``_collect_sso_from_urls`` (``scraper_manager.py``) builds one shared selenium
+    authenticator and releases it in a ``try/finally`` so the browser session is
+    always freed. These tests lock in that ``close()`` is invoked exactly once --
+    neither leaked (never closed) nor double-closed -- whether every seed succeeds
+    or one seed raises mid-loop.
+    """
+
+    def _make_sso_manager(self, make_manager, monkeypatch):
+        """A selenium-enabled manager whose resolve seam yields one shared auth."""
+        manager = make_manager(
+            {"sources": {"links": {"selenium_scraper": {"enabled": True}}}}
+        )
+        monkeypatch.setattr(sm_module, "read_secret", lambda name: "present")
+        authenticator = _FakeAuthenticator()
+        # The manager builds the authenticator via ``authenticator_class(**kwargs)``;
+        # return a factory that hands back the one instance we watch.
+        monkeypatch.setattr(
+            manager, "_resolve_scraper", lambda: (lambda **kw: authenticator, {})
+        )
+        return manager, authenticator
+
+    def test_authenticator_closed_once_on_clean_run(
+        self, make_manager, monkeypatch, tmp_path
+    ):
+        manager, authenticator = self._make_sso_manager(make_manager, monkeypatch)
+        monkeypatch.setattr(manager, "_handle_standard_url", lambda *a, **k: 0)
+
+        urls = [f"https://sso{i}.example.edu/" for i in range(4)]
+        manager._collect_sso_from_urls(urls, persistence=object(), output_dir=tmp_path)
+
+        assert authenticator.closed == 1
+
+    def test_authenticator_closed_once_when_seed_raises(
+        self, make_manager, monkeypatch, tmp_path
+    ):
+        manager, authenticator = self._make_sso_manager(make_manager, monkeypatch)
+
+        def boom(url, *args, **kwargs):
+            if url.endswith("sso1.example.edu/"):
+                raise RuntimeError("seed blew up")
+            return 0
+
+        monkeypatch.setattr(manager, "_handle_standard_url", boom)
+
+        urls = [f"https://sso{i}.example.edu/" for i in range(4)]
+        with pytest.raises(RuntimeError, match="seed blew up"):
+            manager._collect_sso_from_urls(
+                urls, persistence=object(), output_dir=tmp_path
+            )
+
+        # The ``finally`` released the browser session exactly once despite the raise.
+        assert authenticator.closed == 1
