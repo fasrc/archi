@@ -411,7 +411,8 @@ python scripts/benchmarking/goldenset_maintenance.py orphans \
 
 # Which confirmed rows were grounded in a page that has since changed?
 python scripts/benchmarking/goldenset_maintenance.py drift \
-    --bank examples/benchmarking/fasrc_ragas_queries.json
+    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com
 ```
 
 `--min-pages` is the sitemap **completeness floor** and must match the deployment's
@@ -673,11 +674,13 @@ that page still says what it said. It works in two stages, cheap first:
 
 ```bash
 # tripwire only — cheap enough to run on a schedule
-python scripts/benchmarking/goldenset_maintenance.py drift --bank <bank.json>
+python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu
 
 # escalate every moved hash to a model for triage
 python scripts/benchmarking/goldenset_maintenance.py drift \
-    --bank <bank.json> --model anthropic/claude-sonnet-5
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \
+    --model anthropic/claude-sonnet-5
 ```
 
 `--model` is optional. Without it you get the tripwire alone, which is already a real finding:
@@ -758,13 +761,18 @@ and a second, divergent fetch path is the failure mode this module is built to a
 
 ```bash
 python scripts/benchmarking/goldenset_maintenance.py drift \
-    --bank <bank.json> --model anthropic/claude-sonnet-5 --show-text
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \
+    --model anthropic/claude-sonnet-5 --show-text
 ```
 
 It is opt-in because the report is a work list and a page body per changed row would bury it —
 but with `--model` you would otherwise be reading a one-sentence verdict about text you cannot
 see, which is not a review. Note this is the **new** page, not a diff: the tool stores only a
 hash of the old one, which is exactly what lets it keep no state between runs.
+
+A very long page is cut, and the cut is marked with `[... page truncated ...]`. The hash still
+covers the whole page — only the text kept for review is capped — but the model sees the same
+truncated copy you do, so a verdict on a long page is a verdict on its opening section.
 
 #### Stored hashes carry their algorithm
 
@@ -795,7 +803,7 @@ paste-ready block per row.
 
 ```bash
 python scripts/benchmarking/goldenset_maintenance.py drift \
-    --bank <bank.json> --print-hashes
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu --print-hashes
 ```
 
 ```json
@@ -810,6 +818,12 @@ Paste it into the row you are locking. Do the same after reviewing a drifted row
 answer still holds — that re-baselines it so the next run is quiet again. Both are human acts, on
 purpose: a tool that re-baselined a drifted row by itself would erase the finding before anyone
 read it.
+
+Pasting replaces the row's whole map, so each block is **complete for its row**: a source that
+could not be read this run carries its existing baseline forward rather than vanishing. Where a
+source has neither a fresh nor a stored hash there is nothing to carry, and the block is labelled
+`INCOMPLETE` — pasting it as-is would drop that source. Baselines for URLs the row no longer
+cites are deliberately not carried forward; they are reported separately as stale.
 
 #### Abstention
 

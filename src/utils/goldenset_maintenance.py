@@ -826,6 +826,11 @@ DRAFT_STATUS = "draft"
 #: request budget) on a run an operator expects to be cheap.
 MAX_PROMPT_PAGE_CHARS = 24_000
 
+#: Appended when page text is cut for review. Load-bearing: without it a prefix
+#: reads as a whole page, and a verdict formed on one is indistinguishable from
+#: a verdict formed on all of it.
+TRUNCATION_MARKER = "\n[... page truncated ...]"
+
 #: Takes a prompt, returns the model's raw reply. Injected so tests need no LLM.
 AskLLM = Callable[[str], str]
 
@@ -1269,15 +1274,29 @@ No prose, no fences.
 """
 
 
+def _truncate_page_text(text: str) -> str:
+    """Cap page text for review, leaving a visible mark that it was cut.
+
+    **Idempotent.** The cut now happens at the fetch cache, and this builder
+    still guards its own input; without the marker check the text would be cut a
+    second time and lose the very marker that says so. That is how a model ends
+    up reading a prefix presented as a whole page and answering "holds" about a
+    contradiction sitting past the cutoff.
+    """
+    if len(text) <= MAX_PROMPT_PAGE_CHARS or text.endswith(TRUNCATION_MARKER):
+        return text
+    return text[:MAX_PROMPT_PAGE_CHARS] + TRUNCATION_MARKER
+
+
 def build_drift_prompt(
     user_input: str, reference: str, url: str, page_text: str
 ) -> str:
     """Compose the diff prompt for one changed source."""
-    text = page_text.strip()
-    if len(text) > MAX_PROMPT_PAGE_CHARS:
-        text = text[:MAX_PROMPT_PAGE_CHARS] + "\n[... page truncated ...]"
     return _DRIFT_PROMPT.format(
-        user_input=user_input, reference=reference, url=url, page_text=text
+        user_input=user_input,
+        reference=reference,
+        url=url,
+        page_text=_truncate_page_text(page_text.strip()),
     )
 
 
@@ -1380,7 +1399,7 @@ def _fetch_extract(
         return cache[url]
     try:
         text = extract_page_text(fetch_html(url))
-        result = (text[:MAX_PROMPT_PAGE_CHARS], content_digest(text), "")
+        result = (_truncate_page_text(text), content_digest(text), "")
     except Exception as exc:  # noqa: BLE001 - fetcher is injected; any failure is local
         result = ("", "", str(exc))
     cache[url] = result
@@ -1522,7 +1541,21 @@ def find_drift(
             if not isinstance(raw, str) or not raw:
                 continue
             url = canonical_url(raw)
-            if url is None or url in cited:
+            if url is None:
+                # A locked row cites this page, so it is NOT source-less — but
+                # the URL cannot be canonicalized, so it cannot be checked. Drop
+                # it silently and the row falls through to `skipped`, where the
+                # report calls it "draft or source-less": two things it is not.
+                # Unjudgeable is a state this report names.
+                checks.append(
+                    SourceCheck(
+                        url=raw,
+                        state=DRIFT_REFUSED,
+                        detail="not a parseable URL — cannot be checked",
+                    )
+                )
+                continue
+            if url in cited:
                 continue
             cited.append(url)
             checks.append(

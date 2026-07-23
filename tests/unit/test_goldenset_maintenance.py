@@ -32,12 +32,14 @@ from src.data_manager.collectors.scrapers.sitemap_source import (
 )
 from src.utils.goldenset_maintenance import (
     MAX_PROMPT_PAGE_CHARS,
+    TRUNCATION_MARKER,
     CorpusDoc,
     Decline,
     DriftExtractionError,
     LiveInventory,
     NearMiss,
     ProposalError,
+    _truncate_page_text,
     bank_source_urls,
     build_drift_prompt,
     build_live_inventory,
@@ -1789,7 +1791,7 @@ class TestDriftRetainsBoundedText:
         # The digest must cover the WHOLE page — truncating before hashing would
         # make every edit past the cut invisible.
         assert check.fresh == page_digest(html)
-        assert len(check.fresh_text) <= MAX_PROMPT_PAGE_CHARS
+        assert len(check.fresh_text) <= MAX_PROMPT_PAGE_CHARS + len(TRUNCATION_MARKER)
 
     def test_a_malformed_url_is_refused_rather_than_raising(self):
         # `urlparse(...).hostname` raises on an unclosed IPv6 bracket. A read-only
@@ -1841,3 +1843,73 @@ class TestDriftAbstainsWhenNothingWasRead:
         report = _drift([_row(f"{KB}/kb/a")], _fetcher_for({}))
 
         assert report.abstained is False
+
+
+class TestDriftEvidenceIsHonestAboutTruncation:
+    """Round-1's memory fix silently disabled the prompt's truncation marker.
+
+    `_fetch_extract` began capping the retained text at exactly
+    `MAX_PROMPT_PAGE_CHARS`, so `build_drift_prompt`'s own `len(text) > MAX`
+    check stopped firing and the model was handed a prefix presented as the
+    whole page. If the contradicting sentence sits past the cut, the verdict can
+    read "holds" off incomplete evidence — a false reassurance on exactly the
+    long pages hardest to check by eye.
+    """
+
+    def test_retained_text_says_it_was_cut(self):
+        url = f"{KB}/kb/big"
+        html = "<html><body><p>" + ("word " * 40_000) + "</p></body></html>"
+        bank = [_locked(url, hashes={url: "sha256:" + "0" * 64})]
+
+        report = _drift(bank, _fetcher_for({url: html}))
+
+        assert report.drifted[0].changed[0].fresh_text.endswith(TRUNCATION_MARKER)
+
+    def test_the_prompt_carries_the_marker_for_an_already_cut_page(self):
+        url = f"{KB}/kb/big"
+        html = "<html><body><p>" + ("word " * 40_000) + "</p></body></html>"
+        bank = [_locked(url, hashes={url: "sha256:" + "0" * 64})]
+        prompts = []
+
+        _drift(
+            bank,
+            _fetcher_for({url: html}),
+            ask_llm=_recording_llm(prompts, '{"verdict": "unclear"}'),
+        )
+
+        assert TRUNCATION_MARKER.strip() in prompts[0]
+
+    def test_truncation_is_idempotent_not_re_cut(self):
+        # The prompt builder must not chop the marker back off text that arrived
+        # already truncated.
+        once = _truncate_page_text("x" * (MAX_PROMPT_PAGE_CHARS * 2))
+
+        assert _truncate_page_text(once) == once
+
+    def test_a_short_page_is_left_alone(self):
+        assert _truncate_page_text("short") == "short"
+
+
+class TestMalformedLockedSource:
+    """An unparseable URL on a locked row must be named, not quietly dropped."""
+
+    def test_it_is_reported_as_refused_rather_than_skipped(self):
+        bank = [_locked("http://[", status="locked")]
+
+        report = _drift(bank, _fetcher_for({}))
+
+        # Previously this row fell through to `skipped`, where the CLI labels it
+        # "draft or source-less" — both false. A locked row with a broken source
+        # is unjudgeable, and unjudgeable is a thing this report names.
+        assert report.skipped_rows == 0
+        assert [c.url for c in report.refused] == ["http://["]
+
+    def test_a_good_source_alongside_a_broken_one_is_still_checked(self):
+        good = f"{KB}/kb/gpu"
+        bank = [_locked(good, "http://[", hashes={good: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({good: KB_HTML}))
+
+        states = {c.url: c.state for c in report.rows[0].checks}
+        assert states[good] == "unchanged"
+        assert states["http://["] == "refused"

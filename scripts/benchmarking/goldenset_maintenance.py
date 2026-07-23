@@ -850,13 +850,35 @@ def _print_hashes(report) -> None:
     The bank is never written, so this is the whole path by which a baseline gets
     recorded: the tool computes, a human pastes. Without it `source_hashes` could
     never be populated and the tripwire would sit inert.
+
+    A block must therefore be **complete for the row**, because pasting it
+    replaces the whole map. A source that could not be read this run carries its
+    existing baseline forward; emitting only the sources that happened to answer
+    would quietly delete the others' confirmation history — from output that
+    invited the paste. Where a source has neither a fresh nor a stored hash there
+    is nothing to carry, so the block is labelled INCOMPLETE rather than
+    presented as safe.
+
+    Baselines for URLs the row no longer cites are deliberately NOT carried
+    forward; they are reported separately as stale, and dropping them is the
+    point of pasting.
     """
     for row in report.rows:
-        fresh = {c.url: c.fresh for c in row.checks if c.fresh}
-        if not fresh:
+        carried = {
+            c.url: (c.fresh or c.stored) for c in row.checks if c.fresh or c.stored
+        }
+        if not carried:
             continue
+        missing = [c.url for c in row.checks if not (c.fresh or c.stored)]
         print(f"\nrow {row.row_index} — {row.user_input[:60]}")
-        print(json.dumps({"source_hashes": fresh}, indent=2))
+        if missing:
+            print(
+                "  # INCOMPLETE — no hash available for: "
+                + ", ".join(missing)
+                + "\n  # Pasting this as-is would drop those sources. Re-run once "
+                "they are reachable."
+            )
+        print(json.dumps({"source_hashes": carried}, indent=2))
 
 
 def build_parser() -> argparse.ArgumentParser:

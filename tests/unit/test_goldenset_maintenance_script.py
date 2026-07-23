@@ -1856,3 +1856,71 @@ class TestDriftTransport:
         # A mistyped --allowed-hosts must not read as a clean bill of health.
         assert code == 1
         assert "abstain" in captured.err.lower()
+
+
+class TestPrintHashesNeverLosesABaseline:
+    """`--print-hashes` is labelled paste-ready, so it has to be complete.
+
+    A row with one readable source and one unreachable one emitted a block
+    holding only the readable URL. Pasting that over the row's `source_hashes`
+    silently drops the other baseline — the next run calls it unbaselined and
+    the confirmation history is gone, from an output that invited the paste.
+    """
+
+    def test_an_unreadable_source_keeps_its_existing_baseline(self, tmp_path, capsys):
+        script = _load_script()
+        good, dead = f"{KB}/kb/gpu", f"{KB}/kb/dead"
+        stored_dead = "sha256:" + "a" * 64
+        bank = _bank(
+            tmp_path,
+            _locked_row(
+                good,
+                dead,
+                hashes={good: page_digest(GPU_HTML), dead: stored_dead},
+            ),
+        )
+
+        def build():
+            def fetch(url):
+                if url == dead:
+                    raise RuntimeError("timeout")
+                return GPU_HTML
+
+            return fetch
+
+        script.build_fetch_html = build
+
+        script.main([*_drift_head(bank), "--print-hashes"])
+        out = capsys.readouterr().out
+        block = json.loads(out[out.index("{") :])["source_hashes"]
+
+        assert block[good] == page_digest(GPU_HTML)
+        assert block[dead] == stored_dead
+
+    def test_a_block_missing_a_source_entirely_is_flagged_incomplete(
+        self, tmp_path, capsys
+    ):
+        script = _load_script()
+        good, dead = f"{KB}/kb/gpu", f"{KB}/kb/dead"
+        # `dead` is both unreadable AND unbaselined — nothing to carry forward,
+        # so the block genuinely cannot be complete. Say so instead of implying
+        # it is safe to paste.
+        bank = _bank(
+            tmp_path, _locked_row(good, dead, hashes={good: page_digest(GPU_HTML)})
+        )
+
+        def build():
+            def fetch(url):
+                if url == dead:
+                    raise RuntimeError("timeout")
+                return GPU_HTML
+
+            return fetch
+
+        script.build_fetch_html = build
+
+        script.main([*_drift_head(bank), "--print-hashes"])
+        out = capsys.readouterr().out
+
+        assert "INCOMPLETE" in out
+        assert dead in out
