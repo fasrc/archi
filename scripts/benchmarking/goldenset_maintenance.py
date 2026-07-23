@@ -444,7 +444,7 @@ def _print_group(title: str, lines: Sequence[str], stream=sys.stdout) -> None:
         print(f"  {line}", file=stream)
 
 
-def _record(args: argparse.Namespace, **counts: int) -> None:
+def _record(args: argparse.Namespace, **counts: Any) -> None:
     """Note a pass's finding counts for `report --summary-json`, if asked.
 
     The exit code carries only two states — the run happened, or it broke — and
@@ -1293,7 +1293,14 @@ def build_parser() -> argparse.ArgumentParser:
         path_glob=None,
         data_path=None,
         count=3,
-        show_text=False,
+        # ON here, unlike the interactive `drift` where it is opt-in. The spec
+        # asks for a drifted row to be flagged "with the re-fetched content for
+        # review", and interactively that is a re-run away. Unattended there is
+        # nobody to re-run it: this log is the whole artifact, and by the time
+        # someone reads "3 drifted" the page may have moved again — so the
+        # evidence has to be captured when it is detected. The wrapper's size
+        # cap is what makes that safe to do nightly.
+        show_text=True,
         print_hashes=False,
     )
     return parser

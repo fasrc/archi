@@ -2441,3 +2441,51 @@ class TestReportSaysWhenItOnlyRanTheTripwire:
         script.main(_report_argv(bank, corpus, sources))
 
         assert "NOT compared" not in capsys.readouterr().out
+
+
+class TestReportKeepsTheDriftEvidence:
+    """Spec: a drifted row is flagged "with the re-fetched content for review".
+
+    Interactively that is `--show-text`, opt-in because the report is a work
+    list. Unattended there is nobody to re-run it: the log IS the artifact, and
+    by the time anyone reads "3 drifted" the page may have moved again. So the
+    evidence has to be captured at detection time. The cron wrapper's size cap
+    is what makes that safe to do every night.
+    """
+
+    def _drifted(self, tmp_path, script, extra=()):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML_CHANGED})
+        return script.main([*_report_argv(bank, corpus, sources), *extra])
+
+    def test_the_changed_page_text_is_in_the_report(self, tmp_path, capsys):
+        script = _load_script()
+
+        self._drifted(tmp_path, script)
+        out = capsys.readouterr().out
+
+        # The fact that moved, not just the fact that something moved.
+        assert "--gpus=2" in out
+
+    def test_the_evidence_names_the_url_it_came_from(self, tmp_path, capsys):
+        script = _load_script()
+
+        self._drifted(tmp_path, script)
+        out = capsys.readouterr().out
+
+        assert f"{KB}/kb/live (as fetched now)" in out
+
+    def test_a_clean_run_carries_no_page_text(self, tmp_path, capsys):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+
+        script.main(_report_argv(bank, corpus, sources))
+
+        assert "as fetched now" not in capsys.readouterr().out

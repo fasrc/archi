@@ -1024,6 +1024,11 @@ Three properties make it safe unattended, each pinned by
   span the whole bank, so one run really can be enormous. When a run fails, its full output still
   goes to stderr untruncated — nothing diagnostic is lost at the moment it matters. One rotation,
   not a logrotate unit, so rollback stays "delete the cron line".
+- **The evidence is captured when it is detected.** Unlike the interactive `drift` pass, where
+  page text is behind `--show-text`, `report` always includes the re-fetched content for each
+  drifted row. Interactively you can re-run to see it; unattended you cannot, and by the time
+  someone reads "3 drifted" the page may have moved again. The size cap above is what makes this
+  safe to do nightly.
 - **A hash-only run says so.** The nightly job runs the cheap tripwire, which establishes that a
   source *moved* — not that the recorded answer is now wrong. When such a run lists drifted rows
   it prints a note to that effect and records `"drift_check": "hash-only"` in the summary, so a
