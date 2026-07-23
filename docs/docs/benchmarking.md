@@ -455,7 +455,12 @@ the offline run filtered.
 
 ### `coverage --propose` — draft questions for one greenlit page
 
-A gap is a suggestion, not an order. Nothing drafts a question until you name a page:
+A gap is a suggestion, not an order. Nothing drafts a question until you name a page — **one page
+per invocation, deliberately**. The filters above narrow what you *review*; they never batch a
+decision. Drafting for every page under a path glob is the auto-covering this design rejects: a
+golden set's value is signal per question, not count, and a hundred machine-drafted rows on a
+low-value source is debt someone has to read. Working through a large source is a loop over
+single greenlights — which is what the conversational skill does on your behalf.
 
 ```bash
 python scripts/benchmarking/goldenset_maintenance.py coverage \
