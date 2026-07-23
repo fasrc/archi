@@ -2311,3 +2311,74 @@ class TestReportNotifiesOnDegradedRuns:
 
         assert summary["orphans_needs_reconciliation"] == 1
         assert summary["notify"] is True
+
+
+class TestReportConfirmationCensus:
+    """Spec: "WHEN the tool reports on the bank THEN it prints the count of
+    `locked` vs `draft` rows and the `anchor_type` distribution, from the field
+    rather than by parsing `notes`."
+
+    `bank_status_counts` has existed since group 1 but no CLI ever printed it,
+    so the scenario was satisfied nowhere. `report` is the reporting surface.
+    """
+
+    def _bank_and_run(self, tmp_path, script, extra=()):
+        live = f"{KB}/kb/live"
+        bank = _bank(
+            tmp_path,
+            _locked_row(live, hashes={live: page_digest(GPU_HTML)}, anchor_type="easy"),
+            _row(f"{KB}/kb/live", anchor_type="reasoning"),
+        )
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+        code = script.main([*_report_argv(bank, corpus, sources), *extra])
+        return code
+
+    def test_prints_locked_versus_draft(self, tmp_path, capsys):
+        script = _load_script()
+
+        self._bank_and_run(tmp_path, script)
+        out = capsys.readouterr().out
+
+        assert "1 locked" in out
+        assert "1 draft" in out
+
+    def test_prints_the_anchor_type_distribution(self, tmp_path, capsys):
+        script = _load_script()
+
+        self._bank_and_run(tmp_path, script)
+        out = capsys.readouterr().out
+
+        assert "easy" in out
+        assert "reasoning" in out
+
+    def test_the_census_is_in_the_summary_json(self, tmp_path):
+        script = _load_script()
+        out = tmp_path / "summary.json"
+
+        self._bank_and_run(tmp_path, script, ("--summary-json", str(out)))
+        summary = json.loads(out.read_text())
+
+        assert summary["census"]["locked"] == 1
+        assert summary["census"]["draft"] == 1
+        assert summary["census"]["anchor_type"]["easy"] == 1
+
+    def test_the_census_alone_does_not_wake_anyone(self, tmp_path):
+        # Composition, not a finding: a bank that is 90% draft is a project
+        # status, not a nightly alarm.
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _row(live))  # all draft, and fully covered
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+
+        script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+        summary = json.loads(out.read_text())
+
+        assert summary["census"]["draft"] == 1
+        assert summary["notify"] is False

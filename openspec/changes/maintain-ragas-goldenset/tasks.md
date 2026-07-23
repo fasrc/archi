@@ -53,8 +53,10 @@
 ## 5. Read-only `report` + dev-server cron
 
 - [x] 5.1 TDD: `report` prints coverage gaps, drift flags, and orphans, modifies no file, and exits zero when findings exist — reserving non-zero for operational failure (unreachable corpus).
-- [x] 5.2 Add the dev-server cron entry running `report` read-only, writing to `.ralph/log/`; document install + rollback (remove the line).
+- [x] 5.2 Ship the cron entry for `report` read-only, writing to `.ralph/log/`; document install + rollback (remove the line). **Delivered as a tracked wrapper + docs, NOT installed on fasrc-dev** (operator's decision): `scripts/benchmarking/goldenset_report_cron.sh` with a 25-case hermetic self-test, an env-file config (crontab has no line continuation), a one-line crontab entry, and documented rollback. Installing it on the dev server is a deliberate follow-up — no repo change can verify a crontab on a machine this PR does not touch.
 - [x] 5.3 **Docs (same PR):** document the `report` subcommand + cron install/rollback in `docs/docs/benchmarking.md`.
+- [x] 5.4 The confirmation census (task 1.3's `bank_status_counts`) is printed by `report` — the spec's "WHEN the tool reports on the bank" scenario had a helper but no CLI surface until now.
+- [x] 5.5 `scripts/gate.sh` runs the wrapper's shell self-test, so a contract that lives entirely in bash cannot break with every required check still green.
 
 ## 6. Skill (personal tool — no repo PR)
 

@@ -75,7 +75,10 @@ except ImportError:  # pragma: no cover - non-POSIX
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.utils.benchmark_schema import normalize_bank  # noqa: E402  # isort: skip
+from src.utils.benchmark_schema import (  # noqa: E402  # isort: skip
+    bank_status_counts,
+    normalize_bank,
+)
 from src.utils.goldenset_maintenance import (  # noqa: E402  # isort: skip
     DRIFT_INCOMPARABLE,
     DRIFT_REFUSED,
@@ -994,7 +997,9 @@ def run_report(args: argparse.Namespace) -> int:
     reprinted together at the end, because on a cron the summary line is the
     part a human actually reads.
     """
+    census = bank_status_counts(load_bank(args.bank))
     summary: dict = {
+        "census": census,
         "gaps": 0,
         "needs_reconciliation": 0,
         "orphans": 0,
@@ -1004,6 +1009,21 @@ def run_report(args: argparse.Namespace) -> int:
         "refused_sources": 0,
     }
     args.summary_sink = summary
+    # Composition, printed once up front: the spec asks the reporting surface to
+    # answer "how much of this bank has anyone actually vouched for?" from the
+    # `status` field rather than by parsing `notes`. It is deliberately NOT a
+    # notification trigger — a mostly-draft bank is a project status, not a
+    # nightly alarm.
+    print(
+        f"bank: {census['total']} rows | {census['locked']} locked | "
+        f"{census['draft']} draft"
+    )
+    if census["anchor_type"]:
+        _print_group(
+            "anchor_type distribution",
+            [f"{k}: {v}" for k, v in sorted(census["anchor_type"].items())],
+        )
+
     failures: List[str] = []
     for name, blurb, run in _REPORT_PASSES:
         print(f"\n{'=' * 70}\n== {name} — {blurb}\n{'=' * 70}")

@@ -885,6 +885,11 @@ python scripts/benchmarking/goldenset_maintenance.py report \
     --ledger .ralph/goldenset-declines.json
 ```
 
+It opens with a **confirmation census** — how many rows are `locked` versus `draft`, and the
+`anchor_type` distribution — read from the `status` field rather than by parsing `notes`. That is
+composition, not a finding: a mostly-draft bank is a project status, so it never triggers a
+notification on its own.
+
 `--allowed-hosts` serves both passes that need one — the hosts `drift` may contact and the extra
 hosts the sitemap may emit — because in practice they are the same list: hosts the operator
 vouched for.
