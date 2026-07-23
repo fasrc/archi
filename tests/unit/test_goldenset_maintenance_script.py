@@ -2167,9 +2167,7 @@ class TestReportSummaryJson:
         _fake_pages(script, {live: GPU_HTML})
         out = tmp_path / "summary.json"
 
-        code = self._run(
-            tmp_path, script, bank, tmp_path / "nope.json", sources, out
-        )
+        code = self._run(tmp_path, script, bank, tmp_path / "nope.json", sources, out)
         summary = json.loads(out.read_text())
 
         assert code == 1
@@ -2200,3 +2198,114 @@ class TestReportSummaryJson:
         script.main(_report_argv(bank, corpus, sources))
 
         assert list(tmp_path.glob("*summary*")) == []
+
+
+class TestReportNotifiesOnDegradedRuns:
+    """A pass that half-ran must not summarise as clean.
+
+    `find_drift` abstains only when *nothing* was read. One readable source is
+    enough to make the pass "succeed", so a run where 1 page is unchanged and 49
+    were unreachable exits zero with `drifted == 0`. Counting only drifted rows
+    would make that indistinguishable from a healthy bank — the exact false
+    clean the per-bucket reporting exists to prevent, reintroduced one layer up.
+    """
+
+    def _summary(self, tmp_path, script, bank, corpus, sources, extra=()):
+        out = tmp_path / "summary.json"
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out), *extra]
+        )
+        return code, json.loads(out.read_text())
+
+    def test_an_unreachable_source_counts_as_unchecked(self, tmp_path):
+        script = _load_script()
+        ok_url, dead = f"{KB}/kb/ok", f"{KB}/kb/dead"
+        bank = _bank(
+            tmp_path,
+            _locked_row(ok_url, hashes={ok_url: page_digest(GPU_HTML)}),
+            _locked_row(dead, hashes={dead: page_digest(GPU_HTML)}),
+        )
+        corpus = _corpus(tmp_path, ok_url, dead)
+        sources = _sources_list(tmp_path, ok_url, dead)
+        _fake_pages(script, {ok_url: GPU_HTML}, errors={dead: "connection reset"})
+
+        code, summary = self._summary(tmp_path, script, bank, corpus, sources)
+
+        assert code == 0  # the pass ran; the cron contract holds
+        assert summary["drifted"] == 0
+        assert summary["unchecked_sources"] == 1
+        assert summary["notify"] is True
+
+    def test_a_missing_baseline_counts_as_unchecked(self, tmp_path):
+        script = _load_script()
+        url = f"{KB}/kb/ok"
+        bank = _bank(tmp_path, _locked_row(url))  # locked, never baselined
+        corpus = _corpus(tmp_path, url)
+        sources = _sources_list(tmp_path, url)
+        _fake_pages(script, {url: GPU_HTML})
+
+        _, summary = self._summary(tmp_path, script, bank, corpus, sources)
+
+        assert summary["unchecked_sources"] == 1
+        assert summary["notify"] is True
+
+    def test_a_malformed_baseline_counts_as_unchecked(self, tmp_path):
+        script = _load_script()
+        url = f"{KB}/kb/ok"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: "sha256:truncated"}))
+        corpus = _corpus(tmp_path, url)
+        sources = _sources_list(tmp_path, url)
+        _fake_pages(script, {url: GPU_HTML})
+
+        _, summary = self._summary(tmp_path, script, bank, corpus, sources)
+
+        assert summary["unchecked_sources"] == 1
+        assert summary["notify"] is True
+
+    def test_a_policy_refusal_is_counted_but_does_not_notify(self, tmp_path):
+        # Distinct from the three above: a refused host is the operator's OWN
+        # declared allowlist, not something the tool tried and failed to do.
+        # Nagging nightly about a standing decision is the alert fatigue that
+        # makes the real signal unreadable.
+        script = _load_script()
+        url, off_host = f"{KB}/kb/ok", "https://slurm.schedmd.com/mpi"
+        bank = _bank(
+            tmp_path,
+            _locked_row(url, hashes={url: page_digest(GPU_HTML)}),
+            _locked_row(off_host, hashes={off_host: page_digest(GPU_HTML)}),
+        )
+        corpus = _corpus(tmp_path, url)
+        sources = _sources_list(tmp_path, url)
+        _fake_pages(script, {url: GPU_HTML})
+
+        _, summary = self._summary(tmp_path, script, bank, corpus, sources)
+
+        assert summary["refused_sources"] == 1
+        assert summary["unchecked_sources"] == 0
+        assert summary["notify"] is False
+
+    def test_a_clean_run_does_not_notify(self, tmp_path):
+        script = _load_script()
+        url = f"{KB}/kb/ok"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, url)
+        sources = _sources_list(tmp_path, url)
+        _fake_pages(script, {url: GPU_HTML})
+
+        _, summary = self._summary(tmp_path, script, bank, corpus, sources)
+
+        assert summary["notify"] is False
+
+    def test_an_orphan_near_miss_notifies(self, tmp_path):
+        # Recorded under its own key: coverage reports a near-miss bucket too,
+        # and one `update()` overwriting the other would lose a finding.
+        script = _load_script()
+        url = f"{KB}/kb/fairshare-2"
+        bank = _bank(tmp_path, _row(url))
+        corpus = _corpus(tmp_path, f"{KB}/kb/fairshare")
+        sources = _sources_list(tmp_path, f"{KB}/kb/fairshare")
+
+        _, summary = self._summary(tmp_path, script, bank, corpus, sources)
+
+        assert summary["orphans_needs_reconciliation"] == 1
+        assert summary["notify"] is True

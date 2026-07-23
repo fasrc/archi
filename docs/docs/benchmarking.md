@@ -931,10 +931,16 @@ Write `~/.ralph/goldenset-report.env` (the wrapper's default location — overri
 ```bash
 GOLDENSET_PG_DSN=postgresql://archi@localhost/archi-db
 GOLDENSET_SOURCES=/home/archi/archi/config/lists/sources.list
-GOLDENSET_ALLOWED_HOSTS=docs.rc.fas.harvard.edu slurm.schedmd.com
+GOLDENSET_ALLOWED_HOSTS="docs.rc.fas.harvard.edu slurm.schedmd.com"
 GOLDENSET_MIN_PAGES=150
 GOLDENSET_LEDGER=/home/archi/.ralph/goldenset-declines.json
 ```
+
+**Quote any value containing spaces.** The file is *sourced* by the wrapper, so an unquoted
+`GOLDENSET_ALLOWED_HOSTS=host-a host-b` is read by the shell as "run the command `host-b` with
+`GOLDENSET_ALLOWED_HOSTS=host-a`" — the allowlist is normally the only multi-value setting, and
+so the only one this bites. It fails loudly (`command not found`, exit 127) rather than running
+with half a list.
 
 | Variable | Meaning |
 | --- | --- |

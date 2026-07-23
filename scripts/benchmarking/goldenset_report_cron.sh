@@ -20,7 +20,10 @@
 #   GOLDENSET_ENV_FILE      env file to source (default: ~/.ralph/goldenset-report.env)
 #
 # Values in that file win over anything already in the environment, the way
-# systemd's EnvironmentFile= behaves. Recognized settings:
+# systemd's EnvironmentFile= behaves. It is *sourced*, so quote any value with a
+# space in it — unquoted, `VAR=a b` is shell for "run b with VAR=a", which bites
+# the allowlist because it is the one setting that is normally a list.
+# Recognized settings:
 #
 #   GOLDENSET_BANK          bank JSON       (default: examples/benchmarking/…)
 #   GOLDENSET_PG_DSN        live catalog DSN     ) exactly one
@@ -141,15 +144,17 @@ if [ ! -t 1 ]; then
   if [ "$status" -ne 0 ]; then
     cat "${RUN_OUT:-/dev/null}" >&2
   else
-    count_of() { tr -d ' \n' < "$SUMMARY" | grep -o "\"$1\":[0-9]*" | head -1 |
+    read_num() { tr -d ' \n' < "$SUMMARY" | grep -o "\"$1\":[0-9]*" | head -1 |
                  cut -d: -f2; }
-    gaps="$(count_of gaps)";       gaps="${gaps:-0}"
-    orphans="$(count_of orphans)"; orphans="${orphans:-0}"
-    drifted="$(count_of drifted)"; drifted="${drifted:-0}"
-    recon="$(count_of needs_reconciliation)"; recon="${recon:-0}"
-    if [ $((gaps + orphans + drifted + recon)) -gt 0 ]; then
-      printf 'goldenset report: %s gaps | %s orphans | %s drifted | %s need reconciliation\n' \
-        "$gaps" "$orphans" "$drifted" "$recon"
+    # Whether to speak is decided by `report`, not re-derived here: which buckets
+    # deserve to wake someone is a judgement about the domain, and it belongs
+    # where it has tests rather than in shell string-matching.
+    notify="$(tr -d ' \n' < "$SUMMARY" | grep -o '"notify":[a-z]*' | head -1 |
+              cut -d: -f2)"
+    if [ "$notify" = "true" ]; then
+      printf 'goldenset report: %s gaps | %s orphans | %s drifted | %s unchecked\n' \
+        "$(read_num gaps)" "$(read_num orphans)" "$(read_num drifted)" \
+        "$(read_num unchecked_sources)"
       printf 'full report: %s\n' "$LOG"
     fi
   fi

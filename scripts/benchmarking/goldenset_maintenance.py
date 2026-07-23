@@ -708,7 +708,13 @@ def run_orphans(args: argparse.Namespace) -> int:
         _print_group("why", report.reasons, stream=sys.stderr)
         return 1
 
-    _record(args, orphans=len(report.orphans))
+    _record(
+        args,
+        orphans=len(report.orphans),
+        # Its own key: coverage records a near-miss bucket too, and one
+        # `update()` overwriting the other would silently drop a finding.
+        orphans_needs_reconciliation=len(report.needs_reconciliation),
+    )
     print(
         f"live inventory: {len(inventory.urls)} URLs | {len(report.orphans)} orphans | "
         f"{len(report.out_of_scope)} out of scope | "
@@ -783,7 +789,21 @@ def run_drift(args: argparse.Namespace) -> int:
         _print_group("why", report.reasons, stream=sys.stderr)
         return 1
 
-    _record(args, drifted=len(report.drifted))
+    _record(
+        args,
+        drifted=len(report.drifted),
+        # A source the tool WANTED to check and could not. `find_drift` abstains
+        # only when nothing at all was read, so one readable page makes the pass
+        # "succeed" — and counting drifted rows alone would let a run that
+        # checked 1 of 50 sources summarise as clean.
+        unchecked_sources=(
+            len(report.unbaselined) + len(report.incomparable) + len(report.unreachable)
+        ),
+        # Separate, and deliberately NOT notified on: a refusal is the operator's
+        # own allowlist doing its job, not a check that failed. Nagging nightly
+        # about a standing decision is what makes the real signal unreadable.
+        refused_sources=len(report.refused),
+    )
     print(
         f"locked rows: {report.checked_rows} checked | {report.skipped_rows} skipped "
         f"(draft or source-less) | {len(report.drifted)} drifted | "
@@ -934,6 +954,17 @@ def _print_hashes(report) -> None:
         )
 
 
+#: Summary counters that mean "a human should look". Everything the report can
+#: count is recorded, but only these decide whether an unattended run speaks up.
+_NOTIFY_ON = (
+    "gaps",
+    "needs_reconciliation",
+    "orphans",
+    "orphans_needs_reconciliation",
+    "drifted",
+    "unchecked_sources",
+)
+
 #: The three detection passes, in the order the report prints them.
 _REPORT_PASSES = (
     ("coverage", "ingested pages no bank row grounds on", run_coverage),
@@ -958,7 +989,15 @@ def run_report(args: argparse.Namespace) -> int:
     reprinted together at the end, because on a cron the summary line is the
     part a human actually reads.
     """
-    summary: dict = {"gaps": 0, "needs_reconciliation": 0, "orphans": 0, "drifted": 0}
+    summary: dict = {
+        "gaps": 0,
+        "needs_reconciliation": 0,
+        "orphans": 0,
+        "orphans_needs_reconciliation": 0,
+        "drifted": 0,
+        "unchecked_sources": 0,
+        "refused_sources": 0,
+    }
     args.summary_sink = summary
     failures: List[str] = []
     for name, blurb, run in _REPORT_PASSES:
@@ -972,6 +1011,12 @@ def run_report(args: argparse.Namespace) -> int:
             print(f"error: {exc}", file=sys.stderr)
             failures.append(f"{name}: {exc}")
     summary["failed_passes"] = failures
+    # Decided here rather than in the cron wrapper: which buckets deserve to
+    # wake someone is a judgement about the domain, and it belongs where it can
+    # be tested. `refused_sources` is excluded on purpose (see `run_drift`).
+    summary["notify"] = any(
+        summary[key] > 0 for key in _NOTIFY_ON
+    )
     if args.summary_json:
         # Written on every path, including the failing one: a wrapper that finds
         # no file after a broken run cannot tell it from a clean one, which is

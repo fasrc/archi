@@ -40,7 +40,7 @@ printf '%s\n' "\$*" >> "$sb/calls"
 prev=""
 for a in "\$@"; do
   if [ "\$prev" = "--summary-json" ]; then
-    printf '%s' "\${STUB_SUMMARY:-{\"gaps\":0,\"needs_reconciliation\":0,\"orphans\":0,\"drifted\":0,\"failed_passes\":[]}}" > "\$a"
+    printf '%s' "\${STUB_SUMMARY:-{\"gaps\":0,\"orphans\":0,\"drifted\":0,\"unchecked_sources\":0,\"failed_passes\":[],\"notify\":false}}" > "\$a"
   fi
   prev="\$a"
 done
@@ -225,7 +225,7 @@ fi
 # 14. findings exit ZERO by design, so keying notification on the exit status
 #     would hide every actionable result. The wrapper reads the summary instead.
 sb="$(new_sandbox)"
-FINDINGS='{"gaps":2,"needs_reconciliation":0,"orphans":1,"drifted":3,"failed_passes":[]}'
+FINDINGS='{"gaps":2,"orphans":1,"drifted":3,"unchecked_sources":0,"failed_passes":[],"notify":true}'
 out="$( ( STUB_SUMMARY="$FINDINGS" GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) \
   2>"$sb/err" || true )"
 case "$out" in
@@ -269,6 +269,45 @@ if [ ! -f "$sb/log/goldenset-report.log.1" ] \
 else
   notok "a log under the cap is not rotated"
 fi
+
+# 18. drift "succeeds" as long as ONE source was readable, so a run that checked
+#     1 of 50 pages exits zero with drifted=0. Notification keys on the report's
+#     own `notify` flag, not on the drifted count, or that degraded run is
+#     indistinguishable from a clean bank.
+sb="$(new_sandbox)"
+DEGRADED='{"gaps":0,"orphans":0,"drifted":0,"unchecked_sources":49,"failed_passes":[],"notify":true}'
+out="$( ( STUB_SUMMARY="$DEGRADED" GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) \
+  2>/dev/null || true )"
+case "$out" in
+  *"49 unchecked"*) ok "a degraded run notifies even with nothing drifted" ;;
+  *) notok "a degraded run notifies even with nothing drifted (got: $out)" ;;
+esac
+
+# 19. and the flag is authoritative: counts alone do not make it speak
+sb="$(new_sandbox)"
+QUIET='{"gaps":0,"orphans":0,"drifted":0,"unchecked_sources":0,"refused_sources":7,"failed_passes":[],"notify":false}'
+out="$( ( STUB_SUMMARY="$QUIET" GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) \
+  2>/dev/null || true )"
+if [ -z "$out" ]; then
+  ok "notify=false stays silent even with non-zero counters"
+else
+  notok "notify=false stays silent even with non-zero counters (got: $out)"
+fi
+
+# 20. the env file is SOURCED, so a multi-value setting must be quoted in it.
+#     Unquoted, bash reads `VAR=a b` as "run command b with VAR=a" — which is
+#     how the allowlist, the one setting that is normally a list, breaks.
+sb="$(new_sandbox)"
+cat > "$sb/report.env" <<'EOF'
+GOLDENSET_PG_DSN=postgresql://x
+GOLDENSET_ALLOWED_HOSTS="docs.rc.fas.harvard.edu slurm.schedmd.com"
+EOF
+( GOLDENSET_ENV_FILE="$sb/report.env" run_cron "$sb" ) >/dev/null 2>&1 || true
+case "$(cat "$sb/calls" 2>/dev/null || true)" in
+  *"--allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com"*)
+    ok "a quoted multi-host allowlist survives the env file" ;;
+  *) notok "a quoted multi-host allowlist survives the env file (got: $(cat "$sb/calls" 2>/dev/null))" ;;
+esac
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
