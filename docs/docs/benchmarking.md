@@ -553,8 +553,12 @@ re-derived from anything, so the update is protected twice over:
   because `os.replace` swaps the ledger's inode, and a lock on the old inode would not block the
   next writer.
 
-A missing ledger reads as "nothing declined yet"; a *corrupt* one is an operational failure,
-because reading it as empty would resurface every page you ever dismissed.
+A missing ledger reads as "nothing declined yet". Anything **malformed fails the run** — bad JSON,
+not an array, or a single entry without a usable `url`. That includes one broken entry among good
+ones: a dropped decline fails in the visible direction (the page just reappears as a gap) but it
+does so silently on an otherwise green run, and a decline is the one record here that cannot be
+re-derived from the bank. Declining into a ledger the tool cannot fully read is refused for the
+same reason.
 
 ### `orphans` — questions whose page is gone
 

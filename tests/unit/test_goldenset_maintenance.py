@@ -883,16 +883,37 @@ class TestDeclineLedger:
             Decline(url=f"{KB}/kb/a", reason="minor page", at="2026-07-22"),
         )
 
-    def test_survives_a_hand_edited_ledger(self):
-        declines = read_declines(
-            ["not-an-object", {"no_url": 1}, {"url": ""}, {"url": f"{KB}/kb/a"}]
-        )
+    def test_a_malformed_entry_fails_the_run_instead_of_vanishing(self):
+        # A dropped decline is a dropped operator decision. It fails in the
+        # visible direction (the page resurfaces as a gap) but it fails
+        # SILENTLY, on a green run — and a decline cannot be reconstructed from
+        # anything. A corrupt *file* is already fatal; a corrupt *entry* is the
+        # same failure at a finer grain and gets the same treatment.
+        with pytest.raises(ValueError) as caught:
+            read_declines([{"url": f"{KB}/kb/a"}, "not-an-object"])
 
-        assert [d.url for d in declines] == [f"{KB}/kb/a"]
+        assert "1" in str(caught.value)
 
-    def test_a_non_list_ledger_reads_as_empty(self):
-        assert read_declines({"url": f"{KB}/kb/a"}) == ()
-        assert read_declines(None) == ()
+    def test_an_entry_without_a_usable_url_fails_the_run(self):
+        with pytest.raises(ValueError):
+            read_declines([{"no_url": 1}])
+        with pytest.raises(ValueError):
+            read_declines([{"url": "   "}])
+
+    def test_an_entry_whose_url_will_not_parse_fails_the_run(self):
+        # Silently dropping this one was the subtler leak: the entry looks fine
+        # until canonicalization, which used to warn and move on.
+        with pytest.raises(ValueError):
+            read_declines([{"url": "http://["}])
+
+    def test_a_non_list_ledger_fails_the_run(self):
+        with pytest.raises(ValueError):
+            read_declines({"url": f"{KB}/kb/a"})
+        with pytest.raises(ValueError):
+            read_declines(None)
+
+    def test_an_empty_ledger_is_fine(self):
+        assert read_declines([]) == ()
 
     def test_declined_urls_are_canonicalized_like_every_other_url(self):
         # A ledger hand-edited with a trailing slash must still suppress the

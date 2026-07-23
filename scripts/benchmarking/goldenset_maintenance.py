@@ -170,19 +170,22 @@ def ledger_lock(path: str):
 
 
 def read_ledger(path: Optional[str]) -> List[Any]:
-    """Load the decision ledger, or an empty one when the file does not exist.
+    """Load and validate the decision ledger, or an empty one when absent.
 
-    A *missing* ledger legitimately means "nothing declined yet". A *corrupt*
-    one does not: reading it as empty would resurface every page an operator
-    ever dismissed, so it is an operational failure.
+    A *missing* ledger legitimately means "nothing declined yet". Anything
+    malformed — bad JSON, not an array, or a single unusable entry — is an
+    operational failure: reading past it would drop operator decisions on an
+    otherwise green run, and a decline cannot be reconstructed from the bank.
     """
     if not path:
         return []
     if not Path(path).exists():
         return []
     entries = _load_json(path)
-    if not isinstance(entries, list):
-        raise OperationalError(f"ledger {path} is not a list of decline entries")
+    try:
+        read_declines(entries)
+    except ValueError as exc:
+        raise OperationalError(f"ledger {path}: {exc}") from exc
     return entries
 
 
@@ -362,12 +365,15 @@ def run_decline(args: argparse.Namespace) -> int:
         raise OperationalError("--decline needs --ledger <path> to record the decision")
     with ledger_lock(args.ledger):
         entries = read_ledger(args.ledger)
-        stamped = with_decline(
-            entries,
-            args.decline,
-            reason=args.reason or "",
-            at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        )
+        try:
+            stamped = with_decline(
+                entries,
+                args.decline,
+                reason=args.reason or "",
+                at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+        except ValueError as exc:
+            raise OperationalError(f"cannot record the decline: {exc}") from exc
         if len(stamped) == len(entries):
             print(f"already declined: {args.decline}")
             return 0

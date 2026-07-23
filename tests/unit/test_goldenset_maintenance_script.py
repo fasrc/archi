@@ -1194,3 +1194,49 @@ class TestProposeOnlyForUncoveredPages:
 
         assert code == 0
         assert '"status": "draft"' in capsys.readouterr().out
+
+    def test_a_semantically_corrupt_ledger_is_an_operational_failure(
+        self, tmp_path, capsys
+    ):
+        # Syntactically valid JSON, one broken entry: the run must stop rather
+        # than report a clean coverage pass built on a partial decline set.
+        module = _load_script()
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/a"}, {"ur1": f"{KB}/kb/b"})
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, f"{KB}/kb/a")),
+                "--ledger",
+                str(ledger),
+            ]
+        )
+
+        assert code == 1
+        err = capsys.readouterr().err
+        assert "ledger" in err and "1" in err
+
+    def test_declining_into_a_corrupt_ledger_is_refused(self, tmp_path, capsys):
+        # Appending here would carry the broken entry forward while presenting
+        # the readable subset as the authoritative decline set.
+        module = _load_script()
+        ledger = _ledger(tmp_path, {"url": ""})
+        before = ledger.read_bytes()
+
+        code = module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--decline",
+                f"{KB}/kb/new",
+                "--ledger",
+                str(ledger),
+            ]
+        )
+
+        assert code == 1
+        assert ledger.read_bytes() == before

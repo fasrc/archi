@@ -703,7 +703,12 @@ def find_orphans(bank: Iterable[Any], inventory: LiveInventory) -> OrphanReport:
 
 @dataclass(frozen=True)
 class Decline:
-    """One operator dismissal of an uncovered page."""
+    """One operator dismissal of an uncovered page.
+
+    `url` is stored canonical, so a ledger hand-edited with a trailing slash
+    still matches the corpus — a decline that silently stops working is worse
+    than no decline at all.
+    """
 
     url: str
     reason: str = ""
@@ -711,22 +716,39 @@ class Decline:
 
 
 def read_declines(entries: Any) -> Tuple[Decline, ...]:
-    """Parse ledger entries, skipping anything a hand edit may have mangled.
+    """Parse ledger entries, failing closed on anything malformed.
 
-    A malformed *entry* is skipped rather than fatal; a malformed *file* is the
-    caller's problem to raise on, because reading a corrupt ledger as "no
-    declines" would resurface every page an operator ever dismissed.
+    Every entry must be a JSON object with a `url` that canonicalizes. A bad one
+    raises, naming its index, rather than being skipped.
+
+    Skipping looked defensible — a dropped decline fails in the *visible*
+    direction, since the page simply reappears as a gap. But it fails silently,
+    on an otherwise green run, and a decline is the one record here that cannot
+    be re-derived from the bank. A corrupt ledger *file* is already an
+    operational failure for exactly that reason; a corrupt *entry* is the same
+    failure at a finer grain, and treating them differently was a threshold set
+    by count rather than by principle.
+
+    This is deliberately stricter than `bank_source_urls`, which does skip
+    mangled rows: the bank is large, hand-authored, and a skipped row only
+    over-reports a gap. The ledger is small and machine-written, so a malformed
+    entry means something is actually wrong.
     """
+    if not isinstance(entries, list):
+        raise ValueError("ledger is not a list of decline entries")
     declines: List[Decline] = []
-    for entry in entries if isinstance(entries, list) else []:
+    for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
-            continue
+            raise ValueError(f"ledger entry {index} is not a JSON object")
         url = entry.get("url")
-        if not isinstance(url, str) or not url:
-            continue
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError(f"ledger entry {index} has no usable `url`")
+        canonical = canonical_url(url)
+        if canonical is None:
+            raise ValueError(f"ledger entry {index} has an unparseable url {url!r}")
         declines.append(
             Decline(
-                url=url,
+                url=canonical,
                 reason=str(entry.get("reason") or ""),
                 at=str(entry.get("at") or ""),
             )
@@ -737,16 +759,9 @@ def read_declines(entries: Any) -> Tuple[Decline, ...]:
 def declined_urls(declines: Iterable[Decline]) -> Set[str]:
     """The canonical URL set to suppress.
 
-    Canonicalized on read so a ledger hand-edited with a trailing slash keeps
-    matching the corpus — a decline that silently stops working is worse than
-    no decline at all.
+    Canonicalization happens in `read_declines`, so nothing can be dropped here.
     """
-    urls: Set[str] = set()
-    for decline in declines:
-        url = canonical_url(decline.url)
-        if url:
-            urls.add(url)
-    return urls
+    return {decline.url for decline in declines}
 
 
 def with_decline(
@@ -756,8 +771,13 @@ def with_decline(
 
     Idempotent by canonical URL: declining the same page twice keeps the first
     entry (and its reason), so a repeated dismissal never grows the file.
+
+    Raises if the existing ledger is malformed — appending to a ledger the tool
+    cannot fully read would present the surviving subset as authoritative while
+    carrying the broken entries forward unnoticed.
     """
     existing = list(entries) if isinstance(entries, list) else []
+    read_declines(existing)
     canonical = canonical_url(url)
     if canonical is None:
         raise ValueError(f"cannot decline an unusable URL: {url!r}")
