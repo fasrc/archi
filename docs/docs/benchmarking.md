@@ -909,6 +909,39 @@ monitor must read those summary counts, not the process exit code, or it will re
 barely-completed run as healthy. The exit code answers "did a pass break?"; the summary answers
 "how much did it actually check?", and only the second distinguishes a thorough run from a thin one.
 
+#### The summary JSON — what a completed run reports
+
+`--summary-json <path>` is written once the passes run — including when a pass **fails**, so the
+file separates a clean run, a run with findings, and one where a pass broke (`failed_passes`
+non-empty). It records every count the report can take, but only the **notify buckets** decide
+whether a human is paged:
+
+| Key | Type | Notify? | Meaning |
+| --- | --- | :---: | --- |
+| `census` | object | no | Bank composition — `total`, `locked`, `draft`, and the `anchor_type` distribution. A project status, not an alarm. |
+| `gaps` | int | ✅ | Ingested pages no bank row grounds on. |
+| `needs_reconciliation` | int | ✅ | Coverage slug near-misses awaiting a human pairing. |
+| `orphans` | int | ✅ | Bank rows whose grounding page left the live inventory. |
+| `orphans_needs_reconciliation` | int | ✅ | The same near-miss bucket from the orphan pass — its own key so neither pass's count overwrites the other. |
+| `drifted` | int | ✅ | Locked rows whose grounding page changed. |
+| `unchecked_sources` | int | ✅ | Sources `drift` wanted to check but could not — no baseline, malformed baseline, or unreachable. |
+| `refused_sources` | int | ✅ | Sources refused by the URL policy or absent from `--allowed-hosts`. Notifies because an unlisted host is an omission, not a standing decision. |
+| `drift_check` | string | no | `"hash-only"` (tripwire alone) or `"reference-compared"` (a model was named). Marks whether a listed drift is a completed staleness check or just a page that moved. |
+| `failed_passes` | list | — | Passes that could not run; non-empty ⇒ the run exits non-zero. |
+| `notify` | bool | — | `true` iff any notify bucket above is non-zero. On an **exit-zero** run this is what the cron wrapper reads to decide whether to speak; a non-zero run alerts on the exit status instead and never consults it. |
+
+On an exit-zero run the nightly wrapper collapses these into one digest line —
+`gaps | orphans | drifted | reconcile | unchecked | refused`, where `reconcile` is
+`needs_reconciliation + orphans_needs_reconciliation` — and prints it only when `notify` is `true`.
+A **non-zero** run is a separate path: the wrapper mails the full report on stderr and never reads
+`notify`.
+
+**A monitor must treat a non-zero exit — or a missing or stale summary — as failure, not read the
+file alone.** The summary is written *after* the bank loads, so a run that cannot even read its bank
+exits non-zero *before* the file is refreshed and leaves the previous run's file untouched. The exit
+code answers "did the run break?"; the summary answers "what did a completed run find?" — a monitor
+needs both.
+
 #### One broken pass does not hide the other two
 
 The three passes read three independent things: the corpus catalog, the live source inventory, and
