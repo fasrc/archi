@@ -1,3 +1,4 @@
+import contextvars
 import re
 import threading
 import time
@@ -37,6 +38,14 @@ from src.archi.utils.output_dataclass import PipelineOutput
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Maps pipeline instance id → RunMemory for the current execution context.
+# Per-thread (or per-async-task) isolation is provided by the ContextVar;
+# per-instance isolation within a single thread (e.g. source vs. view) is
+# provided by the id-keyed dict.
+_ACTIVE_MEMORY: contextvars.ContextVar[Optional[Dict[int, "RunMemory"]]] = (
+    contextvars.ContextVar("_ACTIVE_MEMORY", default=None)
+)
 
 
 class BaseReActAgent:
@@ -114,13 +123,22 @@ class BaseReActAgent:
     def start_run_memory(self) -> RunMemory:
         """Create and store the active memory for the current run."""
         memory = self.create_run_memory()
+        current = _ACTIVE_MEMORY.get()
+        updated = (
+            {id(self): memory} if current is None else {**current, id(self): memory}
+        )
+        _ACTIVE_MEMORY.set(updated)
+        # Keep instance attribute for backward-compat callers that read it directly.
         self._active_memory = memory
         return memory
 
     @property
     def active_memory(self) -> Optional[RunMemory]:
         """Return the memory currently associated with the run, if any."""
-        return self._active_memory
+        current = _ACTIVE_MEMORY.get()
+        if current is None:
+            return None
+        return current.get(id(self))
 
     def finalize_output(
         self,

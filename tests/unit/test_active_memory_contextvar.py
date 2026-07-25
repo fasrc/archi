@@ -80,7 +80,6 @@ class _MemoryRaceAgent(BaseReActAgent):
         self.default_provider = None
         self.default_model = None
         self.selected_tool_names = ["fetch_doc"]
-        self._active_memory = None
         self._tool_budgets_cache = None
         self._static_tools = None
         self._mcp_tools = None
@@ -131,15 +130,6 @@ def _run_stream(agent: _MemoryRaceAgent, query: str, errors: List[Exception]) ->
         errors.append(exc)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RED baseline: self._active_memory is a shared instance attribute. "
-        "The second start_run_memory() overwrites the first, so both tool "
-        "callbacks write into the same RunMemory.  Passes once task 2 moves "
-        "active_memory onto a contextvars.ContextVar."
-    ),
-)
 def test_concurrent_default_requests_memory_isolation():
     """RED: two concurrent default requests must keep isolated RunMemory.
 
