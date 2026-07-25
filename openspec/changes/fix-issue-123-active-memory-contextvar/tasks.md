@@ -53,7 +53,7 @@
 
 ## 5. Verify subclasses and full behavior
 
-- [ ] 5.1 Confirm `src/archi/pipelines/agents/fasrc_docs_agent.py` and
+- [x] 5.1 Confirm `src/archi/pipelines/agents/fasrc_docs_agent.py` and
   `src/archi/pipelines/agents/cms_comp_ops_agent.py` tool construction still binds correctly (their
   tools' callbacks resolve memory via the property / ContextVar); add a lightweight assertion if a
   gap is found.
