@@ -62,6 +62,6 @@
 
 ## 6. Gate and PR
 
-- [ ] 6.1 `bash scripts/gate.sh` exits 0 (black/isort, pytest, ≥80% diff coverage vs `origin/dev`).
-- [ ] 6.2 Open a PR against `fasrc/archi:dev` whose body references #123 and #86 and links the
+- [x] 6.1 `bash scripts/gate.sh` exits 0 (black/isort, pytest, ≥80% diff coverage vs `origin/dev`).
+- [x] 6.2 Open a PR against `fasrc/archi:dev` whose body references #123 and #86 and links the
   glossary on first use of project terms; do not merge.
