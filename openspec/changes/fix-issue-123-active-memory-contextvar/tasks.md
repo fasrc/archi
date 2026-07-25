@@ -36,13 +36,20 @@
 
 - [x] 4.1 Ensure the #86 concurrent overridden-vs-default isolation test exists and is green
   (add/port one if missing) so it guards this step.
-- [ ] 4.2 In `src/interfaces/chat_app/app.py` `_build_request_local_pipeline`, remove the
+- [x] 4.2 In `src/interfaces/chat_app/app.py` `_build_request_local_pipeline`, remove the
   `_static_tools = None` reset and the memory-motivated `refresh_agent(force=True)` **only** to the
   extent they were needed for memory isolation; KEEP everything the LLM/sources override needs
   (`agent_llm`, `_vector_tools`/`_vector_retrievers` reset, and any rebuild a differing retriever
   requires). If removing the rebuild fails the guard test, leave it in place (it is a cost
   optimization, not part of the correctness fix) and note that in the task.
-- [ ] 4.3 Run the #86 override isolation tests and the task-1/task-3 tests together; all green.
+  **NOTE: Both resets left in place.** The ContextVar stores memory keyed by `id(self)`, so static
+  tools bound to the source pipeline (via `copy.copy`) cannot resolve the view's memory — they call
+  `source.active_memory` which looks up `id(source)` while the view stored memory at `id(view)`.
+  Removing `_static_tools = None` breaks `test_view_resets_per_run_state` and
+  `test_view_static_tool_isolates_documents_to_view_memory`; removing `refresh_agent(force=True)`
+  leaves `_active_tools` empty and breaks `test_view_static_tool_isolates_documents_to_view_memory`.
+  The optimization cannot be applied without changing the ContextVar keying scheme.
+- [x] 4.3 Run the #86 override isolation tests and the task-1/task-3 tests together; all green.
 
 ## 5. Verify subclasses and full behavior
 
