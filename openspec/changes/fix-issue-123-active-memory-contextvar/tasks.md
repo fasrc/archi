@@ -10,23 +10,23 @@
 
 ## 2. ContextVar fix — move active memory off the shared instance (GREEN)
 
-- [ ] 2.1 In `src/archi/pipelines/agents/base_react.py` add a module-level
+- [x] 2.1 In `src/archi/pipelines/agents/base_react.py` add a module-level
   `_ACTIVE_MEMORY: contextvars.ContextVar[Optional[RunMemory]]` with default `None` (import
   `contextvars`).
-- [ ] 2.2 Change `start_run_memory()` (`:114`) to `_ACTIVE_MEMORY.set(memory)` instead of assigning
+- [x] 2.2 Change `start_run_memory()` (`:114`) to `_ACTIVE_MEMORY.set(memory)` instead of assigning
   `self._active_memory`; change the `active_memory` property (`:120`) to return `_ACTIVE_MEMORY.get()`.
   Remove the `self._active_memory` instance attribute (`:79`) — or leave it unused only if a
   subclass/serialization needs it (prefer removal).
-- [ ] 2.3 Confirm the static-tool callbacks `_store_documents`, `_store_tool_input`, and
+- [x] 2.3 Confirm the static-tool callbacks `_store_documents`, `_store_tool_input`, and
   `_consume_tool_budget` still read `self.active_memory` (the property) and keep the `None` →
   fail-open contract; no callback should reference `self._active_memory` directly.
-- [ ] 2.4 Run the task-1 test and confirm it now PASSES for the `stream()` path.
+- [x] 2.4 Run the task-1 test and confirm it now PASSES for the `stream()` path.
 
 ## 3. Async path — resolve the caller's memory on `astream()`
 
-- [ ] 3.1 Add a test that runs two concurrent **default** requests through the async `astream()`
+- [x] 3.1 Add a test that runs two concurrent **default** requests through the async `astream()`
   path and asserts the same per-request memory isolation as task 1.
-- [ ] 3.2 Run it. If tool callbacks resolve `None` because LangGraph offloads sync tools to an
+- [x] 3.2 Run it. If tool callbacks resolve `None` because LangGraph offloads sync tools to an
   executor that drops the context, wrap the offloaded execution with
   `contextvars.copy_context().run(...)` (or otherwise bind the request's memory into that context)
   until the test passes. If `astream` already resolves correctly, no code change is needed — record

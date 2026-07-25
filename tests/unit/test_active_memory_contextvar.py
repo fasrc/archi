@@ -1,4 +1,4 @@
-"""Regression test for the shared _active_memory race (issue #123).
+"""Regression tests for the shared _active_memory race (issue #123).
 
 Two concurrent DEFAULT (no-override) requests run through the same shared
 BaseReActAgent-derived pipeline instance.  Each calls a stub document-retrieving
@@ -9,10 +9,15 @@ Task 1: written FIRST (red-only phase) so the assertions fail against the
 current shared-attribute implementation, establishing the RED baseline.  The
 green phase (task 2) makes it pass by moving active_memory onto a
 contextvars.ContextVar.
+
+Task 3: async variant — two concurrent astream() tasks use asyncio.gather()
+(which wraps each coroutine in an asyncio.Task with its own copy of the
+ContextVar context), so no code change is needed for the async path.
 """
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from typing import Any, Dict, List
 
@@ -189,3 +194,111 @@ def test_concurrent_default_requests_memory_isolation():
     assert (
         docs_b[0].page_content == "query-B"
     ), f"Memory B contains the wrong document: {docs_b[0].page_content!r}"
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — async path (astream)
+# ---------------------------------------------------------------------------
+
+
+class _AsyncFakeGraph:
+    """Stub async compiled LangGraph agent for async concurrency testing.
+
+    Both concurrent asyncio Tasks arrive at the barrier before either's tool
+    fires.  Because asyncio.create_task() copies the caller's ContextVar
+    context for each Task, _ACTIVE_MEMORY.set() in Task A is invisible to
+    Task B, so the tool callback in each task resolves active_memory to its
+    own RunMemory.
+    """
+
+    def __init__(
+        self,
+        pipeline: "_MemoryRaceAgent",
+        ready_count: List[int],
+        barrier_event: asyncio.Event,
+    ) -> None:
+        self._pipeline = pipeline
+        self._ready_count = ready_count
+        self._barrier_event = barrier_event
+
+    async def astream(self, inputs: Dict[str, Any], stream_mode=None, config=None):
+        messages = inputs.get("messages", [])
+        query = "default"
+        if messages:
+            content = getattr(messages[-1], "content", "")
+            if isinstance(content, str) and content:
+                query = content
+
+        # Signal readiness.  No lock needed: asyncio is single-threaded and
+        # the increment + conditional-set run atomically (no await between them).
+        self._ready_count[0] += 1
+        if self._ready_count[0] >= 2:
+            self._barrier_event.set()
+        # Both tasks have called start_run_memory() before either reaches here.
+        await self._barrier_event.wait()
+
+        # Call the static tool in this task's ContextVar context.
+        active_tools = list(self._pipeline._active_tools)
+        if active_tools:
+            active_tools[0](query=query)
+
+        yield [AIMessage(content=f"answer:{query}")]
+
+
+async def _run_astream_get_docs(
+    agent: "_MemoryRaceAgent", query: str
+) -> List[Document]:
+    """Drain astream() for one request; return source_documents from the final output."""
+    async for output in agent.astream(history=[("human", query)]):
+        if output.final:
+            return output.source_documents
+    return []
+
+
+async def _async_isolation_body() -> tuple:
+    """Run two concurrent astream() requests and return each request's documents."""
+    ready_count: List[int] = [0]
+    barrier_event = asyncio.Event()
+
+    agent = _MemoryRaceAgent(graph=None)
+    graph = _AsyncFakeGraph(
+        pipeline=agent, ready_count=ready_count, barrier_event=barrier_event
+    )
+    agent.agent = graph
+
+    docs_a, docs_b = await asyncio.gather(
+        _run_astream_get_docs(agent, "query-A"),
+        _run_astream_get_docs(agent, "query-B"),
+    )
+    return docs_a, docs_b
+
+
+def test_concurrent_default_requests_astream_memory_isolation():
+    """Two concurrent default requests through astream() must keep isolated RunMemory.
+
+    asyncio.gather() wraps each coroutine in an asyncio.Task, which receives a
+    copy of the current ContextVar context at creation time.  Therefore
+    _ACTIVE_MEMORY.set() in Task A does not affect Task B, and each task's tool
+    callback resolves self.active_memory to its own RunMemory via the ContextVar.
+
+    The stub tool is called synchronously inside the async generator body, so it
+    runs in the same task context as start_run_memory().  No executor wrapping is
+    needed; the ContextVar fix from task 2 is sufficient for the async path.
+    """
+    docs_a, docs_b = asyncio.run(_async_isolation_body())
+
+    assert len(docs_a) == 1, (
+        f"Task A holds {len(docs_a)} doc(s) (expected 1 — its own only). "
+        f"Contents: {[d.page_content for d in docs_a]!r}"
+    )
+    assert (
+        docs_a[0].page_content == "query-A"
+    ), f"Task A contains the wrong document: {docs_a[0].page_content!r}"
+
+    assert len(docs_b) == 1, (
+        f"Task B holds {len(docs_b)} doc(s) (expected 1 — its own only). "
+        f"Contents: {[d.page_content for d in docs_b]!r}"
+    )
+    assert (
+        docs_b[0].page_content == "query-B"
+    ), f"Task B contains the wrong document: {docs_b[0].page_content!r}"
