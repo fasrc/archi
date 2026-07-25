@@ -65,9 +65,16 @@ EOF
 }
 
 # Run the wrapper in a sandbox with the fake python ahead of the real one.
+# HOME is pinned to the sandbox so the wrapper's default env-file lookup
+# (${GOLDENSET_ENV_FILE:-$HOME/.ralph/goldenset-report.env}) can never resolve to
+# the developer's *real* installed cron config — otherwise, on a machine that has
+# actually installed the nightly report, the gate would source that file, run the
+# real maintenance command against the live corpus, and fail. Cases that exercise
+# the HOME-convention lookup plant their env file under this sandbox HOME.
 run_cron() { # $1 = sandbox; remaining env comes from the caller
   local sb="$1"; shift
   PATH="$sb/bin:$PATH" \
+  HOME="$sb" \
   GOLDENSET_BANK="${GOLDENSET_BANK-$sb/bank.json}" \
   GOLDENSET_SOURCES="${GOLDENSET_SOURCES-$sb/sources.list}" \
   GOLDENSET_ALLOWED_HOSTS="${GOLDENSET_ALLOWED_HOSTS-docs.rc.fas.harvard.edu}" \
@@ -216,12 +223,13 @@ case "$(cat "$sb/calls" 2>/dev/null || true)" in
 esac
 
 # 12. and it is found by convention, so the cron entry needs no environment at all
+#     (run_cron pins HOME to the sandbox, so $HOME/.ralph is $sb/.ralph here)
 sb="$(new_sandbox)"
-mkdir -p "$sb/home/.ralph"
-cat > "$sb/home/.ralph/goldenset-report.env" <<EOF
+mkdir -p "$sb/.ralph"
+cat > "$sb/.ralph/goldenset-report.env" <<EOF
 GOLDENSET_PG_DSN=postgresql://by-convention
 EOF
-( HOME="$sb/home" GOLDENSET_PG_DSN="" run_cron "$sb" ) >/dev/null 2>&1 || true
+( GOLDENSET_PG_DSN="" run_cron "$sb" ) >/dev/null 2>&1 || true
 case "$(cat "$sb/calls" 2>/dev/null || true)" in
   *"--pg-dsn postgresql://by-convention"*) ok "finds the default env file under HOME" ;;
   *) notok "finds the default env file under HOME (got: $(cat "$sb/calls" 2>/dev/null))" ;;
