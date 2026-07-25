@@ -34,7 +34,7 @@
 
 ## 4. Drop the memory-driven request-local-view rebuild (#86 D1a) — guarded
 
-- [ ] 4.1 Ensure the #86 concurrent overridden-vs-default isolation test exists and is green
+- [x] 4.1 Ensure the #86 concurrent overridden-vs-default isolation test exists and is green
   (add/port one if missing) so it guards this step.
 - [ ] 4.2 In `src/interfaces/chat_app/app.py` `_build_request_local_pipeline`, remove the
   `_static_tools = None` reset and the memory-motivated `refresh_agent(force=True)` **only** to the
