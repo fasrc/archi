@@ -13,6 +13,10 @@ contextvars.ContextVar.
 Task 3: async variant — two concurrent astream() tasks use asyncio.gather()
 (which wraps each coroutine in an asyncio.Task with its own copy of the
 ContextVar context), so no code change is needed for the async path.
+
+Task 5.2: single-threaded invoke() must record docs, tool inputs, and budget
+consumption into RunMemory exactly as before — the ContextVar fix must not
+regress the basic single-request path.
 """
 
 from __future__ import annotations
@@ -302,3 +306,65 @@ def test_concurrent_default_requests_astream_memory_isolation():
     assert (
         docs_b[0].page_content == "query-B"
     ), f"Task B contains the wrong document: {docs_b[0].page_content!r}"
+
+
+# ---------------------------------------------------------------------------
+# Task 5.2 — single-threaded invoke() path
+# ---------------------------------------------------------------------------
+
+
+class _FakeInvokeGraph:
+    """Stub compiled LangGraph agent for the single-threaded invoke() test.
+
+    Its invoke() method calls the pipeline's tool-callback helpers directly,
+    simulating what a real tool would do: store a retrieved document, record
+    a tool input, and consume two units of the search budget.  Returns a
+    minimal messages dict so _build_output_from_messages() can extract an answer.
+    """
+
+    def __init__(self, pipeline: "_MemoryRaceAgent") -> None:
+        self._pipeline = pipeline
+
+    def invoke(self, inputs: Dict[str, Any], config=None):
+        self._pipeline._store_documents("fetch", [Document(page_content="invoke-doc")])
+        self._pipeline._store_tool_input("fetch_tool", {"query": "invoke-query"})
+        self._pipeline._consume_tool_budget("search_vectorstore_hybrid")
+        self._pipeline._consume_tool_budget("search_vectorstore_hybrid")
+        return {"messages": [AIMessage(content="invoke-answer")]}
+
+
+def test_invoke_records_documents_tool_input_and_budget():
+    """Single-threaded invoke() must populate active_memory with docs, inputs, and budget.
+
+    The ContextVar fix (task 2) must not regress the basic single-request path:
+    after invoke() returns the output must carry the retrieved document, the
+    answer text must match the stub response, and the per-tool budget counter
+    in RunMemory must reflect the two calls made inside the fake graph.
+    """
+    agent = _MemoryRaceAgent(graph=None)
+    graph = _FakeInvokeGraph(pipeline=agent)
+    agent.agent = graph
+
+    output = agent.invoke(history=[("human", "test question")])
+
+    assert (
+        len(output.source_documents) == 1
+    ), f"Expected 1 source document in output, got {len(output.source_documents)}"
+    assert output.source_documents[0].page_content == "invoke-doc"
+
+    assert (
+        output.answer == "invoke-answer"
+    ), f"Expected answer 'invoke-answer', got {output.answer!r}"
+
+    memory = agent.active_memory
+    assert memory is not None, "active_memory must remain set after invoke() returns"
+
+    assert (
+        memory.tool_call_count("search_vectorstore_hybrid") == 2
+    ), f"Expected budget counter of 2, got {memory.tool_call_count('search_vectorstore_hybrid')}"
+
+    pending = memory._pending_tool_inputs_by_name.get("fetch_tool", [])
+    assert (
+        len(pending) == 1
+    ), f"Expected 1 pending tool input for 'fetch_tool', got {len(pending)}"
+    assert pending[0] == {"query": "invoke-query"}

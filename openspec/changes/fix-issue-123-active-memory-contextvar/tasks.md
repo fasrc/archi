@@ -57,7 +57,7 @@
   `src/archi/pipelines/agents/cms_comp_ops_agent.py` tool construction still binds correctly (their
   tools' callbacks resolve memory via the property / ContextVar); add a lightweight assertion if a
   gap is found.
-- [ ] 5.2 Confirm single-threaded `invoke()` records docs / tool-input / budget exactly as before
+- [x] 5.2 Confirm single-threaded `invoke()` records docs / tool-input / budget exactly as before
   (add or extend a test if not already covered).
 
 ## 6. Gate and PR
