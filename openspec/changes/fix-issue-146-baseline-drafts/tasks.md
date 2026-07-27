@@ -33,7 +33,7 @@
 
 - [x] 7.1 Update the "Recording a baseline" section of `docs/docs/benchmarking.md` so the documented workflow is a single edit (compute the hash with `--baseline-drafts --print-hashes`, then paste `status: locked` and `source_hashes` together).
 - [x] 7.2 Audit every `drift` example in `docs/docs/benchmarking.md` for the required `--allowed-hosts` flag; confirm the two grep counts in the issue's Commands block are equal.
-- [ ] 7.3 `cd docs && mkdocs build --strict` exits 0.
+- [x] 7.3 `cd docs && mkdocs build --strict` exits 0.
 
 ## 8. Gate and verify
 
