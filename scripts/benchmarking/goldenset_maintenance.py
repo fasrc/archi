@@ -975,10 +975,10 @@ def _print_hashes(report) -> None:
         print(json.dumps({"source_hashes": baseline_row.source_hashes}, indent=2))
     if not emitted:
         print(
-            "\nno `source_hashes` blocks — baselines come from `locked` rows only. "
-            "A draft row has no confirmation to record yet, so declaring the lock "
-            "comes first: set `status: locked` on the row, then re-run this to get "
-            "its block."
+            "\nno `source_hashes` blocks to print. To baseline a draft row in a "
+            "single edit: run with --baseline-drafts --print-hashes to compute the "
+            "hash now, then paste the printed `source_hashes` block into the bank "
+            "file alongside `status: locked` in one commit."
         )
 
 

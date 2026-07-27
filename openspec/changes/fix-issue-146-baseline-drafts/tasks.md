@@ -26,8 +26,8 @@
 
 ## 6. Replace the unsafe guidance
 
-- [ ] 6.1 Replace the "set `status: locked` on the row, then re-run this to get its block" message at `scripts/benchmarking/goldenset_maintenance.py:898-903` with guidance pointing at `--baseline-drafts` and the single-edit workflow.
-- [ ] 6.2 Confirm `grep -n 'set .status: locked. on the row, then re-run' scripts/benchmarking/goldenset_maintenance.py` returns nothing.
+- [x] 6.1 Replace the "set `status: locked` on the row, then re-run this to get its block" message at `scripts/benchmarking/goldenset_maintenance.py:898-903` with guidance pointing at `--baseline-drafts` and the single-edit workflow.
+- [x] 6.2 Confirm `grep -n 'set .status: locked. on the row, then re-run' scripts/benchmarking/goldenset_maintenance.py` returns nothing.
 
 ## 7. Docs
 
