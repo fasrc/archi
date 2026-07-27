@@ -40,4 +40,4 @@
 - [x] 8.1 `black src/ scripts/ tests/ -q && isort src/ scripts/ tests/ -q`.
 - [x] 8.2 `python -m pytest tests/unit/ -q` passes; total count > 1290.
 - [x] 8.3 `openspec validate fix-issue-146-baseline-drafts --strict` passes.
-- [ ] 8.4 Commit only green through the pre-commit gate (≥80% diff coverage; never `--no-verify`); push and open a PR to `fasrc/archi:dev` with `closes #146`.
+- [x] 8.4 Commit only green through the pre-commit gate (≥80% diff coverage; never `--no-verify`); push and open a PR to `fasrc/archi:dev` with `closes #146`.
