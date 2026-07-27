@@ -778,6 +778,7 @@ def run_drift(args: argparse.Namespace) -> int:
         build_fetch_html(),
         ask_llm=ask_llm,
         allowed_hosts=args.allowed_hosts,
+        baseline_drafts=getattr(args, "baseline_drafts", False),
     )
 
     if report.abstained:
@@ -966,6 +967,12 @@ def _print_hashes(report) -> None:
                 "they are reachable."
             )
         print(json.dumps({"source_hashes": carried}, indent=2))
+    for baseline_row in report.baseline_only:
+        if not baseline_row.source_hashes:
+            continue
+        emitted += 1
+        print(f"\nrow {baseline_row.row_index} (draft — paste with status: locked)")
+        print(json.dumps({"source_hashes": baseline_row.source_hashes}, indent=2))
     if not emitted:
         print(
             "\nno `source_hashes` blocks — baselines come from `locked` rows only. "
@@ -1219,6 +1226,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Print a paste-ready `source_hashes` block per row. The tool never "
             "writes the bank, so this is how a baseline gets recorded."
+        ),
+    )
+    drift.add_argument(
+        "--baseline-drafts",
+        action="store_true",
+        help=(
+            "Also compute and print `source_hashes` blocks for `draft` rows when "
+            "--print-hashes is given. Draft rows are never checked for drift; this "
+            "only produces the hash block so it can be pasted alongside "
+            "`status: locked` in a single edit."
         ),
     )
     drift.set_defaults(func=run_drift)

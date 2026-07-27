@@ -20,9 +20,9 @@
 
 ## 5. RED+GREEN — CLI flag and read-only guarantee
 
-- [ ] 5.1 In `tests/unit/test_goldenset_maintenance_script.py`, add a failing test: a CLI flag (`--baseline-drafts`, usable with `--print-hashes`) emits a `source_hashes` block for a `draft` row.
-- [ ] 5.2 In the same file, add a failing test asserting the bank file is byte-identical before and after a `--print-hashes` run that includes drafts.
-- [ ] 5.3 Implement the `--baseline-drafts` flag in `scripts/benchmarking/goldenset_maintenance.py`, plumb it into `find_drift`, and make `_print_hashes` (~:855) also emit blocks for `report.baseline_only`. Run until green.
+- [x] 5.1 In `tests/unit/test_goldenset_maintenance_script.py`, add a failing test: a CLI flag (`--baseline-drafts`, usable with `--print-hashes`) emits a `source_hashes` block for a `draft` row.
+- [x] 5.2 In the same file, add a failing test asserting the bank file is byte-identical before and after a `--print-hashes` run that includes drafts.
+- [x] 5.3 Implement the `--baseline-drafts` flag in `scripts/benchmarking/goldenset_maintenance.py`, plumb it into `find_drift`, and make `_print_hashes` (~:855) also emit blocks for `report.baseline_only`. Run until green.
 
 ## 6. Replace the unsafe guidance
 

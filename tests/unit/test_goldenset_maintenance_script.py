@@ -1684,6 +1684,34 @@ class TestDriftSubcommand:
         assert script.main([*_drift_head(bank), "--print-hashes"]) == 0
 
 
+class TestBaselineDraftsCli:
+    """5.1 / 5.2 — --baseline-drafts flag wires draft rows into _print_hashes."""
+
+    def test_baseline_drafts_emits_source_hashes_for_draft_row(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, status="draft"))
+        _fake_pages(script, {url: GPU_HTML})
+
+        code = script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts"])
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert '"source_hashes"' in out
+        assert page_digest(GPU_HTML) in out
+
+    def test_baseline_drafts_print_hashes_leaves_bank_byte_identical(self, tmp_path):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, status="draft"))
+        before = bank.read_bytes()
+        _fake_pages(script, {url: GPU_HTML})
+
+        script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts"])
+
+        assert bank.read_bytes() == before
+
+
 class TestDriftVerdictCli:
     """4.3 — the model diff is advisory and fires only on a moved hash."""
 
