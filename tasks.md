@@ -1,1 +1,1 @@
-openspec/changes/fix-issue-118-scraper-trailing-slash/tasks.md
+openspec/changes/fix-issue-146-baseline-drafts/tasks.md

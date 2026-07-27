@@ -1202,6 +1202,14 @@ class DriftVerdict:
 
 
 @dataclass(frozen=True)
+class BaselineRow:
+    """A draft row's sources hashed for baselining, kept out of drift detection."""
+
+    row_index: int
+    source_hashes: Dict[str, str]
+
+
+@dataclass(frozen=True)
 class SourceCheck:
     """One grounding URL of one locked row, checked against its baseline.
 
@@ -1249,6 +1257,7 @@ class DriftReport:
     skipped_rows: int
     abstained: bool = False
     reasons: Tuple[str, ...] = ()
+    baseline_only: Tuple[BaselineRow, ...] = ()
 
     def _in_state(self, state: str) -> Tuple[SourceCheck, ...]:
         return tuple(c for row in self.rows for c in row.checks if c.state == state)
@@ -1534,6 +1543,7 @@ def find_drift(
     *,
     ask_llm: Optional[AskLLM] = None,
     allowed_hosts: Iterable[str] = (),
+    baseline_drafts: bool = False,
 ) -> DriftReport:
     """Re-hash every locked row's grounding pages and report what moved.
 
@@ -1560,16 +1570,41 @@ def find_drift(
     individually reported as unchecked rather than as clean. When nothing could
     be read, though, "no drift" would be a false clean over the entire bank.
 
+    When `baseline_drafts` is True, draft rows' sources are fetched and hashed so
+    their `source_hashes` block can be computed before locking. These rows are
+    collected on `DriftReport.baseline_only` and are structurally excluded from
+    all drift-detection aggregates (rows, drifted, unbaselined, checked_rows,
+    abstention, LLM calls).
+
     Read-only: the bank is never mutated, and `source_hashes` is never rewritten.
     Re-baselining a row is a human act, like locking it in the first place.
     """
     cache: Dict[str, Tuple[str, str, str]] = {}
     rows: List[RowDrift] = []
+    baseline_only: List[BaselineRow] = []
     checked = 0
     skipped = 0
 
     for index, record in enumerate(bank):
-        if not isinstance(record, dict) or row_status(record) != "locked":
+        if not isinstance(record, dict):
+            skipped += 1
+            continue
+        status = row_status(record)
+        if status == "draft" and baseline_drafts:
+            sources = record.get("sources")
+            hashes: Dict[str, str] = {}
+            for raw in sources if isinstance(sources, list) else ():
+                if not isinstance(raw, str) or not raw:
+                    continue
+                url = canonical_url(raw)
+                if url is None or not is_fetchable_source(url, allowed_hosts):
+                    continue
+                _, digest, _ = _fetch_extract(url, cache, fetch_html)
+                if digest:
+                    hashes[url] = digest
+            baseline_only.append(BaselineRow(row_index=index, source_hashes=hashes))
+            continue
+        if status != "locked":
             skipped += 1
             continue
         baselines = _baselines(record)
@@ -1641,4 +1676,5 @@ def find_drift(
             if abstained
             else ()
         ),
+        baseline_only=tuple(baseline_only),
     )

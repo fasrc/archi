@@ -33,6 +33,7 @@ from src.data_manager.collectors.scrapers.sitemap_source import (
 from src.utils.goldenset_maintenance import (
     MAX_PROMPT_PAGE_CHARS,
     TRUNCATION_MARKER,
+    BaselineRow,
     CorpusDoc,
     Decline,
     DriftExtractionError,
@@ -2034,3 +2035,128 @@ class TestMalformedLockedSource:
         states = {c.url: c.state for c in report.rows[0].checks}
         assert states[good] == "unchanged"
         assert states["http://["] == "refused"
+
+
+class TestBaselineDrafts:
+    """goldenset-baseline-drafts — opt-in hashing of draft rows before locking."""
+
+    def test_baseline_drafts_fetches_and_hashes_draft_sources(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+        calls = []
+
+        report = _drift(
+            bank, _fetcher_for({url: KB_HTML}, calls=calls), baseline_drafts=True
+        )
+
+        assert calls == [url]
+        assert len(report.baseline_only) == 1
+        assert isinstance(report.baseline_only[0], BaselineRow)
+        assert report.baseline_only[0].source_hashes == {url: page_digest(KB_HTML)}
+
+    def test_baseline_only_result_is_not_in_report_rows(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}), baseline_drafts=True)
+
+        assert report.rows == ()
+
+    def test_without_baseline_drafts_draft_sources_are_not_fetched(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+        calls = []
+
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls), baseline_drafts=False)
+
+        assert calls == []
+
+    def test_without_baseline_drafts_baseline_only_is_empty(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert report.baseline_only == ()
+
+    def test_baselined_draft_does_not_appear_in_drifted(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}), baseline_drafts=True)
+
+        assert report.drifted == ()
+
+    def test_baselined_draft_does_not_appear_in_unbaselined(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}), baseline_drafts=True)
+
+        assert report.unbaselined == ()
+
+    def test_baselined_draft_does_not_trigger_llm_call(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+        llm_calls = []
+
+        _drift(
+            bank,
+            _fetcher_for({url: KB_HTML}),
+            ask_llm=_recording_llm(llm_calls, '{"verdict": "holds"}'),
+            baseline_drafts=True,
+        )
+
+        assert llm_calls == []
+
+    def test_baselined_draft_does_not_count_toward_checked_rows(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}), baseline_drafts=True)
+
+        assert report.checked_rows == 0
+
+    def test_baselined_draft_does_not_change_abstention_with_locked_row_unreachable(
+        self,
+    ):
+        draft_url = f"{KB}/kb/draft"
+        locked_url = f"{KB}/kb/locked"
+        bank = [
+            _row(draft_url, status="draft"),
+            _locked(locked_url, hashes={locked_url: page_digest(KB_HTML)}),
+        ]
+
+        report_without = _drift(
+            bank,
+            _fetcher_for({draft_url: KB_HTML}, errors={locked_url: "timeout"}),
+            baseline_drafts=False,
+        )
+        report_with = _drift(
+            bank,
+            _fetcher_for({draft_url: KB_HTML}, errors={locked_url: "timeout"}),
+            baseline_drafts=True,
+        )
+
+        assert report_without.abstained == report_with.abstained
+
+    def test_baseline_row_carries_row_index(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}), baseline_drafts=True)
+
+        assert report.baseline_only[0].row_index == 0
+
+    def test_multi_source_draft_row_hashes_all_sources(self):
+        url_a = f"{KB}/kb/a"
+        url_b = f"{KB}/kb/b"
+        bank = [_row(url_a, url_b, status="draft")]
+
+        report = _drift(
+            bank,
+            _fetcher_for({url_a: KB_HTML, url_b: KB_HTML_RESTYLED}),
+            baseline_drafts=True,
+        )
+
+        assert set(report.baseline_only[0].source_hashes) == {url_a, url_b}
