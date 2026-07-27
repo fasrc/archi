@@ -815,12 +815,20 @@ gets its own bucket in the report:
 The tool never writes the bank, so `--print-hashes` is how a baseline gets recorded: it prints a
 paste-ready block per row.
 
+**Locking a new candidate is a single edit.** Use `--baseline-drafts` to compute hashes for
+`draft` rows before locking them, then paste `status: locked` and the `source_hashes` block
+together in one commit:
+
 ```bash
 python scripts/benchmarking/goldenset_maintenance.py drift \
-    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu --print-hashes
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \
+    --baseline-drafts --print-hashes
 ```
 
-```json
+The output labels draft blocks so you know what to paste alongside them:
+
+```
+row 3 (draft — paste with status: locked)
 {
   "source_hashes": {
     "https://docs.rc.fas.harvard.edu/kb/gpu-computing": "sha256:9f86d081884c7d65…"
@@ -828,21 +836,31 @@ python scripts/benchmarking/goldenset_maintenance.py drift \
 }
 ```
 
-**Declare the lock first, then take the baseline.** Blocks are produced for `locked` rows only, so
-locking a confirmed candidate is two edits to the same row:
+Open the bank file, find that row, and add both fields in one edit:
 
-1. set `status: locked` on the row (this is the human act — you are vouching for the reference
-   against that page),
-2. run the command above and paste the block it prints for that row.
+```json
+{
+  "user_input": "…",
+  "status": "locked",
+  "source_hashes": {
+    "https://docs.rc.fas.harvard.edu/kb/gpu-computing": "sha256:9f86d081884c7d65…"
+  }
+}
+```
 
-Between the two the row is locked with no baseline, which is a state the report already names
-(*no baseline recorded*) rather than a broken one. The order is deliberate: a baseline is a record
-of a confirmation, so producing one for a `draft` row would manufacture the evidence of a
-confirmation that has not happened. A run that prints no blocks says so and names this reason.
+The two fields belong together: `status: locked` is you vouching for the reference against that
+page, and `source_hashes` is the record of what the page said when you vouched. Writing one
+without the other is correct but transient — a locked row with no hash shows as *no baseline
+recorded* on the next run, and a hash on a draft row is never checked. Both in one commit keeps
+the history clean and the intermediate state off the main branch.
 
-Do the same after reviewing a drifted row and deciding the answer still holds — that re-baselines
-it so the next run is quiet again. Both are human acts, on purpose: a tool that re-baselined a
-drifted row by itself would erase the finding before anyone read it.
+Do the same after reviewing a drifted row and deciding the answer still holds — run
+`--print-hashes` (no `--baseline-drafts` needed, since the row is already locked) and paste the
+new block to re-baseline it. The next run is quiet again. Both acts are deliberate: a tool that
+re-baselined a drifted row by itself would erase the finding before anyone read it.
+
+A run that prints no blocks says so and names the reason (e.g. no locked or draft rows with
+reachable sources were found).
 
 Pasting replaces the row's whole map, so each block is **complete for its row**: a source that
 could not be read this run carries its existing baseline forward rather than vanishing. Where a
