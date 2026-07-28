@@ -31,4 +31,4 @@
 - [x] 5.1 `python -m pytest tests/unit/ -q` passes; total count > 1290. (1342 passed, 1 xfailed)
 - [x] 5.2 `black src/ scripts/ tests/ -q && isort src/ scripts/ tests/ -q` clean; `openspec validate fix-issue-147-drift-explicit-mode --strict` passes.
 - [x] 5.3 Commit only green (pre-commit gate: format → lint → test, ≥80% diff coverage; never `--no-verify`). Short lowercase commit messages, no `Co-Authored-By`. (verified: `bash scripts/gate.sh` green at HEAD — 1342 passed, 1 xfailed; working tree has no uncommitted tracked changes — the implementation/test/docs commits above already went through this gate individually)
-- [ ] 5.4 Open the PR: `gh pr create --repo fasrc/archi --base dev` with a `closes #147` body.
+- [x] 5.4 Open the PR: `gh pr create --repo fasrc/archi --base dev` with a `closes #147` body. (opened: https://github.com/fasrc/archi/pull/161)
