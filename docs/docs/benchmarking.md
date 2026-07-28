@@ -412,7 +412,8 @@ python scripts/benchmarking/goldenset_maintenance.py orphans \
 # Which confirmed rows were grounded in a page that has since changed?
 python scripts/benchmarking/goldenset_maintenance.py drift \
     --bank examples/benchmarking/fasrc_ragas_queries.json \
-    --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com
+    --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com \
+    --tripwire-only
 ```
 
 `--min-pages` is the sitemap **completeness floor** and must match the deployment's
@@ -675,7 +676,8 @@ that page still says what it said. It works in two stages, cheap first:
 ```bash
 # tripwire only — cheap enough to run on a schedule
 python scripts/benchmarking/goldenset_maintenance.py drift \
-    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \
+    --tripwire-only
 
 # escalate every moved hash to a model for triage
 python scripts/benchmarking/goldenset_maintenance.py drift \
@@ -683,8 +685,12 @@ python scripts/benchmarking/goldenset_maintenance.py drift \
     --model anthropic/claude-sonnet-5
 ```
 
-`--model` is optional. Without it you get the tripwire alone, which is already a real finding:
-"this page changed" is worth knowing even before anyone decides whether the answer broke.
+`drift` requires naming exactly one of `--tripwire-only` or `--model` — there is no implicit
+default, and running neither (or both) exits non-zero naming both flags. The tripwire alone is
+already a real finding: "this page changed" is worth knowing even before anyone decides whether
+the answer broke. The nightly cron gets this same hash-only pass without asking for it, because
+it runs through `report` (below), whose own `--model` is optional and omitted in production —
+`report` never needs `--tripwire-only` itself.
 
 #### What gets checked
 
@@ -718,7 +724,8 @@ authorized to contact, and there is no allow-everything default:
 
 ```bash
 python scripts/benchmarking/goldenset_maintenance.py drift \
-    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com \
+    --tripwire-only
 ```
 
 The bank legitimately grounds some questions in external authorities (the upstream Slurm docs),
@@ -817,7 +824,8 @@ paste-ready block per row.
 
 ```bash
 python scripts/benchmarking/goldenset_maintenance.py drift \
-    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu --print-hashes
+    --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu --print-hashes \
+    --tripwire-only
 ```
 
 ```json

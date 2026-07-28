@@ -22,9 +22,9 @@
 
 ## 4. Docs
 
-- [ ] 4.1 In `docs/docs/benchmarking.md`, update the two `drift` examples so `--tripwire-only` and `--model` read as a deliberate choice, and state which mode the group-5 cron uses (hash-only, via `report` without `--model`).
-- [ ] 4.2 Ensure **every** `drift` example in that file carries `--allowed-hosts`; verify the two grep counts are equal: `grep -c 'goldenset_maintenance.py drift' docs/docs/benchmarking.md` equals `grep -A 3 'goldenset_maintenance.py drift' docs/docs/benchmarking.md | grep -c 'allowed-hosts'`.
-- [ ] 4.3 `(cd docs && mkdocs build --strict)` exits 0.
+- [x] 4.1 In `docs/docs/benchmarking.md`, update the two `drift` examples so `--tripwire-only` and `--model` read as a deliberate choice, and state which mode the group-5 cron uses (hash-only, via `report` without `--model`).
+- [x] 4.2 Ensure **every** `drift` example in that file carries `--allowed-hosts`; verify the two grep counts are equal: `grep -c 'goldenset_maintenance.py drift' docs/docs/benchmarking.md` equals `grep -A 3 'goldenset_maintenance.py drift' docs/docs/benchmarking.md | grep -c 'allowed-hosts'`.
+- [x] 4.3 `(cd docs && mkdocs build --strict)` exits 0.
 
 ## 5. Verify & gate
 
