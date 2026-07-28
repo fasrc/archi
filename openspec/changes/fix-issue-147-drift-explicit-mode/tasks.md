@@ -14,11 +14,11 @@
 
 ## 3. Implementation
 
-- [ ] 3.1 In `build_parser()`, replace the standalone `drift.add_argument("--model", …)` with a `drift.add_mutually_exclusive_group(required=True)` containing `--model` (unchanged help, tightened to say it selects the semantic pass) and a new `--tripwire-only` (`action="store_true"`, help: explicitly select the hash-only pass, no LLM call). Follow the `coverage`/`report` `add_mutually_exclusive_group()` shape.
-- [ ] 3.2 In `run_drift()`, replace the mode line with a defensive resolve: `tripwire_only = getattr(args, "tripwire_only", False)` then `ask_llm = None if tripwire_only else (build_ask_llm(args.model) if args.model else None)`. Do not otherwise change the pass logic.
-- [ ] 3.3 Add `tripwire_only=False` to `report.set_defaults(...)` so the reused runner reads a defined, inert attribute for the cron pass (matching the file's "named here rather than defaulted inside each runner" idiom). Leave `report`'s optional `--model` untouched.
-- [ ] 3.4 Add an unconditional mode-declaring header line at the top of `run_drift()` (before the `locked rows: …` summary) naming hash-only/tripwire vs reference-compared/semantic. Keep the existing drift NOTE (fires only when rows drifted) as-is.
-- [ ] 3.5 Run the new tests and the full `tests/unit/test_goldenset_maintenance*.py` suite green.
+- [x] 3.1 In `build_parser()`, replace the standalone `drift.add_argument("--model", …)` with a `drift.add_mutually_exclusive_group(required=True)` containing `--model` (unchanged help, tightened to say it selects the semantic pass) and a new `--tripwire-only` (`action="store_true"`, help: explicitly select the hash-only pass, no LLM call). Follow the `coverage`/`report` `add_mutually_exclusive_group()` shape.
+- [x] 3.2 In `run_drift()`, replace the mode line with a defensive resolve: `tripwire_only = getattr(args, "tripwire_only", False)` then `ask_llm = None if tripwire_only else (build_ask_llm(args.model) if args.model else None)`. Do not otherwise change the pass logic.
+- [x] 3.3 Add `tripwire_only=False` to `report.set_defaults(...)` so the reused runner reads a defined, inert attribute for the cron pass (matching the file's "named here rather than defaulted inside each runner" idiom). Leave `report`'s optional `--model` untouched.
+- [x] 3.4 Add an unconditional mode-declaring header line at the top of `run_drift()` (before the `locked rows: …` summary) naming hash-only/tripwire vs reference-compared/semantic. Keep the existing drift NOTE (fires only when rows drifted) as-is.
+- [x] 3.5 Run the new tests and the full `tests/unit/test_goldenset_maintenance*.py` suite green.
 
 ## 4. Docs
 

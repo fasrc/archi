@@ -772,7 +772,15 @@ def run_drift(args: argparse.Namespace) -> int:
     human act as locking it was.
     """
     bank = load_bank(args.bank)
-    ask_llm = build_ask_llm(args.model) if args.model else None
+    tripwire_only = getattr(args, "tripwire_only", False)
+    ask_llm = (
+        None if tripwire_only else (build_ask_llm(args.model) if args.model else None)
+    )
+    print(
+        "mode: hash-only (tripwire) — no reference comparison"
+        if ask_llm is None
+        else "mode: reference-compared (semantic)"
+    )
     report = find_drift(
         bank,
         build_fetch_html(),
@@ -1182,12 +1190,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     drift = sub.add_parser("drift", help="Locked rows whose grounding page changed.")
     add_bank(drift)
-    drift.add_argument(
+    drift_mode = drift.add_mutually_exclusive_group(required=True)
+    drift_mode.add_argument(
         "--model",
         help=(
             "`provider/model` asked whether the stored reference still holds, for "
-            "sources whose hash moved. Optional: without it the run is the cheap "
-            "hash tripwire alone, which is still a real finding."
+            "sources whose hash moved. Selects the semantic pass."
+        ),
+    )
+    drift_mode.add_argument(
+        "--tripwire-only",
+        action="store_true",
+        help=(
+            "Explicitly select the cheap hash-only pass: no LLM call, just the "
+            "tripwire. Mutually exclusive with --model."
         ),
     )
     drift.add_argument(
@@ -1296,6 +1312,9 @@ def build_parser() -> argparse.ArgumentParser:
         path_glob=None,
         data_path=None,
         count=3,
+        # `drift`'s mode flag is required there, but `report` has no CLI surface
+        # for it and must stay hash-only-by-default for the unattended cron.
+        tripwire_only=False,
         # ON here, unlike the interactive `drift` where it is opt-in. The spec
         # asks for a drifted row to be flagged "with the re-fetched content for
         # review", and interactively that is a re-run away. Unattended there is
