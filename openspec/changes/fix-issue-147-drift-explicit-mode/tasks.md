@@ -1,7 +1,7 @@
 ## 1. Baseline & scope confirmation
 
 - [x] 1.1 `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH`; run `python -m pytest tests/unit/test_goldenset_maintenance.py tests/unit/test_goldenset_maintenance_script.py -q` and record the passing count as the baseline. (baseline: 302 passed)
-- [ ] 1.2 Confirm no `.sh`/`.yaml`/`.yml`/`.md` caller relies on the implicit no-flag drift: `grep -rn "goldenset_maintenance.py drift" --include='*.sh' --include='*.yaml' --include='*.yml' --include='*.md' .` — expect no invocation that omits both `--model` and a mode flag. (If one exists, STOP: the break is not safe.)
+- [x] 1.2 Confirm no `.sh`/`.yaml`/`.yml`/`.md` caller relies on the implicit no-flag drift: `grep -rn "goldenset_maintenance.py drift" --include='*.sh' --include='*.yaml' --include='*.yml' --include='*.md' .` — expect no invocation that omits both `--model` and a mode flag. (If one exists, STOP: the break is not safe.) (confirmed: zero `.sh`/`.yaml`/`.yml` matches; the 4 no-flag `.md` examples are doc examples in `docs/docs/benchmarking.md`, updated in task 4, not automation callers)
 
 ## 2. RED tests (write first, watch fail)
 
