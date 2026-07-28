@@ -5,12 +5,12 @@
 
 ## 2. RED tests (write first, watch fail)
 
-- [ ] 2.1 In `tests/unit/test_goldenset_maintenance_script.py`: `drift` invoked with a bank and `--allowed-hosts` but **neither** `--model` nor `--tripwire-only` exits non-zero, and the error text contains **both** `--model` and `--tripwire-only`.
-- [ ] 2.2 `drift ... --tripwire-only` exits 0, reports a moved hash, and the injected/patched `build_ask_llm` (or the drift LLM hook) is **never called** — assert on the mock, not on output absence.
-- [ ] 2.3 `drift ... --model <id> --tripwire-only` exits non-zero (contradictory instruction rejected).
-- [ ] 2.4 A `drift ... --tripwire-only` run's stdout **header** states the hash-only / tripwire-only mode — assert on the header string, not on the absence of verdicts.
-- [ ] 2.5 Regression: the `report` subcommand with **no** `--model` still runs the drift pass hash-only and exits 0 (proves the group-5 cron seam is intact). Mirror the existing report test's fixture/patching style.
-- [ ] 2.6 Run the new tests and confirm they FAIL for the expected reasons before writing implementation.
+- [x] 2.1 In `tests/unit/test_goldenset_maintenance_script.py`: `drift` invoked with a bank and `--allowed-hosts` but **neither** `--model` nor `--tripwire-only` exits non-zero, and the error text contains **both** `--model` and `--tripwire-only`.
+- [x] 2.2 `drift ... --tripwire-only` exits 0, reports a moved hash, and the injected/patched `build_ask_llm` (or the drift LLM hook) is **never called** — assert on the mock, not on output absence.
+- [x] 2.3 `drift ... --model <id> --tripwire-only` exits non-zero (contradictory instruction rejected).
+- [x] 2.4 A `drift ... --tripwire-only` run's stdout **header** states the hash-only / tripwire-only mode — assert on the header string, not on the absence of verdicts.
+- [x] 2.5 Regression: the `report` subcommand with **no** `--model` still runs the drift pass hash-only and exits 0 (proves the group-5 cron seam is intact). Mirror the existing report test's fixture/patching style.
+- [x] 2.6 Run the new tests and confirm they FAIL for the expected reasons before writing implementation.
 
 ## 3. Implementation
 

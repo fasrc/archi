@@ -1740,6 +1740,104 @@ class TestDriftVerdictCli:
         assert "holds" in out
 
 
+class TestDriftExplicitMode:
+    """issue #147 — the hash-only pass must be a named choice, not a fallback.
+
+    A bare `drift --bank ... --allowed-hosts ...` with neither flag used to run
+    the cheap hash tripwire implicitly. That silently drops the reference check
+    if `--model` is ever forgotten. The two passes are now a required, mutually
+    exclusive choice: `--model <id>` for the semantic pass, or `--tripwire-only`
+    for the explicit hash-only one.
+
+    RED: `--tripwire-only` and the mutually-exclusive-required group (tasks
+    3.1-3.2) do not exist yet, so the tests below are marked
+    `xfail(strict=True)` — they fail against today's optional `--model` alone
+    and will start passing once `build_parser()`/`run_drift()` are updated, at
+    which point the strict marker fails the gate and must be removed (task 3.5).
+    """
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="RED (issue #147): drift's --model/--tripwire-only choice is not "
+        "required yet (task 3.1). Remove this marker once build_parser() makes "
+        "them a required mutually exclusive group.",
+    )
+    def test_neither_flag_is_rejected_naming_both(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML})
+
+        with pytest.raises(SystemExit):
+            script.main([*_drift_head(bank)])
+        err = capsys.readouterr().err
+
+        assert "--model" in err
+        assert "--tripwire-only" in err
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="RED (issue #147): --tripwire-only does not exist yet (task 3.1). "
+        "Remove this marker once build_parser() adds it.",
+    )
+    def test_tripwire_only_runs_the_hash_pass_without_the_model(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML_CHANGED})
+        calls = []
+        _fake_llm(script, {"verdict": "broken"}, calls=calls)
+
+        code = script.main([*_drift_head(bank), "--tripwire-only"])
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert url in out
+        assert calls == []
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="RED (issue #147): --tripwire-only does not exist yet (task 3.1), "
+        "so this is rejected as an unrecognized argument rather than a named "
+        "contradiction. Remove this marker once both flags are a real mutually "
+        "exclusive group.",
+    )
+    def test_model_and_tripwire_only_together_is_rejected(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+
+        with pytest.raises(SystemExit):
+            script.main(
+                [*_drift_head(bank), "--model", "anthropic/x", "--tripwire-only"]
+            )
+        err = capsys.readouterr().err
+
+        # Today `--tripwire-only` is simply an unrecognized argument, so this
+        # already exits non-zero — but for the wrong reason. Once it is a real
+        # mutually exclusive group (task 3.1), the rejection names BOTH flags as
+        # the contradiction, not one flag as unknown.
+        assert "--model" in err
+        assert "--tripwire-only" in err
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="RED (issue #147): run_drift() has no mode-declaring header yet "
+        "(task 3.4). Remove this marker once it prints one.",
+    )
+    def test_tripwire_only_header_states_the_mode(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML})
+
+        script.main([*_drift_head(bank), "--tripwire-only"])
+        out = capsys.readouterr().out
+
+        assert "hash-only" in out.lower()
+        assert "tripwire" in out.lower()
+
+
 class TestDriftFetchPolicyCli:
     """A bank-controlled URL must not become an unrestricted outbound request."""
 
@@ -2441,6 +2539,21 @@ class TestReportSaysWhenItOnlyRanTheTripwire:
         script.main(_report_argv(bank, corpus, sources))
 
         assert "NOT compared" not in capsys.readouterr().out
+
+    def test_report_without_a_model_still_runs_the_tripwire_pass(
+        self, tmp_path, capsys
+    ):
+        """Regression (#147): `drift`'s new required mode flag must not leak onto
+        `report` — the nightly cron passes neither `--model` nor
+        `--tripwire-only`, so this seam has to stay hash-only-by-default.
+        """
+        script = _load_script()
+
+        code = self._drifted_run(tmp_path, script)
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert "hash-only" in out.lower() or "NOT compared" in out
 
 
 class TestReportKeepsTheDriftEvidence:
