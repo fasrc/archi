@@ -28,7 +28,7 @@
 
 ## 5. Verify & gate
 
-- [ ] 5.1 `python -m pytest tests/unit/ -q` passes; total count > 1290.
+- [x] 5.1 `python -m pytest tests/unit/ -q` passes; total count > 1290. (1342 passed, 1 xfailed)
 - [ ] 5.2 `black src/ scripts/ tests/ -q && isort src/ scripts/ tests/ -q` clean; `openspec validate fix-issue-147-drift-explicit-mode --strict` passes.
 - [ ] 5.3 Commit only green (pre-commit gate: format → lint → test, ≥80% diff coverage; never `--no-verify`). Short lowercase commit messages, no `Co-Authored-By`.
 - [ ] 5.4 Open the PR: `gh pr create --repo fasrc/archi --base dev` with a `closes #147` body.
