@@ -909,12 +909,14 @@ monitor must read those summary counts, not the process exit code, or it will re
 barely-completed run as healthy. The exit code answers "did a pass break?"; the summary answers
 "how much did it actually check?", and only the second distinguishes a thorough run from a thin one.
 
-#### The summary JSON — what a completed run reports
+#### The summary JSON — what every run reports
 
-`--summary-json <path>` is written once the passes run — including when a pass **fails**, so the
-file separates a clean run, a run with findings, and one where a pass broke (`failed_passes`
-non-empty). It records every count the report can take, but only the **notify buckets** decide
-whether a human is paged:
+`--summary-json <path>` is written on every terminating path — including when a pass **fails** and
+including when the bank itself fails to load — so the file is always current after the process
+exits. A completed run separates clean, findings, and a broken pass (`failed_passes` non-empty); a
+bank-load failure writes `census: null`, names the error in `failed_passes`, and sets `notify:
+true`. It records every count the report can take, but only the **notify buckets** decide whether
+a human is paged:
 
 | Key | Type | Notify? | Meaning |
 | --- | --- | :---: | --- |
@@ -936,11 +938,14 @@ On an exit-zero run the nightly wrapper collapses these into one digest line —
 A **non-zero** run is a separate path: the wrapper mails the full report on stderr and never reads
 `notify`.
 
-**A monitor must treat a non-zero exit — or a missing or stale summary — as failure, not read the
-file alone.** The summary is written *after* the bank loads, so a run that cannot even read its bank
-exits non-zero *before* the file is refreshed and leaves the previous run's file untouched. The exit
-code answers "did the run break?"; the summary answers "what did a completed run find?" — a monitor
-needs both.
+**The exit code is the authoritative failure signal; the summary file is always current.**
+The summary is written on every terminating path — including a bank-load failure — so a monitor
+can read the file alone as a point-in-time snapshot. A startup failure that could not even read the
+bank sets `census: null`, names the error in `failed_passes`, and sets `notify: true`; a monitor
+reading only the file will see a clear failure state, not a stale success. That said, a missing file
+(a run that was killed or never reached the write) is still indistinguishable from a clean one by
+file inspection — **treat a missing summary as failure** and key the notification decision on the
+exit code first.
 
 #### One broken pass does not hide the other two
 

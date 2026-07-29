@@ -995,6 +995,39 @@ _REPORT_PASSES = (
 )
 
 
+def _write_summary(args: argparse.Namespace, summary: dict) -> None:
+    """Atomically write the --summary-json file (temp + os.replace).
+
+    Mirrors write_ledger's commit step: the target is never truncated before the
+    replacement is ready, so a crash or full-disk mid-write cannot corrupt an
+    existing file.  Full fsync durability is not required for a re-derivable
+    health signal (non-goal per design.md).
+    """
+    if not args.summary_json:
+        return
+    target = Path(args.summary_json)
+    tmp_name = ""
+    handle = None
+    try:
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+        )
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+        json.dump(summary, handle, indent=2)
+        handle.close()
+        handle = None
+        os.replace(tmp_name, target)
+    except OSError as exc:
+        if handle is not None:
+            handle.close()
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:  # pragma: no cover - already gone
+                pass
+        raise OperationalError(f"cannot write {args.summary_json}: {exc}") from exc
+
+
 def run_report(args: argparse.Namespace) -> int:
     """Run all three passes as one unattended summary (design: cron contract).
 
@@ -1011,9 +1044,8 @@ def run_report(args: argparse.Namespace) -> int:
     reprinted together at the end, because on a cron the summary line is the
     part a human actually reads.
     """
-    census = bank_status_counts(load_bank(args.bank))
     summary: dict = {
-        "census": census,
+        "census": None,
         "gaps": 0,
         "needs_reconciliation": 0,
         "orphans": 0,
@@ -1022,7 +1054,20 @@ def run_report(args: argparse.Namespace) -> int:
         "unchecked_sources": 0,
         "refused_sources": 0,
         "drift_check": "hash-only",
+        "failed_passes": [],
+        "notify": True,
     }
+    try:
+        census = bank_status_counts(load_bank(args.bank))
+        summary["census"] = census
+        summary["notify"] = False
+    except OperationalError as exc:
+        summary["failed_passes"] = [f"bank: {exc}"]
+        summary["census"] = None
+        summary["notify"] = True
+        _write_summary(args, summary)
+        raise
+
     args.summary_sink = summary
     # Composition, printed once up front: the spec asks the reporting surface to
     # answer "how much of this bank has anyone actually vouched for?" from the
@@ -1058,15 +1103,11 @@ def run_report(args: argparse.Namespace) -> int:
     # decision, so an unchecked source notifies whether the page or the
     # allowlist is the reason it went unchecked.
     summary["notify"] = any(summary[key] > 0 for key in _NOTIFY_ON)
-    if args.summary_json:
-        # Written on every path, including the failing one: a wrapper that finds
-        # no file after a broken run cannot tell it from a clean one, which is
-        # the exact confusion this file exists to remove.
-        try:
-            with open(args.summary_json, "w", encoding="utf-8") as handle:
-                json.dump(summary, handle, indent=2)
-        except OSError as exc:
-            raise OperationalError(f"cannot write {args.summary_json}: {exc}") from exc
+    # Written on every terminating path, including a bank-load failure: a
+    # wrapper that finds no file (or a stale one) after a broken run cannot
+    # distinguish it from a clean run — the exact confusion this file exists
+    # to remove.
+    _write_summary(args, summary)
 
     if failures:
         _print_group(

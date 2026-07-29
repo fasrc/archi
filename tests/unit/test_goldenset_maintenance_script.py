@@ -2199,6 +2199,118 @@ class TestReportSummaryJson:
 
         assert list(tmp_path.glob("*summary*")) == []
 
+    def test_malformed_bank_overwrites_healthy_summary_with_failure_state(
+        self, tmp_path, capsys
+    ):
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        # Pre-existing healthy summary from a previous good run.
+        out.write_text(
+            json.dumps(
+                {
+                    "census": {"total": 5, "locked": 5, "draft": 0, "anchor_type": {}},
+                    "gaps": 0,
+                    "orphans": 0,
+                    "drifted": 0,
+                    "failed_passes": [],
+                    "notify": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        bank = tmp_path / "bank.json"
+        bank.write_text("{not valid json", encoding="utf-8")
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+        summary = json.loads(out.read_text())
+
+        assert code == 1
+        assert any("bank" in f for f in summary["failed_passes"])
+        assert summary["census"] is None
+        assert summary["notify"] is True
+        # Old success values must be gone — a monitor reading this file alone sees failure.
+        assert (
+            summary.get("gaps") != 0
+            or summary.get("drifted") != 0
+            or (summary["failed_passes"] != [] and summary["census"] is None)
+        )
+
+    def test_missing_bank_writes_failure_summary_and_exits_nonzero(
+        self, tmp_path, capsys
+    ):
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+        # Bank path does not exist.
+        bank = tmp_path / "no_such_bank.json"
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+
+        assert code == 1
+        assert out.exists(), "summary must be written even when the bank is missing"
+        summary = json.loads(out.read_text())
+        assert any("bank" in f for f in summary["failed_passes"])
+        assert summary["census"] is None
+        assert summary["notify"] is True
+
+    def test_healthy_bank_still_writes_normal_summary(self, tmp_path):
+        # Regression: the bank-load-failure path must not break the happy path.
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+
+        code = self._run(tmp_path, script, bank, corpus, sources, out)
+        summary = json.loads(out.read_text())
+
+        assert code == 0
+        assert summary["census"] is not None
+        assert summary["failed_passes"] == []
+        # `notify` is derived from _NOTIFY_ON buckets; a clean bank gives False.
+        assert summary["notify"] is False
+
+    def test_write_interrupted_before_commit_leaves_prior_file_intact(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+        healthy = json.dumps(
+            {"status": "healthy", "failed_passes": [], "notify": False}
+        )
+        out.write_text(healthy, encoding="utf-8")
+        before = out.read_bytes()
+
+        def boom(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(os, "replace", boom)
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+
+        assert code == 1
+        assert "cannot write" in capsys.readouterr().err.lower()
+        assert out.read_bytes() == before, "pre-existing file must be left intact"
+        assert [
+            p for p in tmp_path.iterdir() if p.suffix == ".tmp"
+        ] == [], "no temp file litter may remain after a failed write"
+
 
 class TestReportNotifiesOnDegradedRuns:
     """A pass that half-ran must not summarise as clean.
