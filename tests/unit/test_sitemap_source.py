@@ -102,6 +102,121 @@ def _policy(allowed_hosts=None, min_pages=1, max_pages=20000):
 
 
 # --------------------------------------------------------------------------- #
+# Fixtures for lastmod-aware parse (tasks 1.1 / 1.2 / 1.3)
+# --------------------------------------------------------------------------- #
+URLSET_LASTMOD_MIXED = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.org/a</loc><lastmod>2026-04-21T19:19:35+00:00</lastmod></url>
+  <url><loc>https://example.org/b</loc></url>
+  <url><loc>https://example.org/c</loc><lastmod></lastmod></url>
+</urlset>"""
+
+SITEMAPINDEX_WITH_LASTMOD = """<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>https://example.org/s1.xml</loc><lastmod>2026-01-01</lastmod></sitemap>
+  <sitemap><loc>https://example.org/s2.xml</loc></sitemap>
+</sitemapindex>"""
+
+
+# --------------------------------------------------------------------------- #
+# 1.1 parse_sitemap_entries — TDD: new lastmod-aware parser
+# --------------------------------------------------------------------------- #
+class TestParseSitemapEntries:
+    def test_entry_with_lastmod_yields_value(self):
+        kind, entries = ss.parse_sitemap_entries(URLSET_LASTMOD_MIXED)
+        assert kind == "urlset"
+        assert entries[0] == ("https://example.org/a", "2026-04-21T19:19:35+00:00")
+
+    def test_entry_without_lastmod_yields_none(self):
+        _, entries = ss.parse_sitemap_entries(URLSET_LASTMOD_MIXED)
+        assert entries[1] == ("https://example.org/b", None)
+
+    def test_empty_lastmod_yields_none(self):
+        _, entries = ss.parse_sitemap_entries(URLSET_LASTMOD_MIXED)
+        assert entries[2] == ("https://example.org/c", None)
+
+    def test_all_three_entries_present(self):
+        _, entries = ss.parse_sitemap_entries(URLSET_LASTMOD_MIXED)
+        assert len(entries) == 3
+
+    def test_malformed_document_raises_sitemap_parse_error_only(self):
+        with pytest.raises(ss.SitemapParseError):
+            ss.parse_sitemap_entries("<urlset <<< not well formed")
+
+    def test_doctype_rejected_in_entries(self):
+        with pytest.raises(ss.SitemapParseError):
+            ss.parse_sitemap_entries(DOCTYPE_BODY)
+
+    def test_unknown_root_raises_in_entries(self):
+        with pytest.raises(ss.SitemapParseError):
+            ss.parse_sitemap_entries(RSS_BODY)
+
+    def test_sitemapindex_entries_carry_lastmod(self):
+        kind, entries = ss.parse_sitemap_entries(SITEMAPINDEX_WITH_LASTMOD)
+        assert kind == "sitemapindex"
+        assert entries[0] == ("https://example.org/s1.xml", "2026-01-01")
+        assert entries[1] == ("https://example.org/s2.xml", None)
+
+    def test_empty_urlset_returns_empty_entries(self):
+        kind, entries = ss.parse_sitemap_entries(EMPTY_URLSET)
+        assert kind == "urlset"
+        assert entries == []
+
+    def test_lastmod_whitespace_trimmed(self):
+        body = """<?xml version="1.0"?>
+<urlset><url><loc>https://example.org/x</loc><lastmod>  2026-05-01  </lastmod></url></urlset>"""
+        _, entries = ss.parse_sitemap_entries(body)
+        assert entries[0] == ("https://example.org/x", "2026-05-01")
+
+    def test_namespaced_lastmod_captured(self):
+        # Namespace on urlset must not prevent reading lastmod under the same ns.
+        body = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://docs.rc.fas.harvard.edu/kb/x</loc>
+    <lastmod>2026-03-15</lastmod>
+  </url>
+</urlset>"""
+        _, entries = ss.parse_sitemap_entries(body)
+        assert entries[0] == ("https://docs.rc.fas.harvard.edu/kb/x", "2026-03-15")
+
+    def test_stray_non_url_child_skipped_in_entries(self):
+        # A direct child that is not a <url> wrapper must be ignored — matching
+        # the _locs behavior for non-wrapper children (covers the continue branch
+        # in _loc_entries).
+        _, entries = ss.parse_sitemap_entries(URLSET_STRAY)
+        assert len(entries) == 1
+        assert entries[0][0] == "https://docs.rc.fas.harvard.edu/kb/only"
+
+
+# --------------------------------------------------------------------------- #
+# 1.3 Regression: existing parse callers keep their behavior
+# --------------------------------------------------------------------------- #
+class TestParseSitemapDocumentRegression:
+    def test_parse_sitemap_document_still_returns_loc_list_not_entries(self):
+        # parse_sitemap_document must return (kind, List[str]) — never tuples —
+        # so sources_builder and goldenset_maintenance callers are unaffected.
+        kind, locs = ss.parse_sitemap_document(URLSET_LASTMOD_MIXED)
+        assert kind == "urlset"
+        assert locs == [
+            "https://example.org/a",
+            "https://example.org/b",
+            "https://example.org/c",
+        ]
+        # Values are plain strings, not tuples.
+        assert all(isinstance(loc, str) for loc in locs)
+
+    def test_parse_sitemap_document_ignores_lastmod_entirely(self):
+        # Even with lastmod present, parse_sitemap_document sees only locs.
+        kind, locs = ss.parse_sitemap_document(URLSET_NS)
+        assert locs == [
+            "https://docs.rc.fas.harvard.edu/kb/copying-data-to-and-from-cluster-using-scp/",
+            "https://docs.rc.fas.harvard.edu/kb/running-jobs",
+            "https://docs.rc.fas.harvard.edu/kb/fairshare",
+        ]
+
+
+# --------------------------------------------------------------------------- #
 # 1.2 parse_sitemap_document
 # --------------------------------------------------------------------------- #
 class TestParse:

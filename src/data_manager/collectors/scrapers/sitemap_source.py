@@ -121,6 +121,35 @@ def _locs(root: "ElementTree.Element", wrapper: str) -> List[str]:
     return out
 
 
+def _loc_entries(
+    root: "ElementTree.Element", wrapper: str
+) -> List[Tuple[str, Optional[str]]]:
+    """Return ``(loc, lastmod|None)`` for each DIRECT ``<wrapper>`` child of ``root``.
+
+    Reads the first ``<loc>`` and the first ``<lastmod>`` in each wrapper entry.
+    An absent or empty ``<lastmod>`` yields ``None`` for that entry. Entries
+    without a ``<loc>`` are skipped (matches ``_locs`` behavior). Keeps ``_locs``
+    untouched so existing callers (``sources_builder``, ``goldenset_maintenance``)
+    are unaffected (design D1).
+    """
+    out: List[Tuple[str, Optional[str]]] = []
+    for child in root:
+        if _local_tag(child.tag) != wrapper:
+            continue
+        loc: Optional[str] = None
+        lastmod: Optional[str] = None
+        for grand in child:
+            tag = _local_tag(grand.tag)
+            if tag == "loc" and loc is None and grand.text:
+                loc = grand.text.strip()
+            elif tag == "lastmod" and lastmod is None:
+                text = grand.text.strip() if grand.text else ""
+                lastmod = text if text else None
+        if loc is not None:
+            out.append((loc, lastmod))
+    return out
+
+
 def parse_sitemap_document(text: str) -> Tuple[str, List[str]]:
     """Parse a sitemap document into ``(root_kind, loc_values)``.
 
@@ -146,6 +175,35 @@ def parse_sitemap_document(text: str) -> Tuple[str, List[str]]:
         return "urlset", _locs(root, "url")
     if kind == "sitemapindex":
         return "sitemapindex", _locs(root, "sitemap")
+    raise SitemapParseError(f"unexpected sitemap root <{kind}>")
+
+
+def parse_sitemap_entries(text: str) -> Tuple[str, List[Tuple[str, Optional[str]]]]:
+    """Parse a sitemap document into ``(root_kind, entries)`` where each entry is
+    ``(loc, lastmod|None)``.
+
+    Identical to :func:`parse_sitemap_document` in its DTD/entity rejection and
+    error contract. ``parse_sitemap_document`` is left unchanged so existing
+    callers (``sources_builder``, ``goldenset_maintenance``) are unaffected
+    (design D1). ``lastmod`` is the trimmed text of the first ``<lastmod>``
+    element inside each wrapper, or ``None`` when absent or empty.
+    """
+    lowered = text.lower()
+    if "<!doctype" in lowered or "<!entity" in lowered:
+        raise SitemapParseError(
+            "refusing sitemap with a DTD/entity declaration "
+            "(possible entity-expansion attack)"
+        )
+    try:
+        root = ElementTree.fromstring(text)
+    except ElementTree.ParseError as exc:
+        raise SitemapParseError(f"malformed sitemap XML: {exc}")
+
+    kind = _local_tag(root.tag)
+    if kind == "urlset":
+        return "urlset", _loc_entries(root, "url")
+    if kind == "sitemapindex":
+        return "sitemapindex", _loc_entries(root, "sitemap")
     raise SitemapParseError(f"unexpected sitemap root <{kind}>")
 
 
