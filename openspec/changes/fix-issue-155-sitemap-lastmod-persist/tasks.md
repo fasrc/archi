@@ -28,7 +28,7 @@
 
 - [x] 3.1 Add `last_modified TIMESTAMPTZ` (nullable) to the `documents` DDL in
       `src/cli/templates/init.sql` (Timestamps block, near `file_modified_at`).
-- [ ] 3.2 Add a forward-only, idempotent migration
+- [x] 3.2 Add a forward-only, idempotent migration
       `src/cli/templates/migrations/add_documents_last_modified.sql`
       (`ALTER TABLE documents ADD COLUMN IF NOT EXISTS last_modified TIMESTAMPTZ;`).
 - [ ] 3.3 Write failing test(s) for `catalog_postgres.upsert_resource`: a resource whose
