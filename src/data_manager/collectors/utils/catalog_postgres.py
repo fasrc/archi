@@ -62,6 +62,7 @@ _METADATA_COLUMN_MAP = {
     "modified_at": "file_modified_at",
     "file_modified_at": "file_modified_at",
     "ingested_at": "ingested_at",
+    "last_modified": "last_modified",
 }
 
 
@@ -212,11 +213,12 @@ class PostgresCatalogService:
                         relative_path,
                         file_modified_at,
                         ingested_at,
+                        last_modified,
                         ingestion_status,
                         extra_json,
                         extra_text,
                         is_deleted
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, FALSE)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, FALSE)
                     ON CONFLICT (resource_hash) DO UPDATE SET
                         file_path = EXCLUDED.file_path,
                         display_name = EXCLUDED.display_name,
@@ -230,6 +232,7 @@ class PostgresCatalogService:
                         relative_path = EXCLUDED.relative_path,
                         file_modified_at = EXCLUDED.file_modified_at,
                         ingested_at = EXCLUDED.ingested_at,
+                        last_modified = EXCLUDED.last_modified,
                         extra_json = EXCLUDED.extra_json,
                         extra_text = EXCLUDED.extra_text,
                         is_deleted = FALSE,
@@ -253,6 +256,7 @@ class PostgresCatalogService:
                             or payload.get("file_modified_at")
                         ),
                         _parse_timestamp(payload.get("ingested_at")),
+                        _parse_timestamp(payload.get("last_modified")),
                         extra_json,
                         extra_text,
                     ),

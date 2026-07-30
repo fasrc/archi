@@ -31,11 +31,11 @@
 - [x] 3.2 Add a forward-only, idempotent migration
       `src/cli/templates/migrations/add_documents_last_modified.sql`
       (`ALTER TABLE documents ADD COLUMN IF NOT EXISTS last_modified TIMESTAMPTZ;`).
-- [ ] 3.3 Write failing test(s) for `catalog_postgres.upsert_resource`: a resource whose
+- [x] 3.3 Write failing test(s) for `catalog_postgres.upsert_resource`: a resource whose
       metadata carries `last_modified` writes the value to the column on insert and on
       conflict-update; absent → `NULL`; no error either way (fake/mock connection, no live
       DB).
-- [ ] 3.4 Add `"last_modified": "last_modified"` to
+- [x] 3.4 Add `"last_modified": "last_modified"` to
       `catalog_postgres._METADATA_COLUMN_MAP` and wire the column into the INSERT column
       list, the `VALUES` tuple, and the `ON CONFLICT DO UPDATE SET` clause
       (`= EXCLUDED.last_modified`). Leave the SQLite `index_utils` backend untouched.
