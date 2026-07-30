@@ -513,7 +513,10 @@ class ScraperManager:
             sitemap_source.fetch_sitemap_text,
             verify=self.config.get("verify_urls", False),
         )
-        return sitemap_source.expand_sitemaps(sitemap_urls, fetch, policy)
+        return [
+            url
+            for url, _ in sitemap_source.expand_sitemaps(sitemap_urls, fetch, policy)
+        ]
 
     @staticmethod
     def _is_elog_url(url: str) -> bool:

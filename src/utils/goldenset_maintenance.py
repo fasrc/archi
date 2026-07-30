@@ -579,7 +579,9 @@ def build_live_inventory(
     expanded: List[str] = []
     if sitemap_urls:
         try:
-            expanded = expand_sitemaps(sitemap_urls, recording_fetch, policy)
+            expanded = [
+                url for url, _ in expand_sitemaps(sitemap_urls, recording_fetch, policy)
+            ]
         except SitemapExpansionError as exc:
             failures.append(f"{exc.source_url}: {exc.reason} ({exc.count} pages)")
 

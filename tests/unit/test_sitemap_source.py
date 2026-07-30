@@ -60,6 +60,14 @@ NESTED_INDEX = """<?xml version="1.0" encoding="UTF-8"?>
 
 MALFORMED = "<urlset <<< not well formed"
 
+# Two entries normalize to the same URL (/kb/x); the first has lastmod "2026-01-01".
+URLSET_DUP_WITH_LASTMOD = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/x/</loc><lastmod>2026-01-01</lastmod></url>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/x</loc><lastmod>2026-02-01</lastmod></url>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/y</loc><lastmod>2026-03-01</lastmod></url>
+</urlset>"""
+
 DOCTYPE_BODY = """<?xml version="1.0"?>
 <!DOCTYPE urlset [ <!ENTITY lol "lol"> ]>
 <urlset><url><loc>https://docs.rc.fas.harvard.edu/kb/x</loc></url></urlset>"""
@@ -434,9 +442,12 @@ class TestExpand:
         fetch = FakeFetch({url: URLSET_NS})
         pages = ss.expand_sitemap_source(url, fetch, _policy())
         assert pages == [
-            "https://docs.rc.fas.harvard.edu/kb/copying-data-to-and-from-cluster-using-scp",
-            "https://docs.rc.fas.harvard.edu/kb/running-jobs",
-            "https://docs.rc.fas.harvard.edu/kb/fairshare",
+            (
+                "https://docs.rc.fas.harvard.edu/kb/copying-data-to-and-from-cluster-using-scp",
+                "2026-01-01",
+            ),
+            ("https://docs.rc.fas.harvard.edu/kb/running-jobs", "2026-01-02"),
+            ("https://docs.rc.fas.harvard.edu/kb/fairshare", "2026-01-03"),
         ]
         assert fetch.calls == [url]
 
@@ -451,9 +462,9 @@ class TestExpand:
         )
         pages = ss.expand_sitemap_source(url, fetch, _policy())
         assert pages == [
-            "https://docs.rc.fas.harvard.edu/kb/1a",
-            "https://docs.rc.fas.harvard.edu/kb/1b",
-            "https://docs.rc.fas.harvard.edu/kb/2a",
+            ("https://docs.rc.fas.harvard.edu/kb/1a", None),
+            ("https://docs.rc.fas.harvard.edu/kb/1b", None),
+            ("https://docs.rc.fas.harvard.edu/kb/2a", None),
         ]
         # index + 2 children, each exactly once
         assert fetch.calls.count(f"https://{HOST}/child-1.xml") == 1
@@ -475,7 +486,7 @@ class TestExpand:
         fetch = FakeFetch({url: dup_index, child_url: CHILD_2})
         pages = ss.expand_sitemap_source(url, fetch, _policy())
         assert fetch.calls.count(child_url) == 1
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/2a", None)]
 
     def test_nested_index_contributes_nothing(self):
         url = f"https://{HOST}/index.xml"
@@ -487,7 +498,7 @@ class TestExpand:
             }
         )
         pages = ss.expand_sitemap_source(url, fetch, _policy())
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/2a", None)]
         # grandchild is never followed
         assert f"https://{HOST}/grandchild.xml" not in fetch.calls
 
@@ -502,7 +513,7 @@ class TestExpand:
         )
         with caplog.at_level(logging.WARNING):
             pages = ss.expand_sitemap_source(url, fetch, _policy())
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/2a", None)]
         assert any(rec.levelno == logging.WARNING for rec in caplog.records)
 
     def test_duplicate_locs_emitted_once_order_preserving(self):
@@ -515,8 +526,8 @@ class TestExpand:
         url = f"https://{HOST}/s.xml"
         pages = ss.expand_sitemap_source(url, FakeFetch({url: dup}), _policy())
         assert pages == [
-            "https://docs.rc.fas.harvard.edu/kb/x",
-            "https://docs.rc.fas.harvard.edu/kb/y",
+            ("https://docs.rc.fas.harvard.edu/kb/x", None),
+            ("https://docs.rc.fas.harvard.edu/kb/y", None),
         ]
 
     def test_expand_sitemaps_merges_and_dedupes_across_sources(self):
@@ -531,9 +542,9 @@ class TestExpand:
         fetch = FakeFetch({a: body_a, b: body_b})
         pages = ss.expand_sitemaps([a, b], fetch, _policy())
         assert pages == [
-            "https://docs.rc.fas.harvard.edu/kb/shared",
-            "https://docs.rc.fas.harvard.edu/kb/only-a",
-            "https://docs.rc.fas.harvard.edu/kb/only-b",
+            ("https://docs.rc.fas.harvard.edu/kb/shared", None),
+            ("https://docs.rc.fas.harvard.edu/kb/only-a", None),
+            ("https://docs.rc.fas.harvard.edu/kb/only-b", None),
         ]
 
 
@@ -551,7 +562,7 @@ class TestEmitValidation:
         url = f"https://{HOST}/s.xml"
         with caplog.at_level(logging.WARNING):
             pages = ss.expand_sitemap_source(url, FakeFetch({url: body}), _policy())
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/good"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/good", None)]
 
     def test_off_host_child_sitemap_not_fetched(self):
         index = """<?xml version="1.0"?>
@@ -562,7 +573,7 @@ class TestEmitValidation:
         url = f"https://{HOST}/index.xml"
         fetch = FakeFetch({url: index, f"https://{HOST}/child-2.xml": CHILD_2})
         pages = ss.expand_sitemap_source(url, fetch, _policy())
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/2a", None)]
         assert "https://evil.example.com/child.xml" not in fetch.calls
 
 
@@ -1089,7 +1100,7 @@ class TestWiring:
             captured["urls"] = sitemap_urls
             captured["policy"] = policy
             captured["fetch"] = fetch
-            return ["https://docs.rc.fas.harvard.edu/kb/x"]
+            return [("https://docs.rc.fas.harvard.edu/kb/x", "2026-01-01")]
 
         with patch.object(ss, "expand_sitemaps", side_effect=fake_expand):
             out = mgr._expand_sitemaps(["https://s.xml"])
@@ -1152,7 +1163,7 @@ class TestRobustness:
         url = f"https://{HOST}/s.xml"
         with caplog.at_level(logging.WARNING):
             pages = ss.expand_sitemap_source(url, FakeFetch({url: body}), _policy())
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/good"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/good", None)]
 
     def test_unparseable_child_sitemap_loc_dropped(self):
         index = """<?xml version="1.0"?>
@@ -1163,7 +1174,7 @@ class TestRobustness:
         url = f"https://{HOST}/index.xml"
         fetch = FakeFetch({url: index, f"https://{HOST}/child-2.xml": CHILD_2})
         pages = ss.expand_sitemap_source(url, fetch, _policy())
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/2a", None)]
         assert "https://docs.rc.fas.harvard.edu[bad/child.xml" not in fetch.calls
 
     def test_malformed_sitemap_url_is_below_floor_not_crash(self):
@@ -1200,3 +1211,111 @@ class TestRobustness:
         pages = ss.expand_sitemap_source(url, fetch, _policy())
         assert fetch.calls == [url]
         assert len(pages) == 3
+
+
+# --------------------------------------------------------------------------- #
+# 2.1 expand_sitemap_source / expand_sitemaps — TDD: emit (url, lastmod|None) pairs
+# --------------------------------------------------------------------------- #
+class TestExpandPairs:
+    """TDD: expand_sitemap_source and expand_sitemaps must return
+    List[Tuple[str, Optional[str]]] — (normalized_url, lastmod|None) —
+    instead of List[str]. All tests in this class fail until task 2.2 implements
+    the new return shape.
+    """
+
+    def test_urlset_with_lastmod_returns_pairs(self):
+        url = f"https://{HOST}/kb/sitemap.xml"
+        fetch = FakeFetch({url: URLSET_NS})
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == [
+            (
+                "https://docs.rc.fas.harvard.edu/kb/copying-data-to-and-from-cluster-using-scp",
+                "2026-01-01",
+            ),
+            ("https://docs.rc.fas.harvard.edu/kb/running-jobs", "2026-01-02"),
+            ("https://docs.rc.fas.harvard.edu/kb/fairshare", "2026-01-03"),
+        ]
+
+    def test_urlset_without_lastmod_yields_none(self):
+        url = f"https://{HOST}/kb/sitemap.xml"
+        fetch = FakeFetch({url: URLSET_NONS})
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == [
+            ("https://docs.rc.fas.harvard.edu/kb/one", None),
+            ("https://docs.rc.fas.harvard.edu/kb/two", None),
+        ]
+
+    def test_mixed_urlset_correct_lastmod_per_entry(self):
+        # URLSET_LASTMOD_MIXED: /a has lastmod, /b absent, /c empty lastmod.
+        url = "https://example.org/sitemap.xml"
+        fetch = FakeFetch({url: URLSET_LASTMOD_MIXED})
+        pages = ss.expand_sitemap_source(url, fetch, _policy(min_pages=1))
+        assert pages == [
+            ("https://example.org/a", "2026-04-21T19:19:35+00:00"),
+            ("https://example.org/b", None),
+            ("https://example.org/c", None),
+        ]
+
+    def test_normalization_collision_first_url_and_lastmod_wins(self):
+        # /kb/x/ and /kb/x normalize to the same URL; the first entry (lastmod
+        # "2026-01-01") wins — the duplicate (lastmod "2026-02-01") is dropped.
+        url = f"https://{HOST}/s.xml"
+        fetch = FakeFetch({url: URLSET_DUP_WITH_LASTMOD})
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == [
+            ("https://docs.rc.fas.harvard.edu/kb/x", "2026-01-01"),
+            ("https://docs.rc.fas.harvard.edu/kb/y", "2026-03-01"),
+        ]
+
+    def test_trust_filter_unchanged_off_host_dropped(self, caplog):
+        body = """<?xml version="1.0"?>
+<urlset>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/good</loc><lastmod>2026-05-01</lastmod></url>
+  <url><loc>https://evil.example.com/x</loc><lastmod>2026-05-01</lastmod></url>
+</urlset>"""
+        url = f"https://{HOST}/s.xml"
+        with caplog.at_level(logging.WARNING):
+            pages = ss.expand_sitemap_source(url, FakeFetch({url: body}), _policy())
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/good", "2026-05-01")]
+
+    def test_expand_sitemaps_pairs_merged_deduped_first_wins(self):
+        # shared URL appears in both sources; the first source's lastmod wins.
+        a = f"https://{HOST}/a.xml"
+        b = f"https://{HOST}/b.xml"
+        body_a = """<?xml version="1.0"?>
+<urlset><url><loc>https://docs.rc.fas.harvard.edu/kb/shared</loc><lastmod>2026-01-01</lastmod></url>
+<url><loc>https://docs.rc.fas.harvard.edu/kb/only-a</loc><lastmod>2026-01-02</lastmod></url></urlset>"""
+        body_b = """<?xml version="1.0"?>
+<urlset><url><loc>https://docs.rc.fas.harvard.edu/kb/shared</loc><lastmod>2026-02-01</lastmod></url>
+<url><loc>https://docs.rc.fas.harvard.edu/kb/only-b</loc><lastmod>2026-02-02</lastmod></url></urlset>"""
+        fetch = FakeFetch({a: body_a, b: body_b})
+        pages = ss.expand_sitemaps([a, b], fetch, _policy())
+        assert pages == [
+            ("https://docs.rc.fas.harvard.edu/kb/shared", "2026-01-01"),
+            ("https://docs.rc.fas.harvard.edu/kb/only-a", "2026-01-02"),
+            ("https://docs.rc.fas.harvard.edu/kb/only-b", "2026-02-02"),
+        ]
+
+    def test_sitemapindex_child_pages_carry_lastmods(self):
+        # Child urlsets with lastmod — child page pairs carry correct values.
+        url = f"https://{HOST}/index.xml"
+        child1 = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/1a</loc><lastmod>2026-06-01</lastmod></url>
+</urlset>"""
+        child2 = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/2a</loc></url>
+</urlset>"""
+        fetch = FakeFetch(
+            {
+                url: SITEMAPINDEX,
+                f"https://{HOST}/child-1.xml": child1,
+                f"https://{HOST}/child-2.xml": child2,
+            }
+        )
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == [
+            ("https://docs.rc.fas.harvard.edu/kb/1a", "2026-06-01"),
+            ("https://docs.rc.fas.harvard.edu/kb/2a", None),
+        ]
