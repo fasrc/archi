@@ -42,12 +42,12 @@
 
 ## 4. Bridge sitemap lastmod → resource metadata (TDD)
 
-- [ ] 4.1 Write failing test(s): given expansion output carrying a `lastmod`, the scrape
+- [x] 4.1 Write failing test(s): given expansion output carrying a `lastmod`, the scrape
       path injects `last_modified` into a sitemap-derived page's resource metadata so it
       reaches `upsert_resource`; a hand-listed URL and a lastmod-less page inject nothing
       (column stays `NULL`). Test the map-build + injection in isolation (fake persistence),
       not a live scrape.
-- [ ] 4.2 In `ScraperManager`, build a `{normalized_url: lastmod}` map from
+- [x] 4.2 In `ScraperManager`, build a `{normalized_url: lastmod}` map from
       `_expand_sitemaps` (now returning pairs) and inject `last_modified` into the matching
       resource's metadata at persist time (design D4). No change to which pages are fetched
       or their order.

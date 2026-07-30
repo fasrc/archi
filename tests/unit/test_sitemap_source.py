@@ -1,13 +1,25 @@
 from __future__ import annotations
 
+import contextlib
 import logging
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
 from src.data_manager.collectors.scrapers import sitemap_source as ss
+from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
+
+
+def _apply(*ctx_managers):
+    """Combine several context managers into one (test helper)."""
+    stack = contextlib.ExitStack()
+    for cm in ctx_managers:
+        stack.enter_context(cm)
+    return stack
+
 
 # --------------------------------------------------------------------------- #
 # Fixture XML documents (namespaced + un-namespaced urlset, index, malformed)
@@ -987,7 +999,9 @@ class TestWiring:
         mgr = self._mgr()
         by_type = (["https://a"], [], [], [], [], ["https://s.xml"])
         with patch.object(
-            ScraperManager, "_expand_sitemaps", return_value=["https://b", "https://c"]
+            ScraperManager,
+            "_expand_sitemaps",
+            return_value=[("https://b", None), ("https://c", None)],
         ) as exp, patch.object(ScraperManager, "collect_links") as cl, patch.object(
             ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
         ), patch.object(
@@ -1022,7 +1036,10 @@ class TestWiring:
         with patch.object(
             ScraperManager,
             "_expand_sitemaps",
-            return_value=[f"https://{HOST}/kb/page", f"https://{HOST}/kb/new"],
+            return_value=[
+                (f"https://{HOST}/kb/page", None),
+                (f"https://{HOST}/kb/new", None),
+            ],
         ), patch.object(ScraperManager, "collect_links") as cl, patch.object(
             ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
         ), patch.object(
@@ -1105,7 +1122,7 @@ class TestWiring:
         with patch.object(ss, "expand_sitemaps", side_effect=fake_expand):
             out = mgr._expand_sitemaps(["https://s.xml"])
 
-        assert out == ["https://docs.rc.fas.harvard.edu/kb/x"]
+        assert out == [("https://docs.rc.fas.harvard.edu/kb/x", "2026-01-01")]
         assert captured["urls"] == ["https://s.xml"]
         assert captured["policy"].allowed_hosts == ["cdn.example.com"]
         assert captured["policy"].min_pages == 2
@@ -1319,3 +1336,150 @@ class TestExpandPairs:
             ("https://docs.rc.fas.harvard.edu/kb/1a", "2026-06-01"),
             ("https://docs.rc.fas.harvard.edu/kb/2a", None),
         ]
+
+
+# --------------------------------------------------------------------------- #
+# 4.1 D4 bridge: sitemap lastmod → resource metadata injection (TDD)
+# --------------------------------------------------------------------------- #
+class TestLastmodBridge:
+    """TDD: ScraperManager must thread sitemap lastmod into resource metadata.
+
+    All tests exercising the injection path (test 2 and 4) fail until task 4.2
+    wires the {url: lastmod} map through collect_all_from_config and the persist
+    path.  The hand-listed-URL negative case (test 3) acts as a regression guard
+    and must stay green throughout.
+    """
+
+    _PAGE_URL = f"https://{HOST}/kb/page"
+    _SITEMAP_URL = f"https://{HOST}/sitemap.xml"
+    _LASTMOD = "2026-04-21T19:19:35+00:00"
+
+    def _mgr(self):
+        mgr = ScraperManager.__new__(ScraperManager)
+        mgr.input_lists = []
+        mgr.git_enabled = False
+        mgr.sso_enabled = False
+        mgr.links_enabled = True
+        mgr.selenium_enabled = False
+        mgr.max_pages = 1000
+        mgr.base_depth = 2
+        mgr.config = {}
+        mgr.sitemap_config = {}
+        mgr.web_scraper = MagicMock()
+        return mgr
+
+    def _resource(self, url):
+        return ScrapedResource(
+            url=url, content="<html>x</html>", suffix="html", source_type="web"
+        )
+
+    def _common_patches(self, by_type):
+        return [
+            patch.object(
+                ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+            ),
+            patch.object(ScraperManager, "collect_sso"),
+            patch.object(ScraperManager, "collect_git"),
+            patch.object(ScraperManager, "collect_elog"),
+            patch.object(ScraperManager, "collect_indico"),
+        ]
+
+    # --- test 1: _expand_sitemaps returns pairs --------------------------------
+
+    def test_expand_sitemaps_returns_pairs(self):
+        """_expand_sitemaps must return List[Tuple[str, Optional[str]]] after D4."""
+        mgr = ScraperManager.__new__(ScraperManager)
+        mgr.config = {}
+        mgr.sitemap_config = {}
+
+        def fake_expand(urls, fetch, policy):
+            return [
+                (f"https://{HOST}/kb/a", "2026-04-21"),
+                (f"https://{HOST}/kb/b", None),
+            ]
+
+        with patch.object(ss, "expand_sitemaps", side_effect=fake_expand):
+            result = mgr._expand_sitemaps(["https://s.xml"])
+
+        assert result == [
+            (f"https://{HOST}/kb/a", "2026-04-21"),
+            (f"https://{HOST}/kb/b", None),
+        ]
+
+    # --- test 2: lastmod injected for sitemap-derived resource ----------------
+
+    def test_sitemap_lastmod_injected_into_resource_metadata(self, tmp_path):
+        """Sitemap-derived resource with lastmod gets last_modified in metadata."""
+        mgr = self._mgr()
+        resource = self._resource(self._PAGE_URL)
+        mgr.web_scraper.crawl_iter.return_value = iter([resource])
+
+        by_type = ([], [], [], [], [], [self._SITEMAP_URL])
+        persistence = MagicMock()
+        persistence.data_path = tmp_path
+
+        captured = []
+        persistence.persist_resource.side_effect = lambda r, p: captured.append(r)
+
+        patches = self._common_patches(by_type) + [
+            patch.object(
+                ScraperManager,
+                "_expand_sitemaps",
+                return_value=[(self._PAGE_URL, self._LASTMOD)],
+            ),
+        ]
+        with _apply(*patches):
+            mgr.collect_all_from_config(persistence)
+
+        assert len(captured) == 1, "persist_resource must be called exactly once"
+        assert captured[0].metadata.get("last_modified") == self._LASTMOD
+
+    # --- test 3: hand-listed URL never gets last_modified (regression guard) --
+
+    def test_hand_listed_url_no_lastmod_injection(self, tmp_path):
+        """A hand-listed (non-sitemap) URL resource must NOT receive last_modified."""
+        hand_url = f"https://{HOST}/kb/hand"
+        mgr = self._mgr()
+        resource = self._resource(hand_url)
+        mgr.web_scraper.crawl_iter.return_value = iter([resource])
+
+        by_type = ([hand_url], [], [], [], [], [])
+        persistence = MagicMock()
+        persistence.data_path = tmp_path
+
+        captured = []
+        persistence.persist_resource.side_effect = lambda r, p: captured.append(r)
+
+        with _apply(*self._common_patches(by_type)):
+            mgr.collect_all_from_config(persistence)
+
+        assert len(captured) == 1
+        assert "last_modified" not in captured[0].metadata
+
+    # --- test 4: sitemap URL with None lastmod leaves last_modified absent ----
+
+    def test_lastmod_none_sitemap_page_no_injection(self, tmp_path):
+        """Sitemap-derived page with None lastmod must NOT receive last_modified."""
+        mgr = self._mgr()
+        resource = self._resource(self._PAGE_URL)
+        mgr.web_scraper.crawl_iter.return_value = iter([resource])
+
+        by_type = ([], [], [], [], [], [self._SITEMAP_URL])
+        persistence = MagicMock()
+        persistence.data_path = tmp_path
+
+        captured = []
+        persistence.persist_resource.side_effect = lambda r, p: captured.append(r)
+
+        patches = self._common_patches(by_type) + [
+            patch.object(
+                ScraperManager,
+                "_expand_sitemaps",
+                return_value=[(self._PAGE_URL, None)],
+            ),
+        ]
+        with _apply(*patches):
+            mgr.collect_all_from_config(persistence)
+
+        assert len(captured) == 1
+        assert "last_modified" not in captured[0].metadata
