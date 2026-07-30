@@ -54,7 +54,7 @@
 
 ## 5. Verify no behavior regression + gate
 
-- [ ] 5.1 Add/confirm a test asserting fetch behavior is unchanged: a fresh ingest fetches
+- [x] 5.1 Add/confirm a test asserting fetch behavior is unchanged: a fresh ingest fetches
       the same set of pages as before; `last_modified` is recorded as an added attribute
       only (no skip path exists).
 - [ ] 5.2 Run `bash scripts/gate.sh` (format → lint → test, ≥80% diff coverage vs

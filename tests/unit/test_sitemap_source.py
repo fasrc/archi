@@ -1483,3 +1483,158 @@ class TestLastmodBridge:
 
         assert len(captured) == 1
         assert "last_modified" not in captured[0].metadata
+
+
+# --------------------------------------------------------------------------- #
+# 5.1 Fetch behavior is unchanged — last_modified is an attribute only
+# --------------------------------------------------------------------------- #
+class TestFetchBehaviorUnchanged:
+    """Verify that adding last_modified capture does not alter fetch behavior.
+
+    A fresh ingest must still fetch every page the sitemap lists.  No resource
+    is skipped because it has (or lacks) a lastmod value; persist_resource is
+    called once per resource regardless of whether last_modified is injected.
+    """
+
+    _HOST = "docs.rc.fas.harvard.edu"
+    _SITEMAP_URL = f"https://{_HOST}/sitemap.xml"
+    _PAGE_WITH_LM = f"https://{_HOST}/kb/with-lastmod"
+    _PAGE_NO_LM = f"https://{_HOST}/kb/no-lastmod"
+    _PAGE_ALSO_LM = f"https://{_HOST}/kb/also-lastmod"
+    _LASTMOD_A = "2026-04-01"
+    _LASTMOD_B = "2026-04-02"
+
+    def _mgr(self):
+        mgr = ScraperManager.__new__(ScraperManager)
+        mgr.input_lists = []
+        mgr.git_enabled = False
+        mgr.sso_enabled = False
+        mgr.links_enabled = True
+        mgr.selenium_enabled = False
+        mgr.max_pages = 1000
+        mgr.base_depth = 2
+        mgr.config = {}
+        mgr.sitemap_config = {}
+        mgr.web_scraper = MagicMock()
+        return mgr
+
+    def _resource(self, url):
+        return ScrapedResource(
+            url=url, content="<html>x</html>", suffix="html", source_type="web"
+        )
+
+    def _common_patches(self, by_type):
+        return [
+            patch.object(
+                ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+            ),
+            patch.object(ScraperManager, "collect_sso"),
+            patch.object(ScraperManager, "collect_git"),
+            patch.object(ScraperManager, "collect_elog"),
+            patch.object(ScraperManager, "collect_indico"),
+        ]
+
+    def test_all_pages_persisted_regardless_of_lastmod(self, tmp_path):
+        """Every sitemap page is fetched and persisted — lastmod does not skip any."""
+        mgr = self._mgr()
+        resources = [
+            self._resource(self._PAGE_WITH_LM),
+            self._resource(self._PAGE_NO_LM),
+            self._resource(self._PAGE_ALSO_LM),
+        ]
+        mgr.web_scraper.crawl_iter.return_value = iter(resources)
+
+        by_type = ([], [], [], [], [], [self._SITEMAP_URL])
+        persistence = MagicMock()
+        persistence.data_path = tmp_path
+
+        captured = []
+        persistence.persist_resource.side_effect = lambda r, p: captured.append(r)
+
+        sitemap_pairs = [
+            (self._PAGE_WITH_LM, self._LASTMOD_A),
+            (self._PAGE_NO_LM, None),
+            (self._PAGE_ALSO_LM, self._LASTMOD_B),
+        ]
+        patches = self._common_patches(by_type) + [
+            patch.object(
+                ScraperManager, "_expand_sitemaps", return_value=sitemap_pairs
+            ),
+        ]
+        with _apply(*patches):
+            mgr.collect_all_from_config(persistence)
+
+        # All three pages fetched and persisted — none skipped.
+        assert len(captured) == 3, (
+            "persist_resource must be called for every page, "
+            "regardless of lastmod presence"
+        )
+
+    def test_lastmod_set_only_on_pages_that_had_it(self, tmp_path):
+        """last_modified appears only on sitemap pages that had a <lastmod>."""
+        mgr = self._mgr()
+        resources = [
+            self._resource(self._PAGE_WITH_LM),
+            self._resource(self._PAGE_NO_LM),
+            self._resource(self._PAGE_ALSO_LM),
+        ]
+        mgr.web_scraper.crawl_iter.return_value = iter(resources)
+
+        by_type = ([], [], [], [], [], [self._SITEMAP_URL])
+        persistence = MagicMock()
+        persistence.data_path = tmp_path
+
+        captured = []
+        persistence.persist_resource.side_effect = lambda r, p: captured.append(r)
+
+        sitemap_pairs = [
+            (self._PAGE_WITH_LM, self._LASTMOD_A),
+            (self._PAGE_NO_LM, None),
+            (self._PAGE_ALSO_LM, self._LASTMOD_B),
+        ]
+        patches = self._common_patches(by_type) + [
+            patch.object(
+                ScraperManager, "_expand_sitemaps", return_value=sitemap_pairs
+            ),
+        ]
+        with _apply(*patches):
+            mgr.collect_all_from_config(persistence)
+
+        by_url = {r.url: r for r in captured}
+        # Pages with sitemap lastmod carry the value.
+        assert (
+            by_url[self._PAGE_WITH_LM].metadata.get("last_modified") == self._LASTMOD_A
+        )
+        assert (
+            by_url[self._PAGE_ALSO_LM].metadata.get("last_modified") == self._LASTMOD_B
+        )
+        # Page without sitemap lastmod has no last_modified key.
+        assert "last_modified" not in by_url[self._PAGE_NO_LM].metadata
+
+    def test_no_skip_when_lastmod_already_stored(self, tmp_path):
+        """A page whose resource carries last_modified is still persisted — no skip."""
+        mgr = self._mgr()
+        resource = self._resource(self._PAGE_WITH_LM)
+        # Simulate a resource that already has last_modified (e.g. from a re-ingest).
+        resource.metadata["last_modified"] = self._LASTMOD_A
+        mgr.web_scraper.crawl_iter.return_value = iter([resource])
+
+        by_type = ([], [], [], [], [], [self._SITEMAP_URL])
+        persistence = MagicMock()
+        persistence.data_path = tmp_path
+
+        captured = []
+        persistence.persist_resource.side_effect = lambda r, p: captured.append(r)
+
+        patches = self._common_patches(by_type) + [
+            patch.object(
+                ScraperManager,
+                "_expand_sitemaps",
+                return_value=[(self._PAGE_WITH_LM, self._LASTMOD_A)],
+            ),
+        ]
+        with _apply(*patches):
+            mgr.collect_all_from_config(persistence)
+
+        # Even with last_modified already set, the page is still persisted (no skip).
+        assert len(captured) == 1
