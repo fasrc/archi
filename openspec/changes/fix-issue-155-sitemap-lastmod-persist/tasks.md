@@ -15,18 +15,18 @@
 
 ## 2. Carry lastmod through expansion (TDD)
 
-- [ ] 2.1 Write failing tests: `expand_sitemap_source`/`expand_sitemaps` emit each
+- [x] 2.1 Write failing tests: `expand_sitemap_source`/`expand_sitemaps` emit each
       normalized page URL paired with its `lastmod` (or `None`); trust-filter, floor/cap,
       and order-preserving dedupe behavior is unchanged; on a normalization collision the
       first occurrence's URL+lastmod wins and the duplicate is dropped.
-- [ ] 2.2 Thread `lastmod` through `expand_sitemap_source` and `expand_sitemaps` (design
+- [x] 2.2 Thread `lastmod` through `expand_sitemap_source` and `expand_sitemaps` (design
       D2), returning `(url, lastmod|None)` per emitted page.
-- [ ] 2.3 Update `goldenset_maintenance.py:582`'s `expand_sitemaps` consumer to the new
+- [x] 2.3 Update `goldenset_maintenance.py:582`'s `expand_sitemaps` consumer to the new
       shape, preserving its URL-set behavior; keep its tests green.
 
 ## 3. Persist last_modified in the documents catalog (TDD)
 
-- [ ] 3.1 Add `last_modified TIMESTAMPTZ` (nullable) to the `documents` DDL in
+- [x] 3.1 Add `last_modified TIMESTAMPTZ` (nullable) to the `documents` DDL in
       `src/cli/templates/init.sql` (Timestamps block, near `file_modified_at`).
 - [ ] 3.2 Add a forward-only, idempotent migration
       `src/cli/templates/migrations/add_documents_last_modified.sql`
