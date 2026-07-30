@@ -57,7 +57,7 @@
 - [x] 5.1 Add/confirm a test asserting fetch behavior is unchanged: a fresh ingest fetches
       the same set of pages as before; `last_modified` is recorded as an added attribute
       only (no skip path exists).
-- [ ] 5.2 Run `bash scripts/gate.sh` (format → lint → test, ≥80% diff coverage vs
+- [x] 5.2 Run `bash scripts/gate.sh` (format → lint → test, ≥80% diff coverage vs
       `origin/dev`) and ensure it exits 0. Fix any format/lint/coverage gaps.
-- [ ] 5.3 Confirm out-of-scope items are absent: no fetch-skip logic, no git `source_ref`
+- [x] 5.3 Confirm out-of-scope items are absent: no fetch-skip logic, no git `source_ref`
       skip, no `min_pages` change, no edit to the SQLite `resources` backend.
