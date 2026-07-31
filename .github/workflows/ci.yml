@@ -9,7 +9,12 @@
 name: gate
 
 on:
+  # Feature-branch commits gate once via pull_request. Restricting push to the
+  # trunk branches stops the double run (push + pull_request) on every PR commit
+  # (#114) while still gating direct pushes to dev/main. Do NOT use a concurrency
+  # cancel group here — it can cancel legitimate in-flight trunk runs.
   push:
+    branches: [dev, main]
   pull_request:
 
 jobs:
