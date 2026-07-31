@@ -129,13 +129,16 @@ _diff_is_formatting_only() {
 #
 # Some contracts live entirely in bash and pytest cannot see them: the golden-set
 # cron wrapper decides notification policy, parses its env file, rotates its log
-# and propagates exit codes, and none of that is Python. Without this line the
-# operational wrapper could break while every required check stayed green — the
-# same class of gap as #34, where a diff-scoped check was a no-op on the very
+# and propagates exit codes, and the PR-readiness reconciler decides which PRs the
+# index may advertise as mergeable — none of that is Python. Without these lines
+# the operational scripts could break while every required check stayed green —
+# the same class of gap as #34, where a diff-scoped check was a no-op on the very
 # events that mattered. Each suite is hermetic (stubbed binaries, temp dirs, no
 # network) and is listed explicitly rather than globbed, so adding a script under
 # scripts/ cannot silently enrol it in the gate.
-for _sh_suite in scripts/benchmarking/test_goldenset_report_cron.sh; do
+for _sh_suite in \
+  scripts/benchmarking/test_goldenset_report_cron.sh \
+  scripts/ci/test_pr_readiness_labels.sh; do
   [ -f "$_sh_suite" ] && bash "$_sh_suite"
 done
 

@@ -1,1 +1,0 @@
-openspec/changes/fix-issue-146-baseline-drafts/tasks.md
