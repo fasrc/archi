@@ -1553,11 +1553,17 @@ def _locked_row(*sources, hashes=None, **extra):
     return row
 
 
-def _fake_pages(module, pages, errors=None):
-    """Replace the CLI's page fetcher with a canned one (no network)."""
+def _fake_pages(module, pages, errors=None, calls=None):
+    """Replace the CLI's page fetcher with a canned one (no network).
+
+    Pass `calls` to record every URL dialed, so a test can assert that a rejected
+    flag combination cost no outbound requests rather than merely printed an error.
+    """
 
     def build():
         def fetch(url):
+            if calls is not None:
+                calls.append(url)
             if errors and url in errors:
                 raise RuntimeError(errors[url])
             return pages[url]
@@ -1710,6 +1716,69 @@ class TestBaselineDraftsCli:
         script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts"])
 
         assert bank.read_bytes() == before
+
+    def test_baseline_drafts_without_print_hashes_is_rejected(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, status="draft"))
+        calls = []
+        _fake_pages(script, {url: GPU_HTML}, calls=calls)
+
+        code = script.main([*_drift_head(bank), "--baseline-drafts"])
+        captured = capsys.readouterr()
+
+        # The combination computes digests nothing ever prints. Rejecting it has to
+        # happen before the fetching, or the flag still costs one request per draft
+        # source on a bank that can hold hundreds.
+        assert code == 2
+        assert "--print-hashes" in captured.err
+        assert calls == []
+
+    def test_an_incomplete_draft_block_is_labelled_incomplete(self, tmp_path, capsys):
+        script = _load_script()
+        reachable = f"{KB}/kb/gpu"
+        dead = f"{KB}/kb/storage"
+        bank = _bank(tmp_path, _locked_row(reachable, dead, status="draft"))
+        _fake_pages(script, {reachable: GPU_HTML}, errors={dead: "timeout"})
+
+        code = script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts"])
+        out = capsys.readouterr().out
+
+        # Pasting this block alongside `status: locked` is the documented workflow,
+        # and the paste replaces the whole map — so a source that could not be read
+        # must be named here, exactly as the locked-row path already does.
+        assert code == 0
+        assert "INCOMPLETE" in out
+        assert dead in out
+        assert page_digest(GPU_HTML) in out
+
+    def test_a_complete_draft_block_is_not_labelled_incomplete(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, status="draft"))
+        _fake_pages(script, {url: GPU_HTML})
+
+        script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts"])
+        out = capsys.readouterr().out
+
+        # Otherwise the warning becomes decoration and stops meaning anything.
+        assert "INCOMPLETE" not in out
+
+    def test_a_draft_whose_every_source_failed_is_named_not_silent(
+        self, tmp_path, capsys
+    ):
+        script = _load_script()
+        dead = f"{KB}/kb/storage"
+        bank = _bank(tmp_path, _locked_row(dead, status="draft"))
+        _fake_pages(script, {}, errors={dead: "timeout"})
+
+        code = script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts"])
+        out = capsys.readouterr().out
+
+        # Nothing to paste, but the operator asked a direct question and silence
+        # reads as "this row is fine" rather than "every source was unreachable".
+        assert code == 0
+        assert dead in out
 
 
 class TestDriftVerdictCli:

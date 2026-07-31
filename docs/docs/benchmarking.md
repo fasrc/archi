@@ -825,6 +825,12 @@ python scripts/benchmarking/goldenset_maintenance.py drift \
     --baseline-drafts --print-hashes
 ```
 
+`--baseline-drafts` **requires `--print-hashes`** and exits `2` without it. On its own it would
+fetch every draft source and then discard every digest, since only `--print-hashes` emits them —
+a burst of requests at the KB in exchange for no output. The two stay separate flags rather than
+one implying the other, because `--print-hashes` alone also prints every locked row's block, and
+that is a wider run than asking for a draft's hashes.
+
 The output labels draft blocks so you know what to paste alongside them:
 
 ```
@@ -867,6 +873,14 @@ could not be read this run carries its existing baseline forward rather than van
 source has neither a fresh nor a stored hash there is nothing to carry, and the block is labelled
 `INCOMPLETE` — pasting it as-is would drop that source. Baselines for URLs the row no longer
 cites are deliberately not carried forward; they are reported separately as stale.
+
+Draft blocks are labelled the same way, and the label matters more there: a locked row can carry a
+failed source's stored hash forward, but a draft has none, so an unreadable source is simply absent
+from the map you are about to paste. Locking on an `INCOMPLETE` draft block leaves that source
+unbaselined — the next run reports it as *without a baseline* rather than checking it. Wait until
+the source is reachable and re-run, or lock knowing that one source is not yet covered. A draft
+whose every source failed is still listed, named `INCOMPLETE` with no block to paste, so an
+unreachable page never looks like a row with nothing to do.
 
 #### Abstention
 

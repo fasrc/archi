@@ -2160,3 +2160,70 @@ class TestBaselineDrafts:
         )
 
         assert set(report.baseline_only[0].source_hashes) == {url_a, url_b}
+
+    def test_enabling_baseline_drafts_leaves_skipped_rows_unchanged(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        without = _drift(bank, _fetcher_for({url: KB_HTML}), baseline_drafts=False)
+        with_baselines = _drift(
+            bank, _fetcher_for({url: KB_HTML}), baseline_drafts=True
+        )
+
+        # Asking for hash output must not move a detection metric. The row is
+        # excluded from drift checking either way, so it stays skipped — else the
+        # CLI's locked-row summary silently stops accounting for baselined drafts
+        # and a one-draft bank reports 0 skipped while skipping one.
+        assert with_baselines.skipped_rows == without.skipped_rows == 1
+
+    def test_unreachable_draft_source_is_recorded_as_missing(self):
+        reachable = f"{KB}/kb/a"
+        dead = f"{KB}/kb/b"
+        bank = [_row(reachable, dead, status="draft")]
+
+        report = _drift(
+            bank,
+            _fetcher_for({reachable: KB_HTML}, errors={dead: "timeout"}),
+            baseline_drafts=True,
+        )
+
+        # A draft has no stored baseline to fall back on, so a dropped source is
+        # not recoverable from the row itself — it has to be named, or the block
+        # invites a paste that locks the row with a hole in it.
+        row = report.baseline_only[0]
+        assert row.source_hashes == {reachable: page_digest(KB_HTML)}
+        assert row.missing == (dead,)
+
+    def test_refused_draft_source_is_recorded_as_missing(self):
+        allowed = f"{KB}/kb/a"
+        offlist = "https://example.com/kb/b"
+        bank = [_row(allowed, offlist, status="draft")]
+
+        report = _drift(bank, _fetcher_for({allowed: KB_HTML}), baseline_drafts=True)
+
+        row = report.baseline_only[0]
+        assert row.source_hashes == {allowed: page_digest(KB_HTML)}
+        assert row.missing == (offlist,)
+
+    def test_unparseable_draft_source_is_recorded_as_missing(self):
+        good = f"{KB}/kb/a"
+        bank = [_row(good, "http://[", status="draft")]
+
+        report = _drift(bank, _fetcher_for({good: KB_HTML}), baseline_drafts=True)
+
+        assert report.baseline_only[0].missing == ("http://[",)
+
+    def test_a_fully_hashed_draft_reports_nothing_missing(self):
+        url_a = f"{KB}/kb/a"
+        url_b = f"{KB}/kb/b"
+        bank = [_row(url_a, url_b, status="draft")]
+
+        report = _drift(
+            bank,
+            _fetcher_for({url_a: KB_HTML, url_b: KB_HTML_RESTYLED}),
+            baseline_drafts=True,
+        )
+
+        # Keeps the three assertions above honest: they would also pass against a
+        # `missing` that is simply always populated.
+        assert report.baseline_only[0].missing == ()

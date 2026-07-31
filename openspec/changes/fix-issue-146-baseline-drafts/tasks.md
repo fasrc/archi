@@ -41,3 +41,13 @@
 - [x] 8.2 `python -m pytest tests/unit/ -q` passes; total count > 1290.
 - [x] 8.3 `openspec validate fix-issue-146-baseline-drafts --strict` passes.
 - [x] 8.4 Commit only green through the pre-commit gate (≥80% diff coverage; never `--no-verify`); push and open a PR to `fasrc/archi:dev` with `closes #146`.
+
+## 9. Review round 1 — three P2 findings from the PR review
+
+- [x] 9.1 RED+GREEN: a baselined draft is still counted in `skipped_rows`. The draft branch reached `continue` without incrementing `skipped`, so enabling the flag moved a detection metric — a one-draft bank went from `1 skipped` to `0` while still skipping the row, and the CLI's locked-row summary stopped accounting for it. Assert the count is identical with the flag off and on.
+- [x] 9.2 RED+GREEN: `BaselineRow.missing` names every source that produced no hash (unreachable, refused by the allowlist, unparseable URL). `_fetch_extract`'s error was discarded, so a multi-source draft with one failed fetch emitted a paste-ready block missing that source with no warning — and unlike a locked row, a draft has no stored hash to carry forward. Include a test that a fully-hashed draft reports `missing == ()`, so the other assertions cannot pass against an always-populated field.
+- [x] 9.3 RED+GREEN: `_print_hashes` labels an incomplete draft block `INCOMPLETE` and names the missing sources, mirroring the locked-row path; a draft whose every source failed is listed and named rather than skipped silently.
+- [x] 9.4 RED+GREEN: `main` rejects `--baseline-drafts` without `--print-hashes` with exit `2`, **before any fetch**. Assert zero fetch calls, not merely the exit code — the cost being avoided is one request per draft source, so a rejection that fired after fetching would pass an exit-code-only test while fixing nothing.
+- [x] 9.5 Mutation-check each of the four fixes: reverting it must fail the specific test that owns it (`skipped += 1`; the failed-fetch `missing` append; the `INCOMPLETE` print; the flag rejection). Confirmed — each mutant killed by its owning test, and restored green afterwards.
+- [x] 9.6 Update `docs/docs/benchmarking.md`: the `--print-hashes` requirement and its rationale, and the draft-specific completeness rule (a draft has no stored hash to carry forward, so locking on an `INCOMPLETE` block leaves the source unbaselined).
+- [x] 9.7 `openspec validate fix-issue-146-baseline-drafts --strict` passes; `cd docs && mkdocs build --strict` exits 0; full gate green through the pre-commit hook.
