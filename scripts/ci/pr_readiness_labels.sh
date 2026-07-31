@@ -46,10 +46,13 @@
 # conflicts PRs B..F — the label has to be revoked on OTHER PRs than the one
 # that changed. A stale green chip is worse than no chip at all.
 #
-# UNKNOWN IS SKIPPED, NEVER GUESSED. GitHub computes mergeability lazily and
-# returns UNKNOWN until it lands, which is exactly the state right after a push
-# to dev. Querying is itself what triggers the computation, so we re-query a
-# few times rather than treat "not yet known" as "not conflicted".
+# UNKNOWN IS NEVER GUESSED, AND NEVER LEFT ADVERTISED. GitHub computes
+# mergeability lazily and returns UNKNOWN until it lands, which is exactly the
+# state right after a push to dev. Querying is itself what triggers the
+# computation, so we re-query a few times rather than treat "not yet known" as
+# "not conflicted". If it is still unknown, any held ready-to-merge is REVOKED —
+# leaving it would reproduce the bug this script exists to prevent — and nothing
+# else is asserted, `conflicts` included, since that is equally unverified.
 #
 # Idempotent by construction: it diffs desired against current labels and calls
 # the API only on a real difference, so the hourly sweep does not churn every
@@ -66,12 +69,21 @@ RETRY_MAX="${PR_LABELS_RETRY_MAX:-5}"
 RETRY_DELAY="${PR_LABELS_RETRY_DELAY:-6}"
 DRY_RUN=0
 
-# INCOMPLETE SNAPSHOT => NOT READY. Neither reviewThreads nor labels is
-# paginated; instead FILTER compares each connection's totalCount against the page
-# size and reports truncation, and a truncated PR is never granted the ready chip.
-# Without this, a PR whose first 100 threads are all resolved/outdated but whose
-# 101st is live would count zero live findings and be advertised as ready. The
-# `> 100` tests in FILTER MUST equal the `first:100` in QUERY for both connections.
+# Connections are fetched one page deep; FILTER returns each totalCount so the
+# reconciler can tell a complete snapshot from a truncated one. The two truncation
+# cases are NOT symmetric:
+#
+#   reviewThreads truncated -> the live-findings count may be an UNDERCOUNT, so
+#       readiness cannot be verified and the chip is withheld.
+#   labels truncated -> the findings count is fine, but we cannot tell whether the
+#       PR already HOLDS a managed chip. That matters more than it looks: if
+#       `ready-to-merge` sat past the page we would read has_ready=no, schedule no
+#       removal, and the PR would keep advertising readiness — the fail-closed
+#       invariant, silently false. So we re-read the labels authoritatively
+#       instead of guessing, and truncation alone does not withhold the chip.
+#
+# MUST equal the `first:N` in QUERY for both connections.
+PAGE=100
 
 usage() {
   cat <<'EOF'
@@ -142,9 +154,8 @@ FILTER='
              then "UNKNOWN" else .mergeStateStatus end),
           ([.reviewThreads.nodes[]
              | select(.isResolved == false and .isOutdated == false)] | length | tostring),
-          (if .reviewThreads.totalCount > 100 then "threads=\(.reviewThreads.totalCount)>100"
-           elif .labels.totalCount > 100 then "labels=\(.labels.totalCount)>100"
-           else "no" end),
+          (.reviewThreads.totalCount | tostring),
+          (.labels.totalCount | tostring),
           ([.labels.nodes[].name] | join(","))
         ] | @tsv )
 '
@@ -184,6 +195,18 @@ fetch_snapshot() {
   done
 }
 
+# The complete label set for one PR, comma-joined, from the paginated REST
+# endpoint. Only called when the GraphQL labels connection was truncated, so the
+# extra request costs nothing on the normal path. --paginate concatenates one JSON
+# array per page, hence the slurp-and-add.
+authoritative_labels() { # $1 = PR number
+  local out
+  if ! out="$(gh api "repos/$REPO/issues/$1/labels" --paginate)"; then
+    return 1
+  fi
+  printf '%s' "$out" | jq -rs '(add // []) | map(.name) | join(",")'
+}
+
 # Re-query while any PR's mergeability is still being computed — the query is
 # what prompts GitHub to compute it. Bounded, then we skip whatever is left.
 snapshot=""
@@ -215,9 +238,20 @@ failed=0
 # warning at the end keys on.
 unverifiable=0
 
-while IFS=$'\t' read -r _tag number isdraft state live truncated labels; do
+while IFS=$'\t' read -r _tag number isdraft state live threads_total labels_total labels; do
   if [ -z "${number:-}" ]; then
     continue
+  fi
+
+  # Truncated label connection: re-read authoritatively rather than conclude a chip
+  # is absent because it fell off the page. Guessing here would break fail-closed.
+  if [ "$labels_total" -gt "$PAGE" ]; then
+    if ! labels="$(authoritative_labels "$number")"; then
+      printf '%s: could not read the full label list for #%s (%s labels)\n' \
+        "${0##*/}" "$number" "$labels_total" >&2
+      failed=$((failed + 1))
+      continue
+    fi
   fi
 
   has_ready=no
@@ -270,10 +304,10 @@ while IFS=$'\t' read -r _tag number isdraft state live truncated labels; do
     why="not CLEAN ($state)"
   elif [ "$live" -gt 0 ]; then
     why="$live live review finding(s)"
-  elif [ "$truncated" != "no" ]; then
+  elif [ "$threads_total" -gt "$PAGE" ]; then
     # A live finding could be sitting in the unfetched tail, in which case `live`
     # undercounted. Withhold rather than advertise a readiness we did not verify.
-    why="incomplete snapshot ($truncated) — cannot verify"
+    why="$threads_total review threads exceed the $PAGE fetched — cannot verify"
   else
     want_ready=yes
     why=""

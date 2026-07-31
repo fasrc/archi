@@ -14,7 +14,7 @@
 # merging PR A is what creates the conflict on PRs B..F. The chips that need
 # revoking are on the PRs that did NOT change, so a per-PR job would miss
 # precisely the case this exists to catch. Sweeping everything also makes a run
-# idempotent and safe to cancel — any single run does the whole job.
+# idempotent. It does NOT make a run safe to cancel — see the concurrency block.
 #
 # The predicate, the retry-on-UNKNOWN, and the grant/revoke asymmetry all live
 # in scripts/ci/pr_readiness_labels.sh, which has its own 16-case suite wired

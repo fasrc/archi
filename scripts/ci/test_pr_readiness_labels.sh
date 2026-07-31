@@ -139,6 +139,17 @@ make_stub() { # $1 = sandbox
   cat > "$sb/bin/gh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$sb/calls"
+# The authoritative label re-read: repos/<owner>/<name>/issues/<N>/labels
+case "\$2" in
+  repos/*/issues/*/labels)
+    if [ "\$1" = "api" ]; then
+      [ -f "$sb/fail_labels" ] && { echo "stub gh: labels boom" >&2; exit 1; }
+      pr=\$(basename "\$(dirname "\$2")")
+      cat "$sb/labels_\$pr.json" 2>/dev/null || printf '[]'
+      exit 0
+    fi
+    ;;
+esac
 if [ "\$1" = "api" ] && [ "\$2" = "graphql" ]; then
   n=\$(( \$(cat "$sb/n" 2>/dev/null || echo 0) + 1 ))
   printf '%s' "\$n" > "$sb/n"
@@ -421,14 +432,38 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
-# ---- 19: a truncated labels connection is not ready ------------------
+# ---- 19: a chip HIDDEN past the label page is still revoked -----------
+# The subtle one. 120 labels exist, so the fetched page is truncated, and
+# `ready-to-merge` is NOT among the names returned — only in the authoritative
+# list. Reading has_ready from the truncated page would conclude the chip is
+# absent, schedule no removal, and leave the PR advertising readiness: the
+# fail-closed invariant silently false. The PR also has a live finding, so it is
+# definitively not ready.
 sb="$(new_sandbox)"
-mk_page false "" "$(mk_node 190 false CLEAN "ready-to-merge" "" "" 120)" > "$sb/resp_1.json"
+mk_page false "" "$(mk_node 190 false CLEAN "some-other-label" "false:false" "" 120)" > "$sb/resp_1.json"
+printf '[{"name":"some-other-label"},{"name":"ready-to-merge"}]' > "$sb/labels_190.json"
 run_reconciler "$sb" >/dev/null 2>&1
 if grep -q '190 .*--remove-label ready-to-merge' "$sb/calls"; then
-  ok "a truncated labels connection withholds and revokes ready-to-merge"
+  ok "a chip past the label page is found authoritatively and revoked"
 else
-  notok "a truncated labels connection withholds and revokes ready-to-merge"
+  notok "a chip past the label page is found authoritatively and revoked"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 20: a failed authoritative label read is a failure, not a guess --
+# If we cannot establish the real label set we must not proceed on the truncated
+# one; that is how the invariant above would break.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 191 false CLEAN "x" "false:false" "" 120)" \
+  "$(mk_node 291 false DIRTY "" "")" > "$sb/resp_1.json"
+: > "$sb/fail_labels"
+if run_reconciler "$sb" >/dev/null 2>&1; then
+  notok "a failed authoritative label read exits non-zero and sweeps the rest"
+elif grep -q '291 .*--add-label conflicts' "$sb/calls"; then
+  ok "a failed authoritative label read exits non-zero and sweeps the rest"
+else
+  notok "a failed authoritative label read exits non-zero and sweeps the rest (later PRs skipped)"
   cat "$sb/calls" 2>/dev/null
 fi
 

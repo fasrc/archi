@@ -278,7 +278,7 @@ Runs on push to `dev`, on PR lifecycle events, on review submissions and inline
 review comments, on completion of the `gate` and `PR Preview` workflows, hourly, and
 on manual dispatch. GitHub emits **no** workflow event when a review thread is
 *resolved*, so the hourly sweep is what picks resolution up.
-All the logic lives in `scripts/ci/pr_readiness_labels.sh` (19-case suite wired into
+All the logic lives in `scripts/ci/pr_readiness_labels.sh` (20-case suite wired into
 `scripts/gate.sh`); the workflow is only the trigger surface. Run it yourself with:
 
 ```bash
@@ -291,11 +291,14 @@ that is unresolved and not outdated.
 
 Four design notes worth knowing before changing it:
 
-- **An incomplete snapshot is never ready.** Neither `reviewThreads` nor `labels`
-  is paginated; instead each connection's `totalCount` is compared against the page
-  size, and a truncated one withholds the chip. Otherwise a PR whose first 100
-  threads all read as addressed would count zero live findings while a live one sat
-  in the unfetched tail.
+- **An incomplete snapshot is never guessed at**, and the two cases are not
+  symmetric. Connections are fetched one page (100) deep and each `totalCount` is
+  checked. Truncated `reviewThreads` means the live-findings count may be an
+  undercount, so the chip is *withheld* — otherwise a PR whose first 100 threads all
+  read as addressed would count zero while a live one sat in the tail. Truncated
+  `labels` instead triggers an authoritative re-read of the full label list, because
+  concluding a chip is *absent* just because it fell off the page would schedule no
+  removal and leave the PR advertising readiness.
 
 - **Every run sweeps every open PR**, not just the one that triggered it. Merging PR
   A is what conflicts PRs B–F, so the chips needing revocation are on the PRs that
