@@ -1,1 +1,0 @@
-openspec/changes/fix-issue-123-active-memory-contextvar/tasks.md
