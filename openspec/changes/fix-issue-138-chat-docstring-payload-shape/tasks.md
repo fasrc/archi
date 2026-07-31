@@ -35,6 +35,20 @@
   succeeds — it includes `client_sent_msg_ts` and `client_timeout`, without which the handler
   returns HTTP 408. Verify the field table marks both as required in practice, and marks
   `provider` / `model` / `include_agent_steps` / `include_tool_steps` as stream-only.
+- [x] 3.5 The runnable example **generates** `client_sent_msg_ts` instead of hard-coding an
+  epoch literal. A literal passes review on the day it is written and silently rots: the
+  check at `app.py:1654` compares it to the server clock, so once it is older than
+  `client_timeout` every copied request is rejected. Any non-runnable shape template uses an
+  unquoted placeholder so a blind paste fails in the caller's own JSON parser rather than
+  arriving as a non-integer and surfacing as an opaque HTTP 500.
+- [x] 3.6 The page distinguishes how the two endpoints report the rejection: HTTP 408 for
+  `POST /api/get_chat_response`, versus HTTP **200** plus a `meta` line and then an
+  `{"type": "error", "status": 408}` NDJSON event for the streaming endpoint
+  (`app.py:2024`). A streaming client checking only the HTTP status must be warned it will
+  read a failure as success.
+- [x] 3.7 The page states that `provider` and `model` are **jointly required** — the override
+  is gated on `if provider and model` (`app.py:2037`), so one without the other silently
+  leaves the default pipeline in place.
 
 ## 4. Ship (post-implementation, handled by the loop)
 

@@ -78,6 +78,33 @@ field names.
 - **THEN** it includes `client_sent_msg_ts` and `client_timeout`
 - **AND** the request is not rejected with HTTP 408 by the check at `app.py:1654`
 
+#### Scenario: The example does not carry a hard-coded timestamp
+
+- **WHEN** the API reference shows a runnable request
+- **THEN** `client_sent_msg_ts` is generated at send time rather than written as a literal
+  epoch value, because the check at `app.py:1654` compares it against the server clock and
+  any literal is stale once it is older than `client_timeout`
+- **AND** any non-runnable shape template marks the field with an unquoted placeholder, so
+  pasting it unedited fails in the caller's JSON parser rather than reaching the server as a
+  non-integer and surfacing as an opaque HTTP 500
+
+#### Scenario: The streaming endpoint reports the rejection as an event, not a status
+
+- **WHEN** the streaming endpoint rejects a request on the shared timeout check
+- **THEN** the documentation states that the HTTP status is **200**, that an opening `meta`
+  line is emitted first, and that the real status arrives in an
+  `{"type": "error", "status": 408}` event (`app.py:2024`)
+- **AND** it warns that a client checking only the HTTP status will read a failed request as
+  a successful stream
+
+#### Scenario: `provider` and `model` are documented as jointly required
+
+- **WHEN** a reader consults the override fields
+- **THEN** the documentation states that the override is applied only under
+  `if provider and model` (`app.py:2037`), so sending one alone is no override at all
+- **AND** it states that this is silent — the default pipeline answers with no error or
+  warning, so a caller can receive a reply from a model they did not request
+
 #### Scenario: Timing fields are not presented as optional
 
 - **WHEN** a reader consults the request-body table

@@ -27,17 +27,17 @@ honour all of it — the last four fields are read only by the streaming endpoin
 |-------|------|----------|-------------|
 | `last_message` | list of `[sender, message]` pairs | yes | The user's turn. A list **containing** the pair, not the pair itself — see below. Only the first pair is read. |
 | `client_id` | string | yes | Identifies the calling client; the request is rejected without it. |
-| `client_sent_msg_ts` | int (ms since epoch) | **yes, in practice** | Client send time. Documented as optional in earlier versions of this page, but **omitting it returns HTTP 408** — see the warning below. |
-| `client_timeout` | int (ms) | **yes, in practice** | How long the client is willing to wait. **Omitting it returns HTTP 408** — see the warning below. |
+| `client_sent_msg_ts` | int (ms since epoch) | **yes, in practice** | Time you send the request. Must be generated **at send time** — a stale value is rejected. See the warning below. |
+| `client_timeout` | int (ms) | **yes, in practice** | How long the client is willing to wait. Omitting it is rejected. See the warning below. |
 | `conversation_id` | int or `null` | no | Existing conversation to append to. `null` (or omitted) starts a new one. |
 | `config_name` | string | no | Named configuration to answer under. |
 | `is_refresh` | bool | no | Re-answer the previous turn instead of adding a new one. |
-| `provider` | string | stream only | Override the LLM provider for this request only. Ignored by `POST /api/get_chat_response`. |
-| `model` | string | stream only | Override the model for this request only. Ignored by `POST /api/get_chat_response`. |
+| `provider` | string | stream only, **with `model`** | Override the LLM provider. Has no effect unless `model` is sent too — see [Overriding provider and model](#overriding-provider-and-model). Ignored entirely by `POST /api/get_chat_response`. |
+| `model` | string | stream only, **with `provider`** | Override the model. Has no effect unless `provider` is sent too — see [Overriding provider and model](#overriding-provider-and-model). Ignored entirely by `POST /api/get_chat_response`. |
 | `include_agent_steps` | bool | stream only | Include agent reasoning steps. Default `true`. Ignored by `POST /api/get_chat_response`. |
 | `include_tool_steps` | bool | stream only | Include tool invocations. Default `true`. Ignored by `POST /api/get_chat_response`. |
 
-!!! warning "Send both timing fields, or every request fails with HTTP 408"
+!!! warning "Send both timing fields, and generate the timestamp fresh"
 
     `client_sent_msg_ts` and `client_timeout` look optional and are not. Both default to
     `0` when absent ([`app.py:4595-4596`][parse]), and the timeout check is an unguarded
@@ -48,19 +48,40 @@ honour all of it — the last four fields are read only by the streaming endpoin
         return None, 408
     ```
 
-    With both defaulted to `0` this reads `<seconds since 1970> - 0 > 0`, which is always
-    true, so the request is rejected as timed out before any answer is produced. Sending
-    only one of the two fails the same way. A caller must send **both**, with
-    `client_timeout` large enough to cover the answer.
+    Three ways to fall foul of it, all rejected:
 
-    This is a bug in the handler, not the intended contract — the streaming loop guards
-    the same comparison with `if client_timeout and ...` ([`app.py:2101`][stream]). It is
-    tracked as [#175](https://github.com/fasrc/archi/issues/175). Once fixed, both fields
-    become genuinely optional and this warning goes away. Until then, this page documents
-    what the endpoint actually does.
+    | You send | Effective values | Result |
+    |---|---|---|
+    | neither field | `0`, `0` | `<seconds since 1970> - 0 > 0` → rejected |
+    | only `client_sent_msg_ts` | e.g. `1769900000.0`, `0` | anything `> 0` → rejected |
+    | only `client_timeout` | `0`, e.g. `600.0` | `<seconds since 1970> > 600` → rejected |
+
+    So send **both**. And generate `client_sent_msg_ts` **when you send**, not as a copied
+    constant: it is compared against the server clock, so a timestamp older than
+    `client_timeout` is treated as a request that already timed out. A hard-coded value
+    works the day it is written and fails silently thereafter.
+
+    **How the rejection reaches you differs by endpoint** — the check is shared, the
+    reporting is not:
+
+    - `POST /api/get_chat_response` returns **HTTP 408** with `{"error": ...}`.
+    - `POST /api/get_chat_response_stream` returns **HTTP 200**, emits its opening `meta`
+      line, and only then yields an NDJSON error event
+      `{"type": "error", "status": 408, "message": ...}` before closing
+      ([`app.py:2024`][streamerr]). A streaming client that checks only the HTTP status
+      sees success. You must inspect the events.
+
+    This is a bug in the handler, not the intended contract — the streaming loop applies
+    the same check to the same variable but guards it, `if client_timeout and ...`
+    ([`app.py:2101`][stream]), so `0` there means "no deadline" while here it means
+    "deadline already passed". Tracked as
+    [#175](https://github.com/fasrc/archi/issues/175); once fixed, both fields become
+    genuinely optional and this warning goes away. Until then, this page documents what
+    the endpoints actually do.
 
 [parse]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4595-L4596
 [check]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1654
+[streamerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2024
 [stream]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2101
 
 **`last_message` is nested.** It is a list whose first element is the
@@ -75,16 +96,33 @@ two-character sender such as `["AI", "hello"]` unpacks into `sender="A"`,
 `content="I"` and the request **succeeds against the wrong content**, silently
 discarding the message. The endpoint does not currently validate the shape.
 
-A complete request. `client_sent_msg_ts` is the current time in milliseconds and
-`client_timeout` is how long you will wait; both are required in practice, per the warning
-above.
+**A request you can run.** `client_sent_msg_ts` has to be generated as you send, so this
+example computes it rather than hard-coding one — a literal epoch value pasted from a page
+like this is stale on arrival and comes back rejected:
 
-```json
+```bash
+curl -sS http://localhost:7861/api/get_chat_response \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --argjson ts "$(date +%s000)" '{
+        last_message: [["User", "How do I submit a job?"]],
+        conversation_id: null,
+        client_id: "web-3f2a91",
+        client_sent_msg_ts: $ts,
+        client_timeout: 600000
+      }')"
+```
+
+The body it builds has this shape. This is a **template, not valid JSON** — the placeholder
+is deliberately unquoted so that pasting it unedited fails in your own JSON parser rather
+than reaching the server, where a non-integer would surface as an opaque HTTP 500. Replace
+it with the current time in milliseconds, as an integer:
+
+```text
 {
   "last_message": [["User", "How do I submit a job?"]],
   "conversation_id": null,
   "client_id": "web-3f2a91",
-  "client_sent_msg_ts": 1769904000000,
+  "client_sent_msg_ts": <epoch ms at send time>,
   "client_timeout": 600000
 }
 ```
@@ -100,6 +138,26 @@ ignored — no error, no warning.
 To override the provider or model, or to control step inclusion, use the streaming
 endpoint.
 
+#### Overriding provider and model
+
+`provider` and `model` are **jointly required**. The streaming path builds a request-local
+pipeline only under `if provider and model` ([`app.py:2037`][override]), so sending one
+without the other is not a partial override — it is no override at all, and the request is
+answered by the default pipeline. This is silent: there is no error and no warning, and the
+answer looks normal, so a caller who sends `model` alone can receive a reply from a model
+they did not ask for.
+
+| Sent | Effect |
+|---|---|
+| `provider` + `model` | override applied for this request only |
+| `provider` alone | **ignored**, default pipeline answers |
+| `model` alone | **ignored**, default pipeline answers |
+
+If you need to know which model actually answered, read it from the response rather than
+assuming your override took.
+
+[override]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2037
+
 ### `POST /api/get_chat_response_stream`
 
 Send a message and receive a streaming response via NDJSON (`application/x-ndjson`).
@@ -108,7 +166,22 @@ Takes the same request body as `POST /api/get_chat_response` above, including th
 nested `last_message` shape and the two required timing fields.
 
 This is the endpoint that honours `provider`, `model`, `include_agent_steps` and
-`include_tool_steps`; the non-streaming one ignores all four.
+`include_tool_steps`; the non-streaming one ignores all four. `provider` and `model` must
+be sent [together](#overriding-provider-and-model) or neither takes effect.
+
+!!! warning "A failed request still returns HTTP 200"
+
+    Errors on this endpoint arrive **as events, not as status codes**. The response is
+    opened before the request is validated, so a rejection is reported as HTTP 200, an
+    opening `meta` line, then an `error` event carrying the real status:
+
+    ```json
+    {"type": "error", "status": 408, "message": "..."}
+    ```
+
+    Do not treat `200 OK` as success here. Read the events and check for `type: "error"`,
+    whose `status` field holds what the non-streaming endpoint would have returned as the
+    HTTP status.
 
 Each line is a JSON object with a `type` field. Event types:
 
