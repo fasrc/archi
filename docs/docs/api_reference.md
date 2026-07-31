@@ -10,6 +10,11 @@ REST API endpoints for the Archi chat application. All endpoints are prefixed wi
 - Most `/api/*` endpoints require an authenticated session.
 - Endpoints marked **Admin only** require an admin user.
 - Authentication routes (`/login`, `/logout`, `/auth/user`) are not under `/api/`.
+- **Lists of events, error statuses and failure modes describe categories and the cases you
+  will meet — they are not closed enumerations.** The chat handler has behaviour that varies
+  by pipeline and by provider, so this page documents the *mechanism* that decides an outcome
+  and gives examples. Build clients that tolerate an event type or status they have not seen
+  before, and prefer reading what the response reports over inferring it from the request.
 
 ---
 
@@ -31,7 +36,7 @@ honour all of it — the last four fields are read only by the streaming endpoin
 | `client_timeout` | int (ms) | **yes, in practice** | How long the client is willing to wait. Omitting it is rejected. See the warning below. |
 | `conversation_id` | int or `null` | no | Existing conversation to append to. `null` (or omitted) starts a new one. |
 | `config_name` | string | no | Named configuration to answer under. |
-| `is_refresh` | bool | no | Re-answer the previous turn instead of adding a new one. |
+| `is_refresh` | bool | no, but **needs `conversation_id`** | Re-answer the previous turn instead of adding a new one. Not an independent switch: with no `conversation_id` the handler starts a *new* conversation with empty history ([`app.py:1639`][refreshnew]) and then skips appending your message ([`app.py:1657`][refreshskip]), so there is no previous turn to re-answer and the pipeline is invoked with no user turn at all. |
 | `provider` | string | stream only, **with `model`** | Override the LLM provider. Has no effect unless `model` is sent too — see [Overriding provider and model](#overriding-provider-and-model). Ignored entirely by `POST /api/get_chat_response`. |
 | `model` | string | stream only, **with `provider`** | Override the model. Has no effect unless `provider` is sent too — see [Overriding provider and model](#overriding-provider-and-model). Ignored entirely by `POST /api/get_chat_response`. |
 | `include_agent_steps` | bool | stream only | Include the incremental **answer text** — the `chunk` events ([`app.py:2365`][chunkgate]). Default `true`. Does **not** gate reasoning. Ignored by `POST /api/get_chat_response`. |
@@ -91,10 +96,15 @@ it as `(sender, content)`.
 
 Sending the flat form does not return a clean error, so it is worth getting right:
 the first element is then a *string*, and unpacking it yields its characters. A
-sender of three or more characters raises and the request fails with HTTP 500; a
-two-character sender such as `["AI", "hello"]` unpacks into `sender="A"`,
+sender of three or more characters raises — reported as HTTP 500 by
+`POST /api/get_chat_response`, but as an in-band `{"type": "error", "status": 500}`
+under HTTP **200** by the streaming endpoint, since the exception happens inside the
+generator after the opening `meta` line ([`app.py:2568`][outerr]); see the two error channels
+under [`POST /api/get_chat_response_stream`](#post-apiget_chat_response_stream).
+A two-character sender such as `["AI", "hello"]` unpacks into `sender="A"`,
 `content="I"` and the request **succeeds against the wrong content**, silently
-discarding the message. The endpoint does not currently validate the shape.
+discarding the message — on both endpoints, with no error at all. The endpoint does
+not currently validate the shape.
 
 **A request you can run.** `client_sent_msg_ts` has to be generated as you send, so this
 example computes it rather than hard-coding one — a literal epoch value pasted from a page
@@ -177,27 +187,40 @@ they did not ask for.
 | `provider` alone | **ignored**, default pipeline answers |
 | `model` alone | **ignored**, default pipeline answers |
 
-Sending both is necessary but not sufficient: the override is an attempt, and it has three
-distinct outcomes.
+Sending both is necessary but not sufficient. **Treat the override as a request, not a
+setting**: the only reliable way to know which model answered is to read the reported model
+back off the response. Everything below is why.
 
-| Outcome | What you receive |
+The override is applied only if the LLM is constructed *and* a request-local pipeline view is
+built from it, under a guard that also requires the active pipeline to expose an `agent_llm`
+([`app.py:2055`][ovrguard]). Any step of that failing leaves the **default pipeline** to
+answer, and how you find out — if at all — depends on how it failed:
+
+| How you find out | Examples (not exhaustive) |
 |---|---|
-| Applied | the answer, with the response's reported model set to `provider/model` |
-| Rejected — unknown provider/model, or overrides disabled | `{"type": "error", "status": 400, ...}` and the stream **ends** ([`app.py:2048`][ovrreject]) |
-| Fell back — provider construction or request-local pipeline build failed | `{"type": "warning", "message": "Using default model: …"}`, then the **default pipeline answers** ([`app.py:2052`][ovrwarn], [`:2073`][ovrwarn2]) |
+| `{"type": "error", "status": 400}` and the stream **ends** | a construction-time `ValueError` — overrides disabled, or a provider name that does not resolve ([`app.py:2048`][ovrreject]) |
+| `{"type": "warning", "message": "Using default model: …"}`, then the default answers | most construction failures, and a failed request-local pipeline build ([`app.py:2052`][ovrwarn], [`:2073`][ovrwarn2]) |
+| **Nothing at all** — no `error`, no `warning` | `_create_provider_llm` returning falsey rather than raising, which is what an `ImportError` does ([`app.py:1611`][ovrimport]); or an active pipeline with no `agent_llm` ([`app.py:2055`][ovrguard]) |
+| An in-band `{"type": "error", "status": 500}` *mid-answer* | a model string the provider builds happily and rejects on use — `get_chat_model` does not check the provider's catalogue, so an unknown model ID for OpenAI or OpenRouter surfaces at invocation, not at construction ([`app.py:2568`][outerr]) |
 
-The fallback is the one to design for: the request succeeds, the stream looks normal, and the
-only signal that a different model answered is a `warning` event you have to be reading for.
-There is also a quieter case — if the active pipeline exposes no `agent_llm`, the override is
-skipped with no `error` and no `warning` at all ([`app.py:2055`][ovrguard]).
+Two consequences worth designing for. **A silent fallback is a normal-looking success** — the
+answer arrives, nothing is flagged, and only the reported model differs from what you asked
+for. And **`400` is not the failure mode for a bad model ID**; a typo'd model name typically
+reaches the provider and comes back as an in-band `500` partway through the stream.
 
-So do not infer the answering model from your own request. Read the reported model back from
-the response, and treat a `warning` event as "my override did not take".
+So do not infer the answering model from your own request. Read it back from the response, and
+treat a `warning` event as "my override did not take".
 
 [ovrreject]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2048
 [ovrwarn]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2052
 [ovrwarn2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2073
 [ovrguard]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2055
+[ovrimport]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1611
+[outerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2568
+[legacygate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2386
+[stepemit]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1701
+[refreshnew]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1639
+[refreshskip]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1657
 
 [override]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2037
 
@@ -258,6 +281,11 @@ Each line is a JSON object with a `type` field. Event types:
 | `final` | Final response with full message and metadata |
 | `error` | Error occurred |
 | `warning` | The request continued, but not as asked — e.g. an override fell back to the default model |
+| `step` | Legacy step event from a non-agent pipeline, carrying a `step_type` such as `tool_call` or `tool_result` ([`app.py:1701`][stepemit]) |
+
+Treat this as the set you will encounter rather than a closed enumeration: which events a
+pipeline emits depends on the pipeline, so **ignore unknown `type` values rather than
+failing on them**.
 
 !!! warning "The two step flags do not group events the way their names suggest"
 
@@ -267,7 +295,10 @@ Each line is a JSON object with a `type` field. Event types:
     | Flag | Actually gates |
     |---|---|
     | `include_agent_steps` | the incremental answer text — `chunk` events ([`app.py:2365`][chunkgate], [`:2399`][chunkgate2]) |
-    | `include_tool_steps` | `tool_start`, `tool_output`, `tool_end` **and** `thinking_start` / `thinking_end` ([`app.py:2345`][thinkgate], [`:2359`][thinkgate2]) |
+    | `include_tool_steps` | tool activity (`tool_start`, `tool_output`, `tool_end`), reasoning (`thinking_start` / `thinking_end`, [`app.py:2345`][thinkgate], [`:2359`][thinkgate2]), **and** the legacy `step` events that non-agent pipelines emit ([`app.py:2386`][legacygate] → [`:1701`][stepemit]) |
+
+    Read those as the categories each flag controls, not as closed lists — a pipeline that
+    emits an event type not named here will have it gated by the same flag as its category.
 
     So reasoning events are controlled by the **tool** flag. Setting
     `include_agent_steps: false` to suppress reasoning does the opposite of what you

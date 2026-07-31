@@ -73,6 +73,32 @@
   is disabled or a session cookie is passed. The basic-auth cookie flow is shown
   (`/login` takes form-encoded `username`/`password`, `app.py:3213`) and the SSO case is named
   as not completable with `curl`.
+- [x] 3.12 Replace the page's **closed enumerations with open ones**, and say so up front. Four
+  of round 5's five findings were edges of exhaustive claims added in rounds 3–4 ("three
+  outcomes", "the only silent case", a closed gated-event list, an endpoint-neutral HTTP 500):
+  a closed list about a handler whose behaviour varies by pipeline and provider is a hostage to
+  the next edge case. Document the deciding *mechanism* plus non-exhaustive examples, tell
+  clients to tolerate unseen event types and statuses, and record the property in the spec so
+  re-tightening a list is a visible regression rather than an improvement.
+- [x] 3.13 Override outcomes are organized by **how the caller finds out**, and include the two
+  silent paths: `_create_provider_llm` returning falsey rather than raising (what an
+  `ImportError` does, `app.py:1611`) and no `agent_llm` on the active pipeline (`app.py:2055`).
+  Drop the claim that an unknown model ID yields `400` — `get_chat_model` does not check the
+  provider catalogue, so for OpenAI/OpenRouter it fails at invocation as an in-band
+  `{"type": "error", "status": 500}` (`app.py:2568`). Scope the `400` to construction-time
+  `ValueError`.
+- [x] 3.14 `include_tool_steps` also gates the legacy `step` events non-agent pipelines emit
+  (`app.py:2386` → `:1701`); add them to the flag's categories and add `step` to the
+  event-type table with its `step_type` values, so a client built from the table does not
+  discard tool updates from a supported pipeline.
+- [x] 3.15 `is_refresh` is marked as requiring `conversation_id`. Without one the handler opens
+  a new conversation with empty history (`app.py:1639`) and then skips appending the message
+  (`app.py:1657`), so the pipeline is invoked with no user turn at all — it is not an
+  independent switch.
+- [x] 3.16 The flat-`last_message` failure is split by endpoint: HTTP 500 for
+  `POST /api/get_chat_response`, in-band `{"type": "error", "status": 500}` under HTTP 200 for
+  the streaming endpoint (`app.py:2568`). The two-character-sender case succeeds silently on
+  both.
 
 ## 4. Ship (post-implementation, handled by the loop)
 

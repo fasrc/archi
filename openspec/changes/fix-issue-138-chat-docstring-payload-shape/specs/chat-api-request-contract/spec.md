@@ -85,48 +85,6 @@ field names.
 - **AND** the page shows how to obtain that cookie for a basic-auth deployment, and states
   that the SSO redirect flow cannot be completed with `curl`
 
-### Requirement: The step flags are documented by what they gate, not by their names
-
-`docs/docs/api_reference.md` SHALL describe `include_agent_steps` and `include_tool_steps` by
-the events each one actually controls. `include_agent_steps` gates the incremental answer
-text (`chunk`, `app.py:2365` and `:2399`); `include_tool_steps` gates the tool events **and**
-the reasoning events (`thinking_start` / `thinking_end`, `app.py:2345` and `:2359`). The page
-SHALL warn that the names invite the opposite reading.
-
-#### Scenario: Reasoning events are documented as tool-flag controlled
-
-- **WHEN** a reader consults either step flag
-- **THEN** the page states that `thinking_start` and `thinking_end` are gated by
-  `include_tool_steps`, not by `include_agent_steps`
-- **AND** it states that `include_agent_steps: false` suppresses the streamed answer text
-  while leaving reasoning events in place — failing twice for a caller who set it intending
-  to hide reasoning
-- **AND** it notes the resulting symptom is an answer arriving all at once in the `final`
-  event rather than an error, so the mistake does not announce itself
-- **AND** it states that reasoning cannot be suppressed independently of tool events through
-  this API
-
-### Requirement: The provider/model override is documented as an attempt, not a guarantee
-
-The API reference SHALL describe sending `provider` and `model` together as an override that
-is *attempted*, and SHALL document its three outcomes: applied; rejected with
-`{"type": "error", "status": 400}` and the stream ending (`app.py:2048`); or fallen back to
-the default pipeline after a `{"type": "warning", ...}` event (`app.py:2052`, `:2073`). It
-SHALL also record that an active pipeline exposing no `agent_llm` skips the override with
-neither error nor warning (`app.py:2055`).
-
-#### Scenario: The fallback path is documented
-
-- **WHEN** a reader consults the override behaviour
-- **THEN** the page states that a construction or pipeline-build failure yields a `warning`
-  event and lets the default pipeline answer, so the request still succeeds
-- **AND** it states that the only in-band signal is that `warning` event, which a client must
-  be reading for
-- **AND** it directs the caller to read the reported model back from the response instead of
-  inferring it from the request
-- **AND** `warning` appears in the streaming event-type table, so a client enumerating event
-  types does not treat it as unknown
-
 #### Scenario: The example does not carry a hard-coded timestamp
 
 - **WHEN** the API reference shows a runnable request
@@ -181,3 +139,106 @@ neither error nor warning (`app.py:2055`).
   honoured only by `POST /api/get_chat_response_stream`
 - **AND** the page states that sending them to `POST /api/get_chat_response` is silently
   ignored, because that handler never reads them off the parsed payload
+
+### Requirement: The step flags are documented by what they gate, not by their names
+
+`docs/docs/api_reference.md` SHALL describe `include_agent_steps` and `include_tool_steps` by
+the events each one actually controls. `include_agent_steps` gates the incremental answer
+text (`chunk`, `app.py:2365` and `:2399`); `include_tool_steps` gates the tool events **and**
+the reasoning events (`thinking_start` / `thinking_end`, `app.py:2345` and `:2359`). The page
+SHALL warn that the names invite the opposite reading.
+
+#### Scenario: Reasoning events are documented as tool-flag controlled
+
+- **WHEN** a reader consults either step flag
+- **THEN** the page states that `thinking_start` and `thinking_end` are gated by
+  `include_tool_steps`, not by `include_agent_steps`
+- **AND** it states that `include_agent_steps: false` suppresses the streamed answer text
+  while leaving reasoning events in place — failing twice for a caller who set it intending
+  to hide reasoning
+- **AND** it notes the resulting symptom is an answer arriving all at once in the `final`
+  event rather than an error, so the mistake does not announce itself
+- **AND** it states that reasoning cannot be suppressed independently of tool events through
+  this API
+
+### Requirement: The provider/model override is documented as an attempt, not a guarantee
+
+The API reference SHALL describe sending `provider` and `model` together as an override that
+is *attempted*, and SHALL organize the outcomes by **how the caller finds out** rather than as
+a closed list of failure kinds. It SHALL cover: rejection as
+`{"type": "error", "status": 400}` with the stream ending (`app.py:2048`); fallback announced
+by a `{"type": "warning", ...}` event (`app.py:2052`, `:2073`); **silent** fallback, both when
+`_create_provider_llm` returns falsey instead of raising — which is what an `ImportError` does
+(`app.py:1611`) — and when the active pipeline exposes no `agent_llm` (`app.py:2055`); and
+invocation-time failure surfacing as an in-band `{"type": "error", "status": 500}`
+(`app.py:2568`). It SHALL NOT present `400` as the response to an unknown model ID.
+
+#### Scenario: The fallback paths are documented, including the silent ones
+
+- **WHEN** a reader consults the override behaviour
+- **THEN** the page states that a construction or pipeline-build failure yields a `warning`
+  event and lets the default pipeline answer, so the request still succeeds
+- **AND** it states that some failures produce **no** `error` and **no** `warning` at all —
+  falsey construction such as an `ImportError`, and a pipeline without `agent_llm` — so a
+  silent fallback is indistinguishable from success except by the reported model
+- **AND** it directs the caller to read the reported model back from the response instead of
+  inferring it from the request
+- **AND** `warning` appears in the streaming event-type table, so a client enumerating event
+  types does not treat it as unknown
+
+#### Scenario: An unknown model ID is not documented as HTTP 400
+
+- **WHEN** a reader consults what happens to a model ID the provider does not have
+- **THEN** the page states that `get_chat_model` does not check the provider's catalogue, so
+  for providers such as OpenAI and OpenRouter the string is accepted at construction time
+- **AND** the failure is documented as arriving at invocation as an in-band
+  `{"type": "error", "status": 500}` partway through the stream, not as a `400`
+- **AND** the `400` claim is scoped to construction-time `ValueError` cases
+
+### Requirement: `is_refresh` is documented as requiring a conversation ID
+
+The API reference SHALL NOT present `is_refresh` as an independent optional switch. With no
+`conversation_id`, the handler creates a *new* conversation with empty history
+(`app.py:1639`) and then skips appending the caller's message because the request is a refresh
+(`app.py:1657`), so there is no previous turn to re-answer and the pipeline is invoked with no
+user turn at all.
+
+#### Scenario: The refresh field states its dependency
+
+- **WHEN** a reader consults `is_refresh` in the request-body table
+- **THEN** it is marked as requiring `conversation_id`
+- **AND** the consequence of omitting it is stated — a new empty conversation, the message
+  dropped, and a pipeline invocation with no user turn
+
+### Requirement: Event and failure lists are documented as open, not closed
+
+The API reference SHALL present event types, gated-event categories and failure modes as the
+cases a caller will meet rather than as exhaustive enumerations, and SHALL instruct clients to
+tolerate unseen event types and statuses. The chat handler's emitted events vary by pipeline
+and its failure modes vary by provider, so a closed list is a claim the code does not support.
+Recording this as a requirement makes a future edit that tightens a list into an exhaustive
+claim a visible regression rather than an apparent improvement.
+
+#### Scenario: The page states that its lists are not exhaustive
+
+- **WHEN** a reader begins the page
+- **THEN** it states that lists of events, error statuses and failure modes are categories and
+  examples rather than closed enumerations
+- **AND** it instructs clients to ignore unknown event `type` values rather than fail on them
+
+#### Scenario: Legacy `step` events are covered by the tool-flag contract
+
+- **WHEN** a reader consults what `include_tool_steps` gates
+- **THEN** the legacy `step` events emitted by non-agent pipelines (`app.py:2386` →
+  `app.py:1701`) are named alongside the tool and reasoning events
+- **AND** `step` appears in the streaming event-type table with its `step_type` values, so a
+  client built from the table does not discard tool updates from a supported pipeline
+
+#### Scenario: The flat-payload failure is split by endpoint
+
+- **WHEN** a reader consults what happens when `last_message` is sent in the flat form
+- **THEN** the unpacking failure is documented as HTTP 500 for `POST /api/get_chat_response`
+  and as an in-band `{"type": "error", "status": 500}` under HTTP 200 for the streaming
+  endpoint, since the exception is raised inside the generator (`app.py:2568`)
+- **AND** the two-character-sender case is documented as succeeding silently on **both**
+  endpoints
