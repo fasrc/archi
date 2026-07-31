@@ -33,8 +33,11 @@
 #    16.  ...but a single failed write does not abort the remaining PRs
 #    17.  UNKNOWN REVOKES a chip it cannot verify — a merge to dev conflicts a
 #         PR before GitHub recomputes, and a green chip must not survive that
-#   18-19. a TRUNCATED reviewThreads or labels connection is never ready: an
-#         unfetched live finding would otherwise count as zero
+#    18.  a TRUNCATED reviewThreads connection is never ready — an unfetched live
+#         finding would otherwise count as zero
+#   19-20. a TRUNCATED labels connection is RE-READ authoritatively, so a chip
+#         hiding past the page is still revoked rather than read as absent; and a
+#         failed re-read is a failure, never a fallback to the partial set
 #
 # Every negative case seeds a PR that already HOLDS the chip and requires its
 # removal. Asserting only "no add-label happened" would pass for a reconciler

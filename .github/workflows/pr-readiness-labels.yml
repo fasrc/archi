@@ -17,7 +17,7 @@
 # idempotent. It does NOT make a run safe to cancel — see the concurrency block.
 #
 # The predicate, the retry-on-UNKNOWN, and the grant/revoke asymmetry all live
-# in scripts/ci/pr_readiness_labels.sh, which has its own 16-case suite wired
+# in scripts/ci/pr_readiness_labels.sh, which has its own 20-case suite wired
 # into scripts/gate.sh. This file is only the trigger surface.
 
 name: pr-readiness-labels
