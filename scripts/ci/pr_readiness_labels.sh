@@ -9,7 +9,10 @@
 # that could never land. Labels are the only readiness signal the index renders,
 # so this reconciles two of them:
 #
-#   ready-to-merge  a human can merge this now — the process is complete
+#   ready-to-merge  nothing blocks a human merge: not a draft, no conflicts,
+#                   checks green, and no review finding still pointing at current
+#                   code. NOT a claim that review is provably complete — see the
+#                   isOutdated note below and issue #169.
 #   conflicts       merge-conflicted; further review rounds are wasted effort
 #
 # THE PREDICATE. `ready-to-merge` requires all three:
@@ -28,8 +31,14 @@
 # touches the same lines without fixing the finding also outdates it. The
 # honest fix is for the review-response loop to resolve threads it has
 # addressed, at which point `isResolved` becomes exact and belongs in the
-# predicate too. Until then this errs toward the proxy rather than toward a
-# chip that never appears.
+# predicate too — that is issue #169, and it must land in that order: resolving
+# first, tightening second, or every chip in the repo disappears at once.
+#
+# Until then this errs toward the proxy rather than toward a chip that never
+# appears, and the label's stated meaning is limited to match (above). Adversarial
+# review flagged the proxy twice; the counter-proposal — require isResolved now —
+# was measured and would grant the chip to ZERO of 9 open PRs, so it delivers an
+# always-empty index instead of a best-available one.
 #
 # THE ASYMMETRY. Granting is conservative; revocation is unconditional. Any
 # PR that stops satisfying the predicate loses the chip on the next sweep, and

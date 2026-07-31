@@ -152,9 +152,15 @@ automatically-maintained labels close that gap — see
 
 | Chip | Meaning |
 |------|---------|
-| `ready-to-merge` | Not a draft, no conflicts, checks green, no outstanding review findings. Safe to merge. |
+| `ready-to-merge` | Nothing blocks a merge: not a draft, no conflicts, checks green, and no review finding still pointing at current code. |
 | `conflicts` | Merge-conflicted with `dev`. Resolve it before spending another review round — answering findings cannot land the PR. |
 | *neither* | In flight: review findings outstanding, or checks not green. |
+
+`ready-to-merge` is **not** a claim that review is provably complete. It cannot be
+one yet: the "no outstanding finding" test relies on GitHub's `isOutdated` flag as
+a proxy, because no review thread in this repository has ever been marked resolved.
+[Issue #169](https://github.com/fasrc/archi/issues/169) makes the signal exact.
+Read it before treating the chip as an approval.
 
 Filter for what is actually mergeable:
 [`is:pr is:open label:ready-to-merge`](https://github.com/fasrc/archi/pulls?q=is%3Apr+is%3Aopen+label%3Aready-to-merge).
@@ -268,8 +274,10 @@ Triggered on push to `main`; rebuilds and pushes base images when requirements o
 Reconciles the `ready-to-merge` and `conflicts` labels on every open PR so the PR
 index reflects mergeability, which GitHub itself never renders there.
 
-Runs on push to `dev`, on PR events, hourly, and on manual dispatch. All the logic
-lives in `scripts/ci/pr_readiness_labels.sh` (16-case suite wired into
+Runs on push to `dev`, on PR lifecycle events, on review submissions and inline
+review comments, hourly, and on manual dispatch. GitHub emits **no** workflow event
+when a review thread is *resolved*, so the hourly sweep is what picks resolution up.
+All the logic lives in `scripts/ci/pr_readiness_labels.sh` (19-case suite wired into
 `scripts/gate.sh`); the workflow is only the trigger surface. Run it yourself with:
 
 ```bash
@@ -280,7 +288,13 @@ bash scripts/ci/pr_readiness_labels.sh --dry-run     # decide and print, change 
 (mergeable **and** checks green), and zero *live* review findings — a review thread
 that is unresolved and not outdated.
 
-Three design notes worth knowing before changing it:
+Four design notes worth knowing before changing it:
+
+- **An incomplete snapshot is never ready.** Neither `reviewThreads` nor `labels`
+  is paginated; instead each connection's `totalCount` is compared against the page
+  size, and a truncated one withholds the chip. Otherwise a PR whose first 100
+  threads all read as addressed would count zero live findings while a live one sat
+  in the unfetched tail.
 
 - **Every run sweeps every open PR**, not just the one that triggered it. Merging PR
   A is what conflicts PRs B–F, so the chips needing revocation are on the PRs that

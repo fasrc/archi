@@ -29,8 +29,20 @@ on:
     # "ready" — so a chip may be revoked here and re-granted by the hourly sweep
     # once checks go green. Conservative on grant, immediate on revoke.
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  # A new review finding changes the predicate but emits its OWN event — NOT one
+  # of the pull_request types above. Without these two, a reviewer could raise a
+  # blocking finding on a PR holding the chip and it would keep advertising
+  # "ready" until the hourly sweep. Serialization cannot close a race when no run
+  # is ever enqueued.
+  pull_request_review:
+    types: [submitted, dismissed]
+  pull_request_review_comment:
+    types: [created, deleted]
   schedule:
-    - cron: "17 * * * *"   # hourly backstop, off the hour to avoid the rush
+    # Hourly backstop, off the hour to avoid the rush. Still load-bearing: GitHub
+    # emits NO workflow event when a review thread is RESOLVED, so resolution is
+    # only ever picked up by this sweep.
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -56,12 +68,18 @@ concurrency:
 jobs:
   reconcile:
     runs-on: ubuntu-latest
-    # A pull_request event from a FORK gets a read-only token, so the label
-    # write would 403. Skip those rather than fail; the scheduled sweep runs in
-    # the base repo with a write token and picks them up. Every open PR in this
-    # repo today is same-repo (branches pushed to fasrc/archi directly).
+    # Any PR-scoped event on a FORK PR gets a read-only token, so the label write
+    # would 403. Skip those rather than fail; the scheduled sweep runs in the base
+    # repo with a write token and picks them up. Every open PR in this repo today
+    # is same-repo (branches pushed to fasrc/archi directly).
+    #
+    # Keyed on the PAYLOAD, not the event name: pull_request, pull_request_review
+    # and pull_request_review_comment all carry `pull_request`, while push,
+    # schedule and workflow_dispatch carry none. An earlier version tested
+    # `event_name != 'pull_request'`, which let both review events straight past
+    # the guard and into a 403.
     if: >-
-      github.event_name != 'pull_request' ||
+      github.event.pull_request == null ||
       github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: read
