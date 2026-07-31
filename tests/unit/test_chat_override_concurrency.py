@@ -398,3 +398,48 @@ def test_overlapping_overrides_are_not_serialized():
     assert observations.get(202), "request B produced no observations"
     assert all(llm is llm_x for llm in observations[201]), observations[201]
     assert all(llm is llm_y for llm in observations[202]), observations[202]
+
+
+def test_overridden_and_default_concurrent_keep_own_model():
+    """An overridden turn and a default turn running concurrently keep their own LLM.
+
+    This is the core guard for issue #86 in the mixed scenario: one request
+    carries a provider/model override (→ request-local pipeline view), the other
+    uses the shared pipeline's configured default LLM.  The barrier forces genuine
+    overlap so both turns are in-flight simultaneously.  The overridden turn must
+    observe only the override LLM; the default turn must observe only the default
+    LLM — no cross-contamination in either direction.
+    """
+    default_llm = _LLM("default", {"enable_thinking": False})
+    llm_x = _LLM("X", {"temp": 0.1})
+    llm_by_key = {("provX", "modX"): llm_x}
+
+    observations: dict = {}
+    observe_lock = threading.Lock()
+    wrapper = _make_wrapper(default_llm, llm_by_key, observations, observe_lock)
+
+    wrapper.archi._barrier = threading.Barrier(2)
+    errors: list = []
+
+    # Thread A: overridden turn (provider + model specified → request-local view)
+    ta = threading.Thread(target=_drain, args=(wrapper, 301, "provX", "modX", errors))
+    # Thread B: default turn (no provider/model → shared pipeline's default LLM)
+    tb = threading.Thread(target=_drain, args=(wrapper, 302, None, None, errors))
+    ta.start()
+    tb.start()
+    ta.join(timeout=30)
+    tb.join(timeout=30)
+
+    assert not errors, f"stream turn raised: {errors!r}"
+    assert not ta.is_alive() and not tb.is_alive(), "a turn hung"
+
+    # Overridden request must see only the override LLM throughout the turn.
+    assert observations.get(301), "overridden request produced no observations"
+    assert all(llm is llm_x for llm in observations[301]), observations[301]
+
+    # Default request must see only the default LLM throughout the turn.
+    assert observations.get(302), "default request produced no observations"
+    assert all(llm is default_llm for llm in observations[302]), observations[302]
+    assert all(
+        llm.extra_kwargs == {"enable_thinking": False} for llm in observations[302]
+    )
