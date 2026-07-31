@@ -77,6 +77,55 @@ field names.
 - **WHEN** an integrator copies the example request body from the API reference
 - **THEN** it includes `client_sent_msg_ts` and `client_timeout`
 - **AND** the request is not rejected with HTTP 408 by the check at `app.py:1654`
+- **AND** the page states the example's authentication precondition, because every chat
+  route is wrapped in `require_auth` (`app.py:2729`): with
+  `services.chat_app.auth.enabled: true` the command receives `401` — or `302` when SSO is
+  on and anonymous access is blocked — and never reaches the handler, so "a request that
+  succeeds" is true only where auth is disabled or a session cookie is supplied
+- **AND** the page shows how to obtain that cookie for a basic-auth deployment, and states
+  that the SSO redirect flow cannot be completed with `curl`
+
+### Requirement: The step flags are documented by what they gate, not by their names
+
+`docs/docs/api_reference.md` SHALL describe `include_agent_steps` and `include_tool_steps` by
+the events each one actually controls. `include_agent_steps` gates the incremental answer
+text (`chunk`, `app.py:2365` and `:2399`); `include_tool_steps` gates the tool events **and**
+the reasoning events (`thinking_start` / `thinking_end`, `app.py:2345` and `:2359`). The page
+SHALL warn that the names invite the opposite reading.
+
+#### Scenario: Reasoning events are documented as tool-flag controlled
+
+- **WHEN** a reader consults either step flag
+- **THEN** the page states that `thinking_start` and `thinking_end` are gated by
+  `include_tool_steps`, not by `include_agent_steps`
+- **AND** it states that `include_agent_steps: false` suppresses the streamed answer text
+  while leaving reasoning events in place — failing twice for a caller who set it intending
+  to hide reasoning
+- **AND** it notes the resulting symptom is an answer arriving all at once in the `final`
+  event rather than an error, so the mistake does not announce itself
+- **AND** it states that reasoning cannot be suppressed independently of tool events through
+  this API
+
+### Requirement: The provider/model override is documented as an attempt, not a guarantee
+
+The API reference SHALL describe sending `provider` and `model` together as an override that
+is *attempted*, and SHALL document its three outcomes: applied; rejected with
+`{"type": "error", "status": 400}` and the stream ending (`app.py:2048`); or fallen back to
+the default pipeline after a `{"type": "warning", ...}` event (`app.py:2052`, `:2073`). It
+SHALL also record that an active pipeline exposing no `agent_llm` skips the override with
+neither error nor warning (`app.py:2055`).
+
+#### Scenario: The fallback path is documented
+
+- **WHEN** a reader consults the override behaviour
+- **THEN** the page states that a construction or pipeline-build failure yields a `warning`
+  event and lets the default pipeline answer, so the request still succeeds
+- **AND** it states that the only in-band signal is that `warning` event, which a client must
+  be reading for
+- **AND** it directs the caller to read the reported model back from the response instead of
+  inferring it from the request
+- **AND** `warning` appears in the streaming event-type table, so a client enumerating event
+  types does not treat it as unknown
 
 #### Scenario: The example does not carry a hard-coded timestamp
 

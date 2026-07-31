@@ -34,8 +34,8 @@ honour all of it — the last four fields are read only by the streaming endpoin
 | `is_refresh` | bool | no | Re-answer the previous turn instead of adding a new one. |
 | `provider` | string | stream only, **with `model`** | Override the LLM provider. Has no effect unless `model` is sent too — see [Overriding provider and model](#overriding-provider-and-model). Ignored entirely by `POST /api/get_chat_response`. |
 | `model` | string | stream only, **with `provider`** | Override the model. Has no effect unless `provider` is sent too — see [Overriding provider and model](#overriding-provider-and-model). Ignored entirely by `POST /api/get_chat_response`. |
-| `include_agent_steps` | bool | stream only | Include agent reasoning steps. Default `true`. Ignored by `POST /api/get_chat_response`. |
-| `include_tool_steps` | bool | stream only | Include tool invocations. Default `true`. Ignored by `POST /api/get_chat_response`. |
+| `include_agent_steps` | bool | stream only | Include the incremental **answer text** — the `chunk` events ([`app.py:2365`][chunkgate]). Default `true`. Does **not** gate reasoning. Ignored by `POST /api/get_chat_response`. |
+| `include_tool_steps` | bool | stream only | Include tool events (`tool_start`, `tool_output`, `tool_end`) **and reasoning events** (`thinking_start`, `thinking_end`, [`app.py:2345`][thinkgate]). Default `true`. Ignored by `POST /api/get_chat_response`. |
 
 !!! warning "Send both timing fields, and generate the timestamp fresh"
 
@@ -112,6 +112,30 @@ curl -sS http://localhost:7861/api/get_chat_response \
       }')"
 ```
 
+!!! note "It runs as-is only where authentication is disabled"
+
+    Every chat route is registered through `require_auth` ([`app.py:2729`][authwrap]), so with
+    `services.chat_app.auth.enabled: true` this command gets `401` — or a `302` to the login
+    page when SSO is on and anonymous access is blocked — instead of an answer. Nothing about
+    the request body is wrong in that case; it never reaches the handler.
+
+    Against a deployment with **basic auth** enabled, log in first and reuse the session
+    cookie (`/login` accepts a form-encoded `username` and `password`,
+    [`app.py:3213`][loginform], and exists only when auth is enabled):
+
+    ```bash
+    curl -sS -c jar.txt -X POST http://localhost:7861/login \
+      -d 'username=<user>&password=<password>'
+    curl -sS -b jar.txt http://localhost:7861/api/get_chat_response \
+      -H 'Content-Type: application/json' -d '<body as above>'
+    ```
+
+    With **SSO** the login is a browser redirect flow that curl cannot complete; copy the
+    session cookie out of an already-logged-in browser session instead.
+
+[authwrap]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2729
+[loginform]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L3213
+
 The body it builds has this shape. This is a **template, not valid JSON** — the placeholder
 is deliberately unquoted so that pasting it unedited fails in your own JSON parser rather
 than reaching the server, where a non-integer would surface as an opaque HTTP 500. Replace
@@ -149,12 +173,31 @@ they did not ask for.
 
 | Sent | Effect |
 |---|---|
-| `provider` + `model` | override applied for this request only |
+| `provider` + `model` | override **attempted** for this request only — may still fall back, see below |
 | `provider` alone | **ignored**, default pipeline answers |
 | `model` alone | **ignored**, default pipeline answers |
 
-If you need to know which model actually answered, read it from the response rather than
-assuming your override took.
+Sending both is necessary but not sufficient: the override is an attempt, and it has three
+distinct outcomes.
+
+| Outcome | What you receive |
+|---|---|
+| Applied | the answer, with the response's reported model set to `provider/model` |
+| Rejected — unknown provider/model, or overrides disabled | `{"type": "error", "status": 400, ...}` and the stream **ends** ([`app.py:2048`][ovrreject]) |
+| Fell back — provider construction or request-local pipeline build failed | `{"type": "warning", "message": "Using default model: …"}`, then the **default pipeline answers** ([`app.py:2052`][ovrwarn], [`:2073`][ovrwarn2]) |
+
+The fallback is the one to design for: the request succeeds, the stream looks normal, and the
+only signal that a different model answered is a `warning` event you have to be reading for.
+There is also a quieter case — if the active pipeline exposes no `agent_llm`, the override is
+skipped with no `error` and no `warning` at all ([`app.py:2055`][ovrguard]).
+
+So do not infer the answering model from your own request. Read the reported model back from
+the response, and treat a `warning` event as "my override did not take".
+
+[ovrreject]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2048
+[ovrwarn]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2052
+[ovrwarn2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2073
+[ovrguard]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2055
 
 [override]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2037
 
@@ -214,6 +257,32 @@ Each line is a JSON object with a `type` field. Event types:
 | `thinking_end` | Reasoning model thinking ends |
 | `final` | Final response with full message and metadata |
 | `error` | Error occurred |
+| `warning` | The request continued, but not as asked — e.g. an override fell back to the default model |
+
+!!! warning "The two step flags do not group events the way their names suggest"
+
+    Read this before using either flag to filter the stream. The grouping is by
+    **flag**, not by the sense of the flag's name:
+
+    | Flag | Actually gates |
+    |---|---|
+    | `include_agent_steps` | the incremental answer text — `chunk` events ([`app.py:2365`][chunkgate], [`:2399`][chunkgate2]) |
+    | `include_tool_steps` | `tool_start`, `tool_output`, `tool_end` **and** `thinking_start` / `thinking_end` ([`app.py:2345`][thinkgate], [`:2359`][thinkgate2]) |
+
+    So reasoning events are controlled by the **tool** flag. Setting
+    `include_agent_steps: false` to suppress reasoning does the opposite of what you
+    want twice over: the `thinking_*` events still arrive, and you silently stop
+    receiving streamed answer text. The `final` event still carries the complete
+    answer, so the loss shows up as an answer that appears all at once at the end
+    rather than as an error.
+
+    To suppress reasoning, set `include_tool_steps: false` — accepting that tool
+    events go with it. The two are not separable through this API.
+
+[chunkgate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2365
+[chunkgate2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2399
+[thinkgate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2345
+[thinkgate2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2359
 
 ### `POST /api/cancel_stream`
 

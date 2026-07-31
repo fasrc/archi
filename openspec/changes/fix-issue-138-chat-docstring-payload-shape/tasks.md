@@ -56,6 +56,23 @@
   `meta` line and no `error` event. An unscoped "errors arrive as events, not status codes"
   tells a client to disregard status codes, which turns a 401 into an apparently-successful
   stream. The page must direct callers to check the status **and** inspect events.
+- [x] 3.9 The step flags are described by the events they gate, not by their names:
+  `include_agent_steps` gates the answer `chunk` events (`app.py:2365`, `:2399`);
+  `include_tool_steps` gates the tool events **and** `thinking_start` / `thinking_end`
+  (`app.py:2345`, `:2359`). The page warns that setting `include_agent_steps: false` to hide
+  reasoning both fails to hide it and silently drops streamed answer text, and that the
+  symptom is a late-arriving `final` answer rather than an error.
+- [x] 3.10 The override is documented as *attempted*, with all three outcomes: applied;
+  rejected `{"type": "error", "status": 400}` with the stream ending (`app.py:2048`); or
+  fallen back to the default pipeline after a `{"type": "warning"}` event (`app.py:2052`,
+  `:2073`). The silent case — no `agent_llm` on the active pipeline (`app.py:2055`) — is
+  recorded too, and `warning` is added to the streaming event-type table.
+- [x] 3.11 The runnable example states its authentication precondition. Every chat route is
+  wrapped in `require_auth` (`app.py:2729`), so with `auth.enabled: true` the command gets
+  `401`/`302` and never reaches the handler — "a request that succeeds" holds only where auth
+  is disabled or a session cookie is passed. The basic-auth cookie flow is shown
+  (`/login` takes form-encoded `username`/`password`, `app.py:3213`) and the SSO case is named
+  as not completable with `curl`.
 
 ## 4. Ship (post-implementation, handled by the loop)
 
