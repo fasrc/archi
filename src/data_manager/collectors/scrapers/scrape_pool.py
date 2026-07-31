@@ -17,17 +17,80 @@ of and in addition to the global worker pool bound.
 sums the per-seed resource counts on the calling thread as futures complete. A
 seed whose crawl raises is isolated — the failure is logged and contributes zero
 while every other seed still runs.
+
+``host_key`` and ``interleave_by_host`` are the two pure functions the pool leans
+on, kept separate so their behavior is assertable without threads: the first
+decides *which* slot a seed contends for, the second decides *when* each seed is
+handed to the pool.
 """
 
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
+from itertools import zip_longest
 from urllib.parse import urlsplit
 
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def host_key(url):
+    """Return the canonical per-host slot key for ``url``.
+
+    The cap exists to be polite to a *server*, so every spelling that reaches the
+    same server must contend for the same slot. ``urlsplit(...).netloc`` does not
+    give that: it keeps letter case, an explicitly written port, and any
+    ``user:pw@`` prefix, so ``https://EXAMPLE.com/a``, ``https://example.com:443/b``
+    and ``https://example.com/c`` would take three separate semaphores and together
+    run three times the configured per-host concurrency at one host.
+
+    ``.hostname`` normalizes all three at once — it lowercases, drops userinfo, and
+    drops the port. Dropping the port is deliberate rather than incidental: a
+    non-default port is still the same machine, so ``example.com:8443`` must not buy
+    itself a second slot alongside ``example.com``. A seed with no parseable
+    hostname falls back to the raw string, which keeps the key stable and non-empty
+    so malformed seeds contend only with themselves instead of collapsing into one
+    shared ``""`` bucket.
+    """
+    parts = urlsplit(url)
+    return parts.hostname or parts.netloc or url
+
+
+def interleave_by_host(seeds):
+    """Reorder ``seeds`` round-robin across hosts, stable within each host.
+
+    A worker blocked in ``HostLimiter.acquire`` is still holding a thread in the
+    global pool. So with a host-grouped list — the shape the catalog actually
+    produces, with all 212 ``docs.rc.fas.harvard.edu`` seeds adjacent — the first
+    ``workers`` threads all take that host, ``per_host_workers`` of them run and the
+    rest block, and seeds for a completely idle host sit in the queue with no thread
+    free to pick them up. Throughput then depends on input order, and a mixed-host
+    run can crawl at nearly the per-host rate.
+
+    Rotating the submission order fixes that at the point where it is cheap: the
+    first ``n`` seeds dispatched span up to ``n`` distinct hosts, so pile-up on any
+    one host is bounded by how many of its seeds appear in the first window rather
+    than by how the list happened to be sorted. Relative order within a host is
+    preserved, and hosts are visited in first-appearance order, so the result is
+    fully deterministic. Keying on :func:`host_key` means spelling variants rotate as
+    one host, matching what the limiter will actually enforce.
+
+    This is intentionally not a fair scheduler. Per-host queues with slot-aware
+    dispatch would guarantee no worker ever blocks; that is a larger machine than
+    this phase needs, and it would trade the deterministic ordering above for
+    completion-order nondeterminism.
+    """
+    by_host = {}
+    for seed in seeds:
+        by_host.setdefault(host_key(seed), []).append(seed)
+
+    rotated = []
+    queues = list(by_host.values())
+    for row in zip_longest(*queues):
+        rotated.extend(seed for seed in row if seed is not None)
+    return rotated
 
 
 class HostLimiter:
@@ -78,11 +141,17 @@ def run_seeds(seeds, scrape_one, workers, per_host_workers):
     ``HostLimiter`` bounded by ``per_host_workers`` — so the per-host cap applies
     even when the global pool has idle capacity.
 
+    With more than one worker the seeds are dispatched round-robin across hosts
+    (see :func:`interleave_by_host`) so a host-grouped input list cannot starve the
+    other hosts. With ``workers`` of 1 that rotation is skipped and the input order
+    is preserved exactly: there is no shared pool to monopolize, and keeping
+    ``scrape_workers: 1`` a byte-for-byte replay of the old sequential path is worth
+    more than a reordering that could not help it.
+
     Per-seed failures are isolated: an exception raised by ``scrape_one`` is
     logged and counts as zero, leaving the rest of the batch untouched. The
     returned total is the exact sum of the successful per-seed counts, accumulated
-    on the calling thread as futures complete. With ``workers`` of 1 the seeds run
-    one at a time in their input order, reproducing the sequential path.
+    on the calling thread as futures complete.
 
     Exactly one summary line is logged once the pool drains, reporting the seed
     count, the effective (clamped) worker count and per-host cap, and the elapsed
@@ -90,12 +159,13 @@ def run_seeds(seeds, scrape_one, workers, per_host_workers):
     """
     seeds = list(seeds)
     workers = max(1, int(workers))
+    if workers > 1:
+        seeds = interleave_by_host(seeds)
     limiter = HostLimiter(per_host_workers)
     started = time.perf_counter()
 
     def _work(seed):
-        host = urlsplit(seed).netloc
-        with limiter.acquire(host):
+        with limiter.acquire(host_key(seed)):
             return scrape_one(seed)
 
     total = 0

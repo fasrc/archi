@@ -15,7 +15,12 @@ until a slot for that host is free, and leaving it releases the slot.
 import logging
 import threading
 
-from src.data_manager.collectors.scrapers.scrape_pool import HostLimiter, run_seeds
+from src.data_manager.collectors.scrapers.scrape_pool import (
+    HostLimiter,
+    host_key,
+    interleave_by_host,
+    run_seeds,
+)
 
 
 class _PeakTracker:
@@ -325,3 +330,153 @@ class TestRunSeedsSummary:
             run_seeds(seeds, scrape_one, workers=3, per_host_workers=3)
 
         assert len(self._summary_records(caplog)) == 1
+
+
+class TestHostKeyCanonicalization:
+    """Host slots key on a canonical hostname, not the raw ``netloc``.
+
+    ``urlsplit(...).netloc`` preserves letter case, an explicitly written port, and
+    any userinfo prefix, so ``https://EXAMPLE.com/a`` and ``https://example.com:443/b``
+    would each take a *different* semaphore and jointly exceed the configured
+    per-host cap against what is, to the remote server, one host.
+    """
+
+    def test_case_port_and_userinfo_collapse_to_one_key(self):
+        variants = [
+            "https://EXAMPLE.com/a",
+            "https://example.com:443/b",
+            "https://user:pw@example.com/c",
+            "https://example.com/d",
+        ]
+        assert {host_key(url) for url in variants} == {"example.com"}
+
+    def test_non_default_port_shares_the_host_slot(self):
+        """Politeness is per-server: a port variant must not buy a second slot."""
+        assert host_key("https://example.com:8443/x") == host_key(
+            "https://example.com/y"
+        )
+
+    def test_distinct_hosts_keep_distinct_keys(self):
+        assert host_key("https://a.example.edu/") != host_key("https://b.example.edu/")
+
+    def test_seed_without_a_hostname_falls_back_to_the_raw_string(self):
+        """A malformed seed still gets a stable, non-empty key of its own."""
+        assert host_key("not-a-url") == "not-a-url"
+
+    def test_spelling_variants_share_the_per_host_cap(self):
+        """per_host_workers=1 over four spellings of one host: never 2 in flight."""
+        seeds = [
+            "https://EXAMPLE.com/a",
+            "https://example.com:443/b",
+            "https://user:pw@example.com/c",
+            "https://example.com/d",
+        ]
+        tracker = _PeakTracker()
+
+        def scrape_one(seed):
+            with tracker.enter():
+                pass
+            return 1
+
+        total = run_seeds(seeds, scrape_one, workers=4, per_host_workers=1)
+
+        assert total == 4
+        assert tracker.peak == 1
+
+
+class TestFairHostScheduling:
+    """Dispatch order rotates across hosts so list grouping cannot starve a host.
+
+    A worker that blocks in ``limiter.acquire`` still occupies a slot in the global
+    pool. With a host-grouped seed list the first workers therefore all pile onto
+    the same host, and seeds for an idle host sit queued behind them with no thread
+    free to run them. Rotating the submission order bounds that pile-up to the
+    per-host cap without a scheduler rewrite.
+    """
+
+    def test_grouped_seeds_dispatch_round_robin(self):
+        seeds = [
+            "https://a.example.edu/1",
+            "https://a.example.edu/2",
+            "https://a.example.edu/3",
+            "https://b.example.edu/1",
+        ]
+        assert interleave_by_host(seeds) == [
+            "https://a.example.edu/1",
+            "https://b.example.edu/1",
+            "https://a.example.edu/2",
+            "https://a.example.edu/3",
+        ]
+
+    def test_relative_order_within_a_host_is_preserved(self):
+        """Rotation is stable: a host's own seeds keep their input sequence."""
+        seeds = [
+            "https://a.example.edu/1",
+            "https://b.example.edu/1",
+            "https://a.example.edu/2",
+            "https://a.example.edu/3",
+        ]
+        rotated = interleave_by_host(seeds)
+        assert [s for s in rotated if "a.example.edu" in s] == [
+            "https://a.example.edu/1",
+            "https://a.example.edu/2",
+            "https://a.example.edu/3",
+        ]
+
+    def test_rotation_keys_on_the_canonical_host(self):
+        """Spelling variants of one host rotate as that host, not as three."""
+        seeds = [
+            "https://EXAMPLE.com/1",
+            "https://example.com:443/2",
+            "https://other.example.edu/1",
+        ]
+        assert interleave_by_host(seeds) == [
+            "https://EXAMPLE.com/1",
+            "https://other.example.edu/1",
+            "https://example.com:443/2",
+        ]
+
+    def test_a_host_grouped_list_does_not_starve_a_later_host(self):
+        """workers=2, per-host cap 1: host b starts while host a is still crawling.
+
+        The barrier forces the overlap rather than hoping for it — without the
+        rotation both pool threads are consumed by host ``a`` (one running, one
+        blocked on its slot), host ``b`` never starts, and the barrier times out.
+        """
+        seeds = [
+            "https://a.example.edu/1",
+            "https://a.example.edu/2",
+            "https://a.example.edu/3",
+            "https://b.example.edu/1",
+        ]
+        two_hosts_live = threading.Barrier(2, timeout=5)
+        tracker = _PeakTracker(hold_iters=0)
+
+        def scrape_one(seed):
+            with tracker.enter():
+                if seed in ("https://a.example.edu/1", "https://b.example.edu/1"):
+                    two_hosts_live.wait()
+            return 1
+
+        total = run_seeds(seeds, scrape_one, workers=2, per_host_workers=1)
+
+        assert total == 4
+        assert tracker.peak == 2
+
+    def test_single_worker_preserves_exact_input_order(self):
+        """workers=1 stays the sequential escape hatch — no rotation applied."""
+        seeds = [
+            "https://a.example.edu/1",
+            "https://a.example.edu/2",
+            "https://b.example.edu/1",
+        ]
+        calls = []
+
+        def scrape_one(seed):
+            calls.append(seed)
+            return 1
+
+        total = run_seeds(seeds, scrape_one, workers=1, per_host_workers=4)
+
+        assert total == 3
+        assert calls == seeds
