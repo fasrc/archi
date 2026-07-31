@@ -1,7 +1,8 @@
 ## Context
 
 `get_chat_response` in `src/interfaces/chat_app/app.py` is the chat-app HTTP endpoint. Its
-docstring is the only integrator-facing description of the request contract. The docstring
+docstring was, before this change, the only integrator-facing description of the request
+contract; this change also publishes it in `docs/docs/api_reference.md`. The docstring
 (around `:4620-4634`) describes `last_message` as a flat two-element list
 (`["User", "hello"]`), but the request path consumes a list of pairs:
 
@@ -13,8 +14,10 @@ docstring is the only integrator-facing description of the request contract. The
 
 So the accepted shape is `[["User", "hello"]]`. A client built from the docstring sends the
 flat shape, `message[0]` is `"User"`, `tuple("User")` yields four characters, and the route
-raises `ValueError: too many values to unpack (expected 2)` → HTTP 500 (reproduced live
-2026-07-22 against dev `a8e06c79`). Both in-repo clients already send the nested shape:
+raises `ValueError: too many values to unpack (expected 2)` → HTTP 500 from
+`POST /api/get_chat_response` (reproduced live 2026-07-22 against dev `a8e06c79`). On the
+streaming endpoint the same exception is raised inside the generator and surfaces in-band as
+`{"type": "error", "status": 500}` under HTTP 200. Both in-repo clients already send the nested shape:
 `static/chat.js:266` (`last_message: history.slice(-1)` over `[sender, content]` pairs) and
 `openai_compat.py:242` (`last_message = [("user", query)]`).
 
@@ -29,9 +32,10 @@ The narrower statement that is actually true: the **request path** through this 
 not exercised. Importing the module executes its `def` statements, so signature lines
 register as covered, but the bodies of `_prepare_chat_context` (the `tuple(message[0])`
 unpack at `app.py:1633`) and `get_chat_response` are not reached by any unit test. New
-executable lines *there* would therefore land uncovered and drag the patch-coverage ratio
-down, which is why the payload validation below is deferred to a separate PR routed through
-a testable helper.
+executable lines *there* would therefore land uncovered unless the change brings tests that
+reach them, which is why the payload validation below is deferred to a separate PR. That PR
+must budget for the test work; it is **not** required to adopt any particular design to avoid
+it.
 
 This is a statement about where the tests currently reach, not a prohibition. A future
 contributor may add executable lines to this file, and should — provided they bring the
@@ -55,9 +59,10 @@ coverage with them. A docstring-only edit adds no executable lines either way.
 **Non-Goals:**
 - No runtime behavior change. The handler continues to read `message[0]` exactly as today.
 - No payload validation / 400-on-malformed handling. That is a real, defensible follow-on,
-  but it is a behavior change on a request path no unit test currently reaches, so it needs
-  a separate PR that routes the check through a testable helper and brings its own coverage.
-  It is explicitly excluded here.
+  but it is a behavior change on a request path no unit test currently reaches, so it needs a
+  separate PR that brings its own coverage. How it gets that coverage — a testable helper, or a
+  direct test of the request path — is the follow-up's call, not this change's. It is
+  explicitly excluded here.
 - No changes to the in-repo clients (they already send the correct shape).
 
 ## Decisions
@@ -66,7 +71,8 @@ coverage with them. A docstring-only edit adds no executable lines either way.
 one both real clients already send and the one `_prepare_chat_context` unpacks; that is the
 de-facto contract. The docstring is the artifact that is wrong. Aligning the docstring to
 the code (rather than loosening the code to accept the flat shape) preserves existing
-callers and avoids touching a coverage-trapped file.
+callers, and keeps the change free of executable edits — which is a scope choice, not a
+coverage prohibition (see the corrected note above and the alternative below).
 - *Alternative considered — make the handler also accept the flat shape:* rejected, but **not**
   on coverage grounds. An earlier revision of this line said it "fails diff-cover", which
   contradicts the corrected coverage note above: diff coverage is computed per changed
@@ -79,10 +85,22 @@ callers and avoids touching a coverage-trapped file.
 - *Alternative considered — add 400 validation now:* rejected for this change; deferred to a
   separate PR per the issue's scope decision.
 
-**Decision: Edit only the `last_message` description lines** (around `:4626-4628`), keeping
-the surrounding docstring style. State that `last_message` is a list containing a single
-`[sender, message]` pair, give the example `[["User", "How do I submit a job?"]]`, and note
-that only the first pair is read.
+**Decision: in `app.py`, edit only the `last_message` description lines** (around
+`:4626-4628`), keeping the surrounding docstring style. State that `last_message` is a list
+containing a single `[sender, message]` pair, give the example
+`[["User", "How do I submit a job?"]]`, and note that only the first pair is read.
+
+**Decision: also publish the contract in `docs/docs/api_reference.md`** — recorded here as a
+decision, not just as a goal, because the earlier revision of this section said "edit only the
+three docstring lines" while the change ships ~300 lines to that page. The repository requires
+user-facing API changes to be documented in `docs/`, and an integrator is far likelier to read
+that page than a docstring, so the page is part of the deliverable rather than an extra.
+
+Scoping it explicitly matters for **rollback**: reverting this change means reverting both
+edits, and the migration plan says so. It also bounds the page — it documents the request
+contract (shape, timing fields, override behaviour, error channels, stream events) and is not
+a general rewrite of the API reference. Review rounds 3–8 expanded that section considerably;
+the boundary above is what keeps "document the contract" from becoming "document the handler".
 
 ## Risks / Trade-offs
 

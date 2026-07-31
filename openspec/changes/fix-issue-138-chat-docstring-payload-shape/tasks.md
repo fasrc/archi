@@ -19,8 +19,12 @@
 - [x] 2.3 Publish the same contract in `docs/docs/api_reference.md`, as the repository
   requires for user-facing API changes: the request-body table, the `last_message` nesting
   rule with the failure modes of the flat form, the two timing fields that are required in
-  practice (omitting either returns HTTP 408, tracked as #175), and the four override fields
-  that only the streaming endpoint honours.
+  practice, and the four override fields that only the streaming endpoint honours. The
+  rejection is **reported differently by each endpoint** — HTTP 408 from
+  `POST /api/get_chat_response`, but HTTP 200 plus an in-band `{"type": "error", "status": 408}`
+  event from the streaming endpoint (see 3.6, which is the authoritative statement; an earlier
+  revision of this task said "omitting either returns HTTP 408" with no endpoint qualifier).
+  The underlying handler bug is tracked as #175.
 
 ## 3. Verify against acceptance criteria
 
@@ -32,8 +36,10 @@
   `source ~/miniforge3/etc/profile.d/conda.sh && conda activate archi && bash scripts/gate.sh`
   (a documentation-only edit adds no executable lines, so diff-cover has nothing to fail on).
 - [x] 3.4 The published example in `docs/docs/api_reference.md` is a request that actually
-  succeeds — it includes `client_sent_msg_ts` and `client_timeout`, without which the handler
-  returns HTTP 408. Verify the field table marks both as required in practice, and marks
+  succeeds — it includes `client_sent_msg_ts` and `client_timeout`, without which the request
+  is rejected on the shared timeout check (reported as HTTP 408 by
+  `POST /api/get_chat_response`, and in-band under HTTP 200 by the streaming endpoint — see
+  3.6). Verify the field table marks both as required in practice, and marks
   `provider` / `model` / `include_agent_steps` / `include_tool_steps` as stream-only.
 - [x] 3.5 The runnable example **generates** `client_sent_msg_ts` instead of hard-coding an
   epoch literal. A literal passes review on the day it is written and silently rots: the
@@ -100,6 +106,21 @@
   `POST /api/get_chat_response`, in-band `{"type": "error", "status": 500}` under HTTP 200 for
   the streaming endpoint (`app.py:2568`). The two-character-sender case succeeds silently on
   both.
+
+- [x] 3.17 **Systematic pass, replacing round-by-round patching.** Rounds 7 and 8 each found one
+  missing row in the streaming event table (`chunk`, then `tool_end`) — the same defect twice,
+  because the first was fixed as an instance rather than as a class. Two structural fixes:
+  - The event table is now **derived from the handler**, listing every `"type"` the streaming
+    generator yields and excluding the ones appended to `trace_events` (`text`, `usage`). The
+    page carries the one-line command to re-derive it, so the next editor checks the code rather
+    than trusting the table. Derivation found `tool_end` missing and confirmed the other ten.
+  - All four change artifacts were swept for the known defect classes at once — endpoint-neutral
+    status claims, closed enumerations, stale scope claims, coverage-as-prohibition. That found
+    four contradictions **no review round had flagged**: `proposal.md` and `design.md` both still
+    called the docstring "the only integrator-facing description of the contract" (falsified by
+    this very change adding the API page); `design.md` still gave "avoids touching a
+    coverage-trapped file" as a decision rationale; and the helper-only prescription removed from
+    `proposal.md` survived in two further places in `design.md`.
 
 ## 4. Ship (post-implementation, handled by the loop)
 

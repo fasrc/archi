@@ -6,11 +6,15 @@ list (`["User", "hello"]`), but the handler unpacks the **first element** of `la
 as a `(sender, content)` pair (`_prepare_chat_context`, `app.py:1633`:
 `sender, content = tuple(message[0])`). A client built from the docstring sends the flat
 shape, `message[0]` becomes the string `"User"`, `tuple("User")` yields four characters, and
-the route raises `ValueError: too many values to unpack (expected 2)` → HTTP 500. This was
-reproduced live on 2026-07-22 against a dev deployment at `a8e06c79`: all five queries built
+the route raises `ValueError: too many values to unpack (expected 2)` → HTTP 500 from
+`POST /api/get_chat_response` (the streaming endpoint reports the same failure in-band, under
+HTTP 200 — see the API reference). This was reproduced live on 2026-07-22 against a dev
+deployment at `a8e06c79`: all five queries built
 from the docstring returned 500; the same queries with `[["User", ...]]` succeeded. The
-docstring is the only integrator-facing description of this endpoint's contract, so a wrong
-docstring is a direct correctness bug for anyone integrating against it.
+docstring was, before this change, the only integrator-facing description of this endpoint's
+contract, so a wrong docstring is a direct correctness bug for anyone integrating against it.
+This change also publishes the contract in `docs/docs/api_reference.md`, which is where an
+integrator is likelier to look — so the docstring stops being the single point of failure.
 
 ## What Changes
 
@@ -20,9 +24,14 @@ docstring is a direct correctness bug for anyone integrating against it.
   pair** (e.g. `[["User", "How do I submit a job?"]]`), and only the first pair is read.
 - No executable-code change. This is a documentation-accuracy fix only.
 - **Out of scope (explicitly deferred):** changing the handler to validate the payload and
-  return HTTP 400 instead of an unhandled 500. That is a behavior change in a
-  coverage-trapped file and must ship as a separate PR routing validation through a tested
-  helper module.
+  return HTTP 400 instead of an unhandled 500. That is a runtime behaviour change and ships as
+  a separate PR.
+  - An earlier revision of this bullet also *required* that the follow-up route validation
+    through a tested helper module. That prescription is withdrawn: it rested on the
+    since-corrected belief that executable edits to this file cannot clear the coverage gate.
+    Diff coverage is computed per changed executable line, so a direct test of the request
+    path is equally viable — see the coverage note below and `design.md`. The follow-up should
+    pick its own design; this proposal defers the work, it does not dictate the shape.
 
 ## Capabilities
 

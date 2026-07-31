@@ -188,28 +188,36 @@ they did not ask for.
 | `model` alone | **ignored**, default pipeline answers |
 
 Sending both is necessary but not sufficient. **Treat the override as a request, not a
-setting**: the only reliable way to know which model answered is to read the reported model
-back off the response. Everything below is why.
+setting**: the only reliable way to know which model answered is to read it back off the
+`final` event's **`model_used`** field ([`app.py:2538`][modelused]). Note that `final` carries
+*two* model fields — `model` comes from the pipeline output's metadata, while `model_used` is
+the request-local identity that reflects whether the override actually took. Comparing against
+`model` will not tell you that. Everything below is why it matters.
 
 The override is applied only if the LLM is constructed *and* a request-local pipeline view is
 built from it, under a guard that also requires the active pipeline to expose an `agent_llm`
-([`app.py:2055`][ovrguard]). Any step of that failing leaves the **default pipeline** to
-answer, and how you find out — if at all — depends on how it failed:
+([`app.py:2055`][ovrguard]). Failures divide into two kinds — those that let the **default
+pipeline** answer, and those that **end the stream with no answer at all** — and how you find
+out differs again:
 
-| How you find out | Examples (not exhaustive) |
-|---|---|
-| `{"type": "error", "status": 400}` and the stream **ends** | a construction-time `ValueError` — overrides disabled, or a provider name that does not resolve ([`app.py:2048`][ovrreject]) |
-| `{"type": "warning", "message": "Using default model: …"}`, then the default answers | most construction failures, and a failed request-local pipeline build ([`app.py:2052`][ovrwarn], [`:2073`][ovrwarn2]) |
-| **Nothing at all** — no `error`, no `warning` | `_create_provider_llm` returning falsey rather than raising, which is what an `ImportError` does ([`app.py:1611`][ovrimport]); or an active pipeline with no `agent_llm` ([`app.py:2055`][ovrguard]) |
-| An in-band `{"type": "error", "status": 500}` *mid-answer* | a model string the provider builds happily and rejects on use — `get_chat_model` does not check the provider's catalogue, so an unknown model ID for OpenAI or OpenRouter surfaces at invocation, not at construction ([`app.py:2568`][outerr]) |
+| Do you still get an answer? | How you find out | Examples (not exhaustive) |
+|---|---|---|
+| **No** — the stream ends | `{"type": "error", "status": 400}` | a construction-time `ValueError` — overrides disabled, or a provider name that does not resolve ([`app.py:2048`][ovrreject]) |
+| **No** — the stream ends mid-answer | in-band `{"type": "error", "status": 500}` | a model string the provider builds happily and rejects on use — `get_chat_model` does not check the provider's catalogue, so an unknown model ID for OpenAI or OpenRouter surfaces at invocation, not at construction ([`app.py:2568`][outerr]) |
+| **Yes** — from the default pipeline | `{"type": "warning", "message": "Using default model: …"}` | most construction failures, and a failed request-local pipeline build ([`app.py:2052`][ovrwarn], [`:2073`][ovrwarn2]) |
+| **Yes** — from the default pipeline | **nothing at all**: no `error`, no `warning` | `_create_provider_llm` returning falsey rather than raising, which is what an `ImportError` does ([`app.py:1611`][ovrimport]); or an active pipeline with no `agent_llm` ([`app.py:2055`][ovrguard]) |
 
-Two consequences worth designing for. **A silent fallback is a normal-looking success** — the
-answer arrives, nothing is flagged, and only the reported model differs from what you asked
-for. And **`400` is not the failure mode for a bad model ID**; a typo'd model name typically
-reaches the provider and comes back as an in-band `500` partway through the stream.
+So "the override failed" does **not** imply "the default answered" — the first two rows
+terminate rather than fall back, and a client that assumes an answer is always coming will wait
+for a `final` event that never arrives.
 
-So do not infer the answering model from your own request. Read it back from the response, and
-treat a `warning` event as "my override did not take".
+Two more consequences worth designing for. **A silent fallback is a normal-looking success** —
+the answer arrives, nothing is flagged, and only `model_used` differs from what you asked for.
+And **`400` is not the failure mode for a bad model ID**; a typo'd model name typically reaches
+the provider and comes back as an in-band `500` partway through the stream.
+
+So do not infer the answering model from your own request. Read `final.model_used`, and treat a
+`warning` event as "my override did not take".
 
 [ovrreject]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2048
 [ovrwarn]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2052
@@ -219,6 +227,13 @@ treat a `warning` event as "my override did not take".
 [outerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2568
 [legacygate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2386
 [chunkyield]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2368
+[evmeta]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4742
+[evtoolstart]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2299
+[evtooloutput]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2312
+[evtoolend]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2326
+[evfinal]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2523
+[everror]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2024
+[traceusage]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2499
 [chunkyield2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2410
 [traceevent]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2377
 [stepemit]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1701
@@ -281,29 +296,50 @@ Each line is a JSON object with a `type` field. Event types:
 
 | Type | Description |
 |------|-------------|
-| `meta` | Stream metadata (sent first, includes padding) |
-| `chunk` | **The incremental answer text.** This is the event carrying the response as it is produced ([`app.py:2368`][chunkyield], [`:2410`][chunkyield2]) — gated by `include_agent_steps` |
-| `tool_start` | Agent is invoking a tool |
-| `tool_output` | Tool result |
-| `thinking_start` | Reasoning model thinking begins |
-| `thinking_end` | Reasoning model thinking ends |
-| `final` | Final response with full message and metadata |
-| `error` | Error occurred |
-| `warning` | The request continued, but not as asked — e.g. an override fell back to the default model |
-| `step` | Legacy step event from a non-agent pipeline, carrying a `step_type` such as `tool_call` or `tool_result` ([`app.py:1701`][stepemit]) |
+| Type | Gated by | Description |
+|------|---|-------------|
+| `meta` | — | Stream metadata, sent first; includes padding ([`app.py:4742`][evmeta]) |
+| `chunk` | `include_agent_steps` | **The incremental answer text** — the event carrying the response as it is produced ([`app.py:2368`][chunkyield], [`:2410`][chunkyield2]) |
+| `tool_start` | `include_tool_steps` | Agent is invoking a tool ([`:2299`][evtoolstart]) |
+| `tool_output` | `include_tool_steps` | Tool result ([`:2312`][evtooloutput]) |
+| `tool_end` | `include_tool_steps` | Tool invocation finished, with its completion status and duration ([`:2326`][evtoolend]) |
+| `thinking_start` | `include_tool_steps` | Reasoning begins ([`:2339`][thinkgate]) |
+| `thinking_end` | `include_tool_steps` | Reasoning ends ([`:2351`][thinkgate2]) |
+| `step` | `include_tool_steps` | Legacy step event from a non-agent pipeline, carrying a `step_type` such as `tool_call` or `tool_result` ([`:1707`][stepemit]) |
+| `final` | — | Final response with the full message and metadata ([`:2523`][evfinal]) |
+| `warning` | — | The request continued, but not as asked — e.g. an override fell back to the default model ([`:2053`][ovrwarn]) |
+| `error` | — | A failure, carrying its own `status` ([`:2024`][everror]) |
 
-Treat this as the set you will encounter rather than a closed enumeration: which events a
-pipeline emits depends on the pipeline, so **ignore unknown `type` values rather than
-failing on them** — while still handling `chunk`, which is where the answer arrives.
+That table is **derived from the handler rather than maintained by hand** — it is every
+`"type"` the streaming generator yields. To re-derive it after a change, list the yielded
+dict literals and exclude the ones appended to `trace_events`:
 
-!!! note "`text` is a trace event, not a stream event"
+```bash
+grep -n '"type":' src/interfaces/chat_app/app.py
+```
 
-    `text` is the pipeline's *internal* output type. The dispatch converts it to a `chunk`
-    event on the wire ([`app.py:2362-2368`][chunkyield]) and records a separate `text` entry
-    in the request trace ([`:2377`][traceevent]), which you read back through
-    `GET /api/trace/<trace_id>` — it is never emitted on the NDJSON stream. Earlier revisions
-    of this table listed `text` and omitted `chunk`, which is the wrong way round for anyone
-    parsing the stream.
+A match reaches the wire only if its dict is `yield`ed. Two cases the grep does not settle on
+its own: a dict appended to `trace_events` is trace-only (`text`, `usage`), and a dict bound to
+a variable first — `start_event = {...}` … `yield start_event` for `tool_start` — is on the
+wire despite no `yield` on the matching line. Check the enclosing statement for each hit.
+
+Even so, **ignore unknown `type` values rather than failing on them** — a pipeline may emit
+something not listed here — while still handling `chunk`, which is where the answer arrives.
+
+!!! note "`text` and `usage` are trace events, not stream events"
+
+    Two types are recorded in the request trace and **never** emitted on the NDJSON stream, so
+    you read them back through `GET /api/trace/<trace_id>` rather than by parsing the response:
+
+    - `text` — the pipeline's *internal* output type. The dispatch converts it into the `chunk`
+      event on the wire ([`app.py:2362-2368`][chunkyield]) and records `text` separately in the
+      trace ([`:2377`][traceevent]).
+    - `usage` — token accounting ([`:2499`][traceusage]).
+
+    Earlier revisions of this table listed `text` and omitted `chunk`, which is the wrong way
+    round for anyone parsing the stream. If you are matching the handler's
+    `elif event_type == "text"` branch against this table, note that the branch names the
+    *input* it consumes, not the event it emits.
 
 !!! warning "The two step flags do not group events the way their names suggest"
 
