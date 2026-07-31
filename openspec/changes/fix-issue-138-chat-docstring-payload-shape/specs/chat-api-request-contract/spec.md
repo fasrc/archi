@@ -97,6 +97,18 @@ field names.
 - **AND** it warns that a client checking only the HTTP status will read a failed request as
   a successful stream
 
+#### Scenario: Pre-stream failures still report an ordinary HTTP status
+
+- **WHEN** a streaming request fails *before* the response is constructed
+  (`app.py:4768`) — an unauthenticated caller stopped by the `require_auth` wrapper, or a
+  request omitting `client_id` (`app.py:4730`)
+- **THEN** the documentation states that the failure arrives as a real HTTP status — `401`
+  or a `302` redirect to login for authentication, `400` for the missing `client_id` — with
+  no `meta` line and no `error` event, because the generator never runs
+- **AND** the event-channel warning is scoped to failures raised *after* the stream opens,
+  so the guidance is to check the HTTP status **and** inspect events — never to disregard
+  status codes, which would make a client swallow a 401 as a successful stream
+
 #### Scenario: `provider` and `model` are documented as jointly required
 
 - **WHEN** a reader consults the override fields

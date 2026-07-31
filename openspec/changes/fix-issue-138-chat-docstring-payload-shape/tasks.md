@@ -49,6 +49,13 @@
 - [x] 3.7 The page states that `provider` and `model` are **jointly required** — the override
   is gated on `if provider and model` (`app.py:2037`), so one without the other silently
   leaves the default pipeline in place.
+- [x] 3.8 The HTTP-200 warning is **scoped to failures raised after the stream opens**. The
+  boundary is the `Response(stream_with_context(...))` construction at `app.py:4768`, not the
+  kind of error: `require_auth` returns 401 (or a 302 redirect to login) before the route
+  body runs, and a missing `client_id` returns 400 at `app.py:4730` — all three with no
+  `meta` line and no `error` event. An unscoped "errors arrive as events, not status codes"
+  tells a client to disregard status codes, which turns a 401 into an apparently-successful
+  stream. The page must direct callers to check the status **and** inspect events.
 
 ## 4. Ship (post-implementation, handled by the loop)
 

@@ -169,19 +169,38 @@ This is the endpoint that honours `provider`, `model`, `include_agent_steps` and
 `include_tool_steps`; the non-streaming one ignores all four. `provider` and `model` must
 be sent [together](#overriding-provider-and-model) or neither takes effect.
 
-!!! warning "A failed request still returns HTTP 200"
+!!! warning "Once the stream opens, failures arrive as events — not as status codes"
 
-    Errors on this endpoint arrive **as events, not as status codes**. The response is
-    opened before the request is validated, so a rejection is reported as HTTP 200, an
-    opening `meta` line, then an `error` event carrying the real status:
+    This endpoint has **two** error channels. Which one you get depends on whether the
+    failure happens before or after the response is constructed at
+    [`app.py:4768`][streamopen] — not on the kind of error.
+
+    **Before the stream opens — an ordinary HTTP status.** Check these as you would on any
+    endpoint:
+
+    | Failure | Status |
+    |---|---|
+    | Not authenticated, SSO on and anonymous access blocked | **302** redirect to login |
+    | Not authenticated, otherwise | **401** `{"error": "Unauthorized"}` |
+    | `client_id` missing ([`app.py:4730`][clientid]) | **400** `{"error": "client_id missing"}` |
+
+    **After the stream opens — HTTP 200 plus an event.** The status line is already on the
+    wire, so a failure inside the generator can only be reported in-band: the opening `meta`
+    line, then
 
     ```json
     {"type": "error", "status": 408, "message": "..."}
     ```
 
-    Do not treat `200 OK` as success here. Read the events and check for `type: "error"`,
-    whose `status` field holds what the non-streaming endpoint would have returned as the
-    HTTP status.
+    The timeout rejection described above is in this second group.
+
+    A correct client therefore does **both**: check the HTTP status first, and — when it is
+    `200` — still inspect the events for `type: "error"`, whose `status` field holds what the
+    non-streaming endpoint would have returned. Treating `200 OK` alone as success misses the
+    second group; ignoring the status code misses the first.
+
+[streamopen]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4768
+[clientid]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4730
 
 Each line is a JSON object with a `type` field. Event types:
 
