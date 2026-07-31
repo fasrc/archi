@@ -53,13 +53,19 @@ on:
   # hourly sweep, and worse, a failed rerun leaves ready-to-merge advertised for up
   # to an hour. These are the two workflows that produce PR checks here.
   #
-  # NOT check_suite: GitHub suppresses that event for check suites created by
-  # GitHub Actions as a recursion guard, and these are exactly that. workflow_run
-  # is the mechanism that actually fires for Actions-produced checks.
-  # `requested` and `in_progress`, not just `completed`: a manual RERUN turns a
-  # green check pending the moment the run is queued, so the PR stops satisfying
-  # CLEAN right then. Waiting for `completed` would leave a stale ready-to-merge
-  # advertised for the entire rerun — revoke when the predicate first changes.
+  # NOT check_suite. GitHub's events reference: "To prevent recursive workflows,
+  # this event does not trigger workflows if the check suite was created by GitHub
+  # Actions or if the check suite's head SHA is associated with GitHub Actions."
+  # These check suites are exactly that, so check_suite would never fire for them;
+  # workflow_run is the mechanism that does.
+  #
+  # Three activity types, because a RERUN turns a green check pending and the PR
+  # stops satisfying CLEAN before that rerun finishes — waiting only for
+  # `completed` would leave a stale ready-to-merge advertised for its whole
+  # duration. `in_progress` is the type that covers reruns: GitHub documents that
+  # "the `requested` activity type does not occur when a workflow is re-run".
+  # `requested` is still worth having for a NEW run, where it fires at queue time
+  # and so lands earlier than `in_progress` on a busy runner.
   workflow_run:
     workflows: [gate, "PR Preview"]
     types: [requested, in_progress, completed]
