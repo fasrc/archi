@@ -4624,8 +4624,9 @@ class FlaskAppWrapper(object):
         requestion with
 
             conversation_id: Either None or an integer
-            last_message:    list of length 2, where the first element is "User"
-                             and the second element contains their message.
+            last_message:    list containing a single [sender, message] pair,
+                             e.g. [["User", "How do I submit a job?"]]. Only
+                             the first pair is read.
 
         Returns:
             A json with a response (html formatted plain text string) and a
