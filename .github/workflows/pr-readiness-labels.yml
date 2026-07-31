@@ -5,8 +5,10 @@
 # genuinely ready to merge. On 2026-07-31 that hid a single deleted symlink
 # (issue #168) which had left 6 of 7 open PRs unmergeable while every check
 # stayed green and the nightly kept answering review findings that could never
-# land. Labels are the only readiness signal the index renders, so this
-# reconciles two of them on every event that can change the answer.
+# land. Labels are the only readiness signal the index renders, so this reconciles
+# two of them on every event GitHub EXPOSES that can change the answer — plus an
+# hourly sweep, which is load-bearing rather than decorative because GitHub emits
+# no event at all when a review thread is resolved.
 #
 # WHY EVERY RUN SWEEPS EVERY OPEN PR, not just the one that triggered it:
 # merging PR A is what creates the conflict on PRs B..F. The chips that need
@@ -38,6 +40,18 @@ on:
     types: [submitted, dismissed]
   pull_request_review_comment:
     types: [created, deleted]
+  # mergeStateStatus folds in CHECK state, so a check finishing — or a rerun of a
+  # previously green check going red — changes the predicate while emitting no
+  # pull_request event at all. Without this, a green PR stays unlabelled until the
+  # hourly sweep, and worse, a failed rerun leaves ready-to-merge advertised for up
+  # to an hour. These are the two workflows that produce PR checks here.
+  #
+  # NOT check_suite: GitHub suppresses that event for check suites created by
+  # GitHub Actions as a recursion guard, and these are exactly that. workflow_run
+  # is the mechanism that actually fires for Actions-produced checks.
+  workflow_run:
+    workflows: [gate, "PR Preview"]
+    types: [completed]
   schedule:
     # Hourly backstop, off the hour to avoid the rush. Still load-bearing: GitHub
     # emits NO workflow event when a review thread is RESOLVED, so resolution is

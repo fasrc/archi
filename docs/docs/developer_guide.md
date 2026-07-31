@@ -275,8 +275,9 @@ Reconciles the `ready-to-merge` and `conflicts` labels on every open PR so the P
 index reflects mergeability, which GitHub itself never renders there.
 
 Runs on push to `dev`, on PR lifecycle events, on review submissions and inline
-review comments, hourly, and on manual dispatch. GitHub emits **no** workflow event
-when a review thread is *resolved*, so the hourly sweep is what picks resolution up.
+review comments, on completion of the `gate` and `PR Preview` workflows, hourly, and
+on manual dispatch. GitHub emits **no** workflow event when a review thread is
+*resolved*, so the hourly sweep is what picks resolution up.
 All the logic lives in `scripts/ci/pr_readiness_labels.sh` (19-case suite wired into
 `scripts/gate.sh`); the workflow is only the trigger surface. Run it yourself with:
 
@@ -298,13 +299,20 @@ Four design notes worth knowing before changing it:
 
 - **Every run sweeps every open PR**, not just the one that triggered it. Merging PR
   A is what conflicts PRs B–F, so the chips needing revocation are on the PRs that
-  did *not* change. This also makes a run idempotent and safe to cancel.
+  did *not* change. This also makes a run idempotent.
+- **Sweeps serialize; they are not cancelled.** The workflow sets
+  `cancel-in-progress: false` deliberately. A cancelled run can have a label write
+  already in flight, which may land *after* the replacement run wrote from a newer
+  snapshot — persisting the stale decision until the next sweep.
 - **Granting is conservative, revocation is unconditional.** A stale green chip is
   worse than no chip.
-- **`UNKNOWN` mergeability is skipped, never guessed.** GitHub computes mergeability
-  lazily and reports `UNKNOWN` until it lands — which is exactly the state right
-  after a push to `dev`. The script re-queries a few times, since querying is what
-  prompts the computation.
+- **`UNKNOWN` mergeability is never guessed — and never left advertised.** GitHub
+  computes mergeability lazily and reports `UNKNOWN` until it lands, which is exactly
+  the state right after a push to `dev`. The script re-queries a few times, since
+  querying is what prompts the computation. If it is still unknown, the PR
+  *revokes* any `ready-to-merge` it holds (readiness that cannot be verified must not
+  be asserted) and asserts nothing else — no `conflicts` either, since that is
+  equally unverified.
 
 The predicate keys on GitHub's `isOutdated` rather than `isResolved` because review
 threads in this repo are not marked resolved, so an `isResolved` predicate would
