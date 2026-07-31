@@ -274,17 +274,24 @@ Triggered on push to `main`; rebuilds and pushes base images when requirements o
 Reconciles the `ready-to-merge` and `conflicts` labels on every open PR so the PR
 index reflects mergeability, which GitHub itself never renders there.
 
-Every input to the predicate has an event, and the workflow subscribes to all of them:
+The workflow subscribes to every event Actions can be triggered by that changes the
+answer:
 
 | Trigger | Why it changes the answer |
 |---------|---------------------------|
 | `push` to `dev` | Merging one PR is what conflicts the others |
 | `pull_request` (incl. `edited`, `labeled`/`unlabeled`) | Retargeting changes the base; a hand-edited chip needs correcting |
 | `pull_request_review`, `pull_request_review_comment` | A new finding appears |
-| `pull_request_review_thread` (`resolved`/`unresolved`) | Resolution *is* the finding signal |
 | `workflow_run` on `gate` / `PR Preview` | Checks feed `mergeStateStatus`; a rerun turns a green check pending |
-| `schedule` (hourly) | Backstop for a missed delivery, a failed run, or mergeability still `UNKNOWN` |
+| `schedule` (hourly) | The **only** observer of thread resolution — plus a missed delivery, a failed run, or mergeability still `UNKNOWN` |
 | `workflow_dispatch` | Manual, with a `dry_run` input |
+
+One input has no trigger: **resolving or un-resolving a review thread.**
+`pull_request_review_thread` is a real *webhook* event but is not among the events
+that can start a workflow, so the hourly sweep is what picks resolution up. Adding it
+to the trigger list does not silently no-op — it makes the workflow file invalid, and
+GitHub then records a startup failure on every push. Check the Actions events
+reference, not the webhooks reference; they are different sets.
 
 All the logic lives in `scripts/ci/pr_readiness_labels.sh` (22-case suite wired into
 `scripts/gate.sh`); the workflow is only the trigger surface. Run it yourself with:
