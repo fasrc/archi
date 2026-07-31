@@ -6,9 +6,11 @@
 # (issue #168) which had left 6 of 7 open PRs unmergeable while every check
 # stayed green and the nightly kept answering review findings that could never
 # land. Labels are the only readiness signal the index renders, so this reconciles
-# two of them on every event that can change the answer, plus an hourly sweep as a
-# genuine backstop — for an event delivery that never arrived, a run that failed, or
-# mergeability still UNKNOWN when the previous sweep gave up.
+# two of them on every event Actions can actually be triggered by, plus an hourly
+# sweep — which is load-bearing, not decorative, because thread RESOLUTION has no
+# Actions trigger at all (see the pull_request_review_comment block below), and
+# because event deliveries can be missed, runs can fail, and mergeability can still
+# be UNKNOWN when a sweep gives up.
 #
 # WHY EVERY RUN SWEEPS EVERY OPEN PR, not just the one that triggered it:
 # merging PR A is what creates the conflict on PRs B..F. The chips that need
@@ -56,15 +58,21 @@ on:
     types: [submitted, dismissed]
   pull_request_review_comment:
     types: [created, deleted]
-  # RESOLUTION has its own event too. An earlier version of this file asserted that
-  # GitHub emits no event when a review thread is resolved, and leaned on the hourly
-  # sweep for it. That was simply wrong: `pull_request_review_thread` exists with
-  # `resolved` and `unresolved` activity types. It matters directly here because the
-  # predicate reads `isResolved` — UNRESOLVING a thread re-introduces a live finding
-  # on a PR that may be holding the chip, and without this the chip stayed wrong for
-  # up to an hour.
-  pull_request_review_thread:
-    types: [resolved, unresolved]
+  # NO TRIGGER FOR THREAD RESOLUTION. `pull_request_review_thread` (activity types
+  # `resolved` / `unresolved`) is a real WEBHOOK event, but it is NOT among the events
+  # that can start a workflow — the Actions events reference lists only
+  # pull_request, pull_request_review, pull_request_review_comment and
+  # pull_request_target in that family. Adding it here does not merely fail to fire:
+  # it makes the whole workflow file invalid, and GitHub then records a
+  # startup_failure for EVERY push, including branches this file's push filter
+  # excludes. That is exactly what happened — the workflow was dead on dev until it
+  # was removed again, so do not re-add it without checking the Actions list rather
+  # than the webhook list. The two are not the same set.
+  #
+  # Consequence, stated plainly: resolving or un-resolving a thread changes the
+  # predicate with no event to observe it, so the hourly sweep is the only thing that
+  # picks it up. Issue #169 removes the need by making resolution the authoritative
+  # signal and having the review loop resolve threads as it addresses them.
   # mergeStateStatus folds in CHECK state, so a check finishing — or a rerun of a
   # previously green check going red — changes the predicate while emitting no
   # pull_request event at all. Without this, a green PR stays unlabelled until the
@@ -88,10 +96,11 @@ on:
     workflows: [gate, "PR Preview"]
     types: [requested, in_progress, completed]
   schedule:
-    # Hourly backstop, off the hour to avoid the rush. A genuine backstop now rather
-    # than the only route for anything: every predicate input above has its own
-    # event. This catches what events cannot — a delivery that never arrived, a run
-    # that failed, or mergeability that was still UNKNOWN when the last sweep gave up.
+    # Hourly, off the hour to avoid the rush. NOT merely a backstop: thread
+    # resolution has no Actions trigger, so this sweep is the ONLY thing that ever
+    # observes a thread being resolved or un-resolved. It also covers what events
+    # cannot — a delivery that never arrived, a run that failed, or mergeability
+    # still UNKNOWN when the previous sweep gave up.
     - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
