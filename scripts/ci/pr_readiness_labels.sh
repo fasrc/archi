@@ -209,6 +209,11 @@ unchanged=0
 skipped=0
 ready_now=0
 failed=0
+# Counted separately from changed/unchanged/skipped so those three stay DISJOINT
+# and sum to the number of PRs seen. An UNKNOWN PR whose chip we revoke is
+# `changed`, not `skipped` — but it is still unverifiable, which is what the
+# warning at the end keys on.
+unverifiable=0
 
 while IFS=$'\t' read -r _tag number isdraft state live truncated labels; do
   if [ -z "${number:-}" ]; then
@@ -229,10 +234,11 @@ while IFS=$'\t' read -r _tag number isdraft state live truncated labels; do
   # asserting a conflict we cannot see would be the same sin in the other
   # direction.
   if [ "$state" = "UNKNOWN" ]; then
-    skipped=$((skipped + 1))
+    unverifiable=$((unverifiable + 1))
     if [ "$has_ready" = no ]; then
       printf '#%-5s %-9s live=%-3s : skip (mergeability not computed)\n' \
         "$number" "$state" "$live"
+      skipped=$((skipped + 1))
       continue
     fi
     printf '#%-5s %-9s live=%-3s : --remove-label %s (unverifiable — mergeability not computed)\n' \
@@ -317,8 +323,11 @@ while IFS=$'\t' read -r _tag number isdraft state live truncated labels; do
   changed=$((changed + 1))
 done <<< "$snapshot"
 
-printf '\n%s: %s changed, %s unchanged, %s skipped — %s ready to merge%s\n' \
-  "$REPO" "$changed" "$unchanged" "$skipped" "$ready_now" \
+printf '\n%s: %s changed, %s unchanged, %s skipped%s%s — %s ready to merge%s\n' \
+  "$REPO" "$changed" "$unchanged" "$skipped" \
+  "$([ "$unverifiable" -gt 0 ] && printf ', %s unverifiable' "$unverifiable" || true)" \
+  "$([ "$failed" -gt 0 ] && printf ', %s FAILED' "$failed" || true)" \
+  "$ready_now" \
   "$([ "$DRY_RUN" -eq 1 ] && printf ' (dry run — nothing written)' || true)"
 
 # Surface an incomplete reconciliation in the Actions UI WITHOUT failing the run.
@@ -326,9 +335,9 @@ printf '\n%s: %s changed, %s unchanged, %s skipped — %s ready to merge%s\n' \
 # is computed asynchronously — which trains people to ignore the signal. The
 # scheduled sweep is the retry, and the fail-safe revocation above already
 # guarantees a skipped PR is never left ADVERTISING unverified readiness.
-if [ "$skipped" -gt 0 ] && [ -n "${GITHUB_ACTIONS:-}" ]; then
-  printf '::warning::%s PR(s) skipped — mergeability not computed after %s attempt(s); the next sweep retries\n' \
-    "$skipped" "$RETRY_MAX"
+if [ "$unverifiable" -gt 0 ] && [ -n "${GITHUB_ACTIONS:-}" ]; then
+  printf '::warning::%s PR(s) had unverifiable mergeability after %s attempt(s); any held %s was revoked and the next sweep retries\n' \
+    "$unverifiable" "$RETRY_MAX" "$READY_LABEL"
 fi
 
 if [ "$failed" -gt 0 ]; then

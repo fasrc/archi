@@ -389,12 +389,18 @@ mk_page false "" \
   "$(mk_node 170 false UNKNOWN "ready-to-merge" "")" \
   "$(mk_node 270 false UNKNOWN "" "")" > "$sb/resp_1.json"
 out="$(run_reconciler "$sb" 2>&1)"
+# The summary assertion also pins the counter arithmetic: changed/unchanged/
+# skipped must stay DISJOINT and sum to the 2 PRs seen (1 + 0 + 1), while
+# `unverifiable` counts both UNKNOWN PRs and overlaps deliberately. An earlier
+# version incremented `skipped` for a PR it had also counted as `changed`, so the
+# tallies summed to more PRs than existed.
 if grep -q '170 .*--remove-label ready-to-merge' "$sb/calls" \
    && ! grep -q -- '--add-label' "$sb/calls" \
-   && ! grep -q '270 .*--remove-label' "$sb/calls"; then
-  ok "UNKNOWN revokes an unverifiable ready-to-merge and asserts nothing new"
+   && ! grep -q '270 .*--remove-label' "$sb/calls" \
+   && grep -q '1 changed, 0 unchanged, 1 skipped, 2 unverifiable' <<<"$out"; then
+  ok "UNKNOWN revokes an unverifiable ready-to-merge, asserts nothing new, counts once"
 else
-  notok "UNKNOWN revokes an unverifiable ready-to-merge and asserts nothing new"
+  notok "UNKNOWN revokes an unverifiable ready-to-merge, asserts nothing new, counts once"
   printf '%s\n' "$out"; cat "$sb/calls" 2>/dev/null
 fi
 
