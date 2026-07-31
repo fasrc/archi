@@ -1202,6 +1202,24 @@ class DriftVerdict:
 
 
 @dataclass(frozen=True)
+class BaselineRow:
+    """A draft row's sources hashed for baselining, kept out of drift detection.
+
+    `missing` names the row's sources that produced no hash this run — unreachable,
+    refused by the allowlist, or not a parseable URL. It is carried rather than
+    dropped because the printed block is *pasted*, and it replaces the whole map: a
+    locked row can carry a failed source's stored baseline forward, but a draft has
+    no stored baseline to fall back on, so a source omitted here is simply absent
+    once the row is locked. Naming it is the only thing standing between a failed
+    fetch and a row that looks baselined but is not.
+    """
+
+    row_index: int
+    source_hashes: Dict[str, str]
+    missing: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class SourceCheck:
     """One grounding URL of one locked row, checked against its baseline.
 
@@ -1249,6 +1267,7 @@ class DriftReport:
     skipped_rows: int
     abstained: bool = False
     reasons: Tuple[str, ...] = ()
+    baseline_only: Tuple[BaselineRow, ...] = ()
 
     def _in_state(self, state: str) -> Tuple[SourceCheck, ...]:
         return tuple(c for row in self.rows for c in row.checks if c.state == state)
@@ -1534,6 +1553,7 @@ def find_drift(
     *,
     ask_llm: Optional[AskLLM] = None,
     allowed_hosts: Iterable[str] = (),
+    baseline_drafts: bool = False,
 ) -> DriftReport:
     """Re-hash every locked row's grounding pages and report what moved.
 
@@ -1560,16 +1580,66 @@ def find_drift(
     individually reported as unchecked rather than as clean. When nothing could
     be read, though, "no drift" would be a false clean over the entire bank.
 
+    When `baseline_drafts` is True, draft rows' sources are fetched and hashed so
+    their `source_hashes` block can be computed before locking. These rows are
+    collected on `DriftReport.baseline_only` and are structurally excluded from
+    all drift-detection aggregates (rows, drifted, unbaselined, checked_rows,
+    abstention, LLM calls).
+
+    `skipped_rows` is the deliberate exception: a baselined draft is still a row
+    drift did not check, so it is still counted there. Excluding it too would let
+    an output-only flag change a detection metric — a one-draft bank would report
+    0 skipped while skipping one, and the locked-row summary would stop accounting
+    for the row at all. Sources that produced no hash are named on the row's
+    `missing` rather than dropped, so the printer can label the block incomplete
+    instead of inviting a paste that locks a row with a hole in it.
+
     Read-only: the bank is never mutated, and `source_hashes` is never rewritten.
     Re-baselining a row is a human act, like locking it in the first place.
     """
     cache: Dict[str, Tuple[str, str, str]] = {}
     rows: List[RowDrift] = []
+    baseline_only: List[BaselineRow] = []
     checked = 0
     skipped = 0
 
     for index, record in enumerate(bank):
-        if not isinstance(record, dict) or row_status(record) != "locked":
+        if not isinstance(record, dict):
+            skipped += 1
+            continue
+        status = row_status(record)
+        if status == "draft" and baseline_drafts:
+            sources = record.get("sources")
+            hashes: Dict[str, str] = {}
+            unhashed: List[str] = []
+            for raw in sources if isinstance(sources, list) else ():
+                if not isinstance(raw, str) or not raw:
+                    continue
+                url = canonical_url(raw)
+                if url is None or not is_fetchable_source(url, allowed_hosts):
+                    # Unparseable or off-allowlist: report the string as written,
+                    # since that is what a human has to fix in the bank file.
+                    unhashed.append(raw)
+                    continue
+                _, digest, _ = _fetch_extract(url, cache, fetch_html)
+                if digest:
+                    hashes[url] = digest
+                else:
+                    unhashed.append(url)
+            baseline_only.append(
+                BaselineRow(
+                    row_index=index,
+                    source_hashes=hashes,
+                    missing=tuple(unhashed),
+                )
+            )
+            # Counted as skipped, like any other row drift did not check. Asking
+            # for hash output is not a drift check, so the locked-row summary must
+            # read the same either way — otherwise enabling an output flag silently
+            # drops this row from the one total that was still accounting for it.
+            skipped += 1
+            continue
+        if status != "locked":
             skipped += 1
             continue
         baselines = _baselines(record)
@@ -1641,4 +1711,5 @@ def find_drift(
             if abstained
             else ()
         ),
+        baseline_only=tuple(baseline_only),
     )

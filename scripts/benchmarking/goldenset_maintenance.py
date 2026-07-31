@@ -778,6 +778,7 @@ def run_drift(args: argparse.Namespace) -> int:
         build_fetch_html(),
         ask_llm=ask_llm,
         allowed_hosts=args.allowed_hosts,
+        baseline_drafts=getattr(args, "baseline_drafts", False),
     )
 
     if report.abstained:
@@ -943,10 +944,18 @@ def _print_hashes(report) -> None:
     forward; they are reported separately as stale, and dropping them is the
     point of pasting.
 
-    Emitting nothing is explained rather than left silent. Blocks come from the
-    same locked-only pass as the rest of drift, so asking for a draft row's
-    baseline produces an empty run — right place, wrong step — and unexplained
-    silence reads as a broken tool.
+    Emitting nothing is explained rather than left silent. Without
+    `--baseline-drafts` the blocks come from the same locked-only pass as the rest
+    of drift, so asking for a draft row's baseline produces an empty run — right
+    place, wrong step — and unexplained silence reads as a broken tool.
+
+    Draft rows collected by `--baseline-drafts` are held to the same completeness
+    rule, and need it more: a locked row can carry a failed source's stored hash
+    forward, but a draft has none, so an unreadable source is simply missing from
+    the map the operator is about to paste alongside `status: locked`. A draft whose
+    every source failed is printed as a named INCOMPLETE row with no block rather
+    than skipped, because the operator asked about that row directly and silence
+    there reads as "nothing to do" rather than "nothing could be read".
     """
     emitted = 0
     for row in report.rows:
@@ -966,12 +975,27 @@ def _print_hashes(report) -> None:
                 "they are reachable."
             )
         print(json.dumps({"source_hashes": carried}, indent=2))
+    for baseline_row in report.baseline_only:
+        if not baseline_row.source_hashes and not baseline_row.missing:
+            continue
+        emitted += 1
+        print(f"\nrow {baseline_row.row_index} (draft — paste with status: locked)")
+        if baseline_row.missing:
+            print(
+                "  # INCOMPLETE — no hash available for: "
+                + ", ".join(baseline_row.missing)
+                + "\n  # A draft has no stored baseline to carry forward, so locking "
+                "with this block leaves those sources unbaselined. Re-run once they "
+                "are reachable."
+            )
+        if baseline_row.source_hashes:
+            print(json.dumps({"source_hashes": baseline_row.source_hashes}, indent=2))
     if not emitted:
         print(
-            "\nno `source_hashes` blocks — baselines come from `locked` rows only. "
-            "A draft row has no confirmation to record yet, so declaring the lock "
-            "comes first: set `status: locked` on the row, then re-run this to get "
-            "its block."
+            "\nno `source_hashes` blocks to print. To baseline a draft row in a "
+            "single edit: run with --baseline-drafts --print-hashes to compute the "
+            "hash now, then paste the printed `source_hashes` block into the bank "
+            "file alongside `status: locked` in one commit."
         )
 
 
@@ -1221,6 +1245,17 @@ def build_parser() -> argparse.ArgumentParser:
             "writes the bank, so this is how a baseline gets recorded."
         ),
     )
+    drift.add_argument(
+        "--baseline-drafts",
+        action="store_true",
+        help=(
+            "Also compute and print `source_hashes` blocks for `draft` rows. "
+            "**Requires --print-hashes** — without it there is nothing to emit and "
+            "the fetches would be wasted, so the combination is rejected. Draft rows "
+            "are never checked for drift; this only produces the hash block so it "
+            "can be pasted alongside `status: locked` in a single edit."
+        ),
+    )
     drift.set_defaults(func=run_drift)
 
     report = sub.add_parser(
@@ -1314,6 +1349,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not getattr(args, "func", None):
         print(
             "error: a subcommand is required " "(coverage | orphans | drift | report)",
+            file=sys.stderr,
+        )
+        return 2
+    if getattr(args, "baseline_drafts", False) and not getattr(
+        args, "print_hashes", False
+    ):
+        # Rejected before dispatch, not downgraded to a warning: on its own the flag
+        # fetches every draft source and then discards every digest, because only
+        # --print-hashes emits them. On a bank of any size that is a burst of
+        # requests at the KB in exchange for nothing. Refusing here also keeps the
+        # two flags independent — implying --print-hashes would silently widen the
+        # output to every locked row's block as well, which is not what was asked.
+        print(
+            "error: --baseline-drafts requires --print-hashes (it computes hash "
+            "blocks that only --print-hashes emits)",
             file=sys.stderr,
         )
         return 2
