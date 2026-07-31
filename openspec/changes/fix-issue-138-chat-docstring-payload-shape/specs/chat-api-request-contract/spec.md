@@ -55,3 +55,41 @@ docstring SHALL remain in agreement with the shape the handler consumes.
 - **WHEN** the documented `last_message` example is sent as a request payload
 - **THEN** it is the same shape `_prepare_chat_context` unpacks at `app.py:1633`, so a
   client built from the docstring does not hit the unpacking error
+- **AND** note this covers the payload *shape* only; a request also needs the two timing
+  fields to avoid HTTP 408, per the requirement below
+
+### Requirement: The API reference documents the contract the endpoints actually honour
+
+`docs/docs/api_reference.md` SHALL document the chat request body as the endpoints actually
+treat it, not as the field names imply. Specifically it SHALL mark `client_sent_msg_ts` and
+`client_timeout` as required in practice for as long as
+[#175](https://github.com/fasrc/archi/issues/175) is open, SHALL publish an example that is a
+request that succeeds, and SHALL mark `provider`, `model`, `include_agent_steps` and
+`include_tool_steps` as honoured only by the streaming endpoint.
+
+This requirement exists because both gaps are silent: omitting a timing field yields a 408
+that names a timeout the caller never set, and sending an override field to the
+non-streaming endpoint is discarded with no error at all. Neither is discoverable from the
+field names.
+
+#### Scenario: The published example completes a request
+
+- **WHEN** an integrator copies the example request body from the API reference
+- **THEN** it includes `client_sent_msg_ts` and `client_timeout`
+- **AND** the request is not rejected with HTTP 408 by the check at `app.py:1654`
+
+#### Scenario: Timing fields are not presented as optional
+
+- **WHEN** a reader consults the request-body table
+- **THEN** `client_sent_msg_ts` and `client_timeout` are marked required in practice, with the
+  408 behaviour and its cause stated
+- **AND** the note records that this is a handler bug tracked as #175, not the intended
+  contract, so the page can be simplified when that lands
+
+#### Scenario: Override fields are marked stream-only
+
+- **WHEN** a reader consults the request-body table
+- **THEN** `provider`, `model`, `include_agent_steps` and `include_tool_steps` are marked as
+  honoured only by `POST /api/get_chat_response_stream`
+- **AND** the page states that sending them to `POST /api/get_chat_response` is silently
+  ignored, because that handler never reads them off the parsed payload

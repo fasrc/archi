@@ -43,7 +43,14 @@ coverage with them. A docstring-only edit adds no executable lines either way.
 - Make the `get_chat_response` docstring describe the `last_message` shape the handler
   actually accepts, with a concrete nested example, so an integrator building from the
   docstring produces a request that succeeds.
-- Keep the change docstring-only so it passes the gate unchanged (no diff-cover exposure).
+- Publish the same contract in `docs/docs/api_reference.md`, because the repository requires
+  user-facing API changes to be documented there and an integrator is far likelier to read
+  that page than a docstring. This is where the request-body table, the `last_message`
+  nesting rule, the two required timing fields, and the stream-only override fields live.
+- Keep the change **documentation-only** — no executable-code edit, so no diff-cover
+  exposure. "Documentation" covers both the docstring and the API reference page; earlier
+  revisions of this design said "docstring-only", which understated the scope actually
+  shipped.
 
 **Non-Goals:**
 - No runtime behavior change. The handler continues to read `message[0]` exactly as today.
@@ -85,5 +92,8 @@ that only the first pair is read.
 
 ## Migration Plan
 
-None. Documentation-only; no deploy, data, or API-behavior change. Rollback is reverting the
-single docstring edit.
+None. Documentation-only; no deploy, data, or API-behavior change. Rollback is reverting
+both documentation edits — the `get_chat_response` docstring in
+`src/interfaces/chat_app/app.py` and the request-contract section of
+`docs/docs/api_reference.md`. Neither carries runtime behaviour, so a revert is safe in
+either order and needs no redeploy.

@@ -42,6 +42,14 @@ docstring is a direct correctness bug for anyone integrating against it.
 - **Consumers:** integrators who build requests to `/api/get_chat_response` from the
   docstring; in-repo clients (`static/chat.js:266`, `openai_compat.py:242`) already send the
   correct nested shape and are unaffected.
-- **Coverage/gate:** `app.py` is not imported by unit tests, so a docstring-only edit adds no
-  executable lines and does not trip the ≥80% diff-cover gate. Any executable change here
-  would fail diff-cover — a hard constraint on this change staying doc-only.
+- **Coverage/gate (corrected 2026-07-31 — the original claim here was wrong):** `app.py` *is*
+  imported by unit tests — `test_chat_override_concurrency.py:27`,
+  `test_chat_override_persistence.py:32`, `test_provider_config_override.py:12` and
+  `test_request_local_pipeline.py:21`. Nor is "any executable change would fail diff-cover" a
+  hard constraint: diff-cover is computed per changed *executable line*, so a new line that
+  its own test covers passes fine. The narrower true statement is that the **request path**
+  through this module is unexercised — importing it runs the `def` statements, but the bodies
+  of `_prepare_chat_context` and `get_chat_response` are reached by no unit test, so new
+  executable lines *there* would land uncovered unless the change brings coverage with it.
+  That is why the payload validation is deferred, not a prohibition on ever editing this file.
+  See `design.md` for the fuller version of this note.

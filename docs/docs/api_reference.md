@@ -19,21 +19,49 @@ REST API endpoints for the Archi chat application. All endpoints are prefixed wi
 
 Send a message and receive a complete response.
 
-**Request body** (JSON). Both chat endpoints take the same payload.
+**Request body** (JSON). Both chat endpoints accept the same payload, but they do not
+honour all of it — the last four fields are read only by the streaming endpoint. See
+[Fields the non-streaming endpoint ignores](#fields-the-non-streaming-endpoint-ignores).
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `last_message` | list of `[sender, message]` pairs | yes | The user's turn. A list **containing** the pair, not the pair itself — see below. Only the first pair is read. |
-| `conversation_id` | int or `null` | no | Existing conversation to append to. `null` (or omitted) starts a new one. |
 | `client_id` | string | yes | Identifies the calling client; the request is rejected without it. |
+| `client_sent_msg_ts` | int (ms since epoch) | **yes, in practice** | Client send time. Documented as optional in earlier versions of this page, but **omitting it returns HTTP 408** — see the warning below. |
+| `client_timeout` | int (ms) | **yes, in practice** | How long the client is willing to wait. **Omitting it returns HTTP 408** — see the warning below. |
+| `conversation_id` | int or `null` | no | Existing conversation to append to. `null` (or omitted) starts a new one. |
 | `config_name` | string | no | Named configuration to answer under. |
 | `is_refresh` | bool | no | Re-answer the previous turn instead of adding a new one. |
-| `provider` | string | no | Override the LLM provider for this request only. |
-| `model` | string | no | Override the model for this request only. |
-| `include_agent_steps` | bool | no | Include agent reasoning steps in the response. Default `true`. |
-| `include_tool_steps` | bool | no | Include tool invocations in the response. Default `true`. |
-| `client_sent_msg_ts` | int (ms since epoch) | no | Client send time, used for latency accounting. |
-| `client_timeout` | int (ms) | no | Client's own timeout, used for latency accounting. |
+| `provider` | string | stream only | Override the LLM provider for this request only. Ignored by `POST /api/get_chat_response`. |
+| `model` | string | stream only | Override the model for this request only. Ignored by `POST /api/get_chat_response`. |
+| `include_agent_steps` | bool | stream only | Include agent reasoning steps. Default `true`. Ignored by `POST /api/get_chat_response`. |
+| `include_tool_steps` | bool | stream only | Include tool invocations. Default `true`. Ignored by `POST /api/get_chat_response`. |
+
+!!! warning "Send both timing fields, or every request fails with HTTP 408"
+
+    `client_sent_msg_ts` and `client_timeout` look optional and are not. Both default to
+    `0` when absent ([`app.py:4595-4596`][parse]), and the timeout check is an unguarded
+    comparison ([`app.py:1654`][check]):
+
+    ```python
+    if server_received_msg_ts.timestamp() - client_sent_msg_ts > client_timeout:
+        return None, 408
+    ```
+
+    With both defaulted to `0` this reads `<seconds since 1970> - 0 > 0`, which is always
+    true, so the request is rejected as timed out before any answer is produced. Sending
+    only one of the two fails the same way. A caller must send **both**, with
+    `client_timeout` large enough to cover the answer.
+
+    This is a bug in the handler, not the intended contract — the streaming loop guards
+    the same comparison with `if client_timeout and ...` ([`app.py:2101`][stream]). It is
+    tracked as [#175](https://github.com/fasrc/archi/issues/175). Once fixed, both fields
+    become genuinely optional and this warning goes away. Until then, this page documents
+    what the endpoint actually does.
+
+[parse]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4595-L4596
+[check]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1654
+[stream]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2101
 
 **`last_message` is nested.** It is a list whose first element is the
 `[sender, message]` pair — `[["User", "How do I submit a job?"]]`, **not**
@@ -47,20 +75,40 @@ two-character sender such as `["AI", "hello"]` unpacks into `sender="A"`,
 `content="I"` and the request **succeeds against the wrong content**, silently
 discarding the message. The endpoint does not currently validate the shape.
 
+A complete request. `client_sent_msg_ts` is the current time in milliseconds and
+`client_timeout` is how long you will wait; both are required in practice, per the warning
+above.
+
 ```json
 {
   "last_message": [["User", "How do I submit a job?"]],
   "conversation_id": null,
-  "client_id": "web-3f2a91"
+  "client_id": "web-3f2a91",
+  "client_sent_msg_ts": 1769904000000,
+  "client_timeout": 600000
 }
 ```
+
+#### Fields the non-streaming endpoint ignores
+
+`provider`, `model`, `include_agent_steps` and `include_tool_steps` are accepted by both
+endpoints but **only acted on by `POST /api/get_chat_response_stream`**. The non-streaming
+handler never reads them off the parsed payload, so it cannot select a provider or model
+and always applies the defaults for step inclusion. Sending them there is silently
+ignored — no error, no warning.
+
+To override the provider or model, or to control step inclusion, use the streaming
+endpoint.
 
 ### `POST /api/get_chat_response_stream`
 
 Send a message and receive a streaming response via NDJSON (`application/x-ndjson`).
 
 Takes the same request body as `POST /api/get_chat_response` above, including the
-nested `last_message` shape.
+nested `last_message` shape and the two required timing fields.
+
+This is the endpoint that honours `provider`, `model`, `include_agent_steps` and
+`include_tool_steps`; the non-streaming one ignores all four.
 
 Each line is a JSON object with a `type` field. Event types:
 
