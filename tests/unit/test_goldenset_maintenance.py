@@ -31,20 +31,30 @@ from src.data_manager.collectors.scrapers.sitemap_source import (
     SitemapPolicy,
 )
 from src.utils.goldenset_maintenance import (
+    MAX_PROMPT_PAGE_CHARS,
+    TRUNCATION_MARKER,
     CorpusDoc,
     Decline,
+    DriftExtractionError,
     LiveInventory,
     NearMiss,
     ProposalError,
+    _truncate_page_text,
     bank_source_urls,
+    build_drift_prompt,
     build_live_inventory,
     declined_urls,
     filter_docs,
     find_coverage_gaps,
+    find_drift,
     find_orphans,
     group_by_parent,
+    is_fetchable_source,
+    normalize_extracted_text,
+    page_digest,
     parent_source,
     parse_candidates,
+    parse_drift_verdict,
     propose_candidates,
     read_corpus_docs,
     read_declines,
@@ -1254,3 +1264,773 @@ class TestPersistedDocumentPath:
         docs = read_corpus_docs(_rows({"url": f"{KB}/kb/a", "source_type": "web"}))
 
         assert docs[0].file_path == ""
+
+
+# --------------------------------------------------------------------------- #
+# Fact drift (group 4) — hash tripwire, then LLM diff
+# --------------------------------------------------------------------------- #
+# Drift keys on a **live re-fetch**, not the persisted corpus (design D6): the
+# corpus lags in-place edits, so judging drift there would silently pass a
+# reference that is already stale against the authoritative page. The sign-off
+# condition on that decision is what these tests pin — the live signal is
+# measured through the ingest's own extraction, so markup churn cannot
+# masquerade as a fact change.
+
+KB_HTML = "<html><body><p>Add #SBATCH --gpus=1 for one GPU.</p></body></html>"
+KB_HTML_RESTYLED = (
+    "<html><body><div class='card'>\n  <p>Add #SBATCH --gpus=1 for one GPU.</p>\n"
+    "</div></body></html>"
+)
+KB_HTML_CHANGED = "<html><body><p>Add #SBATCH --gpus=2 for one GPU.</p></body></html>"
+
+
+def _fetcher_for(pages, calls=None, errors=None):
+    """A fake page fetcher, recording calls so re-fetch counts can be asserted."""
+
+    def fetch(url):
+        if calls is not None:
+            calls.append(url)
+        if errors and url in errors:
+            raise SitemapFetchError(errors[url])
+        return pages[url]
+
+    return fetch
+
+
+KB_HOST = "docs.rc.fas.harvard.edu"
+
+
+def _drift(bank, fetch, **kwargs):
+    """`find_drift` with an allowlist — an empty one authorizes nothing."""
+    kwargs.setdefault("allowed_hosts", [KB_HOST, "slurm.schedmd.com"])
+    return find_drift(bank, fetch, **kwargs)
+
+
+def _locked(*sources, hashes=None, **extra):
+    """A locked bank row citing `sources`, optionally with stored baselines."""
+    row = {
+        "user_input": "How many GPUs?",
+        "reference": "Add #SBATCH --gpus=1.",
+        "sources": list(sources),
+        "status": "locked",
+    }
+    if hashes is not None:
+        row["source_hashes"] = hashes
+    row.update(extra)
+    return row
+
+
+class TestExtractedTextDigest:
+    """4.1 — hash the normalized extracted text, never the raw markup."""
+
+    def test_digest_is_algorithm_labeled(self):
+        assert page_digest(KB_HTML).startswith("sha256:")
+
+    def test_markup_churn_does_not_move_the_digest(self):
+        # Same sentence, different wrapper markup and indentation: a theme change
+        # must not read as a fact change (design D6 sign-off condition).
+        assert page_digest(KB_HTML) == page_digest(KB_HTML_RESTYLED)
+
+    def test_a_changed_fact_moves_the_digest(self):
+        assert page_digest(KB_HTML) != page_digest(KB_HTML_CHANGED)
+
+    def test_normalization_absorbs_whitespace_only_edits(self):
+        assert normalize_extracted_text(
+            "a  b \r\n\n\n c\n"
+        ) == normalize_extracted_text("a b\n\nc")
+
+    def test_normalization_keeps_a_real_word_change(self):
+        assert normalize_extracted_text("a b") != normalize_extracted_text("a c")
+
+    def test_blank_extraction_refuses_rather_than_hashing_nothing(self):
+        # Every failed extraction would otherwise hash to the SAME value, so a
+        # page that stops converting would read as "unchanged" forever.
+        with pytest.raises(DriftExtractionError):
+            page_digest("<!-- nothing here -->")
+
+
+class TestFindDrift:
+    """4.1 / 4.2 — which rows are checked, and what a mismatch reports."""
+
+    def test_matching_hashes_are_not_flagged(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert report.drifted == ()
+        assert report.checked_rows == 1
+
+    def test_a_changed_source_is_flagged_and_named(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML_CHANGED}))
+
+        assert [row.row_index for row in report.drifted] == [0]
+        assert [c.url for c in report.drifted[0].changed] == [url]
+
+    def test_any_changed_source_flags_a_multi_source_row(self):
+        stable, moved = f"{KB}/kb/a", f"{KB}/kb/b"
+        bank = [
+            _locked(
+                stable,
+                moved,
+                hashes={stable: page_digest(KB_HTML), moved: page_digest(KB_HTML)},
+            )
+        ]
+
+        report = _drift(bank, _fetcher_for({stable: KB_HTML, moved: KB_HTML_CHANGED}))
+
+        assert [c.url for c in report.drifted[0].changed] == [moved]
+        states = {c.url: c.state for c in report.drifted[0].checks}
+        assert states[stable] == "unchanged"
+
+    def test_a_draft_row_is_never_checked_even_with_a_moved_page(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft", source_hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML_CHANGED}, calls=calls))
+
+        assert report.drifted == ()
+        assert report.checked_rows == 0
+        assert calls == []  # not even fetched: an unconfirmed row has no baseline
+
+    def test_a_row_without_status_is_a_draft_and_is_skipped(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, source_hashes={url: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML_CHANGED}))
+
+        assert report.drifted == ()
+
+    def test_a_locked_source_less_row_is_skipped(self):
+        # A `should_refuse` row carries no sources by design — nothing to drift
+        # against, and locking it must not require a grounding hash.
+        bank = [_locked(anchor_type="should_refuse")]
+
+        report = _drift(bank, _fetcher_for({}))
+
+        assert report.drifted == ()
+        assert report.checked_rows == 0
+
+    def test_a_missing_baseline_is_reported_not_called_drift(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url)]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert report.drifted == ()
+        assert [c.url for c in report.unbaselined] == [url]
+
+    def test_an_unknown_hash_algorithm_is_incomparable_not_clean(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: "crc32:deadbeef"})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert report.drifted == ()
+        assert [c.url for c in report.incomparable] == [url]
+
+    def test_an_unlabeled_hash_is_incomparable(self):
+        # A bare hex digest does not say how it was computed, and guessing is how
+        # a whole bank silently compares against the wrong rule.
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: "a" * 64})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert [c.url for c in report.incomparable] == [url]
+
+    def test_a_fetch_failure_is_unreachable_never_unchanged(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({}, errors={url: "connection reset"}))
+
+        assert report.drifted == ()
+        assert [c.url for c in report.unreachable] == [url]
+        assert "connection reset" in report.unreachable[0].detail
+
+    def test_a_baseline_for_a_url_the_row_no_longer_cites_is_reported(self):
+        current, dropped = f"{KB}/kb/a", f"{KB}/kb/gone"
+        bank = [
+            _locked(
+                current,
+                hashes={current: page_digest(KB_HTML), dropped: page_digest(KB_HTML)},
+            )
+        ]
+
+        report = _drift(bank, _fetcher_for({current: KB_HTML}))
+
+        assert report.rows[0].stale_baselines == (dropped,)
+
+    def test_emptying_sources_entirely_still_reports_the_stale_baselines(self):
+        # The maximal case of the bucket above: `sources` was cleared but the
+        # map was left behind, so every recorded confirmation now refers to a
+        # page the row no longer cites. Skipping the row as "source-less" hides
+        # exactly the hand edit this bucket exists to catch.
+        dropped = f"{KB}/kb/gone"
+        bank = [_locked(hashes={dropped: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({}))
+
+        assert [row.stale_baselines for row in report.rows] == [(dropped,)]
+
+    def test_a_row_with_only_stale_baselines_counts_as_skipped_not_checked(self):
+        # Nothing was fetched or compared, so the census must not imply it was.
+        dropped = f"{KB}/kb/gone"
+        bank = [_locked(hashes={dropped: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({}))
+
+        assert report.checked_rows == 0
+        assert report.skipped_rows == 1
+        assert report.rows[0].checks == ()
+
+    def test_a_legitimate_source_less_locked_row_produces_no_row(self):
+        # A confirmed `should_refuse` anchor: empty `sources`, no baselines. The
+        # spec makes this lockable on purpose, so it must stay silent.
+        report = _drift([_locked()], _fetcher_for({}))
+
+        assert report.rows == ()
+        assert report.skipped_rows == 1
+
+    def test_unusable_sources_do_not_hide_stale_baselines_either(self):
+        # Same hole one branch further down: the sources list is non-empty but
+        # every entry is junk, so no check is produced and the row would fall
+        # through before the baselines were read.
+        dropped = f"{KB}/kb/gone"
+        bank = [_locked("", None, hashes={dropped: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({}))
+
+        assert [row.stale_baselines for row in report.rows] == [(dropped,)]
+
+    def test_a_draft_row_with_baselines_is_still_not_reported(self):
+        # Drift is locked-only. A draft row's map is not a confirmation history,
+        # so it is not a stale one either.
+        dropped = f"{KB}/kb/gone"
+        bank = [_locked(hashes={dropped: page_digest(KB_HTML)}, status="draft")]
+
+        report = _drift(bank, _fetcher_for({}))
+
+        assert report.rows == ()
+
+    def test_every_source_url_is_fetched_once_per_run(self):
+        url = f"{KB}/kb/gpu"
+        digest = page_digest(KB_HTML)
+        bank = [_locked(url, hashes={url: digest}) for _ in range(3)]
+        calls = []
+
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == [url]
+
+    def test_a_failed_fetch_is_not_retried_for_every_row(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)}) for _ in range(3)]
+        calls = []
+
+        _drift(bank, _fetcher_for({}, calls=calls, errors={url: "timeout"}))
+
+        assert calls == [url]
+
+    def test_all_sources_unreachable_abstains(self):
+        # No page was read, so "no drift" would be a false clean over the whole
+        # bank — the same trap the orphan pass abstains on.
+        a, b = f"{KB}/kb/a", f"{KB}/kb/b"
+        bank = [
+            _locked(a, hashes={a: page_digest(KB_HTML)}),
+            _locked(b, hashes={b: page_digest(KB_HTML)}),
+        ]
+
+        report = _drift(bank, _fetcher_for({}, errors={a: "timeout", b: "timeout"}))
+
+        assert report.abstained is True
+
+    def test_one_unreachable_source_does_not_abstain(self):
+        # Unlike the orphan inventory, a failure here is LOCAL: it affects only
+        # the rows citing that URL, and those are reported individually.
+        good, bad = f"{KB}/kb/a", f"{KB}/kb/b"
+        bank = [
+            _locked(good, hashes={good: page_digest(KB_HTML_CHANGED)}),
+            _locked(bad, hashes={bad: page_digest(KB_HTML)}),
+        ]
+
+        report = _drift(bank, _fetcher_for({good: KB_HTML}, errors={bad: "timeout"}))
+
+        assert report.abstained is False
+        assert [row.row_index for row in report.drifted] == [0]
+        assert [c.url for c in report.unreachable] == [bad]
+
+    def test_the_bank_is_never_mutated(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        before = copy.deepcopy(bank)
+
+        _drift(bank, _fetcher_for({url: KB_HTML_CHANGED}))
+
+        assert bank == before
+
+
+class TestDriftVerdict:
+    """4.3 — the LLM diff fires only on a mismatch, and only ever advises."""
+
+    def test_the_model_is_asked_only_about_changed_sources(self):
+        stable, moved = f"{KB}/kb/a", f"{KB}/kb/b"
+        bank = [
+            _locked(
+                stable,
+                moved,
+                hashes={stable: page_digest(KB_HTML), moved: page_digest(KB_HTML)},
+            )
+        ]
+        prompts = []
+
+        _drift(
+            bank,
+            _fetcher_for({stable: KB_HTML, moved: KB_HTML_CHANGED}),
+            ask_llm=_recording_llm(
+                prompts, '{"verdict": "broken", "explanation": "2 now"}'
+            ),
+        )
+
+        assert len(prompts) == 1
+        assert moved in prompts[0]
+        assert stable not in prompts[0]
+
+    def test_the_prompt_carries_the_question_reference_and_fresh_page(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        prompts = []
+
+        _drift(
+            bank,
+            _fetcher_for({url: KB_HTML_CHANGED}),
+            ask_llm=_recording_llm(prompts, '{"verdict": "broken"}'),
+        )
+
+        assert "How many GPUs?" in prompts[0]
+        assert "Add #SBATCH --gpus=1." in prompts[0]
+        assert "--gpus=2" in prompts[0]
+
+    def test_no_model_leaves_the_finding_without_a_verdict(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML_CHANGED}))
+
+        assert report.drifted[0].changed[0].verdict is None
+
+    def test_a_holds_verdict_does_not_clear_the_finding(self):
+        # The hash mismatch is the fact; the model only triages it. Letting a
+        # "holds" reply drop the row would put a hallucination in charge of
+        # whether a real change gets reviewed.
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+
+        report = _drift(
+            bank,
+            _fetcher_for({url: KB_HTML_CHANGED}),
+            ask_llm=_recording_llm([], '{"verdict": "holds", "explanation": "same"}'),
+        )
+
+        assert [row.row_index for row in report.drifted] == [0]
+        assert report.drifted[0].changed[0].verdict.verdict == "holds"
+
+    def test_an_unknown_verdict_word_becomes_unclear(self):
+        assert parse_drift_verdict('{"verdict": "maybe"}').verdict == "unclear"
+
+    def test_an_unparseable_reply_becomes_unclear_and_says_so(self):
+        verdict = parse_drift_verdict("I think it's fine, honestly")
+
+        assert verdict.verdict == "unclear"
+        assert "not JSON" in verdict.explanation
+
+    def test_a_model_failure_leaves_the_finding_standing(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+
+        def exploding(_prompt):
+            raise RuntimeError("provider 503")
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML_CHANGED}), ask_llm=exploding)
+
+        assert [row.row_index for row in report.drifted] == [0]
+        assert report.drifted[0].changed[0].verdict.verdict == "unclear"
+        assert "provider 503" in report.drifted[0].changed[0].verdict.explanation
+
+
+def _recording_llm(prompts, reply):
+    def ask(prompt):
+        prompts.append(prompt)
+        return reply
+
+    return ask
+
+
+class TestDriftAgainstAHandEditedBank:
+    """The bank is hand-authored, so every field can arrive malformed."""
+
+    def test_a_non_string_stored_hash_reads_as_no_baseline(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: 12345})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert [c.url for c in report.unbaselined] == [url]
+
+    def test_unusable_source_entries_are_ignored(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked("", None, url, hashes={url: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert [c.url for c in report.rows[0].checks] == [url]
+
+    def test_a_row_whose_sources_are_all_unusable_is_skipped(self):
+        bank = [_locked("", None)]
+
+        report = _drift(bank, _fetcher_for({}))
+
+        assert report.checked_rows == 0
+        assert report.skipped_rows == 1
+
+    def test_a_repeated_source_is_checked_once(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, f"{url}/", hashes={url: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert [c.url for c in report.rows[0].checks] == [url]
+
+    def test_a_truncated_digest_is_incomparable_not_drift(self):
+        # A half-pasted `sha256:` value keeps the label but loses the digest. It
+        # can never equal a fresh hash, so treating it as comparable reports a
+        # page that did not move — and, with --model, buys an LLM call to
+        # explain a change that never happened.
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: "sha256:9f86d0818"})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert report.drifted == ()
+        assert [c.url for c in report.incomparable] == [url]
+
+    def test_a_non_hex_digest_of_the_right_length_is_incomparable(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: "sha256:" + "z" * 64})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert [c.url for c in report.incomparable] == [url]
+
+    def test_a_malformed_digest_is_never_shown_to_the_model(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: "sha256:9f86d0818"})]
+        prompts = []
+
+        _drift(
+            bank,
+            _fetcher_for({url: KB_HTML}),
+            ask_llm=_recording_llm(prompts, '{"verdict": "broken"}'),
+        )
+
+        assert prompts == []
+
+    def test_a_well_formed_digest_still_compares(self):
+        # The guard must reject only malformed values, not tighten what counts
+        # as a real baseline.
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert report.incomparable == ()
+        assert report.drifted == ()
+
+    def test_a_json_reply_that_is_not_an_object_is_unclear(self):
+        assert parse_drift_verdict('["holds"]').verdict == "unclear"
+
+    def test_a_long_page_is_truncated_in_the_prompt(self):
+        prompt = build_drift_prompt("q?", "a", f"{KB}/kb/gpu", "x" * 40_000)
+
+        assert "page truncated" in prompt
+        assert len(prompt) < 40_000
+
+
+class TestDriftFetchPolicy:
+    """A `sources` URL is data, and drift turns it into an outbound request.
+
+    The ingest's trust filter (`is_url_allowed`) lives in `expand_sitemaps`, NOT
+    in `fetch_sitemap_text` — so reusing the ingest's *fetcher* inherits its
+    redirect and size limits but none of its target policy. Drift has to apply
+    the filter itself or it becomes a way to reach internal services from
+    whatever host the tool runs on, and (with `--model`) to forward what they
+    return to an external provider.
+    """
+
+    def test_a_loopback_source_is_refused_and_never_fetched(self):
+        url = "http://127.0.0.1:8000/admin"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+        assert [c.url for c in report.refused] == [url]
+        assert report.drifted == ()
+
+    def test_a_link_local_metadata_endpoint_is_refused(self):
+        url = "http://169.254.169.254/latest/meta-data/iam/security-credentials"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+
+    def test_a_private_range_source_is_refused(self):
+        url = "http://10.0.0.5/internal"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+
+    def test_an_obfuscated_numeric_host_is_refused(self):
+        # 2130706433 == 127.0.0.1; resolvers accept it, ipaddress will not
+        # canonicalize it, so the ingest's filter rejects the whole shape.
+        url = "http://2130706433/admin"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+
+    def test_a_non_http_scheme_is_refused(self):
+        url = "file:///etc/passwd"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+
+    def test_a_refused_source_is_never_shown_to_the_model(self):
+        url = "http://127.0.0.1:8000/admin"
+        bank = [_locked(url, hashes={url: "sha256:" + "0" * 64})]
+        prompts = []
+
+        _drift(
+            bank,
+            _fetcher_for({url: KB_HTML}),
+            ask_llm=_recording_llm(prompts, '{"verdict": "broken"}'),
+        )
+
+        assert prompts == []
+
+    def test_an_allowlisted_host_is_fetched(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == [url]
+
+    def test_no_allowlist_authorizes_nothing(self):
+        # Fail closed. Hostname policy cannot survive DNS rebinding, so the set
+        # of hosts drift will dial has to be one an operator actually vouched
+        # for — not "whatever the bank happens to name".
+        url = f"{KB}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        report = find_drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+        assert [c.url for c in report.refused] == [url]
+
+    def test_an_allowlist_restricts_which_hosts_drift_will_contact(self):
+        listed, other = f"{KB}/kb/gpu", "https://slurm.schedmd.com/mpi"
+        bank = [
+            _locked(listed, hashes={listed: page_digest(KB_HTML)}),
+            _locked(other, hashes={other: page_digest(KB_HTML)}),
+        ]
+        calls = []
+
+        report = _drift(
+            bank,
+            _fetcher_for({listed: KB_HTML, other: KB_HTML}, calls=calls),
+            allowed_hosts=["docs.rc.fas.harvard.edu"],
+        )
+
+        assert calls == [listed]
+        assert [c.url for c in report.refused] == [other]
+
+    def test_a_plaintext_source_is_refused_even_on_an_allowlisted_host(self):
+        # The ingest's filter permits http, and TLS verification buys nothing on
+        # a plaintext hop: anyone on the network path can substitute the page,
+        # manufacture a drift finding, steer the advisory verdict, and — with
+        # --model — choose the text sent to the provider. That is the exact risk
+        # the fetcher verifies TLS to avoid, so drift must not dial the scheme
+        # that defeats it.
+        url = f"http://{KB_HOST}/kb/gpu"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+        calls = []
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls))
+
+        assert calls == []
+        assert [c.url for c in report.refused] == [url]
+
+    def test_the_plaintext_refusal_names_the_scheme(self):
+        # A refused URL is only useful if the report says which rule refused it.
+        url = f"http://{KB_HOST}/kb/gpu"
+
+        report = _drift([_locked(url)], _fetcher_for({url: KB_HTML}))
+
+        assert "https" in report.refused[0].detail
+
+
+class TestDriftRetainsBoundedText:
+    """The tripwire runs over a whole bank; retained text has to be bounded."""
+
+    def test_a_huge_page_is_hashed_whole_but_retained_truncated(self):
+        url = f"{KB}/kb/big"
+        html = "<html><body><p>" + ("word " * 40_000) + "</p></body></html>"
+        bank = [_locked(url, hashes={url: "sha256:" + "0" * 64})]
+
+        report = _drift(bank, _fetcher_for({url: html}))
+        check = report.drifted[0].changed[0]
+
+        # The digest must cover the WHOLE page — truncating before hashing would
+        # make every edit past the cut invisible.
+        assert check.fresh == page_digest(html)
+        assert len(check.fresh_text) <= MAX_PROMPT_PAGE_CHARS + len(TRUNCATION_MARKER)
+
+    def test_a_malformed_url_is_refused_rather_than_raising(self):
+        # `urlparse(...).hostname` raises on an unclosed IPv6 bracket. A read-only
+        # pass must refuse it, not die on one bad row in a hand-edited bank.
+        assert is_fetchable_source("http://[::1/admin") is False
+
+
+class TestDriftAbstainsWhenNothingWasRead:
+    """Abstention keys on "no page was read", not on how the reading failed.
+
+    A refusal never reaches the fetch cache, so a cache-shaped rule reported a
+    fully-refused run — a mistyped `--allowed-hosts`, say — as a clean zero-drift
+    pass. The honest question is whether any source was actually read.
+    """
+
+    def test_every_source_refused_abstains(self):
+        url = "http://127.0.0.1:9000/admin"
+        bank = [_locked(url, hashes={url: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert report.abstained is True
+
+    def test_a_mix_of_refused_and_unreachable_with_no_reads_abstains(self):
+        refused, dead = "http://10.0.0.5/x", f"{KB}/kb/gone"
+        bank = [
+            _locked(refused, hashes={refused: page_digest(KB_HTML)}),
+            _locked(dead, hashes={dead: page_digest(KB_HTML)}),
+        ]
+
+        report = _drift(bank, _fetcher_for({}, errors={dead: "timeout"}))
+
+        assert report.abstained is True
+        assert len(report.reasons) == 2
+
+    def test_one_successful_read_is_enough_not_to_abstain(self):
+        good, refused = f"{KB}/kb/a", "http://10.0.0.5/x"
+        bank = [
+            _locked(good, hashes={good: page_digest(KB_HTML)}),
+            _locked(refused, hashes={refused: page_digest(KB_HTML)}),
+        ]
+
+        report = _drift(bank, _fetcher_for({good: KB_HTML}))
+
+        assert report.abstained is False
+
+    def test_a_bank_with_nothing_to_check_does_not_abstain(self):
+        # No locked rows is "nothing to do", not "the run failed".
+        report = _drift([_row(f"{KB}/kb/a")], _fetcher_for({}))
+
+        assert report.abstained is False
+
+
+class TestDriftEvidenceIsHonestAboutTruncation:
+    """Round-1's memory fix silently disabled the prompt's truncation marker.
+
+    `_fetch_extract` began capping the retained text at exactly
+    `MAX_PROMPT_PAGE_CHARS`, so `build_drift_prompt`'s own `len(text) > MAX`
+    check stopped firing and the model was handed a prefix presented as the
+    whole page. If the contradicting sentence sits past the cut, the verdict can
+    read "holds" off incomplete evidence — a false reassurance on exactly the
+    long pages hardest to check by eye.
+    """
+
+    def test_retained_text_says_it_was_cut(self):
+        url = f"{KB}/kb/big"
+        html = "<html><body><p>" + ("word " * 40_000) + "</p></body></html>"
+        bank = [_locked(url, hashes={url: "sha256:" + "0" * 64})]
+
+        report = _drift(bank, _fetcher_for({url: html}))
+
+        assert report.drifted[0].changed[0].fresh_text.endswith(TRUNCATION_MARKER)
+
+    def test_the_prompt_carries_the_marker_for_an_already_cut_page(self):
+        url = f"{KB}/kb/big"
+        html = "<html><body><p>" + ("word " * 40_000) + "</p></body></html>"
+        bank = [_locked(url, hashes={url: "sha256:" + "0" * 64})]
+        prompts = []
+
+        _drift(
+            bank,
+            _fetcher_for({url: html}),
+            ask_llm=_recording_llm(prompts, '{"verdict": "unclear"}'),
+        )
+
+        assert TRUNCATION_MARKER.strip() in prompts[0]
+
+    def test_truncation_is_idempotent_not_re_cut(self):
+        # The prompt builder must not chop the marker back off text that arrived
+        # already truncated.
+        once = _truncate_page_text("x" * (MAX_PROMPT_PAGE_CHARS * 2))
+
+        assert _truncate_page_text(once) == once
+
+    def test_a_short_page_is_left_alone(self):
+        assert _truncate_page_text("short") == "short"
+
+
+class TestMalformedLockedSource:
+    """An unparseable URL on a locked row must be named, not quietly dropped."""
+
+    def test_it_is_reported_as_refused_rather_than_skipped(self):
+        bank = [_locked("http://[", status="locked")]
+
+        report = _drift(bank, _fetcher_for({}))
+
+        # Previously this row fell through to `skipped`, where the CLI labels it
+        # "draft or source-less" — both false. A locked row with a broken source
+        # is unjudgeable, and unjudgeable is a thing this report names.
+        assert report.skipped_rows == 0
+        assert [c.url for c in report.refused] == ["http://["]
+
+    def test_a_good_source_alongside_a_broken_one_is_still_checked(self):
+        good = f"{KB}/kb/gpu"
+        bank = [_locked(good, "http://[", hashes={good: page_digest(KB_HTML)})]
+
+        report = _drift(bank, _fetcher_for({good: KB_HTML}))
+
+        states = {c.url: c.state for c in report.rows[0].checks}
+        assert states[good] == "unchanged"
+        assert states["http://["] == "refused"

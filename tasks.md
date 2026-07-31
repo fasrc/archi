@@ -1,1 +1,0 @@
-openspec/changes/fix-issue-136-parallel-scrape/tasks.md

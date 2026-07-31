@@ -1,9 +1,10 @@
 """Read-only detection passes for the RAGAS golden-set question bank.
 
-Group 2 of the openspec change `maintain-ragas-goldenset`: read the ingested
-corpus, reconcile its page URLs against the bank's `sources`, and report
-coverage gaps and orphans. Every pass here is **proposal-only** — nothing in
-this module writes the bank file, the corpus, or the live KB.
+The openspec change `maintain-ragas-goldenset`: read the ingested corpus,
+reconcile its page URLs against the bank's `sources`, and report the three ways
+the bank falls out of sync with the KB — coverage gaps, orphaned rows, and fact
+drift. Every pass here is **proposal-only**: nothing in this module writes the
+bank file, the corpus, or the live KB.
 
 Two design constraints shape the module (see the change's design D6/D7):
 
@@ -13,31 +14,47 @@ Two design constraints shape the module (see the change's design D6/D7):
   path never prunes. So the corpus lags in-place edits and keeps pages that were
   removed upstream — corpus *absence* is not evidence of removal, and the corpus
   resource hash carries no content signal at all. Orphan detection therefore
-  keys on a freshly expanded **live source inventory**.
+  keys on a freshly expanded **live source inventory**, and drift on a live
+  re-fetch.
 - URL reconciliation reuses the ingest's own normalizer
   (`sitemap_source.normalize_page_url`) on both sides, so the bank and the
   corpus are compared in exactly the canonical form the ingest stores rather
-  than through a bespoke second normalizer that could drift from it.
+  than through a bespoke second normalizer that could drift from it. Drift
+  extends the same rule to page *content*: it hashes text produced by the
+  ingest's own extraction (`processing.html_to_markdown`), so markup churn
+  cannot masquerade as a fact change.
+
+The three passes deliberately read different oracles, because they ask different
+questions. Coverage and `--propose` read the **persisted** corpus, since a golden
+question must be answerable from what the retriever actually serves. Orphans read
+the **live source inventory**, since the corpus never prunes. Drift re-fetches the
+**live page**, since the corpus lags edits and would agree with a stale reference.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 from urllib.parse import urlparse
 
+from src.data_manager.collectors.processing import html_to_markdown
 from src.data_manager.collectors.scrapers.sitemap_source import (
     FetchText,
     SitemapExpansionError,
     SitemapParseError,
     SitemapPolicy,
     expand_sitemaps,
+    is_url_allowed,
     normalize_page_url,
     parse_sitemap_document,
 )
+from src.utils.benchmark_schema import row_status
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -809,6 +826,11 @@ DRAFT_STATUS = "draft"
 #: request budget) on a run an operator expects to be cheap.
 MAX_PROMPT_PAGE_CHARS = 24_000
 
+#: Appended when page text is cut for review. Load-bearing: without it a prefix
+#: reads as a whole page, and a verdict formed on one is indistinguishable from
+#: a verdict formed on all of it.
+TRUNCATION_MARKER = "\n[... page truncated ...]"
+
 #: Takes a prompt, returns the model's raw reply. Injected so tests need no LLM.
 AskLLM = Callable[[str], str]
 
@@ -921,8 +943,6 @@ def _candidate_records(raw: str) -> List[Any]:
     Raises rather than returning `[]` on unparseable output: zero candidates
     from a broken reply must not read as "this page has nothing worth asking".
     """
-    import json
-
     try:
         parsed = json.loads(_strip_code_fence(raw))
     except ValueError as exc:
@@ -1048,3 +1068,577 @@ def without_decline(entries: Any, url: str) -> List[Dict[str, str]]:
         if decline.url != canonical:
             kept.append(entry)
     return kept
+
+
+# --------------------------------------------------------------------------- #
+# Fact drift — hash tripwire, then LLM diff (design D2 / D6)
+# --------------------------------------------------------------------------- #
+# A locked row stores `source_hashes`: a map from each grounding URL to a content
+# hash taken when a human confirmed the reference against that page. Each pass
+# re-fetches every source, re-hashes, and compares — no "last run" state file and
+# no timestamps, so the check is the same whether it runs hourly or once a year.
+#
+# Drift keys on the **live** page, not the persisted corpus, and the two passes in
+# this module therefore read different things on purpose. Proposal grounds in the
+# persisted text because a candidate must be answerable from what the retriever
+# serves. Drift asks the opposite question — "has the world moved past what we
+# recorded?" — and the corpus cannot answer it: ingestion skips the content write
+# for a URL it already holds, so a corpus-based check would compare a stale
+# reference against an equally stale copy and call it clean (design D6). Live
+# re-fetch fails toward cheap, human-reviewed false positives instead.
+
+#: Digest algorithm, carried **in** the stored value as a `sha256:` label.
+#: A bare hex string does not say how it was computed, so a later change to the
+#: extraction or hashing rule would silently compare against the wrong baseline —
+#: either a bank-wide false-flag wave or, worse, a coincidental clean. Labeled
+#: values let an unrecognized rule be reported as *incomparable* instead.
+HASH_ALGORITHM = "sha256"
+
+#: Hex characters in a sha256 digest. A stored value carrying the label but not
+#: this shape is malformed, not a baseline — see :func:`is_comparable_digest`.
+_SHA256_HEX_LENGTH = 64
+
+#: What the LLM diff may conclude. Imposed, never read from the model.
+DRIFT_VERDICTS = ("holds", "broken", "unclear")
+UNCLEAR_VERDICT = "unclear"
+
+#: Per-source outcomes. Everything that is not `unchanged` or `changed` is a
+#: state the tool could not judge, and each is reported rather than folded into
+#: either — a page the tool failed to check must never read as a page that is fine.
+DRIFT_UNCHANGED = "unchanged"
+DRIFT_CHANGED = "changed"
+DRIFT_UNBASELINED = "unbaselined"
+DRIFT_INCOMPARABLE = "incomparable"
+DRIFT_UNREACHABLE = "unreachable"
+DRIFT_REFUSED = "refused"
+
+#: States in which no page was actually read. Abstention keys on these rather
+#: than on fetch failures alone: a refusal never reaches the fetcher, so a
+#: fetch-shaped rule reported a fully-refused run — a mistyped allowlist, say —
+#: as a clean zero-drift pass.
+_UNREAD_STATES = (DRIFT_UNREACHABLE, DRIFT_REFUSED)
+
+_INLINE_WHITESPACE = re.compile(r"[ \t]+")
+_BLANK_LINE_RUN = re.compile(r"\n{3,}")
+
+
+class DriftExtractionError(Exception):
+    """A fetched page yielded no text to hash."""
+
+
+def normalize_extracted_text(text: str) -> str:
+    """Reduce extracted text to the form a content hash is taken over.
+
+    Only *presentation* is normalized — line endings, Unicode composition form,
+    runs of spaces/tabs, and runs of blank lines. Wording, case and punctuation
+    are left exactly as written, because those are the content.
+
+    This is the second half of design D6's sign-off condition. The first half is
+    measuring the live page through the ingest's own extraction; this is what
+    keeps the residue of that conversion (a reflowed paragraph, a re-indented
+    list) from moving a hash and manufacturing drift nobody needs to review.
+    """
+    unified = text.replace("\r\n", "\n").replace("\r", "\n")
+    collapsed = _INLINE_WHITESPACE.sub(" ", unicodedata.normalize("NFC", unified))
+    stripped = "\n".join(line.strip() for line in collapsed.split("\n"))
+    return _BLANK_LINE_RUN.sub("\n\n", stripped).strip()
+
+
+def content_digest(text: str) -> str:
+    """Return the algorithm-labeled digest of already-normalized text."""
+    encoded = text.encode("utf-8")
+    return f"{HASH_ALGORITHM}:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def is_comparable_digest(stored: str) -> bool:
+    """Whether a stored baseline is a value a fresh digest could ever equal.
+
+    The `sha256:` label alone is not enough. A hand-edited or half-pasted value
+    keeps the label but loses the digest (`sha256:9f86d0818`), and that can never
+    equal a real hash — so comparing it reports a page that did not move, and
+    with `--model` buys an LLM call to explain a change that never happened. A
+    baseline that is not a well-formed digest is not a baseline; it belongs in
+    the `incomparable` bucket with the unrecognized algorithms, which is where
+    the report already says "this was not checked".
+    """
+    prefix = f"{HASH_ALGORITHM}:"
+    if not stored.startswith(prefix):
+        return False
+    digest = stored[len(prefix) :]
+    return len(digest) == _SHA256_HEX_LENGTH and all(
+        c in "0123456789abcdefABCDEF" for c in digest
+    )
+
+
+def extract_page_text(html: str) -> str:
+    """Extract a fetched page the way the ingest does, normalized for hashing.
+
+    Raises rather than returning `""` when the conversion yields nothing. An
+    empty extraction hashes to a single fixed value, so every page that stopped
+    converting would agree with every other one — and each would then read as
+    "unchanged" on every future run. That is a silent false clean on exactly the
+    pages something is already wrong with.
+    """
+    extracted = normalize_extracted_text(html_to_markdown(html))
+    if not extracted:
+        raise DriftExtractionError(
+            "the page converted to no text at all — refusing to hash an empty "
+            "extraction, which would read as 'unchanged' forever"
+        )
+    return extracted
+
+
+def page_digest(html: str) -> str:
+    """Fetch-to-hash in one step: the value a `source_hashes` entry holds."""
+    return content_digest(extract_page_text(html))
+
+
+@dataclass(frozen=True)
+class DriftVerdict:
+    """The model's advisory read on whether a stored reference still holds."""
+
+    verdict: str
+    explanation: str = ""
+
+
+@dataclass(frozen=True)
+class SourceCheck:
+    """One grounding URL of one locked row, checked against its baseline.
+
+    `fresh_text` is retained only for a `changed` source — it is what the LLM
+    diff reads, and holding every page's body for a whole bank would be a lot of
+    memory for text nothing goes on to use.
+    """
+
+    url: str
+    state: str
+    stored: str = ""
+    fresh: str = ""
+    detail: str = ""
+    fresh_text: str = ""
+    verdict: Optional[DriftVerdict] = None
+
+
+@dataclass(frozen=True)
+class RowDrift:
+    """One locked row's sources, checked.
+
+    `stale_baselines` names hashes stored for URLs the row no longer cites —
+    left behind when someone edited `sources` without clearing the map. Harmless
+    on its own, but it means a recorded confirmation refers to a page that is no
+    longer part of this question, and silently ignoring it hides that.
+    """
+
+    row_index: int
+    user_input: str
+    reference: str
+    checks: Tuple[SourceCheck, ...]
+    stale_baselines: Tuple[str, ...] = ()
+
+    @property
+    def changed(self) -> Tuple[SourceCheck, ...]:
+        return tuple(c for c in self.checks if c.state == DRIFT_CHANGED)
+
+
+@dataclass(frozen=True)
+class DriftReport:
+    """What one drift pass found. Advisory: nothing here edits the bank."""
+
+    rows: Tuple[RowDrift, ...]
+    checked_rows: int
+    skipped_rows: int
+    abstained: bool = False
+    reasons: Tuple[str, ...] = ()
+
+    def _in_state(self, state: str) -> Tuple[SourceCheck, ...]:
+        return tuple(c for row in self.rows for c in row.checks if c.state == state)
+
+    @property
+    def drifted(self) -> Tuple[RowDrift, ...]:
+        return tuple(row for row in self.rows if row.changed)
+
+    @property
+    def unbaselined(self) -> Tuple[SourceCheck, ...]:
+        return self._in_state(DRIFT_UNBASELINED)
+
+    @property
+    def incomparable(self) -> Tuple[SourceCheck, ...]:
+        return self._in_state(DRIFT_INCOMPARABLE)
+
+    @property
+    def unreachable(self) -> Tuple[SourceCheck, ...]:
+        return self._in_state(DRIFT_UNREACHABLE)
+
+    @property
+    def refused(self) -> Tuple[SourceCheck, ...]:
+        return self._in_state(DRIFT_REFUSED)
+
+
+_DRIFT_PROMPT = """\
+A question in a RAG benchmark's golden-answer set was confirmed against a page.
+That page has since changed. Decide whether the recorded answer is still correct.
+
+Question: {user_input}
+Recorded answer: {reference}
+
+The page NOW reads ({url}):
+---
+{page_text}
+---
+
+Answer only about whether the recorded answer is still supported by this page.
+Do not rewrite it, and do not judge its style.
+
+Reply with ONLY a JSON object:
+{{"verdict": "holds" | "broken" | "unclear", "explanation": "<one sentence>"}}
+- "holds": the page still supports the recorded answer.
+- "broken": the page now contradicts it, or no longer supports it.
+- "unclear": the page does not settle it either way.
+No prose, no fences.
+"""
+
+
+def _truncate_page_text(text: str) -> str:
+    """Cap page text for review, leaving a visible mark that it was cut.
+
+    **Idempotent.** The cut now happens at the fetch cache, and this builder
+    still guards its own input; without the marker check the text would be cut a
+    second time and lose the very marker that says so. That is how a model ends
+    up reading a prefix presented as a whole page and answering "holds" about a
+    contradiction sitting past the cutoff.
+    """
+    if len(text) <= MAX_PROMPT_PAGE_CHARS or text.endswith(TRUNCATION_MARKER):
+        return text
+    return text[:MAX_PROMPT_PAGE_CHARS] + TRUNCATION_MARKER
+
+
+def build_drift_prompt(
+    user_input: str, reference: str, url: str, page_text: str
+) -> str:
+    """Compose the diff prompt for one changed source."""
+    return _DRIFT_PROMPT.format(
+        user_input=user_input,
+        reference=reference,
+        url=url,
+        page_text=_truncate_page_text(page_text.strip()),
+    )
+
+
+def parse_drift_verdict(raw: str) -> DriftVerdict:
+    """Sanitize a model reply into one of the three allowed verdicts.
+
+    Never raises. The verdict is advisory triage on a finding the hash already
+    established, so a broken reply must degrade to `unclear` rather than take the
+    run down — but it says *why* it is unclear, so an operator can tell a model
+    that read the page from one that never answered.
+    """
+    try:
+        parsed = json.loads(_strip_code_fence(raw))
+    except ValueError as exc:
+        return DriftVerdict(UNCLEAR_VERDICT, f"the model reply was not JSON: {exc}")
+    if not isinstance(parsed, dict):
+        return DriftVerdict(
+            UNCLEAR_VERDICT, "the model reply was not JSON: expected an object"
+        )
+    explanation = str(parsed.get("explanation") or "").strip()
+    verdict = parsed.get("verdict")
+    if verdict not in DRIFT_VERDICTS:
+        return DriftVerdict(
+            UNCLEAR_VERDICT,
+            f"the model answered {verdict!r}, which is not one of "
+            f"{', '.join(DRIFT_VERDICTS)}. {explanation}".strip(),
+        )
+    return DriftVerdict(str(verdict), explanation)
+
+
+def _ask_drift(
+    ask_llm: AskLLM, user_input: str, reference: str, url: str, page_text: str
+) -> DriftVerdict:
+    """Run the diff, degrading a provider failure to `unclear`.
+
+    A model that cannot be reached must not erase the finding: the hash mismatch
+    is the fact, and the verdict only tells an operator how urgently to look.
+    """
+    prompt = build_drift_prompt(user_input, reference, url, page_text)
+    try:
+        return parse_drift_verdict(ask_llm(prompt))
+    except Exception as exc:  # noqa: BLE001 - any provider failure is advisory
+        return DriftVerdict(UNCLEAR_VERDICT, f"the model could not be reached: {exc}")
+
+
+def is_fetchable_source(url: str, allowed_hosts: Iterable[str] = ()) -> bool:
+    """Whether drift may turn this `sources` value into an outbound request.
+
+    A `sources` entry is *data* read out of a bank file, and drift is the one
+    pass that dials it. The ingest's trust filter lives in `expand_sitemaps`,
+    not in `fetch_sitemap_text`, so reusing the ingest's fetcher inherits its
+    redirect and size limits and **none** of its target policy. Without this
+    check the tool would fetch `http://169.254.169.254/…` from whatever host it
+    runs on and — with `--model` and any hash mismatch — forward the response to
+    an external provider.
+
+    Delegates to the ingest's own `is_url_allowed` rather than restating its
+    rules, so the two cannot diverge: non-http(s) schemes, malformed ports, and
+    loopback/private/link-local or obfuscated-numeric hosts are refused.
+
+    **Fails closed: an empty `allowed_hosts` authorizes nothing.** The obvious
+    alternative — let any syntactically public host through — reads as
+    convenient (the bank legitimately cites external authorities like the
+    upstream Slurm docs) but it is not a policy, because this check can only see
+    a *hostname*. Nothing here resolves DNS or inspects the address actually
+    connected to, so a public-looking name that resolves to loopback or a
+    metadata endpoint passes. Requiring the operator to name the hosts collapses
+    that from "any name the bank contains" to "a host someone vouched for",
+    which is the part this layer can actually enforce.
+
+    It is a narrowing, not a fix. DNS-rebinding-resistant connection pinning
+    belongs in `fetch_sitemap_text` (its "§Deferred hardening v2/H1"), where
+    `expand_sitemaps` — which fetches URLs read out of a *remote* document, less
+    trusted than a repo-committed bank — needs it just as much. Tracked in #143.
+
+    **Plaintext is refused even on an allowlisted host.** `is_url_allowed`
+    permits `http`, which is right for the ingest but not here: TLS verification
+    buys nothing on a plaintext hop, so anyone on the network path could
+    substitute the page — manufacturing a drift finding, steering the advisory
+    verdict, and choosing the text `--model` forwards to the provider. `sources`
+    is repo-committed data an operator can simply write as `https`, so the cost
+    of requiring it is a one-character edit. The transport refuses the downgrade
+    this layer cannot see (an https URL that redirects to http on the same host);
+    naming it here as well means the report shows the URL rather than an opaque
+    fetch failure.
+    """
+    hosts = [host for host in allowed_hosts if host]
+    if not hosts:
+        return False
+    if urlparse(url).scheme.lower() != "https":
+        return False
+    return is_url_allowed(url, "", hosts)
+
+
+def _fetch_extract(
+    url: str, cache: Dict[str, Tuple[str, str, str]], fetch_html: FetchText
+) -> Tuple[str, str, str]:
+    """Return `(text, digest, error)` for a URL, fetching each URL at most once.
+
+    Failures are cached too. A bank cites the same page from several rows, so an
+    uncached failure would re-request a dead URL once per row — turning one
+    unreachable page into a burst of traffic at the KB, and one slow timeout into
+    many.
+
+    The digest is taken over the **whole** extracted page; only the retained copy
+    is truncated, and only to the length a prompt could actually use. Hashing the
+    truncation instead would make every edit past the cut invisible — a silent
+    false clean on exactly the long pages hardest to review by eye. Retaining the
+    whole thing is the opposite trap: this cache lives for the length of the run,
+    so a bank with many large sources would grow it without bound.
+    """
+    if url in cache:
+        return cache[url]
+    try:
+        text = extract_page_text(fetch_html(url))
+        result = (_truncate_page_text(text), content_digest(text), "")
+    except Exception as exc:  # noqa: BLE001 - fetcher is injected; any failure is local
+        result = ("", "", str(exc))
+    cache[url] = result
+    return result
+
+
+def _baselines(record: Mapping[str, Any]) -> Dict[str, str]:
+    """Read a row's `source_hashes` map, canonicalizing its URL keys.
+
+    Keys are canonicalized for the same reason `sources` are: a map written with
+    a trailing slash must still match the source it baselines, or the row reads
+    as unbaselined forever while looking perfectly well-formed.
+    """
+    stored = record.get("source_hashes")
+    if not isinstance(stored, dict):
+        return {}
+    baselines: Dict[str, str] = {}
+    for raw_key, value in stored.items():
+        if not isinstance(raw_key, str) or not isinstance(value, str):
+            continue
+        key = canonical_url(raw_key)
+        if key is not None:
+            baselines[key] = value
+    return baselines
+
+
+def _check_source(
+    url: str,
+    stored: Optional[str],
+    row: Mapping[str, Any],
+    cache: Dict[str, Tuple[str, str, str]],
+    fetch_html: FetchText,
+    ask_llm: Optional[AskLLM],
+    allowed_hosts: Iterable[str] = (),
+) -> SourceCheck:
+    """Compare one grounding URL against its baseline, escalating on a mismatch.
+
+    The policy check and the LLM call both live here, on either side of the
+    fetch, so "never dial a refused target" and "the model fires only on a moved
+    hash" are structural rather than rules some caller has to honor.
+    """
+    if not is_fetchable_source(url, allowed_hosts):
+        return SourceCheck(
+            url=url,
+            state=DRIFT_REFUSED,
+            stored=stored or "",
+            detail=(
+                "refused by the fetch policy (host not in --allowed-hosts, not "
+                "https, or a loopback/private/link-local address) — not "
+                "fetched, and never shown to a model"
+            ),
+        )
+    text, fresh, error = _fetch_extract(url, cache, fetch_html)
+    if error:
+        return SourceCheck(
+            url=url, state=DRIFT_UNREACHABLE, stored=stored or "", detail=error
+        )
+    if not stored:
+        return SourceCheck(url=url, state=DRIFT_UNBASELINED, fresh=fresh)
+    if not is_comparable_digest(stored):
+        return SourceCheck(
+            url=url,
+            state=DRIFT_INCOMPARABLE,
+            stored=stored,
+            fresh=fresh,
+            detail=(
+                f"the stored hash is not a well-formed {HASH_ALGORITHM}: digest, "
+                "so it cannot be compared with a freshly computed one"
+            ),
+        )
+    if stored == fresh:
+        return SourceCheck(url=url, state=DRIFT_UNCHANGED, stored=stored, fresh=fresh)
+    verdict = None
+    if ask_llm is not None:
+        verdict = _ask_drift(
+            ask_llm,
+            str(row.get("user_input") or ""),
+            str(row.get("reference") or ""),
+            url,
+            text,
+        )
+    return SourceCheck(
+        url=url,
+        state=DRIFT_CHANGED,
+        stored=stored,
+        fresh=fresh,
+        fresh_text=text,
+        verdict=verdict,
+    )
+
+
+def find_drift(
+    bank: Iterable[Any],
+    fetch_html: FetchText,
+    *,
+    ask_llm: Optional[AskLLM] = None,
+    allowed_hosts: Iterable[str] = (),
+) -> DriftReport:
+    """Re-hash every locked row's grounding pages and report what moved.
+
+    Only `locked` rows are checked. A `draft` row is unconfirmed by definition —
+    no human ever vouched for its reference against a page — so there is nothing
+    for a hash to be a baseline *of*, and its sources are not even fetched. A
+    locked row with no `sources` (the `should_refuse` shape) has nothing to
+    check either; locking one must not require a grounding hash.
+
+    A row that was checked over nothing is still read for **stale baselines**,
+    though. `source_hashes` left behind when someone emptied `sources` is the
+    largest version of that finding, and it would otherwise be filed under
+    "source-less" — the one shape the report is supposed to call out.
+
+    A row is flagged when **any** of its sources moved, and the changed URL is
+    named: a row grounded in three pages where one was rewritten is exactly as
+    stale as one grounded in a single rewritten page.
+
+    Abstains only when **no source was read at all** — every one unreachable or
+    refused by the fetch policy. That is deliberately weaker than the orphan
+    pass, which abstains on a *single* inventory failure: there, one missing
+    sitemap makes unrelated rows look deleted, so the damage spreads. A failure
+    here is local, affecting only the rows citing that URL, and those rows are
+    individually reported as unchecked rather than as clean. When nothing could
+    be read, though, "no drift" would be a false clean over the entire bank.
+
+    Read-only: the bank is never mutated, and `source_hashes` is never rewritten.
+    Re-baselining a row is a human act, like locking it in the first place.
+    """
+    cache: Dict[str, Tuple[str, str, str]] = {}
+    rows: List[RowDrift] = []
+    checked = 0
+    skipped = 0
+
+    for index, record in enumerate(bank):
+        if not isinstance(record, dict) or row_status(record) != "locked":
+            skipped += 1
+            continue
+        baselines = _baselines(record)
+        sources = record.get("sources")
+        cited: List[str] = []
+        checks: List[SourceCheck] = []
+        for raw in sources if isinstance(sources, list) else ():
+            if not isinstance(raw, str) or not raw:
+                continue
+            url = canonical_url(raw)
+            if url is None:
+                # A locked row cites this page, so it is NOT source-less — but
+                # the URL cannot be canonicalized, so it cannot be checked. Drop
+                # it silently and the row falls through to `skipped`, where the
+                # report calls it "draft or source-less": two things it is not.
+                # Unjudgeable is a state this report names.
+                checks.append(
+                    SourceCheck(
+                        url=raw,
+                        state=DRIFT_REFUSED,
+                        detail="not a parseable URL — cannot be checked",
+                    )
+                )
+                continue
+            if url in cited:
+                continue
+            cited.append(url)
+            checks.append(
+                _check_source(
+                    url,
+                    baselines.get(url),
+                    record,
+                    cache,
+                    fetch_html,
+                    ask_llm,
+                    allowed_hosts,
+                )
+            )
+        row = RowDrift(
+            row_index=index,
+            user_input=str(record.get("user_input") or ""),
+            reference=str(record.get("reference") or ""),
+            checks=tuple(checks),
+            stale_baselines=tuple(u for u in baselines if u not in cited),
+        )
+        if checks:
+            checked += 1
+            rows.append(row)
+            continue
+        # Nothing was compared, so the row counts as skipped. But a row whose
+        # `sources` was emptied while its map was left behind is the *maximal*
+        # case of a stale baseline — every recorded confirmation now points at a
+        # page the row no longer cites — and returning early here would hide the
+        # one edit that bucket exists to catch, filed under "source-less".
+        skipped += 1
+        if row.stale_baselines:
+            rows.append(row)
+
+    attempted = [check for row in rows for check in row.checks]
+    unread = [check for check in attempted if check.state in _UNREAD_STATES]
+    abstained = bool(attempted) and len(unread) == len(attempted)
+    return DriftReport(
+        rows=tuple(rows),
+        checked_rows=checked,
+        skipped_rows=skipped,
+        abstained=abstained,
+        reasons=(
+            tuple(f"{check.url}: {check.detail}" for check in unread)
+            if abstained
+            else ()
+        ),
+    )

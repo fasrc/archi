@@ -208,6 +208,32 @@ class HtmlCategoryProcessor:
         return resource
 
 
+def html_to_markdown(html: str) -> str:
+    """Convert page HTML to the Markdown the ingest persists.
+
+    The extraction rule as a **pure function**, so anything that needs to know
+    what a page "says" measures it the same way the corpus was built. The golden
+    set's drift pass hashes the text of a re-fetched page, and design D6's
+    sign-off condition is exactly this: the live signal must come through the
+    ingest's own extraction rather than a second implementation that could drift
+    from it and turn a markup change into a phantom content change.
+
+    Returns ``""`` when the conversion is blank — the caller decides what that
+    means (persistence keeps the original HTML; drift refuses to hash it).
+    Conversion failures propagate, so a caller can tell "converted to nothing"
+    from "could not convert".
+    """
+    markdown = _markdownify_deep_safe(html)
+    if not markdown or not markdown.strip():
+        return ""
+    # Strip KB page chrome to the article body — ONLY for Echo-KB pages (gated on
+    # their raw-HTML signature), so an arbitrary non-KB page that merely contains
+    # "Table of Contents"/"Last Updated" is never truncated.
+    if _is_echo_kb_page(html):
+        markdown = _slice_kb_article(markdown)
+    return markdown
+
+
 class HtmlToMarkdownProcessor:
     """Convert a string-content HTML resource to Markdown before persistence.
 
@@ -230,7 +256,7 @@ class HtmlToMarkdownProcessor:
             return resource
 
         try:
-            markdown = _markdownify_deep_safe(content)
+            markdown = html_to_markdown(content)
         except Exception as exc:
             logger.warning(
                 "HTML->Markdown conversion failed for %s; keeping original HTML: %s",
@@ -239,19 +265,13 @@ class HtmlToMarkdownProcessor:
             )
             return resource
 
-        if not markdown or not markdown.strip():
+        if not markdown:
             logger.warning(
                 "HTML->Markdown conversion produced blank output for %s; keeping "
                 "original HTML to avoid an empty-content persist error.",
                 _resource_label(resource),
             )
             return resource
-
-        # Strip KB page chrome to the article body — ONLY for Echo-KB pages (gated on
-        # their raw-HTML signature), so an arbitrary non-KB page that merely contains
-        # "Table of Contents"/"Last Updated" is never truncated.
-        if _is_echo_kb_page(content):
-            markdown = _slice_kb_article(markdown)
 
         resource.content = markdown
         resource.suffix = "md"
