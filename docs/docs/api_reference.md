@@ -218,6 +218,9 @@ treat a `warning` event as "my override did not take".
 [ovrimport]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1611
 [outerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2568
 [legacygate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2386
+[chunkyield]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2368
+[chunkyield2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2410
+[traceevent]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2377
 [stepemit]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1701
 [refreshnew]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1639
 [refreshskip]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1657
@@ -261,9 +264,15 @@ be sent [together](#overriding-provider-and-model) or neither takes effect.
     The timeout rejection described above is in this second group.
 
     A correct client therefore does **both**: check the HTTP status first, and — when it is
-    `200` — still inspect the events for `type: "error"`, whose `status` field holds what the
-    non-streaming endpoint would have returned. Treating `200 OK` alone as success misses the
-    second group; ignoring the status code misses the first.
+    `200` — still inspect the events for `type: "error"`, whose `status` field is the status of
+    the **failed streaming operation**. Treating `200 OK` alone as success misses the second
+    group; ignoring the status code misses the first.
+
+    Read that `status` as this endpoint's own result, not as a prediction of what
+    `POST /api/get_chat_response` would have done with the same body. Some failures exist only
+    on this endpoint — an override rejected with an in-band `400` ([`app.py:2042`][ovrreject])
+    has no counterpart there, because the non-streaming handler ignores `provider` and `model`
+    altogether and would answer normally.
 
 [streamopen]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4768
 [clientid]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4730
@@ -273,7 +282,7 @@ Each line is a JSON object with a `type` field. Event types:
 | Type | Description |
 |------|-------------|
 | `meta` | Stream metadata (sent first, includes padding) |
-| `text` | Response text delta |
+| `chunk` | **The incremental answer text.** This is the event carrying the response as it is produced ([`app.py:2368`][chunkyield], [`:2410`][chunkyield2]) — gated by `include_agent_steps` |
 | `tool_start` | Agent is invoking a tool |
 | `tool_output` | Tool result |
 | `thinking_start` | Reasoning model thinking begins |
@@ -285,7 +294,16 @@ Each line is a JSON object with a `type` field. Event types:
 
 Treat this as the set you will encounter rather than a closed enumeration: which events a
 pipeline emits depends on the pipeline, so **ignore unknown `type` values rather than
-failing on them**.
+failing on them** — while still handling `chunk`, which is where the answer arrives.
+
+!!! note "`text` is a trace event, not a stream event"
+
+    `text` is the pipeline's *internal* output type. The dispatch converts it to a `chunk`
+    event on the wire ([`app.py:2362-2368`][chunkyield]) and records a separate `text` entry
+    in the request trace ([`:2377`][traceevent]), which you read back through
+    `GET /api/trace/<trace_id>` — it is never emitted on the NDJSON stream. Earlier revisions
+    of this table listed `text` and omitted `chunk`, which is the wrong way round for anyone
+    parsing the stream.
 
 !!! warning "The two step flags do not group events the way their names suggest"
 

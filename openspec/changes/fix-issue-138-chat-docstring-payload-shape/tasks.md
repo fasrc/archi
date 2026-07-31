@@ -62,11 +62,12 @@
   (`app.py:2345`, `:2359`). The page warns that setting `include_agent_steps: false` to hide
   reasoning both fails to hide it and silently drops streamed answer text, and that the
   symptom is a late-arriving `final` answer rather than an error.
-- [x] 3.10 The override is documented as *attempted*, with all three outcomes: applied;
-  rejected `{"type": "error", "status": 400}` with the stream ending (`app.py:2048`); or
-  fallen back to the default pipeline after a `{"type": "warning"}` event (`app.py:2052`,
-  `:2073`). The silent case — no `agent_llm` on the active pipeline (`app.py:2055`) — is
-  recorded too, and `warning` is added to the streaming event-type table.
+- [x] 3.10 The override is documented as *attempted* rather than applied, and `warning` is added
+  to the streaming event-type table. **Superseded by 3.13** — this task originally said "all
+  three outcomes" and then described a fourth, which is the closed-enumeration defect 3.12 was
+  written to remove. The outcomes are not a fixed count: they are grouped by how the caller
+  finds out (`error` + stream ends, `warning` + fallback, silence, in-band `500` at invocation),
+  and 3.13 is the current statement of that.
 - [x] 3.11 The runnable example states its authentication precondition. Every chat route is
   wrapped in `require_auth` (`app.py:2729`), so with `auth.enabled: true` the command gets
   `401`/`302` and never reaches the handler — "a request that succeeds" holds only where auth
