@@ -1,1 +1,0 @@
-openspec/changes/fix-issue-155-sitemap-lastmod-persist/tasks.md
