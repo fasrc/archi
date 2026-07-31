@@ -1,1 +1,0 @@
-openspec/changes/fix-issue-147-drift-explicit-mode/tasks.md

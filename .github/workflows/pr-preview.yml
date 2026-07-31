@@ -161,6 +161,55 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Decide whether this PR's changed files can affect the smoke deployment or
+      # the Playwright UI suite. A docs-/openspec-/unit-test-only PR skips both
+      # expensive stages (#87). Reuses the `git diff --name-only` pattern from
+      # build-base-images above — no new marketplace action.
+      #
+      # Correctness over speed: if the changed-file list can't be computed (shallow
+      # clone, diff error), both flags default to true so the full suite runs. The
+      # `preview` job itself always runs and succeeds, so gating steps (not the whole
+      # job) keeps any required-status-check behaviour intact.
+      - name: Detect changed paths
+        id: detect
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE_REF" || true
+          FILES="$(git diff --name-only "origin/${BASE_REF}...HEAD" || true)"
+          if [ -z "$FILES" ]; then
+            echo "Changed-file list empty/uncomputable -> running the full suite (fail-safe)."
+            echo "runtime=true" >> "$GITHUB_OUTPUT"
+            echo "ui=true"      >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Changed files:"; echo "$FILES"
+          # Smoke-deploy-relevant (runtime) paths. scripts/dev/ is included because
+          # the run-smoke action executes scripts/dev/run_smoke_preview.sh and the
+          # build/publish jobs call build_docker_images.sh / push_docker_images.sh /
+          # update_service_base_images.py — editing any of those changes the smoke
+          # path itself, so a PR touching them must NOT skip the smoke deploy.
+          # tests/smoke/ for the same reason, one level down: run_smoke_preview.sh
+          # executes tests/smoke/combined_smoke.sh, so a PR editing the smoke suite
+          # itself would otherwise skip the very stage it changes.
+          runtime_re='^(src/|deploy/|requirements/|pyproject\.toml|.*Dockerfile[^/]*$|scripts/dev/|tests/smoke/|tests/pr_preview_config/|\.github/actions/run-smoke/|\.github/workflows/pr-preview\.yml)'
+          # Playwright/UI-relevant paths.
+          ui_re='^(src/interfaces/chat_app/static/|src/interfaces/chat_app/templates/|tests/ui/|playwright\.config\.ts|package(-lock)?\.json|\.github/actions/run-smoke/)'
+          runtime=false; ui=false
+          # Here-strings, NOT `echo "$FILES" | grep -q`. `grep -q` exits on its first
+          # match, and on a large changed-file list that closes the pipe while echo is
+          # still writing: echo takes SIGPIPE (141), `set -o pipefail` makes the whole
+          # pipeline non-zero even though grep MATCHED, and the `|| true` then swallows
+          # it — leaving the flag false. That fails OPEN: a PR touching src/ would skip
+          # the smoke deploy. Reproduced with a 3.9 MB list and a matching path first:
+          # piped form gave runtime=false, here-string gave runtime=true.
+          if grep -qE "$runtime_re" <<<"$FILES"; then runtime=true; fi
+          if grep -qE "$ui_re" <<<"$FILES"; then ui=true; fi
+          echo "runtime=$runtime" >> "$GITHUB_OUTPUT"
+          echo "ui=$ui"           >> "$GITHUB_OUTPUT"
+          echo "Decision: runtime=$runtime ui=$ui"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -177,6 +226,7 @@ jobs:
           python -c "import importlib.util, mkdocs; assert importlib.util.find_spec('mkdocs.__main__'), 'mkdocs.__main__ missing'; print('mkdocs:', mkdocs.__version__)"
 
       - name: Install Ollama and pull model
+        if: steps.detect.outputs.runtime == 'true' || steps.detect.outputs.ui == 'true'
         run: |
           curl -fsSL https://ollama.com/install.sh | sh
           ollama serve &
@@ -190,6 +240,7 @@ jobs:
           ollama pull qwen3:4b
 
       - name: Disable Docker containerd image store
+        if: steps.detect.outputs.runtime == 'true' || steps.detect.outputs.ui == 'true'
         run: |
           # Docker on ubuntu-latest uses containerd image store by default.
           # This causes "already exists" errors when multiple compose services
@@ -225,6 +276,7 @@ jobs:
         run: rm -rf site
 
       - name: Run smoke deployment
+        if: steps.detect.outputs.runtime == 'true' || steps.detect.outputs.ui == 'true'
         uses: ./.github/actions/run-smoke
         with:
           deployment-name: ci-${{ github.run_id }}
@@ -243,26 +295,33 @@ jobs:
           use-podman: "false"
 
       # ── Playwright UI tests (run in same job; deployment is on localhost) ──
+      # Gated on the same signal as the smoke deploy: the UI suite needs the
+      # deployed app up, and a backend-only change can still break the UI, so run
+      # Playwright whenever the app was deployed (runtime OR ui).
       - name: Set up Node.js
+        if: steps.detect.outputs.runtime == 'true' || steps.detect.outputs.ui == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
 
       - name: Install npm dependencies
+        if: steps.detect.outputs.runtime == 'true' || steps.detect.outputs.ui == 'true'
         run: npm ci
 
       - name: Install Playwright browsers
+        if: steps.detect.outputs.runtime == 'true' || steps.detect.outputs.ui == 'true'
         run: npx playwright install --with-deps chromium
 
       - name: Run Playwright tests
+        if: steps.detect.outputs.runtime == 'true' || steps.detect.outputs.ui == 'true'
         env:
           BASE_URL: http://localhost:2786
           CI: "true"
         run: npx playwright test
 
       - name: Upload Playwright report
-        if: ${{ always() }}
+        if: ${{ always() && (steps.detect.outputs.runtime == 'true' || steps.detect.outputs.ui == 'true') }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
@@ -271,7 +330,7 @@ jobs:
 
       # ── Cleanup ─────────────────────────────────────────────────────────
       - name: Cleanup smoke deployment
-        if: ${{ always() }}
+        if: ${{ always() && (steps.detect.outputs.runtime == 'true' || steps.detect.outputs.ui == 'true') }}
         run: |
           yes | archi delete --name ci-${{ github.run_id }} || true
 
