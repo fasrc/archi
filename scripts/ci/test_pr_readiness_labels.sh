@@ -84,41 +84,52 @@ mk_threads() {
   printf '[%s]' "${out%,}"
 }
 
+# A comma-separated list of label names, OR raw JSON when it starts with `[` —
+# needed because a GitHub label name may itself contain a comma, which the CSV
+# form cannot express and which is exactly the ambiguity case 22 exercises.
 mk_labels() {
   local spec="${1:-}" out="" l
-  [ -z "$spec" ] && { printf '[]'; return; }
+  case "$spec" in
+    "")   printf '[]'; return ;;
+    \[*)  printf '%s' "$spec"; return ;;
+  esac
   local IFS=','
   for l in $spec; do out+="{\"name\":\"$l\"},"; done
   printf '[%s]' "${out%,}"
 }
 
-csv_len() {
-  if [ -z "${1:-}" ]; then printf '0'; return; fi
-  printf '%s' "$(( $(printf '%s' "$1" | tr -cd ',' | wc -c) + 1 ))"
-}
-
-# mk_node <number> <isDraft> <mergeStateStatus> <labels-csv> <threads-csv> \
-#         [threads-totalCount] [labels-totalCount]
+# mk_node <number> <isDraft> <mergeStateStatus> <labels> <threads-csv> \
+#         [threads-totalCount] [labels-totalCount] [mergeable]
 #
-# `mergeable` is derived so a fixture cannot describe a state GitHub would never
-# return (UNKNOWN status with a computed mergeable, say). Each connection's
-# totalCount defaults to the number of nodes supplied; the overrides exist to
-# simulate a TRUNCATED connection, where totalCount exceeds what was fetched.
+# `mergeable` defaults to a value consistent with the merge state, but is
+# OVERRIDABLE, because the two fields are independent in the real API and the
+# interesting combinations are the ones where they disagree: a conflicted DRAFT
+# reports mergeable=CONFLICTING while mergeStateStatus=DRAFT masks it. An earlier
+# version derived mergeable solely from the state, which made that real
+# combination unrepresentable — the fixture was hiding a live bug.
+#
+# Each connection's totalCount is counted from the nodes actually supplied; the
+# overrides exist to simulate a TRUNCATED connection where totalCount exceeds
+# what was fetched.
 mk_node() {
   local n="$1" draft="$2" state="$3" labels="${4:-}" threads="${5:-}"
-  local tt="${6:-}" lt="${7:-}" mergeable tcount lcount
-  case "$state" in
-    UNKNOWN) mergeable=UNKNOWN ;;
-    DIRTY)   mergeable=CONFLICTING ;;
-    *)       mergeable=MERGEABLE ;;
-  esac
-  tcount="$(csv_len "$threads")"
-  lcount="$(csv_len "$labels")"
+  local tt="${6:-}" lt="${7:-}" mergeable="${8:-}" tcount lcount ljson tjson
+  if [ -z "$mergeable" ]; then
+    case "$state" in
+      UNKNOWN) mergeable=UNKNOWN ;;
+      DIRTY)   mergeable=CONFLICTING ;;
+      *)       mergeable=MERGEABLE ;;
+    esac
+  fi
+  ljson="$(mk_labels "$labels")"
+  tjson="$(mk_threads "$threads")"
+  # Count from the built JSON, so a label name containing a comma cannot skew it.
+  lcount="$(printf '%s' "$ljson" | jq 'length')"
+  tcount="$(printf '%s' "$tjson" | jq 'length')"
   if [ -n "$tt" ]; then tcount="$tt"; fi
   if [ -n "$lt" ]; then lcount="$lt"; fi
   printf '{"number":%s,"isDraft":%s,"mergeable":"%s","mergeStateStatus":"%s","labels":{"totalCount":%s,"nodes":%s},"reviewThreads":{"totalCount":%s,"nodes":%s}}' \
-    "$n" "$draft" "$mergeable" "$state" \
-    "$lcount" "$(mk_labels "$labels")" "$tcount" "$(mk_threads "$threads")"
+    "$n" "$draft" "$mergeable" "$state" "$lcount" "$ljson" "$tcount" "$tjson"
 }
 
 # mk_page <hasNextPage> <endCursor> <node-json>...
@@ -467,6 +478,37 @@ elif grep -q '291 .*--add-label conflicts' "$sb/calls"; then
   ok "a failed authoritative label read exits non-zero and sweeps the rest"
 else
   notok "a failed authoritative label read exits non-zero and sweeps the rest (later PRs skipped)"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 21: a conflicted DRAFT still earns the conflicts chip -------------
+# mergeStateStatus is a PRIORITY field: on a draft it reports DRAFT and masks
+# DIRTY, while `mergeable` independently reports CONFLICTING. Deriving the
+# conflicts chip from the merge STATE therefore hides a real conflict behind
+# draft status — the chip is arguably most useful there, since it says why the
+# PR cannot land even once it is marked ready.
+sb="$(new_sandbox)"
+mk_page false "" "$(mk_node 210 true DRAFT "" "" "" "" CONFLICTING)" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '210 .*--add-label conflicts' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "a conflicted draft earns conflicts and never ready-to-merge"
+else
+  notok "a conflicted draft earns conflicts and never ready-to-merge"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 22: label membership is exact, not a substring -------------------
+# GitHub permits a comma in a label name. Flattening names to a comma-joined
+# string and glob-matching ",ready-to-merge," reports this PR as already holding
+# the chip, so a genuinely ready PR would never receive the real one.
+sb="$(new_sandbox)"
+mk_page false "" "$(mk_node 220 false CLEAN '[{"name":"blocked,ready-to-merge"}]' "")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '220 .*--add-label ready-to-merge' "$sb/calls"; then
+  ok "a label whose name merely contains the chip name does not count as holding it"
+else
+  notok "a label whose name merely contains the chip name does not count as holding it"
   cat "$sb/calls" 2>/dev/null
 fi
 

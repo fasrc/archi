@@ -17,7 +17,7 @@
 # idempotent. It does NOT make a run safe to cancel — see the concurrency block.
 #
 # The predicate, the retry-on-UNKNOWN, and the grant/revoke asymmetry all live
-# in scripts/ci/pr_readiness_labels.sh, which has its own 20-case suite wired
+# in scripts/ci/pr_readiness_labels.sh, which has its own 22-case suite wired
 # into scripts/gate.sh. This file is only the trigger surface.
 
 name: pr-readiness-labels
@@ -30,7 +30,14 @@ on:
     # push to a PR leaves its own checks pending, which is deliberately NOT
     # "ready" — so a chip may be revoked here and re-granted by the hourly sweep
     # once checks go green. Conservative on grant, immediate on revoke.
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+    # `edited` is here for RETARGETING: changing a PR's base branch arrives as
+    # `edited`, and mergeability is recomputed against the new base, so a
+    # retargeted PR can otherwise carry a wrong chip until the hourly sweep. No
+    # check producer backstops it — ci.yml uses the default actions and
+    # pr-preview.yml selects only opened/synchronize/reopened. `edited` also fires
+    # on title and body edits, which cost one idempotent no-op sweep each.
+    types:
+      [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]
   # A new review finding changes the predicate but emits its OWN event — NOT one
   # of the pull_request types above. Without these two, a reviewer could raise a
   # blocking finding on a PR holding the chip and it would keep advertising
@@ -49,9 +56,13 @@ on:
   # NOT check_suite: GitHub suppresses that event for check suites created by
   # GitHub Actions as a recursion guard, and these are exactly that. workflow_run
   # is the mechanism that actually fires for Actions-produced checks.
+  # `requested` and `in_progress`, not just `completed`: a manual RERUN turns a
+  # green check pending the moment the run is queued, so the PR stops satisfying
+  # CLEAN right then. Waiting for `completed` would leave a stale ready-to-merge
+  # advertised for the entire rerun — revoke when the predicate first changes.
   workflow_run:
     workflows: [gate, "PR Preview"]
-    types: [completed]
+    types: [requested, in_progress, completed]
   schedule:
     # Hourly backstop, off the hour to avoid the rush. Still load-bearing: GitHub
     # emits NO workflow event when a review thread is RESOLVED, so resolution is

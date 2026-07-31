@@ -150,15 +150,30 @@ FILTER='
       | [ "PR",
           (.number | tostring),
           (.isDraft | tostring),
-          (if .mergeable == "UNKNOWN" or .mergeStateStatus == "UNKNOWN"
-             then "UNKNOWN" else .mergeStateStatus end),
+          .mergeable,
+          .mergeStateStatus,
           ([.reviewThreads.nodes[]
              | select(.isResolved == false and .isOutdated == false)] | length | tostring),
           (.reviewThreads.totalCount | tostring),
           (.labels.totalCount | tostring),
-          ([.labels.nodes[].name] | join(","))
+          ([.labels.nodes[].name] | any(. == $ready) | tostring),
+          ([.labels.nodes[].name] | any(. == $conflict) | tostring)
         ] | @tsv )
 '
+
+# mergeable and mergeStateStatus are BOTH carried, because they answer different
+# questions and disagree in cases that matter. mergeStateStatus is a PRIORITY
+# field: on a draft it reports DRAFT, masking DIRTY, so a conflicted draft looks
+# unconflicted through that field alone. `mergeable` reports conflicts and nothing
+# else. So `conflicts` is derived from mergeable == CONFLICTING, while readiness
+# needs mergeStateStatus == CLEAN (which folds in draft, conflict AND check state).
+#
+# Label membership is computed HERE as exact string equality, not matched later
+# against a flattened name list. GitHub permits a comma in a label name, so a
+# glob over a comma-joined string would report a label named
+# "blocked,ready-to-merge" as the managed chip — and a genuinely ready PR would
+# then never receive the real one. Same for a configured name containing glob
+# metacharacters.
 
 # Every open PR as TSV rows.
 #
@@ -182,7 +197,8 @@ fetch_snapshot() {
         "${0##*/}" "$REPO" "${cursor:+ (page after $cursor)}" >&2
       return 1
     fi
-    if ! rows="$(printf '%s' "$page" | jq -r "$FILTER")"; then
+    if ! rows="$(printf '%s' "$page" \
+        | jq -r --arg ready "$READY_LABEL" --arg conflict "$CONFLICT_LABEL" "$FILTER")"; then
       printf '%s: could not parse the GraphQL response for %s\n' "${0##*/}" "$REPO" >&2
       return 1
     fi
@@ -195,16 +211,18 @@ fetch_snapshot() {
   done
 }
 
-# The complete label set for one PR, comma-joined, from the paginated REST
-# endpoint. Only called when the GraphQL labels connection was truncated, so the
-# extra request costs nothing on the normal path. --paginate concatenates one JSON
-# array per page, hence the slurp-and-add.
-authoritative_labels() { # $1 = PR number
+# Exact membership of the two managed chips for one PR, as "<has_ready>
+# <has_conflict>", from the paginated REST endpoint. Only called when the GraphQL
+# labels connection was truncated, so the extra request costs nothing on the
+# normal path. --paginate concatenates one JSON array per page, hence the
+# slurp-and-add; `// []` covers the no-output case.
+authoritative_membership() { # $1 = PR number
   local out
   if ! out="$(gh api "repos/$REPO/issues/$1/labels" --paginate)"; then
     return 1
   fi
-  printf '%s' "$out" | jq -rs '(add // []) | map(.name) | join(",")'
+  printf '%s' "$out" | jq -rs --arg ready "$READY_LABEL" --arg conflict "$CONFLICT_LABEL" \
+    '(add // []) | map(.name) | "\(any(. == $ready)) \(any(. == $conflict))"'
 }
 
 # Re-query while any PR's mergeability is still being computed — the query is
@@ -215,7 +233,11 @@ while :; do
   if ! snapshot="$(fetch_snapshot)"; then
     exit 1
   fi
-  unknown="$(printf '%s\n' "$snapshot" | awk -F'\t' '$4=="UNKNOWN"' | grep -c . || true)"
+  # UNKNOWN can surface in EITHER field (col 4 mergeable, col 5 mergeStateStatus);
+  # both are computed asynchronously and either being unknown makes the PR
+  # unverifiable.
+  unknown="$(printf '%s\n' "$snapshot" \
+    | awk -F'\t' '$4=="UNKNOWN" || $5=="UNKNOWN"' | grep -c . || true)"
   if [ "$unknown" -eq 0 ] || [ "$attempt" -ge "$RETRY_MAX" ]; then
     break
   fi
@@ -238,7 +260,8 @@ failed=0
 # warning at the end keys on.
 unverifiable=0
 
-while IFS=$'\t' read -r _tag number isdraft state live threads_total labels_total labels; do
+while IFS=$'\t' read -r _tag number isdraft mergeable state live \
+                        threads_total labels_total has_ready has_conflict; do
   if [ -z "${number:-}" ]; then
     continue
   fi
@@ -246,18 +269,14 @@ while IFS=$'\t' read -r _tag number isdraft state live threads_total labels_tota
   # Truncated label connection: re-read authoritatively rather than conclude a chip
   # is absent because it fell off the page. Guessing here would break fail-closed.
   if [ "$labels_total" -gt "$PAGE" ]; then
-    if ! labels="$(authoritative_labels "$number")"; then
+    if ! membership="$(authoritative_membership "$number")"; then
       printf '%s: could not read the full label list for #%s (%s labels)\n' \
         "${0##*/}" "$number" "$labels_total" >&2
       failed=$((failed + 1))
       continue
     fi
+    read -r has_ready has_conflict <<<"$membership"
   fi
-
-  has_ready=no
-  has_conflict=no
-  case ",$labels," in *",$READY_LABEL,"*) has_ready=yes ;; esac
-  case ",$labels," in *",$CONFLICT_LABEL,"*) has_conflict=yes ;; esac
 
   # Mergeability not computed even after the retries. We cannot verify readiness,
   # so we must stop ASSERTING it: revoke a held ready-to-merge and let a later
@@ -267,16 +286,16 @@ while IFS=$'\t' read -r _tag number isdraft state live threads_total labels_tota
   # `conflicts` is left untouched: we genuinely do not know either way, and
   # asserting a conflict we cannot see would be the same sin in the other
   # direction.
-  if [ "$state" = "UNKNOWN" ]; then
+  if [ "$state" = "UNKNOWN" ] || [ "$mergeable" = "UNKNOWN" ]; then
     unverifiable=$((unverifiable + 1))
-    if [ "$has_ready" = no ]; then
+    if [ "$has_ready" = false ]; then
       printf '#%-5s %-9s live=%-3s : skip (mergeability not computed)\n' \
-        "$number" "$state" "$live"
+        "$number" "UNKNOWN" "$live"
       skipped=$((skipped + 1))
       continue
     fi
     printf '#%-5s %-9s live=%-3s : --remove-label %s (unverifiable — mergeability not computed)\n' \
-      "$number" "$state" "$live" "$READY_LABEL"
+      "$number" "UNKNOWN" "$live" "$READY_LABEL"
     if [ "$DRY_RUN" -eq 0 ]; then
       if ! gh pr edit "$number" --repo "$REPO" --remove-label "$READY_LABEL" >/dev/null; then
         printf '%s: failed to revoke %s on #%s\n' "${0##*/}" "$READY_LABEL" "$number" >&2
@@ -288,15 +307,19 @@ while IFS=$'\t' read -r _tag number isdraft state live threads_total labels_tota
     continue
   fi
 
-  want_conflict=no
-  if [ "$state" = "DIRTY" ]; then
-    want_conflict=yes
+  # From `mergeable`, NOT from mergeStateStatus == DIRTY. mergeStateStatus is a
+  # priority field and reports DRAFT on a draft PR, masking DIRTY — so a
+  # conflicted draft would get no chip, which is where it is arguably most
+  # useful: it says why the PR cannot land even once it is marked ready.
+  want_conflict=false
+  if [ "$mergeable" = "CONFLICTING" ]; then
+    want_conflict=true
   fi
 
   # The predicate. Each clause is a separate `if` rather than a `&&` chain
   # because under `set -e` a false `[ a ] && [ b ] && cmd` chain exits the
   # script instead of just skipping the command.
-  want_ready=no
+  want_ready=false
   why="not CLEAN ($state)"
   if [ "$isdraft" = "true" ]; then
     why="draft"
@@ -309,25 +332,25 @@ while IFS=$'\t' read -r _tag number isdraft state live threads_total labels_tota
     # undercounted. Withhold rather than advertise a readiness we did not verify.
     why="$threads_total review threads exceed the $PAGE fetched — cannot verify"
   else
-    want_ready=yes
+    want_ready=true
     why=""
   fi
 
   edits=()
-  if [ "$want_ready" = yes ] && [ "$has_ready" = no ]; then
+  if [ "$want_ready" = true ] && [ "$has_ready" = false ]; then
     edits+=(--add-label "$READY_LABEL")
   fi
-  if [ "$want_ready" = no ] && [ "$has_ready" = yes ]; then
+  if [ "$want_ready" = false ] && [ "$has_ready" = true ]; then
     edits+=(--remove-label "$READY_LABEL")
   fi
-  if [ "$want_conflict" = yes ] && [ "$has_conflict" = no ]; then
+  if [ "$want_conflict" = true ] && [ "$has_conflict" = false ]; then
     edits+=(--add-label "$CONFLICT_LABEL")
   fi
-  if [ "$want_conflict" = no ] && [ "$has_conflict" = yes ]; then
+  if [ "$want_conflict" = false ] && [ "$has_conflict" = true ]; then
     edits+=(--remove-label "$CONFLICT_LABEL")
   fi
 
-  if [ "$want_ready" = yes ]; then
+  if [ "$want_ready" = true ]; then
     ready_now=$((ready_now + 1))
   fi
 

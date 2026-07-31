@@ -153,7 +153,7 @@ automatically-maintained labels close that gap — see
 | Chip | Meaning |
 |------|---------|
 | `ready-to-merge` | Nothing blocks a merge: not a draft, no conflicts, checks green, and no review finding still pointing at current code. |
-| `conflicts` | Merge-conflicted with `dev`. Resolve it before spending another review round — answering findings cannot land the PR. |
+| `conflicts` | Merge-conflicted with `dev`, drafts included. Resolve it before spending another review round — answering findings cannot land the PR. |
 | *neither* | In flight: review findings outstanding, or checks not green. |
 
 `ready-to-merge` is **not** a claim that review is provably complete. It cannot be
@@ -274,11 +274,13 @@ Triggered on push to `main`; rebuilds and pushes base images when requirements o
 Reconciles the `ready-to-merge` and `conflicts` labels on every open PR so the PR
 index reflects mergeability, which GitHub itself never renders there.
 
-Runs on push to `dev`, on PR lifecycle events, on review submissions and inline
-review comments, on completion of the `gate` and `PR Preview` workflows, hourly, and
-on manual dispatch. GitHub emits **no** workflow event when a review thread is
+Runs on push to `dev`; on PR lifecycle events including retargeting (a base-branch
+change arrives as `edited`); on review submissions and inline review comments; when
+the `gate` or `PR Preview` workflows are requested, start, or finish — a rerun turns
+a green check pending, which changes the answer before it completes; hourly; and on
+manual dispatch. GitHub emits **no** workflow event when a review thread is
 *resolved*, so the hourly sweep is what picks resolution up.
-All the logic lives in `scripts/ci/pr_readiness_labels.sh` (20-case suite wired into
+All the logic lives in `scripts/ci/pr_readiness_labels.sh` (22-case suite wired into
 `scripts/gate.sh`); the workflow is only the trigger surface. Run it yourself with:
 
 ```bash
@@ -289,7 +291,14 @@ bash scripts/ci/pr_readiness_labels.sh --dry-run     # decide and print, change 
 (mergeable **and** checks green), and zero *live* review findings — a review thread
 that is unresolved and not outdated.
 
-Four design notes worth knowing before changing it:
+Five design notes worth knowing before changing it:
+
+- **`mergeable` and `mergeStateStatus` answer different questions**, and the chips use
+  different ones. `mergeStateStatus` is a *priority* field: on a draft it reports
+  `DRAFT`, masking `DIRTY`. So `conflicts` is derived from `mergeable ==
+  CONFLICTING` — otherwise a conflicted draft gets no chip, which is where it is
+  arguably most useful. Readiness needs `mergeStateStatus == CLEAN`, because that
+  single value folds in draft, conflict *and* check state.
 
 - **An incomplete snapshot is never guessed at**, and the two cases are not
   symmetric. Connections are fetched one page (100) deep and each `totalCount` is
