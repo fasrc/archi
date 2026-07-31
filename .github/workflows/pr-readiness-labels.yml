@@ -1,0 +1,75 @@
+# .github/workflows/pr-readiness-labels.yml — keep the PR index honest.
+#
+# The GitHub PR list renders the CI check rollup but never renders mergeability,
+# so a conflicted PR with green checks looks IDENTICAL in the list to one that is
+# genuinely ready to merge. On 2026-07-31 that hid a single deleted symlink
+# (issue #168) which had left 6 of 7 open PRs unmergeable while every check
+# stayed green and the nightly kept answering review findings that could never
+# land. Labels are the only readiness signal the index renders, so this
+# reconciles two of them on every event that can change the answer.
+#
+# WHY EVERY RUN SWEEPS EVERY OPEN PR, not just the one that triggered it:
+# merging PR A is what creates the conflict on PRs B..F. The chips that need
+# revoking are on the PRs that did NOT change, so a per-PR job would miss
+# precisely the case this exists to catch. Sweeping everything also makes a run
+# idempotent and safe to cancel — any single run does the whole job.
+#
+# The predicate, the retry-on-UNKNOWN, and the grant/revoke asymmetry all live
+# in scripts/ci/pr_readiness_labels.sh, which has its own 16-case suite wired
+# into scripts/gate.sh. This file is only the trigger surface.
+
+name: pr-readiness-labels
+
+on:
+  push:
+    branches: [dev]     # a merge to dev is what conflicts every other open PR
+  pull_request:
+    # Faster revocation when a PR changes under a chip it already holds. Note a
+    # push to a PR leaves its own checks pending, which is deliberately NOT
+    # "ready" — so a chip may be revoked here and re-granted by the hourly sweep
+    # once checks go green. Conservative on grant, immediate on revoke.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  schedule:
+    - cron: "17 * * * *"   # hourly backstop, off the hour to avoid the rush
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Decide and log, change no labels"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # One sweep at a time; a newer one supersedes an older one. Cancelling is safe
+  # because every run reconciles every open PR from a fresh snapshot, so the
+  # survivor does the cancelled run's work too.
+  group: pr-readiness-labels
+  cancel-in-progress: true
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    # A pull_request event from a FORK gets a read-only token, so the label
+    # write would 403. Skip those rather than fail; the scheduled sweep runs in
+    # the base repo with a write token and picks them up. Every open PR in this
+    # repo today is same-repo (branches pushed to fasrc/archi directly).
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # gh and jq are both preinstalled on ubuntu-latest — no toolchain step.
+      - name: Reconcile readiness labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_LABELS_REPO: ${{ github.repository }}
+          # Interpolated into an env var rather than into the run script, so the
+          # shell never sees templated text.
+          DRY: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '' }}
+        run: bash scripts/ci/pr_readiness_labels.sh ${DRY:+--dry-run}
