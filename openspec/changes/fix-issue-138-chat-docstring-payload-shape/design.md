@@ -67,9 +67,15 @@ one both real clients already send and the one `_prepare_chat_context` unpacks; 
 de-facto contract. The docstring is the artifact that is wrong. Aligning the docstring to
 the code (rather than loosening the code to accept the flat shape) preserves existing
 callers and avoids touching a coverage-trapped file.
-- *Alternative considered — make the handler also accept the flat shape:* rejected. It adds
-  executable lines to `app.py` (fails diff-cover), changes runtime behavior, and creates
-  two valid shapes for one field, which is worse for integrators than one documented shape.
+- *Alternative considered — make the handler also accept the flat shape:* rejected, but **not**
+  on coverage grounds. An earlier revision of this line said it "fails diff-cover", which
+  contradicts the corrected coverage note above: diff coverage is computed per changed
+  executable line, so new lines here are perfectly permissible *provided the change brings
+  tests that reach them*. The real reasons stand on their own — it changes runtime behavior, and
+  it creates two valid shapes for one field, which is worse for an integrator than one
+  documented shape. Coverage is a cost to budget for, not a prohibition, and stating it as a
+  prohibition would misdirect the deferred validation work toward a helper-only design when a
+  direct test of the request path is equally available.
 - *Alternative considered — add 400 validation now:* rejected for this change; deferred to a
   separate PR per the issue's scope decision.
 

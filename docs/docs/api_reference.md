@@ -297,8 +297,15 @@ failing on them**.
     | `include_agent_steps` | the incremental answer text — `chunk` events ([`app.py:2365`][chunkgate], [`:2399`][chunkgate2]) |
     | `include_tool_steps` | tool activity (`tool_start`, `tool_output`, `tool_end`), reasoning (`thinking_start` / `thinking_end`, [`app.py:2345`][thinkgate], [`:2359`][thinkgate2]), **and** the legacy `step` events that non-agent pipelines emit ([`app.py:2386`][legacygate] → [`:1701`][stepemit]) |
 
-    Read those as the categories each flag controls, not as closed lists — a pipeline that
-    emits an event type not named here will have it gated by the same flag as its category.
+    Those are the event types the streaming dispatch recognizes by name. Anything else falls
+    through to legacy conversion ([`app.py:2386`][legacygate]), where what reaches you depends
+    on the *shape* of the underlying message rather than on the category you would expect —
+    that path is entered with `include_agent_steps=False`, and answer content in it is gated by
+    `include_agent_steps` further down ([`:2399`][chunkgate2]).
+
+    So do not treat either flag as a suppression guarantee for an event type not listed above.
+    **If there is content you must not surface, filter on what you actually receive** rather
+    than relying on a flag to have withheld it.
 
     So reasoning events are controlled by the **tool** flag. Setting
     `include_agent_steps: false` to suppress reasoning does the opposite of what you

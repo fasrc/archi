@@ -176,8 +176,14 @@ invocation-time failure surfacing as an in-band `{"type": "error", "status": 500
 #### Scenario: The fallback paths are documented, including the silent ones
 
 - **WHEN** a reader consults the override behaviour
-- **THEN** the page states that a construction or pipeline-build failure yields a `warning`
-  event and lets the default pipeline answer, so the request still succeeds
+- **THEN** the page states that a **generic raised** construction exception, or a failed
+  request-local pipeline build, yields a `warning` event and lets the default pipeline answer,
+  so the request still succeeds
+- **AND** it does NOT present construction failure as one uniform outcome: a construction-time
+  `ValueError` emits an `error` event and **ends the stream** (`app.py:2042-2048`), while an
+  `ImportError` returns `None` instead of raising (`app.py:1611-1613`) and falls back with no
+  signal at all — the three are separate outcomes and this scenario is the acceptance check
+  that keeps them separate
 - **AND** it states that some failures produce **no** `error` and **no** `warning` at all —
   falsey construction such as an `ImportError`, and a pipeline without `agent_llm` — so a
   silent fallback is indistinguishable from success except by the reported model
