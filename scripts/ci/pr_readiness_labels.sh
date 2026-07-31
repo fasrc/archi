@@ -57,6 +57,13 @@ RETRY_MAX="${PR_LABELS_RETRY_MAX:-5}"
 RETRY_DELAY="${PR_LABELS_RETRY_DELAY:-6}"
 DRY_RUN=0
 
+# INCOMPLETE SNAPSHOT => NOT READY. Neither reviewThreads nor labels is
+# paginated; instead FILTER compares each connection's totalCount against the page
+# size and reports truncation, and a truncated PR is never granted the ready chip.
+# Without this, a PR whose first 100 threads are all resolved/outdated but whose
+# 101st is live would count zero live findings and be advertised as ready. The
+# `> 100` tests in FILTER MUST equal the `first:100` in QUERY for both connections.
+
 usage() {
   cat <<'EOF'
 Usage: pr_readiness_labels.sh [--dry-run] [--repo owner/name]
@@ -105,8 +112,8 @@ QUERY='query($owner:String!,$name:String!,$cursor:String){
       pageInfo{ hasNextPage endCursor }
       nodes{
         number isDraft mergeable mergeStateStatus
-        labels(first:50){ nodes{ name } }
-        reviewThreads(first:100){ nodes{ isResolved isOutdated } }
+        labels(first:100){ totalCount nodes{ name } }
+        reviewThreads(first:100){ totalCount nodes{ isResolved isOutdated } }
       }
     }
   }
@@ -126,6 +133,9 @@ FILTER='
              then "UNKNOWN" else .mergeStateStatus end),
           ([.reviewThreads.nodes[]
              | select(.isResolved == false and .isOutdated == false)] | length | tostring),
+          (if .reviewThreads.totalCount > 100 then "threads=\(.reviewThreads.totalCount)>100"
+           elif .labels.totalCount > 100 then "labels=\(.labels.totalCount)>100"
+           else "no" end),
           ([.labels.nodes[].name] | join(","))
         ] | @tsv )
 '
@@ -191,14 +201,8 @@ skipped=0
 ready_now=0
 failed=0
 
-while IFS=$'\t' read -r _tag number isdraft state live labels; do
+while IFS=$'\t' read -r _tag number isdraft state live truncated labels; do
   if [ -z "${number:-}" ]; then
-    continue
-  fi
-
-  if [ "$state" = "UNKNOWN" ]; then
-    printf '#%-5s %-9s %-8s : skip (mergeability not computed)\n' "$number" "$state" ""
-    skipped=$((skipped + 1))
     continue
   fi
 
@@ -206,6 +210,34 @@ while IFS=$'\t' read -r _tag number isdraft state live labels; do
   has_conflict=no
   case ",$labels," in *",$READY_LABEL,"*) has_ready=yes ;; esac
   case ",$labels," in *",$CONFLICT_LABEL,"*) has_conflict=yes ;; esac
+
+  # Mergeability not computed even after the retries. We cannot verify readiness,
+  # so we must stop ASSERTING it: revoke a held ready-to-merge and let a later
+  # sweep re-grant it. Leaving the chip would reproduce the exact failure this
+  # script exists to prevent — a push to dev conflicts a PR, the sweep cannot
+  # read mergeability yet, and a green chip survives on a conflicted PR.
+  # `conflicts` is left untouched: we genuinely do not know either way, and
+  # asserting a conflict we cannot see would be the same sin in the other
+  # direction.
+  if [ "$state" = "UNKNOWN" ]; then
+    skipped=$((skipped + 1))
+    if [ "$has_ready" = no ]; then
+      printf '#%-5s %-9s live=%-3s : skip (mergeability not computed)\n' \
+        "$number" "$state" "$live"
+      continue
+    fi
+    printf '#%-5s %-9s live=%-3s : --remove-label %s (unverifiable — mergeability not computed)\n' \
+      "$number" "$state" "$live" "$READY_LABEL"
+    if [ "$DRY_RUN" -eq 0 ]; then
+      if ! gh pr edit "$number" --repo "$REPO" --remove-label "$READY_LABEL" >/dev/null; then
+        printf '%s: failed to revoke %s on #%s\n' "${0##*/}" "$READY_LABEL" "$number" >&2
+        failed=$((failed + 1))
+        continue
+      fi
+    fi
+    changed=$((changed + 1))
+    continue
+  fi
 
   want_conflict=no
   if [ "$state" = "DIRTY" ]; then
@@ -223,6 +255,10 @@ while IFS=$'\t' read -r _tag number isdraft state live labels; do
     why="not CLEAN ($state)"
   elif [ "$live" -gt 0 ]; then
     why="$live live review finding(s)"
+  elif [ "$truncated" != "no" ]; then
+    # A live finding could be sitting in the unfetched tail, in which case `live`
+    # undercounted. Withhold rather than advertise a readiness we did not verify.
+    why="incomplete snapshot ($truncated) — cannot verify"
   else
     want_ready=yes
     why=""
@@ -275,6 +311,16 @@ done <<< "$snapshot"
 printf '\n%s: %s changed, %s unchanged, %s skipped — %s ready to merge%s\n' \
   "$REPO" "$changed" "$unchanged" "$skipped" "$ready_now" \
   "$([ "$DRY_RUN" -eq 1 ] && printf ' (dry run — nothing written)' || true)"
+
+# Surface an incomplete reconciliation in the Actions UI WITHOUT failing the run.
+# Exiting non-zero here would paint CI red for a routine GitHub lag — mergeability
+# is computed asynchronously — which trains people to ignore the signal. The
+# scheduled sweep is the retry, and the fail-safe revocation above already
+# guarantees a skipped PR is never left ADVERTISING unverified readiness.
+if [ "$skipped" -gt 0 ] && [ -n "${GITHUB_ACTIONS:-}" ]; then
+  printf '::warning::%s PR(s) skipped — mergeability not computed after %s attempt(s); the next sweep retries\n' \
+    "$skipped" "$RETRY_MAX"
+fi
 
 if [ "$failed" -gt 0 ]; then
   printf '%s: %s PR(s) could not be updated\n' "${0##*/}" "$failed" >&2

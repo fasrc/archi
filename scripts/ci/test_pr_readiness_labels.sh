@@ -19,7 +19,7 @@
 #     8.  clearing a conflict removes the conflicts chip
 #     9.  idempotence: correct labels already present => ZERO write calls, so
 #         the hourly sweep does not spam every PR's timeline with label churn
-#    10.  UNKNOWN mergeability is SKIPPED, never guessed — GitHub computes it
+#    10.  UNKNOWN mergeability grants nothing — GitHub computes it
 #         asynchronously and returns UNKNOWN until it lands
 #    11.  ...but a retry picks it up once GitHub has computed it, because a
 #         push to dev makes every PR UNKNOWN at exactly the moment the sweep
@@ -31,6 +31,14 @@
 #         unreachable API must never read as "zero open PRs", which would
 #         strip every chip in the repository
 #    16.  ...but a single failed write does not abort the remaining PRs
+#    17.  UNKNOWN REVOKES a chip it cannot verify — a merge to dev conflicts a
+#         PR before GitHub recomputes, and a green chip must not survive that
+#   18-19. a TRUNCATED reviewThreads or labels connection is never ready: an
+#         unfetched live finding would otherwise count as zero
+#
+# Every negative case seeds a PR that already HOLDS the chip and requires its
+# removal. Asserting only "no add-label happened" would pass for a reconciler
+# that ignored the PR entirely — a test that cannot fail is not a test.
 # Run: bash scripts/ci/test_pr_readiness_labels.sh
 set -euo pipefail
 
@@ -81,18 +89,33 @@ mk_labels() {
   printf '[%s]' "${out%,}"
 }
 
-# mk_node <number> <isDraft> <mergeStateStatus> <labels-csv> <threads-csv>
-# `mergeable` is derived so the fixture cannot describe a state GitHub would
-# never return (UNKNOWN status with a computed mergeable, say).
+csv_len() {
+  if [ -z "${1:-}" ]; then printf '0'; return; fi
+  printf '%s' "$(( $(printf '%s' "$1" | tr -cd ',' | wc -c) + 1 ))"
+}
+
+# mk_node <number> <isDraft> <mergeStateStatus> <labels-csv> <threads-csv> \
+#         [threads-totalCount] [labels-totalCount]
+#
+# `mergeable` is derived so a fixture cannot describe a state GitHub would never
+# return (UNKNOWN status with a computed mergeable, say). Each connection's
+# totalCount defaults to the number of nodes supplied; the overrides exist to
+# simulate a TRUNCATED connection, where totalCount exceeds what was fetched.
 mk_node() {
-  local n="$1" draft="$2" state="$3" labels="${4:-}" threads="${5:-}" mergeable
+  local n="$1" draft="$2" state="$3" labels="${4:-}" threads="${5:-}"
+  local tt="${6:-}" lt="${7:-}" mergeable tcount lcount
   case "$state" in
     UNKNOWN) mergeable=UNKNOWN ;;
     DIRTY)   mergeable=CONFLICTING ;;
     *)       mergeable=MERGEABLE ;;
   esac
-  printf '{"number":%s,"isDraft":%s,"mergeable":"%s","mergeStateStatus":"%s","labels":{"nodes":%s},"reviewThreads":{"nodes":%s}}' \
-    "$n" "$draft" "$mergeable" "$state" "$(mk_labels "$labels")" "$(mk_threads "$threads")"
+  tcount="$(csv_len "$threads")"
+  lcount="$(csv_len "$labels")"
+  if [ -n "$tt" ]; then tcount="$tt"; fi
+  if [ -n "$lt" ]; then lcount="$lt"; fi
+  printf '{"number":%s,"isDraft":%s,"mergeable":"%s","mergeStateStatus":"%s","labels":{"totalCount":%s,"nodes":%s},"reviewThreads":{"totalCount":%s,"nodes":%s}}' \
+    "$n" "$draft" "$mergeable" "$state" \
+    "$lcount" "$(mk_labels "$labels")" "$tcount" "$(mk_threads "$threads")"
 }
 
 # mk_page <hasNextPage> <endCursor> <node-json>...
@@ -151,24 +174,38 @@ run_reconciler() { # $1 = sandbox; remaining args passed to the reconciler
 write_calls() { grep -c -- '--add-label\|--remove-label' "$1/calls" 2>/dev/null || true; }
 
 # ---- 1: clean, no findings, unlabelled -> gets the chip ---------------------
+# Also pins the query arguments: a reconciler that swept the wrong repository
+# would otherwise satisfy every other case in this file.
 sb="$(new_sandbox)"
 mk_page false "" "$(mk_node 153 false CLEAN "" "")" > "$sb/resp_1.json"
 out="$(run_reconciler "$sb" 2>&1)"
 if grep -q -- '--add-label ready-to-merge' "$sb/calls" \
-   && grep -q '153' <<<"$out"; then
-  ok "clean PR with no live findings gets ready-to-merge"
+   && grep -q '153' <<<"$out" \
+   && grep -q 'owner=acme' "$sb/calls" \
+   && grep -q 'name=widgets' "$sb/calls" \
+   && grep -q -- '--repo acme/widgets' "$sb/calls"; then
+  ok "clean PR with no live findings gets ready-to-merge, from the named repo"
 else
-  notok "clean PR with no live findings gets ready-to-merge"; printf '%s\n' "$out"
+  notok "clean PR with no live findings gets ready-to-merge, from the named repo"
+  printf '%s\n' "$out"; cat "$sb/calls" 2>/dev/null
 fi
 
-# ---- 2: clean but a live finding -> withheld -------------------------------
+# ---- 2: clean but a live finding -> withheld AND a stale chip revoked -------
+# Every negative case below carries TWO PRs: one already holding the chip (which
+# must be REMOVED) and one without it (which must not gain it). Asserting only
+# "no add happened" would pass for a reconciler that skipped both PRs entirely —
+# a vacuous test that cannot fail.
 sb="$(new_sandbox)"
-mk_page false "" "$(mk_node 154 false CLEAN "" "false:false,false:false")" > "$sb/resp_1.json"
+mk_page false "" \
+  "$(mk_node 154 false CLEAN "ready-to-merge" "false:false,false:false")" \
+  "$(mk_node 254 false CLEAN "" "false:false")" > "$sb/resp_1.json"
 run_reconciler "$sb" >/dev/null 2>&1
-if ! grep -q -- '--add-label ready-to-merge' "$sb/calls" 2>/dev/null; then
-  ok "a live (unresolved, not outdated) finding withholds ready-to-merge"
+if grep -q '154 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "a live (unresolved, not outdated) finding withholds and revokes ready-to-merge"
 else
-  notok "a live (unresolved, not outdated) finding withholds ready-to-merge"
+  notok "a live (unresolved, not outdated) finding withholds and revokes ready-to-merge"
+  cat "$sb/calls" 2>/dev/null
 fi
 
 # ---- 3: only an OUTDATED finding -> still ready ----------------------------
@@ -215,12 +252,16 @@ fi
 
 # ---- 7: a draft is never ready -------------------------------------------
 sb="$(new_sandbox)"
-mk_page false "" "$(mk_node 161 true CLEAN "" "")" > "$sb/resp_1.json"
+mk_page false "" \
+  "$(mk_node 161 true CLEAN "ready-to-merge" "")" \
+  "$(mk_node 261 true CLEAN "" "")" > "$sb/resp_1.json"
 run_reconciler "$sb" >/dev/null 2>&1
-if ! grep -q -- '--add-label ready-to-merge' "$sb/calls" 2>/dev/null; then
-  ok "a draft PR never gets ready-to-merge"
+if grep -q '161 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "converting to a draft revokes ready-to-merge, and a draft never gains it"
 else
-  notok "a draft PR never gets ready-to-merge"
+  notok "converting to a draft revokes ready-to-merge, and a draft never gains it"
+  cat "$sb/calls" 2>/dev/null
 fi
 
 # ---- 8: conflict cleared -> conflicts chip removed -----------------------
@@ -270,13 +311,18 @@ else
 fi
 
 # ---- 12: UNSTABLE (mergeable, red check) earns neither chip -------------
+# A check going red on a PR that already holds the chip must revoke it; and
+# UNSTABLE must not attract `conflicts` either, since the PR is not conflicted.
 sb="$(new_sandbox)"
-mk_page false "" "$(mk_node 162 false UNSTABLE "" "")" > "$sb/resp_1.json"
+mk_page false "" \
+  "$(mk_node 162 false UNSTABLE "ready-to-merge" "")" \
+  "$(mk_node 262 false UNSTABLE "" "")" > "$sb/resp_1.json"
 run_reconciler "$sb" >/dev/null 2>&1
-if [ "$(write_calls "$sb")" = "0" ]; then
-  ok "UNSTABLE earns neither chip (mergeable, but a check is red)"
+if grep -q '162 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label' "$sb/calls"; then
+  ok "a red check revokes ready-to-merge and earns no conflicts chip"
 else
-  notok "UNSTABLE earns neither chip (mergeable, but a check is red)"
+  notok "a red check revokes ready-to-merge and earns no conflicts chip"
   cat "$sb/calls" 2>/dev/null
 fi
 
@@ -295,11 +341,15 @@ sb="$(new_sandbox)"
 mk_page true  "CUR1" "$(mk_node 153 false CLEAN "" "")" > "$sb/resp_1.json"
 mk_page false ""     "$(mk_node 251 false DIRTY "" "")" > "$sb/resp_2.json"
 run_reconciler "$sb" >/dev/null 2>&1
+# The cursor assertion matters: the stub serves pages by call order, so without
+# it this case would pass even if the second request carried no cursor at all
+# (which against the real API would re-fetch page 1 forever).
 if grep -q -- '--add-label ready-to-merge' "$sb/calls" \
-   && grep -q '251 .*--add-label conflicts' "$sb/calls"; then
-  ok "pagination is followed, so PRs past the first page are labelled"
+   && grep -q '251 .*--add-label conflicts' "$sb/calls" \
+   && grep -q 'cursor=CUR1' "$sb/calls"; then
+  ok "pagination is followed with the endCursor from the previous page"
 else
-  notok "pagination is followed, so PRs past the first page are labelled"
+  notok "pagination is followed with the endCursor from the previous page"
   cat "$sb/calls" 2>/dev/null
 fi
 
@@ -327,6 +377,52 @@ elif [ "$(grep -c -- '--add-label' "$sb/calls")" = "2" ]; then
   ok "a failed label write exits non-zero but still sweeps the rest"
 else
   notok "a failed label write exits non-zero but still sweeps the rest (later PRs skipped)"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 17: UNKNOWN revokes a chip it cannot verify -----------------------
+# The dangerous case this exists for: a merge to dev conflicts a PR, the sweep
+# runs before GitHub has recomputed mergeability, and a green chip would
+# otherwise survive on a now-conflicted PR until some later sweep.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 170 false UNKNOWN "ready-to-merge" "")" \
+  "$(mk_node 270 false UNKNOWN "" "")" > "$sb/resp_1.json"
+out="$(run_reconciler "$sb" 2>&1)"
+if grep -q '170 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label' "$sb/calls" \
+   && ! grep -q '270 .*--remove-label' "$sb/calls"; then
+  ok "UNKNOWN revokes an unverifiable ready-to-merge and asserts nothing new"
+else
+  notok "UNKNOWN revokes an unverifiable ready-to-merge and asserts nothing new"
+  printf '%s\n' "$out"; cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 18: a truncated reviewThreads connection is not ready ------------
+# 143 threads exist but only 100 were fetched, and all 100 read as addressed —
+# so `live` is 0 and the naive predicate would grant the chip while a live
+# finding sits in the unfetched tail.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 180 false CLEAN "ready-to-merge" "" 143)" \
+  "$(mk_node 280 false CLEAN "" "" 143)" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '180 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "a truncated reviewThreads connection withholds and revokes ready-to-merge"
+else
+  notok "a truncated reviewThreads connection withholds and revokes ready-to-merge"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 19: a truncated labels connection is not ready ------------------
+sb="$(new_sandbox)"
+mk_page false "" "$(mk_node 190 false CLEAN "ready-to-merge" "" "" 120)" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '190 .*--remove-label ready-to-merge' "$sb/calls"; then
+  ok "a truncated labels connection withholds and revokes ready-to-merge"
+else
+  notok "a truncated labels connection withholds and revokes ready-to-merge"
   cat "$sb/calls" 2>/dev/null
 fi
 

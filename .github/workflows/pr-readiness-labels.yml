@@ -42,11 +42,16 @@ permissions:
   contents: read
 
 concurrency:
-  # One sweep at a time; a newer one supersedes an older one. Cancelling is safe
-  # because every run reconciles every open PR from a fresh snapshot, so the
-  # survivor does the cancelled run's work too.
+  # SERIALIZE, do not cancel. An earlier draft used cancel-in-progress: true on the
+  # reasoning that every run does the whole job, so losing one is harmless. That
+  # covers lost WORK but not write ORDERING: a cancelled run can have a label write
+  # already in flight, which may land AFTER the replacement run wrote from a newer
+  # snapshot — leaving the stale decision as the final state, durably, until the
+  # next sweep. Queueing removes the interleaving entirely, and a sweep costs
+  # seconds. (GitHub keeps at most one run pending per group and cancels older
+  # PENDING runs; those never started, so they cannot have written anything.)
   group: pr-readiness-labels
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   reconcile:
