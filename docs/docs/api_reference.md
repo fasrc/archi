@@ -19,9 +19,48 @@ REST API endpoints for the Archi chat application. All endpoints are prefixed wi
 
 Send a message and receive a complete response.
 
+**Request body** (JSON). Both chat endpoints take the same payload.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `last_message` | list of `[sender, message]` pairs | yes | The user's turn. A list **containing** the pair, not the pair itself — see below. Only the first pair is read. |
+| `conversation_id` | int or `null` | no | Existing conversation to append to. `null` (or omitted) starts a new one. |
+| `client_id` | string | yes | Identifies the calling client; the request is rejected without it. |
+| `config_name` | string | no | Named configuration to answer under. |
+| `is_refresh` | bool | no | Re-answer the previous turn instead of adding a new one. |
+| `provider` | string | no | Override the LLM provider for this request only. |
+| `model` | string | no | Override the model for this request only. |
+| `include_agent_steps` | bool | no | Include agent reasoning steps in the response. Default `true`. |
+| `include_tool_steps` | bool | no | Include tool invocations in the response. Default `true`. |
+| `client_sent_msg_ts` | int (ms since epoch) | no | Client send time, used for latency accounting. |
+| `client_timeout` | int (ms) | no | Client's own timeout, used for latency accounting. |
+
+**`last_message` is nested.** It is a list whose first element is the
+`[sender, message]` pair — `[["User", "How do I submit a job?"]]`, **not**
+`["User", "How do I submit a job?"]`. The handler reads `last_message[0]` and unpacks
+it as `(sender, content)`.
+
+Sending the flat form does not return a clean error, so it is worth getting right:
+the first element is then a *string*, and unpacking it yields its characters. A
+sender of three or more characters raises and the request fails with HTTP 500; a
+two-character sender such as `["AI", "hello"]` unpacks into `sender="A"`,
+`content="I"` and the request **succeeds against the wrong content**, silently
+discarding the message. The endpoint does not currently validate the shape.
+
+```json
+{
+  "last_message": [["User", "How do I submit a job?"]],
+  "conversation_id": null,
+  "client_id": "web-3f2a91"
+}
+```
+
 ### `POST /api/get_chat_response_stream`
 
 Send a message and receive a streaming response via NDJSON (`application/x-ndjson`).
+
+Takes the same request body as `POST /api/get_chat_response` above, including the
+nested `last_message` shape.
 
 Each line is a JSON object with a `type` field. Event types:
 

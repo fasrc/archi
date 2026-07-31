@@ -18,9 +18,24 @@ raises `ValueError: too many values to unpack (expected 2)` → HTTP 500 (reprod
 `static/chat.js:266` (`last_message: history.slice(-1)` over `[sender, content]` pairs) and
 `openai_compat.py:242` (`last_message = [("user", query)]`).
 
-**Hard constraint:** `src/interfaces/chat_app/app.py` is not imported by any unit test, so
-any new *executable* line there fails the ≥80% diff-cover gate (patch coverage vs
-`origin/dev`). A docstring-only edit adds no executable lines and is safe.
+**Coverage note (corrected 2026-07-31 — the original claim here was wrong):**
+`src/interfaces/chat_app/app.py` *is* imported by unit tests — `test_chat_override_concurrency.py:27`,
+`test_chat_override_persistence.py:32-33`, `test_provider_config_override.py:12` and
+`test_request_local_pipeline.py:21` — and the module measures 14% line coverage. Diff
+coverage is also computed per changed *executable line*, not per file, so importing a large
+module says nothing about whether a given new line is covered.
+
+The narrower statement that is actually true: the **request path** through this module is
+not exercised. Importing the module executes its `def` statements, so signature lines
+register as covered, but the bodies of `_prepare_chat_context` (the `tuple(message[0])`
+unpack at `app.py:1633`) and `get_chat_response` are not reached by any unit test. New
+executable lines *there* would therefore land uncovered and drag the patch-coverage ratio
+down, which is why the payload validation below is deferred to a separate PR routed through
+a testable helper.
+
+This is a statement about where the tests currently reach, not a prohibition. A future
+contributor may add executable lines to this file, and should — provided they bring the
+coverage with them. A docstring-only edit adds no executable lines either way.
 
 ## Goals / Non-Goals
 
@@ -32,9 +47,10 @@ any new *executable* line there fails the ≥80% diff-cover gate (patch coverage
 
 **Non-Goals:**
 - No runtime behavior change. The handler continues to read `message[0]` exactly as today.
-- No payload validation / 400-on-malformed handling. That is a real, defensible follow-on
-  but is a behavior change in a coverage-trapped file and MUST be a separate PR routed
-  through a tested helper module. It is explicitly excluded here.
+- No payload validation / 400-on-malformed handling. That is a real, defensible follow-on,
+  but it is a behavior change on a request path no unit test currently reaches, so it needs
+  a separate PR that routes the check through a testable helper and brings its own coverage.
+  It is explicitly excluded here.
 - No changes to the in-repo clients (they already send the correct shape).
 
 ## Decisions
