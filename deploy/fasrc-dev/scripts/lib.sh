@@ -32,8 +32,8 @@ SERVICES="chatbot"                            # auto-pulls postgres + data-manag
 # CONFIG_REPO/CONFIG_DIR are overridable so test_ensure_config.sh can run
 # against a local fixture instead of the real remote/checkout.
 CONFIG_REPO="${CONFIG_REPO:-git@github.com:fasrc/archi-config.git}"
-CONFIG_REF="${CONFIG_REF:-deploy-pin-2026-07d}"
-CONFIG_SHA="${CONFIG_SHA:-b690934238d0206988ab6add27e8530934bcc8fb}"
+CONFIG_REF="${CONFIG_REF:-deploy-pin-2026-07e}"
+CONFIG_SHA="${CONFIG_SHA:-4d6873e3cf6e2e10751ba58133eff1b1f106b13c}"
 CONFIG_DIR="${CONFIG_DIR:-$REPO_ROOT/config}"
 
 # Resolve the secrets file: absolute path used as-is, relative path is repo-relative.
