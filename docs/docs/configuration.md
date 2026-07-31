@@ -189,9 +189,19 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 > **Note:** `scrape_workers` and `scrape_per_host_workers` control the **scrape
 > phase** only and are independent of `parallel_workers`, which governs the
 > **embedding phase**. Both scrape knobs coerce to `int`, fall back to their
-> defaults on invalid values, and clamp to a minimum of `1`. Raising
-> `scrape_workers` above the Postgres connection pool max (`20`) requires raising
-> that pool in tandem, or scrape workers will block on connection checkout.
+> defaults on invalid values, and clamp to a minimum of `1`. Setting
+> `scrape_workers: 1` reproduces the sequential scrape path exactly, in input order.
+>
+> **Database impact of raising `scrape_workers`.** The scrape persistence path does
+> **not** use the pooled connections in `src/utils/connection_pool.py`. Each catalog
+> write goes through `PostgresCatalogService.upsert_resource()`, which opens a fresh
+> `psycopg2.connect()` for the statement and closes it immediately. Workers therefore
+> never block on a pool checkout — instead each in-flight write is one more *direct*
+> connection, so the ceiling that matters is the Postgres server's `max_connections`.
+> Failures there surface as `OperationalError` and are retried three times (2s, then
+> 4s backoff) before the seed is abandoned. Keep `scrape_workers` comfortably below
+> `max_connections` minus whatever the chat app and other services are already
+> holding.
 
 ### Retrieval Settings
 
@@ -282,6 +292,7 @@ data_manager:
       provider: local          # provider key under services.chat_app.providers
       model: qwen3             # model id for that provider
       max_chars: 4000          # content is truncated to this many chars before the call
+      max_concurrency: 1       # concurrent LLM calls; 1 = serial (default)
       categories:              # the closed set of labels the model must choose from
         - compute
         - storage
@@ -295,6 +306,7 @@ data_manager:
 | `categorization.enabled` | `false` | Assign one label from `categories` to each document via an LLM and store it under `metadata.llm_category`. |
 | `categorization.provider` / `model` | — | Which chat model to use. `provider` is a key under `services.chat_app.providers`; that block (base_url / mode / models / extra_kwargs) supplies the model's `provider_config`, so a custom local/vLLM endpoint is honored. |
 | `categorization.max_chars` | `4000` | Document content is truncated to this length before the model call (bounds cost/latency). |
+| `categorization.max_concurrency` | `1` | Upper bound on documents in an LLM call at once. Categorization runs inside `persist_resource`, which the scrape phase calls from a pool sized by `scrape_workers` — this knob keeps the request rate to the model provider decided by the model's limits rather than by a fetch-politeness setting. Anything that is not a positive integer coerces to `1`; a bad value never means "unbounded". |
 | `categorization.categories` | `[]` | The closed label set. An empty list (or any error / out-of-list / model-not-configured) yields `metadata.llm_category = "uncategorized"`. |
 
 **Behavior and caveats:**

@@ -1,5 +1,6 @@
 """Tests for CategorizationProcessor (optional LLM document categorization)."""
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -50,6 +51,7 @@ def _make(
     provider="local",
     model_name="qwen",
     provider_config=None,
+    max_concurrency=None,
 ):
     if provider_config is None:
         provider_config = {"base_url": "http://vllm:8001"}
@@ -69,6 +71,7 @@ def _make(
         provider_config=provider_config,
         max_chars=max_chars,
         model_factory=factory,
+        **({} if max_concurrency is None else {"max_concurrency": max_concurrency}),
     )
     return proc, factory_calls
 
@@ -291,3 +294,117 @@ def test_chat_model_build_failure_is_not_retried_per_document():
         assert out.get_metadata().as_dict()["llm_category"] == "uncategorized"
 
     assert calls["count"] == 1
+
+
+class _ConcurrencyProbe:
+    """Fake chat model that records peak simultaneous callers inside ``invoke``.
+
+    ``barrier`` is the discriminator: a ``Barrier(n)`` only clears when ``n`` threads
+    are inside ``invoke`` *at the same time*. Sized above the bound under test it can
+    never clear, so every call breaks out and the processor marks the document
+    uncategorized — an outcome that is impossible if the calls were allowed to
+    overlap. That turns "is this throttled?" into an assertion on returned values
+    rather than on thread timing.
+    """
+
+    def __init__(self, barrier=None):
+        self._lock = threading.Lock()
+        self._live = 0
+        self.peak = 0
+        self.calls = 0
+        self._barrier = barrier
+
+    def invoke(self, messages):
+        with self._lock:
+            self._live += 1
+            self.calls += 1
+            if self._live > self.peak:
+                self.peak = self._live
+        try:
+            if self._barrier is not None:
+                self._barrier.wait()
+        finally:
+            with self._lock:
+                self._live -= 1
+        return SimpleNamespace(content="compute")
+
+
+def _run_concurrently(proc, count):
+    """Run ``count`` documents through ``proc`` on parallel threads; return labels."""
+    results = [None] * count
+
+    def one(slot):
+        out = proc.process(_resource())
+        results[slot] = out.get_metadata().as_dict()["llm_category"]
+
+    threads = [threading.Thread(target=one, args=(i,)) for i in range(count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+    return results
+
+
+class TestCategorizationConcurrencyBound:
+    """Categorization is throttled independently of whoever calls ``process``.
+
+    The scrape phase now crawls seeds on a pool sized by ``scrape_workers``, and
+    categorization runs inside ``persist_resource`` on those worker threads. Without
+    its own bound, a fetch-shaped knob would silently decide how many LLM requests
+    hit the provider at once — and every rate-limit rejection is swallowed as
+    ``uncategorized``, so the damage would surface as quietly degraded metadata
+    rather than as a failure anyone notices.
+    """
+
+    def test_default_bound_serializes_concurrent_documents(self):
+        """Default of 1 reproduces the pre-parallel-scrape one-at-a-time behavior."""
+        probe = _ConcurrencyProbe(barrier=threading.Barrier(2, timeout=1))
+        proc, _ = _make(model=probe)
+
+        results = _run_concurrently(proc, 2)
+
+        assert probe.calls == 2
+        assert probe.peak == 1
+        assert results == ["uncategorized", "uncategorized"]
+
+    def test_bound_is_configurable_above_one(self):
+        """An operator who knows their provider's ceiling can raise it."""
+        probe = _ConcurrencyProbe(barrier=threading.Barrier(3, timeout=5))
+        proc, _ = _make(model=probe, max_concurrency=3)
+
+        results = _run_concurrently(proc, 6)
+
+        assert probe.calls == 6
+        assert probe.peak == 3
+        assert results == ["compute"] * 6
+
+    def test_configured_bound_is_still_an_upper_limit(self):
+        """A bound of 2 never lets a third document reach the provider."""
+        probe = _ConcurrencyProbe(barrier=threading.Barrier(3, timeout=1))
+        proc, _ = _make(model=probe, max_concurrency=2)
+
+        results = _run_concurrently(proc, 4)
+
+        assert probe.peak == 2
+        assert results == ["uncategorized"] * 4
+
+    def test_invalid_bound_falls_back_to_serial(self):
+        """A non-positive or non-integer bound coerces to 1, never to unbounded."""
+        for bad in (0, -4, None, "many"):
+            probe = _ConcurrencyProbe(barrier=threading.Barrier(2, timeout=1))
+            proc, _ = _make(model=probe, max_concurrency=bad)
+
+            results = _run_concurrently(proc, 2)
+
+            assert probe.peak == 1, f"bound {bad!r} did not coerce to serial"
+            assert results == ["uncategorized", "uncategorized"]
+
+    def test_chat_model_is_built_once_under_concurrency(self):
+        """Lazy model build is guarded: N concurrent first documents, one build."""
+        probe = _ConcurrencyProbe(barrier=threading.Barrier(4, timeout=5))
+        proc, calls = _make(model=probe, max_concurrency=4)
+
+        _run_concurrently(proc, 4)
+
+        assert probe.calls == 4
+        assert calls["count"] == 1

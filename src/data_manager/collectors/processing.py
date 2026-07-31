@@ -398,6 +398,16 @@ class CategorizationProcessor:
     empty category list — yields ``"uncategorized"`` and never raises. The result is
     written to ``metadata["llm_category"]``; a source-provided ``metadata["category"]``
     (e.g. the Indico scraper's) is never touched.
+
+    ``max_concurrency`` bounds how many documents may be in ``invoke`` at once, and
+    defaults to 1. That default is not arbitrary caution: ``process`` runs inside
+    ``persist_resource``, which the scrape phase now calls from a pool sized by
+    ``data_manager.scrape_workers`` (issue #136). Without an independent bound, a
+    knob chosen for *fetch* politeness would silently set the LLM request rate too —
+    and because every provider rejection is swallowed as ``"uncategorized"``, hitting
+    a rate limit degrades metadata quietly instead of failing. Serializing by default
+    reproduces the pre-parallel behavior exactly; operators who know their provider's
+    ceiling raise it via ``categorization.max_concurrency``.
     """
 
     def __init__(
@@ -408,6 +418,7 @@ class CategorizationProcessor:
         model: Optional[str],
         provider_config: Optional[Dict[str, Any]] = None,
         max_chars: int = 4000,
+        max_concurrency: Any = 1,
         model_factory: ModelFactory = _default_model_factory,
     ) -> None:
         self.categories: List[str] = [
@@ -422,6 +433,22 @@ class CategorizationProcessor:
         self._model_factory = model_factory
         self._chat_model: Any = None
         self._model_build_failed = False
+        # Coerce like max_chars: anything not a positive int falls back to serial.
+        # The fallback is deliberately 1 rather than the raw value — a bad config
+        # value must never resolve to "unbounded" against a live provider.
+        self._max_concurrency = (
+            max_concurrency
+            if isinstance(max_concurrency, int)
+            and not isinstance(max_concurrency, bool)
+            and max_concurrency > 0
+            else 1
+        )
+        self._slots = threading.Semaphore(self._max_concurrency)
+        # The lazy model build is a read-modify-write over _chat_model and
+        # _model_build_failed. It was single-threaded until the scrape pool landed;
+        # this lock keeps it to one build even when the first N documents arrive
+        # together, so a broken endpoint is still probed exactly once (#136).
+        self._build_lock = threading.Lock()
 
     def process(self, resource: BaseResource) -> BaseResource:
         category = self._categorize(resource)
@@ -432,26 +459,31 @@ class CategorizationProcessor:
         if not self.categories:
             return UNCATEGORIZED
 
-        chat_model = self._get_chat_model()
-        if chat_model is None:
-            return UNCATEGORIZED
+        # Hold a provider slot across the build-and-invoke pair, so the bound counts
+        # requests actually in flight, and release it before the purely local
+        # response parsing below — parsing one document must not block the next
+        # document's request.
+        with self._slots:
+            chat_model = self._get_chat_model()
+            if chat_model is None:
+                return UNCATEGORIZED
 
-        content = getattr(resource, "content", None)
-        text = content if isinstance(content, str) else _coerce_text(content)
-        if not text:
-            return UNCATEGORIZED
-        truncated = text[: self.max_chars]
+            content = getattr(resource, "content", None)
+            text = content if isinstance(content, str) else _coerce_text(content)
+            if not text:
+                return UNCATEGORIZED
+            truncated = text[: self.max_chars]
 
-        messages = self._build_messages(truncated)
-        try:
-            response = chat_model.invoke(messages)
-        except Exception as exc:
-            logger.warning(
-                "Categorization model.invoke failed for %s; marking uncategorized: %s",
-                _resource_label(resource),
-                exc,
-            )
-            return UNCATEGORIZED
+            messages = self._build_messages(truncated)
+            try:
+                response = chat_model.invoke(messages)
+            except Exception as exc:
+                logger.warning(
+                    "Categorization model.invoke failed for %s; marking uncategorized: %s",
+                    _resource_label(resource),
+                    exc,
+                )
+                return UNCATEGORIZED
 
         label = _select_category(response, self.categories)
         if label:
@@ -470,26 +502,34 @@ class CategorizationProcessor:
         return UNCATEGORIZED
 
     def _get_chat_model(self) -> Any:
+        # Double-checked: the common case (model already built, or the build already
+        # known to have failed) stays lock-free, and only the one-time build path
+        # serializes. Without the lock, N concurrent first documents would each see
+        # _chat_model is None and build their own — N clients against an endpoint
+        # that is often the very thing we are trying not to overload.
         if self._chat_model is not None or self._model_build_failed:
             return self._chat_model
-        if not self.provider or not self.model:
-            self._model_build_failed = True
-            return None
-        try:
-            self._chat_model = self._model_factory(
-                self.provider, self.model, self.provider_config
-            )
-        except Exception as exc:
-            self._model_build_failed = True
-            logger.warning(
-                "Failed to build categorization chat model (%s/%s); categorization "
-                "disabled for this run: %s",
-                self.provider,
-                self.model,
-                exc,
-            )
-            return None
-        return self._chat_model
+        with self._build_lock:
+            if self._chat_model is not None or self._model_build_failed:
+                return self._chat_model
+            if not self.provider or not self.model:
+                self._model_build_failed = True
+                return None
+            try:
+                self._chat_model = self._model_factory(
+                    self.provider, self.model, self.provider_config
+                )
+            except Exception as exc:
+                self._model_build_failed = True
+                logger.warning(
+                    "Failed to build categorization chat model (%s/%s); categorization "
+                    "disabled for this run: %s",
+                    self.provider,
+                    self.model,
+                    exc,
+                )
+                return None
+            return self._chat_model
 
     def _build_messages(self, content: str) -> List[Any]:
         category_list = ", ".join(self.categories)
@@ -659,6 +699,7 @@ def build_persistence(
                     model=cat_cfg.get("model"),
                     provider_config=provider_config,
                     max_chars=int(cat_cfg.get("max_chars", 4000) or 4000),
+                    max_concurrency=cat_cfg.get("max_concurrency", 1),
                     model_factory=model_factory,
                 )
             )

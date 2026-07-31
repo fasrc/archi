@@ -391,6 +391,7 @@ data_manager:
       provider: {{ data_manager.processing.categorization.provider | default('', true) }}
       model: {{ data_manager.processing.categorization.model | default('', true) }}
       max_chars: {{ data_manager.processing.categorization.max_chars | default(4000, true) }}
+      max_concurrency: {{ data_manager.processing.categorization.max_concurrency | default(1, true) }}
       categories:
         {%- for category in data_manager.processing.categorization.categories | default([], true) %}
         - {{ category }}
