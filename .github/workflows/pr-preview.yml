@@ -190,12 +190,22 @@ jobs:
           # build/publish jobs call build_docker_images.sh / push_docker_images.sh /
           # update_service_base_images.py — editing any of those changes the smoke
           # path itself, so a PR touching them must NOT skip the smoke deploy.
-          runtime_re='^(src/|deploy/|requirements/|pyproject\.toml|.*Dockerfile[^/]*$|scripts/dev/|tests/pr_preview_config/|\.github/actions/run-smoke/|\.github/workflows/pr-preview\.yml)'
+          # tests/smoke/ for the same reason, one level down: run_smoke_preview.sh
+          # executes tests/smoke/combined_smoke.sh, so a PR editing the smoke suite
+          # itself would otherwise skip the very stage it changes.
+          runtime_re='^(src/|deploy/|requirements/|pyproject\.toml|.*Dockerfile[^/]*$|scripts/dev/|tests/smoke/|tests/pr_preview_config/|\.github/actions/run-smoke/|\.github/workflows/pr-preview\.yml)'
           # Playwright/UI-relevant paths.
           ui_re='^(src/interfaces/chat_app/static/|src/interfaces/chat_app/templates/|tests/ui/|playwright\.config\.ts|package(-lock)?\.json|\.github/actions/run-smoke/)'
           runtime=false; ui=false
-          echo "$FILES" | grep -qE "$runtime_re" && runtime=true || true
-          echo "$FILES" | grep -qE "$ui_re" && ui=true || true
+          # Here-strings, NOT `echo "$FILES" | grep -q`. `grep -q` exits on its first
+          # match, and on a large changed-file list that closes the pipe while echo is
+          # still writing: echo takes SIGPIPE (141), `set -o pipefail` makes the whole
+          # pipeline non-zero even though grep MATCHED, and the `|| true` then swallows
+          # it — leaving the flag false. That fails OPEN: a PR touching src/ would skip
+          # the smoke deploy. Reproduced with a 3.9 MB list and a matching path first:
+          # piped form gave runtime=false, here-string gave runtime=true.
+          if grep -qE "$runtime_re" <<<"$FILES"; then runtime=true; fi
+          if grep -qE "$ui_re" <<<"$FILES"; then ui=true; fi
           echo "runtime=$runtime" >> "$GITHUB_OUTPUT"
           echo "ui=$ui"           >> "$GITHUB_OUTPUT"
           echo "Decision: runtime=$runtime ui=$ui"
