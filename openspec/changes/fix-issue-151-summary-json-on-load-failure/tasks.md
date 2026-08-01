@@ -72,3 +72,27 @@ consequences of that; the fourth is the doc overclaim it invited.
   would have turned a censusable bank into a hard failure. Test added; mutation
   check — drop the guard → `AttributeError: 'str' object has no attribute
   'get'`, that test alone.
+
+## 6. Review round 3 — Codex on PR #162 (1 finding)
+
+- [x] 6.1 **P2 — a symlinked `--summary-json` is replaced, not followed.**
+  Confirmed and reproduced: `open(link, "w")` leaves the link a link and updates
+  the referent; `mkstemp` + `os.replace` turns the link into a regular file and
+  leaves the referent stale. Making the summary write atomic in 2.1 regressed
+  this. Fixed by `_resolved_target` (`os.path.realpath`), applied before the
+  temp directory is chosen.
+- [x] 6.2 **Class sweep.** The identical pattern is at the ledger writer, where
+  it PRE-dates this PR (`write_ledger` was already temp + replace on `dev`).
+  Same fix, same helper. Also swept the ledger's **lock sidecar**, which was
+  named after the path as typed: resolving the write but not the lock lets two
+  spellings of one ledger take two locks and lose a decline.
+- [x] 6.3 Ordering matters, not just resolution: resolving at the commit while
+  creating the temp beside the *link* passes every same-filesystem test and then
+  dies on `EXDEV` when the link crosses a mount. Pinned by a cross-filesystem
+  test (referent on `/dev/shm`); mutation-checked with exactly that half-fix.
+- [x] 6.4 Following the link makes the round-2 aliasing guard load-bearing — a
+  `--summary-json` symlinked to the bank would now write THROUGH to the bank.
+  Regression test added; it passed unchanged, so the guard already covered it.
+- [x] 6.5 Docs: "A symlinked output path is followed, not replaced".
+- [x] 6.6 Mutation-check all four (summary resolve, ledger resolve, lock
+  resolve, naive half-fix) and re-run the gate.

@@ -1033,6 +1033,23 @@ every filesystem stores extended attributes — because losing the health signal
 detail would be the worse failure. A **new** file keeps the temp file's `0600`: choosing a mode for
 a file that may carry error text is the operator's call, made with `chmod` once, not the tool's.
 
+#### A symlinked output path is followed, not replaced
+
+Point `--summary-json` or `--ledger` at a **symlink** — the stable path pattern, `current ->
+releases/42/report.json` — and the write lands on the *referent*, leaving the link a link. That
+takes a deliberate step, because `os.replace` is the one file operation that does **not** follow a
+symlink on its destination: it swaps the link's own directory entry, which would turn the
+deployment's stable path into a regular file and leave the real report frozen at yesterday's
+content. So the output path is resolved before the temp file is created — before, not at the
+commit, since a temp file next to the *link* and a commit onto the *referent* would cross a mount
+whenever the link does, and `rename(2)` answers a cross-device rename with `EXDEV` instead of
+committing. A path that does not exist yet, and a dangling symlink, both resolve through their
+parent chain and get created where a plain `open(path, "w")` would have put them.
+
+The ledger's lock sidecar is named after the resolved path for the same reason: two runs reaching
+one ledger by different spellings must contend for one lock, or they serialise against nothing and
+the second write erases the first decline.
+
 #### Running it nightly
 
 `scripts/benchmarking/goldenset_report_cron.sh` wraps the command above for cron. The settings

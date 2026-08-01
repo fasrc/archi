@@ -2903,6 +2903,187 @@ class TestOutputPathsMayNotAliasInputs:
         assert json.loads(out.read_text())["failed_passes"] == []
 
 
+@pytest.fixture
+def other_filesystem_dir(tmp_path):
+    """A scratch directory on a DIFFERENT filesystem from `tmp_path`, or skip.
+
+    Needed to prove the temp file is created beside the *referent* rather than
+    beside the symlink: on one filesystem either choice commits, and only a
+    crossed mount makes `rename(2)` answer EXDEV.
+    """
+    import shutil
+    import tempfile as _tempfile
+
+    here = os.stat(tmp_path).st_dev
+    for candidate in ("/dev/shm", f"/run/user/{os.getuid()}"):
+        if not os.path.isdir(candidate) or not os.access(candidate, os.W_OK):
+            continue
+        if os.stat(candidate).st_dev == here:
+            continue
+        made = Path(_tempfile.mkdtemp(dir=candidate, prefix="archi-goldenset-"))
+        try:
+            yield made
+        finally:
+            shutil.rmtree(made, ignore_errors=True)
+        return
+    pytest.skip("no second writable filesystem available to cross")
+
+
+class TestASymlinkedOutputIsFollowedNotReplaced:
+    """`os.replace` does not follow a symlink on its destination.
+
+    It swaps the LINK's own directory entry, so an atomic write against a
+    symlinked output path replaces the operator's stable path with a regular
+    file and leaves the real file untouched and stale. That matters because a
+    deployment names its report through a stable path — `current ->
+    releases/42/report.json` — and the previous plain `open(path, "w")` followed
+    the link, which is the behaviour such a setup is built on.
+    """
+
+    def _report(self, script, tmp_path, out):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        return script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+    def _decline(self, script, tmp_path, ledger):
+        url = f"{KB}/kb/b"
+        return script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(ledger),
+                "--reason",
+                "not worth a question",
+            ]
+        )
+
+    def _linked(self, link_dir, real_dir, name="report.json", body="{}"):
+        referent = real_dir / name
+        referent.write_text(body, encoding="utf-8")
+        link = link_dir / "stable.json"
+        link.symlink_to(referent)
+        return link, referent
+
+    def test_a_summary_symlink_survives_and_its_referent_is_updated(self, tmp_path):
+        script = _load_script()
+        real_dir = tmp_path / "releases"
+        real_dir.mkdir()
+        link, referent = self._linked(tmp_path, real_dir)
+
+        assert self._report(script, tmp_path, link) == 0
+
+        assert link.is_symlink(), "the stable deployment path was replaced by a file"
+        assert json.loads(referent.read_text())["failed_passes"] == []
+
+    def test_a_ledger_symlink_survives_and_its_referent_is_updated(self, tmp_path):
+        """Same commit step, second call site — pre-dates this PR, same defect."""
+        script = _load_script()
+        real_dir = tmp_path / "state"
+        real_dir.mkdir()
+        link, referent = self._linked(tmp_path, real_dir, "declines.json", "[]")
+
+        self._decline(script, tmp_path, link)
+
+        assert link.is_symlink()
+        assert [e["url"] for e in json.loads(referent.read_text())] == [f"{KB}/kb/b"]
+
+    def test_a_summary_symlink_across_filesystems_still_commits(
+        self, tmp_path, other_filesystem_dir
+    ):
+        """Resolve BEFORE choosing the temp directory, or the commit cannot happen.
+
+        Creating the temp beside the *link* and replacing onto the *referent*
+        looks like a fix and passes every same-filesystem test, but `rename(2)`
+        refuses to cross a mount — the run would die on EXDEV instead of writing
+        its health file.
+        """
+        script = _load_script()
+        link, referent = self._linked(tmp_path, other_filesystem_dir)
+
+        assert self._report(script, tmp_path, link) == 0
+
+        assert link.is_symlink()
+        assert json.loads(referent.read_text())["failed_passes"] == []
+
+    def test_a_ledger_symlink_across_filesystems_still_commits(
+        self, tmp_path, other_filesystem_dir
+    ):
+        """The ledger additionally fsyncs its parent — which must be the real one."""
+        script = _load_script()
+        link, referent = self._linked(
+            tmp_path, other_filesystem_dir, "declines.json", "[]"
+        )
+
+        self._decline(script, tmp_path, link)
+
+        assert link.is_symlink()
+        assert [e["url"] for e in json.loads(referent.read_text())] == [f"{KB}/kb/b"]
+
+    def test_the_ledger_lock_follows_the_file_it_protects(self, tmp_path):
+        """Two spellings of one ledger must contend for ONE lock.
+
+        The lock is a sidecar named after the path the operator typed. Left
+        unresolved while the write resolves, a run through the symlink and a run
+        through the real path take two different locks, serialise against
+        nothing, and the second replace erases the first decline — the exact
+        lost update the lock exists to prevent.
+        """
+        script = _load_script()
+        real_dir = tmp_path / "state"
+        real_dir.mkdir()
+        link, referent = self._linked(tmp_path, real_dir, "declines.json", "[]")
+
+        self._decline(script, tmp_path, link)
+
+        per_spelling_lock = Path(f"{link}.lock")
+        assert Path(f"{referent}.lock").exists(), "lock must name the real ledger"
+        assert not per_spelling_lock.exists(), "a second lock serialises nothing"
+
+    def test_a_summary_symlink_pointing_at_the_bank_is_still_refused(self, tmp_path):
+        """Following the link makes the alias guard load-bearing, not decorative.
+
+        While `os.replace` clobbered the link, aliasing the bank through a
+        symlink was survivable — the bank kept its inode. Now the write goes
+        THROUGH the link, so the same configuration would overwrite the bank for
+        real. The guard has to catch it.
+        """
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        before = bank.read_bytes()
+        _fake_pages(script, {live: GPU_HTML})
+        link = tmp_path / "summary.json"
+        link.symlink_to(bank)
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(link),
+            ]
+        )
+
+        assert code == 1
+        assert bank.read_bytes() == before
+
+
 class TestReportNotifiesOnDegradedRuns:
     """A pass that half-ran must not summarise as clean.
 

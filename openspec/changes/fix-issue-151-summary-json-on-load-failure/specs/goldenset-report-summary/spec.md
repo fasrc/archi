@@ -171,3 +171,41 @@ target exists, the replacement SHALL keep `mkstemp`'s `0600`.
 - **WHEN** `coverage --decline`/`--undecline` replaces a ledger whose mode,
   group or ACL an operator had widened
 - **THEN** that access survives the write
+
+### Requirement: A symlinked output path SHALL be followed, not replaced
+
+The system SHALL resolve an output path's final component before writing, so a
+`--summary-json` or `--ledger` naming a symlink updates the referent and leaves
+the symlink intact — matching `open(path, "w")`, which is what a stable
+deployment path (`current -> releases/42/report.json`) is configured for.
+Resolution MUST happen BEFORE the temp file's directory is chosen, so the temp
+file and the commit destination are always on one filesystem. A path that does
+not exist yet, and a dangling symlink, SHALL resolve through their parent chain
+and be created. The ledger's lock sidecar SHALL be named after the resolved
+path, so two spellings of one ledger contend for one lock.
+
+#### Scenario: The stable path survives and the real file is updated
+
+- **WHEN** `--summary-json` (or `--ledger`) names a symlink to a file in another
+  directory
+- **THEN** after the run the path is still a symlink
+- **AND** the referent holds the new content
+
+#### Scenario: The symlink crosses a filesystem boundary
+
+- **WHEN** the referent is on a different filesystem from the symlink
+- **THEN** the write still commits — the temp file is created beside the
+  referent, not beside the link, so `rename(2)` never has to cross a mount
+
+#### Scenario: Two spellings of one ledger take one lock
+
+- **WHEN** a ledger is reached through a symlink
+- **THEN** the lock sidecar is named after the resolved ledger, not after the
+  path as typed
+
+#### Scenario: Following the link does not weaken the aliasing refusal
+
+- **WHEN** `--summary-json` is a symlink whose referent is the `--bank`
+- **THEN** the run is still refused and the bank is byte-unchanged — resolving
+  makes this configuration destructive where clobbering the link was survivable,
+  so the guard must hold

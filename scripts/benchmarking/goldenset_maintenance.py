@@ -183,6 +183,29 @@ def corpus_rows_from_postgres(dsn: str):
     return fetch
 
 
+def _resolved_target(path: str) -> Path:
+    """The real file a write should land on, with the final symlink followed.
+
+    `os.replace` does NOT follow a symlink on its destination — it swaps the
+    LINK's own directory entry. So an atomic write against a symlinked output
+    path replaces the operator's stable path with a regular file and leaves the
+    real file untouched and stale. A deployment names its report through exactly
+    such a path (`current -> releases/42/report.json`), and `open(path, "w")` —
+    what the summary write used before it became atomic — follows the link and
+    updates the referent. That is the behaviour to keep.
+
+    Resolving BEFORE the temp file is created is what makes the commit possible
+    at all: creating the temp beside the *link* and replacing onto the
+    *referent* would cross a mount whenever the link does, and `rename(2)`
+    answers that with EXDEV instead of committing.
+
+    `realpath` on a path that does not exist yet still resolves the parent
+    chain, so a first run and a dangling symlink both land where `open` would
+    have put them.
+    """
+    return Path(os.path.realpath(path))
+
+
 @contextmanager
 def ledger_lock(path: str):
     """Serialize the ledger read-modify-write across processes.
@@ -197,13 +220,19 @@ def ledger_lock(path: str):
     `write_ledger` swaps the ledger's inode via `os.replace`, so a lock taken on
     the ledger file would be a lock on a file the next writer never opens.
 
+    The sidecar is named after the ledger's RESOLVED path, matching what
+    `write_ledger` actually replaces. Named after the path the operator typed, a
+    run reaching the ledger through a symlink and one reaching it directly would
+    take two different locks, serialise against nothing, and lose a decline to
+    the second replace — the exact update this lock exists to protect.
+
     `fcntl` is POSIX-only, and where it is missing this **refuses** rather than
     proceeding with a warning. A warning is not a mitigation — the lost update
     happens either way, and the operator has no way to notice. Only ledger
     mutation takes this path; coverage, orphans and `--propose` are read-only and
     still run.
     """
-    lock_path = Path(f"{path}.lock")
+    lock_path = Path(f"{_resolved_target(path)}.lock")
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -346,7 +375,7 @@ def write_ledger(path: str, entries: List[Any]) -> None:
       write" would tell the operator nothing happened and invite them to redo a
       change that already took effect.
     """
-    target = Path(path)
+    target = _resolved_target(path)
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -1080,7 +1109,7 @@ def _write_summary(args: argparse.Namespace, summary: dict) -> None:
     """
     if not args.summary_json:
         return
-    target = Path(args.summary_json)
+    target = _resolved_target(args.summary_json)
     tmp_name = ""
     handle = None
     try:
