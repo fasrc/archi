@@ -1,17 +1,21 @@
 ## ADDED Requirements
 
-### Requirement: A refresh with nothing to refresh is rejected
+### Requirement: A refresh with no surviving prior turn is rejected
 
-The chat endpoints SHALL reject a request with `is_refresh` true that supplies **no source of prior
-turns** — neither a `conversation_id` nor an `external_history` — with HTTP status `400`, and SHALL
-do so before any conversation row is created.
+The chat endpoints SHALL reject a request with `is_refresh` true for which **no prior turn survives
+history resolution and the refresh trim**, with HTTP status `400`, and SHALL do so before any
+conversation row is created or any conversation timestamp is updated.
 
-The condition is the absence of prior turns, not the absence of a `conversation_id`. Without this
-guard the handler resolves an empty history (`app.py:1639-1641`), performs a no-op refresh trim
-(`:1650-1652`), and then skips appending the caller's message because the request is a refresh
-(`:1657-1658`) — invoking the pipeline with no user turn at all and returning a confident answer to
-an empty prompt. That outcome is indistinguishable from success, which is why it must be an explicit
-rejection rather than a best-effort interpretation.
+The test is on the **resolved** history, not on which request fields were supplied. Testing for a
+supplied source instead is a proxy for "prior turns exist", and the proxy admits three requests that
+reach the same unsatisfiable state: an `external_history` of `[]` (which is not `None`), a history
+of assistant turns only (which the trim empties), and a `conversation_id` naming a conversation that
+holds no turns.
+
+In any of those states the handler would perform a no-op trim and then skip appending the caller's
+message because the request is a refresh — invoking the pipeline with no user turn at all and
+returning a confident answer to an empty prompt. That outcome is indistinguishable from success,
+which is why it must be an explicit rejection rather than a best-effort interpretation.
 
 #### Scenario: Refresh with neither a conversation nor supplied history is rejected
 
@@ -19,20 +23,36 @@ rejection rather than a best-effort interpretation.
 - **THEN** the handler returns error status `400` and no chat context
 - **AND** the caller's message is not silently discarded in favour of an empty prompt
 
-#### Scenario: A rejected refresh creates no conversation
+#### Scenario: Refresh whose resolved history holds no prior turn is rejected
 
-- **WHEN** that same request is rejected
+- **WHEN** a refresh supplies `external_history` of `[]`, or a history containing only assistant
+  turns, or names a `conversation_id` whose conversation holds no turns
+- **THEN** each is rejected with status `400`
+- **AND** the rejection is decided after the refresh trim, so all three routes to the same empty
+  state are covered by one check rather than by three special cases
+
+#### Scenario: A rejected refresh writes nothing
+
+- **WHEN** any refresh is rejected
 - **THEN** `create_conversation` is not called
-- **AND** no empty conversation row is left behind, because the guard runs before the branch that
-  would create one
+- **AND** `update_conversation_timestamp` is not called
+- **AND** no empty conversation row is left behind, because history resolution is side-effect free
+  and the writes are committed only once the request is known to be serviceable
 
 #### Scenario: Refresh over supplied history is still honoured
 
 - **WHEN** a request sets `is_refresh` true with no `conversation_id` but supplies
-  `external_history` containing prior turns
+  `external_history` containing a prior user turn
 - **THEN** the request is **not** rejected
 - **AND** the supplied history is trimmed of its trailing assistant turns and re-answered, because
   supplied turns are a valid source of prior turns
+
+#### Scenario: Supplied history is not mutated by the refresh trim
+
+- **WHEN** a refresh is served against a supplied `external_history`
+- **THEN** the caller's list is unchanged after the call
+- **AND** the trim operates on a copy, because popping from the caller's argument is a side effect
+  the handler has no business having
 
 #### Scenario: Refresh against an existing conversation is unchanged
 

@@ -32,21 +32,27 @@ CLIENT_ID = "client-1"
 INCOMING = [["User", "hello"]]
 
 
-def _wrapper(created, stored_history=None):
-    """A ChatWrapper carrying only the collaborators this method touches."""
+def _wrapper(created, stored_history=None, touched=None):
+    """A ChatWrapper carrying only the collaborators this method touches.
+
+    ``created`` records conversation creations and ``touched`` timestamp updates, so a
+    test can assert that a refused request writes nothing.
+    """
     wrapper = object.__new__(ChatWrapper)
 
     def create_conversation(first_message, client_id, user_id=None):
         created.append(first_message)
         return 42
 
+    def update_conversation_timestamp(conversation_id, client_id, user_id=None):
+        if touched is not None:
+            touched.append(conversation_id)
+
     wrapper.create_conversation = create_conversation
     wrapper.query_conversation_history = (
         lambda conversation_id, client_id, user_id=None: list(stored_history or [])
     )
-    wrapper.update_conversation_timestamp = (
-        lambda conversation_id, client_id, user_id=None: None
-    )
+    wrapper.update_conversation_timestamp = update_conversation_timestamp
     return wrapper
 
 
@@ -84,9 +90,38 @@ class TestRefreshWithoutPriorTurns:
 
         _prepare(_wrapper(created), is_refresh=True)
 
-        # The guard has to run before the branch at app.py:1639-1641, or a request the
-        # server refuses still leaves an empty conversation row behind.
+        # History resolution has to stay side-effect free until the request is known to
+        # be serviceable, or a refusal still leaves an empty conversation row behind.
         assert created == []
+
+    @pytest.mark.parametrize(
+        "label, kwargs",
+        [
+            ("supplied history is empty", {"external_history": []}),
+            (
+                "supplied history is assistant turns only",
+                {"external_history": [(ARCHI_SENDER, "a1")]},
+            ),
+            ("named conversation holds no turns", {"conversation_id": 7}),
+        ],
+    )
+    def test_a_refresh_with_no_surviving_turn_is_rejected(self, label, kwargs):
+        """Three routes to the same unsatisfiable state.
+
+        Guarding on *which fields were supplied* is a proxy for "prior turns exist",
+        and the proxy fails all three of these: an empty supplied list is not ``None``,
+        an assistant-only history is emptied by the trim, and a named conversation can
+        hold no turns. Only the resolved, post-trim history distinguishes them.
+        """
+        created = []
+
+        context, error_code = _prepare(
+            _wrapper(created, stored_history=[]), is_refresh=True, **kwargs
+        )
+
+        assert context is None, label
+        assert error_code == 400, label
+        assert created == [], label
 
 
 class TestRefreshWithPriorTurnsIsUnaffected:
@@ -124,6 +159,55 @@ class TestRefreshWithPriorTurnsIsUnaffected:
         assert error_code is None
         assert context.history == [("User", "hello")]
         assert created == ["hello"]
+
+
+class TestSideEffectsStillHappenWhenTheRequestIsServed:
+    """The writes moved after the refresh check; prove they still fire correctly."""
+
+    def test_an_existing_conversation_has_its_timestamp_updated(self):
+        touched = []
+
+        _prepare(
+            _wrapper([], stored_history=[("User", "q1")], touched=touched),
+            is_refresh=False,
+            conversation_id=7,
+        )
+
+        assert touched == [7]
+
+    def test_supplied_history_does_not_touch_the_conversation_timestamp(self):
+        touched = []
+
+        _prepare(
+            _wrapper([], touched=touched),
+            is_refresh=False,
+            conversation_id=7,
+            external_history=[("User", "q1")],
+        )
+
+        # The external branch never updated the timestamp before this change either;
+        # the restructure must not quietly start doing it.
+        assert touched == []
+
+    def test_a_refused_refresh_updates_no_timestamp(self):
+        touched = []
+
+        _prepare(
+            _wrapper([], stored_history=[], touched=touched),
+            is_refresh=True,
+            conversation_id=7,
+        )
+
+        assert touched == []
+
+    def test_supplied_history_is_not_mutated_by_the_refresh_trim(self):
+        supplied = [("User", "q1"), (ARCHI_SENDER, "a1")]
+
+        _prepare(_wrapper([]), is_refresh=True, external_history=supplied)
+
+        # The trim pops from the resolved list; that list must be a copy, because
+        # mutating the caller's argument is not this function's to do.
+        assert supplied == [("User", "q1"), (ARCHI_SENDER, "a1")]
 
 
 class TestChatErrorMessage:

@@ -96,3 +96,29 @@
   as a literal `[modelused]` on `dev` today. Added the definition. The round-8 check that should
   have caught it grepped a hand-written list of the refs I remembered adding; the check is now
   generic — *any* `[label]` not followed by `(` is an unresolved reference — and reports none.
+
+## 9. Adversarial review round 1 — two findings, both confirmed
+
+- [x] 9.1 **[high] The guard tested a proxy, not the invariant.** `external_history is None` is a
+  proxy for "prior turns exist" and admits three requests that reach the identical unsatisfiable
+  state: `external_history=[]` (not `None`), an assistant-only history (emptied by the trim), and a
+  `conversation_id` naming an empty conversation — the third reaching it through a branch the
+  original guard never considered. Reproduced all three before fixing. The check now runs on the
+  **resolved, post-trim history** (`if not history: return None, 400`), which collapses the three
+  routes into one condition. My own spec said "no source of prior turns"; the implementation tested
+  source *presence* instead, so the spec was right and the code did not match it.
+- [x] 9.2 History resolution is now **side-effect free**: `create_conversation` and
+  `update_conversation_timestamp` are deferred until the request is known to be serviceable, so a
+  refusal writes nothing. Previously the `external_history=[]` path created a row *before* any
+  validation could reject it. Three tests pin the side effects that must still happen (existing
+  conversation is timestamped; supplied history is not; a refused refresh writes neither), because
+  moving side effects is exactly the kind of change that silently drops one.
+- [x] 9.3 `external_history` is copied rather than aliased — the trim pops from the resolved list,
+  which previously mutated the caller's argument. Pinned by a test.
+- [x] 9.4 **[low] The mechanical anchor remap produced a reversed range**, `app.py:2436-2405`: the
+  range pass mapped it correctly and the single-number pass then remapped the result. I had fixed
+  this same double-mapping for `#L4595-L4596` and not looked for other instances — the class again,
+  not the instance. The remap is now a **single regex pass** with ranges and singles in one
+  alternation, plus a `start <= end` assertion and a display-vs-URL consistency check. Both caught
+  further real errors: two anchors I had hand-set to new-file coordinates were re-mapped as if they
+  were old ones, and `[ovrreject]`'s display and URL had drifted apart.

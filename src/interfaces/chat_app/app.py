@@ -1657,37 +1657,41 @@ class ChatWrapper:
             raise ValueError("client_id is required to process chat messages")
         sender, content = tuple(message[0])
 
-        # A refresh re-answers prior turns instead of adding a new one, so it needs
-        # prior turns to exist. Without them the branch below would resolve an empty
-        # history, the trim would be a no-op, and the append would be skipped because
-        # this is a refresh — invoking the pipeline with no user turn at all and
-        # answering an empty prompt, indistinguishable from a real answer (#177).
+        # A refresh re-answers prior turns instead of adding a new one, so it needs a
+        # prior turn to exist. Without one the trim below is a no-op and the append is
+        # skipped because this is a refresh — invoking the pipeline with no user turn at
+        # all and answering an empty prompt, indistinguishable from a real answer (#177).
         #
-        # The condition names both sources deliberately: `external_history` supplies
-        # turns directly, so a refresh over supplied history is satisfiable with no
-        # conversation_id, and must not be rejected. Rejecting here also runs before
-        # the conversation is created, so a refused request leaves no empty row.
-        if is_refresh and conversation_id is None and external_history is None:
-            return None, 400
-
+        # Resolve the prior turns *without writing anything*, so a request that is
+        # about to be refused neither creates a conversation nor touches a timestamp.
+        # `external_history` is copied rather than aliased: the refresh trim below pops
+        # from this list, and mutating the caller's argument is not ours to do.
         if external_history is not None:
-            if conversation_id is None:
-                conversation_id = self.create_conversation(content, client_id, user_id)
-            history = external_history
+            history = list(external_history)
         elif conversation_id is None:
-            conversation_id = self.create_conversation(content, client_id, user_id)
             history = []
         else:
             history = self.query_conversation_history(
                 conversation_id, client_id, user_id
             )
-            self.update_conversation_timestamp(conversation_id, client_id, user_id)
 
         timestamps["query_convo_history_ts"] = datetime.now(timezone.utc)
 
         if is_refresh:
             while history and history[-1][0] == ARCHI_SENDER:
                 _ = history.pop(-1)
+            # The test is on the *resolved* history, not on which fields were supplied.
+            # Checking for a supplied source instead would be a proxy, and the proxy
+            # fails three ways that all land here: `external_history=[]`, a history of
+            # assistant turns only, and a `conversation_id` naming an empty conversation.
+            if not history:
+                return None, 400
+
+        # Committed only once the request is known to be serviceable.
+        if conversation_id is None:
+            conversation_id = self.create_conversation(content, client_id, user_id)
+        elif external_history is None:
+            self.update_conversation_timestamp(conversation_id, client_id, user_id)
 
         if server_received_msg_ts.timestamp() - client_sent_msg_ts > client_timeout:
             return None, 408
