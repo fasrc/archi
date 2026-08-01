@@ -142,13 +142,19 @@ class ScraperManager:
             # normalized, so they compare directly against these keys.
             existing_keys = {_dedup_key(u) for u in link_urls}
             sitemap_pairs = self._expand_sitemaps(sitemap_urls)
-            self._sitemap_lastmod_map = {
-                url: lm for url, lm in sitemap_pairs if lm is not None
-            }
-            for url, _ in sitemap_pairs:
+            # Populated INSIDE the dedup loop, for the URLs actually appended —
+            # not from every expanded pair. A page that is both hand-listed and
+            # in a sitemap belongs to the hand-list: its URL is deliberately not
+            # appended, and the spec says a hand-listed source's `last_modified`
+            # is NULL. Building the map first would still hand that page a
+            # timestamp, because `_handle_standard_url` looks the map up by the
+            # resource's NORMALIZED url — which is exactly what collided.
+            for url, lastmod in sitemap_pairs:
                 if url not in existing_keys:
                     existing_keys.add(url)
                     link_urls.append(url)
+                    if lastmod is not None:
+                        self._sitemap_lastmod_map[url] = lastmod
 
         self.collect_links(persistence, link_urls=link_urls)
         self.collect_sso(persistence, sso_urls=sso_urls)

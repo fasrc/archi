@@ -1061,6 +1061,51 @@ class TestWiring:
             f"https://{HOST}/kb/new",
         ]
 
+    def test_collided_handlist_url_is_left_out_of_the_lastmod_map(self):
+        # Spec `incremental-reingest`: "WHEN a hand-listed (non-sitemap) URL is
+        # scraped and persisted THEN its documents.last_modified is NULL."
+        #
+        # The map was built from every expanded pair BEFORE the dedup decision, so
+        # in the migration-window collision case — the same normalized page both
+        # hand-listed and in a sitemap — the sitemap URL is correctly not appended,
+        # but its <lastmod> stayed in the map. `_handle_standard_url` keys that map
+        # on the NORMALIZED resource URL, so the resource fetched from the
+        # hand-listed seed still picked the timestamp up.
+        mgr = self._mgr()
+        by_type = (
+            [f"https://{HOST}/kb/page/"],
+            [],
+            [],
+            [],
+            [],
+            ["https://s.xml"],
+        )
+        with patch.object(
+            ScraperManager,
+            "_expand_sitemaps",
+            return_value=[
+                (f"https://{HOST}/kb/page", "2026-04-21T19:19:35+00:00"),
+                (f"https://{HOST}/kb/new", "2026-04-22T00:00:00+00:00"),
+            ],
+        ), patch.object(ScraperManager, "collect_links"), patch.object(
+            ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+        ), patch.object(
+            ScraperManager, "collect_sso"
+        ), patch.object(
+            ScraperManager, "collect_git"
+        ), patch.object(
+            ScraperManager, "collect_elog"
+        ), patch.object(
+            ScraperManager, "collect_indico"
+        ):
+            mgr.collect_all_from_config(MagicMock())
+
+        # The collided page belongs to the hand-list now, so it carries no lastmod.
+        # The genuinely-new sitemap page keeps its own.
+        assert mgr._sitemap_lastmod_map == {
+            f"https://{HOST}/kb/new": "2026-04-22T00:00:00+00:00"
+        }
+
     def test_no_sitemap_bucket_skips_expand(self):
         mgr = self._mgr()
         by_type = (["https://a"], [], [], [], [], [])

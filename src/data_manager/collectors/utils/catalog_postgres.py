@@ -1359,6 +1359,13 @@ class PostgresCatalogService:
             "file_path",
             "file_modified_at",
             "ingested_at",
+            # Promoted out of `extra_json` into its own column (#155). It has to
+            # be listed here too, or it is written and then unreadable: every
+            # catalog accessor rebuilds metadata through this list, and
+            # `get_metadata_by_filter` re-checks the rebuilt dict — so an omitted
+            # key makes the filter select the right rows and then discard all of
+            # them.
+            "last_modified",
             "ingestion_status",
             "ingestion_error",
             "resource_hash",

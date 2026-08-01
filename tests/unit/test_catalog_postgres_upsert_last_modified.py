@@ -97,3 +97,47 @@ def test_upsert_resource_without_last_modified_no_error():
     assert "last_modified" in sql
     # No datetime values in params since no datetime metadata was provided
     assert not any(isinstance(p, datetime) for p in params)
+
+
+def test_row_to_metadata_returns_last_modified():
+    """Promoting the key to a real column must not hide it from metadata reads.
+
+    `_row_to_metadata` rebuilds metadata from `extra_json` plus an explicit list
+    of standard columns. Moving `last_modified` out of `extra_json` and into its
+    own column without adding it to that list makes the stored timestamp
+    unreadable through every catalog accessor — written, then invisible.
+    """
+    service = PostgresCatalogService.__new__(PostgresCatalogService)
+    row = {
+        "resource_hash": "hash5",
+        "url": "https://example.org/kb/page",
+        "source_type": "web",
+        "last_modified": datetime(2026, 4, 21, 19, 19, 35, tzinfo=timezone.utc),
+    }
+
+    metadata = service._row_to_metadata(row)
+
+    assert metadata["last_modified"] == "2026-04-21T19:19:35+00:00"
+
+
+def test_get_metadata_by_filter_keeps_the_last_modified_rows_it_selected():
+    """The filter selects on the column, then re-checks the rebuilt metadata.
+
+    So a key missing from `_row_to_metadata` does not merely omit a field — the
+    `metadata_field not in metadata` guard drops every row the query matched, and
+    the filter reports nothing while the database holds the values.
+    """
+    cursor = MagicMock()
+    cursor.fetchall.return_value = [
+        {
+            "resource_hash": "hash6",
+            "url": "https://example.org/kb/page",
+            "source_type": "web",
+            "last_modified": datetime(2026, 4, 21, 19, 19, 35, tzinfo=timezone.utc),
+        }
+    ]
+    service = _make_service(cursor)
+
+    matches = service.get_metadata_by_filter("last_modified")
+
+    assert [resource_hash for resource_hash, _ in matches] == ["hash6"]
