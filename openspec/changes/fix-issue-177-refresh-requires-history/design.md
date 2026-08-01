@@ -38,24 +38,41 @@ the append is skipped, and the pipeline receives no turns at all.
 
 ## Decisions
 
-**Decision: the condition is "no source of prior turns", not "no conversation_id".**
+**Decision: test the resolved history, not which fields were supplied.**
 
-This is the correction that shaped the change. [#177](https://github.com/fasrc/archi/issues/177)
-proposed rejecting `is_refresh` without a `conversation_id`. That is too broad: the **external**
-branch supplies history directly, so a refresh with `external_history` and no `conversation_id` is
-coherent — the supplied turns are trimmed of trailing assistant messages and re-answered. Rejecting
-it would break a legitimate use of the API to fix a different bug.
-
-The guard is therefore:
+The guard is:
 
 ```python
-if is_refresh and conversation_id is None and external_history is None:
-    return None, 400
+if is_refresh:
+    while history and history[-1][0] == ARCHI_SENDER:
+        history.pop(-1)
+    if not history:
+        return None, 400
 ```
 
-`openai_compat.py:280` is the only in-repo caller that passes `external_history`, and it always
-sends `is_refresh: False` — so nothing exercises the coherent case today. It remains supported
-because the API allows it and it has a well-defined meaning, not because a caller depends on it.
+This arrived in two corrections, both worth recording because each looked finished.
+
+[#177](https://github.com/fasrc/archi/issues/177) proposed rejecting `is_refresh` without a
+`conversation_id`. Too broad: the **external** branch supplies turns directly, so a refresh over
+`external_history` with no `conversation_id` is coherent and must not be rejected.
+
+The obvious repair — `conversation_id is None and external_history is None` — is still wrong, and
+adversarial review caught it. Testing which *fields* were supplied is a **proxy** for "prior turns
+exist", and the proxy admits three requests that reach the identical unsatisfiable state:
+
+| Request | Why the proxy misses it |
+|---|---|
+| `external_history=[]` | an empty list is not `None` |
+| history of assistant turns only | non-empty on arrival; the trim empties it |
+| `conversation_id` naming a conversation with no turns | reaches the state through the third branch, which the proxy never considered |
+
+All three were reproduced against `dev`. Only the resolved, post-trim history distinguishes them,
+and testing it collapses four routes into one condition instead of accumulating special cases.
+
+The lesson generalizes past this function: when a guard is written in terms of inputs but the defect
+is defined in terms of a computed state, the guard is a proxy and will have holes. The delta spec
+already said "no source of prior turns" while the first implementation tested field presence — the
+spec was right and the code quietly substituted something weaker and easier to check.
 
 - *Alternative — treat the request as a non-refresh* (append the message and answer normally):
   rejected. It silently reinterprets what the caller asked for. That is the same class of behaviour
@@ -63,13 +80,18 @@ because the API allows it and it has a well-defined meaning, not because a calle
   succeeds against the wrong content. A request that cannot be honoured should say so.
 - *Alternative — return 200 with an empty answer:* rejected; indistinguishable from a real answer.
 
-**Decision: place the guard before the branch table, not inside the `new` branch.**
+**Decision: resolve history without side effects, and commit the writes afterwards.**
 
-It sits immediately after `sender, content = tuple(message[0])` (`:1633`) and before
-`if external_history is not None:` (`:1635`). Placing it inside the `new` branch would work but
-would run *after* `create_conversation` in the external branch's `conversation_id is None` path,
-and reads as a special case rather than a precondition. A precondition on the whole function is what
-it is.
+Because the check now runs *after* history resolution, resolution must not write anything, or a
+refused request would still leave a conversation row behind — which the `external_history=[]` path
+did in the first implementation. So resolution is pure, and `create_conversation` /
+`update_conversation_timestamp` run only once the request is known to be serviceable.
+
+Two consequences worth stating. `external_history` is **copied** rather than aliased, because the
+trim pops from the resolved list and mutating the caller's argument is not this function's to do.
+And the branch that performs the writes has to reproduce the original pairing exactly — create when
+there is no `conversation_id`, touch the timestamp only for an existing conversation that did not
+supply its own history — so three tests pin those side effects rather than trusting the rewrite.
 
 **Decision: collapse the two error-message chains into a shared helper.**
 
@@ -87,14 +109,19 @@ adding an `elif error_code == 400:` to each chain — is two more places to forg
 - **[A caller depends on the current behaviour]** → Very unlikely: the current behaviour is an answer
   to an empty prompt. No in-repo client sends the combination. The change is nonetheless a `200` →
   `400` transition on a live endpoint and is called out in the proposal's Impact section.
-- **[The route's error branch is not reached by tests]** → The `get_chat_response` route body is not
-  exercised by any unit test, so the helper call site there lands uncovered. Mitigation: the helper
-  itself is pure and fully unit-tested, and the streaming call site *is* covered, so the untested
-  surface is one line rather than a branch chain. Net changed-line coverage is what the gate
-  measures, and the guard plus helper tests carry it.
+- **[The route bodies are not reached by unit tests]** → *Resolved during review.* This was
+  originally accepted as a known gap, leaving the non-streaming route's helper call uncovered.
+  Review pushed back on validating a status-code change only through stubs, which was right: both
+  view functions are now registered on a Flask app and driven with `test_client()`, asserting the
+  real `400` from `POST /api/get_chat_response` and the `200`-with-in-band-error from the streaming
+  endpoint. Changed-line coverage is 100% as a result. What remains unverified is behaviour against
+  a *deployed* service; that needs a redeploy of a shared environment for an unmerged branch, which
+  is a human's call, and the in-process route tests cover the status-code and channel claims that
+  the stubs could not.
 - **[The guard could mask a future legitimate refresh source]** → If a third history source is added,
-  the guard must learn about it. Mitigation: the spec states the condition as "no source of prior
-  turns" rather than naming two fields, and the scenario for the `external_history` case exists
+  the guard must learn about it. Mitigation: the guard tests the resolved history, so a new source
+  is covered automatically as long as it flows into `history` before the trim; the spec states the
+  condition in those terms rather than naming two fields, and the scenario for the `external_history` case exists
   precisely so that a narrowing of the guard fails a test.
 
 ## Migration Plan

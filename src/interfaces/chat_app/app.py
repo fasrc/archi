@@ -264,9 +264,14 @@ CLIENT_TIMEOUT_ERROR_MESSAGE = (
     "client timeout; the agent wasn't able to find satisfactory information "
     "to respond to the query within the time limit set by the administrator."
 )
+#: Phrased for an HTTP caller, who has exactly two levers. `external_history` is not
+#: one of them — `_parse_chat_request` never reads it off the payload, so it reaches
+#: `_prepare_chat_context` only from in-process callers like the OpenAI-compatible
+#: shim. And "send a conversation_id" alone would be wrong advice: a conversation with
+#: no prior turn is rejected by the same guard.
 REFRESH_WITHOUT_HISTORY_ERROR_MESSAGE = (
-    "is_refresh requires something to refresh: send a conversation_id, or supply "
-    "the prior turns, or omit is_refresh to ask a new question."
+    "is_refresh needs an earlier turn to re-answer: send a conversation_id for a "
+    "conversation that already has one, or omit is_refresh to ask a new question."
 )
 GENERIC_CHAT_ERROR_MESSAGE = "server error; see chat logs for message"
 

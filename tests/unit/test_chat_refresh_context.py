@@ -21,9 +21,11 @@ referencing ``_prepare_chat_context`` *replaces* it to exercise callers, so the 
 otherwise executed by no test.
 """
 
+import json
 from datetime import datetime, timezone
 
 import pytest
+from flask import Flask
 
 import src.interfaces.chat_app.app as app_module
 from src.interfaces.chat_app.app import ARCHI_SENDER, ChatWrapper
@@ -124,6 +126,27 @@ class TestRefreshWithoutPriorTurns:
         assert created == [], label
 
 
+class TestPreconditions:
+    def test_a_missing_client_id_raises(self):
+        """`client_id` is required before any history work happens.
+
+        Covered here because this change moved code around that guard and diff-cover
+        attributes the line to the diff; it is also a real precondition that had no
+        test, so pinning it is worth more than arguing with the diff algorithm.
+        """
+        with pytest.raises(ValueError, match="client_id is required"):
+            _wrapper([])._prepare_chat_context(
+                INCOMING,
+                None,
+                "",
+                False,
+                datetime.now(timezone.utc),
+                datetime.now(timezone.utc).timestamp(),
+                600.0,
+                {},
+            )
+
+
 class TestRefreshWithPriorTurnsIsUnaffected:
     def test_refresh_over_supplied_history_is_honoured(self):
         supplied = [("User", "q1"), (ARCHI_SENDER, "a1")]
@@ -208,6 +231,97 @@ class TestSideEffectsStillHappenWhenTheRequestIsServed:
         # The trim pops from the resolved list; that list must be a copy, because
         # mutating the caller's argument is not this function's to do.
         assert supplied == [("User", "q1"), (ARCHI_SENDER, "a1")]
+
+
+class TestTheRoutesThemselves:
+    """Drive the real Flask view functions, not just the context helper.
+
+    The unit tests above call `_prepare_chat_context` directly and the streaming test
+    substitutes it, so neither exercises the HTTP layer where the status code is
+    actually chosen. These do: they register the real view functions on a Flask app and
+    assert what a caller receives — the non-streaming `400`, and the streaming
+    endpoint's `200` carrying an in-band error. That difference is the whole point of
+    the two-error-channels section in the API reference, and it is invisible below the
+    route.
+    """
+
+    @staticmethod
+    def _app(view_name, chat):
+        wrapper = object.__new__(app_module.FlaskAppWrapper)
+        wrapper.chat = chat
+        flask_app = Flask(__name__)
+        flask_app.secret_key = "test"
+        flask_app.add_url_rule(
+            "/api/x", view_name, getattr(wrapper, view_name), methods=["POST"]
+        )
+        return flask_app
+
+    @staticmethod
+    def _body(**over):
+        body = {
+            "last_message": INCOMING,
+            "client_id": CLIENT_ID,
+            "is_refresh": True,
+            "client_sent_msg_ts": 1,
+            "client_timeout": 600000,
+        }
+        body.update(over)
+        return body
+
+    def test_non_streaming_route_returns_a_real_http_400(self):
+        flask_app = self._app(
+            "get_chat_response", lambda *a, **k: (None, None, None, {}, 400)
+        )
+
+        with flask_app.test_client() as client:
+            response = client.post("/api/x", json=self._body())
+
+        assert response.status_code == 400
+        assert response.get_json() == {
+            "error": app_module.REFRESH_WITHOUT_HISTORY_ERROR_MESSAGE
+        }
+
+    def test_non_streaming_route_still_maps_408_and_403(self):
+        for code, expected in (
+            (408, app_module.CLIENT_TIMEOUT_ERROR_MESSAGE),
+            (403, "conversation not found"),
+        ):
+            flask_app = self._app(
+                "get_chat_response", lambda *a, **k: (None, None, None, {}, code)
+            )
+            with flask_app.test_client() as client:
+                response = client.post("/api/x", json=self._body())
+
+            assert response.status_code == code
+            assert response.get_json() == {"error": expected}
+
+    def test_streaming_route_returns_http_200_with_the_error_in_band(self):
+        class _Chat:
+            def stream(self, *a, **k):
+                yield {"type": "meta", "event": "stream_started"}
+                yield {
+                    "type": "error",
+                    "status": 400,
+                    "message": app_module.REFRESH_WITHOUT_HISTORY_ERROR_MESSAGE,
+                }
+
+        flask_app = self._app("get_chat_response_stream", _Chat())
+
+        with flask_app.test_client() as client:
+            response = client.post("/api/x", json=self._body())
+            events = [
+                json.loads(line)
+                for line in response.get_data(as_text=True).splitlines()
+                if line.strip()
+            ]
+
+        # The rejection is a 400, but the HTTP status is 200 — a client checking only
+        # the status reads this as success.
+        assert response.status_code == 200
+        assert events[-1]["status"] == 400
+        assert events[-1]["message"] == (
+            app_module.REFRESH_WITHOUT_HISTORY_ERROR_MESSAGE
+        )
 
 
 class TestChatErrorMessage:

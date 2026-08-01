@@ -26,10 +26,11 @@
 
 ## 3. GREEN — the guard
 
-- [x] 3.1 Add the precondition immediately after `sender, content = tuple(message[0])` (`:1633`) and
-  before `if external_history is not None:` (`:1635`):
-  `if is_refresh and conversation_id is None and external_history is None: return None, 400`.
-  Comment it with *why* the condition names both fields.
+- [x] 3.1 Add the precondition. **Superseded by 9.1** — this task specified the field-presence form
+  (`is_refresh and conversation_id is None and external_history is None`) placed before the history
+  branches. That form is a proxy for "prior turns exist" and has three holes; the shipped guard
+  tests the resolved, post-trim history instead. Kept here so the correction is legible rather than
+  looking like the task was always right.
 - [x] 3.2 Run 2.1–2.5 until green.
 
 ## 4. RED+GREEN — the shared error message
@@ -123,3 +124,29 @@
   alternation, plus a `start <= end` assertion and a display-vs-URL consistency check. Both caught
   further real errors: two anchors I had hand-set to new-file coordinates were re-mapped as if they
   were old ones, and `[ovrreject]`'s display and URL had drifted apart.
+
+## 10. PR review round 1 (#182) — three findings, all confirmed
+
+- [x] 10.1 **[P1] Validate through the endpoints, not stubs.** The tests drove
+  `_prepare_chat_context` directly and *replaced* it for the streaming assertion, so nothing
+  exercised the HTTP layer where the status code is actually chosen — while the change alters live
+  API status behaviour. Both view functions are now registered on a Flask app and driven with
+  `test_client()`: the real `400` from `POST /api/get_chat_response`, the unchanged `408`/`403`
+  mappings, and the streaming endpoint's `200` carrying an in-band `400`. This also covers the route
+  line the design had accepted as a known gap — changed-line coverage is now **100%**.
+  Not done: validation against a *deployed* service. That needs a redeploy of a shared environment
+  for an unmerged branch, which is a human's call; the in-process route tests cover the status-code
+  and channel claims that the stubs could not, and the limit is recorded in the design's risks.
+- [x] 10.2 **[P2] The error message recommended an unreachable remedy.** It told callers to "supply
+  the prior turns", but `_parse_chat_request` never reads `external_history` off the payload — that
+  parameter reaches `_prepare_chat_context` only from in-process callers like the OpenAI-compatible
+  shim. It also said "send a conversation_id", which is wrong for the empty-conversation case the
+  same guard rejects. Reworded to the two levers an HTTP caller actually has, with the reasoning
+  recorded at the constant so it is not "simplified" back.
+- [x] 10.3 **[P2] The design still recorded the superseded guard.** Code and delta spec moved to the
+  resolved-history check; `design.md` still showed the field-presence proxy and said to place it
+  before history resolution — following it would reintroduce all three holes. Rewritten to the
+  shipped invariant, including why the proxy fails and the general lesson.
+- [x] 10.4 Swept the change artifacts for the same class rather than fixing only what was reported.
+  That found two more: task 3.1 still prescribed the old guard form (now marked superseded), and a
+  risk entry still claimed the route is untested (resolved by 10.1).
