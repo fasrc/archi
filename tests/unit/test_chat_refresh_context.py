@@ -1,8 +1,8 @@
 """`is_refresh` must have prior turns to refresh (issue #177).
 
 ``_prepare_chat_context`` resolves history from one of three sources, then applies two
-refresh-dependent steps: it trims trailing assistant turns (``app.py:1650-1652``) and it
-skips appending the caller's message when the request is a refresh (``:1657-1658``).
+refresh-dependent steps: it trims trailing assistant turns (``app.py:1684``) and it
+skips appending the caller's message when the request is a refresh (``:1709``).
 
 Combine ``is_refresh`` with *no* history source and both steps degenerate: the trim is a
 no-op on an empty list and the append never happens, so the pipeline is invoked with **no
@@ -16,9 +16,10 @@ coherent. ``test_refresh_over_supplied_history_is_honoured`` is the test that ho
 to that distinction: it fails if the guard is written as "reject when ``conversation_id`` is
 None", which is the obvious and wrong way to write it.
 
-These tests drive the real method with a stub ``self``. Note that every other test file
-referencing ``_prepare_chat_context`` *replaces* it to exercise callers, so the real body is
-otherwise executed by no test.
+These tests drive the real method with a stub ``self``, and the route tests at the bottom
+drive it through the real Flask view functions with a real ``ChatWrapper``. Note that every
+other test file referencing ``_prepare_chat_context`` *replaces* it to exercise callers, so
+the real body is otherwise executed by no test.
 """
 
 import json
@@ -61,7 +62,7 @@ def _wrapper(created, stored_history=None, touched=None):
 def _prepare(wrapper, *, is_refresh, conversation_id=None, external_history=None):
     """Call the real method with a timing pair that does not trip the #175 check.
 
-    ``app.py:1654`` compares ``server_received - client_sent`` against ``client_timeout``
+    ``app.py:1706`` compares ``server_received - client_sent`` against ``client_timeout``
     with no guard. Sending the same instant for both, with a generous timeout, keeps that
     unrelated bug out of these results.
     """
