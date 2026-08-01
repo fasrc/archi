@@ -3,13 +3,13 @@
 `is_refresh: true` sent with no `conversation_id` and no `external_history` causes the chat
 handler to invoke the pipeline with **no user turn at all**.
 
-`_prepare_chat_context` (`src/interfaces/chat_app/app.py:1618`) opens a new conversation with
-`history = []` (`:1639-1641`), then skips appending the caller's message because the request is a
-refresh (`:1657-1658`). The refresh trim at `:1650-1652` is a no-op on the empty history. The model
+`_prepare_chat_context` (`src/interfaces/chat_app/app.py:1622`) opens a new conversation with
+`history = []` (`:1643-1645`), then skips appending the caller's message because the request is a
+refresh (`:1661-1662`). The refresh trim at `:1654-1656` is a no-op on the empty history. The model
 is therefore asked to answer nothing, and the caller receives a plausible-looking response to a
 message the server discarded. There is no error and no warning.
 
-A second, quieter effect: `:1640` has already created a conversation row by then, so every such
+A second, quieter effect: `:1644` has already created a conversation row by then, so every such
 request leaves an empty conversation behind.
 
 `is_refresh` means "re-answer the previous turn instead of adding a new one". Both halves of that
@@ -27,7 +27,7 @@ prompt is the worst available response — it is indistinguishable from success.
   returns HTTP `400`; `POST /api/get_chat_response_stream` returns HTTP **200** with an in-band
   `{"type": "error", "status": 400}`, because its response is constructed before this check runs.
 - Give that status a caller-appropriate message. Today the two error-message chains
-  (`app.py:2019-2025` streaming, `:4668-4674` non-streaming) know only 408 and 403 and fall through
+  (`app.py:2023-2029` streaming, `:4672-4678` non-streaming) know only 408 and 403 and fall through
   to "server error; see chat logs for message", which would misreport a client error as a server
   fault.
 - Collapse those chains into one shared helper so a future status cannot be added to one endpoint
@@ -54,7 +54,7 @@ would have rejected it; see `design.md`.
   error-message chains at the streaming call site and the non-streaming route.
 - **Affected docs:** `docs/docs/api_reference.md`, the `is_refresh` request-body row.
 - **Callers:** no in-repo client sends the rejected combination. `openai_compat.py:272` always sends
-  `is_refresh: False`; the web UI (`static/script.js:781`, `:826`) sends `is_refresh` alongside a
+  `is_refresh: False`; the web UI (`static/script.js:781`, `:830`) sends `is_refresh` alongside a
   `conversation_id`. External API callers who send it today receive an answer to an empty prompt, so
   the change replaces a silent wrong answer with an explicit rejection.
 - **Behaviour change:** yes, and it differs by endpoint. `POST /api/get_chat_response` now returns

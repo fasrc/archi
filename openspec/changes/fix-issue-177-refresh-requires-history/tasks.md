@@ -223,3 +223,41 @@
 - [x] 13.2 **Task 6.1 still stated the superseded precondition** ("needs a `conversation_id` **or**
   `external_history`") and, unlike task 3.1, was not marked superseded — so it contradicted both the
   shipped guard and the correction in 9.1. Marked superseded with the shipped wording.
+
+## 14. Merge `dev` after PR #179 landed
+
+PR [#179](https://github.com/fasrc/archi/pull/179) (`c06fc45c`, issue #167 — validate the
+`last_message` shape on both chat endpoints) merged into `dev` while this branch was review-clean,
+touching the same two files. Merged `origin/dev` in rather than rebasing, so the fix SHAs cited in
+the review threads still resolve.
+
+- [x] 14.1 **`app.py` auto-merged; verified semantically, not just textually.** #179 adds a
+  route-level `parse_last_message` guard *before* the response is constructed; this change guards
+  inside `_prepare_chat_context`, which runs after. Different layers, no interaction — confirmed by
+  running both changes' suites together: 58/58 pass (26 here, 32 from #179).
+- [x] 14.2 **`api_reference.md` conflicted in two hunks, both resolved by content.** The
+  `last_message` paragraph: this branch had only re-anchored the old "does not return a clean error"
+  text, which #179 makes false — took #179's rewrite wholesale. The pre-stream error table: kept
+  both rows.
+- [x] 14.3 **Anchors remapped against the merged `app.py`.** 61 references in `api_reference.md`,
+  4 in the test docstrings, 16 across the proposal/design/spec. The remapper had the range bug
+  *again* in a new form: GitHub's anchor range is `#L4650-L4651`, whose tail is a bare `L`, and the
+  dash group only matched `-` or `-#L`, so it rewrote the start and left the end — yielding
+  `#L4654-L4651`. Caught by the reversed-range assertion before anything was written. The assertion
+  is now scoped to refs the pass produces, because a whole-file scan trips on the reversed ranges
+  task 9.4 *quotes* as evidence. `tasks.md` is excluded from the remap: its line numbers are quoted
+  evidence of what was found at the time, not navigation aids.
+- [x] 14.4 **Fixed a pre-existing off-by-one this verification exposed.** `[streamopen]` pointed at
+  the closing `}` of the `headers` dict, one line above the `return Response(stream_with_context(…))`
+  it names. Shipped that way in #159. Verification was 11 anchors spot-checked by comparing the
+  source line text pre- and post-merge; all 11 matched, which is what surfaced the one that had
+  never matched.
+- [x] 14.5 **De-enumerated the route-level `400` carve-out in the spec.** The scenario from 12.3
+  listed the two other `400`s by name; #179 added a third and would have made the list wrong. Restated
+  as a rule about *where* the rejection is decided — route-level rejections keep their own text,
+  handler-level ones read the shared mapping — so a `400` added later cannot fall out of compliance
+  silently. Same defect class as 12.4 and 13.1: a closed enumeration of an open set.
+- [x] 14.6 **Documented that `400` now appears on both channels of the streaming endpoint.** A
+  malformed `last_message` is a real HTTP `400`; a refresh with nothing to refresh is an in-band
+  `400` under HTTP `200`. Neither PR's review could have caught the ambiguity, since each saw only
+  its own half.

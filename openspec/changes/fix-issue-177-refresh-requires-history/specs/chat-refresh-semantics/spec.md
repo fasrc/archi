@@ -85,8 +85,8 @@ Both chat endpoints SHALL derive the human-readable text for an error status fro
 mapping, so that a status added to one endpoint cannot be missing from the other. This SHALL include
 the streaming endpoint's **exception branches**, not only its context-error branch.
 
-Before this change the mapping was duplicated at the streaming call site (`app.py:2019-2025`) and in
-the non-streaming route (`:4668-4674`), each knowing only `408` and `403` and falling through to
+Before this change the mapping was duplicated at the streaming call site (`app.py:2023-2029`) and in
+the non-streaming route (`:4672-4678`), each knowing only `408` and `403` and falling through to
 "server error; see chat logs for message" — which would report a client error as a server fault.
 
 Three further copies lived in the streaming generator's own error paths: the
@@ -104,9 +104,14 @@ on a different endpoint and is not part of the chat error mapping.
 - **WHEN** either endpoint rejects a refresh because no prior turn survives
 - **THEN** the message identifies the request as unsatisfiable and names the missing precondition
 - **AND** it is not the generic "server error; see chat logs for message" text
-- **AND** the requirement is specific to *this* rejection: the other `400`s on these routes carry
-  their own text — a missing `client_id` before the handler is entered, and a streaming
-  provider-override `ValueError` — and must not claim that prior history is missing
+- **AND** the requirement is specific to *this* rejection. The shared mapping covers statuses
+  decided **inside** the handler, where the same status must read the same on both endpoints.
+  A rejection decided in the route, **before** the handler is entered, keeps its own specific
+  text and must not claim that prior history is missing — a missing `client_id`, a malformed
+  `last_message` (added by [#179](https://github.com/fasrc/archi/pull/179)), and a streaming
+  provider-override `ValueError` are all of that kind. That is a rule about *where* the
+  rejection is decided, not a list of the ones that exist today, so a route-level `400` added
+  later does not silently fall out of compliance
 
 #### Scenario: Existing status messages are unchanged
 

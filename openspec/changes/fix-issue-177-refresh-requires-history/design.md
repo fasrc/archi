@@ -1,7 +1,7 @@
 ## Context
 
-`_prepare_chat_context` (`src/interfaces/chat_app/app.py:1618`) resolves the conversation history a
-request will be answered against. It has three source branches (`:1635-1648`):
+`_prepare_chat_context` (`src/interfaces/chat_app/app.py:1622`) resolves the conversation history a
+request will be answered against. It has three source branches (`:1639-1652`):
 
 | Branch | Condition | History comes from |
 |---|---|---|
@@ -32,8 +32,8 @@ the append is skipped, and the pipeline receives no turns at all.
 
 **Non-Goals**
 - No change to a refresh that has prior turns to work with, from either source.
-- No change to the `is_refresh` trim semantics (`:1650-1652`).
-- No change to the unguarded timeout check at `:1654` — that is
+- No change to the `is_refresh` trim semantics (`:1654-1656`).
+- No change to the unguarded timeout check at `:1658` — that is
   [#175](https://github.com/fasrc/archi/issues/175) and is deliberately untouched here.
 
 ## Decisions
@@ -95,7 +95,7 @@ supply its own history — so three tests pin those side effects rather than tru
 
 **Decision: collapse the two error-message chains into a shared helper.**
 
-`app.py:2019-2025` (streaming) and `:4668-4674` (non-streaming route) contain the same
+`app.py:2023-2029` (streaming) and `:4672-4678` (non-streaming route) contain the same
 `408 / 403 / else` mapping, duplicated. Adding a fourth status to both would deepen a duplication
 that already invites drift — and drift here is invisible, because each endpoint is exercised
 separately.
