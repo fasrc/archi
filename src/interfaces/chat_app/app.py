@@ -1680,8 +1680,6 @@ class ChatWrapper:
                 conversation_id, client_id, user_id
             )
 
-        timestamps["query_convo_history_ts"] = datetime.now(timezone.utc)
-
         if is_refresh:
             while history and history[-1][0] == ARCHI_SENDER:
                 _ = history.pop(-1)
@@ -1697,6 +1695,13 @@ class ChatWrapper:
             conversation_id = self.create_conversation(content, client_id, user_id)
         elif external_history is None:
             self.update_conversation_timestamp(conversation_id, client_id, user_id)
+
+        # Recorded *after* the writes, as it was before the writes were deferred. This
+        # milestone bounds the conversation-store work, so moving the create/update out
+        # from under it would push that latency into the next interval and make new
+        # `timing` rows incomparable with every historical one — a silent break in a
+        # measurement series, which is worse than a visibly wrong number.
+        timestamps["query_convo_history_ts"] = datetime.now(timezone.utc)
 
         if server_received_msg_ts.timestamp() - client_sent_msg_ts > client_timeout:
             return None, 408

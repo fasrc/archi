@@ -150,3 +150,32 @@
 - [x] 10.4 Swept the change artifacts for the same class rather than fixing only what was reported.
   That found two more: task 3.1 still prescribed the old guard form (now marked superseded), and a
   risk entry still claimed the route is untested (resolved by 10.1).
+
+## 11. PR review round 2 (#182) — four findings, all confirmed
+
+- [x] 11.1 **[P1, repeat, sharpened] The route tests injected a synthetic 400.** Round 1's route
+  tests stubbed `self.chat` with a lambda, so they proved the route *maps* an error code while
+  assuming the thing under change produced one. Both route tests now drive a **real `ChatWrapper`**
+  with only its datastore collaborators stubbed: route → `__call__`/`stream` →
+  `_prepare_chat_context` → the guard → the shared message → the response. Proven non-vacuous by
+  mutation: deleting the guard now fails both route tests, which the synthetic versions could not
+  have detected. Deployment validation remains outstanding and is a human's call; the design's risk
+  entry says so plainly rather than implying otherwise.
+- [x] 11.2 **[P2] The deferred writes broke a timing milestone.** `query_convo_history_ts` bounds the
+  conversation-store work, and moving `create_conversation`/`update_conversation_timestamp` past the
+  refresh check moved them out from under it — so new `timing` rows would attribute that latency to
+  the next interval and stop being comparable with historical rows. A measurement series breaking
+  silently is worse than a visibly wrong number. The milestone is recorded after the writes again,
+  and a test asserts the ordering by checking, from inside the stubbed write, that the milestone is
+  not yet set.
+- [x] 11.3 **[P2] The requirement specified HTTP 400 for both endpoints.** The streaming response is
+  constructed before `_prepare_chat_context` runs, so it returns HTTP 200 with an in-band `400` —
+  which the route test and the API reference both assert. The normative text made the shipped
+  behaviour non-compliant. Split by endpoint. The sweep for the same class then found the proposal's
+  Impact line claiming "previously returned `200`, now returns `400`", which is wrong for streaming
+  — it still returns `200`, with an error event instead of an answer.
+- [x] 11.4 **[P2] The anchors were stale again.** The five-line comment added in round 1 shifted
+  every location below it and I did not re-run the remap. Re-derived from `8db5b02a` (the last state
+  where they were correct) and re-verified: every anchor prints its target line, ranges cover what
+  they claim, display text matches its URL. The remap is a checked-in habit at this point, not a
+  one-off — any edit to `app.py` in this repo invalidates every line anchor on that page.

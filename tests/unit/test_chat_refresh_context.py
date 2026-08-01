@@ -223,6 +223,37 @@ class TestSideEffectsStillHappenWhenTheRequestIsServed:
 
         assert touched == []
 
+    def test_the_history_milestone_is_recorded_after_the_conversation_write(self):
+        """`query_convo_history_ts` bounds the conversation-store work.
+
+        Deferring the writes past the refresh check moved them out from under this
+        milestone, which would push that latency into the next interval and make new
+        `timing` rows incomparable with every historical one. A broken measurement
+        series is silent — nothing fails, the numbers just quietly mean something else —
+        so the ordering is asserted rather than assumed.
+        """
+        timestamps = {}
+        seen_at_write = {}
+        wrapper = object.__new__(ChatWrapper)
+
+        def create_conversation(first_message, client_id, user_id=None):
+            seen_at_write["milestone_already_set"] = (
+                "query_convo_history_ts" in timestamps
+            )
+            return 42
+
+        wrapper.create_conversation = create_conversation
+        wrapper.query_conversation_history = lambda *a, **k: []
+        wrapper.update_conversation_timestamp = lambda *a, **k: None
+
+        now = datetime.now(timezone.utc)
+        wrapper._prepare_chat_context(
+            INCOMING, None, CLIENT_ID, False, now, now.timestamp(), 600.0, timestamps
+        )
+
+        assert seen_at_write["milestone_already_set"] is False
+        assert "query_convo_history_ts" in timestamps
+
     def test_supplied_history_is_not_mutated_by_the_refresh_trim(self):
         supplied = [("User", "q1"), (ARCHI_SENDER, "a1")]
 
@@ -244,6 +275,21 @@ class TestTheRoutesThemselves:
     the two-error-channels section in the API reference, and it is invisible below the
     route.
     """
+
+    @staticmethod
+    def _real_chat(created=None, stored_history=None):
+        """A real `ChatWrapper` with only its datastore collaborators stubbed.
+
+        `__call__` and `stream` both reach `_prepare_chat_context` before touching
+        anything else, so the guard under test runs for real — the route, the context
+        helper and the error mapping are all production code. Injecting a synthetic
+        `400` instead would test the mapping while assuming the thing being changed.
+        """
+        chat = _wrapper(created if created is not None else [], stored_history)
+        chat._init_timestamps = lambda: {}
+        chat.cursor = None
+        chat.conn = None
+        return chat
 
     @staticmethod
     def _app(view_name, chat):
@@ -269,17 +315,32 @@ class TestTheRoutesThemselves:
         return body
 
     def test_non_streaming_route_returns_a_real_http_400(self):
-        flask_app = self._app(
-            "get_chat_response", lambda *a, **k: (None, None, None, {}, 400)
-        )
+        created = []
+        flask_app = self._app("get_chat_response", self._real_chat(created))
 
         with flask_app.test_client() as client:
             response = client.post("/api/x", json=self._body())
 
+        # Route → ChatWrapper.__call__ → _prepare_chat_context → the guard → the shared
+        # message → HTTP 400, all production code but the datastore.
         assert response.status_code == 400
         assert response.get_json() == {
             "error": app_module.REFRESH_WITHOUT_HISTORY_ERROR_MESSAGE
         }
+        assert created == []
+
+    def test_non_streaming_route_serves_a_refresh_that_has_a_prior_turn(self):
+        flask_app = self._app(
+            "get_chat_response",
+            self._real_chat(stored_history=[("User", "q1"), (ARCHI_SENDER, "a1")]),
+        )
+
+        with flask_app.test_client() as client:
+            response = client.post("/api/x", json=self._body(conversation_id=7))
+
+        # Not a 400: the guard must not reject a serviceable refresh at the route level
+        # either. It fails later on the stubbed pipeline, which is past what this asserts.
+        assert response.status_code != 400
 
     def test_non_streaming_route_still_maps_408_and_403(self):
         for code, expected in (
@@ -296,16 +357,7 @@ class TestTheRoutesThemselves:
             assert response.get_json() == {"error": expected}
 
     def test_streaming_route_returns_http_200_with_the_error_in_band(self):
-        class _Chat:
-            def stream(self, *a, **k):
-                yield {"type": "meta", "event": "stream_started"}
-                yield {
-                    "type": "error",
-                    "status": 400,
-                    "message": app_module.REFRESH_WITHOUT_HISTORY_ERROR_MESSAGE,
-                }
-
-        flask_app = self._app("get_chat_response_stream", _Chat())
+        flask_app = self._app("get_chat_response_stream", self._real_chat())
 
         with flask_app.test_client() as client:
             response = client.post("/api/x", json=self._body())

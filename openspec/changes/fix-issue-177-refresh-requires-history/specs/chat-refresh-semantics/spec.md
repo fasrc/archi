@@ -3,8 +3,16 @@
 ### Requirement: A refresh with no surviving prior turn is rejected
 
 The chat endpoints SHALL reject a request with `is_refresh` true for which **no prior turn survives
-history resolution and the refresh trim**, with HTTP status `400`, and SHALL do so before any
-conversation row is created or any conversation timestamp is updated.
+history resolution and the refresh trim**, and SHALL do so before any conversation row is created or
+any conversation timestamp is updated.
+
+The rejection SHALL be reported on each endpoint's own error channel, which differ:
+`POST /api/get_chat_response` SHALL return HTTP status `400`, while
+`POST /api/get_chat_response_stream` SHALL return HTTP **200** and report the rejection as an in-band
+`{"type": "error", "status": 400}` event. The streaming response is constructed before
+`_prepare_chat_context` runs, so its status line is already sent by the time this check happens —
+specifying a bare "HTTP 400" for both would make the shipped streaming behaviour non-compliant and
+invite a later implementation to "fix" it by breaking the documented streaming contract.
 
 The test is on the **resolved** history, not on which request fields were supplied. Testing for a
 supplied source instead is a proxy for "prior turns exist", and the proxy admits three requests that
@@ -20,14 +28,15 @@ which is why it must be an explicit rejection rather than a best-effort interpre
 #### Scenario: Refresh with neither a conversation nor supplied history is rejected
 
 - **WHEN** a request sets `is_refresh` true with `conversation_id` absent and no `external_history`
-- **THEN** the handler returns error status `400` and no chat context
+- **THEN** the handler returns error status `400` and no chat context, surfaced on each endpoint's
+  own channel per the requirement above
 - **AND** the caller's message is not silently discarded in favour of an empty prompt
 
 #### Scenario: Refresh whose resolved history holds no prior turn is rejected
 
 - **WHEN** a refresh supplies `external_history` of `[]`, or a history containing only assistant
   turns, or names a `conversation_id` whose conversation holds no turns
-- **THEN** each is rejected with status `400`
+- **THEN** each is rejected with error status `400`, surfaced on each endpoint's own channel
 - **AND** the rejection is decided after the refresh trim, so all three routes to the same empty
   state are covered by one check rather than by three special cases
 

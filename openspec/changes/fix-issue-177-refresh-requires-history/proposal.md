@@ -51,5 +51,9 @@ would have rejected it; see `design.md`.
   `is_refresh: False`; the web UI (`static/script.js:781`, `:826`) sends `is_refresh` alongside a
   `conversation_id`. External API callers who send it today receive an answer to an empty prompt, so
   the change replaces a silent wrong answer with an explicit rejection.
-- **Behaviour change:** yes — a request that previously returned `200` now returns `400`. That is the
-  point of the change, and it is a request that could not have been producing a useful answer.
+- **Behaviour change:** yes, and it differs by endpoint. `POST /api/get_chat_response` now returns
+  HTTP `400` where it previously returned `200` with an answer to an empty prompt.
+  `POST /api/get_chat_response_stream` still returns HTTP **200** — its response is constructed
+  before this check runs — but the body now carries an in-band `{"type": "error", "status": 400}`
+  event instead of an answer. In both cases the request could not have been producing a useful
+  result, so what changes is that the failure is now visible.
