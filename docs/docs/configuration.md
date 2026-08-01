@@ -180,9 +180,40 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 | `embedding_name` | string | `OpenAIEmbeddings` | Embedding backend |
 | `chunk_size` | int | `1000` | Max characters per text chunk |
 | `chunk_overlap` | int | `0` | Overlapping characters between chunks |
-| `parallel_workers` | int | `32` | Parallel ingestion workers |
+| `parallel_workers` | int | `32` | Parallel **embedding**-phase ingestion workers |
+| `scrape_workers` | int | `8` | Parallel **scrape**-phase workers: how many seed URLs are crawled concurrently |
+| `scrape_per_host_workers` | int | `4` | Cap on concurrent in-flight requests to any single host |
 | `reset_collection` | bool | `true` | Wipe collection on startup |
 | `distance_metric` | string | `cosine` | Similarity metric: `cosine`, `l2`, `ip` |
+
+> **Note:** `scrape_workers` and `scrape_per_host_workers` control the **scrape
+> phase** only and are independent of `parallel_workers`, which governs the
+> **embedding phase**. Both scrape knobs coerce to `int`, fall back to their
+> defaults on invalid values (including YAML's non-finite `.inf` / `.nan`), and
+> clamp to a minimum of `1` — so `scrape_workers: 0` is accepted and means `1`, not
+> the default of `8`. Setting `scrape_workers: 1` reproduces the sequential scrape
+> path exactly, in input order.
+>
+> **What "per host" means.** `scrape_per_host_workers` is a budget owed to a
+> *server*, so it is enforced across the whole data-manager process, not per
+> collection run: a scheduled link ingest and a `/document_index/upload_url`
+> request that overlap contend for the same slots rather than each spending the
+> full budget. Host slots also follow redirects — a seed on `example.org` that
+> redirects to `www.example.org` moves onto the destination's slot for the rest of
+> its crawl, so seeds that funnel into one host cannot collectively exceed the cap
+> there. A seed URL the parser cannot read at all gets its own private slot and
+> fails on its own instead of aborting the run.
+>
+> **Database impact of raising `scrape_workers`.** The scrape persistence path does
+> **not** use the pooled connections in `src/utils/connection_pool.py`. Each catalog
+> write goes through `PostgresCatalogService.upsert_resource()`, which opens a fresh
+> `psycopg2.connect()` for the statement and closes it immediately. Workers therefore
+> never block on a pool checkout — instead each in-flight write is one more *direct*
+> connection, so the ceiling that matters is the Postgres server's `max_connections`.
+> Failures there surface as `OperationalError` and are retried three times (2s, then
+> 4s backoff) before the seed is abandoned. Keep `scrape_workers` comfortably below
+> `max_connections` minus whatever the chat app and other services are already
+> holding.
 
 ### Retrieval Settings
 
@@ -273,6 +304,7 @@ data_manager:
       provider: local          # provider key under services.chat_app.providers
       model: qwen3             # model id for that provider
       max_chars: 4000          # content is truncated to this many chars before the call
+      max_concurrency: 1       # concurrent LLM calls; 1 = serial (default)
       categories:              # the closed set of labels the model must choose from
         - compute
         - storage
@@ -286,6 +318,7 @@ data_manager:
 | `categorization.enabled` | `false` | Assign one label from `categories` to each document via an LLM and store it under `metadata.llm_category`. |
 | `categorization.provider` / `model` | — | Which chat model to use. `provider` is a key under `services.chat_app.providers`; that block (base_url / mode / models / extra_kwargs) supplies the model's `provider_config`, so a custom local/vLLM endpoint is honored. |
 | `categorization.max_chars` | `4000` | Document content is truncated to this length before the model call (bounds cost/latency). |
+| `categorization.max_concurrency` | `1` | Upper bound on documents in an LLM call at once. Categorization runs inside `persist_resource`, which the scrape phase calls from a pool sized by `scrape_workers` — this knob keeps the request rate to the model provider decided by the model's limits rather than by a fetch-politeness setting. Anything that is not a positive integer coerces to `1`; a bad value never means "unbounded". |
 | `categorization.categories` | `[]` | The closed label set. An empty list (or any error / out-of-list / model-not-configured) yields `metadata.llm_category = "uncategorized"`. |
 
 **Behavior and caveats:**

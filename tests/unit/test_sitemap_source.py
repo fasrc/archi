@@ -1411,6 +1411,16 @@ class TestLastmodBridge:
         mgr.config = {}
         mgr.sitemap_config = {}
         mgr.web_scraper = MagicMock()
+        # These stubs bypass __init__, so an attribute the scrape path reads has to
+        # be supplied here. `scrape_per_host_workers` is set at app.py-equivalent
+        # __init__ (scraper_manager.py:110) with a default of 4; the per-host cap
+        # added by #136 reads it on the standard-URL path.
+        mgr.scrape_per_host_workers = 4
+        mgr.scrape_workers = 1
+        # #136 moved standard link collection off `self.web_scraper`: each seed crawl
+        # now gets its own LinkScraper from this factory seam, so a test that wants to
+        # control what `crawl_iter` yields has to stub the seam, not the old attribute.
+        mgr._new_link_scraper = lambda: mgr.web_scraper
         return mgr
 
     def _resource(self, url):
@@ -1561,6 +1571,16 @@ class TestFetchBehaviorUnchanged:
         mgr.config = {}
         mgr.sitemap_config = {}
         mgr.web_scraper = MagicMock()
+        # These stubs bypass __init__, so an attribute the scrape path reads has to
+        # be supplied here. `scrape_per_host_workers` is set at app.py-equivalent
+        # __init__ (scraper_manager.py:110) with a default of 4; the per-host cap
+        # added by #136 reads it on the standard-URL path.
+        mgr.scrape_per_host_workers = 4
+        mgr.scrape_workers = 1
+        # #136 moved standard link collection off `self.web_scraper`: each seed crawl
+        # now gets its own LinkScraper from this factory seam, so a test that wants to
+        # control what `crawl_iter` yields has to stub the seam, not the old attribute.
+        mgr._new_link_scraper = lambda: mgr.web_scraper
         return mgr
 
     def _resource(self, url):

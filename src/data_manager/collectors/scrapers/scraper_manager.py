@@ -3,9 +3,14 @@ from __future__ import annotations
 import importlib
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from src.data_manager.collectors.persistence import PersistenceService
+from src.data_manager.collectors.scrapers.scrape_pool import (
+    host_key,
+    run_seeds,
+    shared_host_limiter,
+)
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 from src.data_manager.collectors.scrapers.scraper import LinkScraper
 from src.utils.config_access import get_global_config
@@ -13,6 +18,37 @@ from src.utils.env import read_secret
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+# ``int()`` rejects a non-finite float with ``OverflowError``, which is NOT a
+# subclass of ``ValueError`` — so YAML's `.inf` (a perfectly ordinary way to write
+# "no limit") escapes a bare (TypeError, ValueError) guard and takes down whatever
+# is being constructed. Every tolerant coercion in this module promises to fall back
+# on bad input, so all of them catch this triple.
+_COERCION_ERRORS = (TypeError, ValueError, OverflowError)
+
+
+def _parse_worker_knob(value: Any, name: str, default: int) -> int:
+    """Coerce a scrape-concurrency knob to an int, tolerating junk.
+
+    Falls back to ``default`` with a logged warning when ``value`` is unset or not a
+    valid integer, then clamps the result to a minimum of 1.
+    """
+    if value is None:
+        resolved = default
+    else:
+        try:
+            resolved = int(value)
+        except _COERCION_ERRORS:
+            logger.warning(
+                "Invalid '%s' value %r. Falling back to default %d.",
+                name,
+                value,
+                default,
+            )
+            resolved = default
+    return max(1, resolved)
+
 
 if TYPE_CHECKING:
     from src.data_manager.collectors.scrapers.integrations.git_scraper import GitScraper
@@ -61,8 +97,19 @@ class ScraperManager:
         if raw_max_pages not in (None, ""):
             try:
                 self.max_pages = int(raw_max_pages)
-            except (TypeError, ValueError):
+            except _COERCION_ERRORS:
                 logger.warning(f"Invalid max_pages value {raw_max_pages}; ignoring.")
+
+        # Scrape-phase concurrency knobs (issue #136). Independent of the embedding
+        # phase's `parallel_workers`. Tolerant parse mirrors VectorStoreManager: coerce
+        # to int, fall back to the default with a logged warning on junk, clamp to >= 1.
+        dm = dm_config or {}
+        self.scrape_workers = _parse_worker_knob(
+            dm.get("scrape_workers"), "scrape_workers", 8
+        )
+        self.scrape_per_host_workers = _parse_worker_knob(
+            dm.get("scrape_per_host_workers"), "scrape_per_host_workers", 4
+        )
 
         self.links_enabled = True
         self.git_enabled = (
@@ -97,14 +144,30 @@ class ScraperManager:
 
         self.data_path.mkdir(parents=True, exist_ok=True)
 
-        self.web_scraper = LinkScraper(
+        # Shared scraper for the sequential and selenium/SSO paths. The parallel
+        # link path must NOT reuse this instance: crawl_iter resets and mutates
+        # per-instance state, so concurrent seeds each need their own scraper
+        # from _new_link_scraper() (issue #136).
+        self.web_scraper = self._new_link_scraper()
+        self._git_scraper: Optional["GitScraper"] = None
+        self._indico_scraper: Optional["IndicoScraper"] = None
+
+    def _new_link_scraper(self) -> LinkScraper:
+        """Build a fresh LinkScraper for a single seed crawl.
+
+        Each concurrent crawl in the parallel link path gets its own instance:
+        crawl_iter resets and mutates per-instance ``visited_urls`` /
+        ``seen_urls`` / ``page_data`` for the duration of a crawl, so sharing one
+        instance across threads would let one seed's reset corrupt another's
+        in-flight state (issue #136). The construction args mirror the shared
+        sequential ``self.web_scraper`` so per-worker scrapers behave identically.
+        """
+        return LinkScraper(
             verify_urls=self.config.get(
                 "verify_urls", False
             ),  # Default to False for broader compatibility
             enable_warnings=self.config.get("enable_warnings", False),
         )
-        self._git_scraper: Optional["GitScraper"] = None
-        self._indico_scraper: Optional["IndicoScraper"] = None
 
     def collect_all_from_config(self, persistence: PersistenceService) -> None:
         """Run the configured scrapers and persist their output."""
@@ -352,20 +415,39 @@ class ScraperManager:
             if authenticator_class is not None:
                 authenticator = authenticator_class(**kwargs)
 
-        total_count = 0
+        depth = max_depth if max_depth is not None else self.base_depth
+
+        # One limiter object, used for two things: bounding the pool, and letting a
+        # crawl move its slot when a redirect lands it on a different host than the
+        # seed it was dispatched for (issue #136 review). It is the process-wide
+        # limiter, so an overlapping upload_url batch contends with this one.
+        limiter = shared_host_limiter(self.scrape_per_host_workers)
+
+        def _scrape_one_seed(seed: str) -> int:
+            # For standard link collection, don't use selenium for scraping (SSO
+            # urls are handled separately via collect_sso). Each concurrent seed
+            # crawl gets its own LinkScraper from the factory seam so that the
+            # per-instance state crawl_iter resets is never shared across threads
+            # (issue #136).
+            return self._handle_standard_url(
+                seed,
+                persistence,
+                output_dir,
+                max_depth=depth,
+                client=None,
+                use_client_for_scraping=False,
+                scraper=self._new_link_scraper(),
+                on_request_url=lambda url: limiter.rekey_current(host_key(url)),
+            )
+
         try:
-            for url in urls:
-                # For standard link collection, don't use selenium for scraping
-                # (SSO urls are handled separately via collect_sso)
-                count = self._handle_standard_url(
-                    url,
-                    persistence,
-                    output_dir,
-                    max_depth=max_depth if max_depth is not None else self.base_depth,
-                    client=None,
-                    use_client_for_scraping=False,
-                )
-                total_count += count
+            total_count = run_seeds(
+                urls,
+                _scrape_one_seed,
+                workers=self.scrape_workers,
+                per_host_workers=self.scrape_per_host_workers,
+                limiter=limiter,
+            )
         finally:
             if authenticator is not None:
                 authenticator.close()  # Close the authenticator properly and free the resources
@@ -508,7 +590,7 @@ class ScraperManager:
         def _as_int(value, default: int) -> int:
             try:
                 return int(value)
-            except (TypeError, ValueError):
+            except _COERCION_ERRORS:
                 return default
 
         cfg = self.sitemap_config if isinstance(self.sitemap_config, dict) else {}
@@ -596,8 +678,14 @@ class ScraperManager:
         max_depth: int,
         client=None,
         use_client_for_scraping: bool = False,
+        scraper: Optional[LinkScraper] = None,
+        on_request_url: Optional[Callable[[str], None]] = None,
     ) -> int:
         """Scrape a URL and persist resources. Returns count of resources scraped."""
+        # Parallel seed crawls pass their own per-worker scraper; the sequential
+        # and selenium/SSO callers fall back to the shared ``self.web_scraper``.
+        scraper = scraper if scraper is not None else self.web_scraper
+
         from src.data_manager.collectors.scrapers.sitemap_source import (
             normalize_page_url,
         )
@@ -605,12 +693,13 @@ class ScraperManager:
         lastmod_map: Dict[str, str] = getattr(self, "_sitemap_lastmod_map", {})
         count = 0
         try:
-            for resource in self.web_scraper.crawl_iter(
+            for resource in scraper.crawl_iter(
                 url,
                 browserclient=client,
                 max_depth=max_depth,
                 selenium_scrape=use_client_for_scraping,
                 max_pages=self.max_pages,
+                on_request_url=on_request_url,
             ):
                 if lastmod_map:
                     try:
