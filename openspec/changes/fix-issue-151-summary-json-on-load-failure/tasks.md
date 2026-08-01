@@ -126,3 +126,12 @@ consequences of that; the fourth is the doc overclaim it invited.
   once-per-transaction sentence on the symlink section.
 - [x] 7.6 Mutation-check all four edits (lock yield, decline call site, summary
   warning, ledger warning) and re-run the gate.
+- [x] 7.7 **Self-review of 7.3, before the re-review returned.** The warning is
+  emitted INSIDE both writers' `try`, so a stderr that cannot take it fails the
+  write it was describing — `OSError` (`2>&-` → `EBADF`) is caught by the
+  writer, deletes the staged temp and reports "cannot write" for a write that
+  was ready to commit; `ValueError` (stream closed under the process) is not
+  caught by that handler at all and escapes, leaving the temp file as litter and
+  leaking `write_ledger`'s directory handle. Both now contained in the helper.
+  Mutation-checked: narrowing the guard to `OSError` alone fails the closed-
+  stream test, so the second half is load-bearing.

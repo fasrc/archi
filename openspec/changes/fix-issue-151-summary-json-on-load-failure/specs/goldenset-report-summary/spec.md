@@ -267,3 +267,12 @@ arrived at by a different route — because the summary IS the health signal.
 
 - **WHEN** the output path has a single link, or does not exist yet
 - **THEN** no warning is printed
+
+#### Scenario: A warning that cannot be printed does not fail the write
+
+- **WHEN** `stderr` cannot take the warning — unwritable (`2>&-`) or closed
+- **THEN** the write still commits and no temp file is left behind
+- **AND** this covers both, because the writer's handler catches `OSError` and
+  would report a ready-to-commit write as "cannot write", while a closed stream
+  raises `ValueError`, which that handler does not catch at all. A diagnostic
+  emitted inside the writer must not be able to fail the write it describes

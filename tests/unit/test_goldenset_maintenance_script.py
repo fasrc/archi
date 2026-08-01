@@ -3300,6 +3300,40 @@ class TestAHardLinkedTargetIsNamedNotSilentlyDecoupled:
 
         assert "hard link" not in capsys.readouterr().err
 
+    @pytest.mark.parametrize(
+        "failure",
+        [OSError("stderr is closed"), ValueError("I/O operation on closed file")],
+        ids=["unwritable", "closed"],
+    )
+    def test_a_stderr_that_cannot_take_the_warning_does_not_fail_the_write(
+        self, tmp_path, monkeypatch, failure
+    ):
+        """The diagnostic sits inside the writer's `try`. It must not be able to
+        turn a good write into a reported failure.
+
+        Both spellings of a broken stderr reach it and neither is hypothetical:
+        `2>&-` gives `EBADF` on write, and a stream closed under the process
+        raises `ValueError`, which the `except OSError` would not even catch —
+        that one escapes the writer entirely, leaving the temp file behind as
+        litter and, in `write_ledger`, leaking the directory handle.
+        """
+        script = _load_script()
+        target, _ = self._hard_linked(tmp_path, "summary.json", "{}")
+
+        class Unwritable:
+            def write(self, _text):
+                raise failure
+
+            def flush(self):
+                pass
+
+        monkeypatch.setattr(script.sys, "stderr", Unwritable())
+
+        assert self._report(script, tmp_path, target) == 0
+
+        assert json.loads(target.read_text())["failed_passes"] == []
+        assert not list(tmp_path.glob(".summary.json.*.tmp")), "temp file left behind"
+
 
 class TestReportNotifiesOnDegradedRuns:
     """A pass that half-ran must not summarise as clean.

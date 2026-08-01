@@ -379,6 +379,14 @@ def _warn_if_multiply_linked(target: Path, label: str) -> None:
 
     So the write commits and the run names the decoupled path. A symlink is the
     shape that actually works here, because it IS followed.
+
+    Both halves are contained, because this runs INSIDE the writers' `try` and a
+    diagnostic must not be able to fail the write it is describing. An
+    unwritable stderr (`2>&-` gives `EBADF`) would otherwise be caught as an
+    `OSError` by the writer, delete the staged temp file, and report "cannot
+    write" for a write that was ready to commit; a stderr closed under the
+    process raises `ValueError`, which that handler does not catch at all, so it
+    would escape the writer entirely and leave the temp file as litter.
     """
     try:
         links = target.stat().st_nlink
@@ -386,13 +394,17 @@ def _warn_if_multiply_linked(target: Path, label: str) -> None:
         return
     if links < 2:
         return
-    print(
-        f"warning: {label} {target} has {links - 1} other hard link(s). Committing "
-        "it atomically gives this name a new inode, so those names keep the "
-        "previous contents and go stale silently. Point every consumer at this "
-        "path, or reach it through a symlink, which is followed.",
-        file=sys.stderr,
-    )
+    try:
+        print(
+            f"warning: {label} {target} has {links - 1} other hard link(s). "
+            "Committing it atomically gives this name a new inode, so those names "
+            "keep the previous contents and go stale silently. Point every "
+            "consumer at this path, or reach it through a symlink, which is "
+            "followed.",
+            file=sys.stderr,
+        )
+    except (OSError, ValueError):
+        return  # an unsayable warning is not a reason to fail the write
 
 
 def write_ledger(path: str, entries: List[Any]) -> None:
