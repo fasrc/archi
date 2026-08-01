@@ -135,3 +135,38 @@ consequences of that; the fourth is the doc overclaim it invited.
   leaking `write_ledger`'s directory handle. Both now contained in the helper.
   Mutation-checked: narrowing the guard to `OSError` alone fails the closed-
   stream test, so the second half is load-bearing.
+
+## 8. Review round 5 — Codex on PR #162 (3 findings)
+
+- [x] 8.1 **P2 — `os.chown` is unguarded on non-POSIX.** Confirmed:
+  `AttributeError` is not `OSError`, so it escaped the writer before the unlink.
+  `_copy_xattrs` already drew this boundary with `hasattr(os, "listxattr")` and I
+  did not carry it to `chown`. Extracted `_copy_ownership` with the same guard.
+- [x] 8.2 **P2 — the cleanup handler's own `close()` can raise.** Confirmed: on
+  `ENOSPC` the flush inside `close()` raises the same error again, destroying the
+  report of the first and skipping the unlink.
+- [x] 8.3 **Class fix, not three patches.** 8.1, 8.2 and 7.7 are one defect: the
+  cleanup lived in an `except OSError` and assumed every failure in the block was
+  one. Cleanup now runs in a `finally` keyed on a `committed` flag, through
+  `_close_quietly` / `_discard_quietly`, so any exception type leaves no temp
+  file and cleanup cannot replace the error that caused it. 7.7's guard is kept
+  and is not redundant — the `finally` prevents the *litter*, the guard prevents
+  a warning from *failing the write at all*.
+- [x] 8.4 **P2 — `Path.resolve()` raises `RuntimeError` on a symlink loop.**
+  Confirmed on the interpreter in use (3.11.15): `Path.resolve()` raises where
+  `os.path.realpath` returns the path. `main` catches only `OperationalError`, so
+  a self-referential `--bank` ended the run on a traceback *before* `run_report`
+  and the summary was never written — this capability's own failure, from a
+  direction the change had not looked at. The guard now resolves with
+  `_resolved_target`, which also makes it agree with the writers instead of using
+  a second resolver on the same paths.
+- [x] 8.5 Negative control: an output spelled through a symlinked directory that
+  names an input is still refused, so making resolution total did not make the
+  guard blind.
+- [x] 8.6 Out of scope, filed separately: `src/utils/goldenset_maintenance.py:305`
+  and `:307` resolve a persisted document path against the data root with
+  `Path.resolve()` and carry the same `RuntimeError` exposure. Pre-dates this PR,
+  different module, and it is a path-containment security check — not something
+  to alter inside an unrelated change.
+- [x] 8.7 Mutation-check all three (chown guard, `finally` cleanup, resolver) and
+  re-run the gate.

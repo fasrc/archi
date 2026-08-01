@@ -1066,6 +1066,19 @@ the summary contract exists to prevent, reached by a different route. So the wri
 run prints a warning naming the path it just decoupled. Point every consumer at the same path, or
 reach it through a symlink.
 
+#### A run that fails leaves nothing staged
+
+Whatever goes wrong between staging the temp file and committing it, the temp file is removed —
+not only the `OSError` the run reports as "cannot write". A missing platform API, a warning that
+cannot be printed, or a `close()` that fails while flushing what a full disk rejected are all
+failures of a different type, and each one would otherwise skip the cleanup on its way out and
+leave a `.summary.json.*.tmp` beside the real file. Cleanup is best-effort in turn, so a failure
+while closing or unlinking cannot replace the error that caused it.
+
+A self-referential path among the inputs is reported the same ordinary way. Resolution never
+raises, so a `--bank` symlinked to itself is refused when the file is *read*, as a failed pass with
+a summary written — not as a traceback before the run starts.
+
 #### Running it nightly
 
 `scripts/benchmarking/goldenset_report_cron.sh` wraps the command above for cron. The settings

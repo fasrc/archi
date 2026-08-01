@@ -3335,6 +3335,172 @@ class TestAHardLinkedTargetIsNamedNotSilentlyDecoupled:
         assert not list(tmp_path.glob(".summary.json.*.tmp")), "temp file left behind"
 
 
+class TestOnlyAnOSErrorIsAnExpectedWriterFailure:
+    """The writers convert `OSError` and clean up after it. Nothing else.
+
+    Both writers stage a temp file inside a `try` whose handler assumes every
+    failure arriving there is an `OSError`. Three sources inside that block are
+    not: `os.chown` is absent on non-POSIX platforms (`AttributeError`), a
+    `print` to a closed stream raises `ValueError`, and the handler's own
+    `handle.close()` can raise a *second* `OSError` while flushing what the
+    first one could not write.
+
+    Each escapes the handler before `os.unlink`, so the run ends on a traceback
+    and leaves a `.tmp` file behind — the cleanup contract broken by the very
+    path that exists to honour it. Containing them one at a time invites the
+    next one, so cleanup runs in a `finally` and is itself best-effort.
+    """
+
+    def _report(self, script, tmp_path, out):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        return script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+    def test_a_platform_without_chown_still_refreshes_the_summary(
+        self, tmp_path, monkeypatch
+    ):
+        """`os.chown` is POSIX-only; `_copy_xattrs` already guards its own API.
+
+        The first write succeeds — `_preserve_access` returns early when there is
+        no target to copy from — so this surfaces as "creation works, every
+        refresh after it crashes", which is the harder version to diagnose.
+        """
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text("{}", encoding="utf-8")
+        monkeypatch.delattr(script.os, "chown", raising=False)
+
+        assert self._report(script, tmp_path, out) == 0
+
+        assert json.loads(out.read_text())["failed_passes"] == []
+        assert not list(tmp_path.glob(".summary.json.*.tmp")), "temp file left behind"
+
+    def test_a_close_that_fails_during_cleanup_reports_and_leaves_no_temp(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """A full disk fails the write, then fails the flush that cleans up after it.
+
+        `json.dump` writes incrementally, so `ENOSPC` arrives with output still
+        buffered. The handler's `close()` flushes that buffer, raises `ENOSPC`
+        again, and escapes before the `unlink` — the second error destroying the
+        report of the first.
+        """
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        staged = {}
+        real_mkstemp, real_fdopen = script.tempfile.mkstemp, script.os.fdopen
+
+        class Full:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def write(self, _text):
+                raise OSError(28, "No space left on device")
+
+            def close(self):
+                self._inner.close()
+                raise OSError(28, "No space left on device")
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        def mkstemp(*args, **kwargs):
+            fd, name = real_mkstemp(*args, **kwargs)
+            staged["fd"] = fd
+            return fd, name
+
+        def fdopen(fd, *args, **kwargs):
+            inner = real_fdopen(fd, *args, **kwargs)
+            return Full(inner) if fd == staged.get("fd") else inner
+
+        monkeypatch.setattr(script.tempfile, "mkstemp", mkstemp)
+        monkeypatch.setattr(script.os, "fdopen", fdopen)
+
+        assert self._report(script, tmp_path, out) == 1
+
+        assert "No space left on device" in capsys.readouterr().err
+        assert not list(tmp_path.glob(".summary.json.*.tmp")), "temp file left behind"
+
+
+class TestAnUnresolvablePathIsNotATraceback:
+    """`Path.resolve()` raises `RuntimeError` on a symlink loop before 3.13.
+
+    The alias guard resolves both sides to catch an output spelled through a
+    symlinked directory. `main` catches `OperationalError`, so a self-referential
+    input path ends the process on a traceback *before* `run_report` — and the
+    `--summary-json` the operator asked for is never refreshed, which is the exact
+    failure this change exists to close, reached from the one direction the change
+    did not look at.
+
+    Verified on this interpreter (3.11): `Path.resolve()` raises
+    `RuntimeError: Symlink loop from ...` where `os.path.realpath` returns the
+    path unchanged. The writer already resolves with `realpath`, so the guard and
+    the write were also using two different resolvers on the same paths.
+    """
+
+    def test_a_self_referential_bank_fails_operationally_and_still_summarises(
+        self, tmp_path
+    ):
+        script = _load_script()
+        bank = tmp_path / "bank.json"
+        os.symlink(bank, bank)
+        out = tmp_path / "summary.json"
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank,
+                    _corpus(tmp_path, f"{KB}/kb/live"),
+                    _sources_list(tmp_path, f"{KB}/kb/live"),
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+        assert code == 1
+        assert out.exists(), "the failure summary is the point of this path"
+        summary = json.loads(out.read_text())
+        assert any("bank" in f for f in summary["failed_passes"])
+        assert summary["notify"] is True
+
+    def test_a_genuine_alias_through_a_symlinked_directory_is_still_refused(
+        self, tmp_path
+    ):
+        """Making the guard total must not make it blind."""
+        script = _load_script()
+        real = tmp_path / "releases"
+        real.mkdir()
+        live = f"{KB}/kb/live"
+        bank = _bank(real, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        before = bank.read_bytes()
+        link_dir = tmp_path / "current"
+        link_dir.symlink_to(real, target_is_directory=True)
+        _fake_pages(script, {live: GPU_HTML})
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(link_dir / bank.name),
+            ]
+        )
+
+        assert code == 1
+        assert bank.read_bytes() == before
+
+
 class TestReportNotifiesOnDegradedRuns:
     """A pass that half-ran must not summarise as clean.
 

@@ -309,6 +309,58 @@ def _copy_xattrs(target: Path, tmp_name: str) -> None:
             continue
 
 
+def _copy_ownership(source: os.stat_result, tmp_name: str) -> None:
+    """Move the replacement onto the target's uid/gid, where that is a thing.
+
+    `os.chown` is POSIX-only and simply **absent** elsewhere, so calling it
+    unguarded raises `AttributeError` — which is not an `OSError`, so it escapes
+    the writer's handler before the temp file is unlinked. `_copy_xattrs` already
+    draws this boundary with `hasattr(os, "listxattr")`; the same boundary
+    belongs here.
+
+    The failure is quiet in the worst way: `_preserve_access` returns early when
+    there is no target to copy from, so *creating* a summary works and every
+    refresh after it crashes.
+    """
+    if not hasattr(os, "chown"):  # pragma: no cover - non-POSIX
+        return
+    try:
+        os.chown(tmp_name, source.st_uid, source.st_gid)
+    except OSError:
+        # Not privileged enough to move the uid. The GROUP can still be set by
+        # its own member, and that is the half that usually carries the grant.
+        try:
+            os.chown(tmp_name, -1, source.st_gid)
+        except OSError:  # pragma: no cover - not a member of the target's group
+            pass
+
+
+def _close_quietly(handle) -> None:
+    """Close a staged handle without letting the close become the failure.
+
+    Called from the writers' cleanup, where an exception is usually already in
+    flight. `close()` flushes, so on a full disk it raises the same `ENOSPC` that
+    brought us here — and that second error would replace the first, escape
+    before the temp file is unlinked, and end the run on a traceback.
+    """
+    if handle is None:
+        return
+    try:
+        handle.close()
+    except (OSError, ValueError):
+        pass
+
+
+def _discard_quietly(tmp_name: str) -> None:
+    """Remove an uncommitted temp file. A failure here has nothing left to say."""
+    if not tmp_name:
+        return
+    try:
+        os.unlink(tmp_name)
+    except OSError:  # pragma: no cover - already gone
+        pass
+
+
 def _preserve_access(target: Path, tmp_name: str) -> None:
     """Carry an existing target's access metadata onto its replacement.
 
@@ -344,15 +396,7 @@ def _preserve_access(target: Path, tmp_name: str) -> None:
         source = target.stat()
     except OSError:  # no target yet, or it raced away — keep mkstemp's 0600
         return
-    try:
-        os.chown(tmp_name, source.st_uid, source.st_gid)
-    except OSError:
-        # Not privileged enough to move the uid. The GROUP can still be set by
-        # its own member, and that is the half that usually carries the grant.
-        try:
-            os.chown(tmp_name, -1, source.st_gid)
-        except OSError:  # pragma: no cover - not a member of the target's group
-            pass
+    _copy_ownership(source, tmp_name)
     try:
         os.chmod(tmp_name, stat.S_IMODE(source.st_mode))
     except OSError:  # pragma: no cover - a mode-less filesystem
@@ -442,6 +486,7 @@ def write_ledger(path: str, entries: List[Any]) -> None:
     handle = None
     tmp_name = ""
     dir_fd = None
+    committed = False
     try:
         dir_fd = _open_directory(target.parent)
         fd, tmp_name = tempfile.mkstemp(
@@ -456,17 +501,20 @@ def write_ledger(path: str, entries: List[Any]) -> None:
         _preserve_access(target, tmp_name)
         _warn_if_multiply_linked(target, "the ledger")
         os.replace(tmp_name, target)
+        committed = True
     except OSError as exc:
-        if handle is not None:
-            handle.close()
-        if tmp_name:
-            try:
-                os.unlink(tmp_name)
-            except OSError:  # pragma: no cover - already gone
-                pass
-        if dir_fd is not None:
-            os.close(dir_fd)
         raise OperationalError(f"cannot write ledger {path}: {exc}") from exc
+    finally:
+        # In a `finally`, and keyed on `committed`, because the handler above
+        # only sees OSError. Anything else raised in the block — an absent
+        # `os.chown`, an unsayable warning — would otherwise skip the cleanup
+        # and leave the staged temp file behind.
+        _close_quietly(handle)
+        if not committed:
+            _discard_quietly(tmp_name)
+            if dir_fd is not None:
+                os.close(dir_fd)
+                dir_fd = None
 
     # --- committed. Everything below is durability, never "did it happen". ---
     if dir_fd is None:  # pragma: no cover - non-POSIX
@@ -1170,6 +1218,7 @@ def _write_summary(args: argparse.Namespace, summary: dict) -> None:
     target = _resolved_target(args.summary_json)
     tmp_name = ""
     handle = None
+    committed = False
     try:
         fd, tmp_name = tempfile.mkstemp(
             dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
@@ -1181,15 +1230,15 @@ def _write_summary(args: argparse.Namespace, summary: dict) -> None:
         _preserve_access(target, tmp_name)
         _warn_if_multiply_linked(target, "the summary")
         os.replace(tmp_name, target)
+        committed = True
     except OSError as exc:
-        if handle is not None:
-            handle.close()
-        if tmp_name:
-            try:
-                os.unlink(tmp_name)
-            except OSError:  # pragma: no cover - already gone
-                pass
         raise OperationalError(f"cannot write {args.summary_json}: {exc}") from exc
+    finally:
+        # See write_ledger: cleanup runs for every exception type, not only the
+        # OSError the handler above converts.
+        _close_quietly(handle)
+        if not committed:
+            _discard_quietly(tmp_name)
 
 
 def bank_census(path: str) -> dict:
@@ -1582,13 +1631,23 @@ def _same_file(one: Path, other: Path) -> bool:
       exist YET but is spelled through a symlinked directory, which is how a
       deployment reaching its data through `current -> releases/42` names one
       file two ways.
+
+    Resolved with `_resolved_target`, i.e. `os.path.realpath`, and NOT with
+    `Path.resolve()`. Before 3.13, `Path.resolve()` raises `RuntimeError` on a
+    symlink loop; `main` catches `OperationalError`, so a self-referential input
+    path ended the run on a traceback here — before `run_report`, and therefore
+    before the `--summary-json` the operator is relying on could be refreshed.
+    `realpath` returns the path instead, which lets the loop surface where it
+    actually means something: the `ELOOP` raised when the file is *read*, already
+    reported as a failed pass with a summary written. It also makes this guard
+    and the writers agree, since they resolve the same paths the same way.
     """
     try:
         if one.samefile(other):
             return True
     except OSError:  # one of them does not exist yet — fall through
         pass
-    return one.resolve() == other.resolve()
+    return _resolved_target(str(one)) == _resolved_target(str(other))
 
 
 def reject_aliased_outputs(args: argparse.Namespace) -> None:

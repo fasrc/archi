@@ -276,3 +276,58 @@ arrived at by a different route — because the summary IS the health signal.
   would report a ready-to-commit write as "cannot write", while a closed stream
   raises `ValueError`, which that handler does not catch at all. A diagnostic
   emitted inside the writer must not be able to fail the write it describes
+
+### Requirement: An uncommitted write SHALL leave no staged temp file, whatever failed
+
+The writers SHALL remove the staged temp file whenever the commit did not
+happen, for **any** exception type and not only the `OSError` they convert to an
+operational failure. Cleanup SHALL itself be best-effort, so a failure while
+closing or unlinking cannot replace the error that caused it.
+
+Only `OSError` is converted; the cleanup contract is separate and wider. Three
+sources inside the staged block raise something else, and each one escaped the
+handler before the `unlink`: `os.chown` is absent on non-POSIX platforms
+(`AttributeError`), a warning printed to a closed stream raises `ValueError`, and
+the handler's own `close()` re-raises the `ENOSPC` it is flushing. Containing
+them individually invites the fourth, so the guarantee is stated over the
+cleanup rather than over a list of causes.
+
+#### Scenario: A close that fails during cleanup does not become the failure
+
+- **WHEN** a full disk fails the write and then fails the flush inside `close()`
+- **THEN** the run reports the original write failure operationally
+- **AND** no `.tmp` file is left behind
+
+#### Scenario: A platform without `os.chown` still refreshes an existing file
+
+- **WHEN** the replacement's ownership cannot be copied because the API is absent
+- **THEN** the write still commits, and no `.tmp` file is left behind
+- **AND** this is scoped to *refreshes*: preserving access is skipped when there
+  is no target to copy from, so creating the file always worked and only every
+  write after it failed
+
+### Requirement: An unresolvable input path SHALL NOT end the run on a traceback
+
+Path resolution in the aliasing guard SHALL be total. Before Python 3.13,
+`Path.resolve()` raises `RuntimeError` on a symlink loop, and `main` handles only
+`OperationalError` — so a self-referential input path ended the process on a
+traceback **before** `run_report`, and the `--summary-json` the operator depends
+on was never refreshed. That is this capability's own failure, reached from the
+one direction the change had not looked at.
+
+The guard SHALL resolve with the same resolver the writers use, which returns the
+path rather than raising. The loop then surfaces where it means something — the
+`ELOOP` raised when the file is read — which is already reported as a failed pass
+with a summary written.
+
+#### Scenario: A self-referential input is an operational failure with a summary
+
+- **WHEN** `--bank` is a symlink to itself and `--summary-json` is valid
+- **THEN** the run exits non-zero having reported the bank as a failed pass
+- **AND** the summary file is written, rather than the process ending on a
+  traceback before the write
+
+#### Scenario: Making the guard total does not make it blind
+
+- **WHEN** an output is spelled through a symlinked directory that names an input
+- **THEN** the run is still refused and the input is byte-unchanged
