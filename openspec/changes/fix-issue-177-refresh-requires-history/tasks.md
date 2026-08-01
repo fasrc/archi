@@ -67,12 +67,13 @@
 ## 7. Gate and ship
 
 - [x] 7.1 `openspec validate fix-issue-177-refresh-requires-history --strict` passes.
-- [ ] 7.2 `bash scripts/gate.sh` green through the pre-commit hook, **≥80% diff coverage on changed
-  lines**; never `--no-verify`.
+- [x] 7.2 `bash scripts/gate.sh` green through the pre-commit hook, **≥80% diff coverage on changed
+  lines**; never `--no-verify`. Result: 1399 passed / 1 xfailed, diff coverage **92.9%**
+  (14 lines, 1 missing — the non-streaming route's helper call, which no unit test reaches).
 - [x] 7.3 `git diff origin/dev -- src/interfaces/chat_app/app.py` shows no unrelated black reflow.
-- [ ] 7.4 Adversarial review on the branch; address what holds, push back with reasons on what does
+- [x] 7.4 Adversarial review on the branch; address what holds, push back with reasons on what does
   not.
-- [ ] 7.5 Open the PR to `fasrc/archi:dev` with `closes #177`, then request `@codex review`. Do NOT
+- [x] 7.5 Open the PR to `fasrc/archi:dev` with `closes #177`, then request `@codex review`. Do NOT
   merge.
 
 ## 8. Line anchors (unplanned — surfaced while updating the docs)
