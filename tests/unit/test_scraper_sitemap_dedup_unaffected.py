@@ -54,8 +54,12 @@ class TestSitemapDedupHappensBeforeThePool:
             "_collect_urls_from_lists_by_type",
             lambda _lists: (list(hand_list), [], [], [], [], list(sitemap_marker)),
         )
+        # #155 changed `_expand_sitemaps` to return (url, lastmod) pairs; the caller
+        # unpacks them, so the stub has to match that shape or the unpack raises.
         monkeypatch.setattr(
-            manager, "_expand_sitemaps", lambda _sitemap_urls: list(expanded)
+            manager,
+            "_expand_sitemaps",
+            lambda _sitemap_urls: [(u, None) for u in expanded],
         )
         # Silence the other collectors so only the link path is observed.
         monkeypatch.setattr(manager, "collect_sso", lambda *a, **k: None)

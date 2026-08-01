@@ -237,6 +237,7 @@ CREATE TABLE IF NOT EXISTS documents (
     
     -- Timestamps
     file_modified_at TIMESTAMPTZ,
+    last_modified TIMESTAMPTZ,
     ingested_at TIMESTAMPTZ,
     indexed_at TIMESTAMPTZ,        -- When embeddings were created
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

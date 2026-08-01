@@ -68,6 +68,10 @@ from src.interfaces.chat_app.config_fingerprint import (
     resolve_provider_boot_summary,
 )
 from src.interfaces.chat_app.document_utils import *
+from src.interfaces.chat_app.request_validation import (
+    InvalidLastMessage,
+    parse_last_message,
+)
 from src.interfaces.chat_app.service_alerts import (
     get_active_banner_alerts,
     is_alert_manager,
@@ -264,6 +268,36 @@ CLIENT_TIMEOUT_ERROR_MESSAGE = (
     "client timeout; the agent wasn't able to find satisfactory information "
     "to respond to the query within the time limit set by the administrator."
 )
+#: Phrased for an HTTP caller, who has exactly two levers. `external_history` is not
+#: one of them — `_parse_chat_request` never reads it off the payload, so it reaches
+#: `_prepare_chat_context` only from in-process callers like the OpenAI-compatible
+#: shim. And "send a conversation_id" alone would be wrong advice: a conversation with
+#: no prior turn is rejected by the same guard.
+REFRESH_WITHOUT_HISTORY_ERROR_MESSAGE = (
+    "is_refresh needs an earlier turn to re-answer: send a conversation_id for a "
+    "conversation that already has one, or omit is_refresh to ask a new question."
+)
+GENERIC_CHAT_ERROR_MESSAGE = "server error; see chat logs for message"
+
+#: Human-readable text for the error statuses `_prepare_chat_context` can return.
+#: Both endpoints read from here. They previously carried separate copies of this
+#: mapping — one in the streaming path and one in the non-streaming route — which
+#: meant a status added to one could be missing from the other, and each endpoint
+#: is exercised separately enough that the divergence would not show up.
+_CHAT_ERROR_MESSAGES = {
+    400: REFRESH_WITHOUT_HISTORY_ERROR_MESSAGE,
+    403: "conversation not found",
+    408: CLIENT_TIMEOUT_ERROR_MESSAGE,
+}
+
+
+def _chat_error_message(error_code: int) -> str:
+    """Describe an error status to the caller.
+
+    Falls back to the generic server-error text, so an unmapped status is reported
+    without leaking internals — the same behaviour both endpoints had before.
+    """
+    return _CHAT_ERROR_MESSAGES.get(error_code, GENERIC_CHAT_ERROR_MESSAGE)
 
 
 class AnswerRenderer(mt.HTMLRenderer):
@@ -1632,24 +1666,46 @@ class ChatWrapper:
             raise ValueError("client_id is required to process chat messages")
         sender, content = tuple(message[0])
 
+        # A refresh re-answers prior turns instead of adding a new one, so it needs a
+        # prior turn to exist. Without one the trim below is a no-op and the append is
+        # skipped because this is a refresh — invoking the pipeline with no user turn at
+        # all and answering an empty prompt, indistinguishable from a real answer (#177).
+        #
+        # Resolve the prior turns *without writing anything*, so a request that is
+        # about to be refused neither creates a conversation nor touches a timestamp.
+        # `external_history` is copied rather than aliased: the refresh trim below pops
+        # from this list, and mutating the caller's argument is not ours to do.
         if external_history is not None:
-            if conversation_id is None:
-                conversation_id = self.create_conversation(content, client_id, user_id)
-            history = external_history
+            history = list(external_history)
         elif conversation_id is None:
-            conversation_id = self.create_conversation(content, client_id, user_id)
             history = []
         else:
             history = self.query_conversation_history(
                 conversation_id, client_id, user_id
             )
-            self.update_conversation_timestamp(conversation_id, client_id, user_id)
-
-        timestamps["query_convo_history_ts"] = datetime.now(timezone.utc)
 
         if is_refresh:
             while history and history[-1][0] == ARCHI_SENDER:
                 _ = history.pop(-1)
+            # The test is on the *resolved* history, not on which fields were supplied.
+            # Checking for a supplied source instead would be a proxy, and the proxy
+            # fails three ways that all land here: `external_history=[]`, a history of
+            # assistant turns only, and a `conversation_id` naming an empty conversation.
+            if not history:
+                return None, 400
+
+        # Committed only once the request is known to be serviceable.
+        if conversation_id is None:
+            conversation_id = self.create_conversation(content, client_id, user_id)
+        elif external_history is None:
+            self.update_conversation_timestamp(conversation_id, client_id, user_id)
+
+        # Recorded *after* the writes, as it was before the writes were deferred. This
+        # milestone bounds the conversation-store work, so moving the create/update out
+        # from under it would push that latency into the next interval and make new
+        # `timing` rows incomparable with every historical one — a silent break in a
+        # measurement series, which is worse than a visibly wrong number.
+        timestamps["query_convo_history_ts"] = datetime.now(timezone.utc)
 
         if server_received_msg_ts.timestamp() - client_sent_msg_ts > client_timeout:
             return None, 408
@@ -2016,12 +2072,11 @@ class ChatWrapper:
                 external_history=external_history,
             )
             if error_code is not None:
-                error_message = "server error; see chat logs for message"
-                if error_code == 408:
-                    error_message = CLIENT_TIMEOUT_ERROR_MESSAGE
-                elif error_code == 403:
-                    error_message = "conversation not found"
-                yield {"type": "error", "status": error_code, "message": error_message}
+                yield {
+                    "type": "error",
+                    "status": error_code,
+                    "message": _chat_error_message(error_code),
+                }
                 return
 
             requested_config = self._resolve_config_name(config_name)
@@ -2114,7 +2169,7 @@ class ChatWrapper:
                     yield {
                         "type": "error",
                         "status": 408,
-                        "message": CLIENT_TIMEOUT_ERROR_MESSAGE,
+                        "message": _chat_error_message(408),
                     }
                     return
                 last_output = output
@@ -2426,7 +2481,7 @@ class ChatWrapper:
                 yield {
                     "type": "error",
                     "status": 500,
-                    "message": "server error; see chat logs for message",
+                    "message": _chat_error_message(500),
                 }
                 return
 
@@ -2564,7 +2619,11 @@ class ChatWrapper:
                     cancelled_by="system",
                     cancellation_reason=str(exc),
                 )
-            yield {"type": "error", "status": 403, "message": "conversation not found"}
+            yield {
+                "type": "error",
+                "status": 403,
+                "message": _chat_error_message(403),
+            }
         except Exception as exc:
             logger.error("Failed to stream response: %s", exc, exc_info=True)
             if trace_id:
@@ -2578,7 +2637,7 @@ class ChatWrapper:
             yield {
                 "type": "error",
                 "status": 500,
-                "message": "server error; see chat logs for message",
+                "message": _chat_error_message(500),
             }
         finally:
             # The shared pipeline's LLM is never mutated on the override path
@@ -4624,8 +4683,9 @@ class FlaskAppWrapper(object):
         requestion with
 
             conversation_id: Either None or an integer
-            last_message:    list of length 2, where the first element is "User"
-                             and the second element contains their message.
+            last_message:    list containing a single [sender, message] pair,
+                             e.g. [["User", "How do I submit a job?"]]. Only
+                             the first pair is read.
 
         Returns:
             A json with a response (html formatted plain text string) and a
@@ -4648,6 +4708,11 @@ class FlaskAppWrapper(object):
         if not client_id:
             return jsonify({"error": "client_id missing"}), 400
 
+        try:
+            parse_last_message(message)
+        except InvalidLastMessage as exc:
+            return jsonify({"error": str(exc)}), 400
+
         user_id = session.get("user", {}).get("id") or None
 
         # query the chat and return the results.
@@ -4666,13 +4731,7 @@ class FlaskAppWrapper(object):
 
         # handle errors
         if error_code is not None:
-            if error_code == 408:
-                output = jsonify({"error": CLIENT_TIMEOUT_ERROR_MESSAGE})
-            elif error_code == 403:
-                output = jsonify({"error": "conversation not found"})
-            else:
-                output = jsonify({"error": "server error; see chat logs for message"})
-            return output, error_code
+            return jsonify({"error": _chat_error_message(error_code)}), error_code
 
         # compute timestamp at which message was returned to client
         timestamps["server_response_msg_ts"] = datetime.now(timezone.utc)
@@ -4728,6 +4787,11 @@ class FlaskAppWrapper(object):
 
         if not client_id:
             return jsonify({"error": "client_id missing"}), 400
+
+        try:
+            parse_last_message(message)
+        except InvalidLastMessage as exc:
+            return jsonify({"error": str(exc)}), 400
 
         user_id = session.get("user", {}).get("id") or None
 

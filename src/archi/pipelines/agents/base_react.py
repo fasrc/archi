@@ -1,7 +1,9 @@
+import contextvars
 import re
 import threading
 import time
 import uuid
+import weakref
 from typing import (
     Any,
     AsyncIterator,
@@ -37,6 +39,36 @@ from src.archi.utils.output_dataclass import PipelineOutput
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Maps pipeline instance → RunMemory for the current execution context.
+# Per-thread (or per-async-task) isolation is provided by the ContextVar;
+# per-instance isolation within a single thread (e.g. source vs. view) is
+# provided by the keys of the map.
+#
+# The key is the agent OBJECT, in a WeakKeyDictionary, not ``id(self)``. Two
+# reasons, both consequences of a ContextVar value outliving the request that set
+# it on a reused worker thread:
+#
+#   Retention — an ``id``-keyed plain dict has no lifecycle boundary at which an
+#   entry is dropped. Every request-local view (a ``copy.copy`` of the shared
+#   pipeline, one per overridden request) left its RunMemory, and every document
+#   that memory accumulated, pinned for the life of the thread.
+#
+#   Aliasing — ``id()`` is the object's address, and CPython reuses addresses.
+#   A view allocated where a dead view used to live would inherit the dead one's
+#   entry: ``active_memory`` would return the previous request's documents, and a
+#   callback firing before ``start_run_memory()`` would mutate that stale memory
+#   instead of failing open on ``None``. That is the cross-request attribution
+#   bug #123 exists to close, reintroduced through the key.
+#
+# Weak keys fix both: the entry disappears when the agent is collected, so no
+# orphaned slot survives for a recycled address to land on. Keying on the object
+# also needs no cooperation from ``__init__`` — which matters, because views are
+# built by ``copy.copy`` and never run it, so any key stored in ``__dict__``
+# would be inherited by the view and silently shared with its source.
+_ACTIVE_MEMORY: contextvars.ContextVar[
+    Optional["weakref.WeakKeyDictionary[Any, RunMemory]"]
+] = contextvars.ContextVar("_ACTIVE_MEMORY", default=None)
 
 
 class BaseReActAgent:
@@ -114,13 +146,28 @@ class BaseReActAgent:
     def start_run_memory(self) -> RunMemory:
         """Create and store the active memory for the current run."""
         memory = self.create_run_memory()
+        current = _ACTIVE_MEMORY.get()
+        # Copy-on-write rather than mutating in place: the value may be shared by
+        # reference with a parent context (a thread or task that forked from this
+        # one), and writing through would leak this run's memory into it.
+        updated: "weakref.WeakKeyDictionary[Any, RunMemory]" = (
+            weakref.WeakKeyDictionary()
+            if current is None
+            else weakref.WeakKeyDictionary(current)
+        )
+        updated[self] = memory
+        _ACTIVE_MEMORY.set(updated)
+        # Keep instance attribute for backward-compat callers that read it directly.
         self._active_memory = memory
         return memory
 
     @property
     def active_memory(self) -> Optional[RunMemory]:
         """Return the memory currently associated with the run, if any."""
-        return self._active_memory
+        current = _ACTIVE_MEMORY.get()
+        if current is None:
+            return None
+        return current.get(self)
 
     def finalize_output(
         self,

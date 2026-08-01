@@ -33,6 +33,7 @@ from src.data_manager.collectors.scrapers.sitemap_source import (
 from src.utils.goldenset_maintenance import (
     MAX_PROMPT_PAGE_CHARS,
     TRUNCATION_MARKER,
+    BaselineRow,
     CorpusDoc,
     Decline,
     DriftExtractionError,
@@ -2034,3 +2035,195 @@ class TestMalformedLockedSource:
         states = {c.url: c.state for c in report.rows[0].checks}
         assert states[good] == "unchanged"
         assert states["http://["] == "refused"
+
+
+class TestBaselineDrafts:
+    """goldenset-baseline-drafts — opt-in hashing of draft rows before locking."""
+
+    def test_baseline_drafts_fetches_and_hashes_draft_sources(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+        calls = []
+
+        report = _drift(
+            bank, _fetcher_for({url: KB_HTML}, calls=calls), baseline_drafts=True
+        )
+
+        assert calls == [url]
+        assert len(report.baseline_only) == 1
+        assert isinstance(report.baseline_only[0], BaselineRow)
+        assert report.baseline_only[0].source_hashes == {url: page_digest(KB_HTML)}
+
+    def test_baseline_only_result_is_not_in_report_rows(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}), baseline_drafts=True)
+
+        assert report.rows == ()
+
+    def test_without_baseline_drafts_draft_sources_are_not_fetched(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+        calls = []
+
+        _drift(bank, _fetcher_for({url: KB_HTML}, calls=calls), baseline_drafts=False)
+
+        assert calls == []
+
+    def test_without_baseline_drafts_baseline_only_is_empty(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}))
+
+        assert report.baseline_only == ()
+
+    def test_baselined_draft_does_not_appear_in_drifted(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}), baseline_drafts=True)
+
+        assert report.drifted == ()
+
+    def test_baselined_draft_does_not_appear_in_unbaselined(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}), baseline_drafts=True)
+
+        assert report.unbaselined == ()
+
+    def test_baselined_draft_does_not_trigger_llm_call(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+        llm_calls = []
+
+        _drift(
+            bank,
+            _fetcher_for({url: KB_HTML}),
+            ask_llm=_recording_llm(llm_calls, '{"verdict": "holds"}'),
+            baseline_drafts=True,
+        )
+
+        assert llm_calls == []
+
+    def test_baselined_draft_does_not_count_toward_checked_rows(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}), baseline_drafts=True)
+
+        assert report.checked_rows == 0
+
+    def test_baselined_draft_does_not_change_abstention_with_locked_row_unreachable(
+        self,
+    ):
+        draft_url = f"{KB}/kb/draft"
+        locked_url = f"{KB}/kb/locked"
+        bank = [
+            _row(draft_url, status="draft"),
+            _locked(locked_url, hashes={locked_url: page_digest(KB_HTML)}),
+        ]
+
+        report_without = _drift(
+            bank,
+            _fetcher_for({draft_url: KB_HTML}, errors={locked_url: "timeout"}),
+            baseline_drafts=False,
+        )
+        report_with = _drift(
+            bank,
+            _fetcher_for({draft_url: KB_HTML}, errors={locked_url: "timeout"}),
+            baseline_drafts=True,
+        )
+
+        assert report_without.abstained == report_with.abstained
+
+    def test_baseline_row_carries_row_index(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        report = _drift(bank, _fetcher_for({url: KB_HTML}), baseline_drafts=True)
+
+        assert report.baseline_only[0].row_index == 0
+
+    def test_multi_source_draft_row_hashes_all_sources(self):
+        url_a = f"{KB}/kb/a"
+        url_b = f"{KB}/kb/b"
+        bank = [_row(url_a, url_b, status="draft")]
+
+        report = _drift(
+            bank,
+            _fetcher_for({url_a: KB_HTML, url_b: KB_HTML_RESTYLED}),
+            baseline_drafts=True,
+        )
+
+        assert set(report.baseline_only[0].source_hashes) == {url_a, url_b}
+
+    def test_enabling_baseline_drafts_leaves_skipped_rows_unchanged(self):
+        url = f"{KB}/kb/gpu"
+        bank = [_row(url, status="draft")]
+
+        without = _drift(bank, _fetcher_for({url: KB_HTML}), baseline_drafts=False)
+        with_baselines = _drift(
+            bank, _fetcher_for({url: KB_HTML}), baseline_drafts=True
+        )
+
+        # Asking for hash output must not move a detection metric. The row is
+        # excluded from drift checking either way, so it stays skipped — else the
+        # CLI's locked-row summary silently stops accounting for baselined drafts
+        # and a one-draft bank reports 0 skipped while skipping one.
+        assert with_baselines.skipped_rows == without.skipped_rows == 1
+
+    def test_unreachable_draft_source_is_recorded_as_missing(self):
+        reachable = f"{KB}/kb/a"
+        dead = f"{KB}/kb/b"
+        bank = [_row(reachable, dead, status="draft")]
+
+        report = _drift(
+            bank,
+            _fetcher_for({reachable: KB_HTML}, errors={dead: "timeout"}),
+            baseline_drafts=True,
+        )
+
+        # A draft has no stored baseline to fall back on, so a dropped source is
+        # not recoverable from the row itself — it has to be named, or the block
+        # invites a paste that locks the row with a hole in it.
+        row = report.baseline_only[0]
+        assert row.source_hashes == {reachable: page_digest(KB_HTML)}
+        assert row.missing == (dead,)
+
+    def test_refused_draft_source_is_recorded_as_missing(self):
+        allowed = f"{KB}/kb/a"
+        offlist = "https://example.com/kb/b"
+        bank = [_row(allowed, offlist, status="draft")]
+
+        report = _drift(bank, _fetcher_for({allowed: KB_HTML}), baseline_drafts=True)
+
+        row = report.baseline_only[0]
+        assert row.source_hashes == {allowed: page_digest(KB_HTML)}
+        assert row.missing == (offlist,)
+
+    def test_unparseable_draft_source_is_recorded_as_missing(self):
+        good = f"{KB}/kb/a"
+        bank = [_row(good, "http://[", status="draft")]
+
+        report = _drift(bank, _fetcher_for({good: KB_HTML}), baseline_drafts=True)
+
+        assert report.baseline_only[0].missing == ("http://[",)
+
+    def test_a_fully_hashed_draft_reports_nothing_missing(self):
+        url_a = f"{KB}/kb/a"
+        url_b = f"{KB}/kb/b"
+        bank = [_row(url_a, url_b, status="draft")]
+
+        report = _drift(
+            bank,
+            _fetcher_for({url_a: KB_HTML, url_b: KB_HTML_RESTYLED}),
+            baseline_drafts=True,
+        )
+
+        # Keeps the three assertions above honest: they would also pass against a
+        # `missing` that is simply always populated.
+        assert report.baseline_only[0].missing == ()

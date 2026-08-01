@@ -52,6 +52,16 @@ examples/benchmarking/snow_ragas_queries_pt1.json
 
 # Ralph harness runtime state (machine-written; never committed)
 .ralph/
+# The loop's task-list pointer (ralph.conf: RALPH_TASKS="tasks.md") is a SYMLINK to
+# whichever OpenSpec change is active, so its target differs on every branch. While
+# it was tracked, each branch had its own version and they conflicted with each
+# other; ca31e80d (#164) dropped it from dev, which turned it into a modify/delete
+# conflict that made five open PRs unmergeable at once (#159-#163, cleared under
+# #168). It is working-tree state, so ignore it rather than track it. The leading
+# slash is load-bearing: it anchors to the repo root, leaving the real
+# openspec/changes/**/tasks.md files — the actual source of truth — tracked. Both
+# properties are asserted by tests/unit/test_repo_hygiene.py.
+/tasks.md
 /review-findings.md
 .coverage
 coverage.xml

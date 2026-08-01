@@ -45,10 +45,16 @@ Usage:
     python scripts/benchmarking/goldenset_maintenance.py coverage \\
         --bank <bank.json> --undecline <url> --ledger <ledger.json>
 
-    # fact drift: re-fetch every locked row's sources and report what moved
+    # fact drift: re-fetch every locked row's sources and report what moved.
+    # The pass is a REQUIRED, explicit choice — exactly one of the two below.
+    #   hash tripwire only (no provider call):
     python scripts/benchmarking/goldenset_maintenance.py drift \\
         --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \\
-        [--model anthropic/claude-sonnet-5] [--show-text] [--print-hashes]
+        --tripwire-only [--show-text] [--print-hashes]
+    #   semantic: ask whether the stored reference still holds where a hash moved
+    python scripts/benchmarking/goldenset_maintenance.py drift \\
+        --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \\
+        --model anthropic/claude-sonnet-5 [--show-text] [--print-hashes]
 
     # all three passes in one read-only run (the cron line)
     python scripts/benchmarking/goldenset_maintenance.py report \\
@@ -370,6 +376,28 @@ def read_persisted_document(doc, data_path: Optional[str]) -> str:
     if not text.strip():
         raise OperationalError(f"the persisted document {path} is empty")
     return text
+
+
+def model_arg(value: str) -> str:
+    """Reject a blank `--model`, which an unset shell variable expands to.
+
+    `--model "$MODEL"` with `MODEL` unset reaches argparse as `--model ''`. The
+    flag counts as *present*, so it satisfies `drift`'s required mode group
+    while carrying no model at all — and a truthiness check downstream then
+    reads it as "no model given" and runs the hash-only pass. That is exactly
+    the silent downgrade the required group exists to prevent, so the blank has
+    to die at the parser rather than be interpreted anywhere later.
+
+    Whitespace counts as blank: `--model " "` is truthy, so it survives that
+    check and fails later on the `provider/model` shape instead of on the thing
+    that is actually wrong.
+    """
+    if not value.strip():
+        raise argparse.ArgumentTypeError(
+            "must not be blank — an unset shell variable expands to ''. Pass a "
+            "'provider/model' (e.g. anthropic/claude-sonnet-5)."
+        )
+    return value
 
 
 def build_ask_llm(model: str):
@@ -772,12 +800,27 @@ def run_drift(args: argparse.Namespace) -> int:
     human act as locking it was.
     """
     bank = load_bank(args.bank)
-    ask_llm = build_ask_llm(args.model) if args.model else None
+    tripwire_only = getattr(args, "tripwire_only", False)
+    # `is not None`, not truthiness: `model_arg` has already refused every blank
+    # form, so absent is the ONLY remaining falsy value — and `report` reaches
+    # here with `model=None` deliberately, which is what keeps the unattended
+    # cron hash-only by default.
+    ask_llm = (
+        None
+        if tripwire_only
+        else (build_ask_llm(args.model) if args.model is not None else None)
+    )
+    print(
+        "mode: hash-only (tripwire) — no reference comparison"
+        if ask_llm is None
+        else "mode: reference-compared (semantic)"
+    )
     report = find_drift(
         bank,
         build_fetch_html(),
         ask_llm=ask_llm,
         allowed_hosts=args.allowed_hosts,
+        baseline_drafts=getattr(args, "baseline_drafts", False),
     )
 
     if report.abstained:
@@ -943,10 +986,18 @@ def _print_hashes(report) -> None:
     forward; they are reported separately as stale, and dropping them is the
     point of pasting.
 
-    Emitting nothing is explained rather than left silent. Blocks come from the
-    same locked-only pass as the rest of drift, so asking for a draft row's
-    baseline produces an empty run — right place, wrong step — and unexplained
-    silence reads as a broken tool.
+    Emitting nothing is explained rather than left silent. Without
+    `--baseline-drafts` the blocks come from the same locked-only pass as the rest
+    of drift, so asking for a draft row's baseline produces an empty run — right
+    place, wrong step — and unexplained silence reads as a broken tool.
+
+    Draft rows collected by `--baseline-drafts` are held to the same completeness
+    rule, and need it more: a locked row can carry a failed source's stored hash
+    forward, but a draft has none, so an unreadable source is simply missing from
+    the map the operator is about to paste alongside `status: locked`. A draft whose
+    every source failed is printed as a named INCOMPLETE row with no block rather
+    than skipped, because the operator asked about that row directly and silence
+    there reads as "nothing to do" rather than "nothing could be read".
     """
     emitted = 0
     for row in report.rows:
@@ -966,12 +1017,27 @@ def _print_hashes(report) -> None:
                 "they are reachable."
             )
         print(json.dumps({"source_hashes": carried}, indent=2))
+    for baseline_row in report.baseline_only:
+        if not baseline_row.source_hashes and not baseline_row.missing:
+            continue
+        emitted += 1
+        print(f"\nrow {baseline_row.row_index} (draft — paste with status: locked)")
+        if baseline_row.missing:
+            print(
+                "  # INCOMPLETE — no hash available for: "
+                + ", ".join(baseline_row.missing)
+                + "\n  # A draft has no stored baseline to carry forward, so locking "
+                "with this block leaves those sources unbaselined. Re-run once they "
+                "are reachable."
+            )
+        if baseline_row.source_hashes:
+            print(json.dumps({"source_hashes": baseline_row.source_hashes}, indent=2))
     if not emitted:
         print(
-            "\nno `source_hashes` blocks — baselines come from `locked` rows only. "
-            "A draft row has no confirmation to record yet, so declaring the lock "
-            "comes first: set `status: locked` on the row, then re-run this to get "
-            "its block."
+            "\nno `source_hashes` blocks to print. To baseline a draft row in a "
+            "single edit: run with --baseline-drafts --print-hashes to compute the "
+            "hash now, then paste the printed `source_hashes` block into the bank "
+            "file alongside `status: locked` in one commit."
         )
 
 
@@ -1133,6 +1199,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     coverage.add_argument(
         "--model",
+        type=model_arg,
         help="`provider/model` used to draft candidates. Required with --propose.",
     )
     coverage.add_argument(
@@ -1182,12 +1249,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     drift = sub.add_parser("drift", help="Locked rows whose grounding page changed.")
     add_bank(drift)
-    drift.add_argument(
+    drift_mode = drift.add_mutually_exclusive_group(required=True)
+    drift_mode.add_argument(
         "--model",
+        type=model_arg,
         help=(
             "`provider/model` asked whether the stored reference still holds, for "
-            "sources whose hash moved. Optional: without it the run is the cheap "
-            "hash tripwire alone, which is still a real finding."
+            "sources whose hash moved. Selects the semantic pass."
+        ),
+    )
+    drift_mode.add_argument(
+        "--tripwire-only",
+        action="store_true",
+        help=(
+            "Explicitly select the cheap hash-only pass: no LLM call, just the "
+            "tripwire. Mutually exclusive with --model."
         ),
     )
     drift.add_argument(
@@ -1219,6 +1295,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Print a paste-ready `source_hashes` block per row. The tool never "
             "writes the bank, so this is how a baseline gets recorded."
+        ),
+    )
+    drift.add_argument(
+        "--baseline-drafts",
+        action="store_true",
+        help=(
+            "Also compute and print `source_hashes` blocks for `draft` rows. "
+            "**Requires --print-hashes** — without it there is nothing to emit and "
+            "the fetches would be wasted, so the combination is rejected. Draft rows "
+            "are never checked for drift; this only produces the hash block so it "
+            "can be pasted alongside `status: locked` in a single edit."
         ),
     )
     drift.set_defaults(func=run_drift)
@@ -1265,6 +1352,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report.add_argument(
         "--model",
+        type=model_arg,
         help=(
             "OPTIONAL `provider/model` for the advisory drift diff. Omitted by "
             "default: the hash tripwire is the finding, and an unattended job "
@@ -1296,6 +1384,9 @@ def build_parser() -> argparse.ArgumentParser:
         path_glob=None,
         data_path=None,
         count=3,
+        # `drift`'s mode flag is required there, but `report` has no CLI surface
+        # for it and must stay hash-only-by-default for the unattended cron.
+        tripwire_only=False,
         # ON here, unlike the interactive `drift` where it is opt-in. The spec
         # asks for a drifted row to be flagged "with the re-fetched content for
         # review", and interactively that is a re-run away. Unattended there is
@@ -1314,6 +1405,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not getattr(args, "func", None):
         print(
             "error: a subcommand is required " "(coverage | orphans | drift | report)",
+            file=sys.stderr,
+        )
+        return 2
+    if getattr(args, "baseline_drafts", False) and not getattr(
+        args, "print_hashes", False
+    ):
+        # Rejected before dispatch, not downgraded to a warning: on its own the flag
+        # fetches every draft source and then discards every digest, because only
+        # --print-hashes emits them. On a bank of any size that is a burst of
+        # requests at the KB in exchange for nothing. Refusing here also keeps the
+        # two flags independent — implying --print-hashes would silently widen the
+        # output to every locked row's block as well, which is not what was asked.
+        print(
+            "error: --baseline-drafts requires --print-hashes (it computes hash "
+            "blocks that only --print-hashes emits)",
             file=sys.stderr,
         )
         return 2

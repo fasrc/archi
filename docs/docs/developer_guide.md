@@ -143,6 +143,28 @@ docker restart chatbot-my-archi
 4. **Commit**: Use short, lowercase commit summaries (e.g., `add gemini provider`).
 5. **PR**: Include a brief summary, test results, and documentation impact. Link related issues.
 
+### Reading the PR list
+
+The pull request index shows the CI check rollup but **not** mergeability, so a
+conflicted PR with green checks looks identical to one that is ready. Two
+automatically-maintained labels close that gap — see
+[PR Readiness Labels](#pr-readiness-labels-pr-readiness-labelsyml):
+
+| Chip | Meaning |
+|------|---------|
+| `ready-to-merge` | Nothing blocks a merge: not a draft, no conflicts, checks green, and no review finding still pointing at current code. |
+| `conflicts` | Merge-conflicted with `dev`, drafts included. Resolve it before spending another review round — answering findings cannot land the PR. |
+| *neither* | In flight: review findings outstanding, or checks not green. |
+
+`ready-to-merge` is **not** a claim that review is provably complete. It cannot be
+one yet: the "no outstanding finding" test relies on GitHub's `isOutdated` flag as
+a proxy, because no review thread in this repository has ever been marked resolved.
+[Issue #169](https://github.com/fasrc/archi/issues/169) makes the signal exact.
+Read it before treating the chip as an approval.
+
+Filter for what is actually mergeable:
+[`is:pr is:open label:ready-to-merge`](https://github.com/fasrc/archi/pulls?q=is%3Apr+is%3Aopen+label%3Aready-to-merge).
+
 ## Editing Documentation
 
 Editing documentation requires the `mkdocs` Python package:
@@ -246,6 +268,82 @@ Manually dispatched; builds Docker base images, pushes to DockerHub, runs smoke 
 ### Publish Base Images (`publish-base-images.yml`)
 
 Triggered on push to `main`; rebuilds and pushes base images when requirements or Dockerfiles change.
+
+### PR Readiness Labels (`pr-readiness-labels.yml`)
+
+Reconciles the `ready-to-merge` and `conflicts` labels on every open PR so the PR
+index reflects mergeability, which GitHub itself never renders there.
+
+The workflow subscribes to every event Actions can be triggered by that changes the
+answer:
+
+| Trigger | Why it changes the answer |
+|---------|---------------------------|
+| `push` to `dev` | Merging one PR is what conflicts the others |
+| `pull_request` (incl. `edited`, `labeled`/`unlabeled`) | Retargeting changes the base; a hand-edited chip needs correcting |
+| `pull_request_review`, `pull_request_review_comment` | A new finding appears |
+| `workflow_run` on `gate` / `PR Preview` | Checks feed `mergeStateStatus`; a rerun turns a green check pending |
+| `schedule` (hourly) | The **only** observer of thread resolution — plus a missed delivery, a failed run, or mergeability still `UNKNOWN` |
+| `workflow_dispatch` | Manual, with a `dry_run` input |
+
+One input has no trigger: **resolving or un-resolving a review thread.**
+`pull_request_review_thread` is a real *webhook* event but is not among the events
+that can start a workflow, so the hourly sweep is what picks resolution up. Adding it
+to the trigger list does not silently no-op — it makes the workflow file invalid, and
+GitHub then records a startup failure on every push. Check the Actions events
+reference, not the webhooks reference; they are different sets.
+
+All the logic lives in `scripts/ci/pr_readiness_labels.sh` (22-case suite wired into
+`scripts/gate.sh`); the workflow is only the trigger surface. Run it yourself with:
+
+```bash
+bash scripts/ci/pr_readiness_labels.sh --dry-run     # decide and print, change nothing
+```
+
+`ready-to-merge` requires all three of: not a draft, `mergeStateStatus == CLEAN`
+(mergeable **and** checks green), and zero *live* review findings — a review thread
+that is unresolved and not outdated.
+
+Five design notes worth knowing before changing it:
+
+- **`mergeable` and `mergeStateStatus` answer different questions**, and the chips use
+  different ones. `mergeStateStatus` is a *priority* field: on a draft it reports
+  `DRAFT`, masking `DIRTY`. So `conflicts` is derived from `mergeable ==
+  CONFLICTING` — otherwise a conflicted draft gets no chip, which is where it is
+  arguably most useful. Readiness needs `mergeStateStatus == CLEAN`, because that
+  single value folds in draft, conflict *and* check state.
+
+- **An incomplete snapshot is never guessed at**, and the two cases are not
+  symmetric. Connections are fetched one page (100) deep and each `totalCount` is
+  checked. Truncated `reviewThreads` means the live-findings count may be an
+  undercount, so the chip is *withheld* — otherwise a PR whose first 100 threads all
+  read as addressed would count zero while a live one sat in the tail. Truncated
+  `labels` instead triggers an authoritative re-read of the full label list, because
+  concluding a chip is *absent* just because it fell off the page would schedule no
+  removal and leave the PR advertising readiness.
+
+- **Every run sweeps every open PR**, not just the one that triggered it. Merging PR
+  A is what conflicts PRs B–F, so the chips needing revocation are on the PRs that
+  did *not* change. This also makes a run idempotent.
+- **Sweeps serialize; they are not cancelled.** The workflow sets
+  `cancel-in-progress: false` deliberately. A cancelled run can have a label write
+  already in flight, which may land *after* the replacement run wrote from a newer
+  snapshot — persisting the stale decision until the next sweep.
+- **Granting is conservative, revocation is unconditional.** A stale green chip is
+  worse than no chip.
+- **`UNKNOWN` mergeability is never guessed — and never left advertised.** GitHub
+  computes mergeability lazily and reports `UNKNOWN` until it lands, which is exactly
+  the state right after a push to `dev`. The script re-queries a few times, since
+  querying is what prompts the computation. If it is still unknown, the PR
+  *revokes* any `ready-to-merge` it holds (readiness that cannot be verified must not
+  be asserted) and asserts nothing else — no `conflicts` either, since that is
+  equally unverified.
+
+The predicate keys on GitHub's `isOutdated` rather than `isResolved` because review
+threads in this repo are not marked resolved, so an `isResolved` predicate would
+label nothing. That is a documented proxy: a push touching the same lines outdates a
+finding without fixing it. Resolving threads as they are addressed would make the
+signal exact.
 
 ### Docker Layer Caching
 

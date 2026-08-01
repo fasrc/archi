@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from src.data_manager.collectors.persistence import PersistenceService
 from src.data_manager.collectors.scrapers.scrape_pool import (
@@ -185,6 +185,7 @@ class ScraperManager:
         # order-preserving) before standard link collection. A below-floor /
         # over-cap SitemapExpansionError is intentionally NOT caught here: it
         # propagates out and fails the ingest rather than shipping a bad corpus.
+        self._sitemap_lastmod_map: Dict[str, str] = {}
         if sitemap_urls:
             from src.data_manager.collectors.scrapers.sitemap_source import (
                 normalize_page_url,
@@ -203,10 +204,20 @@ class ScraperManager:
             # hand-list -> sitemap migration window. Expanded URLs are already
             # normalized, so they compare directly against these keys.
             existing_keys = {_dedup_key(u) for u in link_urls}
-            for expanded in self._expand_sitemaps(sitemap_urls):
-                if expanded not in existing_keys:
-                    existing_keys.add(expanded)
-                    link_urls.append(expanded)
+            sitemap_pairs = self._expand_sitemaps(sitemap_urls)
+            # Populated INSIDE the dedup loop, for the URLs actually appended —
+            # not from every expanded pair. A page that is both hand-listed and
+            # in a sitemap belongs to the hand-list: its URL is deliberately not
+            # appended, and the spec says a hand-listed source's `last_modified`
+            # is NULL. Building the map first would still hand that page a
+            # timestamp, because `_handle_standard_url` looks the map up by the
+            # resource's NORMALIZED url — which is exactly what collided.
+            for url, lastmod in sitemap_pairs:
+                if url not in existing_keys:
+                    existing_keys.add(url)
+                    link_urls.append(url)
+                    if lastmod is not None:
+                        self._sitemap_lastmod_map[url] = lastmod
 
         self.collect_links(persistence, link_urls=link_urls)
         self.collect_sso(persistence, sso_urls=sso_urls)
@@ -561,8 +572,10 @@ class ScraperManager:
             link_urls.append(raw_url)
         return link_urls, git_urls, sso_urls, elog_urls, indico_urls, sitemap_urls
 
-    def _expand_sitemaps(self, sitemap_urls: List[str]) -> List[str]:
-        """Expand ``sitemap-`` source URLs into page URLs at ingest time.
+    def _expand_sitemaps(
+        self, sitemap_urls: List[str]
+    ) -> List[Tuple[str, Optional[str]]]:
+        """Expand ``sitemap-`` source URLs into (page_url, lastmod|None) pairs.
 
         Thin call site over :mod:`sitemap_source`: builds the trust/bounds policy
         from the ``sources.links.sitemap`` config sub-block plus a ``requests``
@@ -595,7 +608,7 @@ class ScraperManager:
             sitemap_source.fetch_sitemap_text,
             verify=self.config.get("verify_urls", False),
         )
-        return sitemap_source.expand_sitemaps(sitemap_urls, fetch, policy)
+        return list(sitemap_source.expand_sitemaps(sitemap_urls, fetch, policy))
 
     @staticmethod
     def _is_elog_url(url: str) -> bool:
@@ -672,6 +685,12 @@ class ScraperManager:
         # Parallel seed crawls pass their own per-worker scraper; the sequential
         # and selenium/SSO callers fall back to the shared ``self.web_scraper``.
         scraper = scraper if scraper is not None else self.web_scraper
+
+        from src.data_manager.collectors.scrapers.sitemap_source import (
+            normalize_page_url,
+        )
+
+        lastmod_map: Dict[str, str] = getattr(self, "_sitemap_lastmod_map", {})
         count = 0
         try:
             for resource in scraper.crawl_iter(
@@ -682,6 +701,14 @@ class ScraperManager:
                 max_pages=self.max_pages,
                 on_request_url=on_request_url,
             ):
+                if lastmod_map:
+                    try:
+                        norm = normalize_page_url(resource.url)
+                    except ValueError:
+                        norm = resource.url
+                    lm = lastmod_map.get(norm)
+                    if lm is not None:
+                        resource.metadata["last_modified"] = lm
                 persistence.persist_resource(resource, output_dir)
                 count += 1
             logger.info(f"Scraped {count} resources from {url}")
