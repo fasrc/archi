@@ -30,7 +30,7 @@ honour all of it — the last four fields are read only by the streaming endpoin
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `last_message` | list of `[sender, message]` pairs | yes | The user's turn. A list **containing** the pair, not the pair itself — see below. Only the first pair is read. |
+| `last_message` | list of `[sender, message]` pairs | yes | The user's turn. A list **containing** the pair, not the pair itself — see below. Only the first pair is read. A malformed value is rejected with **HTTP 400**. |
 | `client_id` | string | yes | Identifies the calling client; the request is rejected without it. |
 | `client_sent_msg_ts` | int (ms since epoch) | **yes, in practice** | Time you send the request. Must be generated **at send time** — a stale value is rejected. See the warning below. |
 | `client_timeout` | int (ms) | **yes, in practice** | How long the client is willing to wait. Omitting it is rejected. See the warning below. |
@@ -94,17 +94,19 @@ honour all of it — the last four fields are read only by the streaming endpoin
 `["User", "How do I submit a job?"]`. The handler reads `last_message[0]` and unpacks
 it as `(sender, content)`.
 
-Sending the flat form does not return a clean error, so it is worth getting right:
-the first element is then a *string*, and unpacking it yields its characters. A
-sender of three or more characters raises — reported as HTTP 500 by
-`POST /api/get_chat_response`, but as an in-band `{"type": "error", "status": 500}`
-under HTTP **200** by the streaming endpoint, since the exception happens inside the
-generator after the opening `meta` line ([`app.py:2568`][outerr]); see the two error channels
-under [`POST /api/get_chat_response_stream`](#post-apiget_chat_response_stream).
-A two-character sender such as `["AI", "hello"]` unpacks into `sender="A"`,
-`content="I"` and the request **succeeds against the wrong content**, silently
-discarding the message — on both endpoints, with no error at all. The endpoint does
-not currently validate the shape.
+Both endpoints validate the shape before the request proceeds. A well-formed value is a
+non-empty list or tuple whose first element is itself a list or tuple of exactly two strings.
+Every other value — a flat list, an empty list, `null`, a non-pair first element, or non-string
+members — is rejected with **HTTP 400** and an error body naming the expected shape, e.g.:
+
+```json
+{"error": "last_message must be a list containing a [sender, message] pair of two strings, e.g. [[\"User\", \"hello\"]]"}
+```
+
+The check exists because the flat form `["AI", "hello"]` is a two-character string sequence,
+and without validation `tuple("AI")` yields `sender="A"`, `content="I"` — a request that
+returns HTTP 200 while silently discarding the caller's message. Both endpoints now reject it
+before the pipeline is invoked, so no conversation row is created for the rejected request.
 
 **A request you can run.** `client_sent_msg_ts` has to be generated as you send, so this
 example computes it rather than hard-coding one — a literal epoch value pasted from a page
@@ -267,6 +269,7 @@ be sent [together](#overriding-provider-and-model) or neither takes effect.
     | Not authenticated, SSO on and anonymous access blocked | **302** redirect to login |
     | Not authenticated, otherwise | **401** `{"error": "Unauthorized"}` |
     | `client_id` missing ([`app.py:4730`][clientid]) | **400** `{"error": "client_id missing"}` |
+    | Malformed `last_message` (not a nested pair of two strings) | **400** `{"error": "..."}` naming the expected shape |
 
     **After the stream opens — HTTP 200 plus an event.** The status line is already on the
     wire, so a failure inside the generator can only be reported in-band: the opening `meta`

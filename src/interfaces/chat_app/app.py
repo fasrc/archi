@@ -68,6 +68,10 @@ from src.interfaces.chat_app.config_fingerprint import (
     resolve_provider_boot_summary,
 )
 from src.interfaces.chat_app.document_utils import *
+from src.interfaces.chat_app.request_validation import (
+    InvalidLastMessage,
+    parse_last_message,
+)
 from src.interfaces.chat_app.service_alerts import (
     get_active_banner_alerts,
     is_alert_manager,
@@ -4649,6 +4653,11 @@ class FlaskAppWrapper(object):
         if not client_id:
             return jsonify({"error": "client_id missing"}), 400
 
+        try:
+            parse_last_message(message)
+        except InvalidLastMessage as exc:
+            return jsonify({"error": str(exc)}), 400
+
         user_id = session.get("user", {}).get("id") or None
 
         # query the chat and return the results.
@@ -4729,6 +4738,11 @@ class FlaskAppWrapper(object):
 
         if not client_id:
             return jsonify({"error": "client_id missing"}), 400
+
+        try:
+            parse_last_message(message)
+        except InvalidLastMessage as exc:
+            return jsonify({"error": str(exc)}), 400
 
         user_id = session.get("user", {}).get("id") or None
 
