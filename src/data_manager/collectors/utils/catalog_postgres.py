@@ -62,7 +62,30 @@ _METADATA_COLUMN_MAP = {
     "modified_at": "file_modified_at",
     "file_modified_at": "file_modified_at",
     "ingested_at": "ingested_at",
+    "last_modified": "last_modified",
 }
+
+#: Columns of `documents` that are not text. A "has a value" filter on one of
+#: these must use the NULL check alone: `col != ''` makes PostgreSQL cast `''`
+#: to the column's type first, which raises (`InvalidDatetimeFormat` for a
+#: TIMESTAMPTZ, `InvalidTextRepresentation` for a BIGINT) and fails the whole
+#: query before a single row comes back — so the filter does not merely
+#: mis-select, it errors.
+#:
+#: Listed by column rather than by the metadata keys that currently reach them,
+#: so a key added to `_METADATA_COLUMN_MAP` later is covered without anyone
+#: having to remember this. `indexed_at` is here for that reason: nothing maps
+#: to it today.
+_NON_TEXT_COLUMNS = frozenset(
+    {
+        "size_bytes",  # BIGINT
+        "file_modified_at",  # TIMESTAMPTZ
+        "last_modified",  # TIMESTAMPTZ
+        "ingested_at",  # TIMESTAMPTZ
+        "indexed_at",  # TIMESTAMPTZ
+        "created_at",  # TIMESTAMPTZ
+    }
+)
 
 
 @dataclass
@@ -212,11 +235,12 @@ class PostgresCatalogService:
                         relative_path,
                         file_modified_at,
                         ingested_at,
+                        last_modified,
                         ingestion_status,
                         extra_json,
                         extra_text,
                         is_deleted
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, FALSE)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, FALSE)
                     ON CONFLICT (resource_hash) DO UPDATE SET
                         file_path = EXCLUDED.file_path,
                         display_name = EXCLUDED.display_name,
@@ -230,6 +254,7 @@ class PostgresCatalogService:
                         relative_path = EXCLUDED.relative_path,
                         file_modified_at = EXCLUDED.file_modified_at,
                         ingested_at = EXCLUDED.ingested_at,
+                        last_modified = EXCLUDED.last_modified,
                         extra_json = EXCLUDED.extra_json,
                         extra_text = EXCLUDED.extra_text,
                         is_deleted = FALSE,
@@ -253,6 +278,7 @@ class PostgresCatalogService:
                             or payload.get("file_modified_at")
                         ),
                         _parse_timestamp(payload.get("ingested_at")),
+                        _parse_timestamp(payload.get("last_modified")),
                         extra_json,
                         extra_text,
                     ),
@@ -308,10 +334,15 @@ class PostgresCatalogService:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 if column:
                     if value is None:
+                        non_empty = (
+                            ""
+                            if column in _NON_TEXT_COLUMNS
+                            else f" AND {column} != ''"
+                        )
                         cur.execute(
                             f"""
-                            SELECT * FROM documents 
-                            WHERE NOT is_deleted AND {column} IS NOT NULL AND {column} != ''
+                            SELECT * FROM documents
+                            WHERE NOT is_deleted AND {column} IS NOT NULL{non_empty}
                         """
                         )
                     else:
@@ -1355,6 +1386,13 @@ class PostgresCatalogService:
             "file_path",
             "file_modified_at",
             "ingested_at",
+            # Promoted out of `extra_json` into its own column (#155). It has to
+            # be listed here too, or it is written and then unreadable: every
+            # catalog accessor rebuilds metadata through this list, and
+            # `get_metadata_by_filter` re-checks the rebuilt dict — so an omitted
+            # key makes the filter select the right rows and then discard all of
+            # them.
+            "last_modified",
             "ingestion_status",
             "ingestion_error",
             "resource_hash",

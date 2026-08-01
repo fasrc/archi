@@ -1,13 +1,25 @@
 from __future__ import annotations
 
+import contextlib
 import logging
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
 from src.data_manager.collectors.scrapers import sitemap_source as ss
+from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
+
+
+def _apply(*ctx_managers):
+    """Combine several context managers into one (test helper)."""
+    stack = contextlib.ExitStack()
+    for cm in ctx_managers:
+        stack.enter_context(cm)
+    return stack
+
 
 # --------------------------------------------------------------------------- #
 # Fixture XML documents (namespaced + un-namespaced urlset, index, malformed)
@@ -60,6 +72,14 @@ NESTED_INDEX = """<?xml version="1.0" encoding="UTF-8"?>
 
 MALFORMED = "<urlset <<< not well formed"
 
+# Two entries normalize to the same URL (/kb/x); the first has lastmod "2026-01-01".
+URLSET_DUP_WITH_LASTMOD = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/x/</loc><lastmod>2026-01-01</lastmod></url>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/x</loc><lastmod>2026-02-01</lastmod></url>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/y</loc><lastmod>2026-03-01</lastmod></url>
+</urlset>"""
+
 DOCTYPE_BODY = """<?xml version="1.0"?>
 <!DOCTYPE urlset [ <!ENTITY lol "lol"> ]>
 <urlset><url><loc>https://docs.rc.fas.harvard.edu/kb/x</loc></url></urlset>"""
@@ -99,6 +119,121 @@ def _policy(allowed_hosts=None, min_pages=1, max_pages=20000):
         min_pages=min_pages,
         max_pages=max_pages,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Fixtures for lastmod-aware parse (tasks 1.1 / 1.2 / 1.3)
+# --------------------------------------------------------------------------- #
+URLSET_LASTMOD_MIXED = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.org/a</loc><lastmod>2026-04-21T19:19:35+00:00</lastmod></url>
+  <url><loc>https://example.org/b</loc></url>
+  <url><loc>https://example.org/c</loc><lastmod></lastmod></url>
+</urlset>"""
+
+SITEMAPINDEX_WITH_LASTMOD = """<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>https://example.org/s1.xml</loc><lastmod>2026-01-01</lastmod></sitemap>
+  <sitemap><loc>https://example.org/s2.xml</loc></sitemap>
+</sitemapindex>"""
+
+
+# --------------------------------------------------------------------------- #
+# 1.1 parse_sitemap_entries — TDD: new lastmod-aware parser
+# --------------------------------------------------------------------------- #
+class TestParseSitemapEntries:
+    def test_entry_with_lastmod_yields_value(self):
+        kind, entries = ss.parse_sitemap_entries(URLSET_LASTMOD_MIXED)
+        assert kind == "urlset"
+        assert entries[0] == ("https://example.org/a", "2026-04-21T19:19:35+00:00")
+
+    def test_entry_without_lastmod_yields_none(self):
+        _, entries = ss.parse_sitemap_entries(URLSET_LASTMOD_MIXED)
+        assert entries[1] == ("https://example.org/b", None)
+
+    def test_empty_lastmod_yields_none(self):
+        _, entries = ss.parse_sitemap_entries(URLSET_LASTMOD_MIXED)
+        assert entries[2] == ("https://example.org/c", None)
+
+    def test_all_three_entries_present(self):
+        _, entries = ss.parse_sitemap_entries(URLSET_LASTMOD_MIXED)
+        assert len(entries) == 3
+
+    def test_malformed_document_raises_sitemap_parse_error_only(self):
+        with pytest.raises(ss.SitemapParseError):
+            ss.parse_sitemap_entries("<urlset <<< not well formed")
+
+    def test_doctype_rejected_in_entries(self):
+        with pytest.raises(ss.SitemapParseError):
+            ss.parse_sitemap_entries(DOCTYPE_BODY)
+
+    def test_unknown_root_raises_in_entries(self):
+        with pytest.raises(ss.SitemapParseError):
+            ss.parse_sitemap_entries(RSS_BODY)
+
+    def test_sitemapindex_entries_carry_lastmod(self):
+        kind, entries = ss.parse_sitemap_entries(SITEMAPINDEX_WITH_LASTMOD)
+        assert kind == "sitemapindex"
+        assert entries[0] == ("https://example.org/s1.xml", "2026-01-01")
+        assert entries[1] == ("https://example.org/s2.xml", None)
+
+    def test_empty_urlset_returns_empty_entries(self):
+        kind, entries = ss.parse_sitemap_entries(EMPTY_URLSET)
+        assert kind == "urlset"
+        assert entries == []
+
+    def test_lastmod_whitespace_trimmed(self):
+        body = """<?xml version="1.0"?>
+<urlset><url><loc>https://example.org/x</loc><lastmod>  2026-05-01  </lastmod></url></urlset>"""
+        _, entries = ss.parse_sitemap_entries(body)
+        assert entries[0] == ("https://example.org/x", "2026-05-01")
+
+    def test_namespaced_lastmod_captured(self):
+        # Namespace on urlset must not prevent reading lastmod under the same ns.
+        body = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://docs.rc.fas.harvard.edu/kb/x</loc>
+    <lastmod>2026-03-15</lastmod>
+  </url>
+</urlset>"""
+        _, entries = ss.parse_sitemap_entries(body)
+        assert entries[0] == ("https://docs.rc.fas.harvard.edu/kb/x", "2026-03-15")
+
+    def test_stray_non_url_child_skipped_in_entries(self):
+        # A direct child that is not a <url> wrapper must be ignored — matching
+        # the _locs behavior for non-wrapper children (covers the continue branch
+        # in _loc_entries).
+        _, entries = ss.parse_sitemap_entries(URLSET_STRAY)
+        assert len(entries) == 1
+        assert entries[0][0] == "https://docs.rc.fas.harvard.edu/kb/only"
+
+
+# --------------------------------------------------------------------------- #
+# 1.3 Regression: existing parse callers keep their behavior
+# --------------------------------------------------------------------------- #
+class TestParseSitemapDocumentRegression:
+    def test_parse_sitemap_document_still_returns_loc_list_not_entries(self):
+        # parse_sitemap_document must return (kind, List[str]) — never tuples —
+        # so sources_builder and goldenset_maintenance callers are unaffected.
+        kind, locs = ss.parse_sitemap_document(URLSET_LASTMOD_MIXED)
+        assert kind == "urlset"
+        assert locs == [
+            "https://example.org/a",
+            "https://example.org/b",
+            "https://example.org/c",
+        ]
+        # Values are plain strings, not tuples.
+        assert all(isinstance(loc, str) for loc in locs)
+
+    def test_parse_sitemap_document_ignores_lastmod_entirely(self):
+        # Even with lastmod present, parse_sitemap_document sees only locs.
+        kind, locs = ss.parse_sitemap_document(URLSET_NS)
+        assert locs == [
+            "https://docs.rc.fas.harvard.edu/kb/copying-data-to-and-from-cluster-using-scp/",
+            "https://docs.rc.fas.harvard.edu/kb/running-jobs",
+            "https://docs.rc.fas.harvard.edu/kb/fairshare",
+        ]
 
 
 # --------------------------------------------------------------------------- #
@@ -319,9 +454,12 @@ class TestExpand:
         fetch = FakeFetch({url: URLSET_NS})
         pages = ss.expand_sitemap_source(url, fetch, _policy())
         assert pages == [
-            "https://docs.rc.fas.harvard.edu/kb/copying-data-to-and-from-cluster-using-scp",
-            "https://docs.rc.fas.harvard.edu/kb/running-jobs",
-            "https://docs.rc.fas.harvard.edu/kb/fairshare",
+            (
+                "https://docs.rc.fas.harvard.edu/kb/copying-data-to-and-from-cluster-using-scp",
+                "2026-01-01",
+            ),
+            ("https://docs.rc.fas.harvard.edu/kb/running-jobs", "2026-01-02"),
+            ("https://docs.rc.fas.harvard.edu/kb/fairshare", "2026-01-03"),
         ]
         assert fetch.calls == [url]
 
@@ -336,9 +474,9 @@ class TestExpand:
         )
         pages = ss.expand_sitemap_source(url, fetch, _policy())
         assert pages == [
-            "https://docs.rc.fas.harvard.edu/kb/1a",
-            "https://docs.rc.fas.harvard.edu/kb/1b",
-            "https://docs.rc.fas.harvard.edu/kb/2a",
+            ("https://docs.rc.fas.harvard.edu/kb/1a", None),
+            ("https://docs.rc.fas.harvard.edu/kb/1b", None),
+            ("https://docs.rc.fas.harvard.edu/kb/2a", None),
         ]
         # index + 2 children, each exactly once
         assert fetch.calls.count(f"https://{HOST}/child-1.xml") == 1
@@ -360,7 +498,7 @@ class TestExpand:
         fetch = FakeFetch({url: dup_index, child_url: CHILD_2})
         pages = ss.expand_sitemap_source(url, fetch, _policy())
         assert fetch.calls.count(child_url) == 1
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/2a", None)]
 
     def test_nested_index_contributes_nothing(self):
         url = f"https://{HOST}/index.xml"
@@ -372,7 +510,7 @@ class TestExpand:
             }
         )
         pages = ss.expand_sitemap_source(url, fetch, _policy())
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/2a", None)]
         # grandchild is never followed
         assert f"https://{HOST}/grandchild.xml" not in fetch.calls
 
@@ -387,7 +525,7 @@ class TestExpand:
         )
         with caplog.at_level(logging.WARNING):
             pages = ss.expand_sitemap_source(url, fetch, _policy())
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/2a", None)]
         assert any(rec.levelno == logging.WARNING for rec in caplog.records)
 
     def test_duplicate_locs_emitted_once_order_preserving(self):
@@ -400,8 +538,8 @@ class TestExpand:
         url = f"https://{HOST}/s.xml"
         pages = ss.expand_sitemap_source(url, FakeFetch({url: dup}), _policy())
         assert pages == [
-            "https://docs.rc.fas.harvard.edu/kb/x",
-            "https://docs.rc.fas.harvard.edu/kb/y",
+            ("https://docs.rc.fas.harvard.edu/kb/x", None),
+            ("https://docs.rc.fas.harvard.edu/kb/y", None),
         ]
 
     def test_expand_sitemaps_merges_and_dedupes_across_sources(self):
@@ -416,9 +554,9 @@ class TestExpand:
         fetch = FakeFetch({a: body_a, b: body_b})
         pages = ss.expand_sitemaps([a, b], fetch, _policy())
         assert pages == [
-            "https://docs.rc.fas.harvard.edu/kb/shared",
-            "https://docs.rc.fas.harvard.edu/kb/only-a",
-            "https://docs.rc.fas.harvard.edu/kb/only-b",
+            ("https://docs.rc.fas.harvard.edu/kb/shared", None),
+            ("https://docs.rc.fas.harvard.edu/kb/only-a", None),
+            ("https://docs.rc.fas.harvard.edu/kb/only-b", None),
         ]
 
 
@@ -436,7 +574,7 @@ class TestEmitValidation:
         url = f"https://{HOST}/s.xml"
         with caplog.at_level(logging.WARNING):
             pages = ss.expand_sitemap_source(url, FakeFetch({url: body}), _policy())
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/good"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/good", None)]
 
     def test_off_host_child_sitemap_not_fetched(self):
         index = """<?xml version="1.0"?>
@@ -447,7 +585,7 @@ class TestEmitValidation:
         url = f"https://{HOST}/index.xml"
         fetch = FakeFetch({url: index, f"https://{HOST}/child-2.xml": CHILD_2})
         pages = ss.expand_sitemap_source(url, fetch, _policy())
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/2a", None)]
         assert "https://evil.example.com/child.xml" not in fetch.calls
 
 
@@ -861,7 +999,9 @@ class TestWiring:
         mgr = self._mgr()
         by_type = (["https://a"], [], [], [], [], ["https://s.xml"])
         with patch.object(
-            ScraperManager, "_expand_sitemaps", return_value=["https://b", "https://c"]
+            ScraperManager,
+            "_expand_sitemaps",
+            return_value=[("https://b", None), ("https://c", None)],
         ) as exp, patch.object(ScraperManager, "collect_links") as cl, patch.object(
             ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
         ), patch.object(
@@ -896,7 +1036,10 @@ class TestWiring:
         with patch.object(
             ScraperManager,
             "_expand_sitemaps",
-            return_value=[f"https://{HOST}/kb/page", f"https://{HOST}/kb/new"],
+            return_value=[
+                (f"https://{HOST}/kb/page", None),
+                (f"https://{HOST}/kb/new", None),
+            ],
         ), patch.object(ScraperManager, "collect_links") as cl, patch.object(
             ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
         ), patch.object(
@@ -917,6 +1060,51 @@ class TestWiring:
             "https://[malformed",
             f"https://{HOST}/kb/new",
         ]
+
+    def test_collided_handlist_url_is_left_out_of_the_lastmod_map(self):
+        # Spec `incremental-reingest`: "WHEN a hand-listed (non-sitemap) URL is
+        # scraped and persisted THEN its documents.last_modified is NULL."
+        #
+        # The map was built from every expanded pair BEFORE the dedup decision, so
+        # in the migration-window collision case — the same normalized page both
+        # hand-listed and in a sitemap — the sitemap URL is correctly not appended,
+        # but its <lastmod> stayed in the map. `_handle_standard_url` keys that map
+        # on the NORMALIZED resource URL, so the resource fetched from the
+        # hand-listed seed still picked the timestamp up.
+        mgr = self._mgr()
+        by_type = (
+            [f"https://{HOST}/kb/page/"],
+            [],
+            [],
+            [],
+            [],
+            ["https://s.xml"],
+        )
+        with patch.object(
+            ScraperManager,
+            "_expand_sitemaps",
+            return_value=[
+                (f"https://{HOST}/kb/page", "2026-04-21T19:19:35+00:00"),
+                (f"https://{HOST}/kb/new", "2026-04-22T00:00:00+00:00"),
+            ],
+        ), patch.object(ScraperManager, "collect_links"), patch.object(
+            ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+        ), patch.object(
+            ScraperManager, "collect_sso"
+        ), patch.object(
+            ScraperManager, "collect_git"
+        ), patch.object(
+            ScraperManager, "collect_elog"
+        ), patch.object(
+            ScraperManager, "collect_indico"
+        ):
+            mgr.collect_all_from_config(MagicMock())
+
+        # The collided page belongs to the hand-list now, so it carries no lastmod.
+        # The genuinely-new sitemap page keeps its own.
+        assert mgr._sitemap_lastmod_map == {
+            f"https://{HOST}/kb/new": "2026-04-22T00:00:00+00:00"
+        }
 
     def test_no_sitemap_bucket_skips_expand(self):
         mgr = self._mgr()
@@ -974,12 +1162,12 @@ class TestWiring:
             captured["urls"] = sitemap_urls
             captured["policy"] = policy
             captured["fetch"] = fetch
-            return ["https://docs.rc.fas.harvard.edu/kb/x"]
+            return [("https://docs.rc.fas.harvard.edu/kb/x", "2026-01-01")]
 
         with patch.object(ss, "expand_sitemaps", side_effect=fake_expand):
             out = mgr._expand_sitemaps(["https://s.xml"])
 
-        assert out == ["https://docs.rc.fas.harvard.edu/kb/x"]
+        assert out == [("https://docs.rc.fas.harvard.edu/kb/x", "2026-01-01")]
         assert captured["urls"] == ["https://s.xml"]
         assert captured["policy"].allowed_hosts == ["cdn.example.com"]
         assert captured["policy"].min_pages == 2
@@ -1037,7 +1225,7 @@ class TestRobustness:
         url = f"https://{HOST}/s.xml"
         with caplog.at_level(logging.WARNING):
             pages = ss.expand_sitemap_source(url, FakeFetch({url: body}), _policy())
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/good"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/good", None)]
 
     def test_unparseable_child_sitemap_loc_dropped(self):
         index = """<?xml version="1.0"?>
@@ -1048,7 +1236,7 @@ class TestRobustness:
         url = f"https://{HOST}/index.xml"
         fetch = FakeFetch({url: index, f"https://{HOST}/child-2.xml": CHILD_2})
         pages = ss.expand_sitemap_source(url, fetch, _policy())
-        assert pages == ["https://docs.rc.fas.harvard.edu/kb/2a"]
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/2a", None)]
         assert "https://docs.rc.fas.harvard.edu[bad/child.xml" not in fetch.calls
 
     def test_malformed_sitemap_url_is_below_floor_not_crash(self):
@@ -1085,3 +1273,413 @@ class TestRobustness:
         pages = ss.expand_sitemap_source(url, fetch, _policy())
         assert fetch.calls == [url]
         assert len(pages) == 3
+
+
+# --------------------------------------------------------------------------- #
+# 2.1 expand_sitemap_source / expand_sitemaps — TDD: emit (url, lastmod|None) pairs
+# --------------------------------------------------------------------------- #
+class TestExpandPairs:
+    """TDD: expand_sitemap_source and expand_sitemaps must return
+    List[Tuple[str, Optional[str]]] — (normalized_url, lastmod|None) —
+    instead of List[str]. All tests in this class fail until task 2.2 implements
+    the new return shape.
+    """
+
+    def test_urlset_with_lastmod_returns_pairs(self):
+        url = f"https://{HOST}/kb/sitemap.xml"
+        fetch = FakeFetch({url: URLSET_NS})
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == [
+            (
+                "https://docs.rc.fas.harvard.edu/kb/copying-data-to-and-from-cluster-using-scp",
+                "2026-01-01",
+            ),
+            ("https://docs.rc.fas.harvard.edu/kb/running-jobs", "2026-01-02"),
+            ("https://docs.rc.fas.harvard.edu/kb/fairshare", "2026-01-03"),
+        ]
+
+    def test_urlset_without_lastmod_yields_none(self):
+        url = f"https://{HOST}/kb/sitemap.xml"
+        fetch = FakeFetch({url: URLSET_NONS})
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == [
+            ("https://docs.rc.fas.harvard.edu/kb/one", None),
+            ("https://docs.rc.fas.harvard.edu/kb/two", None),
+        ]
+
+    def test_mixed_urlset_correct_lastmod_per_entry(self):
+        # URLSET_LASTMOD_MIXED: /a has lastmod, /b absent, /c empty lastmod.
+        url = "https://example.org/sitemap.xml"
+        fetch = FakeFetch({url: URLSET_LASTMOD_MIXED})
+        pages = ss.expand_sitemap_source(url, fetch, _policy(min_pages=1))
+        assert pages == [
+            ("https://example.org/a", "2026-04-21T19:19:35+00:00"),
+            ("https://example.org/b", None),
+            ("https://example.org/c", None),
+        ]
+
+    def test_normalization_collision_first_url_and_lastmod_wins(self):
+        # /kb/x/ and /kb/x normalize to the same URL; the first entry (lastmod
+        # "2026-01-01") wins — the duplicate (lastmod "2026-02-01") is dropped.
+        url = f"https://{HOST}/s.xml"
+        fetch = FakeFetch({url: URLSET_DUP_WITH_LASTMOD})
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == [
+            ("https://docs.rc.fas.harvard.edu/kb/x", "2026-01-01"),
+            ("https://docs.rc.fas.harvard.edu/kb/y", "2026-03-01"),
+        ]
+
+    def test_trust_filter_unchanged_off_host_dropped(self, caplog):
+        body = """<?xml version="1.0"?>
+<urlset>
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/good</loc><lastmod>2026-05-01</lastmod></url>
+  <url><loc>https://evil.example.com/x</loc><lastmod>2026-05-01</lastmod></url>
+</urlset>"""
+        url = f"https://{HOST}/s.xml"
+        with caplog.at_level(logging.WARNING):
+            pages = ss.expand_sitemap_source(url, FakeFetch({url: body}), _policy())
+        assert pages == [("https://docs.rc.fas.harvard.edu/kb/good", "2026-05-01")]
+
+    def test_expand_sitemaps_pairs_merged_deduped_first_wins(self):
+        # shared URL appears in both sources; the first source's lastmod wins.
+        a = f"https://{HOST}/a.xml"
+        b = f"https://{HOST}/b.xml"
+        body_a = """<?xml version="1.0"?>
+<urlset><url><loc>https://docs.rc.fas.harvard.edu/kb/shared</loc><lastmod>2026-01-01</lastmod></url>
+<url><loc>https://docs.rc.fas.harvard.edu/kb/only-a</loc><lastmod>2026-01-02</lastmod></url></urlset>"""
+        body_b = """<?xml version="1.0"?>
+<urlset><url><loc>https://docs.rc.fas.harvard.edu/kb/shared</loc><lastmod>2026-02-01</lastmod></url>
+<url><loc>https://docs.rc.fas.harvard.edu/kb/only-b</loc><lastmod>2026-02-02</lastmod></url></urlset>"""
+        fetch = FakeFetch({a: body_a, b: body_b})
+        pages = ss.expand_sitemaps([a, b], fetch, _policy())
+        assert pages == [
+            ("https://docs.rc.fas.harvard.edu/kb/shared", "2026-01-01"),
+            ("https://docs.rc.fas.harvard.edu/kb/only-a", "2026-01-02"),
+            ("https://docs.rc.fas.harvard.edu/kb/only-b", "2026-02-02"),
+        ]
+
+    def test_sitemapindex_child_pages_carry_lastmods(self):
+        # Child urlsets with lastmod — child page pairs carry correct values.
+        url = f"https://{HOST}/index.xml"
+        child1 = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/1a</loc><lastmod>2026-06-01</lastmod></url>
+</urlset>"""
+        child2 = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://docs.rc.fas.harvard.edu/kb/2a</loc></url>
+</urlset>"""
+        fetch = FakeFetch(
+            {
+                url: SITEMAPINDEX,
+                f"https://{HOST}/child-1.xml": child1,
+                f"https://{HOST}/child-2.xml": child2,
+            }
+        )
+        pages = ss.expand_sitemap_source(url, fetch, _policy())
+        assert pages == [
+            ("https://docs.rc.fas.harvard.edu/kb/1a", "2026-06-01"),
+            ("https://docs.rc.fas.harvard.edu/kb/2a", None),
+        ]
+
+
+# --------------------------------------------------------------------------- #
+# 4.1 D4 bridge: sitemap lastmod → resource metadata injection (TDD)
+# --------------------------------------------------------------------------- #
+class TestLastmodBridge:
+    """TDD: ScraperManager must thread sitemap lastmod into resource metadata.
+
+    All tests exercising the injection path (test 2 and 4) fail until task 4.2
+    wires the {url: lastmod} map through collect_all_from_config and the persist
+    path.  The hand-listed-URL negative case (test 3) acts as a regression guard
+    and must stay green throughout.
+    """
+
+    _PAGE_URL = f"https://{HOST}/kb/page"
+    _SITEMAP_URL = f"https://{HOST}/sitemap.xml"
+    _LASTMOD = "2026-04-21T19:19:35+00:00"
+
+    def _mgr(self):
+        mgr = ScraperManager.__new__(ScraperManager)
+        mgr.input_lists = []
+        mgr.git_enabled = False
+        mgr.sso_enabled = False
+        mgr.links_enabled = True
+        mgr.selenium_enabled = False
+        mgr.max_pages = 1000
+        mgr.base_depth = 2
+        mgr.config = {}
+        mgr.sitemap_config = {}
+        mgr.web_scraper = MagicMock()
+        return mgr
+
+    def _resource(self, url):
+        return ScrapedResource(
+            url=url, content="<html>x</html>", suffix="html", source_type="web"
+        )
+
+    def _common_patches(self, by_type):
+        return [
+            patch.object(
+                ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+            ),
+            patch.object(ScraperManager, "collect_sso"),
+            patch.object(ScraperManager, "collect_git"),
+            patch.object(ScraperManager, "collect_elog"),
+            patch.object(ScraperManager, "collect_indico"),
+        ]
+
+    # --- test 1: _expand_sitemaps returns pairs --------------------------------
+
+    def test_expand_sitemaps_returns_pairs(self):
+        """_expand_sitemaps must return List[Tuple[str, Optional[str]]] after D4."""
+        mgr = ScraperManager.__new__(ScraperManager)
+        mgr.config = {}
+        mgr.sitemap_config = {}
+
+        def fake_expand(urls, fetch, policy):
+            return [
+                (f"https://{HOST}/kb/a", "2026-04-21"),
+                (f"https://{HOST}/kb/b", None),
+            ]
+
+        with patch.object(ss, "expand_sitemaps", side_effect=fake_expand):
+            result = mgr._expand_sitemaps(["https://s.xml"])
+
+        assert result == [
+            (f"https://{HOST}/kb/a", "2026-04-21"),
+            (f"https://{HOST}/kb/b", None),
+        ]
+
+    # --- test 2: lastmod injected for sitemap-derived resource ----------------
+
+    def test_sitemap_lastmod_injected_into_resource_metadata(self, tmp_path):
+        """Sitemap-derived resource with lastmod gets last_modified in metadata."""
+        mgr = self._mgr()
+        resource = self._resource(self._PAGE_URL)
+        mgr.web_scraper.crawl_iter.return_value = iter([resource])
+
+        by_type = ([], [], [], [], [], [self._SITEMAP_URL])
+        persistence = MagicMock()
+        persistence.data_path = tmp_path
+
+        captured = []
+        persistence.persist_resource.side_effect = lambda r, p: captured.append(r)
+
+        patches = self._common_patches(by_type) + [
+            patch.object(
+                ScraperManager,
+                "_expand_sitemaps",
+                return_value=[(self._PAGE_URL, self._LASTMOD)],
+            ),
+        ]
+        with _apply(*patches):
+            mgr.collect_all_from_config(persistence)
+
+        assert len(captured) == 1, "persist_resource must be called exactly once"
+        assert captured[0].metadata.get("last_modified") == self._LASTMOD
+
+    # --- test 3: hand-listed URL never gets last_modified (regression guard) --
+
+    def test_hand_listed_url_no_lastmod_injection(self, tmp_path):
+        """A hand-listed (non-sitemap) URL resource must NOT receive last_modified."""
+        hand_url = f"https://{HOST}/kb/hand"
+        mgr = self._mgr()
+        resource = self._resource(hand_url)
+        mgr.web_scraper.crawl_iter.return_value = iter([resource])
+
+        by_type = ([hand_url], [], [], [], [], [])
+        persistence = MagicMock()
+        persistence.data_path = tmp_path
+
+        captured = []
+        persistence.persist_resource.side_effect = lambda r, p: captured.append(r)
+
+        with _apply(*self._common_patches(by_type)):
+            mgr.collect_all_from_config(persistence)
+
+        assert len(captured) == 1
+        assert "last_modified" not in captured[0].metadata
+
+    # --- test 4: sitemap URL with None lastmod leaves last_modified absent ----
+
+    def test_lastmod_none_sitemap_page_no_injection(self, tmp_path):
+        """Sitemap-derived page with None lastmod must NOT receive last_modified."""
+        mgr = self._mgr()
+        resource = self._resource(self._PAGE_URL)
+        mgr.web_scraper.crawl_iter.return_value = iter([resource])
+
+        by_type = ([], [], [], [], [], [self._SITEMAP_URL])
+        persistence = MagicMock()
+        persistence.data_path = tmp_path
+
+        captured = []
+        persistence.persist_resource.side_effect = lambda r, p: captured.append(r)
+
+        patches = self._common_patches(by_type) + [
+            patch.object(
+                ScraperManager,
+                "_expand_sitemaps",
+                return_value=[(self._PAGE_URL, None)],
+            ),
+        ]
+        with _apply(*patches):
+            mgr.collect_all_from_config(persistence)
+
+        assert len(captured) == 1
+        assert "last_modified" not in captured[0].metadata
+
+
+# --------------------------------------------------------------------------- #
+# 5.1 Fetch behavior is unchanged — last_modified is an attribute only
+# --------------------------------------------------------------------------- #
+class TestFetchBehaviorUnchanged:
+    """Verify that adding last_modified capture does not alter fetch behavior.
+
+    A fresh ingest must still fetch every page the sitemap lists.  No resource
+    is skipped because it has (or lacks) a lastmod value; persist_resource is
+    called once per resource regardless of whether last_modified is injected.
+    """
+
+    _HOST = "docs.rc.fas.harvard.edu"
+    _SITEMAP_URL = f"https://{_HOST}/sitemap.xml"
+    _PAGE_WITH_LM = f"https://{_HOST}/kb/with-lastmod"
+    _PAGE_NO_LM = f"https://{_HOST}/kb/no-lastmod"
+    _PAGE_ALSO_LM = f"https://{_HOST}/kb/also-lastmod"
+    _LASTMOD_A = "2026-04-01"
+    _LASTMOD_B = "2026-04-02"
+
+    def _mgr(self):
+        mgr = ScraperManager.__new__(ScraperManager)
+        mgr.input_lists = []
+        mgr.git_enabled = False
+        mgr.sso_enabled = False
+        mgr.links_enabled = True
+        mgr.selenium_enabled = False
+        mgr.max_pages = 1000
+        mgr.base_depth = 2
+        mgr.config = {}
+        mgr.sitemap_config = {}
+        mgr.web_scraper = MagicMock()
+        return mgr
+
+    def _resource(self, url):
+        return ScrapedResource(
+            url=url, content="<html>x</html>", suffix="html", source_type="web"
+        )
+
+    def _common_patches(self, by_type):
+        return [
+            patch.object(
+                ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+            ),
+            patch.object(ScraperManager, "collect_sso"),
+            patch.object(ScraperManager, "collect_git"),
+            patch.object(ScraperManager, "collect_elog"),
+            patch.object(ScraperManager, "collect_indico"),
+        ]
+
+    def test_all_pages_persisted_regardless_of_lastmod(self, tmp_path):
+        """Every sitemap page is fetched and persisted — lastmod does not skip any."""
+        mgr = self._mgr()
+        resources = [
+            self._resource(self._PAGE_WITH_LM),
+            self._resource(self._PAGE_NO_LM),
+            self._resource(self._PAGE_ALSO_LM),
+        ]
+        mgr.web_scraper.crawl_iter.return_value = iter(resources)
+
+        by_type = ([], [], [], [], [], [self._SITEMAP_URL])
+        persistence = MagicMock()
+        persistence.data_path = tmp_path
+
+        captured = []
+        persistence.persist_resource.side_effect = lambda r, p: captured.append(r)
+
+        sitemap_pairs = [
+            (self._PAGE_WITH_LM, self._LASTMOD_A),
+            (self._PAGE_NO_LM, None),
+            (self._PAGE_ALSO_LM, self._LASTMOD_B),
+        ]
+        patches = self._common_patches(by_type) + [
+            patch.object(
+                ScraperManager, "_expand_sitemaps", return_value=sitemap_pairs
+            ),
+        ]
+        with _apply(*patches):
+            mgr.collect_all_from_config(persistence)
+
+        # All three pages fetched and persisted — none skipped.
+        assert len(captured) == 3, (
+            "persist_resource must be called for every page, "
+            "regardless of lastmod presence"
+        )
+
+    def test_lastmod_set_only_on_pages_that_had_it(self, tmp_path):
+        """last_modified appears only on sitemap pages that had a <lastmod>."""
+        mgr = self._mgr()
+        resources = [
+            self._resource(self._PAGE_WITH_LM),
+            self._resource(self._PAGE_NO_LM),
+            self._resource(self._PAGE_ALSO_LM),
+        ]
+        mgr.web_scraper.crawl_iter.return_value = iter(resources)
+
+        by_type = ([], [], [], [], [], [self._SITEMAP_URL])
+        persistence = MagicMock()
+        persistence.data_path = tmp_path
+
+        captured = []
+        persistence.persist_resource.side_effect = lambda r, p: captured.append(r)
+
+        sitemap_pairs = [
+            (self._PAGE_WITH_LM, self._LASTMOD_A),
+            (self._PAGE_NO_LM, None),
+            (self._PAGE_ALSO_LM, self._LASTMOD_B),
+        ]
+        patches = self._common_patches(by_type) + [
+            patch.object(
+                ScraperManager, "_expand_sitemaps", return_value=sitemap_pairs
+            ),
+        ]
+        with _apply(*patches):
+            mgr.collect_all_from_config(persistence)
+
+        by_url = {r.url: r for r in captured}
+        # Pages with sitemap lastmod carry the value.
+        assert (
+            by_url[self._PAGE_WITH_LM].metadata.get("last_modified") == self._LASTMOD_A
+        )
+        assert (
+            by_url[self._PAGE_ALSO_LM].metadata.get("last_modified") == self._LASTMOD_B
+        )
+        # Page without sitemap lastmod has no last_modified key.
+        assert "last_modified" not in by_url[self._PAGE_NO_LM].metadata
+
+    def test_no_skip_when_lastmod_already_stored(self, tmp_path):
+        """A page whose resource carries last_modified is still persisted — no skip."""
+        mgr = self._mgr()
+        resource = self._resource(self._PAGE_WITH_LM)
+        # Simulate a resource that already has last_modified (e.g. from a re-ingest).
+        resource.metadata["last_modified"] = self._LASTMOD_A
+        mgr.web_scraper.crawl_iter.return_value = iter([resource])
+
+        by_type = ([], [], [], [], [], [self._SITEMAP_URL])
+        persistence = MagicMock()
+        persistence.data_path = tmp_path
+
+        captured = []
+        persistence.persist_resource.side_effect = lambda r, p: captured.append(r)
+
+        patches = self._common_patches(by_type) + [
+            patch.object(
+                ScraperManager,
+                "_expand_sitemaps",
+                return_value=[(self._PAGE_WITH_LM, self._LASTMOD_A)],
+            ),
+        ]
+        with _apply(*patches):
+            mgr.collect_all_from_config(persistence)
+
+        # Even with last_modified already set, the page is still persisted (no skip).
+        assert len(captured) == 1

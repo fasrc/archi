@@ -121,6 +121,35 @@ def _locs(root: "ElementTree.Element", wrapper: str) -> List[str]:
     return out
 
 
+def _loc_entries(
+    root: "ElementTree.Element", wrapper: str
+) -> List[Tuple[str, Optional[str]]]:
+    """Return ``(loc, lastmod|None)`` for each DIRECT ``<wrapper>`` child of ``root``.
+
+    Reads the first ``<loc>`` and the first ``<lastmod>`` in each wrapper entry.
+    An absent or empty ``<lastmod>`` yields ``None`` for that entry. Entries
+    without a ``<loc>`` are skipped (matches ``_locs`` behavior). Keeps ``_locs``
+    untouched so existing callers (``sources_builder``, ``goldenset_maintenance``)
+    are unaffected (design D1).
+    """
+    out: List[Tuple[str, Optional[str]]] = []
+    for child in root:
+        if _local_tag(child.tag) != wrapper:
+            continue
+        loc: Optional[str] = None
+        lastmod: Optional[str] = None
+        for grand in child:
+            tag = _local_tag(grand.tag)
+            if tag == "loc" and loc is None and grand.text:
+                loc = grand.text.strip()
+            elif tag == "lastmod" and lastmod is None:
+                text = grand.text.strip() if grand.text else ""
+                lastmod = text if text else None
+        if loc is not None:
+            out.append((loc, lastmod))
+    return out
+
+
 def parse_sitemap_document(text: str) -> Tuple[str, List[str]]:
     """Parse a sitemap document into ``(root_kind, loc_values)``.
 
@@ -146,6 +175,35 @@ def parse_sitemap_document(text: str) -> Tuple[str, List[str]]:
         return "urlset", _locs(root, "url")
     if kind == "sitemapindex":
         return "sitemapindex", _locs(root, "sitemap")
+    raise SitemapParseError(f"unexpected sitemap root <{kind}>")
+
+
+def parse_sitemap_entries(text: str) -> Tuple[str, List[Tuple[str, Optional[str]]]]:
+    """Parse a sitemap document into ``(root_kind, entries)`` where each entry is
+    ``(loc, lastmod|None)``.
+
+    Identical to :func:`parse_sitemap_document` in its DTD/entity rejection and
+    error contract. ``parse_sitemap_document`` is left unchanged so existing
+    callers (``sources_builder``, ``goldenset_maintenance``) are unaffected
+    (design D1). ``lastmod`` is the trimmed text of the first ``<lastmod>``
+    element inside each wrapper, or ``None`` when absent or empty.
+    """
+    lowered = text.lower()
+    if "<!doctype" in lowered or "<!entity" in lowered:
+        raise SitemapParseError(
+            "refusing sitemap with a DTD/entity declaration "
+            "(possible entity-expansion attack)"
+        )
+    try:
+        root = ElementTree.fromstring(text)
+    except ElementTree.ParseError as exc:
+        raise SitemapParseError(f"malformed sitemap XML: {exc}")
+
+    kind = _local_tag(root.tag)
+    if kind == "urlset":
+        return "urlset", _loc_entries(root, "url")
+    if kind == "sitemapindex":
+        return "sitemapindex", _loc_entries(root, "sitemap")
     raise SitemapParseError(f"unexpected sitemap root <{kind}>")
 
 
@@ -353,12 +411,12 @@ def fetch_sitemap_text(
 # --------------------------------------------------------------------------- #
 def _fetch_and_parse(
     url: str, fetch_text: FetchText
-) -> Tuple[Optional[str], List[str]]:
+) -> Tuple[Optional[str], List[Tuple[str, Optional[str]]]]:
     """Fetch + parse one document, failing open: log a WARNING and return
     ``(None, [])`` on any per-document fetch/parse failure."""
     try:
         text = fetch_text(url)
-        return parse_sitemap_document(text)
+        return parse_sitemap_entries(text)
     except (SitemapFetchError, SitemapParseError) as exc:
         logger.warning("sitemap: skipping %s (%s)", url, exc)
         return None, []
@@ -366,20 +424,22 @@ def _fetch_and_parse(
 
 def expand_sitemap_source(
     sitemap_url: str, fetch_text: FetchText, policy: SitemapPolicy
-) -> List[str]:
-    """Expand ONE ``sitemap-`` source into its validated page URLs.
+) -> List[Tuple[str, Optional[str]]]:
+    """Expand ONE ``sitemap-`` source into validated ``(page_url, lastmod|None)`` pairs.
 
-    A ``<urlset>`` contributes its ``<loc>`` pages; a ``<sitemapindex>`` has each
-    child fetched once (a child ``<urlset>`` contributes pages, a nested index
-    contributes nothing). Per-document fetch/parse failures fail open (WARNING,
-    zero URLs). Emitted pages are normalized, trust-filtered, and deduped, then
-    the per-source page cap and floor are applied to THIS source's own count with
-    THIS source's own host — raising :class:`SitemapExpansionError` on
-    over-cap/below-floor. No counting is shared across sources (design D10).
+    A ``<urlset>`` contributes its ``<loc>``/``<lastmod>`` pairs; a
+    ``<sitemapindex>`` has each child fetched once (a child ``<urlset>``
+    contributes pairs, a nested index contributes nothing). Per-document
+    fetch/parse failures fail open (WARNING, zero pairs). Emitted pages are
+    normalized, trust-filtered, and deduped, then the per-source page cap and
+    floor are applied to THIS source's own count with THIS source's own host —
+    raising :class:`SitemapExpansionError` on over-cap/below-floor. On a
+    normalization collision the first occurrence's URL and lastmod win. No
+    counting is shared across sources (design D10).
     """
     sitemap_host = _host_of(sitemap_url)
 
-    raw_pages: List[str] = []
+    raw_pages: List[Tuple[str, Optional[str]]] = []
     # Validate the top-level sitemap URL BEFORE fetching it, so a bad list entry
     # (wrong scheme, or an IP-literal loopback/private/link-local host such as the
     # cloud-metadata address) is never contacted — the same trust policy applied
@@ -390,14 +450,14 @@ def expand_sitemap_source(
         logger.warning(
             "sitemap: refusing untrusted top-level sitemap URL %s", sitemap_url
         )
-        kind, locs = None, []
+        kind, entries = None, []
     else:
-        kind, locs = _fetch_and_parse(sitemap_url, fetch_text)
+        kind, entries = _fetch_and_parse(sitemap_url, fetch_text)
     if kind == "urlset":
-        raw_pages.extend(locs)
+        raw_pages.extend(entries)
     elif kind == "sitemapindex":
         seen_children = set()
-        for child_url in locs:
+        for child_url, _ in entries:  # child sitemap lastmod is not propagated
             if child_url in seen_children:
                 # A repeated child <loc> (e.g. a generator bug) is fetched once,
                 # not once per occurrence — the emitted set is unchanged either way.
@@ -410,9 +470,9 @@ def expand_sitemap_source(
                     sitemap_url,
                 )
                 continue
-            child_kind, child_locs = _fetch_and_parse(child_url, fetch_text)
+            child_kind, child_entries = _fetch_and_parse(child_url, fetch_text)
             if child_kind == "urlset":
-                raw_pages.extend(child_locs)
+                raw_pages.extend(child_entries)
             elif child_kind == "sitemapindex":
                 logger.warning(
                     "sitemap: nested sitemapindex %s not followed (source %s)",
@@ -420,9 +480,9 @@ def expand_sitemap_source(
                     sitemap_url,
                 )
 
-    emitted: List[str] = []
+    emitted: List[Tuple[str, Optional[str]]] = []
     seen = set()
-    for loc in raw_pages:
+    for loc, lastmod in raw_pages:
         try:
             norm = normalize_page_url(loc)
         except ValueError:
@@ -440,7 +500,7 @@ def expand_sitemap_source(
         if norm in seen:
             continue
         seen.add(norm)
-        emitted.append(norm)
+        emitted.append((norm, lastmod))
 
     count = len(emitted)
     if count > policy.max_pages:
@@ -475,15 +535,18 @@ def expand_sitemap_source(
 
 def expand_sitemaps(
     sitemap_urls: List[str], fetch_text: FetchText, policy: SitemapPolicy
-) -> List[str]:
+) -> List[Tuple[str, Optional[str]]]:
     """Expand every ``sitemap-`` source and merge the results (order-preserving
     dedupe). Each source is expanded and validated independently; the first
-    source-level :class:`SitemapExpansionError` propagates and fails the ingest."""
-    merged: List[str] = []
+    source-level :class:`SitemapExpansionError` propagates and fails the ingest.
+    Returns ``(page_url, lastmod|None)`` pairs; on a cross-source URL collision
+    the first occurrence's pair wins.
+    """
+    merged: List[Tuple[str, Optional[str]]] = []
     seen = set()
     for sitemap_url in sitemap_urls:
-        for page in expand_sitemap_source(sitemap_url, fetch_text, policy):
-            if page not in seen:
-                seen.add(page)
-                merged.append(page)
+        for url, lastmod in expand_sitemap_source(sitemap_url, fetch_text, policy):
+            if url not in seen:
+                seen.add(url)
+                merged.append((url, lastmod))
     return merged
