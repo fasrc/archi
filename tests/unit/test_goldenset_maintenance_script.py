@@ -1701,7 +1701,14 @@ class TestBaselineDraftsCli:
         bank = _bank(tmp_path, _locked_row(url, status="draft"))
         _fake_pages(script, {url: GPU_HTML})
 
-        code = script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts", "--tripwire-only"])
+        code = script.main(
+            [
+                *_drift_head(bank),
+                "--print-hashes",
+                "--baseline-drafts",
+                "--tripwire-only",
+            ]
+        )
         out = capsys.readouterr().out
 
         assert code == 0
@@ -1715,7 +1722,14 @@ class TestBaselineDraftsCli:
         before = bank.read_bytes()
         _fake_pages(script, {url: GPU_HTML})
 
-        script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts", "--tripwire-only"])
+        script.main(
+            [
+                *_drift_head(bank),
+                "--print-hashes",
+                "--baseline-drafts",
+                "--tripwire-only",
+            ]
+        )
 
         assert bank.read_bytes() == before
 
@@ -1743,7 +1757,14 @@ class TestBaselineDraftsCli:
         bank = _bank(tmp_path, _locked_row(reachable, dead, status="draft"))
         _fake_pages(script, {reachable: GPU_HTML}, errors={dead: "timeout"})
 
-        code = script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts", "--tripwire-only"])
+        code = script.main(
+            [
+                *_drift_head(bank),
+                "--print-hashes",
+                "--baseline-drafts",
+                "--tripwire-only",
+            ]
+        )
         out = capsys.readouterr().out
 
         # Pasting this block alongside `status: locked` is the documented workflow,
@@ -1760,7 +1781,14 @@ class TestBaselineDraftsCli:
         bank = _bank(tmp_path, _locked_row(url, status="draft"))
         _fake_pages(script, {url: GPU_HTML})
 
-        script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts", "--tripwire-only"])
+        script.main(
+            [
+                *_drift_head(bank),
+                "--print-hashes",
+                "--baseline-drafts",
+                "--tripwire-only",
+            ]
+        )
         out = capsys.readouterr().out
 
         # Otherwise the warning becomes decoration and stops meaning anything.
@@ -1774,7 +1802,14 @@ class TestBaselineDraftsCli:
         bank = _bank(tmp_path, _locked_row(dead, status="draft"))
         _fake_pages(script, {}, errors={dead: "timeout"})
 
-        code = script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts", "--tripwire-only"])
+        code = script.main(
+            [
+                *_drift_head(bank),
+                "--print-hashes",
+                "--baseline-drafts",
+                "--tripwire-only",
+            ]
+        )
         out = capsys.readouterr().out
 
         # Nothing to paste, but the operator asked a direct question and silence
