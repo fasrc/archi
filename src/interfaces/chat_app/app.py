@@ -264,6 +264,31 @@ CLIENT_TIMEOUT_ERROR_MESSAGE = (
     "client timeout; the agent wasn't able to find satisfactory information "
     "to respond to the query within the time limit set by the administrator."
 )
+REFRESH_WITHOUT_HISTORY_ERROR_MESSAGE = (
+    "is_refresh requires something to refresh: send a conversation_id, or supply "
+    "the prior turns, or omit is_refresh to ask a new question."
+)
+GENERIC_CHAT_ERROR_MESSAGE = "server error; see chat logs for message"
+
+#: Human-readable text for the error statuses `_prepare_chat_context` can return.
+#: Both endpoints read from here. They previously carried separate copies of this
+#: mapping — one in the streaming path and one in the non-streaming route — which
+#: meant a status added to one could be missing from the other, and each endpoint
+#: is exercised separately enough that the divergence would not show up.
+_CHAT_ERROR_MESSAGES = {
+    400: REFRESH_WITHOUT_HISTORY_ERROR_MESSAGE,
+    403: "conversation not found",
+    408: CLIENT_TIMEOUT_ERROR_MESSAGE,
+}
+
+
+def _chat_error_message(error_code: int) -> str:
+    """Describe an error status to the caller.
+
+    Falls back to the generic server-error text, so an unmapped status is reported
+    without leaking internals — the same behaviour both endpoints had before.
+    """
+    return _CHAT_ERROR_MESSAGES.get(error_code, GENERIC_CHAT_ERROR_MESSAGE)
 
 
 class AnswerRenderer(mt.HTMLRenderer):
@@ -1632,6 +1657,19 @@ class ChatWrapper:
             raise ValueError("client_id is required to process chat messages")
         sender, content = tuple(message[0])
 
+        # A refresh re-answers prior turns instead of adding a new one, so it needs
+        # prior turns to exist. Without them the branch below would resolve an empty
+        # history, the trim would be a no-op, and the append would be skipped because
+        # this is a refresh — invoking the pipeline with no user turn at all and
+        # answering an empty prompt, indistinguishable from a real answer (#177).
+        #
+        # The condition names both sources deliberately: `external_history` supplies
+        # turns directly, so a refresh over supplied history is satisfiable with no
+        # conversation_id, and must not be rejected. Rejecting here also runs before
+        # the conversation is created, so a refused request leaves no empty row.
+        if is_refresh and conversation_id is None and external_history is None:
+            return None, 400
+
         if external_history is not None:
             if conversation_id is None:
                 conversation_id = self.create_conversation(content, client_id, user_id)
@@ -2016,12 +2054,11 @@ class ChatWrapper:
                 external_history=external_history,
             )
             if error_code is not None:
-                error_message = "server error; see chat logs for message"
-                if error_code == 408:
-                    error_message = CLIENT_TIMEOUT_ERROR_MESSAGE
-                elif error_code == 403:
-                    error_message = "conversation not found"
-                yield {"type": "error", "status": error_code, "message": error_message}
+                yield {
+                    "type": "error",
+                    "status": error_code,
+                    "message": _chat_error_message(error_code),
+                }
                 return
 
             requested_config = self._resolve_config_name(config_name)
@@ -4667,13 +4704,7 @@ class FlaskAppWrapper(object):
 
         # handle errors
         if error_code is not None:
-            if error_code == 408:
-                output = jsonify({"error": CLIENT_TIMEOUT_ERROR_MESSAGE})
-            elif error_code == 403:
-                output = jsonify({"error": "conversation not found"})
-            else:
-                output = jsonify({"error": "server error; see chat logs for message"})
-            return output, error_code
+            return jsonify({"error": _chat_error_message(error_code)}), error_code
 
         # compute timestamp at which message was returned to client
         timestamps["server_response_msg_ts"] = datetime.now(timezone.utc)
