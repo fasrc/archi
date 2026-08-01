@@ -65,6 +65,28 @@ _METADATA_COLUMN_MAP = {
     "last_modified": "last_modified",
 }
 
+#: Columns of `documents` that are not text. A "has a value" filter on one of
+#: these must use the NULL check alone: `col != ''` makes PostgreSQL cast `''`
+#: to the column's type first, which raises (`InvalidDatetimeFormat` for a
+#: TIMESTAMPTZ, `InvalidTextRepresentation` for a BIGINT) and fails the whole
+#: query before a single row comes back — so the filter does not merely
+#: mis-select, it errors.
+#:
+#: Listed by column rather than by the metadata keys that currently reach them,
+#: so a key added to `_METADATA_COLUMN_MAP` later is covered without anyone
+#: having to remember this. `indexed_at` is here for that reason: nothing maps
+#: to it today.
+_NON_TEXT_COLUMNS = frozenset(
+    {
+        "size_bytes",  # BIGINT
+        "file_modified_at",  # TIMESTAMPTZ
+        "last_modified",  # TIMESTAMPTZ
+        "ingested_at",  # TIMESTAMPTZ
+        "indexed_at",  # TIMESTAMPTZ
+        "created_at",  # TIMESTAMPTZ
+    }
+)
+
 
 @dataclass
 class PostgresCatalogService:
@@ -312,10 +334,15 @@ class PostgresCatalogService:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 if column:
                     if value is None:
+                        non_empty = (
+                            ""
+                            if column in _NON_TEXT_COLUMNS
+                            else f" AND {column} != ''"
+                        )
                         cur.execute(
                             f"""
-                            SELECT * FROM documents 
-                            WHERE NOT is_deleted AND {column} IS NOT NULL AND {column} != ''
+                            SELECT * FROM documents
+                            WHERE NOT is_deleted AND {column} IS NOT NULL{non_empty}
                         """
                         )
                     else:

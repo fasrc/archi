@@ -102,3 +102,49 @@ still fetch every page it fetches today; no fetch-skip logic is introduced by th
 #### Scenario: Fresh ingest still fetches every page
 - **WHEN** an ingest runs over a sitemap after this change
 - **THEN** the same set of pages is fetched as before, with `last_modified` recorded as an additional stored attribute only
+
+### Requirement: A value-less catalog filter on a non-text column uses the NULL check alone
+
+`get_metadata_by_filter(field)` called without a value SHALL build its "has a value"
+predicate as `column IS NOT NULL` for any column of `documents` that is not text, and SHALL
+NOT append `column != ''` to it.
+
+`!= ''` is a text comparison. Against a `TIMESTAMPTZ` or `BIGINT` column PostgreSQL must
+first cast `''` to that type, which raises (`InvalidDatetimeFormat`, `InvalidTextRepresentation`)
+and fails the entire query before any row is returned. The filter therefore does not
+mis-select — it errors, and the caller gets no metadata at all.
+
+Exposing `last_modified` to catalog reads is what made this reachable for a new field, but the
+same predicate was already reachable for `created_at`, `ingested_at`,
+`modified_at`/`file_modified_at` and `size_bytes`. The rule is therefore stated over **column
+type**, not over the field names that happen to reach it today.
+
+#### Scenario: A timestamp filter omits the empty-string comparison
+
+- **WHEN** `get_metadata_by_filter` is called with `last_modified`, `created_at`, `ingested_at`,
+  `modified_at` or `file_modified_at` and no value
+- **THEN** the emitted SQL contains `IS NOT NULL` for that column
+- **AND** it contains no `!= ''` comparison, so PostgreSQL is never asked to cast `''` to a
+  timestamp
+
+#### Scenario: A numeric filter omits the empty-string comparison
+
+- **WHEN** `get_metadata_by_filter` is called with `size_bytes` and no value
+- **THEN** the emitted SQL uses the NULL check alone, for the same reason — `''` is not a
+  `BIGINT`
+
+#### Scenario: Text filters keep the emptiness check
+
+- **WHEN** `get_metadata_by_filter` is called with a text-backed field such as `url`, `path` or
+  `source_type` and no value
+- **THEN** the emitted SQL retains `!= ''` for that column
+- **AND** the fix is therefore not "drop the check", which would silently begin matching rows
+  whose text column is present but blank — a behaviour change that nothing would report
+
+#### Scenario: A newly mapped non-text column is covered without further edits
+
+- **WHEN** a metadata key is added to the column map pointing at a non-text column
+- **THEN** it is already guarded, because the guard lists the non-text **columns** of
+  `documents` rather than the metadata keys that currently reach them
+- **AND** a test asserts this over the map, so a mapping that escapes the guard fails in CI
+  rather than in production

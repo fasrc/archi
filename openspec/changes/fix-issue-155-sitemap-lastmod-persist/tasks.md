@@ -61,3 +61,25 @@
       `origin/dev`) and ensure it exits 0. Fix any format/lint/coverage gaps.
 - [x] 5.3 Confirm out-of-scope items are absent: no fetch-skip logic, no git `source_ref`
       skip, no `min_pages` change, no edit to the SQLite `resources` backend.
+
+## Review round — value-less filter on a non-text column
+
+- [x] R.1 **The `!= ''` predicate errors on the new column.** `get_metadata_by_filter("last_modified")`
+  with no value took the "has a value" branch, which built
+  `col IS NOT NULL AND col != ''`. `last_modified` is `TIMESTAMPTZ`, so PostgreSQL casts `''`
+  to a timestamp, raises `InvalidDatetimeFormat`, and fails the whole query — the caller gets
+  an error rather than a wrong row set.
+- [x] R.2 **Fixed by column type, not by field name.** The reported symptom is on the field this
+  change adds, but the same predicate was already reachable for `created_at`, `ingested_at`,
+  `modified_at`/`file_modified_at` (all `TIMESTAMPTZ`) and `size_bytes` (`BIGINT`) — four
+  pre-existing instances of one bug. `_NON_TEXT_COLUMNS` lists the non-text **columns** of
+  `documents`, so a metadata key mapped to one later is covered without anyone remembering,
+  and a test asserts that property over the map itself.
+- [x] R.3 Mutation-checked in both directions: restoring the original predicate fails all six
+  non-text cases, and dropping `!= ''` for *every* column fails the three text cases — so the
+  fix can be neither reverted nor over-broadened silently. Over-broadening is the more
+  dangerous direction, since it would start matching blank text values with nothing to report
+  it.
+- [x] R.4 Asserted on the emitted SQL rather than on returned rows: the query is malformed
+  before PostgreSQL sees it, so the defect is fully visible in the string, and asserting on
+  rows would require a live database to reproduce something a unit test can catch.
