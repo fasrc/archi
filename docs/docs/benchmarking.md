@@ -890,6 +890,20 @@ It opens with a **confirmation census** — how many rows are `locked` versus `d
 composition, not a finding: a mostly-draft bank is a project status, so it never triggers a
 notification on its own.
 
+The census buckets rows by `anchor_type`, so that field has to be **text or absent** on every row —
+a bank where one carries a number, a list, or an object is refused before the passes run, with the
+row index in the message:
+
+```
+error: cannot census bank.json: row 12 has an `anchor_type` of type int; it must be text or absent
+```
+
+That refusal takes the ordinary startup-failure path (`census: null`, `notify: true`, non-zero
+exit), so a monitor sees it. Left unchecked the shapes fail in three different ways and none of
+them is useful: a list is unhashable and kills the census, a number silently becomes a bucket that
+does not exist in the bank, and a number *mixed with* text kills the run at the sort — with a raw
+traceback, and before the summary file is refreshed.
+
 `--allowed-hosts` serves both passes that need one — the hosts `drift` may contact and the extra
 hosts the sitemap may emit — because in practice they are the same list: hosts the operator
 vouched for.
@@ -911,14 +925,17 @@ barely-completed run as healthy. The exit code answers "did a pass break?"; the 
 
 #### The summary JSON — what every run reports
 
-`--summary-json <path>` is written on every terminating path — including when a pass **fails** and
-including when the bank itself fails to load — so the file is always current after the process
-exits. A completed run separates clean, findings, and a broken pass (`failed_passes` non-empty); a
-bank-load failure writes `census: null`, names the error in `failed_passes`, and sets `notify:
-true`. It records every count the report can take, and on a run that *completed* only the
-**notify buckets** decide whether a human is paged. A **startup failure overrides that**: no pass
-ran, so every bucket is zero, and `notify` is set `true` anyway. Read the `notify` field; do not
-re-derive it from the buckets, or a bank that failed to load reads as a clean night.
+`--summary-json <path>` is **attempted** on every terminating path — including when a pass **fails**
+and including when the bank itself fails to load. A completed run separates clean, findings, and a
+broken pass (`failed_passes` non-empty); a bank-load failure writes `census: null`, names the error
+in `failed_passes`, and sets `notify: true`. It records every count the report can take, and on a
+run that *completed* only the **notify buckets** decide whether a human is paged. A **startup
+failure overrides that**: no pass ran, so every bucket is zero, and `notify` is set `true` anyway.
+Read the `notify` field; do not re-derive it from the buckets, or a bank that failed to load reads
+as a clean night.
+
+"Attempted" is the operative word, and the reason a monitor still needs the exit code — see
+[the file is not self-certifying](#the-file-is-not-self-certifying) below.
 
 | Key | Type | Notify? | Meaning |
 | --- | --- | :---: | --- |
@@ -940,14 +957,28 @@ On an exit-zero run the nightly wrapper collapses these into one digest line —
 A **non-zero** run is a separate path: the wrapper mails the full report on stderr and never reads
 `notify`.
 
-**The exit code is the authoritative failure signal; the summary file is always current.**
-The summary is written on every terminating path — including a bank-load failure — so a monitor
-can read the file alone as a point-in-time snapshot. A startup failure that could not even read the
-bank sets `census: null`, names the error in `failed_passes`, and sets `notify: true`; a monitor
-reading only the file will see a clear failure state, not a stale success. That said, a missing file
-(a run that was killed or never reached the write) is still indistinguishable from a clean one by
-file inspection — **treat a missing summary as failure** and key the notification decision on the
-exit code first.
+#### The file is not self-certifying
+
+**A monitor must key on the exit code and on run freshness, not on the file alone.** Writing the
+summary on the bank-load path closes one specific hole — a run that could not read its bank used to
+leave last night's healthy file in place, so the file said "clean" about a run that never started.
+It does not make the file self-certifying, because two states still read as success from the file
+alone:
+
+- **The refresh itself failed.** `_write_summary` commits with `os.replace`, and deliberately leaves
+  the previous file intact if the write cannot complete (a full disk, a denied replace) — a
+  truncated summary would be worse than a stale one. The run exits non-zero and prints
+  `cannot write <path>`, but the file on disk is still the previous run's, healthy and wrong. When
+  the bank *also* failed to load, both errors go to stderr, so the operator sees the bank error and
+  not only the write error.
+- **The run never reached the write** — killed, OOM-ed, or never scheduled. The file is simply the
+  last one written, with nothing to distinguish it from a clean run that finished a minute ago.
+
+So the contract is: **treat a non-zero exit as failure; treat a missing summary as failure; treat a
+summary older than the schedule as failure** (compare its mtime against the expected run time, or
+read the wrapper's own completion signal). Only once the run is known to have completed is the
+file's content the authority on *what it found* — which is the question the exit code cannot answer,
+since findings exit zero.
 
 #### One broken pass does not hide the other two
 
@@ -970,6 +1001,37 @@ operator opts into rather than inherits.
 `report` writes nothing — not the bank, not the corpus, not the source list. The decision ledger
 is passed so that pages already declined stay suppressed from the nightly gap list; `report` reads
 it and never appends to it, because declining a page is an interactive decision.
+
+That contract is **enforced by path, not just by intent**. The tool refuses to start when a flag it
+writes (`--summary-json`, `--ledger`) names the same file as one it reads (`--bank`,
+`--corpus-json`, `--sources`, or the other output):
+
+```
+error: --summary-json and --bank are the same file (/srv/goldenset/bank.json). This run
+writes one and reads the other, so it would destroy its own input — give them separate paths.
+```
+
+The commit step is `os.replace`, which swaps the target's directory entry — so a `--summary-json`
+pointed at the bank does not add a summary, it *replaces the bank with one*, and the run that does
+it is the one where the bank was malformed and the operator was about to go repair it. Identity is
+compared by device and inode (and by resolved path for a target that does not exist yet), so a
+symlinked deployment directory or a second mount path is caught too, not just an exact string
+match. The refusal happens before the first read, so a rejected run has changed nothing.
+
+#### Preserved permissions on the files it does write
+
+The ledger and the summary are both replaced through a temp file, and `os.replace` installs that
+file's *metadata* along with its bytes. A fresh temp file is `0600`, owned by whoever ran the tool,
+with no extended attributes — so without care, the first successful write would revoke every grant
+an operator had put on the target. The mode bits, the owning user and group, and any POSIX ACL are
+therefore carried across from the existing target. This is what lets `0640 archi:monitor`, or a
+`setfacl -m u:monitor:r`, survive a nightly run: a health file the monitor cannot read is
+indistinguishable to it from a run with nothing to report.
+
+Each step is best effort — an unprivileged run cannot move a file to a different owner, and not
+every filesystem stores extended attributes — because losing the health signal over a metadata
+detail would be the worse failure. A **new** file keeps the temp file's `0600`: choosing a mode for
+a file that may carry error text is the operator's call, made with `chmod` once, not the tool's.
 
 #### Running it nightly
 

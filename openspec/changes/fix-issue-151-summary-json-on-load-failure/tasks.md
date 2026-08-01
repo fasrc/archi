@@ -22,3 +22,46 @@
 ## 4. Gate
 
 - [x] 4.1 Run `bash scripts/gate.sh` (format → lint → test, ≥80% diff coverage vs `origin/dev`) and confirm it exits 0.
+
+## 5. Review round 2 — Codex on PR #162 (4 findings)
+
+Making the summary write reachable on the startup-failure path put a *write* on
+a code path that previously only read. Three of the four findings are the
+consequences of that; the fourth is the doc overclaim it invited.
+
+- [x] 5.1 **P1 — `--summary-json` may alias the bank.** Red test: `report` with
+  `--summary-json` = `--bank` against a malformed bank replaces the bank with
+  the failure summary. Fix: `reject_aliased_outputs` in `main`, refusing any
+  output path (`--summary-json`, `--ledger`) that names another declared path,
+  by device+inode and by resolved path. Refused before dispatch, so nothing is
+  read or written.
+- [x] 5.2 **Class sweep for 5.1.** The other output is `--ledger`: with
+  `--ledger` = `--corpus-json`, `--undecline` reads the corpus dump as a decline
+  list and writes the remainder back over it (verified: exit 0, dump one row
+  short). Covered by the same guard. `--ledger` = `--bank` bounces off
+  decline-entry validation today, but only by luck; it is covered too.
+- [x] 5.3 **P2 — non-string `anchor_type`.** Red tests: a numeric
+  `anchor_type` mixed with text kills the run at
+  `sorted(census["anchor_type"].items())` (a `TypeError` no handler catches, so
+  no summary is written); an all-numeric bank does not crash at all and reports
+  a stringified bucket that is nowhere in the bank. Fix: validate the field's
+  type in `bank_census` up front and drop the `except TypeError` backstop, which
+  the validation strictly subsumes.
+- [x] 5.4 **P2 — replacement loses the target's group/ACL.** Red tests: group
+  ownership and a POSIX ACL, on both the summary and the ledger.
+  `_preserve_mode` became `_preserve_access` — chown, then chmod, then xattrs
+  (`system.posix_acl_access` included, copied with stdlib `os.*xattr`), all best
+  effort. Both call sites share it.
+- [x] 5.5 **P2 — docs overclaimed "always current".** Confirmed: `_write_summary`
+  leaves the prior file intact when the write fails, so a file-only monitor can
+  still read a stale success. New "The file is not self-certifying" section
+  names the two states that read as success from the file alone, and requires
+  exit code + freshness. Also fixed the swallowed diagnosis: a write failure
+  raised from inside the bank handler used to replace the bank error as the one
+  `main` printed — both now go to stderr, and the bank error propagates.
+- [x] 5.6 Docs for the new user-facing refusals (aliased paths, non-text
+  `anchor_type`) and the preserved-permission guarantee, in
+  `docs/docs/benchmarking.md`.
+- [x] 5.7 Mutation-check every fix: revert it, confirm the owning test fails,
+  restore. 8 mutations, each caught only by its own tests.
+- [x] 5.8 Re-run the gate.

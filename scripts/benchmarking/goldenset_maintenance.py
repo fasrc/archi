@@ -248,26 +248,77 @@ def read_ledger(path: Optional[str]) -> List[Any]:
     return entries
 
 
-def _preserve_mode(target: Path, tmp_name: str) -> None:
-    """Carry an existing target's permissions onto the replacement written for it.
+def _copy_xattrs(target: Path, tmp_name: str) -> None:
+    """Carry the target's extended attributes over, POSIX ACLs included.
 
-    `tempfile.mkstemp` creates its file 0600 by design, and `os.replace` installs
-    the temp file's mode along with its contents. So a replace-in-place write
-    silently revokes any access an operator had granted on the target — a
-    `--summary-json` health file made group-readable for a monitor running as
-    another Unix user becomes unreadable on the very next report run, and the
-    monitor cannot tell that apart from "nothing to report".
+    An ACL is not a mode bit: on Linux it lives in the `system.posix_acl_access`
+    xattr, so a file whose grant to a monitor is `setfacl -m u:monitor:r` keeps
+    that grant nowhere `chmod` can reach it. Per-attribute failures are skipped
+    rather than raised — `security.*` and `trusted.*` need privileges this tool
+    should not assume, and losing one of those is not worth losing the write.
+    """
+    if not hasattr(os, "listxattr"):  # pragma: no cover - non-Linux
+        return
+    try:
+        names = os.listxattr(str(target))
+    except OSError:  # pragma: no cover - filesystem carries no xattrs
+        return
+    for name in names:
+        try:
+            os.setxattr(tmp_name, name, os.getxattr(str(target), name))
+        except OSError:  # pragma: no cover - a namespace we may not write
+            continue
+
+
+def _preserve_access(target: Path, tmp_name: str) -> None:
+    """Carry an existing target's access metadata onto its replacement.
+
+    `tempfile.mkstemp` creates its file 0600, owned by the writing process, with
+    no extended attributes — and `os.replace` installs all of that along with the
+    contents. So a replace-in-place write silently revokes any access an operator
+    had granted on the target: a `--summary-json` health file readable by a
+    monitor running as another Unix user goes unreadable on the very next report
+    run, and the monitor cannot tell that apart from "nothing to report".
+
+    Three carriers, because any one of them alone can BE the grant, and copying
+    only the first leaves the other two revoked:
+
+    - the mode bits;
+    - the owning uid/gid — `0640 archi:monitor` grants through its GROUP, and
+      mkstemp's file is `archi:archi`, so mode alone still locks the monitor out;
+    - the POSIX ACL, which is an xattr (see `_copy_xattrs`).
+
+    Ordered chown → chmod → xattrs. chown before chmod because chowning clears
+    setuid/setgid; the ACL last because it encodes the base permission bits too,
+    so a chmod after it would rewrite its mask.
+
+    Every step is best-effort. An unprivileged run cannot move a file to another
+    uid, and not every filesystem carries xattrs — failing the write over
+    metadata would trade a cosmetic loss for a lost health signal, which is the
+    worse outcome.
 
     Applied only when the target already exists. Picking a mode for a NEW file is
     a policy decision this tool has no business making, and mkstemp's 0600 is the
     right default for one that can carry error text.
     """
-    if not target.exists():
+    try:
+        source = target.stat()
+    except OSError:  # no target yet, or it raced away — keep mkstemp's 0600
         return
     try:
-        os.chmod(tmp_name, stat.S_IMODE(target.stat().st_mode))
-    except OSError:  # pragma: no cover - raced away, or a mode-less filesystem
+        os.chown(tmp_name, source.st_uid, source.st_gid)
+    except OSError:
+        # Not privileged enough to move the uid. The GROUP can still be set by
+        # its own member, and that is the half that usually carries the grant.
+        try:
+            os.chown(tmp_name, -1, source.st_gid)
+        except OSError:  # pragma: no cover - not a member of the target's group
+            pass
+    try:
+        os.chmod(tmp_name, stat.S_IMODE(source.st_mode))
+    except OSError:  # pragma: no cover - a mode-less filesystem
         pass
+    _copy_xattrs(target, tmp_name)
 
 
 def write_ledger(path: str, entries: List[Any]) -> None:
@@ -316,7 +367,7 @@ def write_ledger(path: str, entries: List[Any]) -> None:
         os.fsync(handle.fileno())
         handle.close()
         handle = None
-        _preserve_mode(target, tmp_name)
+        _preserve_access(target, tmp_name)
         os.replace(tmp_name, target)
     except OSError as exc:
         if handle is not None:
@@ -1040,7 +1091,7 @@ def _write_summary(args: argparse.Namespace, summary: dict) -> None:
         json.dump(summary, handle, indent=2)
         handle.close()
         handle = None
-        _preserve_mode(target, tmp_name)
+        _preserve_access(target, tmp_name)
         os.replace(tmp_name, target)
     except OSError as exc:
         if handle is not None:
@@ -1057,25 +1108,38 @@ def bank_census(path: str) -> dict:
     """Bank composition, with a malformed row reported as an operational failure.
 
     `bank_status_counts` buckets rows by `anchor_type` and uses that value as a
-    dictionary key. A row carrying a list or object there is valid JSON and a
-    valid bank array, so it passes `load_bank` untouched and only dies inside the
-    census, unhashable.
+    dictionary key, so the field's type has to be checked before the census, not
+    after. Any non-text value is valid JSON inside a valid bank array — it passes
+    `load_bank` untouched — and then breaks in one of two ways depending on what
+    else is in the bank:
 
-    Left as a bare `TypeError` it matches neither `run_report`'s handler nor
-    `main`'s, so the process ends on a traceback **before** `--summary-json` is
-    written — and the monitor goes on reading the previous run's healthy file,
-    which is the exact failure this summary contract exists to close. A bank the
-    tool cannot census IS an operational failure, so it is raised as one and
-    takes the failure-summary path along with every other unreadable input.
+    - a list or object is **unhashable**, so the census itself dies;
+    - a number is a perfectly good key, so the census succeeds and the run dies
+      later at `sorted(census["anchor_type"].items())`, comparing `int` to `str`.
+
+    Both are `TypeError`, and neither matches `run_report`'s handler or `main`'s:
+    the process ends on a traceback **before** `--summary-json` is written, and
+    the monitor goes on reading the previous run's healthy file — the exact
+    failure this summary contract exists to close. A bank of nothing but numeric
+    anchor types does not even crash: it sorts fine, `json.dump` stringifies the
+    keys, and the census reports a bucket that is nowhere in the bank.
+
+    So the field is validated up front rather than caught downstream. A bank the
+    tool cannot census IS an operational failure, and raising it as one puts it
+    on the failure-summary path with every other unreadable input.
     """
     bank = load_bank(path)
-    try:
-        return bank_status_counts(bank)
-    except TypeError as exc:
+    for index, record in enumerate(bank):
+        if not isinstance(record, dict):
+            continue  # not a row the census reads a bucket from
+        anchor = record.get("anchor_type")
+        if anchor is None or isinstance(anchor, str):
+            continue
         raise OperationalError(
-            f"cannot census {path}: a row's `anchor_type` must be text or absent "
-            f"({exc})"
-        ) from exc
+            f"cannot census {path}: row {index} has an `anchor_type` of type "
+            f"{type(anchor).__name__}; it must be text or absent"
+        )
+    return bank_status_counts(bank)
 
 
 def run_report(args: argparse.Namespace) -> int:
@@ -1115,7 +1179,15 @@ def run_report(args: argparse.Namespace) -> int:
         summary["failed_passes"] = [f"bank: {exc}"]
         summary["census"] = None
         summary["notify"] = True
-        _write_summary(args, summary)
+        try:
+            _write_summary(args, summary)
+        except OperationalError as write_exc:
+            # Two failures at once, and only one of them is actionable. Letting
+            # the write error propagate from inside this handler would make it
+            # the exception `main` prints, telling the operator the disk is full
+            # and never that their bank is malformed. Both go to stderr; the
+            # bank error stays the one that propagates.
+            print(f"error: {write_exc}", file=sys.stderr)
         raise
 
     args.summary_sink = summary
@@ -1369,7 +1441,10 @@ def build_parser() -> argparse.ArgumentParser:
             "Write per-pass finding counts and any failed passes here, as JSON. "
             "The exit code carries only ran/broke, and findings exit zero, so an "
             "unattended wrapper needs this to tell a clean run from one with "
-            "work to do. Written on every path, including a failing run."
+            "work to do. Attempted on every path, including a failing run — but "
+            "a write that itself fails leaves the previous file in place, so a "
+            "monitor still has to check the exit code and the file's age. May "
+            "not name a file this run reads."
         ),
     )
     # The passes are reused verbatim, so the flags they read but `report` does not
@@ -1400,6 +1475,70 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: Every path flag, split by what the tool does with the file. Declared in ONE
+#: table so a new flag has an obvious place to be classified, rather than a
+#: second aliasing check growing somewhere else and going stale.
+_OUTPUT_PATH_FLAGS = ("summary_json", "ledger")
+_INPUT_PATH_FLAGS = ("bank", "corpus_json", "sources")
+
+
+def _same_file(one: Path, other: Path) -> bool:
+    """Whether two paths name one file — by identity, not by spelling.
+
+    Two checks, because neither subsumes the other:
+
+    - `samefile` compares device + inode, so it sees a hard link and, more to the
+      point, a second mount path to the same directory entry (a bind mount) that
+      no amount of path resolution can normalise. It needs both files to exist.
+    - resolved paths catch the case `samefile` cannot: an output that does not
+      exist YET but is spelled through a symlinked directory, which is how a
+      deployment reaching its data through `current -> releases/42` names one
+      file two ways.
+    """
+    try:
+        if one.samefile(other):
+            return True
+    except OSError:  # one of them does not exist yet — fall through
+        pass
+    return one.resolve() == other.resolve()
+
+
+def reject_aliased_outputs(args: argparse.Namespace) -> None:
+    """Refuse a run whose output path is also one of its inputs.
+
+    `os.replace` swaps the target's directory entry, so a `--summary-json`
+    pointed at the bank does not "also write the summary" — it destroys the bank.
+    The failure-summary path made that reachable on the one run where the input
+    matters most: the bank is malformed, the operator is about to go repair it,
+    and the failure summary lands on top of it. The same shape reaches the
+    ledger, whose `--undecline` write replaces a `--corpus-json` dump — a list of
+    objects that each carry a `url` validates as a decline ledger, so nothing
+    downstream refuses it.
+
+    Checked in `main` before the subcommand is dispatched, not at the write
+    itself: this is the one refusal that has to happen while it is still true
+    that nothing was read, printed or written. A tool that discovers the
+    collision at its commit point has already spent the run.
+    """
+    declared = []
+    for flag in _OUTPUT_PATH_FLAGS + _INPUT_PATH_FLAGS:
+        value = getattr(args, flag, None)
+        if value:
+            declared.append((flag, Path(value)))
+    for flag, path in declared:
+        if flag not in _OUTPUT_PATH_FLAGS:
+            continue
+        for other_flag, other_path in declared:
+            if other_flag == flag or not _same_file(path, other_path):
+                continue
+            raise OperationalError(
+                f"--{flag.replace('_', '-')} and --{other_flag.replace('_', '-')} "
+                f"are the same file ({path}). This run writes one and reads the "
+                "other, so it would destroy its own input — give them separate "
+                "paths."
+            )
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     if not getattr(args, "func", None):
@@ -1409,6 +1548,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return 2
     try:
+        reject_aliased_outputs(args)
         return args.func(args)
     except OperationalError as exc:
         print(f"error: {exc}", file=sys.stderr)

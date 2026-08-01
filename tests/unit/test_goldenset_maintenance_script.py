@@ -2305,6 +2305,73 @@ class TestReportSummaryJson:
         # worth of information ("unhashable type") and no idea which row.
         assert "anchor_type" in " ".join(summary["failed_passes"])
 
+    def test_a_numeric_anchor_type_mixed_with_text_writes_the_failure_summary(
+        self, tmp_path
+    ):
+        """A number is hashable, so it survives the census and dies at the sort.
+
+        `bank_status_counts` keys the distribution by whatever `anchor_type`
+        holds, and a number is a perfectly good dict key — so the unhashable
+        guard never sees it. The run instead dies on
+        `sorted(census["anchor_type"].items())`, comparing `int` with `str`,
+        which is a `TypeError` raised AFTER the bank handler and BEFORE the
+        summary write: traceback, no file, monitor still reading last night's
+        healthy snapshot.
+        """
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text(json.dumps({"notify": False}), encoding="utf-8")
+        bank = _bank(
+            tmp_path,
+            _row(f"{KB}/kb/a", anchor_type=3),
+            _row(f"{KB}/kb/b", anchor_type="faq"),
+        )
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+        summary = json.loads(out.read_text())
+
+        assert code == 1
+        assert summary["census"] is None
+        assert summary["notify"] is True
+        assert "anchor_type" in " ".join(summary["failed_passes"])
+
+    def test_a_bank_whose_anchor_types_are_all_numeric_is_rejected(self, tmp_path):
+        """No sort to crash here — which is exactly why the type must be checked.
+
+        One numeric `anchor_type` and nothing to compare it against sorts fine,
+        and `json.dump` then stringifies the key, so the census reports a bucket
+        `"3"` that is nowhere in the bank. Accepting it means the health file
+        quietly disagrees with the file it is describing; the tool has to refuse
+        the input rather than lean on a downstream crash to notice.
+        """
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        out = tmp_path / "summary.json"
+        bank = _bank(
+            tmp_path,
+            _locked_row(live, hashes={live: page_digest(GPU_HTML)}, anchor_type=3),
+        )
+        _fake_pages(script, {live: GPU_HTML})
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+        summary = json.loads(out.read_text())
+
+        assert code == 1
+        assert summary["census"] is None
+        assert "anchor_type" in " ".join(summary["failed_passes"])
+
     def test_replacing_a_summary_keeps_the_readers_it_already_had(self, tmp_path):
         """`mkstemp` creates 0600 and `os.replace` installs that over the target.
 
@@ -2398,6 +2465,402 @@ class TestReportSummaryJson:
         assert [
             p for p in tmp_path.iterdir() if p.suffix == ".tmp"
         ] == [], "no temp file litter may remain after a failed write"
+
+    def test_a_failed_refresh_still_names_the_bank_error(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Two failures at once must not hide the one the operator can act on.
+
+        The bank is unreadable AND the summary refresh fails. The write error is
+        raised from inside the bank handler, so left alone it replaces the bank
+        error as the exception `main` prints — the operator is told the disk is
+        full and never that their bank is malformed. Both have to be on stderr,
+        and the prior summary is left stale (which is why the exit code, not the
+        file, is the authoritative signal).
+        """
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        healthy = json.dumps({"failed_passes": [], "notify": False})
+        out.write_text(healthy, encoding="utf-8")
+        bank = tmp_path / "bank.json"
+        bank.write_text("{not valid json", encoding="utf-8")
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+        monkeypatch.setattr(
+            os, "replace", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))
+        )
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+        err = capsys.readouterr().err.lower()
+
+        assert code == 1
+        assert "cannot read" in err and str(bank).lower() in err
+        assert "cannot write" in err
+        assert out.read_text() == healthy, "a failed refresh leaves the file stale"
+
+
+def _supplementary_gid():
+    """A group this process belongs to that is NOT its default group, or None.
+
+    The whole point of the ownership fix is a target whose GROUP carries the
+    grant, so the test needs a second group to move the file into. An
+    unprivileged run cannot invent one.
+    """
+    for gid in os.getgroups():
+        if gid != os.getgid():
+            return gid
+    return None
+
+
+#: A POSIX ACL granting group 4242 read, in the on-disk format `system.
+#: posix_acl_access` uses (acl(5)): u32 version 2, then {u16 tag, u16 perm,
+#: u32 id} entries ordered by tag. Built here rather than shelled out to
+#: `setfacl`, so the test needs no binary that CI may not carry.
+def _acl_granting_group_read(gid=4242):
+    import struct
+
+    undefined = 0xFFFFFFFF
+    entries = [
+        (0x01, 6, undefined),  # ACL_USER_OBJ  rw-
+        (0x04, 4, undefined),  # ACL_GROUP_OBJ r--
+        (0x08, 4, gid),  # ACL_GROUP     r--  <- the grant under test
+        (0x10, 4, undefined),  # ACL_MASK      r--
+        (0x20, 0, undefined),  # ACL_OTHER     ---
+    ]
+    return struct.pack("<I", 2) + b"".join(
+        struct.pack("<HHI", tag, perm, ident) for tag, perm, ident in entries
+    )
+
+
+def _set_acl_or_skip(path):
+    if not hasattr(os, "setxattr"):
+        pytest.skip("extended attributes are a Linux thing")
+    acl = _acl_granting_group_read()
+    try:
+        os.setxattr(str(path), "system.posix_acl_access", acl)
+    except OSError as exc:
+        pytest.skip(f"filesystem carries no POSIX ACLs: {exc}")
+    return acl
+
+
+class TestReplacementKeepsTheAccessItsTargetHad:
+    """`os.replace` installs the temp file's metadata, not just its bytes.
+
+    `mkstemp` makes a 0600 file owned by the writer with no extended
+    attributes, so every grant an operator put on the target — mode bits, a
+    group that could read it, a named-user ACL — is revoked by the next
+    successful write. For the `--summary-json` health file that is the worst
+    kind of breakage: the monitor stops being able to read it and cannot tell
+    that apart from "nothing to report".
+    """
+
+    def _report(self, script, tmp_path, out):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        return script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+    def _decline(self, script, tmp_path, ledger):
+        url = f"{KB}/kb/b"
+        return script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(ledger),
+                "--reason",
+                "not worth a question",
+            ]
+        )
+
+    def test_summary_keeps_the_group_that_could_read_it(self, tmp_path):
+        gid = _supplementary_gid()
+        if gid is None:
+            pytest.skip("no supplementary group to hand the file to")
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text("{}", encoding="utf-8")
+        os.chown(out, -1, gid)
+        out.chmod(0o640)
+
+        assert self._report(script, tmp_path, out) == 0
+
+        # 0640 alone is not the grant: the group owning the file is.
+        assert out.stat().st_gid == gid
+        assert stat.S_IMODE(out.stat().st_mode) == 0o640
+
+    def test_summary_keeps_an_acl_that_named_a_reader(self, tmp_path):
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text("{}", encoding="utf-8")
+        acl = _set_acl_or_skip(out)
+
+        assert self._report(script, tmp_path, out) == 0
+
+        assert os.getxattr(str(out), "system.posix_acl_access") == acl
+
+    def test_ledger_keeps_the_group_that_could_read_it(self, tmp_path):
+        """Same commit step, second call site — the ledger replaces the same way."""
+        gid = _supplementary_gid()
+        if gid is None:
+            pytest.skip("no supplementary group to hand the file to")
+        script = _load_script()
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/a", "reason": "keep me"})
+        os.chown(ledger, -1, gid)
+        ledger.chmod(0o640)
+
+        self._decline(script, tmp_path, ledger)
+
+        assert ledger.stat().st_gid == gid
+        assert stat.S_IMODE(ledger.stat().st_mode) == 0o640
+
+    def test_ledger_keeps_an_acl_that_named_a_reader(self, tmp_path):
+        script = _load_script()
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/a", "reason": "keep me"})
+        acl = _set_acl_or_skip(ledger)
+
+        self._decline(script, tmp_path, ledger)
+
+        assert os.getxattr(str(ledger), "system.posix_acl_access") == acl
+
+
+class TestOutputPathsMayNotAliasInputs:
+    """A file this tool WRITES must never be one it has to READ.
+
+    `os.replace` installs the replacement over the target's directory entry, so
+    a `--summary-json` pointed at the bank does not "also write the summary" —
+    it destroys the bank. The bank-load-failure summary made that reachable on
+    the one run where the operator most needs the input preserved: the bank is
+    malformed, they are about to go repair it, and the failure summary lands on
+    top of it. The refusal is up front, before any pass runs and before any
+    write, so nothing is half-done when the run is rejected.
+    """
+
+    def _malformed_bank(self, tmp_path):
+        bank = tmp_path / "bank.json"
+        bank.write_text("{not valid json", encoding="utf-8")
+        return bank
+
+    def test_summary_json_pointed_at_a_malformed_bank_does_not_eat_it(
+        self, tmp_path, capsys
+    ):
+        script = _load_script()
+        bank = self._malformed_bank(tmp_path)
+        before = bank.read_bytes()
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(bank)]
+        )
+        err = capsys.readouterr().err
+
+        assert code == 1
+        assert bank.read_bytes() == before, "the bank the operator must repair is gone"
+        assert "--summary-json" in err and "--bank" in err
+
+    def test_summary_json_pointed_at_a_healthy_bank_is_refused_too(self, tmp_path):
+        """The success path replaces the target as thoroughly as the failure one."""
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        before = bank.read_bytes()
+        _fake_pages(script, {live: GPU_HTML})
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(bank),
+            ]
+        )
+
+        assert code == 1
+        assert bank.read_bytes() == before
+
+    def test_a_different_spelling_of_the_same_file_is_still_the_same_file(
+        self, tmp_path
+    ):
+        """Refusal is on file identity, not on the string the operator typed.
+
+        A deployment reaches its data through a symlinked directory
+        (`/srv/current -> /srv/releases/42`), so the two flags can name one file
+        without matching character for character. `os.replace` resolves the path
+        and eats the bank either way.
+        """
+        script = _load_script()
+        real = tmp_path / "releases"
+        real.mkdir()
+        bank = self._malformed_bank(real)
+        before = bank.read_bytes()
+        link = tmp_path / "current"
+        link.symlink_to(real, target_is_directory=True)
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+
+        code = script.main(
+            [
+                *_report_argv(bank, corpus, sources),
+                "--summary-json",
+                str(link / "bank.json"),
+            ]
+        )
+
+        assert code == 1
+        assert bank.read_bytes() == before
+
+    def test_a_hard_link_to_an_input_is_the_same_file(self, tmp_path):
+        """Identity is the inode, not the name.
+
+        A hard link survives `rename(2)` where a second name for the same
+        directory entry (a bind-mounted path, which no test can create
+        unprivileged) does not — but both are one file wearing two names, and
+        the flags have conflated an input with an output either way.
+        """
+        script = _load_script()
+        bank = self._malformed_bank(tmp_path)
+        alias = tmp_path / "summary.json"
+        os.link(bank, alias)
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(alias)]
+        )
+
+        assert code == 1
+        assert alias.read_text() == "{not valid json"
+
+    def test_summary_json_pointed_at_the_ledger_is_refused(self, tmp_path, capsys):
+        """The ledger is the one record that cannot be re-derived from the bank."""
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/gone", "reason": "retired"})
+        before = ledger.read_bytes()
+        _fake_pages(script, {live: GPU_HTML})
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--ledger",
+                str(ledger),
+                "--summary-json",
+                str(ledger),
+            ]
+        )
+        err = capsys.readouterr().err
+
+        assert code == 1
+        assert ledger.read_bytes() == before
+        assert "--ledger" in err and "--summary-json" in err
+
+    def test_two_outputs_on_one_path_are_refused_before_either_exists(self, tmp_path):
+        """Identity has to hold for a file that is not there yet.
+
+        `samefile` needs both ends on disk, and on a first run neither output is
+        — a missing ledger legitimately means "nothing declined yet". Left
+        unchecked the collision surfaces a night later, when the next run reads
+        the summary it wrote as if it were the ledger and refuses that instead.
+        """
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        shared = tmp_path / "nested" / "state.json"
+        shared.parent.mkdir()
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--ledger",
+                str(shared),
+                "--summary-json",
+                str(tmp_path / "nested" / ".." / "nested" / "state.json"),
+            ]
+        )
+
+        assert code == 1
+        assert not shared.exists(), "the run must be refused before anything is written"
+
+    def test_ledger_pointed_at_the_corpus_dump_is_refused(self, tmp_path, capsys):
+        """The same defect one output over — and this one is not caught by luck.
+
+        A `--ledger` aliasing the `--bank` happens to bounce off decline-entry
+        validation (bank rows carry no `url`). A corpus dump is a list of objects
+        that each DO have one, so it validates as a ledger: `--undecline` reads
+        the corpus as a decline list, drops the named row, and writes the
+        remainder back as the ledger. Verified before the guard existed — the
+        run printed `undeclined: … -> corpus.json`, exited zero, and left the
+        dump one row short and reindented.
+        """
+        script = _load_script()
+        url = f"{KB}/kb/b"
+        corpus = _corpus(tmp_path, url, f"{KB}/kb/c")
+        before = corpus.read_bytes()
+
+        code = script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(corpus),
+                "--undecline",
+                url,
+                "--ledger",
+                str(corpus),
+            ]
+        )
+        err = capsys.readouterr().err
+
+        assert code == 1
+        assert corpus.read_bytes() == before
+        assert "--ledger" in err and "--corpus-json" in err
+
+    def test_distinct_paths_in_one_directory_still_run(self, tmp_path):
+        """The guard must not fire on the ordinary layout: one dir, several files."""
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--ledger",
+                str(_ledger(tmp_path)),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+        assert code == 0
+        assert json.loads(out.read_text())["failed_passes"] == []
 
 
 class TestReportNotifiesOnDegradedRuns:
