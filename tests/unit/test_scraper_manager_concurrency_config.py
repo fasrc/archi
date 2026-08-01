@@ -11,6 +11,7 @@ import logging
 import pytest
 
 from src.data_manager.collectors.scrapers import scraper_manager as sm_module
+from src.data_manager.collectors.scrapers import sitemap_source
 from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
 
 
@@ -73,6 +74,65 @@ class TestScrapeWorkerTolerantParse:
         manager = make_manager({"scrape_workers": -5, "scrape_per_host_workers": -1})
         assert manager.scrape_workers == 1
         assert manager.scrape_per_host_workers == 1
+
+
+class TestNonFiniteConfigValues:
+    """YAML's `.inf` / `.nan` parse to floats that ``int()`` rejects.
+
+    ``int(float("inf"))`` raises ``OverflowError``, which is *not* a subclass of
+    ``ValueError``. Every tolerant int-coercion in this module documents a
+    fall-back-with-a-warning contract, so an uncaught ``OverflowError`` breaks
+    that contract by refusing to construct the manager at all.
+    """
+
+    def test_infinite_scrape_workers_falls_back_and_warns(self, make_manager, caplog):
+        with caplog.at_level(logging.WARNING):
+            manager = make_manager({"scrape_workers": float("inf")})
+        assert manager.scrape_workers == 8
+        assert "scrape_workers" in caplog.text
+
+    def test_infinite_per_host_workers_falls_back_and_warns(self, make_manager, caplog):
+        with caplog.at_level(logging.WARNING):
+            manager = make_manager({"scrape_per_host_workers": float("-inf")})
+        assert manager.scrape_per_host_workers == 4
+        assert "scrape_per_host_workers" in caplog.text
+
+    def test_nan_scrape_workers_falls_back(self, make_manager):
+        manager = make_manager({"scrape_workers": float("nan")})
+        assert manager.scrape_workers == 8
+
+    def test_infinite_max_pages_is_ignored_with_a_warning(self, make_manager, caplog):
+        with caplog.at_level(logging.WARNING):
+            manager = make_manager({"sources": {"links": {"max_pages": float("inf")}}})
+        assert manager.max_pages is None
+        assert "max_pages" in caplog.text
+
+    def test_infinite_sitemap_bounds_fall_back_to_defaults(
+        self, make_manager, monkeypatch
+    ):
+        manager = make_manager(
+            {
+                "sources": {
+                    "links": {
+                        "sitemap": {
+                            "min_pages": float("inf"),
+                            "max_pages": float("inf"),
+                        }
+                    }
+                }
+            }
+        )
+        captured = {}
+
+        def fake_expand(urls, fetch, policy):
+            captured["policy"] = policy
+            return []
+
+        monkeypatch.setattr(sitemap_source, "expand_sitemaps", fake_expand)
+        manager._expand_sitemaps(["https://x.example/sitemap.xml"])
+
+        assert captured["policy"].min_pages == 1
+        assert captured["policy"].max_pages == 20000
 
 
 class TestNoKnobCrossTalk:

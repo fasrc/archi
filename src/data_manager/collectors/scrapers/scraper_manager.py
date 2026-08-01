@@ -3,10 +3,14 @@ from __future__ import annotations
 import importlib
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from src.data_manager.collectors.persistence import PersistenceService
-from src.data_manager.collectors.scrapers.scrape_pool import run_seeds
+from src.data_manager.collectors.scrapers.scrape_pool import (
+    host_key,
+    run_seeds,
+    shared_host_limiter,
+)
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 from src.data_manager.collectors.scrapers.scraper import LinkScraper
 from src.utils.config_access import get_global_config
@@ -14,6 +18,14 @@ from src.utils.env import read_secret
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+# ``int()`` rejects a non-finite float with ``OverflowError``, which is NOT a
+# subclass of ``ValueError`` — so YAML's `.inf` (a perfectly ordinary way to write
+# "no limit") escapes a bare (TypeError, ValueError) guard and takes down whatever
+# is being constructed. Every tolerant coercion in this module promises to fall back
+# on bad input, so all of them catch this triple.
+_COERCION_ERRORS = (TypeError, ValueError, OverflowError)
 
 
 def _parse_worker_knob(value: Any, name: str, default: int) -> int:
@@ -27,7 +39,7 @@ def _parse_worker_knob(value: Any, name: str, default: int) -> int:
     else:
         try:
             resolved = int(value)
-        except (TypeError, ValueError):
+        except _COERCION_ERRORS:
             logger.warning(
                 "Invalid '%s' value %r. Falling back to default %d.",
                 name,
@@ -85,7 +97,7 @@ class ScraperManager:
         if raw_max_pages not in (None, ""):
             try:
                 self.max_pages = int(raw_max_pages)
-            except (TypeError, ValueError):
+            except _COERCION_ERRORS:
                 logger.warning(f"Invalid max_pages value {raw_max_pages}; ignoring.")
 
         # Scrape-phase concurrency knobs (issue #136). Independent of the embedding
@@ -394,6 +406,12 @@ class ScraperManager:
 
         depth = max_depth if max_depth is not None else self.base_depth
 
+        # One limiter object, used for two things: bounding the pool, and letting a
+        # crawl move its slot when a redirect lands it on a different host than the
+        # seed it was dispatched for (issue #136 review). It is the process-wide
+        # limiter, so an overlapping upload_url batch contends with this one.
+        limiter = shared_host_limiter(self.scrape_per_host_workers)
+
         def _scrape_one_seed(seed: str) -> int:
             # For standard link collection, don't use selenium for scraping (SSO
             # urls are handled separately via collect_sso). Each concurrent seed
@@ -408,6 +426,7 @@ class ScraperManager:
                 client=None,
                 use_client_for_scraping=False,
                 scraper=self._new_link_scraper(),
+                on_request_url=lambda url: limiter.rekey_current(host_key(url)),
             )
 
         try:
@@ -416,6 +435,7 @@ class ScraperManager:
                 _scrape_one_seed,
                 workers=self.scrape_workers,
                 per_host_workers=self.scrape_per_host_workers,
+                limiter=limiter,
             )
         finally:
             if authenticator is not None:
@@ -557,7 +577,7 @@ class ScraperManager:
         def _as_int(value, default: int) -> int:
             try:
                 return int(value)
-            except (TypeError, ValueError):
+            except _COERCION_ERRORS:
                 return default
 
         cfg = self.sitemap_config if isinstance(self.sitemap_config, dict) else {}
@@ -646,6 +666,7 @@ class ScraperManager:
         client=None,
         use_client_for_scraping: bool = False,
         scraper: Optional[LinkScraper] = None,
+        on_request_url: Optional[Callable[[str], None]] = None,
     ) -> int:
         """Scrape a URL and persist resources. Returns count of resources scraped."""
         # Parallel seed crawls pass their own per-worker scraper; the sequential
@@ -659,6 +680,7 @@ class ScraperManager:
                 max_depth=max_depth,
                 selenium_scrape=use_client_for_scraping,
                 max_pages=self.max_pages,
+                on_request_url=on_request_url,
             ):
                 persistence.persist_resource(resource, output_dir)
                 count += 1

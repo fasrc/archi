@@ -9,7 +9,11 @@ manager, a persistence service, or a Postgres connection.
 ``threading.Semaphore`` per hostname, exposed as a context manager. A worker
 acquires its seed's host slot for the duration of the crawl, so at most
 ``per_host_workers`` seeds targeting the same host run concurrently, independently
-of and in addition to the global worker pool bound.
+of and in addition to the global worker pool bound. A crawl that redirects onto a
+different host moves its slot there (``rekey_current``) so the cap follows the host
+actually being requested. Limiters are shared process-wide by cap
+(``shared_host_limiter``), because a budget owed to a server has to hold across
+every batch this process has in flight, not within one call.
 
 ``run_seeds`` is the bounded seed pool: it fans a list of seed URLs across a
 ``ThreadPoolExecutor`` sized by ``workers``, wraps each per-seed crawl in the
@@ -53,8 +57,20 @@ def host_key(url):
     hostname falls back to the raw string, which keeps the key stable and non-empty
     so malformed seeds contend only with themselves instead of collapsing into one
     shared ``""`` bucket.
+
+    ``urlsplit`` *raises* on a malformed authority (``http://[broken/path`` ->
+    ``ValueError: Invalid IPv6 URL``), and :func:`interleave_by_host` keys every
+    seed on the calling thread before a single future is submitted — outside the
+    per-seed fault isolation in :func:`run_seeds`. An unguarded parse would let one
+    bad line in a source list abort the whole ingest, so the same raw-seed fallback
+    covers unparseable URLs: the seed keeps a stable private slot and fails (or
+    succeeds) on its own.
     """
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        logger.debug("Unparseable seed URL %r; keying it on the raw string", url)
+        return url
     return parts.hostname or parts.netloc or url
 
 
@@ -101,12 +117,23 @@ class HostLimiter:
     actual per-host bound. Each worker acquires exactly one semaphore and holds no
     other lock while blocking on it, so there is no acquisition ordering and no
     deadlock cycle.
+
+    A thread holds at most one slot at a time, and which host that slot belongs to
+    can change mid-crawl — see :meth:`rekey_current`. That "current slot" is tracked
+    per thread, which is the exactly right scope here: one seed crawl runs start to
+    finish on one pool thread.
     """
 
     def __init__(self, per_host_workers):
         self._per_host = max(1, int(per_host_workers))
         self._lock = threading.Lock()
         self._semaphores = {}
+        self._held = threading.local()
+
+    @property
+    def per_host_workers(self):
+        """The effective (clamped) per-host cap this limiter enforces."""
+        return self._per_host
 
     def _semaphore_for(self, host):
         with self._lock:
@@ -121,17 +148,91 @@ class HostLimiter:
         """Hold a slot for ``host`` for the duration of the ``with`` block.
 
         Blocks until a slot is free, and releases it on exit even if the guarded
-        body raises, so a failing crawl never leaks its host slot.
+        body raises, so a failing crawl never leaks its host slot. The slot released
+        on exit is whichever host is current at that moment, so a :meth:`rekey_current`
+        performed inside the block is honored rather than double-releasing the
+        original host.
         """
         sem = self._semaphore_for(host)
         sem.acquire()
+        previous = getattr(self._held, "host", None)
+        self._held.host = host
         try:
             yield
         finally:
-            sem.release()
+            current = getattr(self._held, "host", None)
+            self._held.host = previous
+            if current is not None:
+                self._semaphore_for(current).release()
+
+    def rekey_current(self, host):
+        """Move this thread's held slot to ``host``.
+
+        ``requests`` follows redirects transparently and ``LinkScraper`` resolves the
+        rest of a crawl against the response's *final* URL, so a seed on one host can
+        spend its entire crawl requesting another. Keyed on the seed alone, two such
+        crawls from different origins occupy two semaphores while pounding one
+        destination — the cap is enforced against hosts nobody is talking to.
+
+        Called with the host actually being requested, this hands the old slot back
+        and takes the destination's. The release happens *before* the acquire on
+        purpose: a thread never holds two host slots at once, so two crawls that swap
+        hosts in opposite directions cannot deadlock against each other. The cost is
+        that the destination can momentarily hold one acquirer more than the cap
+        during the swap window, which is the right trade against a deadlock.
+
+        A no-op when this thread holds no slot (the sequential and selenium/SSO paths
+        never enter the limiter) or is already keyed to ``host`` (the common case,
+        called once per response).
+        """
+        current = getattr(self._held, "host", None)
+        if current is None or current == host:
+            return
+        self._semaphore_for(current).release()
+        # Hold nothing while blocking, and leave nothing to release if the acquire
+        # below is interrupted.
+        self._held.host = None
+        self._semaphore_for(host).acquire()
+        self._held.host = host
 
 
-def run_seeds(seeds, scrape_one, workers, per_host_workers):
+# The per-host cap is a politeness budget owed to a *server*, so it has to hold
+# across everything this process is doing at once, not within one call. A single
+# ``ScraperManager`` is shared by the data-manager's cron ingest thread and the
+# uploader's `/document_index/upload_url` handler (see `src/bin/service_data_manager.py`),
+# so batches genuinely overlap; a limiter built per ``run_seeds`` call would let each
+# batch spend the full budget independently and multiply the real request rate at one
+# host by the number of batches in flight.
+#
+# Keyed by the effective cap: batches configured differently get different limiters.
+# In practice every batch reads the same config, so they share one. Callers that need
+# an isolated bound pass ``limiter=`` to :func:`run_seeds` explicitly.
+_SHARED_LIMITERS = {}
+_SHARED_LIMITERS_LOCK = threading.Lock()
+
+
+def shared_host_limiter(per_host_workers):
+    """Return the process-wide :class:`HostLimiter` for ``per_host_workers``."""
+    cap = max(1, int(per_host_workers))
+    with _SHARED_LIMITERS_LOCK:
+        limiter = _SHARED_LIMITERS.get(cap)
+        if limiter is None:
+            limiter = HostLimiter(cap)
+            _SHARED_LIMITERS[cap] = limiter
+        return limiter
+
+
+def reset_shared_host_limiters():
+    """Drop the process-wide limiter registry.
+
+    Exists so tests can start from a clean bound; production code has no reason to
+    call it, and doing so mid-run would detach in-flight crawls from the cap.
+    """
+    with _SHARED_LIMITERS_LOCK:
+        _SHARED_LIMITERS.clear()
+
+
+def run_seeds(seeds, scrape_one, workers, per_host_workers, limiter=None):
     """Scrape ``seeds`` concurrently, bounded globally and per host.
 
     ``seeds`` is an ordered iterable of seed URLs; ``scrape_one(seed)`` performs
@@ -140,6 +241,12 @@ def run_seeds(seeds, scrape_one, workers, per_host_workers):
     holds its host's slot (derived from the seed URL's network location) via a
     ``HostLimiter`` bounded by ``per_host_workers`` — so the per-host cap applies
     even when the global pool has idle capacity.
+
+    That limiter is the process-wide one for ``per_host_workers``
+    (:func:`shared_host_limiter`), so concurrent batches contend with each other
+    rather than each spending the budget again. Pass ``limiter`` to override it —
+    the caller then owns the bound, and ``per_host_workers`` is used only for the
+    summary line.
 
     With more than one worker the seeds are dispatched round-robin across hosts
     (see :func:`interleave_by_host`) so a host-grouped input list cannot starve the
@@ -161,7 +268,8 @@ def run_seeds(seeds, scrape_one, workers, per_host_workers):
     workers = max(1, int(workers))
     if workers > 1:
         seeds = interleave_by_host(seeds)
-    limiter = HostLimiter(per_host_workers)
+    if limiter is None:
+        limiter = shared_host_limiter(per_host_workers)
     started = time.perf_counter()
 
     def _work(seed):
@@ -183,7 +291,7 @@ def run_seeds(seeds, scrape_one, workers, per_host_workers):
         "link scrape phase complete: %d seeds, %d workers, per-host cap %d, %.2fs elapsed",
         len(seeds),
         workers,
-        limiter._per_host,
+        limiter.per_host_workers,
         elapsed,
     )
     return total

@@ -91,7 +91,7 @@ class TestPoolDoesNotReDedup:
 
         recorded = {}
 
-        def spy_run_seeds(seeds, scrape_one, workers, per_host_workers):
+        def spy_run_seeds(seeds, scrape_one, workers, per_host_workers, limiter=None):
             recorded["seeds"] = list(seeds)
             return 0
 

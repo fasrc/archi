@@ -27,8 +27,9 @@ discovery *within* a single seed's crawl SHALL remain sequential.
 The system SHALL cap the number of concurrent in-flight requests to any single
 host at `data_manager.scrape_per_host_workers`, independently of and in addition
 to the global `scrape_workers` bound. Hosts SHALL be identified by the network
-location (hostname) of the seed URL. The cap SHALL be enforced even when the
-global worker pool has idle capacity.
+location (hostname) of the URL actually being requested. The cap SHALL be
+enforced even when the global worker pool has idle capacity, and SHALL hold
+across every scrape batch the process has in flight rather than per batch.
 
 #### Scenario: Many seeds on one host respect the cap
 
@@ -44,6 +45,21 @@ global worker pool has idle capacity.
 
 - **WHEN** more seeds target a single host than the per-host cap allows
 - **THEN** every seed is still eventually scraped, and the returned resource count includes all of them
+
+#### Scenario: Overlapping batches share one host budget
+
+- **WHEN** a scheduled link ingest and an `/document_index/upload_url` request scrape the same host at the same time with `scrape_per_host_workers` of 1
+- **THEN** the second batch waits for the first batch's slot rather than taking a slot of its own, so the host never sees more than one concurrent request
+
+#### Scenario: A redirected crawl moves onto the destination host's slot
+
+- **WHEN** two seeds on different hosts each redirect to `dest.example` and `scrape_per_host_workers` is 1
+- **THEN** only one of the two crawls requests `dest.example` at a time, because each crawl re-keys its slot to the response's final host instead of holding its original seed host's slot
+
+#### Scenario: An unparseable seed does not abort the batch
+
+- **WHEN** a source list contains a malformed URL such as `http://[broken/path` alongside valid seeds and `scrape_workers` is greater than 1
+- **THEN** the malformed seed is keyed on its raw string and contends only with itself, and every other seed in the batch is still scraped
 
 ### Requirement: Each worker uses its own crawler instance
 
@@ -104,6 +120,23 @@ be dropped or duplicated under concurrency.
 - **WHEN** many seeds complete concurrently, each contributing a nonzero resource count
 - **THEN** the returned total equals the exact sum of the per-seed counts
 
+### Requirement: Persistence of one resource is serialised
+
+The system SHALL ensure that two concurrent seed crawls persisting the same
+resource (same resource hash, and therefore the same file path and catalog row)
+do not interleave the existence check, the file write, the size measurement, and
+the catalog upsert. Persistence of *distinct* resources SHALL remain concurrent.
+
+#### Scenario: Overlapping seed graphs persist a shared page once
+
+- **WHEN** two workers persist the same URL at the same time through one shared `PersistenceService`
+- **THEN** only one of them writes the file, the other takes the already-exists path, and both catalog rows record the size of the bytes actually on disk
+
+#### Scenario: Unrelated resources are not serialised
+
+- **WHEN** one worker is inside the write for resource A and another persists a different resource B
+- **THEN** B does not wait for A, so the per-resource lock never serialises the scrape phase as a whole
+
 ### Requirement: Per-seed fault isolation
 
 The system SHALL isolate failures to the seed that caused them. An exception
@@ -129,7 +162,9 @@ respectively when unset. Both SHALL be coerced to integers, SHALL fall back to
 their defaults with a logged warning when the configured value is not a valid
 integer, and SHALL be clamped to a minimum of 1. These knobs SHALL be documented
 in `src/cli/templates/base-config.yaml` and SHALL be independent of the existing
-embedding-phase `data_manager.parallel_workers` knob.
+embedding-phase `data_manager.parallel_workers` knob. A value explicitly
+configured for a CLI deployment SHALL reach that runtime normalization unchanged,
+including `0` and negative numbers.
 
 #### Scenario: Defaults apply when unset
 
@@ -145,6 +180,16 @@ embedding-phase `data_manager.parallel_workers` knob.
 
 - **WHEN** `scrape_workers` is configured as 0 or a negative number
 - **THEN** the effective value is 1
+
+#### Scenario: Non-finite values fall back rather than crashing
+
+- **WHEN** a concurrency or page-bound knob is configured as YAML `.inf`
+- **THEN** the value falls back to its default with a logged warning, because `int()` rejects a non-finite float with `OverflowError` rather than `ValueError`
+
+#### Scenario: A configured zero survives template rendering
+
+- **WHEN** a CLI deployment sets `scrape_workers: 0` and the base config is rendered
+- **THEN** the rendered config contains `0` — not the shipped default of 8 — so the runtime clamp is what decides the effective value
 
 #### Scenario: Embedding concurrency is unaffected
 

@@ -189,8 +189,20 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 > **Note:** `scrape_workers` and `scrape_per_host_workers` control the **scrape
 > phase** only and are independent of `parallel_workers`, which governs the
 > **embedding phase**. Both scrape knobs coerce to `int`, fall back to their
-> defaults on invalid values, and clamp to a minimum of `1`. Setting
-> `scrape_workers: 1` reproduces the sequential scrape path exactly, in input order.
+> defaults on invalid values (including YAML's non-finite `.inf` / `.nan`), and
+> clamp to a minimum of `1` — so `scrape_workers: 0` is accepted and means `1`, not
+> the default of `8`. Setting `scrape_workers: 1` reproduces the sequential scrape
+> path exactly, in input order.
+>
+> **What "per host" means.** `scrape_per_host_workers` is a budget owed to a
+> *server*, so it is enforced across the whole data-manager process, not per
+> collection run: a scheduled link ingest and a `/document_index/upload_url`
+> request that overlap contend for the same slots rather than each spending the
+> full budget. Host slots also follow redirects — a seed on `example.org` that
+> redirects to `www.example.org` moves onto the destination's slot for the rest of
+> its crawl, so seeds that funnel into one host cannot collectively exceed the cap
+> there. A seed URL the parser cannot read at all gets its own private slot and
+> fails on its own instead of aborting the run.
 >
 > **Database impact of raising `scrape_workers`.** The scrape persistence path does
 > **not** use the pooled connections in `src/utils/connection_pool.py`. Each catalog

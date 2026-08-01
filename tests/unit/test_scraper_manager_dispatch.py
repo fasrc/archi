@@ -13,7 +13,18 @@ untouched.
 import pytest
 
 from src.data_manager.collectors.scrapers import scraper_manager as sm_module
+from src.data_manager.collectors.scrapers.scrape_pool import (
+    reset_shared_host_limiters,
+    shared_host_limiter,
+)
 from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
+
+
+@pytest.fixture(autouse=True)
+def _isolate_shared_limiters():
+    reset_shared_host_limiters()
+    yield
+    reset_shared_host_limiters()
 
 
 @pytest.fixture
@@ -39,11 +50,12 @@ def _install_run_seeds_spy(monkeypatch, recorded, total):
     invoked, which is what makes this test fail.
     """
 
-    def spy_run_seeds(seeds, scrape_one, workers, per_host_workers):
+    def spy_run_seeds(seeds, scrape_one, workers, per_host_workers, limiter=None):
         recorded["seeds"] = list(seeds)
         recorded["scrape_one"] = scrape_one
         recorded["workers"] = workers
         recorded["per_host_workers"] = per_host_workers
+        recorded["limiter"] = limiter
         return total
 
     monkeypatch.setattr(sm_module, "run_seeds", spy_run_seeds, raising=False)
@@ -72,6 +84,10 @@ class TestStandardPathDispatchesThroughPool:
         assert recorded["workers"] == 5
         assert recorded["per_host_workers"] == 3
         assert callable(recorded["scrape_one"])
+        # The pool is handed the PROCESS-WIDE limiter for that cap, not a fresh one,
+        # so a concurrent upload_url batch contends with this ingest instead of
+        # spending the per-host budget a second time.
+        assert recorded["limiter"] is shared_host_limiter(3)
         # The method returns the pool's summed total verbatim.
         assert total == sentinel_total
 

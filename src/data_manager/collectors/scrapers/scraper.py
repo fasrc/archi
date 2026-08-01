@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Iterator, List, Optional
+from typing import Callable, Dict, Iterator, List, Optional
 from urllib.parse import urldefrag, urljoin, urlparse
 
 import requests
@@ -170,6 +170,7 @@ class LinkScraper:
         selenium_scrape: bool = False,
         max_pages: Optional[int] = None,
         collect_page_data: bool = False,
+        on_request_url: Optional[Callable[[str], None]] = None,
     ) -> Iterator[ScrapedResource]:
         """
         crawl pages from a given starting url up to a given depth either using basic http or a provided browser client
@@ -181,6 +182,14 @@ class LinkScraper:
             selenium_scrape (bool): tracks whether or not the page should be scraped through selenium or not
             max_pages (int | None): cap on total pages to visit before stopping
             collect_page_data (bool): whether to store resources on the scraper instance
+            on_request_url (Callable[[str], None] | None): called with the FINAL url of
+                each http response, after redirects. The parallel scrape path uses this
+                to keep its per-host concurrency slot on the host it is really talking
+                to: `requests` follows redirects transparently and the rest of the crawl
+                is resolved against that final url, so a seed can spend its whole crawl
+                off its original host. Ignored on the selenium path, which is sequential
+                and takes no slot. The callback may block (that is the point) but must
+                not raise.
 
         Returns: Iterator[ScrapedResource]
 
@@ -262,6 +271,11 @@ class LinkScraper:
                 if not selenium_scrape:
                     assert session is not None  # REMOVELATER
                     response = session.get(current_url, verify=self.verify_urls)
+                    # Report the post-redirect host before raise_for_status: an
+                    # error response still cost the destination a request, and the
+                    # caller's concurrency slot should follow it either way.
+                    if on_request_url is not None:
+                        on_request_url(getattr(response, "url", None) or current_url)
                     response.raise_for_status()
                 else:
                     assert browserclient is not None  # REMOVELATER

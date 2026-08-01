@@ -53,3 +53,18 @@
 - [x] 8.2 Update `docs/` for the two new user-facing config knobs (project convention: user-facing config changes ship docs in the same change).
 - [x] 8.3 Run `bash scripts/gate.sh` (black 24.10.0 + isort 6.0.1, `pytest tests/unit/`, diff-cover `--fail-under=80` vs `origin/dev`) and confirm exit 0 before every commit. Never `--no-verify`.
 - [x] 8.4 Open a PR against `fasrc/archi:dev` with `closes #136`. No `Co-Authored-By` trailers. Do not merge.
+
+## 9. Review round 2 (Codex, PR #145)
+
+Eight findings. Six confirmed and fixed, one confirmed and fixed as a stale
+comment, one disputed on its premise. Every fix has a failing-first test and a
+mutation check (revert the fix, watch the owning test fail, restore).
+
+- [x] 9.1 **Share the host limiter across concurrent batches** (`scrape_pool.py:164`). Confirmed: `service_data_manager.py` runs the cron ingest thread and the uploader's `/document_index/upload_url` handler against one `ScraperManager`, so batches overlap and a per-call limiter lets each spend the per-host budget again. Added a process-wide registry keyed by the effective cap (`shared_host_limiter`) plus a `limiter=` override on `run_seeds`.
+- [x] 9.2 **Key redirected crawls by the destination host** (`scrape_pool.py:169`). Confirmed: `requests` follows redirects and `reap` resolves the rest of the crawl against `response.url`, so a seed spends its crawl off its origin host while holding the origin's slot. Added `HostLimiter.rekey_current` (release-then-acquire, so no thread ever holds two host slots and swaps cannot deadlock) and an `on_request_url` callback from `crawl_iter` through `_handle_standard_url`.
+- [x] 9.3 **Isolate malformed URL parsing to its seed** (`scrape_pool.py:58`). Confirmed: `urlsplit("http://[broken/path")` raises `ValueError`, and `interleave_by_host` keys every seed on the calling thread before any future exists — outside the per-seed isolation. `host_key` now falls back to the raw seed string.
+- [x] 9.4 **Serialize persistence for overlapping seed crawls** (`scraper_manager.py:418`). Confirmed: `ScrapedResource.get_hash()` is `md5(url)` and the filename derives from it, so overlapping seed graphs give two workers the same path and row; `persist_resource` is an unsynchronised exists/write/stat/upsert over that. Added a per-resource-hash lock in `PersistenceService`.
+- [x] 9.5 **Fall back on non-finite worker settings** (`scraper_manager.py:23`). Confirmed: `int(float("inf"))` raises `OverflowError`, not `ValueError`. Fixed the class, not the instance — `_parse_worker_knob`, the `max_pages` parse, and `_expand_sitemaps._as_int` all now share `_COERCION_ERRORS`.
+- [x] 9.6 **Correct the generated config's database tuning guidance** (`base-config.yaml:219`). Confirmed: the template still told operators to raise `src/utils/connection_pool.py`, which the scrape write path never uses. Replaced with the `max_connections` guidance already in `docs/docs/configuration.md`, and added a test that fails if the two artifacts drift apart again.
+- [x] 9.7 **Preserve zero-valued scrape limits during rendering** (`base-config.yaml:221`). Confirmed: `default(x, true)` replaces every falsey value, so `scrape_workers: 0` rendered as `8`. Switched both knobs to the undefined-only form already used by `min_pages`.
+- [x] 9.8 **Avoid PEP 585 annotations in Python 3.7 tests** — **disputed on the premise**, no change. The floor in `pyproject.toml` / `AGENTS.md` is stale: `src/bin/service_benchmark.py` uses `match` statements (3.10+), several pinned dependencies require >= 3.9, and CI pins 3.11. There is no environment in which collection fails, and eight files repo-wide use the same annotation form. Recorded as a follow-up to correct `requires-python` rather than patching two of the eight.

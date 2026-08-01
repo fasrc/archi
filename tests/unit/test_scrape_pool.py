@@ -15,12 +15,26 @@ until a slot for that host is free, and leaving it releases the slot.
 import logging
 import threading
 
+import pytest
+
 from src.data_manager.collectors.scrapers.scrape_pool import (
     HostLimiter,
     host_key,
     interleave_by_host,
+    reset_shared_host_limiters,
     run_seeds,
+    shared_host_limiter,
 )
+
+
+# The default limiter is process-wide (so overlapping batches contend), which is
+# shared state between tests. Clear the registry around every test so a case that
+# saturates a host cannot influence the next one.
+@pytest.fixture(autouse=True)
+def _isolate_shared_limiters():
+    reset_shared_host_limiters()
+    yield
+    reset_shared_host_limiters()
 
 
 class _PeakTracker:
@@ -480,3 +494,217 @@ class TestFairHostScheduling:
 
         assert total == 3
         assert calls == seeds
+
+
+class TestMalformedSeedIsolation:
+    """A seed the URL parser rejects must fail alone, not abort the batch.
+
+    ``urlsplit`` raises ``ValueError`` on a malformed authority such as
+    ``http://[broken/path``. ``interleave_by_host`` keys *every* seed before any
+    future is submitted, on the calling thread — outside the per-seed
+    try/except — so an unguarded parse turns one bad list entry into a dead
+    ingest.
+    """
+
+    MALFORMED = "http://[broken/path"
+
+    def test_host_key_falls_back_to_the_raw_seed(self):
+        assert host_key(self.MALFORMED) == self.MALFORMED
+
+    def test_interleave_tolerates_a_malformed_seed(self):
+        seeds = [
+            "https://a.example.edu/1",
+            self.MALFORMED,
+            "https://a.example.edu/2",
+        ]
+        assert sorted(interleave_by_host(seeds)) == sorted(seeds)
+
+    def test_malformed_seeds_contend_only_with_themselves(self):
+        # Two distinct malformed seeds must not collapse into one shared slot.
+        assert host_key(self.MALFORMED) != host_key("http://[also-broken/x")
+
+    def test_one_malformed_seed_does_not_abort_the_batch(self):
+        seeds = [
+            "https://a.example.edu/1",
+            self.MALFORMED,
+            "https://b.example.edu/1",
+        ]
+        scraped = []
+        lock = threading.Lock()
+
+        def scrape_one(seed):
+            with lock:
+                scraped.append(seed)
+            return 1
+
+        total = run_seeds(seeds, scrape_one, workers=4, per_host_workers=2)
+
+        assert total == 3
+        assert sorted(scraped) == sorted(seeds)
+
+
+class TestSharedLimiterAcrossBatches:
+    """The per-host cap is a property of the process, not of one ``run_seeds`` call.
+
+    ``ScraperManager`` is a single instance shared by the cron ingest thread and
+    the uploader's ``/document_index/upload_url`` handler, so two batches can be
+    in flight at once. A limiter built per call lets each batch spend the full
+    per-host budget independently.
+    """
+
+    def test_overlapping_batches_contend_for_the_same_host_slot(self):
+        entered_first = threading.Event()
+        entered_second = threading.Event()
+        release_first = threading.Event()
+        seen = []
+        lock = threading.Lock()
+
+        def scrape_one(seed):
+            with lock:
+                is_first = not seen
+                seen.append(seed)
+            if is_first:
+                entered_first.set()
+                assert release_first.wait(10)
+            else:
+                entered_second.set()
+            return 1
+
+        results = {}
+
+        def batch(name, seed):
+            results[name] = run_seeds([seed], scrape_one, workers=2, per_host_workers=1)
+
+        first = threading.Thread(target=batch, args=("a", "https://same.example/a"))
+        first.start()
+        assert entered_first.wait(10), "first batch never started its seed"
+
+        second = threading.Thread(target=batch, args=("b", "https://same.example/b"))
+        second.start()
+        # With one shared slot for `same.example`, the second batch must wait.
+        assert not entered_second.wait(
+            0.5
+        ), "second batch bypassed the per-host cap of the first"
+
+        release_first.set()
+        first.join(10)
+        second.join(10)
+        assert entered_second.is_set()
+        assert results == {"a": 1, "b": 1}
+
+    def test_same_cap_returns_the_same_limiter(self):
+        assert shared_host_limiter(4) is shared_host_limiter(4)
+
+    def test_reset_drops_the_registry(self):
+        before = shared_host_limiter(4)
+        reset_shared_host_limiters()
+        assert shared_host_limiter(4) is not before
+
+    def test_an_injected_limiter_overrides_the_shared_one(self):
+        # The injected limiter's own cap is what binds, not ``per_host_workers``.
+        injected = HostLimiter(1)
+        tracker = _PeakTracker()
+
+        def scrape_one(seed):
+            with tracker.enter():
+                return 1
+
+        seeds = [f"https://x.example/{i}" for i in range(6)]
+        total = run_seeds(
+            seeds, scrape_one, workers=6, per_host_workers=8, limiter=injected
+        )
+
+        assert total == 6
+        assert tracker.peak == 1
+
+
+class TestRedirectedCrawlsFollowTheDestinationHost:
+    """A crawl that redirects off its seed host must move to the destination's slot.
+
+    ``requests`` follows redirects and ``LinkScraper`` resolves the rest of the
+    crawl against the response's final URL, so a seed on ``a.example`` that lands
+    on ``dest.example`` spends its whole life requesting ``dest.example`` while
+    holding ``a.example``'s slot.
+    """
+
+    def test_rekey_frees_the_original_host_slot(self):
+        limiter = HostLimiter(1)
+        moved = threading.Event()
+        release = threading.Event()
+
+        def hold_then_move():
+            with limiter.acquire("a.example"):
+                limiter.rekey_current("dest.example")
+                moved.set()
+                assert release.wait(10)
+
+        holder = threading.Thread(target=hold_then_move)
+        holder.start()
+        assert moved.wait(10)
+
+        # `a.example` was handed back, so a second acquirer gets it immediately.
+        got_original = threading.Event()
+
+        def take_original():
+            with limiter.acquire("a.example"):
+                got_original.set()
+
+        taker = threading.Thread(target=take_original)
+        taker.start()
+        assert got_original.wait(5), "rekey did not release the original host slot"
+
+        release.set()
+        holder.join(10)
+        taker.join(10)
+
+    def test_rekey_to_the_same_host_keeps_the_slot(self):
+        limiter = HostLimiter(1)
+        with limiter.acquire("a.example"):
+            limiter.rekey_current("a.example")
+            assert not limiter._semaphore_for("a.example").acquire(blocking=False)
+
+    def test_rekey_without_a_held_slot_is_a_noop(self):
+        limiter = HostLimiter(1)
+        limiter.rekey_current("a.example")
+        # Nothing was taken, so the slot is still free.
+        assert limiter._semaphore_for("a.example").acquire(blocking=False)
+
+    def test_two_seeds_redirecting_to_one_host_share_its_cap(self):
+        limiter = HostLimiter(1)
+        entered_first = threading.Event()
+        entered_second = threading.Event()
+        release_first = threading.Event()
+        seen = []
+        lock = threading.Lock()
+
+        def scrape_one(seed):
+            # Stands in for the crawl learning its response's final URL.
+            limiter.rekey_current(host_key("https://dest.example/landing"))
+            with lock:
+                is_first = not seen
+                seen.append(seed)
+            if is_first:
+                entered_first.set()
+                assert release_first.wait(10)
+            else:
+                entered_second.set()
+            return 1
+
+        seeds = ["https://a.example/", "https://b.example/"]
+        totals = []
+        runner = threading.Thread(
+            target=lambda: totals.append(
+                run_seeds(
+                    seeds, scrape_one, workers=4, per_host_workers=1, limiter=limiter
+                )
+            )
+        )
+        runner.start()
+        assert entered_first.wait(10)
+        assert not entered_second.wait(
+            0.5
+        ), "both crawls hit dest.example at once despite a per-host cap of 1"
+
+        release_first.set()
+        runner.join(10)
+        assert totals == [2]

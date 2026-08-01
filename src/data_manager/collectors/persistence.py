@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Union
 
@@ -21,13 +22,50 @@ class PersistenceService:
 
         self.catalog = PostgresCatalogService(self.data_path, pg_config=self.pg_config)
 
+        # One lock per resource hash, created on demand — see persist_resource.
+        # The registry grows to at most one small lock per distinct resource the
+        # process has persisted, which is strictly bounded by the corpus already
+        # held on disk and in the catalog.
+        self._resource_locks: Dict[str, threading.Lock] = {}
+        self._resource_locks_guard = threading.Lock()
+
+    def _lock_for_resource(self, resource_hash: str) -> threading.Lock:
+        with self._resource_locks_guard:
+            lock = self._resource_locks.get(resource_hash)
+            if lock is None:
+                lock = threading.Lock()
+                self._resource_locks[resource_hash] = lock
+            return lock
+
     def persist_resource(
         self, resource: "BaseResource", target_dir: Path, overwrite: bool = False
     ) -> Path:
         """
         Write a resource and its metadata to disk,
         updating the catalog with the unique hash of the file and its metadata.
+
+        Serialised per resource hash. One ``PersistenceService`` is shared by every
+        worker in the parallel scrape phase, and ``LinkScraper`` deduplicates only
+        within a single crawl — so overlapping seed graphs (a site root and one of
+        its own child pages both listed as seeds) hand two workers the same URL at
+        the same moment. Same URL means same ``md5`` hash, same filename, same
+        catalog row. The body below is a read-modify-write over all three: it tests
+        ``exists()``, writes, ``stat()``s the result for ``size_bytes``, then upserts.
+        Interleaved, both callers can see the file absent, both truncate and write
+        it, and one can ``stat()`` the other's half-written file — committing a
+        ``size_bytes`` that matches neither version and two catalog rows ordered
+        independently of the bytes that survived on disk.
+
+        The lock is per hash rather than global so unrelated resources still persist
+        concurrently; only genuine duplicates queue, and the second one then takes
+        the cheap already-exists path.
         """
+        with self._lock_for_resource(resource.get_hash()):
+            return self._persist_resource_locked(resource, target_dir, overwrite)
+
+    def _persist_resource_locked(
+        self, resource: "BaseResource", target_dir: Path, overwrite: bool
+    ) -> Path:
         target_dir.mkdir(parents=True, exist_ok=True)
         file_path = resource.get_file_path(target_dir)
 

@@ -214,11 +214,20 @@ data_manager:
   # `parallel_workers` above. `scrape_workers` bounds how many seed URLs are crawled
   # in parallel; `scrape_per_host_workers` caps concurrent in-flight requests to any
   # single host so one host is not hammered. Both coerce to int, fall back to their
-  # defaults on junk, and clamp to a minimum of 1. NOTE: raising `scrape_workers` above
-  # the Postgres connection pool max (20, see src/utils/connection_pool.py) requires
-  # raising that pool in tandem, or scrape workers will block on connection checkout.
-  scrape_workers: {{ data_manager.scrape_workers | default(8, true) }}
-  scrape_per_host_workers: {{ data_manager.scrape_per_host_workers | default(4, true) }}
+  # defaults on junk, and clamp to a minimum of 1 (so `scrape_workers: 0` means the
+  # sequential path, not the default of 8). NOTE on database load: scrape persistence
+  # does NOT use the pool in src/utils/connection_pool.py — each catalog write opens a
+  # fresh psycopg2 connection via PostgresCatalogService.upsert_resource() and closes
+  # it. So workers never block on a pool checkout; instead each in-flight write is one
+  # more DIRECT connection, and the ceiling that matters is the Postgres server's
+  # `max_connections`. Keep `scrape_workers` comfortably below that minus whatever the
+  # chat app and other services already hold.
+  {%- set scrape_workers = data_manager.scrape_workers %}
+  {%- set scrape_per_host_workers = data_manager.scrape_per_host_workers %}
+  # `default(x, true)` is deliberately avoided below: it replaces every falsey value,
+  # so a configured 0 would render as the default and never reach the runtime clamp.
+  scrape_workers: {{ scrape_workers if scrape_workers is defined and scrape_workers is not none else 8 }}
+  scrape_per_host_workers: {{ scrape_per_host_workers if scrape_per_host_workers is defined and scrape_per_host_workers is not none else 4 }}
   reset_collection: {{ data_manager.reset_collection | default(true, true) }}
   stemming:
     enabled: {{ data_manager.stemming.enabled | default(false, true) }}
