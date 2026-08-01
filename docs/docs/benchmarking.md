@@ -915,8 +915,10 @@ barely-completed run as healthy. The exit code answers "did a pass break?"; the 
 including when the bank itself fails to load — so the file is always current after the process
 exits. A completed run separates clean, findings, and a broken pass (`failed_passes` non-empty); a
 bank-load failure writes `census: null`, names the error in `failed_passes`, and sets `notify:
-true`. It records every count the report can take, but only the **notify buckets** decide whether
-a human is paged:
+true`. It records every count the report can take, and on a run that *completed* only the
+**notify buckets** decide whether a human is paged. A **startup failure overrides that**: no pass
+ran, so every bucket is zero, and `notify` is set `true` anyway. Read the `notify` field; do not
+re-derive it from the buckets, or a bank that failed to load reads as a clean night.
 
 | Key | Type | Notify? | Meaning |
 | --- | --- | :---: | --- |
@@ -930,7 +932,7 @@ a human is paged:
 | `refused_sources` | int | ✅ | Sources refused by the URL policy or absent from `--allowed-hosts`. Notifies because an unlisted host is an omission, not a standing decision. |
 | `drift_check` | string | no | `"hash-only"` (tripwire alone) or `"reference-compared"` (a model was named). Marks whether a listed drift is a completed staleness check or just a page that moved. |
 | `failed_passes` | list | — | Passes that could not run; non-empty ⇒ the run exits non-zero. |
-| `notify` | bool | — | `true` iff any notify bucket above is non-zero. On an **exit-zero** run this is what the cron wrapper reads to decide whether to speak; a non-zero run alerts on the exit status instead and never consults it. |
+| `notify` | bool | — | `true` iff any notify bucket above is non-zero **or the bank failed to load** (`census: null`) — a startup failure has no buckets to fill, so deriving this field from them alone would silently suppress that alert. Authoritative as written: read it, never recompute it. On an **exit-zero** run this is what the cron wrapper reads to decide whether to speak; a non-zero run alerts on the exit status instead and never consults it. |
 
 On an exit-zero run the nightly wrapper collapses these into one digest line —
 `gaps | orphans | drifted | reconcile | unchecked | refused`, where `reconcile` is

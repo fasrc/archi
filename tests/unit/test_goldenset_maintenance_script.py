@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import stat
 import threading
 import time
 from pathlib import Path
@@ -1019,6 +1020,36 @@ class TestDeclineTargetsGapsOnly:
 class TestLedgerDurability:
     """The ledger is the only durable record of a decline — and the only file
     this tool writes. A half-written one loses decisions permanently."""
+
+    def test_replacing_the_ledger_keeps_the_permissions_it_already_had(self, tmp_path):
+        """Same `mkstemp` 0600 clobber as the summary file, one commit point over.
+
+        Found while verifying the `--summary-json` finding on #151: `write_ledger`
+        replaces through the identical temp-then-`os.replace` path, so a ledger an
+        operator widened for a teammate loses that access on the next decline.
+        """
+        module = _load_script()
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/a", "reason": "keep me"})
+        ledger.chmod(0o664)
+        url = f"{KB}/kb/b"
+
+        module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(ledger),
+                "--reason",
+                "not worth a question",
+            ]
+        )
+
+        assert stat.S_IMODE(ledger.stat().st_mode) == 0o664
 
     def test_an_interrupted_write_leaves_the_previous_ledger_intact(
         self, tmp_path, monkeypatch
@@ -2238,6 +2269,63 @@ class TestReportSummaryJson:
             or summary.get("drifted") != 0
             or (summary["failed_passes"] != [] and summary["census"] is None)
         )
+
+    def test_a_schema_malformed_bank_writes_the_failure_summary_too(
+        self, tmp_path, capsys
+    ):
+        """A row whose `anchor_type` is a list is valid JSON and a valid list.
+
+        So it survives `load_bank`, and only dies inside the census, which uses
+        that value as a dict key — `TypeError: unhashable type`. That is not an
+        `OperationalError`, so it escapes both the report handler and `main`,
+        killing the process with a traceback BEFORE the summary is written. The
+        monitor is then left reading the previous run's healthy file.
+        """
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text(json.dumps({"notify": False}), encoding="utf-8")
+        bank = tmp_path / "bank.json"
+        bank.write_text(
+            json.dumps([{"user_input": "q", "anchor_type": ["heading", "table"]}]),
+            encoding="utf-8",
+        )
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+        summary = json.loads(out.read_text())
+
+        assert code == 1
+        assert summary["census"] is None
+        assert summary["notify"] is True
+        assert any("bank" in f for f in summary["failed_passes"])
+        # The message has to name the field, or the operator has a traceback's
+        # worth of information ("unhashable type") and no idea which row.
+        assert "anchor_type" in " ".join(summary["failed_passes"])
+
+    def test_replacing_a_summary_keeps_the_readers_it_already_had(self, tmp_path):
+        """`mkstemp` creates 0600 and `os.replace` installs that over the target.
+
+        A summary an operator made group-readable for a monitor running as
+        another Unix user therefore becomes unreadable on the first report run —
+        the health file goes silent in exactly the way a monitor cannot
+        distinguish from "nothing to report".
+        """
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+        out.write_text("{}", encoding="utf-8")
+        out.chmod(0o644)
+
+        self._run(tmp_path, script, bank, corpus, sources, out)
+
+        assert stat.S_IMODE(out.stat().st_mode) == 0o644
 
     def test_missing_bank_writes_failure_summary_and_exits_nonzero(
         self, tmp_path, capsys

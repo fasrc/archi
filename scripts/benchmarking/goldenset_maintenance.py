@@ -61,6 +61,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -247,6 +248,28 @@ def read_ledger(path: Optional[str]) -> List[Any]:
     return entries
 
 
+def _preserve_mode(target: Path, tmp_name: str) -> None:
+    """Carry an existing target's permissions onto the replacement written for it.
+
+    `tempfile.mkstemp` creates its file 0600 by design, and `os.replace` installs
+    the temp file's mode along with its contents. So a replace-in-place write
+    silently revokes any access an operator had granted on the target — a
+    `--summary-json` health file made group-readable for a monitor running as
+    another Unix user becomes unreadable on the very next report run, and the
+    monitor cannot tell that apart from "nothing to report".
+
+    Applied only when the target already exists. Picking a mode for a NEW file is
+    a policy decision this tool has no business making, and mkstemp's 0600 is the
+    right default for one that can carry error text.
+    """
+    if not target.exists():
+        return
+    try:
+        os.chmod(tmp_name, stat.S_IMODE(target.stat().st_mode))
+    except OSError:  # pragma: no cover - raced away, or a mode-less filesystem
+        pass
+
+
 def write_ledger(path: str, entries: List[Any]) -> None:
     """Atomically persist the ledger — the ONLY file this tool writes.
 
@@ -293,6 +316,7 @@ def write_ledger(path: str, entries: List[Any]) -> None:
         os.fsync(handle.fileno())
         handle.close()
         handle = None
+        _preserve_mode(target, tmp_name)
         os.replace(tmp_name, target)
     except OSError as exc:
         if handle is not None:
@@ -1016,6 +1040,7 @@ def _write_summary(args: argparse.Namespace, summary: dict) -> None:
         json.dump(summary, handle, indent=2)
         handle.close()
         handle = None
+        _preserve_mode(target, tmp_name)
         os.replace(tmp_name, target)
     except OSError as exc:
         if handle is not None:
@@ -1026,6 +1051,31 @@ def _write_summary(args: argparse.Namespace, summary: dict) -> None:
             except OSError:  # pragma: no cover - already gone
                 pass
         raise OperationalError(f"cannot write {args.summary_json}: {exc}") from exc
+
+
+def bank_census(path: str) -> dict:
+    """Bank composition, with a malformed row reported as an operational failure.
+
+    `bank_status_counts` buckets rows by `anchor_type` and uses that value as a
+    dictionary key. A row carrying a list or object there is valid JSON and a
+    valid bank array, so it passes `load_bank` untouched and only dies inside the
+    census, unhashable.
+
+    Left as a bare `TypeError` it matches neither `run_report`'s handler nor
+    `main`'s, so the process ends on a traceback **before** `--summary-json` is
+    written — and the monitor goes on reading the previous run's healthy file,
+    which is the exact failure this summary contract exists to close. A bank the
+    tool cannot census IS an operational failure, so it is raised as one and
+    takes the failure-summary path along with every other unreadable input.
+    """
+    bank = load_bank(path)
+    try:
+        return bank_status_counts(bank)
+    except TypeError as exc:
+        raise OperationalError(
+            f"cannot census {path}: a row's `anchor_type` must be text or absent "
+            f"({exc})"
+        ) from exc
 
 
 def run_report(args: argparse.Namespace) -> int:
@@ -1058,7 +1108,7 @@ def run_report(args: argparse.Namespace) -> int:
         "notify": True,
     }
     try:
-        census = bank_status_counts(load_bank(args.bank))
+        census = bank_census(args.bank)
         summary["census"] = census
         summary["notify"] = False
     except OperationalError as exc:
