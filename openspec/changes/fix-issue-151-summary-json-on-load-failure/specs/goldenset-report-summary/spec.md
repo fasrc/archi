@@ -133,6 +133,15 @@ its type alone.
 - **THEN** the bank is rejected the same way, rather than dying unhashable
   inside the census
 
+#### Scenario: A row that is not an object at all is NOT a new refusal
+
+- **WHEN** a bank row is a string or a number rather than an object, which
+  `normalize_bank` passes through and the census has always counted under
+  `unassigned`
+- **THEN** the run still censuses that bank and completes normally — the
+  `anchor_type` check MUST NOT tighten the bank contract beyond the field it
+  validates
+
 ### Requirement: A replaced file SHALL keep the access its target had
 
 The system SHALL copy an existing target's mode bits, owning user and group, and

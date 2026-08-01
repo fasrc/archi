@@ -2372,6 +2372,46 @@ class TestReportSummaryJson:
         assert summary["census"] is None
         assert "anchor_type" in " ".join(summary["failed_passes"])
 
+    def test_a_row_that_is_not_an_object_does_not_become_a_new_refusal(self, tmp_path):
+        """The `anchor_type` check must not tighten the bank contract sideways.
+
+        `normalize_bank` passes a non-object row straight through (verified:
+        `normalize_bank(["x", {...}, 42])` returns all three), and
+        `bank_status_counts` has always tolerated one — it counts it under
+        `unassigned`. The type check walks the same rows, so without its
+        `isinstance` guard it would call `.get` on a string and turn a bank the
+        tool used to census into a hard failure. That would be a regression
+        introduced by a fix, not a fix.
+        """
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        out = tmp_path / "summary.json"
+        bank = _write(
+            tmp_path,
+            "bank.json",
+            [
+                "not an object at all",
+                _locked_row(live, hashes={live: page_digest(GPU_HTML)}),
+            ],
+        )
+        _fake_pages(script, {live: GPU_HTML})
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+        summary = json.loads(out.read_text())
+
+        assert code == 0
+        assert summary["failed_passes"] == []
+        assert summary["census"]["total"] == 2
+        assert summary["census"]["anchor_type"]["unassigned"] == 2
+
     def test_replacing_a_summary_keeps_the_readers_it_already_had(self, tmp_path):
         """`mkstemp` creates 0600 and `os.replace` installs that over the target.
 

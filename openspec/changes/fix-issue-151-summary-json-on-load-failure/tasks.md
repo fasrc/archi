@@ -65,3 +65,10 @@ consequences of that; the fourth is the doc overclaim it invited.
 - [x] 5.7 Mutation-check every fix: revert it, confirm the owning test fails,
   restore. 8 mutations, each caught only by its own tests.
 - [x] 5.8 Re-run the gate.
+- [x] 5.9 Line coverage over the script (not in the gate's `--cov=src` scope)
+  showed one untested branch added in 5.3: the `isinstance(record, dict)` guard
+  in `bank_census`. `normalize_bank` does pass a non-object row through, and the
+  census has always counted it under `unassigned`, so without the guard the fix
+  would have turned a censusable bank into a hard failure. Test added; mutation
+  check — drop the guard → `AttributeError: 'str' object has no attribute
+  'get'`, that test alone.
