@@ -1807,6 +1807,54 @@ class TestDriftExplicitMode:
         assert "hash-only" in out.lower()
         assert "tripwire" in out.lower()
 
+    def test_an_empty_model_is_rejected_not_silently_downgraded(self, tmp_path, capsys):
+        """`--model "$MODEL"` with `MODEL` unset arrives as `--model ''`.
+
+        argparse counts the flag as *present*, so it satisfies the required mode
+        group while carrying nothing. A truthiness check downstream then reads it
+        as "no model" and runs the hash tripwire — reinstating the exact silent
+        downgrade the required group exists to prevent.
+        """
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML})
+
+        with pytest.raises(SystemExit):
+            script.main([*_drift_head(bank), "--model", ""])
+        captured = capsys.readouterr()
+
+        assert "--model" in captured.err
+        assert "hash-only" not in captured.out.lower()
+
+    def test_a_whitespace_model_is_rejected_too(self, tmp_path, capsys):
+        """`--model " "` is the same blank in a form `if args.model` calls true.
+
+        Worse than the empty case: the truthiness check passes, so it reaches
+        `build_ask_llm` and fails on the `provider/model` shape instead of on
+        the thing that is actually wrong.
+        """
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+
+        with pytest.raises(SystemExit):
+            script.main([*_drift_head(bank), "--model", "   "])
+
+        assert "--model" in capsys.readouterr().err
+
+    def test_the_embedded_usage_example_shows_the_required_mode(self):
+        """The module docstring is the copy-paste source for these invocations.
+
+        Making the mode group required left its `drift` example presenting
+        `[--model ...]` as optional with no `--tripwire-only` alternative — an
+        invocation that now exits in argparse instead of running drift.
+        """
+        usage = _load_script().__doc__ or ""
+
+        assert "--tripwire-only" in usage
+        assert "[--model" not in usage
+
 
 class TestDriftFetchPolicyCli:
     """A bank-controlled URL must not become an unrestricted outbound request."""

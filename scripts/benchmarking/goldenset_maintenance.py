@@ -45,10 +45,16 @@ Usage:
     python scripts/benchmarking/goldenset_maintenance.py coverage \\
         --bank <bank.json> --undecline <url> --ledger <ledger.json>
 
-    # fact drift: re-fetch every locked row's sources and report what moved
+    # fact drift: re-fetch every locked row's sources and report what moved.
+    # The pass is a REQUIRED, explicit choice — exactly one of the two below.
+    #   hash tripwire only (no provider call):
     python scripts/benchmarking/goldenset_maintenance.py drift \\
         --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \\
-        [--model anthropic/claude-sonnet-5] [--show-text] [--print-hashes]
+        --tripwire-only [--show-text] [--print-hashes]
+    #   semantic: ask whether the stored reference still holds where a hash moved
+    python scripts/benchmarking/goldenset_maintenance.py drift \\
+        --bank <bank.json> --allowed-hosts docs.rc.fas.harvard.edu \\
+        --model anthropic/claude-sonnet-5 [--show-text] [--print-hashes]
 
     # all three passes in one read-only run (the cron line)
     python scripts/benchmarking/goldenset_maintenance.py report \\
@@ -370,6 +376,28 @@ def read_persisted_document(doc, data_path: Optional[str]) -> str:
     if not text.strip():
         raise OperationalError(f"the persisted document {path} is empty")
     return text
+
+
+def model_arg(value: str) -> str:
+    """Reject a blank `--model`, which an unset shell variable expands to.
+
+    `--model "$MODEL"` with `MODEL` unset reaches argparse as `--model ''`. The
+    flag counts as *present*, so it satisfies `drift`'s required mode group
+    while carrying no model at all — and a truthiness check downstream then
+    reads it as "no model given" and runs the hash-only pass. That is exactly
+    the silent downgrade the required group exists to prevent, so the blank has
+    to die at the parser rather than be interpreted anywhere later.
+
+    Whitespace counts as blank: `--model " "` is truthy, so it survives that
+    check and fails later on the `provider/model` shape instead of on the thing
+    that is actually wrong.
+    """
+    if not value.strip():
+        raise argparse.ArgumentTypeError(
+            "must not be blank — an unset shell variable expands to ''. Pass a "
+            "'provider/model' (e.g. anthropic/claude-sonnet-5)."
+        )
+    return value
 
 
 def build_ask_llm(model: str):
@@ -773,8 +801,14 @@ def run_drift(args: argparse.Namespace) -> int:
     """
     bank = load_bank(args.bank)
     tripwire_only = getattr(args, "tripwire_only", False)
+    # `is not None`, not truthiness: `model_arg` has already refused every blank
+    # form, so absent is the ONLY remaining falsy value — and `report` reaches
+    # here with `model=None` deliberately, which is what keeps the unattended
+    # cron hash-only by default.
     ask_llm = (
-        None if tripwire_only else (build_ask_llm(args.model) if args.model else None)
+        None
+        if tripwire_only
+        else (build_ask_llm(args.model) if args.model is not None else None)
     )
     print(
         "mode: hash-only (tripwire) — no reference comparison"
@@ -1141,6 +1175,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     coverage.add_argument(
         "--model",
+        type=model_arg,
         help="`provider/model` used to draft candidates. Required with --propose.",
     )
     coverage.add_argument(
@@ -1193,6 +1228,7 @@ def build_parser() -> argparse.ArgumentParser:
     drift_mode = drift.add_mutually_exclusive_group(required=True)
     drift_mode.add_argument(
         "--model",
+        type=model_arg,
         help=(
             "`provider/model` asked whether the stored reference still holds, for "
             "sources whose hash moved. Selects the semantic pass."
@@ -1281,6 +1317,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report.add_argument(
         "--model",
+        type=model_arg,
         help=(
             "OPTIONAL `provider/model` for the advisory drift diff. Omitted by "
             "default: the hash tripwire is the finding, and an unattended job "
