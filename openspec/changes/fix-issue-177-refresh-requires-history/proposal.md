@@ -18,15 +18,21 @@ prompt is the worst available response — it is indistinguishable from success.
 
 ## What Changes
 
-- Reject the unsatisfiable combination with **HTTP 400** before any conversation row is created.
-  The condition is the absence of *any* source of prior turns — `is_refresh and conversation_id is
-  None and external_history is None` — not the absence of a `conversation_id`.
-- Give `400` a caller-appropriate message on both endpoints. Today the two error-message chains
+- Reject a refresh for which **no prior turn survives history resolution and the refresh trim**,
+  before any conversation row is created or timestamp updated. The test is on the resolved history,
+  not on which fields were supplied: a field-presence predicate is a proxy that admits
+  `external_history=[]`, an assistant-only history, and a `conversation_id` naming an empty
+  conversation.
+- Report it on **each endpoint's own error channel**, which differ: `POST /api/get_chat_response`
+  returns HTTP `400`; `POST /api/get_chat_response_stream` returns HTTP **200** with an in-band
+  `{"type": "error", "status": 400}`, because its response is constructed before this check runs.
+- Give that status a caller-appropriate message. Today the two error-message chains
   (`app.py:2019-2025` streaming, `:4668-4674` non-streaming) know only 408 and 403 and fall through
   to "server error; see chat logs for message", which would misreport a client error as a server
   fault.
-- Collapse those two duplicated chains into one shared helper so a future status cannot be added to
-  one endpoint and forgotten on the other.
+- Collapse those chains into one shared helper so a future status cannot be added to one endpoint
+  and forgotten on the other — including the streaming exception branches, which carried their own
+  hard-coded copies of the 403 and 500 text.
 - Document the behaviour in `docs/docs/api_reference.md`, replacing the current `is_refresh` row
   that describes the broken behaviour.
 

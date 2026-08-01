@@ -377,6 +377,63 @@ class TestTheRoutesThemselves:
         )
 
 
+class TestStreamingExceptionBranchesReadTheMapping:
+    """The streaming generator's own error paths must not keep private copies.
+
+    Asserting that the emitted text *equals* the mapped text would pass either way, since
+    the literals agreed with the mapping by coincidence — that is exactly why the
+    duplication survived. So these tests **replace** the mapped entry with a sentinel and
+    require the branch to follow it, which only a real lookup can do.
+    """
+
+    @staticmethod
+    def _stream_wrapper(prepare):
+        wrapper = object.__new__(ChatWrapper)
+        wrapper._init_timestamps = lambda: {}
+        wrapper._prepare_chat_context = prepare
+        wrapper.cursor = None
+        wrapper.conn = None
+        wrapper.create_agent_trace = lambda **kw: None
+        wrapper.update_agent_trace = lambda **kw: None
+        return wrapper
+
+    @staticmethod
+    def _drive(wrapper):
+        now = datetime.now(timezone.utc)
+        return list(
+            wrapper.stream(
+                message=INCOMING,
+                conversation_id=None,
+                client_id=CLIENT_ID,
+                is_refresh=False,
+                server_received_msg_ts=now,
+                client_sent_msg_ts=now.timestamp(),
+                client_timeout=600.0,
+                config_name="default",
+            )
+        )
+
+    def test_the_403_branch_follows_the_mapping(self, monkeypatch):
+        def raise_access(*a, **k):
+            raise app_module.ConversationAccessError("nope")
+
+        monkeypatch.setitem(app_module._CHAT_ERROR_MESSAGES, 403, "SENTINEL-403")
+        events = self._drive(self._stream_wrapper(raise_access))
+
+        assert events[-1]["status"] == 403
+        assert events[-1]["message"] == "SENTINEL-403"
+
+    def test_the_generic_branch_follows_the_mapping(self, monkeypatch):
+        def boom(*a, **k):
+            raise RuntimeError("unexpected")
+
+        monkeypatch.setattr(app_module, "GENERIC_CHAT_ERROR_MESSAGE", "SENTINEL-500")
+        events = self._drive(self._stream_wrapper(boom))
+
+        assert events[-1]["status"] == 500
+        assert events[-1]["message"] == "SENTINEL-500"
+
+
 class TestChatErrorMessage:
     """One shared mapping, so a status cannot be described on one endpoint only."""
 

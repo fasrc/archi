@@ -2477,7 +2477,7 @@ class ChatWrapper:
                 yield {
                     "type": "error",
                     "status": 500,
-                    "message": "server error; see chat logs for message",
+                    "message": _chat_error_message(500),
                 }
                 return
 
@@ -2615,7 +2615,11 @@ class ChatWrapper:
                     cancelled_by="system",
                     cancellation_reason=str(exc),
                 )
-            yield {"type": "error", "status": 403, "message": "conversation not found"}
+            yield {
+                "type": "error",
+                "status": 403,
+                "message": _chat_error_message(403),
+            }
         except Exception as exc:
             logger.error("Failed to stream response: %s", exc, exc_info=True)
             if trace_id:
@@ -2629,7 +2633,7 @@ class ChatWrapper:
             yield {
                 "type": "error",
                 "status": 500,
-                "message": "server error; see chat logs for message",
+                "message": _chat_error_message(500),
             }
         finally:
             # The shared pipeline's LLM is never mutated on the override path

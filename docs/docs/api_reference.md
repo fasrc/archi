@@ -45,7 +45,7 @@ honour all of it — the last four fields are read only by the streaming endpoin
 !!! warning "Send both timing fields, and generate the timestamp fresh"
 
     `client_sent_msg_ts` and `client_timeout` look optional and are not. Both default to
-    `0` when absent ([`app.py:4646-4647`][parse]), and the timeout check is an unguarded
+    `0` when absent ([`app.py:4650-4651`][parse]), and the timeout check is an unguarded
     comparison ([`app.py:1706`][check]):
 
     ```python
@@ -84,7 +84,7 @@ honour all of it — the last four fields are read only by the streaming endpoin
     genuinely optional and this warning goes away. Until then, this page documents what
     the endpoints actually do.
 
-[parse]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4646-L4647
+[parse]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4650-L4651
 [check]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1706
 [streamerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2071
 [stream]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2152
@@ -99,7 +99,7 @@ the first element is then a *string*, and unpacking it yields its characters. A
 sender of three or more characters raises — reported as HTTP 500 by
 `POST /api/get_chat_response`, but as an in-band `{"type": "error", "status": 500}`
 under HTTP **200** by the streaming endpoint, since the exception happens inside the
-generator after the opening `meta` line ([`app.py:2619`][outerr]); see the two error channels
+generator after the opening `meta` line ([`app.py:2623`][outerr]); see the two error channels
 under [`POST /api/get_chat_response_stream`](#post-apiget_chat_response_stream).
 A two-character sender such as `["AI", "hello"]` unpacks into `sender="A"`,
 `content="I"` and the request **succeeds against the wrong content**, silently
@@ -124,14 +124,14 @@ curl -sS http://localhost:7861/api/get_chat_response \
 
 !!! note "It runs as-is only where authentication is disabled"
 
-    Every chat route is registered through `require_auth` ([`app.py:2780`][authwrap]), so with
+    Every chat route is registered through `require_auth` ([`app.py:2784`][authwrap]), so with
     `services.chat_app.auth.enabled: true` this command gets `401` — or a `302` to the login
     page when SSO is on and anonymous access is blocked — instead of an answer. Nothing about
     the request body is wrong in that case; it never reaches the handler.
 
     Against a deployment with **basic auth** enabled, log in first and reuse the session
     cookie (`/login` accepts a form-encoded `username` and `password`,
-    [`app.py:3264`][loginform], and exists only when auth is enabled):
+    [`app.py:3268`][loginform], and exists only when auth is enabled):
 
     ```bash
     curl -sS -c jar.txt -X POST http://localhost:7861/login \
@@ -143,8 +143,8 @@ curl -sS http://localhost:7861/api/get_chat_response \
     With **SSO** the login is a browser redirect flow that curl cannot complete; copy the
     session cookie out of an already-logged-in browser session instead.
 
-[authwrap]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2780
-[loginform]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L3264
+[authwrap]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2784
+[loginform]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L3268
 
 The body it builds has this shape. This is a **template, not valid JSON** — the placeholder
 is deliberately unquoted so that pasting it unedited fails in your own JSON parser rather
@@ -203,7 +203,7 @@ out differs again:
 | Do you still get an answer? | How you find out | Examples (not exhaustive) |
 |---|---|---|
 | **No** — the stream ends | `{"type": "error", "status": 400}` | a construction-time `ValueError` — overrides disabled, or a provider name that does not resolve ([`app.py:2098`][ovrreject]) |
-| **No** — the stream ends mid-answer | in-band `{"type": "error", "status": 500}` | a model string the provider builds happily and rejects on use — `get_chat_model` does not check the provider's catalogue, so an unknown model ID for OpenAI or OpenRouter surfaces at invocation, not at construction ([`app.py:2619`][outerr]) |
+| **No** — the stream ends mid-answer | in-band `{"type": "error", "status": 500}` | a model string the provider builds happily and rejects on use — `get_chat_model` does not check the provider's catalogue, so an unknown model ID for OpenAI or OpenRouter surfaces at invocation, not at construction ([`app.py:2623`][outerr]) |
 | **Yes** — from the default pipeline | `{"type": "warning", "message": "Using default model: …"}` | most construction failures, and a failed request-local pipeline build ([`app.py:2104`][ovrwarn], [`:2124`][ovrwarn2]) |
 | **Yes** — from the default pipeline | **nothing at all**: no `error`, no `warning` | `_create_provider_llm` returning falsey rather than raising, which is what an `ImportError` does ([`app.py:1641`][ovrimport]); or an active pipeline with no `agent_llm` ([`app.py:2107`][ovrguard]) |
 
@@ -225,10 +225,10 @@ So do not infer the answering model from your own request. Read `final.model_use
 [ovrguard]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2107
 [ovrimport]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1641
 [modelused]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2589
-[outerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2619
+[outerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2623
 [legacygate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2437
 [chunkyield]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2419
-[evmeta]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4787
+[evmeta]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4791
 [evtoolstart]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2350
 [evtooloutput]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2363
 [evtoolend]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2377
@@ -257,7 +257,7 @@ be sent [together](#overriding-provider-and-model) or neither takes effect.
 
     This endpoint has **two** error channels. Which one you get depends on whether the
     failure happens before or after the response is constructed at
-    [`app.py:4813`][streamopen] — not on the kind of error.
+    [`app.py:4817`][streamopen] — not on the kind of error.
 
     **Before the stream opens — an ordinary HTTP status.** Check these as you would on any
     endpoint:
@@ -266,7 +266,7 @@ be sent [together](#overriding-provider-and-model) or neither takes effect.
     |---|---|
     | Not authenticated, SSO on and anonymous access blocked | **302** redirect to login |
     | Not authenticated, otherwise | **401** `{"error": "Unauthorized"}` |
-    | `client_id` missing ([`app.py:4775`][clientid]) | **400** `{"error": "client_id missing"}` |
+    | `client_id` missing ([`app.py:4779`][clientid]) | **400** `{"error": "client_id missing"}` |
 
     **After the stream opens — HTTP 200 plus an event.** The status line is already on the
     wire, so a failure inside the generator can only be reported in-band: the opening `meta`
@@ -293,8 +293,8 @@ be sent [together](#overriding-provider-and-model) or neither takes effect.
     has no counterpart there, because the non-streaming handler ignores `provider` and `model`
     altogether and would answer normally.
 
-[streamopen]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4813
-[clientid]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4775
+[streamopen]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4817
+[clientid]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4779
 
 Each line is a JSON object with a `type` field. Event types:
 
@@ -302,7 +302,7 @@ Each line is a JSON object with a `type` field. Event types:
 |------|-------------|
 | Type | Gated by | Description |
 |------|---|-------------|
-| `meta` | — | Stream metadata, sent first; includes padding ([`app.py:4787`][evmeta]) |
+| `meta` | — | Stream metadata, sent first; includes padding ([`app.py:4791`][evmeta]) |
 | `chunk` | `include_agent_steps` | **The incremental answer text** — the event carrying the response as it is produced ([`app.py:2419`][chunkyield], [`:2461`][chunkyield2]) |
 | `tool_start` | `include_tool_steps` | Agent is invoking a tool ([`:2350`][evtoolstart]) |
 | `tool_output` | `include_tool_steps` | Tool result ([`:2363`][evtooloutput]) |

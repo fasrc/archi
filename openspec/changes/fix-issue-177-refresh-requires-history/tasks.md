@@ -179,3 +179,27 @@
   where they were correct) and re-verified: every anchor prints its target line, ranges cover what
   they claim, display text matches its URL. The remap is a checked-in habit at this point, not a
   one-off — any edit to `app.py` in this repo invalidates every line anchor on that page.
+
+## 12. PR review round 3 (#182) — four findings, all confirmed
+
+- [x] 12.1 **The shared mapping was not actually shared.** Three of the streaming generator's own
+  error paths — `ConversationAccessError`, the generic exception, and the no-output branch — kept
+  hard-coded copies of the `403`/`500` text. They agreed with the mapping *by coincidence*, which is
+  why the duplication survived a refactor whose stated purpose was removing it: editing a shared
+  string would have silently made the endpoints disagree. All three now call `_chat_error_message`.
+  Tested by **replacing the mapped entry with a sentinel** and requiring the branch to follow it —
+  asserting equality with the mapped text would have passed either way. Mutation-checked: reverting
+  each branch to its literal fails its own test. Out of scope and left alone: the trace-metadata
+  route's `404 "conversation not found"`, a different status on a different endpoint.
+- [x] 12.2 **The no-write scenario over-promised.** It said *any* rejected refresh writes nothing,
+  but a refresh with valid history is still rejected *after* the writes by the timeout `408` and the
+  query-limit `500`. Narrowed to the missing-history rejection, with the later paths named so the
+  boundary is explicit rather than implied.
+- [x] 12.3 **The 400-message scenario over-reached.** It applied the refresh-specific text to every
+  `400` on either endpoint, but a missing `client_id` returns `400` before the handler is entered and
+  a streaming provider-override `ValueError` emits its own in-band `400`. Neither must claim that
+  prior history is missing. Scoped to this rejection.
+- [x] 12.4 **The proposal still carried the superseded predicate and an unconditional `400`.** Third
+  round running that an artifact lagged the implementation, and this time my own sweep missed it —
+  the grep filtered out lines mentioning "streaming", which is exactly what the stale bullet said.
+  Rewritten. A negative-filter sweep can hide the thing it is looking for.

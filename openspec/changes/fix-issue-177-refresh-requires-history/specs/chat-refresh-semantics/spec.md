@@ -40,13 +40,16 @@ which is why it must be an explicit rejection rather than a best-effort interpre
 - **AND** the rejection is decided after the refresh trim, so all three routes to the same empty
   state are covered by one check rather than by three special cases
 
-#### Scenario: A rejected refresh writes nothing
+#### Scenario: A refresh rejected for missing history writes nothing
 
-- **WHEN** any refresh is rejected
+- **WHEN** a refresh is rejected because no prior turn survives resolution and the trim
 - **THEN** `create_conversation` is not called
 - **AND** `update_conversation_timestamp` is not called
 - **AND** no empty conversation row is left behind, because history resolution is side-effect free
-  and the writes are committed only once the request is known to be serviceable
+  and the writes are committed only once this check has passed
+- **AND** this guarantee is scoped to *this* rejection: later rejections on the same path — the
+  timeout `408` and the query-limit `500` — are decided after the writes and are unchanged by this
+  change, so it would be false to promise that no rejected request ever writes
 
 #### Scenario: Refresh over supplied history is still honoured
 
@@ -79,17 +82,31 @@ which is why it must be an explicit rejection rather than a best-effort interpre
 ### Requirement: Chat error statuses carry a caller-appropriate message on both endpoints
 
 Both chat endpoints SHALL derive the human-readable text for an error status from a single shared
-mapping, so that a status added to one endpoint cannot be missing from the other.
+mapping, so that a status added to one endpoint cannot be missing from the other. This SHALL include
+the streaming endpoint's **exception branches**, not only its context-error branch.
 
 Before this change the mapping was duplicated at the streaming call site (`app.py:2019-2025`) and in
 the non-streaming route (`:4668-4674`), each knowing only `408` and `403` and falling through to
 "server error; see chat logs for message" — which would report a client error as a server fault.
 
-#### Scenario: A client-error status is not described as a server error
+Three further copies lived in the streaming generator's own error paths: the
+`ConversationAccessError` branch, the generic-exception branch, and the no-output branch each
+hard-coded their `403`/`500` text. The strings agreed with the mapping by coincidence, so the
+duplication was invisible — and editing the shared text would silently have made the endpoints
+disagree, which is precisely the failure this requirement exists to prevent. A requirement that
+holds only where someone remembered to apply it is not a requirement.
 
-- **WHEN** either endpoint rejects a request with status `400`
+Out of scope: the trace-metadata route's `404 "conversation not found"`, which is a different status
+on a different endpoint and is not part of the chat error mapping.
+
+#### Scenario: The refresh rejection is not described as a server error
+
+- **WHEN** either endpoint rejects a refresh because no prior turn survives
 - **THEN** the message identifies the request as unsatisfiable and names the missing precondition
 - **AND** it is not the generic "server error; see chat logs for message" text
+- **AND** the requirement is specific to *this* rejection: the other `400`s on these routes carry
+  their own text — a missing `client_id` before the handler is entered, and a streaming
+  provider-override `ValueError` — and must not claim that prior history is missing
 
 #### Scenario: Existing status messages are unchanged
 
@@ -101,3 +118,5 @@ the non-streaming route (`:4668-4674`), each knowing only `408` and `403` and fa
 
 - **WHEN** the same error status is produced by the streaming and non-streaming endpoints
 - **THEN** both report the same message, because both read it from the shared mapping
+- **AND** this holds for the streaming endpoint's exception branches too, so editing a mapped string
+  cannot make one path disagree with the others
