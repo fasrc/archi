@@ -24,6 +24,7 @@ the real body is otherwise executed by no test.
 
 import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from flask import Flask
@@ -422,6 +423,49 @@ class TestStreamingExceptionBranchesReadTheMapping:
 
         assert events[-1]["status"] == 403
         assert events[-1]["message"] == "SENTINEL-403"
+
+    def test_the_in_loop_timeout_follows_the_mapping(self, monkeypatch):
+        """The 408 raised *during* pipeline iteration, not the pre-pipeline one.
+
+        This branch is reached only after the pipeline yields, so it was the last copy
+        still holding its own text — the pre-pipeline 408 would have followed a changed
+        mapping while this one silently kept the old wording.
+        """
+        context = SimpleNamespace(
+            sender="User",
+            content="hello",
+            conversation_id=42,
+            history=[("User", "q1")],
+            is_refresh=False,
+        )
+        wrapper = self._stream_wrapper(lambda *a, **k: (context, None))
+        wrapper._resolve_config_name = lambda name: name or "default"
+        wrapper.update_config = lambda config_name=None: None
+        wrapper.current_model_used = "default/default"
+        wrapper.number_of_queries = 0
+        wrapper.archi = SimpleNamespace(
+            stream=lambda **kw: iter([SimpleNamespace(metadata={}, answer="hi")])
+        )
+
+        monkeypatch.setitem(app_module._CHAT_ERROR_MESSAGES, 408, "SENTINEL-408")
+        now = datetime.now(timezone.utc)
+        events = list(
+            wrapper.stream(
+                message=INCOMING,
+                conversation_id=42,
+                client_id=CLIENT_ID,
+                is_refresh=False,
+                server_received_msg_ts=now,
+                client_sent_msg_ts=now.timestamp(),
+                # Any elapsed time exceeds this, so the loop's first iteration trips the
+                # deadline deterministically rather than by racing a real clock.
+                client_timeout=1e-9,
+                config_name="default",
+            )
+        )
+
+        assert events[-1]["status"] == 408
+        assert events[-1]["message"] == "SENTINEL-408"
 
     def test_the_generic_branch_follows_the_mapping(self, monkeypatch):
         def boom(*a, **k):

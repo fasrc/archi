@@ -2165,7 +2165,7 @@ class ChatWrapper:
                     yield {
                         "type": "error",
                         "status": 408,
-                        "message": CLIENT_TIMEOUT_ERROR_MESSAGE,
+                        "message": _chat_error_message(408),
                     }
                     return
                 last_output = output

@@ -57,8 +57,11 @@
 
 - [x] 6.1 Update the `is_refresh` row in `docs/docs/api_reference.md`. It currently documents the
   broken behaviour (new empty conversation, message dropped, pipeline invoked with no user turn);
-  replace it with the `400` and the precise precondition — a refresh needs a `conversation_id` **or**
-  `external_history`.
+  replace it with the `400` and the precondition. **The precondition stated here originally — "a
+  refresh needs a `conversation_id` **or** `external_history`" — is superseded by 9.1**: either field
+  can still resolve to no surviving turn (an empty named conversation, `external_history=[]`, an
+  assistant-only history), and all three are rejected. The shipped wording is "needs a prior user
+  turn", which is what the page says.
 - [x] 6.2 Add `400` to the page's error-status coverage for both endpoints, consistent with the
   existing two-error-channels section: a real HTTP `400` from `POST /api/get_chat_response`, and an
   in-band `{"type": "error", "status": 400}` under HTTP 200 from the streaming endpoint, since
@@ -203,3 +206,20 @@
   round running that an artifact lagged the implementation, and this time my own sweep missed it —
   the grep filtered out lines mentioning "streaming", which is exactly what the stale bullet said.
   Rewritten. A negative-filter sweep can hide the thing it is looking for.
+
+## 13. PR review round 4 (#182) — two findings, both confirmed
+
+- [x] 13.1 **A fourth copy of a mapped message.** The in-loop timeout (`app.py:2165-2169`, raised
+  *during* pipeline iteration rather than before it) still emitted `CLIENT_TIMEOUT_ERROR_MESSAGE`
+  directly, so a changed `408` would have been followed by the pre-pipeline check and ignored here.
+  Routed through the helper and covered with the same sentinel technique; mutation-checked.
+  **This is the fourth round in which I fixed the reported instances and not the class.** So this
+  time the sweep was exhaustive by construction: enumerate every emission carrying a mapped status
+  in the chat paths and check each one. Result — every `403`/`408`/`500` in `ChatWrapper.stream`,
+  `__call__` and the two chat routes now reads the mapping. Two literals remain **by design**: the
+  provider-override `ValueError`, which carries the exception's own text, and `client_id missing`,
+  which is a different `400`; both were established as out of scope in round 3 and are recorded as
+  such in the spec.
+- [x] 13.2 **Task 6.1 still stated the superseded precondition** ("needs a `conversation_id` **or**
+  `external_history`") and, unlike task 3.1, was not marked superseded — so it contradicted both the
+  shipped guard and the correction in 9.1. Marked superseded with the shipped wording.
