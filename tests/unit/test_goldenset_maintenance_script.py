@@ -1582,7 +1582,7 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
         _fake_pages(script, {url: GPU_HTML_CHANGED})
 
-        code = script.main([*_drift_head(bank)])
+        code = script.main([*_drift_head(bank), "--tripwire-only"])
         out = capsys.readouterr().out
 
         # A finding is work to do, not a broken run (the cron contract).
@@ -1596,7 +1596,7 @@ class TestDriftSubcommand:
         before = bank.read_bytes()
         _fake_pages(script, {url: GPU_HTML_CHANGED})
 
-        script.main([*_drift_head(bank)])
+        script.main([*_drift_head(bank), "--tripwire-only"])
 
         assert bank.read_bytes() == before
 
@@ -1606,7 +1606,7 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
         _fake_pages(script, {url: GPU_HTML})
 
-        code = script.main([*_drift_head(bank)])
+        code = script.main([*_drift_head(bank), "--tripwire-only"])
         out = capsys.readouterr().out
 
         assert code == 0
@@ -1618,7 +1618,7 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _locked_row(url))
         _fake_pages(script, {url: GPU_HTML})
 
-        code = script.main([*_drift_head(bank)])
+        code = script.main([*_drift_head(bank), "--tripwire-only"])
         out = capsys.readouterr().out
 
         assert code == 0
@@ -1631,7 +1631,7 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
         _fake_pages(script, {}, errors={url: "connection timed out"})
 
-        code = script.main([*_drift_head(bank)])
+        code = script.main([*_drift_head(bank), "--tripwire-only"])
         captured = capsys.readouterr()
 
         # Nothing was read, so "no drift" would be a false clean over the bank.
@@ -1645,7 +1645,7 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _row(f"{KB}/kb/gpu"))
         _fake_pages(script, {})
 
-        code = script.main([*_drift_head(bank)])
+        code = script.main([*_drift_head(bank), "--tripwire-only"])
         out = capsys.readouterr().out
 
         assert code == 0
@@ -1657,7 +1657,7 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _locked_row(url))
         _fake_pages(script, {url: GPU_HTML})
 
-        script.main([*_drift_head(bank), "--print-hashes"])
+        script.main([*_drift_head(bank), "--tripwire-only", "--print-hashes"])
         out = capsys.readouterr().out
 
         # Without a way to obtain a hash, `source_hashes` could never be filled in
@@ -1671,7 +1671,7 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _locked_row(url, status="draft"))
         _fake_pages(script, {url: GPU_HTML})
 
-        script.main([*_drift_head(bank), "--print-hashes"])
+        script.main([*_drift_head(bank), "--tripwire-only", "--print-hashes"])
         out = capsys.readouterr().out
 
         # Baselines are produced for `locked` rows only — declaring the lock is
@@ -1687,7 +1687,9 @@ class TestDriftSubcommand:
         bank = _bank(tmp_path, _locked_row(url, status="draft"))
         _fake_pages(script, {url: GPU_HTML})
 
-        assert script.main([*_drift_head(bank), "--print-hashes"]) == 0
+        assert (
+            script.main([*_drift_head(bank), "--tripwire-only", "--print-hashes"]) == 0
+        )
 
 
 class TestBaselineDraftsCli:
@@ -1699,7 +1701,14 @@ class TestBaselineDraftsCli:
         bank = _bank(tmp_path, _locked_row(url, status="draft"))
         _fake_pages(script, {url: GPU_HTML})
 
-        code = script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts"])
+        code = script.main(
+            [
+                *_drift_head(bank),
+                "--print-hashes",
+                "--baseline-drafts",
+                "--tripwire-only",
+            ]
+        )
         out = capsys.readouterr().out
 
         assert code == 0
@@ -1713,7 +1722,14 @@ class TestBaselineDraftsCli:
         before = bank.read_bytes()
         _fake_pages(script, {url: GPU_HTML})
 
-        script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts"])
+        script.main(
+            [
+                *_drift_head(bank),
+                "--print-hashes",
+                "--baseline-drafts",
+                "--tripwire-only",
+            ]
+        )
 
         assert bank.read_bytes() == before
 
@@ -1724,7 +1740,7 @@ class TestBaselineDraftsCli:
         calls = []
         _fake_pages(script, {url: GPU_HTML}, calls=calls)
 
-        code = script.main([*_drift_head(bank), "--baseline-drafts"])
+        code = script.main([*_drift_head(bank), "--baseline-drafts", "--tripwire-only"])
         captured = capsys.readouterr()
 
         # The combination computes digests nothing ever prints. Rejecting it has to
@@ -1741,7 +1757,14 @@ class TestBaselineDraftsCli:
         bank = _bank(tmp_path, _locked_row(reachable, dead, status="draft"))
         _fake_pages(script, {reachable: GPU_HTML}, errors={dead: "timeout"})
 
-        code = script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts"])
+        code = script.main(
+            [
+                *_drift_head(bank),
+                "--print-hashes",
+                "--baseline-drafts",
+                "--tripwire-only",
+            ]
+        )
         out = capsys.readouterr().out
 
         # Pasting this block alongside `status: locked` is the documented workflow,
@@ -1758,7 +1781,14 @@ class TestBaselineDraftsCli:
         bank = _bank(tmp_path, _locked_row(url, status="draft"))
         _fake_pages(script, {url: GPU_HTML})
 
-        script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts"])
+        script.main(
+            [
+                *_drift_head(bank),
+                "--print-hashes",
+                "--baseline-drafts",
+                "--tripwire-only",
+            ]
+        )
         out = capsys.readouterr().out
 
         # Otherwise the warning becomes decoration and stops meaning anything.
@@ -1772,7 +1802,14 @@ class TestBaselineDraftsCli:
         bank = _bank(tmp_path, _locked_row(dead, status="draft"))
         _fake_pages(script, {}, errors={dead: "timeout"})
 
-        code = script.main([*_drift_head(bank), "--print-hashes", "--baseline-drafts"])
+        code = script.main(
+            [
+                *_drift_head(bank),
+                "--print-hashes",
+                "--baseline-drafts",
+                "--tripwire-only",
+            ]
+        )
         out = capsys.readouterr().out
 
         # Nothing to paste, but the operator asked a direct question and silence
@@ -1816,7 +1853,7 @@ class TestDriftVerdictCli:
         bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
         _fake_pages(script, {url: GPU_HTML_CHANGED})
 
-        code = script.main([*_drift_head(bank)])
+        code = script.main([*_drift_head(bank), "--tripwire-only"])
         out = capsys.readouterr().out
 
         # Hash-only is the cheap cron mode: the tripwire alone is a real finding.
@@ -1835,6 +1872,120 @@ class TestDriftVerdictCli:
 
         assert url in out
         assert "holds" in out
+
+
+class TestDriftExplicitMode:
+    """issue #147 — the hash-only pass must be a named choice, not a fallback.
+
+    A bare `drift --bank ... --allowed-hosts ...` with neither flag used to run
+    the cheap hash tripwire implicitly. That silently drops the reference check
+    if `--model` is ever forgotten. The two passes are now a required, mutually
+    exclusive choice: `--model <id>` for the semantic pass, or `--tripwire-only`
+    for the explicit hash-only one.
+    """
+
+    def test_neither_flag_is_rejected_naming_both(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML})
+
+        with pytest.raises(SystemExit):
+            script.main([*_drift_head(bank)])
+        err = capsys.readouterr().err
+
+        assert "--model" in err
+        assert "--tripwire-only" in err
+
+    def test_tripwire_only_runs_the_hash_pass_without_the_model(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML_CHANGED})
+        calls = []
+        _fake_llm(script, {"verdict": "broken"}, calls=calls)
+
+        code = script.main([*_drift_head(bank), "--tripwire-only"])
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert url in out
+        assert calls == []
+
+    def test_model_and_tripwire_only_together_is_rejected(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+
+        with pytest.raises(SystemExit):
+            script.main(
+                [*_drift_head(bank), "--model", "anthropic/x", "--tripwire-only"]
+            )
+        err = capsys.readouterr().err
+
+        # A real mutually exclusive group names BOTH flags as the contradiction.
+        assert "--model" in err
+        assert "--tripwire-only" in err
+
+    def test_tripwire_only_header_states_the_mode(self, tmp_path, capsys):
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML})
+
+        script.main([*_drift_head(bank), "--tripwire-only"])
+        out = capsys.readouterr().out
+
+        assert "hash-only" in out.lower()
+        assert "tripwire" in out.lower()
+
+    def test_an_empty_model_is_rejected_not_silently_downgraded(self, tmp_path, capsys):
+        """`--model "$MODEL"` with `MODEL` unset arrives as `--model ''`.
+
+        argparse counts the flag as *present*, so it satisfies the required mode
+        group while carrying nothing. A truthiness check downstream then reads it
+        as "no model" and runs the hash tripwire — reinstating the exact silent
+        downgrade the required group exists to prevent.
+        """
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+        _fake_pages(script, {url: GPU_HTML})
+
+        with pytest.raises(SystemExit):
+            script.main([*_drift_head(bank), "--model", ""])
+        captured = capsys.readouterr()
+
+        assert "--model" in captured.err
+        assert "hash-only" not in captured.out.lower()
+
+    def test_a_whitespace_model_is_rejected_too(self, tmp_path, capsys):
+        """`--model " "` is the same blank in a form `if args.model` calls true.
+
+        Worse than the empty case: the truthiness check passes, so it reaches
+        `build_ask_llm` and fails on the `provider/model` shape instead of on
+        the thing that is actually wrong.
+        """
+        script = _load_script()
+        url = f"{KB}/kb/gpu"
+        bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
+
+        with pytest.raises(SystemExit):
+            script.main([*_drift_head(bank), "--model", "   "])
+
+        assert "--model" in capsys.readouterr().err
+
+    def test_the_embedded_usage_example_shows_the_required_mode(self):
+        """The module docstring is the copy-paste source for these invocations.
+
+        Making the mode group required left its `drift` example presenting
+        `[--model ...]` as optional with no `--tripwire-only` alternative — an
+        invocation that now exits in argparse instead of running drift.
+        """
+        usage = _load_script().__doc__ or ""
+
+        assert "--tripwire-only" in usage
+        assert "[--model" not in usage
 
 
 class TestDriftFetchPolicyCli:
@@ -1862,7 +2013,7 @@ class TestDriftFetchPolicyCli:
 
         script.build_fetch_html = build
 
-        code = script.main([*_drift_head(bank)])
+        code = script.main([*_drift_head(bank), "--tripwire-only"])
         out = capsys.readouterr().out
 
         assert fetched == [ok]
@@ -1880,7 +2031,9 @@ class TestDriftFetchPolicyCli:
         )
         _fake_pages(script, {listed: GPU_HTML, other: GPU_HTML})
 
-        code = script.main(_drift_head(bank, "docs.rc.fas.harvard.edu"))
+        code = script.main(
+            [*_drift_head(bank, "docs.rc.fas.harvard.edu"), "--tripwire-only"]
+        )
         out = capsys.readouterr().out
 
         assert code == 0
@@ -1922,7 +2075,7 @@ class TestDriftEvidence:
         bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
         _fake_pages(script, {url: GPU_HTML_CHANGED})
 
-        script.main([*_drift_head(bank)])
+        script.main([*_drift_head(bank), "--tripwire-only"])
         out = capsys.readouterr().out
 
         assert "--gpus=2" not in out
@@ -1989,7 +2142,7 @@ class TestDriftTransport:
         bank = _bank(tmp_path, _locked_row(url, hashes={url: page_digest(GPU_HTML)}))
         _fake_pages(script, {url: GPU_HTML})
 
-        code = script.main([*_drift_head(bank)])
+        code = script.main([*_drift_head(bank), "--tripwire-only"])
         captured = capsys.readouterr()
 
         # A mistyped --allowed-hosts must not read as a clean bill of health.
@@ -2029,7 +2182,7 @@ class TestPrintHashesNeverLosesABaseline:
 
         script.build_fetch_html = build
 
-        script.main([*_drift_head(bank), "--print-hashes"])
+        script.main([*_drift_head(bank), "--tripwire-only", "--print-hashes"])
         out = capsys.readouterr().out
         block = json.loads(out[out.index("{") :])["source_hashes"]
 
@@ -2058,7 +2211,7 @@ class TestPrintHashesNeverLosesABaseline:
 
         script.build_fetch_html = build
 
-        script.main([*_drift_head(bank), "--print-hashes"])
+        script.main([*_drift_head(bank), "--tripwire-only", "--print-hashes"])
         out = capsys.readouterr().out
 
         assert "INCOMPLETE" in out
@@ -2538,6 +2691,21 @@ class TestReportSaysWhenItOnlyRanTheTripwire:
         script.main(_report_argv(bank, corpus, sources))
 
         assert "NOT compared" not in capsys.readouterr().out
+
+    def test_report_without_a_model_still_runs_the_tripwire_pass(
+        self, tmp_path, capsys
+    ):
+        """Regression (#147): `drift`'s new required mode flag must not leak onto
+        `report` — the nightly cron passes neither `--model` nor
+        `--tripwire-only`, so this seam has to stay hash-only-by-default.
+        """
+        script = _load_script()
+
+        code = self._drifted_run(tmp_path, script)
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert "hash-only" in out.lower() or "NOT compared" in out
 
 
 class TestReportKeepsTheDriftEvidence:
