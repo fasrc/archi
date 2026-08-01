@@ -96,3 +96,33 @@ consequences of that; the fourth is the doc overclaim it invited.
 - [x] 6.5 Docs: "A symlinked output path is followed, not replaced".
 - [x] 6.6 Mutation-check all four (summary resolve, ledger resolve, lock
   resolve, naive half-fix) and re-run the gate.
+
+## 7. Review round 4 — Codex on PR #162 (2 findings)
+
+- [x] 7.1 **P1 — the ledger transaction resolved its path three times.** Round 3
+  named the lock sidecar after the *resolved* ledger, which closed the
+  two-spellings-two-locks hole; the read and the write still resolved on their
+  own. Confirmed: retargeting the symlink after the lock is taken leaves the
+  command holding the old referent's sidecar while it reads and replaces the new
+  one, and a concurrent command on that file takes its own lock. `ledger_lock`
+  now resolves once and **yields** the pinned path; `run_decline` and
+  `run_undecline` read and write it.
+- [x] 7.2 Scope recorded in the spec: the coverage pass's read-only load runs
+  *before* the transaction opens and legitimately resolves at its own open.
+  Pinning it would claim a guarantee no lock is held for, so the requirement is
+  written against the read-modify-write inside the lock — a later reader will not
+  re-raise it as a miss.
+- [x] 7.3 **P2 — a hard-linked output was silently decoupled.** Confirmed as a
+  real behaviour change from this PR's atomic write. **Partial pushback on the
+  remedy:** neither option offered is available. Writing in place restores the
+  shared inode by reopening the partial-write window this PR exists to close, and
+  does not help a consumer holding an open fd anyway; *refusing* the write leaves
+  the monitor reading the previous healthy summary forever, which is the failure
+  the summary contract exists to close. The defect is the silence, so the write
+  commits and the run names the decoupled path.
+- [x] 7.4 Class sweep: applied at both writers via `_warn_if_multiply_linked`,
+  the summary and the ledger, as in 6.2.
+- [x] 7.5 Docs: "A hard-linked output path is reported, not followed", plus the
+  once-per-transaction sentence on the symlink section.
+- [x] 7.6 Mutation-check all four edits (lock yield, decline call site, summary
+  warning, ledger warning) and re-run the gate.

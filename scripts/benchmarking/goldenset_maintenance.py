@@ -226,13 +226,23 @@ def ledger_lock(path: str):
     take two different locks, serialise against nothing, and lose a decline to
     the second replace — the exact update this lock exists to protect.
 
+    That resolution is done ONCE and **yielded**, and the caller must read and
+    write the path it hands back. Resolving again at each step reopens the same
+    hole from the other side: a deployment that retargets the advertised stable
+    symlink after the lock is taken leaves this command holding the old
+    referent's sidecar while it reads and replaces the new one, where a
+    concurrent command is serialising on that file's own lock. One resolution per
+    transaction is what makes the lock, the read and the write the same file by
+    construction rather than by three lookups agreeing.
+
     `fcntl` is POSIX-only, and where it is missing this **refuses** rather than
     proceeding with a warning. A warning is not a mitigation — the lost update
     happens either way, and the operator has no way to notice. Only ledger
     mutation takes this path; coverage, orphans and `--propose` are read-only and
     still run.
     """
-    lock_path = Path(f"{_resolved_target(path)}.lock")
+    resolved = _resolved_target(path)
+    lock_path = Path(f"{resolved}.lock")
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -252,7 +262,7 @@ def ledger_lock(path: str):
         raise OperationalError(f"cannot open ledger lock {lock_path}: {exc}") from exc
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        yield
+        yield str(resolved)
     finally:
         handle.close()  # releases the flock
 
@@ -350,6 +360,41 @@ def _preserve_access(target: Path, tmp_name: str) -> None:
     _copy_xattrs(target, tmp_name)
 
 
+def _warn_if_multiply_linked(target: Path, label: str) -> None:
+    """Say which other name this replacement is about to leave behind.
+
+    `os.replace` installs a NEW inode under the target's name. Any other hard
+    link to the old inode keeps it, and keeps the previous contents — a monitor
+    reading that second name sits on a healthy snapshot forever while every run
+    reports success. `realpath` cannot see this: hard links are not a chain to
+    follow, they are equal names for one inode.
+
+    Neither obvious remedy is available. Truncating in place would put every
+    name back on one inode and reopen the partial-write window this file's
+    atomicity exists to close — and it would not help a consumer holding an open
+    descriptor across the write, which goes stale the same way. Refusing the
+    write is worse: the summary IS the health signal, so a run that declines to
+    write it leaves the monitor on the previous healthy file indefinitely, which
+    is the failure the summary contract exists to close.
+
+    So the write commits and the run names the decoupled path. A symlink is the
+    shape that actually works here, because it IS followed.
+    """
+    try:
+        links = target.stat().st_nlink
+    except OSError:  # pragma: no cover - no target yet, or it raced away
+        return
+    if links < 2:
+        return
+    print(
+        f"warning: {label} {target} has {links - 1} other hard link(s). Committing "
+        "it atomically gives this name a new inode, so those names keep the "
+        "previous contents and go stale silently. Point every consumer at this "
+        "path, or reach it through a symlink, which is followed.",
+        file=sys.stderr,
+    )
+
+
 def write_ledger(path: str, entries: List[Any]) -> None:
     """Atomically persist the ledger — the ONLY file this tool writes.
 
@@ -397,6 +442,7 @@ def write_ledger(path: str, entries: List[Any]) -> None:
         handle.close()
         handle = None
         _preserve_access(target, tmp_name)
+        _warn_if_multiply_linked(target, "the ledger")
         os.replace(tmp_name, target)
     except OSError as exc:
         if handle is not None:
@@ -641,8 +687,8 @@ def run_decline(args: argparse.Namespace, docs, bank) -> int:
     if not args.ledger:
         raise OperationalError("--decline needs --ledger <path> to record the decision")
     require_gap(args.decline, docs, bank, "decline")
-    with ledger_lock(args.ledger):
-        entries = read_ledger(args.ledger)
+    with ledger_lock(args.ledger) as ledger_path:
+        entries = read_ledger(ledger_path)
         try:
             stamped = with_decline(
                 entries,
@@ -655,7 +701,7 @@ def run_decline(args: argparse.Namespace, docs, bank) -> int:
         if len(stamped) == len(entries):
             print(f"already declined: {args.decline}")
             return 0
-        write_ledger(args.ledger, stamped)
+        write_ledger(ledger_path, stamped)
     print(f"declined: {args.decline} -> {args.ledger}")
     return 0
 
@@ -671,8 +717,8 @@ def run_undecline(args: argparse.Namespace) -> int:
         raise OperationalError(
             "--undecline needs --ledger <path> — the record to clear lives there"
         )
-    with ledger_lock(args.ledger):
-        entries = read_ledger(args.ledger)
+    with ledger_lock(args.ledger) as ledger_path:
+        entries = read_ledger(ledger_path)
         try:
             kept = without_decline(entries, args.undecline)
         except ValueError as exc:
@@ -680,7 +726,7 @@ def run_undecline(args: argparse.Namespace) -> int:
         if len(kept) == len(entries):
             print(f"not declined: {args.undecline} — nothing to clear")
             return 0
-        write_ledger(args.ledger, kept)
+        write_ledger(ledger_path, kept)
     print(f"undeclined: {args.undecline} -> {args.ledger}")
     return 0
 
@@ -1121,6 +1167,7 @@ def _write_summary(args: argparse.Namespace, summary: dict) -> None:
         handle.close()
         handle = None
         _preserve_access(target, tmp_name)
+        _warn_if_multiply_linked(target, "the summary")
         os.replace(tmp_name, target)
     except OSError as exc:
         if handle is not None:

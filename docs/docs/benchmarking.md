@@ -1048,7 +1048,23 @@ parent chain and get created where a plain `open(path, "w")` would have put them
 
 The ledger's lock sidecar is named after the resolved path for the same reason: two runs reaching
 one ledger by different spellings must contend for one lock, or they serialise against nothing and
-the second write erases the first decline.
+the second write erases the first decline. That resolution happens **once per transaction** and is
+reused for the read and the write, so retargeting the link while a decline is being recorded cannot
+leave the command holding one file's lock while it rewrites another.
+
+#### A hard-linked output path is reported, not followed
+
+A **hard link** is the one output shape that cannot be honoured. Committing atomically means
+installing a new inode under the target's name, so any other name for the old inode keeps it — and
+keeps yesterday's contents. There is no resolving this the way a symlink resolves: hard links are
+not a chain to follow, they are equal names for one file, and a consumer holding the file open
+across the write goes stale in exactly the same way.
+
+Writing in place instead would reopen the partial-write window this whole section exists to close,
+and refusing the write would leave a monitor reading the last healthy summary forever — the failure
+the summary contract exists to prevent, reached by a different route. So the write commits and the
+run prints a warning naming the path it just decoupled. Point every consumer at the same path, or
+reach it through a symlink.
 
 #### Running it nightly
 

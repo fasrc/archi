@@ -3084,6 +3084,223 @@ class TestASymlinkedOutputIsFollowedNotReplaced:
         assert bank.read_bytes() == before
 
 
+class TestOneResolutionPerLedgerTransaction:
+    """The lock, the read and the write must name one file BY CONSTRUCTION.
+
+    Naming the sidecar after the resolved path fixed the two-spellings-two-locks
+    case, but each of the three steps still resolved `--ledger` independently.
+    Between them sits a window: a deployment that retargets the advertised
+    stable symlink after the lock is taken leaves the command holding the OLD
+    referent's sidecar while it reads and replaces the NEW one. A concurrent
+    command reaching the new referent directly takes that file's own lock, the
+    two replacements serialise against nothing, and one decline is erased — the
+    lost update the lock exists to prevent, reintroduced by the resolution
+    itself.
+
+    So the lock resolves once and hands the caller the path it locked.
+    """
+
+    def _two_referents(self, tmp_path):
+        state = tmp_path / "state"
+        state.mkdir()
+        first = state / "release-1.json"
+        first.write_text("[]", encoding="utf-8")
+        second = state / "release-2.json"
+        second.write_text("[]", encoding="utf-8")
+        link = tmp_path / "stable.json"
+        link.symlink_to(first)
+        return link, first, second
+
+    def _decline_argv(self, tmp_path, url, ledger):
+        return [
+            "coverage",
+            "--bank",
+            str(_bank(tmp_path, _row())),
+            "--corpus-json",
+            str(_corpus(tmp_path, url)),
+            "--decline",
+            url,
+            "--ledger",
+            str(ledger),
+        ]
+
+    def _paths_seen(self, script, monkeypatch):
+        """Record the path each ledger step is handed, still running the real one."""
+        seen = []
+        for name in ("read_ledger", "write_ledger"):
+            original = getattr(script, name)
+
+            def recorder(path, *rest, _name=name, _original=original):
+                seen.append((_name, str(path)))
+                return _original(path, *rest)
+
+            monkeypatch.setattr(script, name, recorder)
+        return seen
+
+    def test_the_lock_hands_back_the_path_it_locked(self, tmp_path):
+        script = _load_script()
+        link, first, _ = self._two_referents(tmp_path)
+
+        with script.ledger_lock(str(link)) as pinned:
+            assert Path(pinned) == first
+
+    def test_retargeting_the_link_mid_transaction_does_not_move_the_write(
+        self, tmp_path
+    ):
+        """The window itself, closed: flip the link while the lock is held."""
+        script = _load_script()
+        link, first, second = self._two_referents(tmp_path)
+        entry = [{"url": f"{KB}/kb/b", "reason": "", "at": "2026-01-01T00:00:00Z"}]
+
+        with script.ledger_lock(str(link)) as pinned:
+            link.unlink()
+            link.symlink_to(second)
+            script.write_ledger(pinned, entry)
+
+        assert [e["url"] for e in json.loads(first.read_text())] == [
+            f"{KB}/kb/b"
+        ], "the write landed off the file whose lock is held"
+        assert json.loads(second.read_text()) == [], "an unlocked file was written"
+
+    def test_the_decline_call_site_reads_and_writes_the_pinned_path(
+        self, tmp_path, monkeypatch
+    ):
+        script = _load_script()
+        link, first, _ = self._two_referents(tmp_path)
+        url = f"{KB}/kb/b"
+        seen = self._paths_seen(script, monkeypatch)
+
+        assert script.main(self._decline_argv(tmp_path, url, link)) == 0
+
+        # The coverage pass loads the ledger read-only before the transaction
+        # opens. That one legitimately resolves at its own open, and pinning it
+        # would claim a guarantee the lock is not held for. What has to be
+        # pinned is the read-modify-write inside the lock.
+        assert seen[0] == ("read_ledger", str(link))
+        assert seen[1:] == [("read_ledger", str(first)), ("write_ledger", str(first))]
+
+    def test_the_undecline_call_site_reads_and_writes_the_pinned_path(
+        self, tmp_path, monkeypatch
+    ):
+        script = _load_script()
+        link, first, _ = self._two_referents(tmp_path)
+        url = f"{KB}/kb/b"
+        first.write_text(
+            json.dumps([{"url": url, "reason": "", "at": "2026-01-01T00:00:00Z"}]),
+            encoding="utf-8",
+        )
+        seen = self._paths_seen(script, monkeypatch)
+
+        argv = self._decline_argv(tmp_path, url, link)
+        argv[argv.index("--decline")] = "--undecline"
+        assert script.main(argv) == 0
+
+        assert seen == [("read_ledger", str(first)), ("write_ledger", str(first))]
+
+
+class TestAHardLinkedTargetIsNamedNotSilentlyDecoupled:
+    """A replace gives the name a new inode; other hard links keep the old one.
+
+    That is inherent to replace-based atomicity, not a slip: a consumer holding
+    an open descriptor across the write goes stale in exactly the same way.
+    Truncating in place instead would put every name back on one inode and
+    reopen the partial-write window this change exists to close, so "preserve
+    the old behaviour" is not available here the way it was for the symlink.
+
+    Refusing the write is worse still. The summary IS the health signal, and a
+    run that declines to write it leaves the monitor reading the previous
+    healthy file forever — the failure this whole contract exists to close,
+    arrived at by a different road.
+
+    What must not happen is the silence. So the write commits, and the run says
+    which name it just decoupled.
+    """
+
+    def _hard_linked(self, tmp_path, name, body):
+        target = tmp_path / name
+        target.write_text(body, encoding="utf-8")
+        other = tmp_path / f"monitor-{name}"
+        os.link(target, other)
+        return target, other
+
+    def _report(self, script, tmp_path, out):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        return script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+    def test_a_hard_linked_summary_names_the_path_left_behind(self, tmp_path, capsys):
+        script = _load_script()
+        target, _ = self._hard_linked(tmp_path, "summary.json", "{}")
+
+        assert self._report(script, tmp_path, target) == 0
+
+        err = capsys.readouterr().err
+        assert "hard link" in err
+        assert str(target) in err
+
+    def test_the_summary_still_commits_at_the_configured_name(self, tmp_path):
+        """The warning is a warning. The health signal is not withheld."""
+        script = _load_script()
+        target, other = self._hard_linked(tmp_path, "summary.json", "{}")
+
+        assert self._report(script, tmp_path, target) == 0
+
+        assert json.loads(target.read_text())["failed_passes"] == []
+        assert other.read_text() == "{}", "the other name cannot follow a new inode"
+
+    def test_a_hard_linked_ledger_names_the_path_left_behind(self, tmp_path, capsys):
+        """Same commit step, second writer — the defect is the step, not the file."""
+        script = _load_script()
+        target, _ = self._hard_linked(tmp_path, "declines.json", "[]")
+        url = f"{KB}/kb/b"
+
+        code = script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(target),
+            ]
+        )
+
+        assert code == 0
+        err = capsys.readouterr().err
+        assert "hard link" in err
+        assert str(target) in err
+
+    def test_an_ordinary_target_says_nothing(self, tmp_path, capsys):
+        """No false alarm on the shape every deployment actually uses."""
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text("{}", encoding="utf-8")
+
+        assert self._report(script, tmp_path, out) == 0
+
+        assert "hard link" not in capsys.readouterr().err
+
+    def test_a_first_run_with_no_target_yet_says_nothing(self, tmp_path, capsys):
+        """`stat` on a path that does not exist is not a reason to warn."""
+        script = _load_script()
+
+        assert self._report(script, tmp_path, tmp_path / "new.json") == 0
+
+        assert "hard link" not in capsys.readouterr().err
+
+
 class TestReportNotifiesOnDegradedRuns:
     """A pass that half-ran must not summarise as clean.
 

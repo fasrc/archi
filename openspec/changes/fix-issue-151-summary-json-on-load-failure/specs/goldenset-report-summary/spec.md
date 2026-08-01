@@ -209,3 +209,61 @@ path, so two spellings of one ledger contend for one lock.
 - **THEN** the run is still refused and the bank is byte-unchanged — resolving
   makes this configuration destructive where clobbering the link was survivable,
   so the guard must hold
+
+### Requirement: A ledger transaction SHALL resolve its path exactly once
+
+The system SHALL resolve the `--ledger` path once when the lock is taken and use
+that resolved path for the lock, the read and the write of one transaction.
+Resolving independently at each step leaves the lock protecting a file the
+transaction may no longer be operating on: a deployment that retargets the
+advertised stable symlink after the lock is taken leaves the command holding the
+old referent's sidecar while it reads and replaces the new one, where a
+concurrent command is serialising on that file's own lock — the lost update the
+lock exists to prevent, reintroduced by the resolution.
+
+Scoped to the read-modify-write **inside** the lock. A read-only load taken
+before the transaction opens — the coverage pass's — legitimately resolves at its
+own open, and pinning it would claim a guarantee no lock is held for.
+
+#### Scenario: The lock hands back the path it locked
+
+- **WHEN** a ledger transaction takes the lock
+- **THEN** the caller receives the resolved ledger path
+- **AND** the read and the write of that transaction use it
+
+#### Scenario: Retargeting the link mid-transaction does not move the write
+
+- **WHEN** the symlink named by `--ledger` is retargeted after the lock is taken
+- **THEN** the write still lands on the file whose lock is held
+- **AND** the new referent is left untouched
+
+### Requirement: A hard-linked output path SHALL be reported, not silently decoupled
+
+The system SHALL write the file and SHALL print a warning naming the target when
+an output path has more than one hard link. An atomic commit installs a new inode
+under the target's name, so every other name for the old inode keeps the previous
+contents — a monitor reading one of those names sits on a healthy snapshot
+indefinitely while each run reports success.
+
+This is a property of replace-based atomicity, not a defect to resolve away: a
+consumer holding an open descriptor across the write goes stale identically, and
+`realpath` cannot see hard links at all, because they are equal names for one
+inode rather than a chain to follow.
+
+Neither alternative is acceptable, and the requirement says so to keep a later
+change from "fixing" it into one of them. Writing in place would restore the
+shared inode and reopen the partial-write window the atomic write exists to
+close. **Refusing** the write would leave the monitor reading the previous
+healthy summary indefinitely — the failure the summary contract exists to close,
+arrived at by a different route — because the summary IS the health signal.
+
+#### Scenario: A hard-linked target is named on stderr
+
+- **WHEN** `--summary-json` or `--ledger` names a file with another hard link
+- **THEN** the run warns and names that path
+- **AND** the write still commits, so the health signal is not withheld
+
+#### Scenario: An ordinary target is silent
+
+- **WHEN** the output path has a single link, or does not exist yet
+- **THEN** no warning is printed
