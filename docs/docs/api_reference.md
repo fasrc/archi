@@ -42,48 +42,6 @@ honour all of it — the last four fields are read only by the streaming endpoin
 | `include_agent_steps` | bool | stream only | Include the incremental **answer text** — the `chunk` events ([`app.py:2420`][chunkgate]). Default `true`. Does **not** gate reasoning. Ignored by `POST /api/get_chat_response`. |
 | `include_tool_steps` | bool | stream only | Include tool events (`tool_start`, `tool_output`, `tool_end`) **and reasoning events** (`thinking_start`, `thinking_end`, [`app.py:2400`][thinkgate]). Default `true`. Ignored by `POST /api/get_chat_response`. |
 
-!!! warning "Send both timing fields, and generate the timestamp fresh"
-
-    `client_sent_msg_ts` and `client_timeout` look optional and are not. Both default to
-    `0` when absent ([`app.py:4654-4655`][parse]), and the timeout check is an unguarded
-    comparison ([`app.py:1710`][check]):
-
-    ```python
-    if server_received_msg_ts.timestamp() - client_sent_msg_ts > client_timeout:
-        return None, 408
-    ```
-
-    Three ways to fall foul of it, all rejected:
-
-    | You send | Effective values | Result |
-    |---|---|---|
-    | neither field | `0`, `0` | `<seconds since 1970> - 0 > 0` → rejected |
-    | only `client_sent_msg_ts` | e.g. `1769900000.0`, `0` | anything `> 0` → rejected |
-    | only `client_timeout` | `0`, e.g. `600.0` | `<seconds since 1970> > 600` → rejected |
-
-    So send **both**. And generate `client_sent_msg_ts` **when you send**, not as a copied
-    constant: it is compared against the server clock, so a timestamp older than
-    `client_timeout` is treated as a request that already timed out. A hard-coded value
-    works the day it is written and fails silently thereafter.
-
-    **How the rejection reaches you differs by endpoint** — the check is shared, the
-    reporting is not:
-
-    - `POST /api/get_chat_response` returns **HTTP 408** with `{"error": ...}`.
-    - `POST /api/get_chat_response_stream` returns **HTTP 200**, emits its opening `meta`
-      line, and only then yields an NDJSON error event
-      `{"type": "error", "status": 408, "message": ...}` before closing
-      ([`app.py:2075`][streamerr]). A streaming client that checks only the HTTP status
-      sees success. You must inspect the events.
-
-    This is a bug in the handler, not the intended contract — the streaming loop applies
-    the same check to the same variable but guards it, `if client_timeout and ...`
-    ([`app.py:2156`][stream]), so `0` there means "no deadline" while here it means
-    "deadline already passed". Tracked as
-    [#175](https://github.com/fasrc/archi/issues/175); once fixed, both fields become
-    genuinely optional and this warning goes away. Until then, this page documents what
-    the endpoints actually do.
-
 [parse]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4654-L4655
 [check]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1710
 [streamerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2075

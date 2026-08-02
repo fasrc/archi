@@ -68,7 +68,7 @@
       It documents that a 408 arrives as HTTP 200 plus an `{"type": "error", "status": 408}`
       NDJSON event on the streaming route, which stays true for the explicit-deadline 408 this
       change preserves. Reword it to describe an exceeded deadline the caller *did* declare.
-- [ ] 5.3 Delete the rest of the admonition: the "look optional and are not" framing, the
+- [x] 5.3 Delete the rest of the admonition: the "look optional and are not" framing, the
       three-row reproduction table, the quoted unguarded comparison, and the closing paragraph
       calling it a handler bug tracked as #175.
 - [ ] 5.4 Clean up the reference-link definitions the admonition owned (`[parse]`, `[check]`,
