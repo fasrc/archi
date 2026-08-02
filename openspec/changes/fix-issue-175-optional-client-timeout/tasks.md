@@ -86,13 +86,13 @@
 
 ## 6. Verify and land
 
-- [ ] 6.1 Run `bash scripts/gate.sh` **bare** — no pipe, no redirect, since redirecting it
+- [x] 6.1 Run `bash scripts/gate.sh` **bare** — no pipe, no redirect, since redirecting it
       trips the harness protected-path guard and reads as a failure that is not one. It must
       pass format, lint and tests.
-- [ ] 6.2 Confirm **diff coverage ≥80% on the changed lines of `app.py`** specifically, from
+- [x] 6.2 Confirm **diff coverage ≥80% on the changed lines of `app.py`** specifically, from
       the gate's diff-coverage output — not merely a passing project total. The handler path
       starts largely uncovered, so a passing total proves nothing about these lines.
-- [ ] 6.3 Re-check the acceptance criteria in issue #175 one by one against the working tree,
+- [x] 6.3 Re-check the acceptance criteria in issue #175 one by one against the working tree,
       including that `git diff` on `app.py` shows no unrelated black reflow.
 - [ ] 6.4 Run `openspec validate fix-issue-175-optional-client-timeout --strict` and confirm it
       passes.
