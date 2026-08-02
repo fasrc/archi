@@ -3198,6 +3198,220 @@ class TestOneResolutionPerLedgerTransaction:
         assert seen == [("read_ledger", str(first)), ("write_ledger", str(first))]
 
 
+class TestTheValidatedOutputPathIsTheOneWritten:
+    """The alias refusal must bind the write, not just the instant it ran.
+
+    `reject_aliased_outputs` resolves every declared path before the first read,
+    and each writer then resolved its own path AGAIN — for `report`, minutes of
+    network passes later. Between the two lookups a symlinked output can be
+    retargeted: point `--summary-json`'s stable link at the bank once the run is
+    under way and the refusal is not defeated so much as bypassed, because the
+    file it approved is no longer the file `os.replace` lands on. The bank the
+    operator was about to go repair is replaced by a summary.
+
+    The same window sits between the check and `ledger_lock`, one lookup earlier
+    than the one `TestOneResolutionPerLedgerTransaction` closed: pinning inside
+    the transaction cannot help if the transaction opens on the wrong file.
+
+    So the resolution the check validated is pinned and handed to the writers.
+    This is not a general TOCTOU cure — anyone able to retarget the link can
+    also swap the resolved file — but it is what makes the refusal mean
+    something for the whole run instead of for one instant of it.
+    """
+
+    def _stable_link(self, tmp_path, name="report.json", body="{}"):
+        releases = tmp_path / "releases"
+        releases.mkdir()
+        referent = releases / name
+        referent.write_text(body, encoding="utf-8")
+        link = tmp_path / "stable.json"
+        link.symlink_to(referent)
+        return link, referent
+
+    def _retarget_mid_run(self, script, monkeypatch, hook, link, new_target):
+        """Flip the link at a point the run reaches after the alias check."""
+        original = getattr(script, hook)
+
+        def flip(*args, **kwargs):
+            link.unlink()
+            link.symlink_to(new_target)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(script, hook, flip)
+
+    def test_retargeting_the_summary_link_mid_run_cannot_reach_the_bank(
+        self, tmp_path, monkeypatch
+    ):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        before = bank.read_bytes()
+        _fake_pages(script, {live: GPU_HTML})
+        link, referent = self._stable_link(tmp_path)
+        self._retarget_mid_run(script, monkeypatch, "bank_census", link, bank)
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(link),
+            ]
+        )
+
+        assert code == 0
+        assert (
+            bank.read_bytes() == before
+        ), "the alias refusal was bypassed by retargeting the link mid-run"
+        assert json.loads(referent.read_text())["failed_passes"] == []
+
+    def test_retargeting_the_ledger_link_mid_run_does_not_move_the_lock(
+        self, tmp_path, monkeypatch
+    ):
+        """The window BEFORE `ledger_lock`, which one-resolution-per-transaction leaves open."""
+        script = _load_script()
+        link, referent = self._stable_link(tmp_path, "declines.json", "[]")
+        elsewhere = tmp_path / "releases" / "release-2.json"
+        elsewhere.write_text("[]", encoding="utf-8")
+        url = f"{KB}/kb/b"
+        self._retarget_mid_run(script, monkeypatch, "require_gap", link, elsewhere)
+
+        code = script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(link),
+            ]
+        )
+
+        assert code == 0
+        assert [e["url"] for e in json.loads(referent.read_text())] == [
+            url
+        ], "the transaction opened on a file the check never validated"
+        assert json.loads(elsewhere.read_text()) == []
+
+    def test_a_summary_path_with_no_link_to_follow_is_unaffected(self, tmp_path):
+        """Pinning must not disturb the ordinary case, nor a first run."""
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+        assert code == 0
+        assert json.loads(out.read_text())["failed_passes"] == []
+
+
+class TestACyclicOutputSymlinkIsRefused:
+    """A loop is a broken configuration, and the write must say so, not erase it.
+
+    `realpath` is deliberately total for the inputs — a self-referential `--bank`
+    surfaces as a failed pass with a summary written, not a traceback. But a
+    total resolver hands the WRITERS the unresolved path back, and `os.replace`
+    does not follow a symlink on its destination: the commit lands on the link's
+    own directory entry and turns the operator's broken link into a plausible
+    regular file. `open(path, "w")` — what the summary write used before it
+    became atomic — reported `ELOOP` and changed nothing.
+
+    Losing the diagnosis is the smaller half. The link is a deployment's
+    configuration, the tool has no business rewriting it, and a summary sitting
+    where a link belongs reads as a healthy run to the next operator.
+    """
+
+    def _report_to(self, script, tmp_path, out):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        return script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+    def test_a_self_referential_summary_path_is_not_replaced(self, tmp_path, capsys):
+        script = _load_script()
+        loop = tmp_path / "summary.json"
+        loop.symlink_to(loop)
+
+        code = self._report_to(script, tmp_path, loop)
+
+        assert code == 1
+        assert loop.is_symlink(), "the broken link was replaced by a regular file"
+        err = capsys.readouterr().err
+        assert "summary.json" in err and "loop" in err.lower()
+
+    def test_a_mutually_cyclic_summary_path_is_refused_too(self, tmp_path):
+        """`a -> b -> a` resolves no further than `a -> a` does."""
+        script = _load_script()
+        first = tmp_path / "summary.json"
+        second = tmp_path / "other.json"
+        first.symlink_to(second)
+        second.symlink_to(first)
+
+        assert self._report_to(script, tmp_path, first) == 1
+        assert first.is_symlink() and second.is_symlink()
+
+    def test_a_cyclic_ledger_path_is_refused_before_it_is_replaced(self, tmp_path):
+        script = _load_script()
+        loop = tmp_path / "declines.json"
+        loop.symlink_to(loop)
+        url = f"{KB}/kb/b"
+
+        code = script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(loop),
+            ]
+        )
+
+        assert code == 1
+        assert loop.is_symlink()
+
+    def test_a_dangling_summary_symlink_is_still_written_through(self, tmp_path):
+        """The control: a dangling link resolves fine and must keep working.
+
+        `realpath` follows it to a name that does not exist yet, which is not a
+        loop and is exactly where `open(path, "w")` would have created the file.
+        """
+        script = _load_script()
+        link = tmp_path / "summary.json"
+        referent = tmp_path / "not-there-yet.json"
+        link.symlink_to(referent)
+
+        assert self._report_to(script, tmp_path, link) == 0
+
+        assert link.is_symlink()
+        assert json.loads(referent.read_text())["failed_passes"] == []
+
+
 class TestAHardLinkedTargetIsNamedNotSilentlyDecoupled:
     """A replace gives the name a new inode; other hard links keep the old one.
 
@@ -3429,6 +3643,83 @@ class TestOnlyAnOSErrorIsAnExpectedWriterFailure:
 
         assert "No space left on device" in capsys.readouterr().err
         assert not list(tmp_path.glob(".summary.json.*.tmp")), "temp file left behind"
+
+    def test_closing_the_directory_handle_cannot_replace_the_write_error(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """The one cleanup step still outside the best-effort boundary.
+
+        `write_ledger` closes its directory descriptor in the same `finally`
+        that discards the temp file — but unguarded. An `OSError` from that
+        `close(2)` propagates out of the `finally` and REPLACES the
+        `OperationalError` the handler just raised, so the operator is told
+        about a descriptor instead of about the disk that failed their write.
+        """
+        script = _load_script()
+        ledger = tmp_path / "declines.json"
+        ledger.write_text("[]", encoding="utf-8")
+        real_open_directory, real_close = script._open_directory, script.os.close
+        dir_fds = []
+
+        def open_directory(directory):
+            fd = real_open_directory(directory)
+            dir_fds.append(fd)
+            return fd
+
+        def close(fd):
+            if fd in dir_fds:
+                dir_fds.remove(fd)
+                real_close(fd)
+                raise OSError(5, "Input/output error")
+            return real_close(fd)
+
+        def refuse_to_stage(*_args, **_kwargs):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(script, "_open_directory", open_directory)
+        monkeypatch.setattr(script.tempfile, "mkstemp", refuse_to_stage)
+        monkeypatch.setattr(script.os, "close", close)
+
+        with pytest.raises(script.OperationalError) as caught:
+            script.write_ledger(str(ledger), [])
+
+        assert "No space left on device" in str(caught.value)
+
+    def test_closing_the_directory_handle_cannot_fail_a_committed_write(
+        self, tmp_path, monkeypatch
+    ):
+        """The same close, on the far side of the commit, where it is worse.
+
+        Nothing is in flight there — the ledger IS the ledger and the fsync
+        succeeded. An unguarded `close(2)` would manufacture a raw `OSError` out
+        of a run that entirely worked, and `main` does not catch that: the
+        operator gets a traceback telling them a completed decline failed.
+        """
+        script = _load_script()
+        ledger = tmp_path / "declines.json"
+        ledger.write_text("[]", encoding="utf-8")
+        entry = [{"url": f"{KB}/kb/b", "reason": "", "at": "2026-01-01T00:00:00Z"}]
+        real_open_directory, real_close = script._open_directory, script.os.close
+        dir_fds = []
+
+        def open_directory(directory):
+            fd = real_open_directory(directory)
+            dir_fds.append(fd)
+            return fd
+
+        def close(fd):
+            if fd in dir_fds:
+                dir_fds.remove(fd)
+                real_close(fd)
+                raise OSError(5, "Input/output error")
+            return real_close(fd)
+
+        monkeypatch.setattr(script, "_open_directory", open_directory)
+        monkeypatch.setattr(script.os, "close", close)
+
+        script.write_ledger(str(ledger), entry)
+
+        assert [e["url"] for e in json.loads(ledger.read_text())] == [f"{KB}/kb/b"]
 
 
 class TestAnUnresolvablePathIsNotATraceback:

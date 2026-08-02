@@ -206,6 +206,63 @@ def _resolved_target(path: str) -> Path:
     return Path(os.path.realpath(path))
 
 
+def _output_target(path: str, label: str) -> Path:
+    """The file a write must land on: final symlink followed, a loop refused.
+
+    `_resolved_target` is deliberately **total**, and for an INPUT that is the
+    right trade: an unresolvable `--bank` reaches the read, where `ELOOP` is
+    reported as a failed pass with a summary written, instead of ending the run
+    on a traceback before it starts.
+
+    For an OUTPUT it is the wrong half of that trade. `realpath` gives up on a
+    cycle and hands the unresolved link back; `os.replace` does not follow a
+    symlink on its destination; so the commit swaps the link's own directory
+    entry and turns the operator's broken configuration into a plausible regular
+    file — where the pre-atomic `open(path, "w")` raised `ELOOP` and changed
+    nothing. Losing the diagnosis is the smaller half: a summary sitting where a
+    link belongs reads as a healthy run to whoever looks next.
+
+    A resolution that is itself STILL a symlink is precisely the signal that
+    resolution gave up, which is why that is the test. A dangling link is not
+    that — `realpath` follows it to a name that does not exist yet, exactly
+    where `open` would have created the file.
+    """
+    resolved = _resolved_target(path)
+    if os.path.islink(resolved):
+        raise OperationalError(
+            f"cannot write {label} {resolved}: the path is a symlink loop, so it "
+            "resolves to nothing. Committing atomically would replace the link "
+            "with a regular file and destroy the configuration silently. Repair "
+            "the link, or name the file directly."
+        )
+    return resolved
+
+
+def pinned_output(args: argparse.Namespace, flag: str) -> str:
+    """The resolution `reject_aliased_outputs` validated — not a fresh lookup.
+
+    The alias refusal resolves every declared path before the first read. Left
+    at that, each writer resolved its own path again afterwards, and for
+    `report` that is minutes of network passes later. A symlinked output
+    retargeted inside that window bypasses the refusal without defeating it:
+    point `--summary-json`'s stable link at the bank once the run is under way
+    and `os.replace` lands on a file the check never saw. The same window sits
+    before `ledger_lock`, one lookup earlier than the pinning inside the
+    transaction can reach.
+
+    This is not a general cure for the race — anyone able to retarget the link
+    can swap the resolved file too. It is what makes the refusal hold for the
+    whole run rather than for the instant it ran.
+
+    Falls back to resolving when nothing is pinned, so the writers stay callable
+    on their own.
+    """
+    pinned = getattr(args, "pinned_outputs", None) or {}
+    if flag in pinned:
+        return str(pinned[flag])
+    return str(_resolved_target(str(getattr(args, flag))))
+
+
 @contextmanager
 def ledger_lock(path: str):
     """Serialize the ledger read-modify-write across processes.
@@ -351,6 +408,26 @@ def _close_quietly(handle) -> None:
         pass
 
 
+def _close_fd_quietly(fd: Optional[int]) -> None:
+    """Close a directory descriptor without letting the close become the failure.
+
+    `_close_quietly`'s sibling, for the one cleanup step that sat outside that
+    boundary. `write_ledger`'s `finally` runs while the write's own
+    `OperationalError` is already in flight, and an `OSError` from `close(2)`
+    raised there propagates out of the `finally` and REPLACES it — leaving the
+    operator holding a descriptor error instead of the diagnosis of the disk
+    that failed their write. After the commit it is worse still: it would either
+    replace `LedgerNotDurable` or manufacture a raw `OSError` out of a run that
+    entirely succeeded.
+    """
+    if fd is None:
+        return
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
 def _discard_quietly(tmp_name: str) -> None:
     """Remove an uncommitted temp file. A failure here has nothing left to say."""
     if not tmp_name:
@@ -476,7 +553,7 @@ def write_ledger(path: str, entries: List[Any]) -> None:
       write" would tell the operator nothing happened and invite them to redo a
       change that already took effect.
     """
-    target = _resolved_target(path)
+    target = _output_target(path, "the ledger")
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -512,9 +589,8 @@ def write_ledger(path: str, entries: List[Any]) -> None:
         _close_quietly(handle)
         if not committed:
             _discard_quietly(tmp_name)
-            if dir_fd is not None:
-                os.close(dir_fd)
-                dir_fd = None
+            _close_fd_quietly(dir_fd)
+            dir_fd = None
 
     # --- committed. Everything below is durability, never "did it happen". ---
     if dir_fd is None:  # pragma: no cover - non-POSIX
@@ -528,7 +604,7 @@ def write_ledger(path: str, entries: List[Any]) -> None:
             "host crash. Do not retry it — check the storage instead."
         ) from exc
     finally:
-        os.close(dir_fd)
+        _close_fd_quietly(dir_fd)
 
 
 def _open_directory(directory: Path) -> Optional[int]:
@@ -747,7 +823,7 @@ def run_decline(args: argparse.Namespace, docs, bank) -> int:
     if not args.ledger:
         raise OperationalError("--decline needs --ledger <path> to record the decision")
     require_gap(args.decline, docs, bank, "decline")
-    with ledger_lock(args.ledger) as ledger_path:
+    with ledger_lock(pinned_output(args, "ledger")) as ledger_path:
         entries = read_ledger(ledger_path)
         try:
             stamped = with_decline(
@@ -777,7 +853,7 @@ def run_undecline(args: argparse.Namespace) -> int:
         raise OperationalError(
             "--undecline needs --ledger <path> — the record to clear lives there"
         )
-    with ledger_lock(args.ledger) as ledger_path:
+    with ledger_lock(pinned_output(args, "ledger")) as ledger_path:
         entries = read_ledger(ledger_path)
         try:
             kept = without_decline(entries, args.undecline)
@@ -1215,7 +1291,7 @@ def _write_summary(args: argparse.Namespace, summary: dict) -> None:
     """
     if not args.summary_json:
         return
-    target = _resolved_target(args.summary_json)
+    target = _output_target(pinned_output(args, "summary_json"), "the summary")
     tmp_name = ""
     handle = None
     committed = False
@@ -1619,7 +1695,9 @@ _OUTPUT_PATH_FLAGS = ("summary_json", "ledger")
 _INPUT_PATH_FLAGS = ("bank", "corpus_json", "sources")
 
 
-def _same_file(one: Path, other: Path) -> bool:
+def _same_file(
+    one: Path, other: Path, one_resolved: Path, other_resolved: Path
+) -> bool:
     """Whether two paths name one file — by identity, not by spelling.
 
     Two checks, because neither subsumes the other:
@@ -1641,13 +1719,20 @@ def _same_file(one: Path, other: Path) -> bool:
     actually means something: the `ELOOP` raised when the file is *read*, already
     reported as a failed pass with a summary written. It also makes this guard
     and the writers agree, since they resolve the same paths the same way.
+
+    The resolutions are handed IN rather than taken here, so the comparison and
+    the pin that outlives it (`reject_aliased_outputs`) are literally one lookup
+    instead of two that happen to agree. Resolving a second time to pin what was
+    just compared would leave the refusal a check on a path nothing afterwards
+    is guaranteed to use — the hole this whole pinning exists to close, reopened
+    at its own seam.
     """
     try:
         if one.samefile(other):
             return True
     except OSError:  # one of them does not exist yet — fall through
         pass
-    return _resolved_target(str(one)) == _resolved_target(str(other))
+    return one_resolved == other_resolved
 
 
 def reject_aliased_outputs(args: argparse.Namespace) -> None:
@@ -1666,17 +1751,25 @@ def reject_aliased_outputs(args: argparse.Namespace) -> None:
     itself: this is the one refusal that has to happen while it is still true
     that nothing was read, printed or written. A tool that discovers the
     collision at its commit point has already spent the run.
+
+    Each declared path is resolved ONCE here, and every output's resolution is
+    **pinned** on `args` for the writers to use (`pinned_output`). Without that
+    the refusal only describes the instant it ran: the writers looked their own
+    paths up again afterwards, so retargeting a symlinked output mid-run walked
+    straight past it.
     """
     declared = []
     for flag in _OUTPUT_PATH_FLAGS + _INPUT_PATH_FLAGS:
         value = getattr(args, flag, None)
         if value:
-            declared.append((flag, Path(value)))
-    for flag, path in declared:
+            declared.append((flag, Path(value), _resolved_target(str(value))))
+    for flag, path, resolved in declared:
         if flag not in _OUTPUT_PATH_FLAGS:
             continue
-        for other_flag, other_path in declared:
-            if other_flag == flag or not _same_file(path, other_path):
+        for other_flag, other_path, other_resolved in declared:
+            if other_flag == flag or not _same_file(
+                path, other_path, resolved, other_resolved
+            ):
                 continue
             raise OperationalError(
                 f"--{flag.replace('_', '-')} and --{other_flag.replace('_', '-')} "
@@ -1684,6 +1777,11 @@ def reject_aliased_outputs(args: argparse.Namespace) -> None:
                 "other, so it would destroy its own input — give them separate "
                 "paths."
             )
+    args.pinned_outputs = {
+        flag: resolved
+        for flag, _path, resolved in declared
+        if flag in _OUTPUT_PATH_FLAGS
+    }
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

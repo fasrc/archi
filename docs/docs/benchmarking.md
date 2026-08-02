@@ -1033,6 +1033,29 @@ every filesystem stores extended attributes — because losing the health signal
 detail would be the worse failure. A **new** file keeps the temp file's `0600`: choosing a mode for
 a file that may carry error text is the operator's call, made with `chmod` once, not the tool's.
 
+#### The output's *directory* must be writable, which it did not have to be before
+
+Replacing a file atomically means creating a temp file beside it and renaming over it, so the run
+needs create-and-rename permission on the **parent directory** — not just write permission on the
+file. A plain `open(path, "w")` needed only the latter, so one deployment shape that used to work
+now fails on every run:
+
+```
+# report.json is writable; the directory it lives in is not
+drwxr-xr-x  root:root    /var/lib/monitoring/
+-rw-rw-r--  archi:monitor /var/lib/monitoring/report.json
+
+error: cannot write /var/lib/monitoring/report.json: [Errno 13] Permission denied: ...
+```
+
+There is no way to keep the old behaviour and the atomicity: the rename is the commit. Provision
+the directory so the writing user can create in it — own it, or group-write it — and keep the file
+grants as they are (they are carried across each replacement anyway, see above). This applies to
+`--ledger` and `--summary-json` alike.
+
+The failure is loud, not silent: the run reports `cannot write` on stderr and exits non-zero, so a
+monitor left on the previous snapshot is accompanied by a failing nightly rather than a quiet one.
+
 #### A symlinked output path is followed, not replaced
 
 Point `--summary-json` or `--ledger` at a **symlink** — the stable path pattern, `current ->
@@ -1051,6 +1074,14 @@ one ledger by different spellings must contend for one lock, or they serialise a
 the second write erases the first decline. That resolution happens **once per transaction** and is
 reused for the read and the write, so retargeting the link while a decline is being recorded cannot
 leave the command holding one file's lock while it rewrites another.
+
+Each output path is resolved exactly once for the whole run, at the alias check above, and the
+writers use that pinned result rather than looking the path up again. Otherwise the refusal would
+only describe the instant it ran: `report` spends minutes on its network passes between the check
+and the write, and a stable link retargeted at the bank inside that window would be followed by
+`os.replace` to a file the check never approved. Pinning is not a general cure for the race —
+whoever can retarget the link can swap the resolved file too — but it is what makes the refusal
+hold for the run instead of for one moment of it.
 
 #### A hard-linked output path is reported, not followed
 
@@ -1078,6 +1109,21 @@ while closing or unlinking cannot replace the error that caused it.
 A self-referential path among the inputs is reported the same ordinary way. Resolution never
 raises, so a `--bank` symlinked to itself is refused when the file is *read*, as a failed pass with
 a summary written — not as a traceback before the run starts.
+
+An **output** whose path is a symlink loop is refused outright instead. Resolution gives up and
+hands the unresolved link back, and `os.replace` does not follow a symlink on its destination — so
+committing would swap the link's own directory entry and leave a plausible-looking regular file
+where the operator's broken configuration used to be. `open(path, "w")` reported `ELOOP` and
+changed nothing, and that is the behaviour kept:
+
+```
+error: cannot write the summary /srv/goldenset/current.json: the path is a symlink loop, so it
+resolves to nothing. Committing atomically would replace the link with a regular file and destroy
+the configuration silently. Repair the link, or name the file directly.
+```
+
+A *dangling* link is not a loop and is unaffected — it resolves through to a name that does not
+exist yet, which is exactly where `open` would have created the file.
 
 #### Running it nightly
 
