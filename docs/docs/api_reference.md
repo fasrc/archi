@@ -205,7 +205,7 @@ So do not infer the answering model from your own request. Read `final.model_use
 Send a message and receive a streaming response via NDJSON (`application/x-ndjson`).
 
 Takes the same request body as `POST /api/get_chat_response` above, including the
-nested `last_message` shape and the two required timing fields.
+nested `last_message` shape and the two optional timing fields.
 
 This is the endpoint that honours `provider`, `model`, `include_agent_steps` and
 `include_tool_steps`; the non-streaming one ignores all four. `provider` and `model` must

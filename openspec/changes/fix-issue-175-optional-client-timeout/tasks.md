@@ -81,7 +81,7 @@
       `client_sent_msg_ts` generated at send time via `date +%s000` rather than a literal —
       a stale literal plus the retained `client_timeout` is a genuinely expired deadline and
       would still 408.
-- [ ] 5.6 Grep the whole `docs/` tree for any other claim that the timing fields are required
+- [x] 5.6 Grep the whole `docs/` tree for any other claim that the timing fields are required
       or that omitting them yields 408, and correct anything found.
 
 ## 6. Verify and land
