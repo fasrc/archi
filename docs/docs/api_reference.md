@@ -63,9 +63,10 @@ and without validation `tuple("AI")` yields `sender="A"`, `content="I"` — a re
 returns HTTP 200 while silently discarding the caller's message. Both endpoints now reject it
 before the pipeline is invoked, so no conversation row is created for the rejected request.
 
-**A request you can run.** `client_sent_msg_ts` has to be generated as you send, so this
-example computes it rather than hard-coding one — a literal epoch value pasted from a page
-like this is stale on arrival and comes back rejected:
+**A request you can run.** Both timing fields are optional; when both are present,
+`client_sent_msg_ts` must be generated at send time — a stale literal paired with a live
+`client_timeout` is an already-expired deadline and returns **408**. This example computes
+it rather than hard-coding one:
 
 ```bash
 curl -sS http://localhost:7861/api/get_chat_response \

@@ -76,7 +76,7 @@
       remove any definition left unused. Leave `[refreshguard]` alone — it is used elsewhere on
       the page. Then grep the file for both dangling link uses and orphaned definitions and
       confirm neither exists.
-- [ ] 5.5 Check the runnable `curl` example and the shape template still read correctly with
+- [x] 5.5 Check the runnable `curl` example and the shape template still read correctly with
       the fields documented as optional. Keep both timing fields in the example, and keep
       `client_sent_msg_ts` generated at send time via `date +%s000` rather than a literal —
       a stale literal plus the retained `client_timeout` is a genuinely expired deadline and
