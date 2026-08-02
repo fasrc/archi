@@ -59,7 +59,7 @@
 
 ## 5. Simplify the API reference
 
-- [ ] 5.1 In `docs/docs/api_reference.md`, change the `Required` column for
+- [x] 5.1 In `docs/docs/api_reference.md`, change the `Required` column for
       `client_sent_msg_ts` and `client_timeout` from **yes, in practice** to `no`, and rewrite
       both descriptions around what the fields are for — latency accounting, and declaring a
       deadline the server honours when supplied — with no reference to rejection for omission.

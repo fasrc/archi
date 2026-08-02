@@ -32,8 +32,8 @@ honour all of it — the last four fields are read only by the streaming endpoin
 |-------|------|----------|-------------|
 | `last_message` | list of `[sender, message]` pairs | yes | The user's turn. A list **containing** the pair, not the pair itself — see below. Only the first pair is read. A malformed value is rejected with **HTTP 400**. |
 | `client_id` | string | yes | Identifies the calling client; the request is rejected without it. |
-| `client_sent_msg_ts` | int (ms since epoch) | **yes, in practice** | Time you send the request. Must be generated **at send time** — a stale value is rejected. See the warning below. |
-| `client_timeout` | int (ms) | **yes, in practice** | How long the client is willing to wait. Omitting it is rejected. See the warning below. |
+| `client_sent_msg_ts` | int (ms since epoch) | no | The time you send the request (milliseconds since epoch); used for latency accounting and as the start of the deadline window when `client_timeout` is also supplied. Generate this value at send time — a stale timestamp paired with a live `client_timeout` looks like an already-expired deadline. |
+| `client_timeout` | int (ms) | no | How long the client is willing to wait (milliseconds). When both this and `client_sent_msg_ts` are supplied, the server honours the deadline and rejects requests that arrive after the window has elapsed with **408**. |
 | `conversation_id` | int or `null` | no | Existing conversation to append to. `null` (or omitted) starts a new one. |
 | `config_name` | string | no | Named configuration to answer under. |
 | `is_refresh` | bool | no, but **needs a prior user turn** | Re-answer the previous turn instead of adding a new one. Not an independent switch — a refresh does not add your message to the conversation, so it needs an earlier turn to work from. If none survives (no `conversation_id` and no supplied history; a named conversation holding no turns; or a history of assistant turns only, which the refresh trim empties), the request is **rejected with `400`** ([`app.py:1694`][refreshguard]) and no conversation is created. |
