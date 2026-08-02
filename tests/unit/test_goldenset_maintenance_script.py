@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import stat
 import threading
 import time
 from pathlib import Path
@@ -1019,6 +1020,36 @@ class TestDeclineTargetsGapsOnly:
 class TestLedgerDurability:
     """The ledger is the only durable record of a decline — and the only file
     this tool writes. A half-written one loses decisions permanently."""
+
+    def test_replacing_the_ledger_keeps_the_permissions_it_already_had(self, tmp_path):
+        """Same `mkstemp` 0600 clobber as the summary file, one commit point over.
+
+        Found while verifying the `--summary-json` finding on #151: `write_ledger`
+        replaces through the identical temp-then-`os.replace` path, so a ledger an
+        operator widened for a teammate loses that access on the next decline.
+        """
+        module = _load_script()
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/a", "reason": "keep me"})
+        ledger.chmod(0o664)
+        url = f"{KB}/kb/b"
+
+        module.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(ledger),
+                "--reason",
+                "not worth a question",
+            ]
+        )
+
+        assert stat.S_IMODE(ledger.stat().st_mode) == 0o664
 
     def test_an_interrupted_write_leaves_the_previous_ledger_intact(
         self, tmp_path, monkeypatch
@@ -2448,6 +2479,1763 @@ class TestReportSummaryJson:
         script.main(_report_argv(bank, corpus, sources))
 
         assert list(tmp_path.glob("*summary*")) == []
+
+    def test_malformed_bank_overwrites_healthy_summary_with_failure_state(
+        self, tmp_path, capsys
+    ):
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        # Pre-existing healthy summary from a previous good run.
+        out.write_text(
+            json.dumps(
+                {
+                    "census": {"total": 5, "locked": 5, "draft": 0, "anchor_type": {}},
+                    "gaps": 0,
+                    "orphans": 0,
+                    "drifted": 0,
+                    "failed_passes": [],
+                    "notify": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        bank = tmp_path / "bank.json"
+        bank.write_text("{not valid json", encoding="utf-8")
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+        summary = json.loads(out.read_text())
+
+        assert code == 1
+        assert any("bank" in f for f in summary["failed_passes"])
+        assert summary["census"] is None
+        assert summary["notify"] is True
+        # Old success values must be gone — a monitor reading this file alone sees failure.
+        assert (
+            summary.get("gaps") != 0
+            or summary.get("drifted") != 0
+            or (summary["failed_passes"] != [] and summary["census"] is None)
+        )
+
+    def test_a_schema_malformed_bank_writes_the_failure_summary_too(
+        self, tmp_path, capsys
+    ):
+        """A row whose `anchor_type` is a list is valid JSON and a valid list.
+
+        So it survives `load_bank`, and only dies inside the census, which uses
+        that value as a dict key — `TypeError: unhashable type`. That is not an
+        `OperationalError`, so it escapes both the report handler and `main`,
+        killing the process with a traceback BEFORE the summary is written. The
+        monitor is then left reading the previous run's healthy file.
+        """
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text(json.dumps({"notify": False}), encoding="utf-8")
+        bank = tmp_path / "bank.json"
+        bank.write_text(
+            json.dumps([{"user_input": "q", "anchor_type": ["heading", "table"]}]),
+            encoding="utf-8",
+        )
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+        summary = json.loads(out.read_text())
+
+        assert code == 1
+        assert summary["census"] is None
+        assert summary["notify"] is True
+        assert any("bank" in f for f in summary["failed_passes"])
+        # The message has to name the field, or the operator has a traceback's
+        # worth of information ("unhashable type") and no idea which row.
+        assert "anchor_type" in " ".join(summary["failed_passes"])
+
+    def test_a_numeric_anchor_type_mixed_with_text_writes_the_failure_summary(
+        self, tmp_path
+    ):
+        """A number is hashable, so it survives the census and dies at the sort.
+
+        `bank_status_counts` keys the distribution by whatever `anchor_type`
+        holds, and a number is a perfectly good dict key — so the unhashable
+        guard never sees it. The run instead dies on
+        `sorted(census["anchor_type"].items())`, comparing `int` with `str`,
+        which is a `TypeError` raised AFTER the bank handler and BEFORE the
+        summary write: traceback, no file, monitor still reading last night's
+        healthy snapshot.
+        """
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text(json.dumps({"notify": False}), encoding="utf-8")
+        bank = _bank(
+            tmp_path,
+            _row(f"{KB}/kb/a", anchor_type=3),
+            _row(f"{KB}/kb/b", anchor_type="faq"),
+        )
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+        summary = json.loads(out.read_text())
+
+        assert code == 1
+        assert summary["census"] is None
+        assert summary["notify"] is True
+        assert "anchor_type" in " ".join(summary["failed_passes"])
+
+    def test_a_bank_whose_anchor_types_are_all_numeric_is_rejected(self, tmp_path):
+        """No sort to crash here — which is exactly why the type must be checked.
+
+        One numeric `anchor_type` and nothing to compare it against sorts fine,
+        and `json.dump` then stringifies the key, so the census reports a bucket
+        `"3"` that is nowhere in the bank. Accepting it means the health file
+        quietly disagrees with the file it is describing; the tool has to refuse
+        the input rather than lean on a downstream crash to notice.
+        """
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        out = tmp_path / "summary.json"
+        bank = _bank(
+            tmp_path,
+            _locked_row(live, hashes={live: page_digest(GPU_HTML)}, anchor_type=3),
+        )
+        _fake_pages(script, {live: GPU_HTML})
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+        summary = json.loads(out.read_text())
+
+        assert code == 1
+        assert summary["census"] is None
+        assert "anchor_type" in " ".join(summary["failed_passes"])
+
+    def test_a_row_that_is_not_an_object_does_not_become_a_new_refusal(self, tmp_path):
+        """The `anchor_type` check must not tighten the bank contract sideways.
+
+        `normalize_bank` passes a non-object row straight through (verified:
+        `normalize_bank(["x", {...}, 42])` returns all three), and
+        `bank_status_counts` has always tolerated one — it counts it under
+        `unassigned`. The type check walks the same rows, so without its
+        `isinstance` guard it would call `.get` on a string and turn a bank the
+        tool used to census into a hard failure. That would be a regression
+        introduced by a fix, not a fix.
+        """
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        out = tmp_path / "summary.json"
+        bank = _write(
+            tmp_path,
+            "bank.json",
+            [
+                "not an object at all",
+                _locked_row(live, hashes={live: page_digest(GPU_HTML)}),
+            ],
+        )
+        _fake_pages(script, {live: GPU_HTML})
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+        summary = json.loads(out.read_text())
+
+        assert code == 0
+        assert summary["failed_passes"] == []
+        assert summary["census"]["total"] == 2
+        assert summary["census"]["anchor_type"]["unassigned"] == 2
+
+    def test_replacing_a_summary_keeps_the_readers_it_already_had(self, tmp_path):
+        """`mkstemp` creates 0600 and `os.replace` installs that over the target.
+
+        A summary an operator made group-readable for a monitor running as
+        another Unix user therefore becomes unreadable on the first report run —
+        the health file goes silent in exactly the way a monitor cannot
+        distinguish from "nothing to report".
+        """
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+        out.write_text("{}", encoding="utf-8")
+        out.chmod(0o644)
+
+        self._run(tmp_path, script, bank, corpus, sources, out)
+
+        assert stat.S_IMODE(out.stat().st_mode) == 0o644
+
+    def test_missing_bank_writes_failure_summary_and_exits_nonzero(
+        self, tmp_path, capsys
+    ):
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+        # Bank path does not exist.
+        bank = tmp_path / "no_such_bank.json"
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+
+        assert code == 1
+        assert out.exists(), "summary must be written even when the bank is missing"
+        summary = json.loads(out.read_text())
+        assert any("bank" in f for f in summary["failed_passes"])
+        assert summary["census"] is None
+        assert summary["notify"] is True
+
+    def test_healthy_bank_still_writes_normal_summary(self, tmp_path):
+        # Regression: the bank-load-failure path must not break the happy path.
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+
+        code = self._run(tmp_path, script, bank, corpus, sources, out)
+        summary = json.loads(out.read_text())
+
+        assert code == 0
+        assert summary["census"] is not None
+        assert summary["failed_passes"] == []
+        # `notify` is derived from _NOTIFY_ON buckets; a clean bank gives False.
+        assert summary["notify"] is False
+
+    def test_write_interrupted_before_commit_leaves_prior_file_intact(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        corpus = _corpus(tmp_path, live)
+        sources = _sources_list(tmp_path, live)
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+        healthy = json.dumps(
+            {"status": "healthy", "failed_passes": [], "notify": False}
+        )
+        out.write_text(healthy, encoding="utf-8")
+        before = out.read_bytes()
+
+        def boom(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(os, "replace", boom)
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+
+        assert code == 1
+        assert "cannot write" in capsys.readouterr().err.lower()
+        assert out.read_bytes() == before, "pre-existing file must be left intact"
+        assert [
+            p for p in tmp_path.iterdir() if p.suffix == ".tmp"
+        ] == [], "no temp file litter may remain after a failed write"
+
+    def test_a_failed_refresh_still_names_the_bank_error(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Two failures at once must not hide the one the operator can act on.
+
+        The bank is unreadable AND the summary refresh fails. The write error is
+        raised from inside the bank handler, so left alone it replaces the bank
+        error as the exception `main` prints — the operator is told the disk is
+        full and never that their bank is malformed. Both have to be on stderr,
+        and the prior summary is left stale (which is why the exit code, not the
+        file, is the authoritative signal).
+        """
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        healthy = json.dumps({"failed_passes": [], "notify": False})
+        out.write_text(healthy, encoding="utf-8")
+        bank = tmp_path / "bank.json"
+        bank.write_text("{not valid json", encoding="utf-8")
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+        monkeypatch.setattr(
+            os, "replace", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))
+        )
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(out)]
+        )
+        err = capsys.readouterr().err.lower()
+
+        assert code == 1
+        assert "cannot read" in err and str(bank).lower() in err
+        assert "cannot write" in err
+        assert out.read_text() == healthy, "a failed refresh leaves the file stale"
+
+
+def _supplementary_gid():
+    """A group this process belongs to that is NOT its default group, or None.
+
+    The whole point of the ownership fix is a target whose GROUP carries the
+    grant, so the test needs a second group to move the file into. An
+    unprivileged run cannot invent one.
+    """
+    for gid in os.getgroups():
+        if gid != os.getgid():
+            return gid
+    return None
+
+
+#: A POSIX ACL granting group 4242 read, in the on-disk format `system.
+#: posix_acl_access` uses (acl(5)): u32 version 2, then {u16 tag, u16 perm,
+#: u32 id} entries ordered by tag. Built here rather than shelled out to
+#: `setfacl`, so the test needs no binary that CI may not carry.
+def _acl_granting_group_read(gid=4242):
+    import struct
+
+    undefined = 0xFFFFFFFF
+    entries = [
+        (0x01, 6, undefined),  # ACL_USER_OBJ  rw-
+        (0x04, 4, undefined),  # ACL_GROUP_OBJ r--
+        (0x08, 4, gid),  # ACL_GROUP     r--  <- the grant under test
+        (0x10, 4, undefined),  # ACL_MASK      r--
+        (0x20, 0, undefined),  # ACL_OTHER     ---
+    ]
+    return struct.pack("<I", 2) + b"".join(
+        struct.pack("<HHI", tag, perm, ident) for tag, perm, ident in entries
+    )
+
+
+def _set_acl_or_skip(path):
+    if not hasattr(os, "setxattr"):
+        pytest.skip("extended attributes are a Linux thing")
+    acl = _acl_granting_group_read()
+    try:
+        os.setxattr(str(path), "system.posix_acl_access", acl)
+    except OSError as exc:
+        pytest.skip(f"filesystem carries no POSIX ACLs: {exc}")
+    return acl
+
+
+class TestReplacementKeepsTheAccessItsTargetHad:
+    """`os.replace` installs the temp file's metadata, not just its bytes.
+
+    `mkstemp` makes a 0600 file owned by the writer with no extended
+    attributes, so every grant an operator put on the target — mode bits, a
+    group that could read it, a named-user ACL — is revoked by the next
+    successful write. For the `--summary-json` health file that is the worst
+    kind of breakage: the monitor stops being able to read it and cannot tell
+    that apart from "nothing to report".
+    """
+
+    def _report(self, script, tmp_path, out):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        return script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+    def _decline(self, script, tmp_path, ledger):
+        url = f"{KB}/kb/b"
+        return script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(ledger),
+                "--reason",
+                "not worth a question",
+            ]
+        )
+
+    def test_summary_keeps_the_group_that_could_read_it(self, tmp_path):
+        gid = _supplementary_gid()
+        if gid is None:
+            pytest.skip("no supplementary group to hand the file to")
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text("{}", encoding="utf-8")
+        os.chown(out, -1, gid)
+        out.chmod(0o640)
+
+        assert self._report(script, tmp_path, out) == 0
+
+        # 0640 alone is not the grant: the group owning the file is.
+        assert out.stat().st_gid == gid
+        assert stat.S_IMODE(out.stat().st_mode) == 0o640
+
+    def test_summary_keeps_an_acl_that_named_a_reader(self, tmp_path):
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text("{}", encoding="utf-8")
+        acl = _set_acl_or_skip(out)
+
+        assert self._report(script, tmp_path, out) == 0
+
+        assert os.getxattr(str(out), "system.posix_acl_access") == acl
+
+    def test_ledger_keeps_the_group_that_could_read_it(self, tmp_path):
+        """Same commit step, second call site — the ledger replaces the same way."""
+        gid = _supplementary_gid()
+        if gid is None:
+            pytest.skip("no supplementary group to hand the file to")
+        script = _load_script()
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/a", "reason": "keep me"})
+        os.chown(ledger, -1, gid)
+        ledger.chmod(0o640)
+
+        self._decline(script, tmp_path, ledger)
+
+        assert ledger.stat().st_gid == gid
+        assert stat.S_IMODE(ledger.stat().st_mode) == 0o640
+
+    def test_ledger_keeps_an_acl_that_named_a_reader(self, tmp_path):
+        script = _load_script()
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/a", "reason": "keep me"})
+        acl = _set_acl_or_skip(ledger)
+
+        self._decline(script, tmp_path, ledger)
+
+        assert os.getxattr(str(ledger), "system.posix_acl_access") == acl
+
+
+class TestOutputPathsMayNotAliasInputs:
+    """A file this tool WRITES must never be one it has to READ.
+
+    `os.replace` installs the replacement over the target's directory entry, so
+    a `--summary-json` pointed at the bank does not "also write the summary" —
+    it destroys the bank. The bank-load-failure summary made that reachable on
+    the one run where the operator most needs the input preserved: the bank is
+    malformed, they are about to go repair it, and the failure summary lands on
+    top of it. The refusal is up front, before any pass runs and before any
+    write, so nothing is half-done when the run is rejected.
+    """
+
+    def _malformed_bank(self, tmp_path):
+        bank = tmp_path / "bank.json"
+        bank.write_text("{not valid json", encoding="utf-8")
+        return bank
+
+    def test_summary_json_pointed_at_a_malformed_bank_does_not_eat_it(
+        self, tmp_path, capsys
+    ):
+        script = _load_script()
+        bank = self._malformed_bank(tmp_path)
+        before = bank.read_bytes()
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(bank)]
+        )
+        err = capsys.readouterr().err
+
+        assert code == 1
+        assert bank.read_bytes() == before, "the bank the operator must repair is gone"
+        assert "--summary-json" in err and "--bank" in err
+
+    def test_summary_json_pointed_at_a_healthy_bank_is_refused_too(self, tmp_path):
+        """The success path replaces the target as thoroughly as the failure one."""
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        before = bank.read_bytes()
+        _fake_pages(script, {live: GPU_HTML})
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(bank),
+            ]
+        )
+
+        assert code == 1
+        assert bank.read_bytes() == before
+
+    def test_a_different_spelling_of_the_same_file_is_still_the_same_file(
+        self, tmp_path
+    ):
+        """Refusal is on file identity, not on the string the operator typed.
+
+        A deployment reaches its data through a symlinked directory
+        (`/srv/current -> /srv/releases/42`), so the two flags can name one file
+        without matching character for character. `os.replace` resolves the path
+        and eats the bank either way.
+        """
+        script = _load_script()
+        real = tmp_path / "releases"
+        real.mkdir()
+        bank = self._malformed_bank(real)
+        before = bank.read_bytes()
+        link = tmp_path / "current"
+        link.symlink_to(real, target_is_directory=True)
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+
+        code = script.main(
+            [
+                *_report_argv(bank, corpus, sources),
+                "--summary-json",
+                str(link / "bank.json"),
+            ]
+        )
+
+        assert code == 1
+        assert bank.read_bytes() == before
+
+    def test_a_hard_link_to_an_input_is_the_same_file(self, tmp_path):
+        """Identity is the inode, not the name.
+
+        A hard link survives `rename(2)` where a second name for the same
+        directory entry (a bind-mounted path, which no test can create
+        unprivileged) does not — but both are one file wearing two names, and
+        the flags have conflated an input with an output either way.
+        """
+        script = _load_script()
+        bank = self._malformed_bank(tmp_path)
+        alias = tmp_path / "summary.json"
+        os.link(bank, alias)
+        corpus = _corpus(tmp_path, f"{KB}/kb/live")
+        sources = _sources_list(tmp_path, f"{KB}/kb/live")
+
+        code = script.main(
+            [*_report_argv(bank, corpus, sources), "--summary-json", str(alias)]
+        )
+
+        assert code == 1
+        assert alias.read_text() == "{not valid json"
+
+    def test_summary_json_pointed_at_the_ledger_is_refused(self, tmp_path, capsys):
+        """The ledger is the one record that cannot be re-derived from the bank."""
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        ledger = _ledger(tmp_path, {"url": f"{KB}/kb/gone", "reason": "retired"})
+        before = ledger.read_bytes()
+        _fake_pages(script, {live: GPU_HTML})
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--ledger",
+                str(ledger),
+                "--summary-json",
+                str(ledger),
+            ]
+        )
+        err = capsys.readouterr().err
+
+        assert code == 1
+        assert ledger.read_bytes() == before
+        assert "--ledger" in err and "--summary-json" in err
+
+    def test_two_outputs_on_one_path_are_refused_before_either_exists(self, tmp_path):
+        """Identity has to hold for a file that is not there yet.
+
+        `samefile` needs both ends on disk, and on a first run neither output is
+        — a missing ledger legitimately means "nothing declined yet". Left
+        unchecked the collision surfaces a night later, when the next run reads
+        the summary it wrote as if it were the ledger and refuses that instead.
+        """
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        shared = tmp_path / "nested" / "state.json"
+        shared.parent.mkdir()
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--ledger",
+                str(shared),
+                "--summary-json",
+                str(tmp_path / "nested" / ".." / "nested" / "state.json"),
+            ]
+        )
+
+        assert code == 1
+        assert not shared.exists(), "the run must be refused before anything is written"
+
+    def test_ledger_pointed_at_the_corpus_dump_is_refused(self, tmp_path, capsys):
+        """The same defect one output over — and this one is not caught by luck.
+
+        A `--ledger` aliasing the `--bank` happens to bounce off decline-entry
+        validation (bank rows carry no `url`). A corpus dump is a list of objects
+        that each DO have one, so it validates as a ledger: `--undecline` reads
+        the corpus as a decline list, drops the named row, and writes the
+        remainder back as the ledger. Verified before the guard existed — the
+        run printed `undeclined: … -> corpus.json`, exited zero, and left the
+        dump one row short and reindented.
+        """
+        script = _load_script()
+        url = f"{KB}/kb/b"
+        corpus = _corpus(tmp_path, url, f"{KB}/kb/c")
+        before = corpus.read_bytes()
+
+        code = script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(corpus),
+                "--undecline",
+                url,
+                "--ledger",
+                str(corpus),
+            ]
+        )
+        err = capsys.readouterr().err
+
+        assert code == 1
+        assert corpus.read_bytes() == before
+        assert "--ledger" in err and "--corpus-json" in err
+
+    def test_distinct_paths_in_one_directory_still_run(self, tmp_path):
+        """The guard must not fire on the ordinary layout: one dir, several files."""
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--ledger",
+                str(_ledger(tmp_path)),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+        assert code == 0
+        assert json.loads(out.read_text())["failed_passes"] == []
+
+
+@pytest.fixture
+def other_filesystem_dir(tmp_path):
+    """A scratch directory on a DIFFERENT filesystem from `tmp_path`, or skip.
+
+    Needed to prove the temp file is created beside the *referent* rather than
+    beside the symlink: on one filesystem either choice commits, and only a
+    crossed mount makes `rename(2)` answer EXDEV.
+    """
+    import shutil
+    import tempfile as _tempfile
+
+    here = os.stat(tmp_path).st_dev
+    for candidate in ("/dev/shm", f"/run/user/{os.getuid()}"):
+        if not os.path.isdir(candidate) or not os.access(candidate, os.W_OK):
+            continue
+        if os.stat(candidate).st_dev == here:
+            continue
+        made = Path(_tempfile.mkdtemp(dir=candidate, prefix="archi-goldenset-"))
+        try:
+            yield made
+        finally:
+            shutil.rmtree(made, ignore_errors=True)
+        return
+    pytest.skip("no second writable filesystem available to cross")
+
+
+class TestASymlinkedOutputIsFollowedNotReplaced:
+    """`os.replace` does not follow a symlink on its destination.
+
+    It swaps the LINK's own directory entry, so an atomic write against a
+    symlinked output path replaces the operator's stable path with a regular
+    file and leaves the real file untouched and stale. That matters because a
+    deployment names its report through a stable path — `current ->
+    releases/42/report.json` — and the previous plain `open(path, "w")` followed
+    the link, which is the behaviour such a setup is built on.
+    """
+
+    def _report(self, script, tmp_path, out):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        return script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+    def _decline(self, script, tmp_path, ledger):
+        url = f"{KB}/kb/b"
+        return script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(ledger),
+                "--reason",
+                "not worth a question",
+            ]
+        )
+
+    def _linked(self, link_dir, real_dir, name="report.json", body="{}"):
+        referent = real_dir / name
+        referent.write_text(body, encoding="utf-8")
+        link = link_dir / "stable.json"
+        link.symlink_to(referent)
+        return link, referent
+
+    def test_a_summary_symlink_survives_and_its_referent_is_updated(self, tmp_path):
+        script = _load_script()
+        real_dir = tmp_path / "releases"
+        real_dir.mkdir()
+        link, referent = self._linked(tmp_path, real_dir)
+
+        assert self._report(script, tmp_path, link) == 0
+
+        assert link.is_symlink(), "the stable deployment path was replaced by a file"
+        assert json.loads(referent.read_text())["failed_passes"] == []
+
+    def test_a_ledger_symlink_survives_and_its_referent_is_updated(self, tmp_path):
+        """Same commit step, second call site — pre-dates this PR, same defect."""
+        script = _load_script()
+        real_dir = tmp_path / "state"
+        real_dir.mkdir()
+        link, referent = self._linked(tmp_path, real_dir, "declines.json", "[]")
+
+        self._decline(script, tmp_path, link)
+
+        assert link.is_symlink()
+        assert [e["url"] for e in json.loads(referent.read_text())] == [f"{KB}/kb/b"]
+
+    def test_a_summary_symlink_across_filesystems_still_commits(
+        self, tmp_path, other_filesystem_dir
+    ):
+        """Resolve BEFORE choosing the temp directory, or the commit cannot happen.
+
+        Creating the temp beside the *link* and replacing onto the *referent*
+        looks like a fix and passes every same-filesystem test, but `rename(2)`
+        refuses to cross a mount — the run would die on EXDEV instead of writing
+        its health file.
+        """
+        script = _load_script()
+        link, referent = self._linked(tmp_path, other_filesystem_dir)
+
+        assert self._report(script, tmp_path, link) == 0
+
+        assert link.is_symlink()
+        assert json.loads(referent.read_text())["failed_passes"] == []
+
+    def test_a_ledger_symlink_across_filesystems_still_commits(
+        self, tmp_path, other_filesystem_dir
+    ):
+        """The ledger additionally fsyncs its parent — which must be the real one."""
+        script = _load_script()
+        link, referent = self._linked(
+            tmp_path, other_filesystem_dir, "declines.json", "[]"
+        )
+
+        self._decline(script, tmp_path, link)
+
+        assert link.is_symlink()
+        assert [e["url"] for e in json.loads(referent.read_text())] == [f"{KB}/kb/b"]
+
+    def test_the_ledger_lock_follows_the_file_it_protects(self, tmp_path):
+        """Two spellings of one ledger must contend for ONE lock.
+
+        The lock is a sidecar named after the path the operator typed. Left
+        unresolved while the write resolves, a run through the symlink and a run
+        through the real path take two different locks, serialise against
+        nothing, and the second replace erases the first decline — the exact
+        lost update the lock exists to prevent.
+        """
+        script = _load_script()
+        real_dir = tmp_path / "state"
+        real_dir.mkdir()
+        link, referent = self._linked(tmp_path, real_dir, "declines.json", "[]")
+
+        self._decline(script, tmp_path, link)
+
+        per_spelling_lock = Path(f"{link}.lock")
+        assert Path(f"{referent}.lock").exists(), "lock must name the real ledger"
+        assert not per_spelling_lock.exists(), "a second lock serialises nothing"
+
+    def test_a_summary_symlink_pointing_at_the_bank_is_still_refused(self, tmp_path):
+        """Following the link makes the alias guard load-bearing, not decorative.
+
+        While `os.replace` clobbered the link, aliasing the bank through a
+        symlink was survivable — the bank kept its inode. Now the write goes
+        THROUGH the link, so the same configuration would overwrite the bank for
+        real. The guard has to catch it.
+        """
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        before = bank.read_bytes()
+        _fake_pages(script, {live: GPU_HTML})
+        link = tmp_path / "summary.json"
+        link.symlink_to(bank)
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(link),
+            ]
+        )
+
+        assert code == 1
+        assert bank.read_bytes() == before
+
+
+class TestOneResolutionPerLedgerTransaction:
+    """The lock, the read and the write must name one file BY CONSTRUCTION.
+
+    Naming the sidecar after the resolved path fixed the two-spellings-two-locks
+    case, but each of the three steps still resolved `--ledger` independently.
+    Between them sits a window: a deployment that retargets the advertised
+    stable symlink after the lock is taken leaves the command holding the OLD
+    referent's sidecar while it reads and replaces the NEW one. A concurrent
+    command reaching the new referent directly takes that file's own lock, the
+    two replacements serialise against nothing, and one decline is erased — the
+    lost update the lock exists to prevent, reintroduced by the resolution
+    itself.
+
+    So the lock resolves once and hands the caller the path it locked.
+    """
+
+    def _two_referents(self, tmp_path):
+        state = tmp_path / "state"
+        state.mkdir()
+        first = state / "release-1.json"
+        first.write_text("[]", encoding="utf-8")
+        second = state / "release-2.json"
+        second.write_text("[]", encoding="utf-8")
+        link = tmp_path / "stable.json"
+        link.symlink_to(first)
+        return link, first, second
+
+    def _decline_argv(self, tmp_path, url, ledger):
+        return [
+            "coverage",
+            "--bank",
+            str(_bank(tmp_path, _row())),
+            "--corpus-json",
+            str(_corpus(tmp_path, url)),
+            "--decline",
+            url,
+            "--ledger",
+            str(ledger),
+        ]
+
+    def _paths_seen(self, script, monkeypatch):
+        """Record the path each ledger step is handed, still running the real one."""
+        seen = []
+        for name in ("read_ledger", "write_ledger"):
+            original = getattr(script, name)
+
+            def recorder(path, *rest, _name=name, _original=original):
+                seen.append((_name, str(path)))
+                return _original(path, *rest)
+
+            monkeypatch.setattr(script, name, recorder)
+        return seen
+
+    def test_the_lock_hands_back_the_path_it_locked(self, tmp_path):
+        script = _load_script()
+        link, first, _ = self._two_referents(tmp_path)
+
+        with script.ledger_lock(str(link)) as pinned:
+            assert Path(pinned) == first
+
+    def test_retargeting_the_link_mid_transaction_does_not_move_the_write(
+        self, tmp_path
+    ):
+        """The window itself, closed: flip the link while the lock is held."""
+        script = _load_script()
+        link, first, second = self._two_referents(tmp_path)
+        entry = [{"url": f"{KB}/kb/b", "reason": "", "at": "2026-01-01T00:00:00Z"}]
+
+        with script.ledger_lock(str(link)) as pinned:
+            link.unlink()
+            link.symlink_to(second)
+            script.write_ledger(pinned, entry)
+
+        assert [e["url"] for e in json.loads(first.read_text())] == [
+            f"{KB}/kb/b"
+        ], "the write landed off the file whose lock is held"
+        assert json.loads(second.read_text()) == [], "an unlocked file was written"
+
+    def test_the_decline_call_site_reads_and_writes_the_pinned_path(
+        self, tmp_path, monkeypatch
+    ):
+        script = _load_script()
+        link, first, _ = self._two_referents(tmp_path)
+        url = f"{KB}/kb/b"
+        seen = self._paths_seen(script, monkeypatch)
+
+        assert script.main(self._decline_argv(tmp_path, url, link)) == 0
+
+        # The coverage pass loads the ledger read-only before the transaction
+        # opens. That one legitimately resolves at its own open, and pinning it
+        # would claim a guarantee the lock is not held for. What has to be
+        # pinned is the read-modify-write inside the lock.
+        assert seen[0] == ("read_ledger", str(link))
+        assert seen[1:] == [("read_ledger", str(first)), ("write_ledger", str(first))]
+
+    def test_the_undecline_call_site_reads_and_writes_the_pinned_path(
+        self, tmp_path, monkeypatch
+    ):
+        script = _load_script()
+        link, first, _ = self._two_referents(tmp_path)
+        url = f"{KB}/kb/b"
+        first.write_text(
+            json.dumps([{"url": url, "reason": "", "at": "2026-01-01T00:00:00Z"}]),
+            encoding="utf-8",
+        )
+        seen = self._paths_seen(script, monkeypatch)
+
+        argv = self._decline_argv(tmp_path, url, link)
+        argv[argv.index("--decline")] = "--undecline"
+        assert script.main(argv) == 0
+
+        assert seen == [("read_ledger", str(first)), ("write_ledger", str(first))]
+
+
+class TestTheValidatedOutputPathIsTheOneWritten:
+    """The alias refusal must bind the write, not just the instant it ran.
+
+    `reject_aliased_outputs` resolves every declared path before the first read,
+    and each writer then resolved its own path AGAIN — for `report`, minutes of
+    network passes later. Between the two lookups a symlinked output can be
+    retargeted: point `--summary-json`'s stable link at the bank once the run is
+    under way and the refusal is not defeated so much as bypassed, because the
+    file it approved is no longer the file `os.replace` lands on. The bank the
+    operator was about to go repair is replaced by a summary.
+
+    The same window sits between the check and `ledger_lock`, one lookup earlier
+    than the one `TestOneResolutionPerLedgerTransaction` closed: pinning inside
+    the transaction cannot help if the transaction opens on the wrong file.
+
+    So the resolution the check validated is pinned and handed to the writers.
+    This is not a general TOCTOU cure — anyone able to retarget the link can
+    also swap the resolved file — but it is what makes the refusal mean
+    something for the whole run instead of for one instant of it.
+    """
+
+    def _stable_link(self, tmp_path, name="report.json", body="{}"):
+        releases = tmp_path / "releases"
+        releases.mkdir()
+        referent = releases / name
+        referent.write_text(body, encoding="utf-8")
+        link = tmp_path / "stable.json"
+        link.symlink_to(referent)
+        return link, referent
+
+    def _retarget_mid_run(self, script, monkeypatch, hook, link, new_target):
+        """Flip the link at a point the run reaches after the alias check."""
+        original = getattr(script, hook)
+
+        def flip(*args, **kwargs):
+            link.unlink()
+            link.symlink_to(new_target)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(script, hook, flip)
+
+    def test_retargeting_the_summary_link_mid_run_cannot_reach_the_bank(
+        self, tmp_path, monkeypatch
+    ):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        before = bank.read_bytes()
+        _fake_pages(script, {live: GPU_HTML})
+        link, referent = self._stable_link(tmp_path)
+        self._retarget_mid_run(script, monkeypatch, "bank_census", link, bank)
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(link),
+            ]
+        )
+
+        assert code == 0
+        assert (
+            bank.read_bytes() == before
+        ), "the alias refusal was bypassed by retargeting the link mid-run"
+        assert json.loads(referent.read_text())["failed_passes"] == []
+
+    def test_retargeting_the_ledger_link_mid_run_does_not_move_the_lock(
+        self, tmp_path, monkeypatch
+    ):
+        """The window BEFORE `ledger_lock`, which one-resolution-per-transaction leaves open."""
+        script = _load_script()
+        link, referent = self._stable_link(tmp_path, "declines.json", "[]")
+        elsewhere = tmp_path / "releases" / "release-2.json"
+        elsewhere.write_text("[]", encoding="utf-8")
+        url = f"{KB}/kb/b"
+        self._retarget_mid_run(script, monkeypatch, "require_gap", link, elsewhere)
+
+        code = script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(link),
+            ]
+        )
+
+        assert code == 0
+        assert [e["url"] for e in json.loads(referent.read_text())] == [
+            url
+        ], "the transaction opened on a file the check never validated"
+        assert json.loads(elsewhere.read_text()) == []
+
+    def test_a_summary_path_with_no_link_to_follow_is_unaffected(self, tmp_path):
+        """Pinning must not disturb the ordinary case, nor a first run."""
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+        assert code == 0
+        assert json.loads(out.read_text())["failed_passes"] == []
+
+
+class TestACyclicOutputSymlinkIsRefused:
+    """A loop is a broken configuration, and the write must say so, not erase it.
+
+    `realpath` is deliberately total for the inputs — a self-referential `--bank`
+    surfaces as a failed pass with a summary written, not a traceback. But a
+    total resolver hands the WRITERS the unresolved path back, and `os.replace`
+    does not follow a symlink on its destination: the commit lands on the link's
+    own directory entry and turns the operator's broken link into a plausible
+    regular file. `open(path, "w")` — what the summary write used before it
+    became atomic — reported `ELOOP` and changed nothing.
+
+    Losing the diagnosis is the smaller half. The link is a deployment's
+    configuration, the tool has no business rewriting it, and a summary sitting
+    where a link belongs reads as a healthy run to the next operator.
+    """
+
+    def _report_to(self, script, tmp_path, out):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        return script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+    def test_a_self_referential_summary_path_is_not_replaced(self, tmp_path, capsys):
+        script = _load_script()
+        loop = tmp_path / "summary.json"
+        loop.symlink_to(loop)
+
+        code = self._report_to(script, tmp_path, loop)
+
+        assert code == 1
+        assert loop.is_symlink(), "the broken link was replaced by a regular file"
+        err = capsys.readouterr().err
+        assert "summary.json" in err and "loop" in err.lower()
+
+    def test_a_mutually_cyclic_summary_path_is_refused_too(self, tmp_path):
+        """`a -> b -> a` resolves no further than `a -> a` does."""
+        script = _load_script()
+        first = tmp_path / "summary.json"
+        second = tmp_path / "other.json"
+        first.symlink_to(second)
+        second.symlink_to(first)
+
+        assert self._report_to(script, tmp_path, first) == 1
+        assert first.is_symlink() and second.is_symlink()
+
+    def test_a_cyclic_ledger_path_is_refused_before_it_is_replaced(self, tmp_path):
+        script = _load_script()
+        loop = tmp_path / "declines.json"
+        loop.symlink_to(loop)
+        url = f"{KB}/kb/b"
+
+        code = script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(loop),
+            ]
+        )
+
+        assert code == 1
+        assert loop.is_symlink()
+
+    def test_a_dangling_summary_symlink_is_still_written_through(self, tmp_path):
+        """The control: a dangling link resolves fine and must keep working.
+
+        `realpath` follows it to a name that does not exist yet, which is not a
+        loop and is exactly where `open(path, "w")` would have created the file.
+        """
+        script = _load_script()
+        link = tmp_path / "summary.json"
+        referent = tmp_path / "not-there-yet.json"
+        link.symlink_to(referent)
+
+        assert self._report_to(script, tmp_path, link) == 0
+
+        assert link.is_symlink()
+        assert json.loads(referent.read_text())["failed_passes"] == []
+
+
+class TestANonRegularOutputIsRefused:
+    """A FIFO at the output path is an endpoint, and `os.replace` deletes it.
+
+    `open(path, "w")` on a named pipe handed the JSON to whoever was reading it.
+    The atomic commit unlinks the FIFO and installs a regular file in its place,
+    so the consumer is disconnected permanently while the run reports success —
+    the same silent-success shape as the hard link, but destroying the thing
+    instead of merely diverging from it.
+
+    Refused rather than warned, unlike the hard-linked case. There the choice was
+    between a stale second name and no health signal at all; here nothing has
+    been written yet and the endpoint still exists, so a refusal costs nothing
+    and leaves something to repair. A socket or a device node is the same
+    question, which is why the test is "regular file" and not "not a FIFO".
+    """
+
+    def _argv(self, tmp_path, script, out):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        return [
+            *_report_argv(bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)),
+            "--summary-json",
+            str(out),
+        ]
+
+    def test_a_fifo_summary_is_refused_and_survives(self, tmp_path, capsys):
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        os.mkfifo(out)
+
+        code = script.main(self._argv(tmp_path, script, out))
+
+        assert code == 1
+        assert stat.S_ISFIFO(os.stat(out).st_mode), "the FIFO was destroyed"
+        assert "not a regular file" in capsys.readouterr().err
+
+    def test_a_symlink_to_a_fifo_is_refused_too(self, tmp_path):
+        """The shape that matters is the one at the end of the link."""
+        script = _load_script()
+        pipe = tmp_path / "pipe"
+        os.mkfifo(pipe)
+        link = tmp_path / "summary.json"
+        link.symlink_to(pipe)
+
+        assert script.main(self._argv(tmp_path, script, link)) == 1
+
+        assert stat.S_ISFIFO(os.stat(pipe).st_mode)
+        assert link.is_symlink()
+
+    def test_a_fifo_ledger_is_refused(self, tmp_path):
+        """Second writer, same commit step."""
+        script = _load_script()
+        ledger = tmp_path / "declines.json"
+        os.mkfifo(ledger)
+        url = f"{KB}/kb/b"
+
+        code = script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(ledger),
+            ]
+        )
+
+        assert code == 1
+        assert stat.S_ISFIFO(os.stat(ledger).st_mode)
+
+    def test_an_ordinary_regular_file_is_untouched_by_the_check(self, tmp_path):
+        """The negative control: the shape every deployment actually uses."""
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text("{}", encoding="utf-8")
+
+        assert script.main(self._argv(tmp_path, script, out)) == 0
+
+        assert json.loads(out.read_text())["failed_passes"] == []
+
+
+class TestTheSummaryContractIsTotalNotOSErrorShaped:
+    """ "Written on every terminating path" was implemented as a call at each
+    known exit.
+
+    Three findings have now arrived through that gap — a `TypeError` from an
+    unvalidated `anchor_type`, a `RuntimeError` from a symlink loop, and an
+    `AttributeError` from a corpus row that is not an object. Each ended the run
+    before the write and left the monitor reading the previous healthy summary:
+    a broken run that reads as green, which is the one outcome this capability
+    exists to prevent.
+
+    Validating the next input shape closes the third instance and leaves the
+    class open, so the write is guaranteed by a `finally` instead.
+    """
+
+    def test_a_pass_raising_an_unexpected_error_still_writes_the_summary(
+        self, tmp_path
+    ):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        # Valid JSON, valid array, and a row that is not an object — so it loads
+        # and then dies at `row.get(...)`, past every check that reads the file.
+        corpus = tmp_path / "corpus.json"
+        corpus.write_text(json.dumps(["not-a-row"]), encoding="utf-8")
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+
+        with pytest.raises(Exception):
+            script.main(
+                [
+                    *_report_argv(bank, corpus, _sources_list(tmp_path, live)),
+                    "--summary-json",
+                    str(out),
+                ]
+            )
+
+        assert out.exists(), "an unexpected error must not skip the summary"
+        summary = json.loads(out.read_text())
+        assert summary["notify"] is True
+        assert summary["failed_passes"], "a failed run must not summarise as clean"
+
+    def test_the_healthy_path_writes_exactly_one_summary(self, tmp_path, monkeypatch):
+        """Guaranteeing the write must not make it happen twice.
+
+        A `finally` added on top of the existing call sites would write the file
+        again on the way out — harmless-looking, and it would double every
+        replace the atomic-write work is about.
+        """
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+        writes = []
+        original = script._write_summary
+
+        def counted(args, summary):
+            writes.append(1)
+            return original(args, summary)
+
+        monkeypatch.setattr(script, "_write_summary", counted)
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+        assert code == 0
+        assert len(writes) == 1
+
+    def test_a_bank_failure_still_writes_exactly_one_summary(
+        self, tmp_path, monkeypatch
+    ):
+        """The bank path had its own write; folding it in must not double it."""
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        out = tmp_path / "summary.json"
+        writes = []
+        original = script._write_summary
+
+        def counted(args, summary):
+            writes.append(1)
+            return original(args, summary)
+
+        monkeypatch.setattr(script, "_write_summary", counted)
+
+        code = script.main(
+            [
+                *_report_argv(
+                    tmp_path / "missing.json",
+                    _corpus(tmp_path, live),
+                    _sources_list(tmp_path, live),
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+        assert code == 1
+        assert len(writes) == 1
+        summary = json.loads(out.read_text())
+        assert any("bank" in f for f in summary["failed_passes"])
+        assert summary["census"] is None
+
+
+class TestAHardLinkedTargetIsNamedNotSilentlyDecoupled:
+    """A replace gives the name a new inode; other hard links keep the old one.
+
+    That is inherent to replace-based atomicity, not a slip: a consumer holding
+    an open descriptor across the write goes stale in exactly the same way.
+    Truncating in place instead would put every name back on one inode and
+    reopen the partial-write window this change exists to close, so "preserve
+    the old behaviour" is not available here the way it was for the symlink.
+
+    Refusing the write is worse still. The summary IS the health signal, and a
+    run that declines to write it leaves the monitor reading the previous
+    healthy file forever — the failure this whole contract exists to close,
+    arrived at by a different road.
+
+    What must not happen is the silence. So the write commits, and the run says
+    which name it just decoupled.
+    """
+
+    def _hard_linked(self, tmp_path, name, body):
+        target = tmp_path / name
+        target.write_text(body, encoding="utf-8")
+        other = tmp_path / f"monitor-{name}"
+        os.link(target, other)
+        return target, other
+
+    def _report(self, script, tmp_path, out):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        return script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+    def test_a_hard_linked_summary_names_the_path_left_behind(self, tmp_path, capsys):
+        script = _load_script()
+        target, _ = self._hard_linked(tmp_path, "summary.json", "{}")
+
+        assert self._report(script, tmp_path, target) == 0
+
+        err = capsys.readouterr().err
+        assert "hard link" in err
+        assert str(target) in err
+
+    def test_the_summary_still_commits_at_the_configured_name(self, tmp_path):
+        """The warning is a warning. The health signal is not withheld."""
+        script = _load_script()
+        target, other = self._hard_linked(tmp_path, "summary.json", "{}")
+
+        assert self._report(script, tmp_path, target) == 0
+
+        assert json.loads(target.read_text())["failed_passes"] == []
+        assert other.read_text() == "{}", "the other name cannot follow a new inode"
+
+    def test_a_hard_linked_ledger_names_the_path_left_behind(self, tmp_path, capsys):
+        """Same commit step, second writer — the defect is the step, not the file."""
+        script = _load_script()
+        target, _ = self._hard_linked(tmp_path, "declines.json", "[]")
+        url = f"{KB}/kb/b"
+
+        code = script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(target),
+            ]
+        )
+
+        assert code == 0
+        err = capsys.readouterr().err
+        assert "hard link" in err
+        assert str(target) in err
+
+    def test_an_ordinary_target_says_nothing(self, tmp_path, capsys):
+        """No false alarm on the shape every deployment actually uses."""
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text("{}", encoding="utf-8")
+
+        assert self._report(script, tmp_path, out) == 0
+
+        assert "hard link" not in capsys.readouterr().err
+
+    def test_a_first_run_with_no_target_yet_says_nothing(self, tmp_path, capsys):
+        """`stat` on a path that does not exist is not a reason to warn."""
+        script = _load_script()
+
+        assert self._report(script, tmp_path, tmp_path / "new.json") == 0
+
+        assert "hard link" not in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        "failure",
+        [OSError("stderr is closed"), ValueError("I/O operation on closed file")],
+        ids=["unwritable", "closed"],
+    )
+    def test_a_stderr_that_cannot_take_the_warning_does_not_fail_the_write(
+        self, tmp_path, monkeypatch, failure
+    ):
+        """The diagnostic sits inside the writer's `try`. It must not be able to
+        turn a good write into a reported failure.
+
+        Both spellings of a broken stderr reach it and neither is hypothetical:
+        `2>&-` gives `EBADF` on write, and a stream closed under the process
+        raises `ValueError`, which the `except OSError` would not even catch —
+        that one escapes the writer entirely, leaving the temp file behind as
+        litter and, in `write_ledger`, leaking the directory handle.
+        """
+        script = _load_script()
+        target, _ = self._hard_linked(tmp_path, "summary.json", "{}")
+
+        class Unwritable:
+            def write(self, _text):
+                raise failure
+
+            def flush(self):
+                pass
+
+        monkeypatch.setattr(script.sys, "stderr", Unwritable())
+
+        assert self._report(script, tmp_path, target) == 0
+
+        assert json.loads(target.read_text())["failed_passes"] == []
+        assert not list(tmp_path.glob(".summary.json.*.tmp")), "temp file left behind"
+
+
+class TestOnlyAnOSErrorIsAnExpectedWriterFailure:
+    """The writers convert `OSError` and clean up after it. Nothing else.
+
+    Both writers stage a temp file inside a `try` whose handler assumes every
+    failure arriving there is an `OSError`. Three sources inside that block are
+    not: `os.chown` is absent on non-POSIX platforms (`AttributeError`), a
+    `print` to a closed stream raises `ValueError`, and the handler's own
+    `handle.close()` can raise a *second* `OSError` while flushing what the
+    first one could not write.
+
+    Each escapes the handler before `os.unlink`, so the run ends on a traceback
+    and leaves a `.tmp` file behind — the cleanup contract broken by the very
+    path that exists to honour it. Containing them one at a time invites the
+    next one, so cleanup runs in a `finally` and is itself best-effort.
+    """
+
+    def _report(self, script, tmp_path, out):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        return script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+    def test_a_platform_without_chown_still_refreshes_the_summary(
+        self, tmp_path, monkeypatch
+    ):
+        """`os.chown` is POSIX-only; `_copy_xattrs` already guards its own API.
+
+        The first write succeeds — `_preserve_access` returns early when there is
+        no target to copy from — so this surfaces as "creation works, every
+        refresh after it crashes", which is the harder version to diagnose.
+        """
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text("{}", encoding="utf-8")
+        monkeypatch.delattr(script.os, "chown", raising=False)
+
+        assert self._report(script, tmp_path, out) == 0
+
+        assert json.loads(out.read_text())["failed_passes"] == []
+        assert not list(tmp_path.glob(".summary.json.*.tmp")), "temp file left behind"
+
+    def test_a_close_that_fails_during_cleanup_reports_and_leaves_no_temp(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """A full disk fails the write, then fails the flush that cleans up after it.
+
+        `json.dump` writes incrementally, so `ENOSPC` arrives with output still
+        buffered. The handler's `close()` flushes that buffer, raises `ENOSPC`
+        again, and escapes before the `unlink` — the second error destroying the
+        report of the first.
+        """
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        staged = {}
+        real_mkstemp, real_fdopen = script.tempfile.mkstemp, script.os.fdopen
+
+        class Full:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def write(self, _text):
+                raise OSError(28, "No space left on device")
+
+            def close(self):
+                self._inner.close()
+                raise OSError(28, "No space left on device")
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        def mkstemp(*args, **kwargs):
+            fd, name = real_mkstemp(*args, **kwargs)
+            staged["fd"] = fd
+            return fd, name
+
+        def fdopen(fd, *args, **kwargs):
+            inner = real_fdopen(fd, *args, **kwargs)
+            return Full(inner) if fd == staged.get("fd") else inner
+
+        monkeypatch.setattr(script.tempfile, "mkstemp", mkstemp)
+        monkeypatch.setattr(script.os, "fdopen", fdopen)
+
+        assert self._report(script, tmp_path, out) == 1
+
+        assert "No space left on device" in capsys.readouterr().err
+        assert not list(tmp_path.glob(".summary.json.*.tmp")), "temp file left behind"
+
+    def test_closing_the_directory_handle_cannot_replace_the_write_error(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """The one cleanup step still outside the best-effort boundary.
+
+        `write_ledger` closes its directory descriptor in the same `finally`
+        that discards the temp file — but unguarded. An `OSError` from that
+        `close(2)` propagates out of the `finally` and REPLACES the
+        `OperationalError` the handler just raised, so the operator is told
+        about a descriptor instead of about the disk that failed their write.
+        """
+        script = _load_script()
+        ledger = tmp_path / "declines.json"
+        ledger.write_text("[]", encoding="utf-8")
+        real_open_directory, real_close = script._open_directory, script.os.close
+        dir_fds = []
+
+        def open_directory(directory):
+            fd = real_open_directory(directory)
+            dir_fds.append(fd)
+            return fd
+
+        def close(fd):
+            if fd in dir_fds:
+                dir_fds.remove(fd)
+                real_close(fd)
+                raise OSError(5, "Input/output error")
+            return real_close(fd)
+
+        def refuse_to_stage(*_args, **_kwargs):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(script, "_open_directory", open_directory)
+        monkeypatch.setattr(script.tempfile, "mkstemp", refuse_to_stage)
+        monkeypatch.setattr(script.os, "close", close)
+
+        with pytest.raises(script.OperationalError) as caught:
+            script.write_ledger(str(ledger), [])
+
+        assert "No space left on device" in str(caught.value)
+
+    def test_closing_the_directory_handle_cannot_fail_a_committed_write(
+        self, tmp_path, monkeypatch
+    ):
+        """The same close, on the far side of the commit, where it is worse.
+
+        Nothing is in flight there — the ledger IS the ledger and the fsync
+        succeeded. An unguarded `close(2)` would manufacture a raw `OSError` out
+        of a run that entirely worked, and `main` does not catch that: the
+        operator gets a traceback telling them a completed decline failed.
+        """
+        script = _load_script()
+        ledger = tmp_path / "declines.json"
+        ledger.write_text("[]", encoding="utf-8")
+        entry = [{"url": f"{KB}/kb/b", "reason": "", "at": "2026-01-01T00:00:00Z"}]
+        real_open_directory, real_close = script._open_directory, script.os.close
+        dir_fds = []
+
+        def open_directory(directory):
+            fd = real_open_directory(directory)
+            dir_fds.append(fd)
+            return fd
+
+        def close(fd):
+            if fd in dir_fds:
+                dir_fds.remove(fd)
+                real_close(fd)
+                raise OSError(5, "Input/output error")
+            return real_close(fd)
+
+        monkeypatch.setattr(script, "_open_directory", open_directory)
+        monkeypatch.setattr(script.os, "close", close)
+
+        script.write_ledger(str(ledger), entry)
+
+        assert [e["url"] for e in json.loads(ledger.read_text())] == [f"{KB}/kb/b"]
+
+
+class TestAnUnresolvablePathIsNotATraceback:
+    """`Path.resolve()` raises `RuntimeError` on a symlink loop before 3.13.
+
+    The alias guard resolves both sides to catch an output spelled through a
+    symlinked directory. `main` catches `OperationalError`, so a self-referential
+    input path ends the process on a traceback *before* `run_report` — and the
+    `--summary-json` the operator asked for is never refreshed, which is the exact
+    failure this change exists to close, reached from the one direction the change
+    did not look at.
+
+    Verified on this interpreter (3.11): `Path.resolve()` raises
+    `RuntimeError: Symlink loop from ...` where `os.path.realpath` returns the
+    path unchanged. The writer already resolves with `realpath`, so the guard and
+    the write were also using two different resolvers on the same paths.
+    """
+
+    def test_a_self_referential_bank_fails_operationally_and_still_summarises(
+        self, tmp_path
+    ):
+        script = _load_script()
+        bank = tmp_path / "bank.json"
+        os.symlink(bank, bank)
+        out = tmp_path / "summary.json"
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank,
+                    _corpus(tmp_path, f"{KB}/kb/live"),
+                    _sources_list(tmp_path, f"{KB}/kb/live"),
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+        assert code == 1
+        assert out.exists(), "the failure summary is the point of this path"
+        summary = json.loads(out.read_text())
+        assert any("bank" in f for f in summary["failed_passes"])
+        assert summary["notify"] is True
+
+    def test_a_genuine_alias_through_a_symlinked_directory_is_still_refused(
+        self, tmp_path
+    ):
+        """Making the guard total must not make it blind."""
+        script = _load_script()
+        real = tmp_path / "releases"
+        real.mkdir()
+        live = f"{KB}/kb/live"
+        bank = _bank(real, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        before = bank.read_bytes()
+        link_dir = tmp_path / "current"
+        link_dir.symlink_to(real, target_is_directory=True)
+        _fake_pages(script, {live: GPU_HTML})
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(link_dir / bank.name),
+            ]
+        )
+
+        assert code == 1
+        assert bank.read_bytes() == before
 
 
 class TestReportNotifiesOnDegradedRuns:

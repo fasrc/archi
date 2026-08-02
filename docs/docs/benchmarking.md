@@ -929,6 +929,20 @@ It opens with a **confirmation census** — how many rows are `locked` versus `d
 composition, not a finding: a mostly-draft bank is a project status, so it never triggers a
 notification on its own.
 
+The census buckets rows by `anchor_type`, so that field has to be **text or absent** on every row —
+a bank where one carries a number, a list, or an object is refused before the passes run, with the
+row index in the message:
+
+```
+error: cannot census bank.json: row 12 has an `anchor_type` of type int; it must be text or absent
+```
+
+That refusal takes the ordinary startup-failure path (`census: null`, `notify: true`, non-zero
+exit), so a monitor sees it. Left unchecked the shapes fail in three different ways and none of
+them is useful: a list is unhashable and kills the census, a number silently becomes a bucket that
+does not exist in the bank, and a number *mixed with* text kills the run at the sort — with a raw
+traceback, and before the summary file is refreshed.
+
 `--allowed-hosts` serves both passes that need one — the hosts `drift` may contact and the extra
 hosts the sitemap may emit — because in practice they are the same list: hosts the operator
 vouched for.
@@ -948,12 +962,19 @@ monitor must read those summary counts, not the process exit code, or it will re
 barely-completed run as healthy. The exit code answers "did a pass break?"; the summary answers
 "how much did it actually check?", and only the second distinguishes a thorough run from a thin one.
 
-#### The summary JSON — what a completed run reports
+#### The summary JSON — what every run reports
 
-`--summary-json <path>` is written once the passes run — including when a pass **fails**, so the
-file separates a clean run, a run with findings, and one where a pass broke (`failed_passes`
-non-empty). It records every count the report can take, but only the **notify buckets** decide
-whether a human is paged:
+`--summary-json <path>` is **attempted** on every terminating path — including when a pass **fails**
+and including when the bank itself fails to load. A completed run separates clean, findings, and a
+broken pass (`failed_passes` non-empty); a bank-load failure writes `census: null`, names the error
+in `failed_passes`, and sets `notify: true`. It records every count the report can take, and on a
+run that *completed* only the **notify buckets** decide whether a human is paged. A **startup
+failure overrides that**: no pass ran, so every bucket is zero, and `notify` is set `true` anyway.
+Read the `notify` field; do not re-derive it from the buckets, or a bank that failed to load reads
+as a clean night.
+
+"Attempted" is the operative word, and the reason a monitor still needs the exit code — see
+[the file is not self-certifying](#the-file-is-not-self-certifying) below.
 
 | Key | Type | Notify? | Meaning |
 | --- | --- | :---: | --- |
@@ -967,7 +988,7 @@ whether a human is paged:
 | `refused_sources` | int | ✅ | Sources refused by the URL policy or absent from `--allowed-hosts`. Notifies because an unlisted host is an omission, not a standing decision. |
 | `drift_check` | string | no | `"hash-only"` (tripwire alone) or `"reference-compared"` (a model was named). Marks whether a listed drift is a completed staleness check or just a page that moved. |
 | `failed_passes` | list | — | Passes that could not run; non-empty ⇒ the run exits non-zero. |
-| `notify` | bool | — | `true` iff any notify bucket above is non-zero. On an **exit-zero** run this is what the cron wrapper reads to decide whether to speak; a non-zero run alerts on the exit status instead and never consults it. |
+| `notify` | bool | — | `true` iff any notify bucket above is non-zero **or the bank failed to load** (`census: null`) — a startup failure has no buckets to fill, so deriving this field from them alone would silently suppress that alert. Authoritative as written: read it, never recompute it. On an **exit-zero** run this is what the cron wrapper reads to decide whether to speak; a non-zero run alerts on the exit status instead and never consults it. |
 
 On an exit-zero run the nightly wrapper collapses these into one digest line —
 `gaps | orphans | drifted | reconcile | unchecked | refused`, where `reconcile` is
@@ -975,11 +996,28 @@ On an exit-zero run the nightly wrapper collapses these into one digest line —
 A **non-zero** run is a separate path: the wrapper mails the full report on stderr and never reads
 `notify`.
 
-**A monitor must treat a non-zero exit — or a missing or stale summary — as failure, not read the
-file alone.** The summary is written *after* the bank loads, so a run that cannot even read its bank
-exits non-zero *before* the file is refreshed and leaves the previous run's file untouched. The exit
-code answers "did the run break?"; the summary answers "what did a completed run find?" — a monitor
-needs both.
+#### The file is not self-certifying
+
+**A monitor must key on the exit code and on run freshness, not on the file alone.** Writing the
+summary on the bank-load path closes one specific hole — a run that could not read its bank used to
+leave last night's healthy file in place, so the file said "clean" about a run that never started.
+It does not make the file self-certifying, because two states still read as success from the file
+alone:
+
+- **The refresh itself failed.** `_write_summary` commits with `os.replace`, and deliberately leaves
+  the previous file intact if the write cannot complete (a full disk, a denied replace) — a
+  truncated summary would be worse than a stale one. The run exits non-zero and prints
+  `cannot write <path>`, but the file on disk is still the previous run's, healthy and wrong. When
+  the bank *also* failed to load, both errors go to stderr, so the operator sees the bank error and
+  not only the write error.
+- **The run never reached the write** — killed, OOM-ed, or never scheduled. The file is simply the
+  last one written, with nothing to distinguish it from a clean run that finished a minute ago.
+
+So the contract is: **treat a non-zero exit as failure; treat a missing summary as failure; treat a
+summary older than the schedule as failure** (compare its mtime against the expected run time, or
+read the wrapper's own completion signal). Only once the run is known to have completed is the
+file's content the authority on *what it found* — which is the question the exit code cannot answer,
+since findings exit zero.
 
 #### One broken pass does not hide the other two
 
@@ -1002,6 +1040,154 @@ operator opts into rather than inherits.
 `report` writes nothing — not the bank, not the corpus, not the source list. The decision ledger
 is passed so that pages already declined stay suppressed from the nightly gap list; `report` reads
 it and never appends to it, because declining a page is an interactive decision.
+
+That contract is **enforced by path, not just by intent**. The tool refuses to start when a flag it
+writes (`--summary-json`, `--ledger`) names the same file as one it reads (`--bank`,
+`--corpus-json`, `--sources`, or the other output):
+
+```
+error: --summary-json and --bank are the same file (/srv/goldenset/bank.json). This run
+writes one and reads the other, so it would destroy its own input — give them separate paths.
+```
+
+The commit step is `os.replace`, which swaps the target's directory entry — so a `--summary-json`
+pointed at the bank does not add a summary, it *replaces the bank with one*, and the run that does
+it is the one where the bank was malformed and the operator was about to go repair it. Identity is
+compared by device and inode (and by resolved path for a target that does not exist yet), so a
+symlinked deployment directory or a second mount path is caught too, not just an exact string
+match. The refusal happens before the first read, so a rejected run has changed nothing.
+
+#### Preserved permissions on the files it does write
+
+The ledger and the summary are both replaced through a temp file, and `os.replace` installs that
+file's *metadata* along with its bytes. A fresh temp file is `0600`, owned by whoever ran the tool,
+with no extended attributes — so without care, the first successful write would revoke every grant
+an operator had put on the target. The mode bits, the owning user and group, and any POSIX ACL are
+therefore carried across from the existing target. This is what lets `0640 archi:monitor`, or a
+`setfacl -m u:monitor:r`, survive a nightly run: a health file the monitor cannot read is
+indistinguishable to it from a run with nothing to report.
+
+Each step is best effort — an unprivileged run cannot move a file to a different owner, and not
+every filesystem stores extended attributes — because losing the health signal over a metadata
+detail would be the worse failure. A **new** file keeps the temp file's `0600`: choosing a mode for
+a file that may carry error text is the operator's call, made with `chmod` once, not the tool's.
+
+#### The output's *directory* must be writable, which it did not have to be before
+
+Replacing a file atomically means creating a temp file beside it and renaming over it, so the run
+needs create-and-rename permission on the **parent directory** — not just write permission on the
+file. A plain `open(path, "w")` needed only the latter, so one deployment shape that used to work
+now fails on every run:
+
+```
+# report.json is writable; the directory it lives in is not
+drwxr-xr-x  root:root    /var/lib/monitoring/
+-rw-rw-r--  archi:monitor /var/lib/monitoring/report.json
+
+error: cannot write /var/lib/monitoring/report.json: [Errno 13] Permission denied: ...
+```
+
+There is no way to keep the old behaviour and the atomicity: the rename is the commit. Provision
+the directory so the writing user can create in it — own it, or group-write it — and keep the file
+grants as they are (they are carried across each replacement anyway, see above). This applies to
+`--ledger` and `--summary-json` alike.
+
+The failure is loud, not silent: the run reports `cannot write` on stderr and exits non-zero, so a
+monitor left on the previous snapshot is accompanied by a failing nightly rather than a quiet one.
+
+#### A symlinked output path is followed, not replaced
+
+Point `--summary-json` or `--ledger` at a **symlink** — the stable path pattern, `current ->
+releases/42/report.json` — and the write lands on the *referent*, leaving the link a link. That
+takes a deliberate step, because `os.replace` is the one file operation that does **not** follow a
+symlink on its destination: it swaps the link's own directory entry, which would turn the
+deployment's stable path into a regular file and leave the real report frozen at yesterday's
+content. So the output path is resolved before the temp file is created — before, not at the
+commit, since a temp file next to the *link* and a commit onto the *referent* would cross a mount
+whenever the link does, and `rename(2)` answers a cross-device rename with `EXDEV` instead of
+committing. A path that does not exist yet, and a dangling symlink, both resolve through their
+parent chain and get created where a plain `open(path, "w")` would have put them.
+
+The ledger's lock sidecar is named after the resolved path for the same reason: two runs reaching
+one ledger by different spellings must contend for one lock, or they serialise against nothing and
+the second write erases the first decline. That resolution happens **once per transaction** and is
+reused for the read and the write, so retargeting the link while a decline is being recorded cannot
+leave the command holding one file's lock while it rewrites another.
+
+Each output path is resolved exactly once for the whole run, at the alias check above, and the
+writers use that pinned result rather than looking the path up again. Otherwise the refusal would
+only describe the instant it ran: `report` spends minutes on its network passes between the check
+and the write, and a stable link retargeted at the bank inside that window would be followed by
+`os.replace` to a file the check never approved. Pinning is not a general cure for the race —
+whoever can retarget the link can swap the resolved file too — but it is what makes the refusal
+hold for the run instead of for one moment of it.
+
+#### A hard-linked output path is reported, not followed
+
+A **hard link** is the one output shape that cannot be honoured. Committing atomically means
+installing a new inode under the target's name, so any other name for the old inode keeps it — and
+keeps yesterday's contents. There is no resolving this the way a symlink resolves: hard links are
+not a chain to follow, they are equal names for one file, and a consumer holding the file open
+across the write goes stale in exactly the same way.
+
+Writing in place instead would reopen the partial-write window this whole section exists to close,
+and refusing the write would leave a monitor reading the last healthy summary forever — the failure
+the summary contract exists to prevent, reached by a different route. So the write commits and the
+run prints a warning naming the path it just decoupled. Point every consumer at the same path, or
+reach it through a symlink.
+
+#### A run that fails leaves nothing staged
+
+Whatever goes wrong between staging the temp file and committing it, the temp file is removed —
+not only the `OSError` the run reports as "cannot write". A missing platform API, a warning that
+cannot be printed, or a `close()` that fails while flushing what a full disk rejected are all
+failures of a different type, and each one would otherwise skip the cleanup on its way out and
+leave a `.summary.json.*.tmp` beside the real file. Cleanup is best-effort in turn, so a failure
+while closing or unlinking cannot replace the error that caused it.
+
+A self-referential path among the inputs is reported the same ordinary way. Resolution never
+raises, so a `--bank` symlinked to itself is refused when the file is *read*, as a failed pass with
+a summary written — not as a traceback before the run starts.
+
+An **output** whose path is a symlink loop is refused outright instead. Resolution gives up and
+hands the unresolved link back, and `os.replace` does not follow a symlink on its destination — so
+committing would swap the link's own directory entry and leave a plausible-looking regular file
+where the operator's broken configuration used to be. `open(path, "w")` reported `ELOOP` and
+changed nothing, and that is the behaviour kept:
+
+```
+error: cannot write the summary /srv/goldenset/current.json: the path is a symlink loop, so it
+resolves to nothing. Committing atomically would replace the link with a regular file and destroy
+the configuration silently. Repair the link, or name the file directly.
+```
+
+A *dangling* link is not a loop and is unaffected — it resolves through to a name that does not
+exist yet, which is exactly where `open` would have created the file.
+
+An output that is **not a regular file** is refused for the same reason. A FIFO used to receive the
+JSON as a stream; an atomic commit unlinks it and installs an ordinary file in its place, so the
+process reading the pipe is disconnected for good while the run reports success. A socket or a
+device node is the same question. Nothing is lost by refusing — nothing has been written yet, and
+the endpoint is still there to point somewhere else.
+
+#### What an output path may be
+
+Every one of these is settled **before the first read**, alongside the aliasing refusal, and the
+path that passes is the one the write uses:
+
+| At the output path | What happens |
+|---|---|
+| Nothing yet, or a regular file | Written |
+| A symlink to a regular file, or a dangling symlink | Followed; the link survives, the referent is updated |
+| A symlink loop | **Refused** |
+| A FIFO, socket, or device node | **Refused** |
+| A regular file with other hard links | Written, with a warning naming it |
+| One of this run's own inputs | **Refused** |
+
+Checking at the write instead would be too late twice over. A `--ledger` that is a FIFO is *read*
+before it is written, and reading a pipe with no writer never returns — so the tool would hang
+rather than refuse. And for `report`, the passes take minutes: resolving again at the write leaves
+a window in which retargeting the advertised link moves the write to a file no check ever looked at.
 
 #### Running it nightly
 
