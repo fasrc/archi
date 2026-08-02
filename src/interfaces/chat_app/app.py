@@ -1707,7 +1707,16 @@ class ChatWrapper:
         # measurement series, which is worse than a visibly wrong number.
         timestamps["query_convo_history_ts"] = datetime.now(timezone.utc)
 
-        if server_received_msg_ts.timestamp() - client_sent_msg_ts > client_timeout:
+        # Both fields must be truthy before comparing elapsed time against the deadline.
+        # A falsey client_timeout means no declared deadline; a falsey client_sent_msg_ts
+        # means there is no baseline to measure from.  The streaming twin at app.py:2156
+        # uses the same "if client_timeout and ..." guard and measures from stream_start_time
+        # instead of client_sent_msg_ts — the differing baselines are deliberate, not a bug.
+        if (
+            client_sent_msg_ts
+            and client_timeout
+            and server_received_msg_ts.timestamp() - client_sent_msg_ts > client_timeout
+        ):
             return None, 408
 
         if not is_refresh:
@@ -2153,6 +2162,11 @@ class ChatWrapper:
                 conversation_id=context.conversation_id,
                 pipeline=request_pipeline,
             ):
+                # Falsey client_timeout means no declared deadline — same rule as the
+                # pre-pipeline check in _prepare_chat_context (app.py:1710).  That check
+                # measures from client_sent_msg_ts; this one measures from stream_start_time.
+                # The differing baselines are deliberate: the first bounds total in-flight
+                # time, the second bounds the streaming phase specifically.
                 if client_timeout and time.time() - stream_start_time > client_timeout:
                     if trace_id:
                         total_duration_ms = int(

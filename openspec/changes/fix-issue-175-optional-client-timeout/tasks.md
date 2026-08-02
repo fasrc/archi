@@ -22,35 +22,35 @@
       with `create_conversation`, `query_conversation_history` and
       `update_conversation_timestamp` stubbed. Do not import the existing module's private
       helpers; mirror the pattern, so neither file constrains the other's evolution.
-- [ ] 2.2 Add the failing test for both fields absent: call the real
+- [x] 2.2 Add the failing test for both fields absent: call the real
       `_prepare_chat_context` with `client_sent_msg_ts=0, client_timeout=0` and assert it
       returns a context with no error status. Run it and **watch it fail** with the current
       `(None, 408)` — record the failure output in the commit body. Do not touch `app.py` yet.
-- [ ] 2.3 Add the two single-field cases as failing tests: `client_sent_msg_ts=0` with a
+- [x] 2.3 Add the two single-field cases as failing tests: `client_sent_msg_ts=0` with a
       non-zero `client_timeout`, and a non-zero `client_sent_msg_ts` with `client_timeout=0`.
       Both must fail with 408 before the fix — confirm both, since a guard on `client_timeout`
       alone would leave the first one passing for the wrong reason.
-- [ ] 2.4 Add the explicit-deadline test that must **pass** both before and after: a non-zero
+- [x] 2.4 Add the explicit-deadline test that must **pass** both before and after: a non-zero
       `client_sent_msg_ts` with a non-zero `client_timeout` where `server_received_msg_ts`
       exceeds the window still returns `(None, 408)`. Add its companion in-window case that
       asserts a deadline not yet reached is accepted.
 
 ## 3. Fix the guard
 
-- [ ] 3.1 In `_prepare_chat_context`, make the timeout comparison conditional on both
+- [x] 3.1 In `_prepare_chat_context`, make the timeout comparison conditional on both
       `client_sent_msg_ts` and `client_timeout` being truthy. Keep the edit minimal and
       black-formatted — `app.py` is currently black-clean, so `black --check` on it must still
       report unchanged afterwards and `git diff` must show no reflow of unrelated lines.
-- [ ] 3.2 Run `tests/unit/test_chat_timeout_guard.py` and confirm every test from section 2
+- [x] 3.2 Run `tests/unit/test_chat_timeout_guard.py` and confirm every test from section 2
       now passes, including the two that were already green.
-- [ ] 3.3 Add the cross-reference comment at the `_prepare_chat_context` check naming the
+- [x] 3.3 Add the cross-reference comment at the `_prepare_chat_context` check naming the
       streaming check, and the reciprocal comment at the streaming check naming this one. Each
       states that both read a falsey `client_timeout` as "no client deadline" and that the
       differing baselines (client send time vs `stream_start_time`) are deliberate.
 
 ## 4. Retire the workaround the old bug forced on other tests
 
-- [ ] 4.1 Update the `_prepare()` helper docstring in `tests/unit/test_chat_refresh_context.py`,
+- [x] 4.1 Update the `_prepare()` helper docstring in `tests/unit/test_chat_refresh_context.py`,
       which currently explains that it sends a matched timing pair to keep "this unrelated bug"
       out of its results and cites `app.py:1710` as unguarded. Restate it as a deliberate
       choice of a valid deadline rather than a workaround for a live defect. Do not change what
