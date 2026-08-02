@@ -63,7 +63,7 @@
       `client_sent_msg_ts` and `client_timeout` from **yes, in practice** to `no`, and rewrite
       both descriptions around what the fields are for — latency accounting, and declaring a
       deadline the server honours when supplied — with no reference to rejection for omission.
-- [ ] 5.2 Before deleting the warning admonition, lift out the "How the rejection reaches you
+- [x] 5.2 Before deleting the warning admonition, lift out the "How the rejection reaches you
       differs by endpoint" sub-section and relocate it to the streaming endpoint's own section.
       It documents that a 408 arrives as HTTP 200 plus an `{"type": "error", "status": 408}`
       NDJSON event on the streaming route, which stays true for the explicit-deadline 408 this

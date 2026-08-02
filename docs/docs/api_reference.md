@@ -279,11 +279,18 @@ be sent [together](#overriding-provider-and-model) or neither takes effect.
     {"type": "error", "status": 408, "message": "..."}
     ```
 
-    The timeout rejection described above is in this second group, and so is the `400` for a
-    refresh with nothing to refresh ([`app.py:1694`][refreshguard]) — both are decided inside
-    `_prepare_chat_context`, which runs after the response is constructed. **The same `400`
-    arrives as a real HTTP status from `POST /api/get_chat_response`**, which is the clearest
-    illustration of why this section exists: identical rejection, two different channels.
+    When both `client_sent_msg_ts` and `client_timeout` are supplied and the declared
+    deadline has elapsed by the time the request is processed, the 408 rejection is in this
+    second group — the check runs inside `_prepare_chat_context`, which runs after the
+    response is constructed. **How that rejection reaches you differs by endpoint:** on
+    `POST /api/get_chat_response` it is a real **HTTP 408** with `{"error": ...}`; here it
+    arrives as **HTTP 200** followed by the in-band event
+    `{"type": "error", "status": 408, "message": ...}` ([`app.py:2075`][streamerr]). A
+    streaming client that checks only the HTTP status sees success and must inspect the
+    events. The `400` for a refresh with nothing to refresh ([`app.py:1694`][refreshguard])
+    follows the same pattern — also decided inside `_prepare_chat_context` — and is the
+    clearest illustration of why this section exists: identical rejection, two different
+    channels.
 
     Note that `400` appears in **both** groups on this endpoint, so the status alone does not
     tell you which one you are in: a malformed `last_message` is rejected in the route and
