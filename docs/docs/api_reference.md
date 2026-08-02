@@ -42,10 +42,7 @@ honour all of it — the last four fields are read only by the streaming endpoin
 | `include_agent_steps` | bool | stream only | Include the incremental **answer text** — the `chunk` events ([`app.py:2420`][chunkgate]). Default `true`. Does **not** gate reasoning. Ignored by `POST /api/get_chat_response`. |
 | `include_tool_steps` | bool | stream only | Include tool events (`tool_start`, `tool_output`, `tool_end`) **and reasoning events** (`thinking_start`, `thinking_end`, [`app.py:2400`][thinkgate]). Default `true`. Ignored by `POST /api/get_chat_response`. |
 
-[parse]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4654-L4655
-[check]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1710
 [streamerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2075
-[stream]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2156
 
 **`last_message` is nested.** It is a list whose first element is the
 `[sender, message]` pair — `[["User", "How do I submit a job?"]]`, **not**

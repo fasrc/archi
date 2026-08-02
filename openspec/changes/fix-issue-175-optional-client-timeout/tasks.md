@@ -71,7 +71,7 @@
 - [x] 5.3 Delete the rest of the admonition: the "look optional and are not" framing, the
       three-row reproduction table, the quoted unguarded comparison, and the closing paragraph
       calling it a handler bug tracked as #175.
-- [ ] 5.4 Clean up the reference-link definitions the admonition owned (`[parse]`, `[check]`,
+- [x] 5.4 Clean up the reference-link definitions the admonition owned (`[parse]`, `[check]`,
       `[streamerr]`, `[stream]`). Keep `[streamerr]` if the relocated sub-section still uses it;
       remove any definition left unused. Leave `[refreshguard]` alone — it is used elsewhere on
       the page. Then grep the file for both dangling link uses and orphaned definitions and
