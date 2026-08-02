@@ -1125,6 +1125,31 @@ the configuration silently. Repair the link, or name the file directly.
 A *dangling* link is not a loop and is unaffected — it resolves through to a name that does not
 exist yet, which is exactly where `open` would have created the file.
 
+An output that is **not a regular file** is refused for the same reason. A FIFO used to receive the
+JSON as a stream; an atomic commit unlinks it and installs an ordinary file in its place, so the
+process reading the pipe is disconnected for good while the run reports success. A socket or a
+device node is the same question. Nothing is lost by refusing — nothing has been written yet, and
+the endpoint is still there to point somewhere else.
+
+#### What an output path may be
+
+Every one of these is settled **before the first read**, alongside the aliasing refusal, and the
+path that passes is the one the write uses:
+
+| At the output path | What happens |
+|---|---|
+| Nothing yet, or a regular file | Written |
+| A symlink to a regular file, or a dangling symlink | Followed; the link survives, the referent is updated |
+| A symlink loop | **Refused** |
+| A FIFO, socket, or device node | **Refused** |
+| A regular file with other hard links | Written, with a warning naming it |
+| One of this run's own inputs | **Refused** |
+
+Checking at the write instead would be too late twice over. A `--ledger` that is a FIFO is *read*
+before it is written, and reading a pipe with no writer never returns — so the tool would hang
+rather than refuse. And for `report`, the passes take minutes: resolving again at the write leaves
+a window in which retargeting the advertised link moves the write to a file no check ever looked at.
+
 #### Running it nightly
 
 `scripts/benchmarking/goldenset_report_cron.sh` wraps the command above for cron. The settings

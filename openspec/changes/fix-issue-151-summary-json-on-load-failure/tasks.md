@@ -170,3 +170,72 @@ consequences of that; the fourth is the doc overclaim it invited.
   to alter inside an unrelated change.
 - [x] 8.7 Mutation-check all three (chown guard, `finally` cleanup, resolver) and
   re-run the gate.
+
+## 9. Review round 6 — Codex on PR #162 (6 findings, two batches)
+
+All six confirmed. Batch 1 (4 findings, 19:25) was worked by the nightly loop in
+`582211e3` while this session was idle; batch 2 (2 findings, 08:33) arrived after
+that push and is worked here in `HEAD`. Both are recorded together because the
+findings are one story: `os.replace` replaces a **name**, and each shape that
+name can hold was being handled at the write, one at a time, which is what kept
+producing the next one.
+
+### Batch 1 — `582211e3` (nightly loop)
+
+- [x] 9.1 **P1 — the alias guard and the writers resolved independently.** Same
+  class as 7.1, one layer up: `report` spends its network passes between them, so
+  retargeting a symlinked output mid-run walks past the refusal and lets
+  `os.replace` land on a file it never examined, the bank included. Each output's
+  resolution is pinned at the guard and handed to the writers via
+  `pinned_output`.
+- [x] 9.2 **P2 — a symlink loop at an OUTPUT is destroyed.** A regression from
+  8.4: the non-strict resolver that keeps a looped *input* from ending the run on
+  a traceback returns the loop unresolved, and `os.replace` then swaps the link
+  itself for a regular file. Refused; a resolution that is still a symlink is the
+  signal that resolution gave up. A dangling link is not that, and is still
+  written through.
+- [x] 9.3 **P2 — `os.close(dir_fd)` was left bare** beside the `_close_quietly`
+  and `_discard_quietly` from 8.3. `_close_fd_quietly`, applied on **both** sides
+  of the commit — after it, a raw `OSError` would replace `LedgerNotDurable` or
+  manufacture a failure out of a run that succeeded.
+- [x] 9.4 **P2 — atomic writes need a writable parent directory.** Confirmed and
+  inherent: staging a sibling needs create/rename on the directory where
+  `open(path, "w")` needed write on the file. Not fixable, so documented as a
+  deployment prerequisite, which is what the finding asked for.
+
+### Batch 2 — this commit
+
+- [x] 9.5 **P2 — a FIFO output is unlinked and its consumer disconnected.**
+  Refused, unlike the hard-linked target in 7.3: there the choice was between a
+  stale second name and no health signal at all, whereas here nothing has been
+  written and the endpoint still exists. Written as "not a regular file", so a
+  socket or device node is the same answer.
+- [x] 9.6 **The refusal had to move to the guard, not the write.** 9.2 validated
+  at the writers; a FIFO `--ledger` is *read* first, and reading a pipe with no
+  writer never returns. Left there, the tool hangs instead of refusing —
+  demonstrated by the mutation: with the check removed the suite does not fail,
+  it stops responding. Output validation now runs inside
+  `reject_aliased_outputs`, before the first read.
+- [x] 9.7 **P2 — an unexpected exception skipped the summary write.** Third
+  arrival through the same gap (`TypeError` round 2, `RuntimeError` 8.4,
+  `AttributeError` here): the contract said "every terminating path", the
+  implementation was a call at each known exit. The write is now one `finally`
+  around the whole run, reached for any exception type.
+- [x] 9.8 **Regression caught by an existing test while doing 9.7.** The first
+  `finally` swallowed the write error unconditionally, so a failed summary write
+  on an otherwise-clean run started reporting success — the exact stale-file
+  failure this capability exists to close.
+  `test_write_interrupted_before_commit_leaves_prior_file_intact` failed and I
+  kept it: the write error propagates unless a worse one already is.
+- [x] 9.9 Mutation-check the three (non-regular refusal, the total `finally`, the
+  propagate-unless-already-failing rule) and re-run the gate.
+
+### Note on concurrent work
+
+- [x] 9.10 This session had independently fixed batch 1 before discovering
+  `582211e3` on the remote. That work was **discarded in favour of the loop's**,
+  which was better on two counts: `_close_fd_quietly` on both sides of the
+  commit, which this session missed, and pinning through an explicit
+  `pinned_output` accessor rather than rewriting `args` in place, which would
+  have changed operator-facing paths in the run's own output. Only batch 2 and
+  the OpenSpec artifacts are carried forward.

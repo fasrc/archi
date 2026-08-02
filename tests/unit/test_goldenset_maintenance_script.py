@@ -3412,6 +3412,202 @@ class TestACyclicOutputSymlinkIsRefused:
         assert json.loads(referent.read_text())["failed_passes"] == []
 
 
+class TestANonRegularOutputIsRefused:
+    """A FIFO at the output path is an endpoint, and `os.replace` deletes it.
+
+    `open(path, "w")` on a named pipe handed the JSON to whoever was reading it.
+    The atomic commit unlinks the FIFO and installs a regular file in its place,
+    so the consumer is disconnected permanently while the run reports success —
+    the same silent-success shape as the hard link, but destroying the thing
+    instead of merely diverging from it.
+
+    Refused rather than warned, unlike the hard-linked case. There the choice was
+    between a stale second name and no health signal at all; here nothing has
+    been written yet and the endpoint still exists, so a refusal costs nothing
+    and leaves something to repair. A socket or a device node is the same
+    question, which is why the test is "regular file" and not "not a FIFO".
+    """
+
+    def _argv(self, tmp_path, script, out):
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        return [
+            *_report_argv(bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)),
+            "--summary-json",
+            str(out),
+        ]
+
+    def test_a_fifo_summary_is_refused_and_survives(self, tmp_path, capsys):
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        os.mkfifo(out)
+
+        code = script.main(self._argv(tmp_path, script, out))
+
+        assert code == 1
+        assert stat.S_ISFIFO(os.stat(out).st_mode), "the FIFO was destroyed"
+        assert "not a regular file" in capsys.readouterr().err
+
+    def test_a_symlink_to_a_fifo_is_refused_too(self, tmp_path):
+        """The shape that matters is the one at the end of the link."""
+        script = _load_script()
+        pipe = tmp_path / "pipe"
+        os.mkfifo(pipe)
+        link = tmp_path / "summary.json"
+        link.symlink_to(pipe)
+
+        assert script.main(self._argv(tmp_path, script, link)) == 1
+
+        assert stat.S_ISFIFO(os.stat(pipe).st_mode)
+        assert link.is_symlink()
+
+    def test_a_fifo_ledger_is_refused(self, tmp_path):
+        """Second writer, same commit step."""
+        script = _load_script()
+        ledger = tmp_path / "declines.json"
+        os.mkfifo(ledger)
+        url = f"{KB}/kb/b"
+
+        code = script.main(
+            [
+                "coverage",
+                "--bank",
+                str(_bank(tmp_path, _row())),
+                "--corpus-json",
+                str(_corpus(tmp_path, url)),
+                "--decline",
+                url,
+                "--ledger",
+                str(ledger),
+            ]
+        )
+
+        assert code == 1
+        assert stat.S_ISFIFO(os.stat(ledger).st_mode)
+
+    def test_an_ordinary_regular_file_is_untouched_by_the_check(self, tmp_path):
+        """The negative control: the shape every deployment actually uses."""
+        script = _load_script()
+        out = tmp_path / "summary.json"
+        out.write_text("{}", encoding="utf-8")
+
+        assert script.main(self._argv(tmp_path, script, out)) == 0
+
+        assert json.loads(out.read_text())["failed_passes"] == []
+
+
+class TestTheSummaryContractIsTotalNotOSErrorShaped:
+    """ "Written on every terminating path" was implemented as a call at each
+    known exit.
+
+    Three findings have now arrived through that gap — a `TypeError` from an
+    unvalidated `anchor_type`, a `RuntimeError` from a symlink loop, and an
+    `AttributeError` from a corpus row that is not an object. Each ended the run
+    before the write and left the monitor reading the previous healthy summary:
+    a broken run that reads as green, which is the one outcome this capability
+    exists to prevent.
+
+    Validating the next input shape closes the third instance and leaves the
+    class open, so the write is guaranteed by a `finally` instead.
+    """
+
+    def test_a_pass_raising_an_unexpected_error_still_writes_the_summary(
+        self, tmp_path
+    ):
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        # Valid JSON, valid array, and a row that is not an object — so it loads
+        # and then dies at `row.get(...)`, past every check that reads the file.
+        corpus = tmp_path / "corpus.json"
+        corpus.write_text(json.dumps(["not-a-row"]), encoding="utf-8")
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+
+        with pytest.raises(Exception):
+            script.main(
+                [
+                    *_report_argv(bank, corpus, _sources_list(tmp_path, live)),
+                    "--summary-json",
+                    str(out),
+                ]
+            )
+
+        assert out.exists(), "an unexpected error must not skip the summary"
+        summary = json.loads(out.read_text())
+        assert summary["notify"] is True
+        assert summary["failed_passes"], "a failed run must not summarise as clean"
+
+    def test_the_healthy_path_writes_exactly_one_summary(self, tmp_path, monkeypatch):
+        """Guaranteeing the write must not make it happen twice.
+
+        A `finally` added on top of the existing call sites would write the file
+        again on the way out — harmless-looking, and it would double every
+        replace the atomic-write work is about.
+        """
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        bank = _bank(tmp_path, _locked_row(live, hashes={live: page_digest(GPU_HTML)}))
+        _fake_pages(script, {live: GPU_HTML})
+        out = tmp_path / "summary.json"
+        writes = []
+        original = script._write_summary
+
+        def counted(args, summary):
+            writes.append(1)
+            return original(args, summary)
+
+        monkeypatch.setattr(script, "_write_summary", counted)
+
+        code = script.main(
+            [
+                *_report_argv(
+                    bank, _corpus(tmp_path, live), _sources_list(tmp_path, live)
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+        assert code == 0
+        assert len(writes) == 1
+
+    def test_a_bank_failure_still_writes_exactly_one_summary(
+        self, tmp_path, monkeypatch
+    ):
+        """The bank path had its own write; folding it in must not double it."""
+        script = _load_script()
+        live = f"{KB}/kb/live"
+        out = tmp_path / "summary.json"
+        writes = []
+        original = script._write_summary
+
+        def counted(args, summary):
+            writes.append(1)
+            return original(args, summary)
+
+        monkeypatch.setattr(script, "_write_summary", counted)
+
+        code = script.main(
+            [
+                *_report_argv(
+                    tmp_path / "missing.json",
+                    _corpus(tmp_path, live),
+                    _sources_list(tmp_path, live),
+                ),
+                "--summary-json",
+                str(out),
+            ]
+        )
+
+        assert code == 1
+        assert len(writes) == 1
+        summary = json.loads(out.read_text())
+        assert any("bank" in f for f in summary["failed_passes"])
+        assert summary["census"] is None
+
+
 class TestAHardLinkedTargetIsNamedNotSilentlyDecoupled:
     """A replace gives the name a new inode; other hard links keep the old one.
 

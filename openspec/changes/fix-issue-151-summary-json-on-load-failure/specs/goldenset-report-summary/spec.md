@@ -331,3 +331,107 @@ with a summary written.
 
 - **WHEN** an output is spelled through a symlinked directory that names an input
 - **THEN** the run is still refused and the input is byte-unchanged
+
+### Requirement: An output path SHALL be validated once, before any work, and reused
+
+The system SHALL settle every question about an output path in one place, before
+the first read, and SHALL use the path it validated for the write.
+
+It SHALL refuse a path whose resolution is a **symlink loop**. The resolver is
+non-strict so a looped *input* is reported when it is read rather than ending the
+run on a `RuntimeError`; at an output that same totality is destructive, because
+the loop comes back unresolved and `os.replace` swaps the link's own directory
+entry for a regular file where `open(path, "w")` raised `ELOOP` and changed
+nothing.
+
+It SHALL refuse an existing target that is **not a regular file**. A FIFO
+received the JSON as a stream; replacing it unlinks it and disconnects its
+consumer permanently while the run reports success. Refusing costs nothing here,
+unlike the hard-link case: nothing has been written and the endpoint is still
+there to repair. It must also happen before the first read, because reading a
+FIFO with no writer never returns — so validating at the write would leave the
+tool hanging on a FIFO `--ledger` rather than refusing it.
+
+The validated path SHALL be the one the writers use. Resolving again at the write
+leaves a window — for `report`, as long as its network passes — in which
+retargeting the advertised link moves the write to a file no refusal examined,
+including an input.
+
+This requirement is written over *the set of shapes an output path can hold*
+rather than over the shapes being added. Handling them one at a time at the write
+is what produced them one at a time; enumerated in one place, the next shape is a
+missing branch rather than a new code path.
+
+#### Scenario: A symlink loop at an output is refused and survives
+
+- **WHEN** an output flag names a self-referential symlink
+- **THEN** the run is refused before any pass, and the path is still a symlink
+
+#### Scenario: A FIFO at an output is refused and survives
+
+- **WHEN** an existing output target is a FIFO, directly or through a symlink
+- **THEN** the run is refused and the FIFO is intact
+- **AND** for `--ledger` the refusal precedes the read, so the run does not block
+
+#### Scenario: An ordinary symlinked output is still honoured
+
+- **WHEN** an output names a symlink to a regular file
+- **THEN** the run proceeds, the link survives, and the referent is updated
+
+#### Scenario: Retargeting after validation does not move the write
+
+- **WHEN** an output's symlink is retargeted after the guard and before the write
+- **THEN** the write lands on the validated file and the new referent is untouched
+
+### Requirement: An atomic output's directory prerequisite SHALL be documented
+
+The docs SHALL state that `--summary-json` and `--ledger` require a parent
+directory writable by the user running the report.
+
+Replacing a file atomically stages a sibling and renames over it, so it needs
+create-and-rename permission on the **parent directory**, where `open(path, "w")`
+needed only write permission on the file. A service-owned `report.json` inside a
+root-owned `0755` directory refreshed fine before and now fails with `EACCES` on
+every run. That is inherent to atomic replacement rather than a policy choice, so
+the requirement is to state it, not to work around it.
+
+#### Scenario: The prerequisite is stated where the atomic write is described
+
+- **WHEN** an operator reads the atomic-write section of the benchmarking docs
+- **THEN** it states that the parent directory must be writable by the report
+  user, and that a file-writable-but-directory-read-only layout that worked
+  before will now fail
+
+### Requirement: The summary write SHALL be guaranteed by construction, not by call site
+
+The `report` run SHALL write the summary from a single point that executes on
+every exit, and that point SHALL be reached for **any** exception type, not only
+`OperationalError`.
+
+Three findings arrived through this gap while it was stated as a contract and
+implemented as a call at each known exit — a `TypeError` from an unvalidated
+`anchor_type`, a `RuntimeError` from a symlink loop, an `AttributeError` from a
+corpus row that is not an object. Each ended the run before the write and left
+the monitor reading the previous healthy summary: a broken run that reads as
+green. Validating each new input shape closes instances and leaves the class
+open.
+
+A failure to write the summary SHALL still fail the run, EXCEPT where a failure
+is already propagating — then the write error is printed and the original
+propagates, because only one of the two is actionable.
+
+#### Scenario: An unexpected error still writes the summary
+
+- **WHEN** a pass raises an exception that is not an `OperationalError`
+- **THEN** the summary is still written, marked as failed and notifying
+- **AND** the error itself still surfaces
+
+#### Scenario: The summary is written exactly once
+
+- **WHEN** a run completes, cleanly or on a bank-load failure
+- **THEN** the summary is written once, not once per exit path
+
+#### Scenario: A failed write still fails an otherwise-clean run
+
+- **WHEN** every pass succeeds and only the summary write fails
+- **THEN** the run exits non-zero rather than reporting success over a stale file

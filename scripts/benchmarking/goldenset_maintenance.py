@@ -235,6 +235,25 @@ def _output_target(path: str, label: str) -> Path:
             "with a regular file and destroy the configuration silently. Repair "
             "the link, or name the file directly."
         )
+    if resolved.exists() and not resolved.is_file():
+        # The same trade one shape further along. `open(path, "w")` on a FIFO
+        # handed the JSON to whoever was reading it; `os.replace` unlinks the
+        # FIFO and installs a regular file, disconnecting that reader for good
+        # while the run reports success. A socket or a device node is the same
+        # question, so the test is "regular file" rather than "not a FIFO".
+        #
+        # Refused rather than warned, unlike a hard-linked target. There the
+        # choice was between a stale second name and no health signal at all;
+        # here nothing has been written, and the endpoint is still there to be
+        # repaired, so the refusal costs nothing. Refusing at the guard also
+        # comes BEFORE the ledger is read — and reading a FIFO with no writer
+        # blocks forever, so this is what keeps the tool from hanging on one.
+        raise OperationalError(
+            f"cannot write {label} {resolved}: it is not a regular file. An "
+            "atomic commit replaces the name, which would unlink it and install "
+            "an ordinary file in its place, permanently disconnecting anything "
+            "reading it. Give the run a regular file of its own."
+        )
     return resolved
 
 
@@ -1384,6 +1403,46 @@ def run_report(args: argparse.Namespace) -> int:
         "failed_passes": [],
         "notify": True,
     }
+    already_failing = False
+    try:
+        return _report_passes(args, summary)
+    except BaseException as exc:
+        # "Written on every terminating path" has to mean every one, not every
+        # `OperationalError`. Three findings have arrived through that gap — a
+        # `TypeError` from an unvalidated `anchor_type`, a `RuntimeError` from a
+        # symlink loop, an `AttributeError` from a corpus row that is not an
+        # object — each ending the run before the write and leaving the monitor
+        # on the previous healthy file. Validating the next input shape closes
+        # the next instance and leaves the class open.
+        already_failing = True
+        if not summary["failed_passes"]:
+            summary["failed_passes"] = [f"{type(exc).__name__}: {exc}"]
+        summary["notify"] = True
+        raise
+    finally:
+        try:
+            _write_summary(args, summary)
+        except OperationalError as write_exc:
+            # A summary that could not be written still fails the run: silence
+            # would report success over a stale file, which is the failure this
+            # whole contract exists to close.
+            #
+            # Unless something worse is already propagating. Then there are two
+            # failures and only one is actionable — letting the write error out
+            # of here would make it the exception `main` prints, telling the
+            # operator the disk is full and never that their bank is malformed.
+            # Both go to stderr; the original stays the one that propagates.
+            if not already_failing:
+                raise
+            print(f"error: {write_exc}", file=sys.stderr)
+
+
+def _report_passes(args: argparse.Namespace, summary: dict) -> int:
+    """The report itself. Its caller owns writing the summary, exactly once.
+
+    Split out so the write is one `finally` around the whole run rather than a
+    call on each way out, which is what let three exception types slip past it.
+    """
     try:
         census = bank_census(args.bank)
         summary["census"] = census
@@ -1392,15 +1451,6 @@ def run_report(args: argparse.Namespace) -> int:
         summary["failed_passes"] = [f"bank: {exc}"]
         summary["census"] = None
         summary["notify"] = True
-        try:
-            _write_summary(args, summary)
-        except OperationalError as write_exc:
-            # Two failures at once, and only one of them is actionable. Letting
-            # the write error propagate from inside this handler would make it
-            # the exception `main` prints, telling the operator the disk is full
-            # and never that their bank is malformed. Both go to stderr; the
-            # bank error stays the one that propagates.
-            print(f"error: {write_exc}", file=sys.stderr)
         raise
 
     args.summary_sink = summary
@@ -1438,11 +1488,6 @@ def run_report(args: argparse.Namespace) -> int:
     # decision, so an unchecked source notifies whether the page or the
     # allowlist is the reason it went unchecked.
     summary["notify"] = any(summary[key] > 0 for key in _NOTIFY_ON)
-    # Written on every terminating path, including a bank-load failure: a
-    # wrapper that finds no file (or a stale one) after a broken run cannot
-    # distinguish it from a clean run — the exact confusion this file exists
-    # to remove.
-    _write_summary(args, summary)
 
     if failures:
         _print_group(
@@ -1693,6 +1738,8 @@ def build_parser() -> argparse.ArgumentParser:
 #: second aliasing check growing somewhere else and going stale.
 _OUTPUT_PATH_FLAGS = ("summary_json", "ledger")
 _INPUT_PATH_FLAGS = ("bank", "corpus_json", "sources")
+#: What each output is called in the refusal that names it.
+_OUTPUT_LABELS = {"summary_json": "the summary", "ledger": "the ledger"}
 
 
 def _same_file(
@@ -1761,8 +1808,20 @@ def reject_aliased_outputs(args: argparse.Namespace) -> None:
     declared = []
     for flag in _OUTPUT_PATH_FLAGS + _INPUT_PATH_FLAGS:
         value = getattr(args, flag, None)
-        if value:
-            declared.append((flag, Path(value), _resolved_target(str(value))))
+        if not value:
+            continue
+        if flag in _OUTPUT_PATH_FLAGS:
+            # Validated HERE, not at the write. Every shape an output path can
+            # already hold and the commit cannot honour is settled before the
+            # first read — which for a FIFO ledger is the difference between a
+            # refusal and a hang, since reading a pipe with no writer never
+            # returns. It is also the last moment at which nothing has been
+            # read, printed or written, which is the whole reason the aliasing
+            # refusal lives here.
+            resolved = _output_target(str(value), _OUTPUT_LABELS[flag])
+        else:
+            resolved = _resolved_target(str(value))
+        declared.append((flag, Path(value), resolved))
     for flag, path, resolved in declared:
         if flag not in _OUTPUT_PATH_FLAGS:
             continue
