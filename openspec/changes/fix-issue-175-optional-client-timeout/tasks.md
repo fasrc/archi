@@ -14,7 +14,7 @@
 
 ## 2. Red tests first
 
-- [ ] 2.1 Create `tests/unit/test_chat_timeout_guard.py` with a module docstring stating what
+- [x] 2.1 Create `tests/unit/test_chat_timeout_guard.py` with a module docstring stating what
       the guard means (a falsey `client_timeout` or `client_sent_msg_ts` = no client deadline)
       and why the explicit-timeout test exists (it fails if the check is deleted rather than
       corrected). Build the stub-`self` wrapper the same way
