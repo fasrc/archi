@@ -1617,7 +1617,7 @@ class ChatWrapper:
             api_key: Optional API key (overrides environment variable)
 
         Returns:
-            A LangChain BaseChatModel instance, or None if creation fails
+            A LangChain BaseChatModel instance. Raises on failure.
         """
         try:
             from src.archi.providers import get_provider
@@ -1642,9 +1642,6 @@ class ChatWrapper:
             if api_key:
                 provider_instance.set_api_key(api_key)
             return provider_instance.get_chat_model(model)
-        except ImportError as e:
-            logger.warning(f"Providers module not available: {e}")
-            return None
         except Exception as e:
             logger.warning(f"Failed to create provider LLM {provider}/{model}: {e}")
             raise

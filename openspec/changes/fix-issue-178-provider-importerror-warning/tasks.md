@@ -51,21 +51,21 @@ protected-path guard and looks like a failure when it is not.
 
 ## 3. The fix
 
-- [ ] 3.1 Delete the `except ImportError as e:` clause at `app.py:1645-1647` so `ImportError`
+- [x] 3.1 Delete the `except ImportError as e:` clause at `app.py:1645-1647` so `ImportError`
       falls through to the existing `except Exception` handler, which logs with provider/model
       context and re-raises. Do not add a new branch. Do not touch the `except Exception` clause
       itself.
-- [ ] 3.2 Update the docstring's Returns section at `app.py:1616-1621` — it currently promises
+- [x] 3.2 Update the docstring's Returns section at `app.py:1616-1621` — it currently promises
       "A LangChain BaseChatModel instance, or None if creation fails", which is false once no
       failure path returns `None`. State that the method returns the constructed chat model and
       raises on failure.
-- [ ] 3.3 Run the tests from group 2 and confirm 2.1 now passes:
+- [x] 3.3 Run the tests from group 2 and confirm 2.1 now passes:
       `python -m pytest tests/unit/test_chat_override_persistence.py -v`.
-- [ ] 3.4 Confirm the untouched paths still behave: the `ValueError` → `{"type": "error",
+- [x] 3.4 Confirm the untouched paths still behave: the `ValueError` → `{"type": "error",
       "status": 400}` early return (`app.py:2097-2103`) and the generic `except Exception` →
       warning path (`:2104-2109`) are unchanged and their existing tests still pass. The fix must
       not turn the `400` into a warning.
-- [ ] 3.5 Inspect `git diff src/interfaces/chat_app/app.py` and confirm it contains only the
+- [x] 3.5 Inspect `git diff src/interfaces/chat_app/app.py` and confirm it contains only the
       clause deletion and the docstring edit — no unrelated black reflow hunks.
 
 ## 4. Documentation

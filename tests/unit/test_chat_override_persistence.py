@@ -429,16 +429,6 @@ def test_override_view_build_failure_warns_and_falls_back(monkeypatch):
     assert finals and finals[0]["model_used"] == "default/default"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RED baseline (issue #178): the `except ImportError` clause at "
-        "app.py:1645-1647 swallows the exception and returns None instead of "
-        "propagating it. Passes once task 3 deletes that clause and lets "
-        "ImportError fall through to the `except Exception` clause, which "
-        "re-raises."
-    ),
-)
 def test_create_provider_llm_propagates_import_error(monkeypatch):
     """Direct test of the real `_create_provider_llm` body (design D3): forcing
     the lazy `from src.archi.providers import get_provider` (app.py:1623) to
