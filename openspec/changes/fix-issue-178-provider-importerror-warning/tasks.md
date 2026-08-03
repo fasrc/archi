@@ -88,7 +88,7 @@ protected-path guard and looks like a failure when it is not.
 - [x] 5.2 Confirm diff coverage specifically covers the changed lines of `app.py`; the deletion
       itself is not a coverage target, so the new direct test from 2.1 is what carries the changed
       region.
-- [ ] 5.3 Commit with a short lowercase subject and no `Co-Authored-By` or AI-attribution
+- [x] 5.3 Commit with a short lowercase subject and no `Co-Authored-By` or AI-attribution
       trailers, then push the branch and open a PR into `fasrc/archi:dev` with `closes #178`.
       In the PR body, record the 1.2 finding (call-site count), note that operators with a broken
       provider install will now see `warning` events where responses previously looked clean, and
