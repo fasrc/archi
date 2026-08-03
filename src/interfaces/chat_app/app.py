@@ -1709,7 +1709,7 @@ class ChatWrapper:
 
         # Both fields must be truthy before comparing elapsed time against the deadline.
         # A falsey client_timeout means no declared deadline; a falsey client_sent_msg_ts
-        # means there is no baseline to measure from.  The streaming twin at app.py:2170
+        # means there is no baseline to measure from.  The streaming twin at app.py:2173
         # uses the same "if client_timeout and ..." guard and measures from stream_start_time
         # instead of client_sent_msg_ts — the differing baselines are deliberate, not a bug.
         if (
@@ -2167,6 +2167,9 @@ class ChatWrapper:
                 # measures from client_sent_msg_ts; this one measures from stream_start_time.
                 # The differing baselines are deliberate: the first bounds total in-flight
                 # time, the second bounds the streaming phase specifically.
+                # Reached only when the upstream generator yields, so this bounds a slow
+                # stream, not a provider that stalls without emitting.  Issue #191 tracks
+                # enforcing the deadline around stream advancement itself.
                 if client_timeout and time.time() - stream_start_time > client_timeout:
                     if trace_id:
                         total_duration_ms = int(
