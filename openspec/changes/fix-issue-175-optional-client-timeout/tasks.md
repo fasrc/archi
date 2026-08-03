@@ -136,8 +136,32 @@
       starts largely uncovered, so a passing total proves nothing about these lines.
 - [x] 6.3 Re-check the acceptance criteria in issue #175 one by one against the working tree,
       including that `git diff` on `app.py` shows no unrelated black reflow.
-- [ ] 6.4 Run `openspec validate fix-issue-175-optional-client-timeout --strict` and confirm it
+- [x] 6.4 Run `openspec validate fix-issue-175-optional-client-timeout --strict` and confirm it
       passes.
-- [ ] 6.5 Commit only green, with a short lowercase subject and no `Co-Authored-By` or
+- [x] 6.5 Commit only green, with a short lowercase subject and no `Co-Authored-By` or
       AI-attribution trailer. Push the branch and open a PR into `fasrc/archi:dev` whose body
       says `closes #175`. **Do not merge** — a human merges.
+
+## 6b. Round-4 review findings
+
+- [x] 6b.1 Screen an unrepresentable `client_sent_msg_ts` with **400** at both route handlers,
+      before the pipeline and before any conversation write. The old unconditional deadline
+      check screened these out incidentally; making it conditional let them through to
+      `datetime.fromtimestamp`, which raises `OSError` / `OverflowError` / `ValueError`
+      depending on the value — a 500 after generation on the non-streaming route, and a
+      mid-stream failure after HTTP 200 on the streaming one. Check by attempting the
+      conversion, not by hardcoding a range.
+- [x] 6b.2 Fix `test_no_timeout_at_all_lets_the_stream_run`: its stub output was a
+      `SimpleNamespace` with no `.get`, so finalization raised and the stream ended in an
+      in-band 500 — and the assertion, phrased as "no 408", passed anyway. Give the stub the
+      production interface and assert the event sequence is `chunk` then `final`. Verified the
+      new assertion discriminates by restoring the old stub and watching it fail.
+- [x] 6b.3 Add route-level tests that run the **real** `_parse_chat_request` against a real
+      JSON body (`tests/unit/test_chat_timing_field_validation.py`), covering the two seams a
+      stubbed-method test cannot reach: JSON decoding of an omitted key, and the handler wiring
+      that carries the parsed value into `insert_timing`.
+- [ ] 6b.4 **Human, before merge:** run one timestamp-less request against a *running*
+      deployment and record the response. Not automatable from here — the deployment installs
+      the package non-editable, so it will not contain this branch until it is redeployed, and
+      redeploying the live dev chat service for an unmerged PR is a human decision. Commands
+      are in the round-4 review thread.

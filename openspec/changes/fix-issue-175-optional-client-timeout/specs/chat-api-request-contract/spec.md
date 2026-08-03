@@ -76,6 +76,42 @@ its twin.
 - **AND** it records that the differing baselines are deliberate, not a bug to be "fixed" by
   making them identical
 
+### Requirement: An unrepresentable client send time is refused, not crashed
+
+Both chat endpoints SHALL reject a request whose supplied `client_sent_msg_ts` cannot be
+converted by `datetime.fromtimestamp` with **HTTP 400**, and SHALL do so before invoking the
+pipeline and before any conversation or timestamp row is written. A falsey value SHALL NOT be
+treated as unrepresentable — that is the documented optional case.
+
+The unconditional deadline check used to screen these values out incidentally: any absurd
+`client_sent_msg_ts` made `server_received_msg_ts - client_sent_msg_ts` exceed the timeout, so
+the request was refused with 408 before the pipeline ran. Requiring a truthy `client_timeout`
+removes that accident, and the value then reaches `datetime.fromtimestamp` at persistence time
+instead — raising `OSError` beyond the platform's `time_t`, `OverflowError`, or `ValueError`
+outside years 1–9999. On the non-streaming route that is a 500 after generation has been paid
+for; on the streaming route the caller has already received HTTP 200 and the failure lands
+mid-stream.
+
+The check SHALL be the conversion itself rather than a hardcoded range, so that it cannot
+disagree with the two call sites it protects about where the boundary lies.
+
+#### Scenario: An unrepresentable timestamp is refused before any work
+
+- **WHEN** a request supplies a `client_sent_msg_ts` that `datetime.fromtimestamp` cannot
+  convert, with or without a `client_timeout`
+- **THEN** the endpoint returns HTTP 400 with an error naming `client_sent_msg_ts`
+- **AND** the pipeline is not invoked
+
+#### Scenario: A representable timestamp is still accepted
+
+- **WHEN** a request supplies a normal millisecond timestamp
+- **THEN** it is converted to seconds and processed as before
+
+#### Scenario: An absent timestamp is not an invalid one
+
+- **WHEN** a request omits `client_sent_msg_ts`
+- **THEN** the request is processed normally and no 400 is returned
+
 ### Requirement: A timing row records an absent client send time as a specified sentinel
 
 A request that omits `client_sent_msg_ts` and completes SHALL still have its `timing` row

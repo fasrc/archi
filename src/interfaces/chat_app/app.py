@@ -69,7 +69,9 @@ from src.interfaces.chat_app.config_fingerprint import (
 )
 from src.interfaces.chat_app.document_utils import *
 from src.interfaces.chat_app.request_validation import (
+    InvalidClientTimestamp,
     InvalidLastMessage,
+    check_client_sent_msg_ts,
     parse_last_message,
 )
 from src.interfaces.chat_app.service_alerts import (
@@ -4736,7 +4738,11 @@ class FlaskAppWrapper(object):
 
         try:
             parse_last_message(message)
-        except InvalidLastMessage as exc:
+            # Screened here, not at the deadline check: an unrepresentable timestamp used
+            # to be caught by the unconditional 408 and now would raise from
+            # datetime.fromtimestamp at persistence time, after generation.
+            check_client_sent_msg_ts(client_sent_msg_ts)
+        except (InvalidLastMessage, InvalidClientTimestamp) as exc:
             return jsonify({"error": str(exc)}), 400
 
         user_id = session.get("user", {}).get("id") or None
@@ -4816,7 +4822,11 @@ class FlaskAppWrapper(object):
 
         try:
             parse_last_message(message)
-        except InvalidLastMessage as exc:
+            # Screened here, not at the deadline check: an unrepresentable timestamp used
+            # to be caught by the unconditional 408 and now would raise from
+            # datetime.fromtimestamp at persistence time, after generation.
+            check_client_sent_msg_ts(client_sent_msg_ts)
+        except (InvalidLastMessage, InvalidClientTimestamp) as exc:
             return jsonify({"error": str(exc)}), 400
 
         user_id = session.get("user", {}).get("id") or None
