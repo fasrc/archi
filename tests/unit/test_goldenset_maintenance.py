@@ -1243,6 +1243,24 @@ class TestPersistedDocumentPath:
         with pytest.raises(ValueError):
             resolve_persisted_path("link.md", str(root))
 
+    def test_a_self_referential_symlink_is_refused_by_name(self, tmp_path):
+        root = tmp_path / "data"
+        root.mkdir()
+        loop = root / "loop.md"
+        loop.symlink_to(loop)
+
+        with pytest.raises(ValueError, match="loop.md"):
+            resolve_persisted_path("loop.md", str(root))
+
+    def test_a_symlink_loop_in_the_data_root_is_refused(self, tmp_path):
+        root = tmp_path / "data"
+        root.mkdir()
+        loop_root = tmp_path / "loop_root"
+        loop_root.symlink_to(loop_root)
+
+        with pytest.raises(ValueError, match="loop_root"):
+            resolve_persisted_path("a.md", str(loop_root))
+
     def test_a_sibling_root_prefix_is_not_treated_as_contained(self, tmp_path):
         # `/srv/data-old/x` starts with `/srv/data` as a string but is a
         # different directory; containment is by path component, not prefix.

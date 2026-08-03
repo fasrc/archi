@@ -280,6 +280,30 @@ def read_corpus_docs(fetch_rows: CorpusRowFetcher) -> List[CorpusDoc]:
     return docs
 
 
+def _resolve_totally(path: Path, description: str) -> Path:
+    """Resolve *path* to a real absolute path, refusing if it cannot be resolved.
+
+    Two routes cover both pre-3.13 and 3.13+ behavior:
+    - Python 3.11/3.12: Path.resolve() raises RuntimeError on a symlink loop.
+    - Python 3.13+: Path.resolve() returns the loop path (still a symlink)
+      instead of raising, so a post-condition check catches it.
+    Both funnel into one ValueError so the message and type are identical on
+    every interpreter.
+    """
+    try:
+        resolved = path.resolve()
+    except RuntimeError as exc:
+        raise ValueError(
+            f"{description} {str(path)!r} cannot be resolved: {exc}"
+        ) from exc
+    if resolved.is_symlink():
+        # 3.13+: resolve() returned the loop path without raising.
+        raise ValueError(
+            f"{description} {str(path)!r} cannot be resolved: symlink loop"
+        )
+    return resolved
+
+
 def resolve_persisted_path(file_path: str, data_path: str) -> Optional[Path]:
     """Locate the persisted document on disk, contained under the data root.
 
@@ -299,12 +323,22 @@ def resolve_persisted_path(file_path: str, data_path: str) -> Optional[Path]:
     out of it is caught too, and containment is compared by path component so a
     sibling root (`/srv/data-old` against `/srv/data`) is not mistaken for a
     child. Returns None only when the row carries no path at all.
+
+    An unresolvable path (symlink loop) is refused by name rather than resolved
+    via `os.path.realpath`. On a loop, `realpath()` returns the loop path itself
+    — which is inside the data root — so containment would pass and the guard
+    would hand back a path whose target is unknown, failing later at `read_text`.
+    Refusing is the correct and conservative answer: a symlink loop is never a
+    legitimate persisted document.
     """
     if not file_path:
         return None
-    root = Path(data_path).resolve()
+    root = _resolve_totally(Path(data_path), "data root")
     candidate = Path(file_path)
-    resolved = (candidate if candidate.is_absolute() else root / candidate).resolve()
+    resolved = _resolve_totally(
+        candidate if candidate.is_absolute() else root / candidate,
+        "persisted document",
+    )
     try:
         resolved.relative_to(root)
     except ValueError:
