@@ -81,6 +81,29 @@ protected-path guard and looks like a failure when it is not.
       sentence still claims an `ImportError` produces no event. In particular check the "A silent
       fallback is a normal-looking success" paragraph below the table.
 
+## 4b. Retarget the api_reference.md line anchors (review round 1)
+
+- [x] 4b.1 Merge `origin/dev` into the branch first. The anchors are `blob/dev#Lnnn` links, so
+      they resolve against `dev` *after* this merges — computing them against the pre-merge
+      branch would be correct for a state that never exists. PR #184 landed +17/−8 in `app.py`
+      between this branch's base and `dev`.
+- [x] 4b.2 Retarget all 32 `[name]: .../app.py#Lnnn` definitions by mapping each one's target
+      **content** from the branch base through a `difflib` line map, asserting each new target
+      line is byte-identical to the old one. Net shift is −2 for the region before #184's hunks
+      and +6 after, not the uniform −3 the deletion alone implies.
+- [x] 4b.3 Retarget the 44 inline `[`app.py:nnn`][name]` numbers as well — the definition and
+      the visible number are two separate copies, and a fix to only one leaves the page stating
+      a line it does not link to. Include the two range forms
+      (`[`app.py:4654-4655`][parse]`, `[`app.py:2417-2423`][chunkyield]`), which a
+      single-number pattern misses.
+- [x] 4b.4 Audit the result: no dangling link uses, no orphaned definitions, and every prose
+      number equal to its definition except the four deliberate second citations
+      (`thinkgate`, `thinkgate2`, `stepemit`, `chunkyield`), whose targets are verified by
+      content.
+- [x] 4b.5 Record that this converges only until the next `app.py` merge — PR #185 is open and
+      edits the same file, so whichever lands second re-stales the other. Issue #190 is the
+      structural fix (self-verifying anchors); this task is the instance, not the class.
+
 ## 5. Gate and hand off
 
 - [x] 5.1 Run the full gate bare: `bash scripts/gate.sh`. It must pass — format, lint, tests, and
