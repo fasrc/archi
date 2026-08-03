@@ -76,7 +76,7 @@ not reflow them and collapse diff coverage.
 
 - [x] 5.1 Run `bash scripts/gate.sh` bare (do not pipe or redirect it) and confirm it passes,
       including diff coverage ≥80% on the changed lines.
-- [ ] 5.2 Commit on `fix/issue-183-symlink-loop-containment` with a short lowercase message,
+- [x] 5.2 Commit on `fix/issue-183-symlink-loop-containment` with a short lowercase message,
       e.g. `fix(goldenset): refuse unresolvable persisted document paths`. No `Co-Authored-By`.
 - [ ] 5.3 Push the branch and open the PR — this step is required, the change is not done
       without it:
