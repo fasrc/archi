@@ -78,10 +78,10 @@ not reflow them and collapse diff coverage.
       including diff coverage ≥80% on the changed lines.
 - [x] 5.2 Commit on `fix/issue-183-symlink-loop-containment` with a short lowercase message,
       e.g. `fix(goldenset): refuse unresolvable persisted document paths`. No `Co-Authored-By`.
-- [ ] 5.3 Push the branch and open the PR — this step is required, the change is not done
+- [x] 5.3 Push the branch and open the PR — this step is required, the change is not done
       without it:
       `gh pr create --repo fasrc/archi --base dev --title "fix(goldenset): refuse unresolvable persisted document paths (closes #183)"`.
       The body MUST contain `closes #183`, state which resolver strategy was chosen and why
       (design.md Decision 1), and note that the existing containment tests passed unmodified.
       Link the first use of any project term to the glossary.
-- [ ] 5.4 Request review on the PR. Do NOT merge — a human merges in daylight.
+- [x] 5.4 Request review on the PR. Do NOT merge — a human merges in daylight.
