@@ -27,7 +27,10 @@ site. It captures what ``_finalize_result`` would persist by replicating
 ``self.current_model_used``) — the exact fallback D3 specifies.
 """
 
+import sys
 from types import SimpleNamespace
+
+import pytest
 
 import src.interfaces.chat_app.app as app_module
 from src.interfaces.chat_app.app import ChatWrapper
@@ -419,6 +422,49 @@ def test_override_view_build_failure_warns_and_falls_back(monkeypatch):
 
     wrapper = _make_stream_wrapper(lambda provider, model, api_key=None: _LLM("X"))
     outputs = _drive_stream(wrapper)
+
+    warnings = [o for o in outputs if o.get("type") == "warning"]
+    finals = [o for o in outputs if o.get("type") == "final"]
+    assert warnings and "Using default model" in warnings[0]["message"]
+    assert finals and finals[0]["model_used"] == "default/default"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "RED baseline (issue #178): the `except ImportError` clause at "
+        "app.py:1645-1647 swallows the exception and returns None instead of "
+        "propagating it. Passes once task 3 deletes that clause and lets "
+        "ImportError fall through to the `except Exception` clause, which "
+        "re-raises."
+    ),
+)
+def test_create_provider_llm_propagates_import_error(monkeypatch):
+    """Direct test of the real `_create_provider_llm` body (design D3): forcing
+    the lazy `from src.archi.providers import get_provider` (app.py:1623) to
+    raise ImportError must propagate, not return None. This is the
+    reproduction; test_override_import_error_warns_and_falls_back_to_default
+    below is the observable-contract guard."""
+    monkeypatch.setitem(sys.modules, "src.archi.providers", None)
+
+    wrapper = object.__new__(ChatWrapper)
+    wrapper.config = {}
+
+    with pytest.raises(ImportError):
+        wrapper._create_provider_llm("provX", "modX")
+
+
+def test_override_import_error_warns_and_falls_back_to_default():
+    """An ImportError during provider construction warns and falls back to the
+    shared pipeline, exactly like any other construction failure (design D3).
+    Unlike the direct test above, this substitutes `_create_provider_llm` with
+    a raiser and so exercises only the caller's existing exception handling —
+    it passes both before and after the task 3 fix."""
+
+    def _raise(provider, model, api_key=None):
+        raise ImportError("No module named 'anthropic'")
+
+    outputs = _drive_stream(_make_stream_wrapper(_raise))
 
     warnings = [o for o in outputs if o.get("type") == "warning"]
     finals = [o for o in outputs if o.get("type") == "final"]

@@ -30,17 +30,17 @@ protected-path guard and looks like a failure when it is not.
 
 ## 2. Red tests — write these before touching `app.py`
 
-- [ ] 2.1 In `tests/unit/test_chat_override_persistence.py`, add a direct test of the real
+- [x] 2.1 In `tests/unit/test_chat_override_persistence.py`, add a direct test of the real
       `_create_provider_llm` asserting that an `ImportError` **propagates** rather than returning
       `None`. Force the lazy import at `app.py:1623` to fail with
       `monkeypatch.setitem(sys.modules, "src.archi.providers", None)`, which makes
       `from src.archi.providers import get_provider` raise `ImportError`. Use `monkeypatch` (not a
       bare assignment) so `sys.modules` is restored at teardown. Build the wrapper with
       `object.__new__(ChatWrapper)` and set only the attributes the method touches (`self.config`).
-- [ ] 2.2 Run it and **watch it fail**: `python -m pytest tests/unit/test_chat_override_persistence.py -k importerror -v`.
+- [x] 2.2 Run it and **watch it fail**: `python -m pytest tests/unit/test_chat_override_persistence.py -k importerror -v`.
       It must fail with "returned None" (or equivalent), not with a setup error — a setup error
       means the test is not reaching the clause. This is the test that proves the defect.
-- [ ] 2.3 Add the end-to-end test through `stream`, modelled on
+- [x] 2.3 Add the end-to-end test through `stream`, modelled on
       `test_override_generic_error_warns_and_falls_back_to_default`
       (`tests/unit/test_chat_override_persistence.py:341`) and reusing the `_make_stream_wrapper`
       (`:339`) and `_drive_stream` (`:366`) helpers: substitute a `_create_provider_llm` that
