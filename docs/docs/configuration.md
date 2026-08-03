@@ -79,8 +79,12 @@ Rules, evaluated in order:
 Because the first rule is checked first, an enforced-SSO deployment redirects `/api/` callers
 too, rather than answering them with a `401`.
 
-A JSON content type counts as a programmatic caller even on a page route, so a script polling
-`/chat` gets the `401` rather than HTML it cannot use.
+A JSON content type counts as a programmatic caller even on a page route, so a script posting
+JSON to `/chat` gets the `401` rather than HTML it cannot use. The `Accept` request header is
+**not** consulted: a caller that only sends `Accept: application/json` is treated as a browser
+and redirected. Every JSON surface lives under `/api/`, which is already covered — see
+[issue #189](https://github.com/fasrc/archi/issues/189) if you need negotiation on a page
+route.
 
 Logging in is only half the check on the permission-guarded routes (`/data`, `/upload`,
 `/admin/database` and their `/api/` equivalents). A logged-in user whose roles lack the

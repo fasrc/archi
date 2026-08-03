@@ -57,8 +57,16 @@ def is_api_request() -> bool:
     unauthorized caller: API and JSON clients get a status code and a JSON body they can
     parse, browsers get a redirect to the login page they can render.
 
-    A JSON content type counts even off an `/api/` path, so a programmatic client is never
-    handed HTML it cannot use.
+    A JSON *content type* counts even off an `/api/` path, so a client that sends JSON is
+    not handed HTML in reply.
+
+    Deliberately narrow: the `Accept` request header is not consulted. A caller that sends
+    only `Accept: application/json` to a page route is treated as a browser and redirected.
+    Every JSON surface lives under `/api/`, so a programmatic caller reaching a page route
+    would get HTML from the route itself even when authenticated — the redirect tells it no
+    more and no less than success would. Widening this to `Accept` negotiation means picking
+    a side for `*/*` (curl's default), which is a contract decision, not a detail: see
+    issue #189.
 
     Returns:
         True if the caller expects JSON rather than a rendered page
