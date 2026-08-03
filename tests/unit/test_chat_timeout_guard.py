@@ -1,7 +1,7 @@
 """Timeout guard in ``_prepare_chat_context`` (issue #175).
 
 A falsey ``client_timeout`` or ``client_sent_msg_ts`` means the caller did not declare a
-client-side deadline, so the server must not apply one.  The guard at ``app.py:1710``
+client-side deadline, so the server must not apply one.  The guard at ``app.py:1715``
 must be conditional on *both* fields being truthy before comparing elapsed time against
 the timeout value.
 
@@ -12,6 +12,7 @@ a completely absent check.
 """
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import src.interfaces.chat_app.app as app_module
 from src.interfaces.chat_app.app import ChatWrapper
@@ -133,10 +134,87 @@ class TestExplicitDeadlineIsStillEnforced:
             CLIENT_ID,
             False,
             now,
-            now.timestamp(),  # sent right now
+            now.timestamp(),
             600.0,  # 10-minute deadline
             {},
         )
 
         assert error_code is None
         assert context is not None
+
+
+class TestTheInStreamCheckNeedsOnlyTheTimeout:
+    """The in-stream guard reads ``client_timeout`` alone, and that is deliberate.
+
+    ``_prepare_chat_context``'s guard needs ``client_sent_msg_ts`` because it measures from
+    the client's send time — with no baseline it would measure from the epoch and reject
+    everything.  The in-stream guard measures from ``stream_start_time``, a *server-side*
+    baseline, so a supplied ``client_timeout`` is enforceable there even when no timestamp
+    came with it.
+
+    Making the two guards identical — the obvious-looking "consistency" fix — would discard
+    a deadline the caller explicitly declared.  This is the test that fails if someone tries,
+    which is why it exists rather than a comment saying so.
+    """
+
+    def _streaming_wrapper(self):
+        """A ChatWrapper stubbed to what ``stream`` touches, per test_chat_override_persistence.
+
+        ``cursor``/``conn`` are None so the ``finally`` block that closes them is a no-op,
+        and ``_finalize_result`` is stubbed so the no-timeout case can run to completion
+        without a database.
+        """
+        wrapper = _wrapper()
+        wrapper.archi = SimpleNamespace(
+            stream=lambda **kwargs: iter([SimpleNamespace(content="x", metadata=None)]),
+            pipeline_name="test-pipeline",
+        )
+        wrapper._resolve_config_name = lambda config_name: config_name or "default"
+        wrapper.update_config = lambda config_name=None: None
+        wrapper.current_model_used = "test-model"
+        wrapper.number_of_queries = 0
+        wrapper.cursor = None
+        wrapper.conn = None
+        # A None trace_id short-circuits the trace update inside the timeout branch.
+        wrapper.create_agent_trace = lambda **kwargs: None
+        wrapper.update_agent_trace = lambda **kwargs: None
+        wrapper.insert_timing = lambda *a, **k: None
+        wrapper._finalize_result = lambda result, **kwargs: ("out", [])
+        return wrapper
+
+    def _run(self, monkeypatch, client_sent_msg_ts, client_timeout):
+        # First reading is stream_start_time; every later one is far past any deadline.
+        readings = iter([0.0] + [1_000_000.0] * 8)
+        monkeypatch.setattr(
+            app_module, "time", SimpleNamespace(time=lambda: next(readings))
+        )
+
+        return list(
+            self._streaming_wrapper().stream(
+                INCOMING,
+                None,
+                CLIENT_ID,
+                False,
+                datetime.now(timezone.utc),
+                client_sent_msg_ts,
+                client_timeout,
+                "default",
+            )
+        )
+
+    def test_timeout_without_a_timestamp_still_ends_the_stream_with_408(
+        self, monkeypatch
+    ):
+        events = self._run(monkeypatch, 0, 600.0)
+
+        assert events[-1]["type"] == "error"
+        assert events[-1]["status"] == 408
+
+    def test_no_timeout_at_all_lets_the_stream_run(self, monkeypatch):
+        """The other half of the rule: a falsey timeout means no deadline, as before."""
+        events = self._run(monkeypatch, 0, 0)
+
+        assert not any(
+            event.get("type") == "error" and event.get("status") == 408
+            for event in events
+        )
