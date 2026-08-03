@@ -61,6 +61,33 @@ The main chat interface.
 | `auth.enabled` | bool | `false` | Enable authentication |
 | `alerts.managers` | list | `[]` | Usernames allowed to create and delete alerts |
 
+#### `services.chat_app.auth`
+
+With `auth.enabled: false` (the default) every route runs for everyone and none of the rules
+below apply. With it `true`, each guarded route rejects a caller who is not logged in — and
+*how* it rejects depends on what the caller can act on. A browser gets a page it can render;
+a program gets a status code and a JSON body it can parse.
+
+Rules, evaluated in order:
+
+| Condition | Response |
+|-----------|----------|
+| SSO is on and `allow_anonymous` is false | **302** redirect to `/login` (an `anonymous_redirect` audit event is recorded) |
+| The request path starts with `/api/`, **or** the request carries an `application/json` content type | **401** `{"error": "Unauthorized", "message": "Authentication required"}` |
+| Anything else — a browser opening `/chat`, `/terms`, `/data`, `/upload` or `/admin/database` | **302** redirect to `/login` |
+
+Because the first rule is checked first, an enforced-SSO deployment redirects `/api/` callers
+too, rather than answering them with a `401`.
+
+A JSON content type counts as a programmatic caller even on a page route, so a script polling
+`/chat` gets the `401` rather than HTML it cannot use.
+
+Logging in is only half the check on the permission-guarded routes (`/data`, `/upload`,
+`/admin/database` and their `/api/` equivalents). A logged-in user whose roles lack the
+required permission gets **403** `{"error": "Forbidden", ...}` naming the missing permission —
+for every caller, browser included. Authorization failures are not redirected; only
+authentication failures are.
+
 #### `services.chat_app.alerts`
 
 Controls access to the [Service Status Board & Alert Banners](services.md#service-status-board--alert-banners).
