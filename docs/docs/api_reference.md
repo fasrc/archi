@@ -32,62 +32,18 @@ honour all of it — the last four fields are read only by the streaming endpoin
 |-------|------|----------|-------------|
 | `last_message` | list of `[sender, message]` pairs | yes | The user's turn. A list **containing** the pair, not the pair itself — see below. Only the first pair is read. A malformed value is rejected with **HTTP 400**. |
 | `client_id` | string | yes | Identifies the calling client; the request is rejected without it. |
-| `client_sent_msg_ts` | int (ms since epoch) | **yes, in practice** | Time you send the request. Must be generated **at send time** — a stale value is rejected. See the warning below. |
-| `client_timeout` | int (ms) | **yes, in practice** | How long the client is willing to wait. Omitting it is rejected. See the warning below. |
+| `client_sent_msg_ts` | int (ms since epoch) | no | The time you send the request (milliseconds since epoch); used for latency accounting and as the start of the deadline window when `client_timeout` is also supplied. Generate this value at send time — a stale timestamp paired with a live `client_timeout` looks like an already-expired deadline. Omitting it costs you only the client→server half of the latency profile: the request is still timed and still recorded, but the `timing.client_sent_msg_ts` column stores `1970-01-01T00:00:00Z` as a sentinel meaning *"the client declared no send time"* ([`app.py:4773`][sentinel]). Exclude that value when computing client→server latency; every other milestone on the row is a real measurement. A value you *do* send must be a representable time — one that cannot be converted to a date (far outside the Unix range, or negative beyond year 1) is rejected with **400** before the pipeline runs, rather than failing later at persistence. |
+| `client_timeout` | int (ms) | no | How long the client is willing to wait (milliseconds). Two deadlines read it. When both this and `client_sent_msg_ts` are supplied, the server rejects a request that *arrives* after the window has already elapsed with **408**. On the streaming endpoint it is additionally checked **as each event is produced**, measured server-side from the moment the stream opens — so supplying `client_timeout` alone, with no `client_sent_msg_ts`, still ends an over-long stream with the in-band 408 event even though the arrival check cannot run. Because that check runs between events, it bounds a slow stream but **not** a provider that stalls without emitting anything; do not rely on it as a hard ceiling, and keep your own client-side timeout ([issue #191](https://github.com/fasrc/archi/issues/191)). |
 | `conversation_id` | int or `null` | no | Existing conversation to append to. `null` (or omitted) starts a new one. |
 | `config_name` | string | no | Named configuration to answer under. |
-| `is_refresh` | bool | no, but **needs a prior user turn** | Re-answer the previous turn instead of adding a new one. Not an independent switch — a refresh does not add your message to the conversation, so it needs an earlier turn to work from. If none survives (no `conversation_id` and no supplied history; a named conversation holding no turns; or a history of assistant turns only, which the refresh trim empties), the request is **rejected with `400`** ([`app.py:1694`][refreshguard]) and no conversation is created. |
+| `is_refresh` | bool | no, but **needs a prior user turn** | Re-answer the previous turn instead of adding a new one. Not an independent switch — a refresh does not add your message to the conversation, so it needs an earlier turn to work from. If none survives (no `conversation_id` and no supplied history; a named conversation holding no turns; or a history of assistant turns only, which the refresh trim empties), the request is **rejected with `400`** ([`app.py:1698`][refreshguard]) and no conversation is created. |
 | `provider` | string | stream only, **with `model`** | Override the LLM provider. Has no effect unless `model` is sent too — see [Overriding provider and model](#overriding-provider-and-model). Ignored entirely by `POST /api/get_chat_response`. |
 | `model` | string | stream only, **with `provider`** | Override the model. Has no effect unless `provider` is sent too — see [Overriding provider and model](#overriding-provider-and-model). Ignored entirely by `POST /api/get_chat_response`. |
-| `include_agent_steps` | bool | stream only | Include the incremental **answer text** — the `chunk` events ([`app.py:2420`][chunkgate]). Default `true`. Does **not** gate reasoning. Ignored by `POST /api/get_chat_response`. |
-| `include_tool_steps` | bool | stream only | Include tool events (`tool_start`, `tool_output`, `tool_end`) **and reasoning events** (`thinking_start`, `thinking_end`, [`app.py:2400`][thinkgate]). Default `true`. Ignored by `POST /api/get_chat_response`. |
+| `include_agent_steps` | bool | stream only | Include the incremental **answer text** — the `chunk` events ([`app.py:2441`][chunkgate]). Default `true`. Does **not** gate reasoning. Ignored by `POST /api/get_chat_response`. |
+| `include_tool_steps` | bool | stream only | Include tool events (`tool_start`, `tool_output`, `tool_end`) **and reasoning events** (`thinking_start`, `thinking_end`, [`app.py:2421`][thinkgate]). Default `true`. Ignored by `POST /api/get_chat_response`. |
 
-!!! warning "Send both timing fields, and generate the timestamp fresh"
-
-    `client_sent_msg_ts` and `client_timeout` look optional and are not. Both default to
-    `0` when absent ([`app.py:4654-4655`][parse]), and the timeout check is an unguarded
-    comparison ([`app.py:1710`][check]):
-
-    ```python
-    if server_received_msg_ts.timestamp() - client_sent_msg_ts > client_timeout:
-        return None, 408
-    ```
-
-    Three ways to fall foul of it, all rejected:
-
-    | You send | Effective values | Result |
-    |---|---|---|
-    | neither field | `0`, `0` | `<seconds since 1970> - 0 > 0` → rejected |
-    | only `client_sent_msg_ts` | e.g. `1769900000.0`, `0` | anything `> 0` → rejected |
-    | only `client_timeout` | `0`, e.g. `600.0` | `<seconds since 1970> > 600` → rejected |
-
-    So send **both**. And generate `client_sent_msg_ts` **when you send**, not as a copied
-    constant: it is compared against the server clock, so a timestamp older than
-    `client_timeout` is treated as a request that already timed out. A hard-coded value
-    works the day it is written and fails silently thereafter.
-
-    **How the rejection reaches you differs by endpoint** — the check is shared, the
-    reporting is not:
-
-    - `POST /api/get_chat_response` returns **HTTP 408** with `{"error": ...}`.
-    - `POST /api/get_chat_response_stream` returns **HTTP 200**, emits its opening `meta`
-      line, and only then yields an NDJSON error event
-      `{"type": "error", "status": 408, "message": ...}` before closing
-      ([`app.py:2075`][streamerr]). A streaming client that checks only the HTTP status
-      sees success. You must inspect the events.
-
-    This is a bug in the handler, not the intended contract — the streaming loop applies
-    the same check to the same variable but guards it, `if client_timeout and ...`
-    ([`app.py:2156`][stream]), so `0` there means "no deadline" while here it means
-    "deadline already passed". Tracked as
-    [#175](https://github.com/fasrc/archi/issues/175); once fixed, both fields become
-    genuinely optional and this warning goes away. Until then, this page documents what
-    the endpoints actually do.
-
-[parse]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4654-L4655
-[check]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1710
-[streamerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2075
-[stream]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2156
+[streamerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2088
+[sentinel]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4773
 
 **`last_message` is nested.** It is a list whose first element is the
 `[sender, message]` pair — `[["User", "How do I submit a job?"]]`, **not**
@@ -108,9 +64,10 @@ and without validation `tuple("AI")` yields `sender="A"`, `content="I"` — a re
 returns HTTP 200 while silently discarding the caller's message. Both endpoints now reject it
 before the pipeline is invoked, so no conversation row is created for the rejected request.
 
-**A request you can run.** `client_sent_msg_ts` has to be generated as you send, so this
-example computes it rather than hard-coding one — a literal epoch value pasted from a page
-like this is stale on arrival and comes back rejected:
+**A request you can run.** Both timing fields are optional; when both are present,
+`client_sent_msg_ts` must be generated at send time — a stale literal paired with a live
+`client_timeout` is an already-expired deadline and returns **408**. This example computes
+it rather than hard-coding one:
 
 ```bash
 curl -sS http://localhost:7861/api/get_chat_response \
@@ -126,14 +83,14 @@ curl -sS http://localhost:7861/api/get_chat_response \
 
 !!! note "It runs as-is only where authentication is disabled"
 
-    Every chat route is registered through `require_auth` ([`app.py:2788`][authwrap]), so with
+    Every chat route is registered through `require_auth` ([`app.py:2809`][authwrap]), so with
     `services.chat_app.auth.enabled: true` this command gets `401` — or a `302` to the login
     page when SSO is on and anonymous access is blocked — instead of an answer. Nothing about
     the request body is wrong in that case; it never reaches the handler.
 
     Against a deployment with **basic auth** enabled, log in first and reuse the session
     cookie (`/login` accepts a form-encoded `username` and `password`,
-    [`app.py:3272`][loginform], and exists only when auth is enabled):
+    [`app.py:3293`][loginform], and exists only when auth is enabled):
 
     ```bash
     curl -sS -c jar.txt -X POST http://localhost:7861/login \
@@ -145,8 +102,8 @@ curl -sS http://localhost:7861/api/get_chat_response \
     With **SSO** the login is a browser redirect flow that curl cannot complete; copy the
     session cookie out of an already-logged-in browser session instead.
 
-[authwrap]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2788
-[loginform]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L3272
+[authwrap]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2809
+[loginform]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L3293
 
 The body it builds has this shape. This is a **template, not valid JSON** — the placeholder
 is deliberately unquoted so that pasting it unedited fails in your own JSON parser rather
@@ -177,7 +134,7 @@ endpoint.
 #### Overriding provider and model
 
 `provider` and `model` are **jointly required**. The streaming path builds a request-local
-pipeline only under `if provider and model` ([`app.py:2092`][override]), so sending one
+pipeline only under `if provider and model` ([`app.py:2105`][override]), so sending one
 without the other is not a partial override — it is no override at all, and the request is
 answered by the default pipeline. This is silent: there is no error and no warning, and the
 answer looks normal, so a caller who sends `model` alone can receive a reply from a model
@@ -191,23 +148,23 @@ they did not ask for.
 
 Sending both is necessary but not sufficient. **Treat the override as a request, not a
 setting**: the only reliable way to know which model answered is to read it back off the
-`final` event's **`model_used`** field ([`app.py:2593`][modelused]). Note that `final` carries
+`final` event's **`model_used`** field ([`app.py:2614`][modelused]). Note that `final` carries
 *two* model fields — `model` comes from the pipeline output's metadata, while `model_used` is
 the request-local identity that reflects whether the override actually took. Comparing against
 `model` will not tell you that. Everything below is why it matters.
 
 The override is applied only if the LLM is constructed *and* a request-local pipeline view is
 built from it, under a guard that also requires the active pipeline to expose an `agent_llm`
-([`app.py:2111`][ovrguard]). Failures divide into two kinds — those that let the **default
+([`app.py:2124`][ovrguard]). Failures divide into two kinds — those that let the **default
 pipeline** answer, and those that **end the stream with no answer at all** — and how you find
 out differs again:
 
 | Do you still get an answer? | How you find out | Examples (not exhaustive) |
 |---|---|---|
-| **No** — the stream ends | `{"type": "error", "status": 400}` | a construction-time `ValueError` — overrides disabled, or a provider name that does not resolve ([`app.py:2102`][ovrreject]) |
-| **No** — the stream ends mid-answer | in-band `{"type": "error", "status": 500}` | a model string the provider builds happily and rejects on use — `get_chat_model` does not check the provider's catalogue, so an unknown model ID for OpenAI or OpenRouter surfaces at invocation, not at construction ([`app.py:2627`][outerr]) |
-| **Yes** — from the default pipeline | `{"type": "warning", "message": "Using default model: …"}` | most construction failures, and a failed request-local pipeline build ([`app.py:2108`][ovrwarn], [`:2128`][ovrwarn2]) |
-| **Yes** — from the default pipeline | **nothing at all**: no `error`, no `warning` | `_create_provider_llm` returning falsey rather than raising, which is what an `ImportError` does ([`app.py:1645`][ovrimport]); or an active pipeline with no `agent_llm` ([`app.py:2111`][ovrguard]) |
+| **No** — the stream ends | `{"type": "error", "status": 400}` | a construction-time `ValueError` — overrides disabled, or a provider name that does not resolve ([`app.py:2115`][ovrreject]) |
+| **No** — the stream ends mid-answer | in-band `{"type": "error", "status": 500}` | a model string the provider builds happily and rejects on use — `get_chat_model` does not check the provider's catalogue, so an unknown model ID for OpenAI or OpenRouter surfaces at invocation, not at construction ([`app.py:2648`][outerr]) |
+| **Yes** — from the default pipeline | `{"type": "warning", "message": "Using default model: …"}` | most construction failures, and a failed request-local pipeline build ([`app.py:2121`][ovrwarn], [`:2141`][ovrwarn2]) |
+| **Yes** — from the default pipeline | **nothing at all**: no `error`, no `warning` | `_create_provider_llm` returning falsey rather than raising, which is what an `ImportError` does ([`app.py:1649`][ovrimport]); or an active pipeline with no `agent_llm` ([`app.py:2124`][ovrguard]) |
 
 So "the override failed" does **not** imply "the default answered" — the first two rows
 terminate rather than fall back, and a client that assumes an answer is always coming will wait
@@ -221,35 +178,35 @@ the provider and comes back as an in-band `500` partway through the stream.
 So do not infer the answering model from your own request. Read `final.model_used`, and treat a
 `warning` event as "my override did not take".
 
-[ovrreject]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2102
-[ovrwarn]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2108
-[ovrwarn2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2128
-[ovrguard]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2111
-[ovrimport]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1645
-[modelused]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2593
-[outerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2627
-[legacygate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2441
-[chunkyield]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2423
-[evmeta]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4805
-[evtoolstart]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2354
-[evtooloutput]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2367
-[evtoolend]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2381
-[evfinal]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2578
-[everror]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2075
-[traceusage]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2554
-[chunkyield2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2465
-[traceevent]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2432
-[stepemit]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1757
-[refreshguard]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1694
+[ovrreject]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2115
+[ovrwarn]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2121
+[ovrwarn2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2141
+[ovrguard]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2124
+[ovrimport]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1649
+[modelused]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2614
+[outerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2648
+[legacygate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2462
+[chunkyield]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2444
+[evmeta]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4840
+[evtoolstart]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2375
+[evtooloutput]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2388
+[evtoolend]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2402
+[evfinal]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2599
+[everror]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2088
+[traceusage]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2575
+[chunkyield2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2486
+[traceevent]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2453
+[stepemit]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1770
+[refreshguard]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1698
 
-[override]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2092
+[override]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2105
 
 ### `POST /api/get_chat_response_stream`
 
 Send a message and receive a streaming response via NDJSON (`application/x-ndjson`).
 
 Takes the same request body as `POST /api/get_chat_response` above, including the
-nested `last_message` shape and the two required timing fields.
+nested `last_message` shape and the two optional timing fields.
 
 This is the endpoint that honours `provider`, `model`, `include_agent_steps` and
 `include_tool_steps`; the non-streaming one ignores all four. `provider` and `model` must
@@ -259,7 +216,7 @@ be sent [together](#overriding-provider-and-model) or neither takes effect.
 
     This endpoint has **two** error channels. Which one you get depends on whether the
     failure happens before or after the response is constructed at
-    [`app.py:4832`][streamopen] — not on the kind of error.
+    [`app.py:4867`][streamopen] — not on the kind of error.
 
     **Before the stream opens — an ordinary HTTP status.** Check these as you would on any
     endpoint:
@@ -268,7 +225,7 @@ be sent [together](#overriding-provider-and-model) or neither takes effect.
     |---|---|
     | Not authenticated, SSO on and anonymous access blocked | **302** redirect to login |
     | Not authenticated, otherwise | **401** `{"error": "Unauthorized"}` |
-    | `client_id` missing ([`app.py:4788`][clientid]) | **400** `{"error": "client_id missing"}` |
+    | `client_id` missing ([`app.py:4823`][clientid]) | **400** `{"error": "client_id missing"}` |
     | Malformed `last_message` (not a nested pair of two strings) | **400** `{"error": "..."}` naming the expected shape |
 
     **After the stream opens — HTTP 200 plus an event.** The status line is already on the
@@ -279,11 +236,18 @@ be sent [together](#overriding-provider-and-model) or neither takes effect.
     {"type": "error", "status": 408, "message": "..."}
     ```
 
-    The timeout rejection described above is in this second group, and so is the `400` for a
-    refresh with nothing to refresh ([`app.py:1694`][refreshguard]) — both are decided inside
-    `_prepare_chat_context`, which runs after the response is constructed. **The same `400`
-    arrives as a real HTTP status from `POST /api/get_chat_response`**, which is the clearest
-    illustration of why this section exists: identical rejection, two different channels.
+    When both `client_sent_msg_ts` and `client_timeout` are supplied and the declared
+    deadline has elapsed by the time the request is processed, the 408 rejection is in this
+    second group — the check runs inside `_prepare_chat_context`, which runs after the
+    response is constructed. **How that rejection reaches you differs by endpoint:** on
+    `POST /api/get_chat_response` it is a real **HTTP 408** with `{"error": ...}`; here it
+    arrives as **HTTP 200** followed by the in-band event
+    `{"type": "error", "status": 408, "message": ...}` ([`app.py:2088`][streamerr]). A
+    streaming client that checks only the HTTP status sees success and must inspect the
+    events. The `400` for a refresh with nothing to refresh ([`app.py:1698`][refreshguard])
+    follows the same pattern — also decided inside `_prepare_chat_context` — and is the
+    clearest illustration of why this section exists: identical rejection, two different
+    channels.
 
     Note that `400` appears in **both** groups on this endpoint, so the status alone does not
     tell you which one you are in: a malformed `last_message` is rejected in the route and
@@ -298,12 +262,12 @@ be sent [together](#overriding-provider-and-model) or neither takes effect.
 
     Read that `status` as this endpoint's own result, not as a prediction of what
     `POST /api/get_chat_response` would have done with the same body. Some failures exist only
-    on this endpoint — an override rejected with an in-band `400` ([`app.py:2102`][ovrreject])
+    on this endpoint — an override rejected with an in-band `400` ([`app.py:2115`][ovrreject])
     has no counterpart there, because the non-streaming handler ignores `provider` and `model`
     altogether and would answer normally.
 
-[streamopen]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4832
-[clientid]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4788
+[streamopen]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4867
+[clientid]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4823
 
 Each line is a JSON object with a `type` field. Event types:
 
@@ -311,17 +275,17 @@ Each line is a JSON object with a `type` field. Event types:
 |------|-------------|
 | Type | Gated by | Description |
 |------|---|-------------|
-| `meta` | — | Stream metadata, sent first; includes padding ([`app.py:4805`][evmeta]) |
-| `chunk` | `include_agent_steps` | **The incremental answer text** — the event carrying the response as it is produced ([`app.py:2423`][chunkyield], [`:2465`][chunkyield2]) |
-| `tool_start` | `include_tool_steps` | Agent is invoking a tool ([`:2354`][evtoolstart]) |
-| `tool_output` | `include_tool_steps` | Tool result ([`:2367`][evtooloutput]) |
-| `tool_end` | `include_tool_steps` | Tool invocation finished, with its completion status and duration ([`:2381`][evtoolend]) |
-| `thinking_start` | `include_tool_steps` | Reasoning begins ([`:2394`][thinkgate]) |
-| `thinking_end` | `include_tool_steps` | Reasoning ends ([`:2406`][thinkgate2]) |
-| `step` | `include_tool_steps` | Legacy step event from a non-agent pipeline, carrying a `step_type` such as `tool_call` or `tool_result` ([`:1763`][stepemit]) |
-| `final` | — | Final response with the full message and metadata ([`:2578`][evfinal]) |
-| `warning` | — | The request continued, but not as asked — e.g. an override fell back to the default model ([`:2108`][ovrwarn]) |
-| `error` | — | A failure, carrying its own `status` ([`:2075`][everror]) |
+| `meta` | — | Stream metadata, sent first; includes padding ([`app.py:4840`][evmeta]) |
+| `chunk` | `include_agent_steps` | **The incremental answer text** — the event carrying the response as it is produced ([`app.py:2444`][chunkyield], [`:2486`][chunkyield2]) |
+| `tool_start` | `include_tool_steps` | Agent is invoking a tool ([`:2375`][evtoolstart]) |
+| `tool_output` | `include_tool_steps` | Tool result ([`:2388`][evtooloutput]) |
+| `tool_end` | `include_tool_steps` | Tool invocation finished, with its completion status and duration ([`:2402`][evtoolend]) |
+| `thinking_start` | `include_tool_steps` | Reasoning begins ([`:2415`][thinkgate]) |
+| `thinking_end` | `include_tool_steps` | Reasoning ends ([`:2427`][thinkgate2]) |
+| `step` | `include_tool_steps` | Legacy step event from a non-agent pipeline, carrying a `step_type` such as `tool_call` or `tool_result` ([`:1776`][stepemit]) |
+| `final` | — | Final response with the full message and metadata ([`:2599`][evfinal]) |
+| `warning` | — | The request continued, but not as asked — e.g. an override fell back to the default model ([`:2121`][ovrwarn]) |
+| `error` | — | A failure, carrying its own `status` ([`:2088`][everror]) |
 
 That table is **derived from the handler rather than maintained by hand** — it is every
 `"type"` the streaming generator yields. To re-derive it after a change, list the yielded
@@ -345,9 +309,9 @@ something not listed here — while still handling `chunk`, which is where the a
     you read them back through `GET /api/trace/<trace_id>` rather than by parsing the response:
 
     - `text` — the pipeline's *internal* output type. The dispatch converts it into the `chunk`
-      event on the wire ([`app.py:2417-2423`][chunkyield]) and records `text` separately in the
-      trace ([`:2432`][traceevent]).
-    - `usage` — token accounting ([`:2554`][traceusage]).
+      event on the wire ([`app.py:2438-2444`][chunkyield]) and records `text` separately in the
+      trace ([`:2453`][traceevent]).
+    - `usage` — token accounting ([`:2575`][traceusage]).
 
     Earlier revisions of this table listed `text` and omitted `chunk`, which is the wrong way
     round for anyone parsing the stream. If you are matching the handler's
@@ -361,14 +325,14 @@ something not listed here — while still handling `chunk`, which is where the a
 
     | Flag | Actually gates |
     |---|---|
-    | `include_agent_steps` | the incremental answer text — `chunk` events ([`app.py:2420`][chunkgate], [`:2454`][chunkgate2]) |
-    | `include_tool_steps` | tool activity (`tool_start`, `tool_output`, `tool_end`), reasoning (`thinking_start` / `thinking_end`, [`app.py:2400`][thinkgate], [`:2414`][thinkgate2]), **and** the legacy `step` events that non-agent pipelines emit ([`app.py:2441`][legacygate] → [`:1757`][stepemit]) |
+    | `include_agent_steps` | the incremental answer text — `chunk` events ([`app.py:2441`][chunkgate], [`:2475`][chunkgate2]) |
+    | `include_tool_steps` | tool activity (`tool_start`, `tool_output`, `tool_end`), reasoning (`thinking_start` / `thinking_end`, [`app.py:2421`][thinkgate], [`:2435`][thinkgate2]), **and** the legacy `step` events that non-agent pipelines emit ([`app.py:2462`][legacygate] → [`:1770`][stepemit]) |
 
     Those are the event types the streaming dispatch recognizes by name. Anything else falls
-    through to legacy conversion ([`app.py:2441`][legacygate]), where what reaches you depends
+    through to legacy conversion ([`app.py:2462`][legacygate]), where what reaches you depends
     on the *shape* of the underlying message rather than on the category you would expect —
     that path is entered with `include_agent_steps=False`, and answer content in it is gated by
-    `include_agent_steps` further down ([`:2454`][chunkgate2]).
+    `include_agent_steps` further down ([`:2475`][chunkgate2]).
 
     So do not treat either flag as a suppression guarantee for an event type not listed above.
     **If there is content you must not surface, filter on what you actually receive** rather
@@ -384,10 +348,10 @@ something not listed here — while still handling `chunk`, which is where the a
     To suppress reasoning, set `include_tool_steps: false` — accepting that tool
     events go with it. The two are not separable through this API.
 
-[chunkgate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2420
-[chunkgate2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2454
-[thinkgate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2400
-[thinkgate2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2414
+[chunkgate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2441
+[chunkgate2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2475
+[thinkgate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2421
+[thinkgate2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2435
 
 ### `POST /api/cancel_stream`
 
