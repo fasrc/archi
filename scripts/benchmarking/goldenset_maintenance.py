@@ -67,6 +67,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -188,6 +189,105 @@ def corpus_rows_from_postgres(dsn: str):
     return fetch
 
 
+def _resolved_target(path: str) -> Path:
+    """The real file a write should land on, with the final symlink followed.
+
+    `os.replace` does NOT follow a symlink on its destination — it swaps the
+    LINK's own directory entry. So an atomic write against a symlinked output
+    path replaces the operator's stable path with a regular file and leaves the
+    real file untouched and stale. A deployment names its report through exactly
+    such a path (`current -> releases/42/report.json`), and `open(path, "w")` —
+    what the summary write used before it became atomic — follows the link and
+    updates the referent. That is the behaviour to keep.
+
+    Resolving BEFORE the temp file is created is what makes the commit possible
+    at all: creating the temp beside the *link* and replacing onto the
+    *referent* would cross a mount whenever the link does, and `rename(2)`
+    answers that with EXDEV instead of committing.
+
+    `realpath` on a path that does not exist yet still resolves the parent
+    chain, so a first run and a dangling symlink both land where `open` would
+    have put them.
+    """
+    return Path(os.path.realpath(path))
+
+
+def _output_target(path: str, label: str) -> Path:
+    """The file a write must land on: final symlink followed, a loop refused.
+
+    `_resolved_target` is deliberately **total**, and for an INPUT that is the
+    right trade: an unresolvable `--bank` reaches the read, where `ELOOP` is
+    reported as a failed pass with a summary written, instead of ending the run
+    on a traceback before it starts.
+
+    For an OUTPUT it is the wrong half of that trade. `realpath` gives up on a
+    cycle and hands the unresolved link back; `os.replace` does not follow a
+    symlink on its destination; so the commit swaps the link's own directory
+    entry and turns the operator's broken configuration into a plausible regular
+    file — where the pre-atomic `open(path, "w")` raised `ELOOP` and changed
+    nothing. Losing the diagnosis is the smaller half: a summary sitting where a
+    link belongs reads as a healthy run to whoever looks next.
+
+    A resolution that is itself STILL a symlink is precisely the signal that
+    resolution gave up, which is why that is the test. A dangling link is not
+    that — `realpath` follows it to a name that does not exist yet, exactly
+    where `open` would have created the file.
+    """
+    resolved = _resolved_target(path)
+    if os.path.islink(resolved):
+        raise OperationalError(
+            f"cannot write {label} {resolved}: the path is a symlink loop, so it "
+            "resolves to nothing. Committing atomically would replace the link "
+            "with a regular file and destroy the configuration silently. Repair "
+            "the link, or name the file directly."
+        )
+    if resolved.exists() and not resolved.is_file():
+        # The same trade one shape further along. `open(path, "w")` on a FIFO
+        # handed the JSON to whoever was reading it; `os.replace` unlinks the
+        # FIFO and installs a regular file, disconnecting that reader for good
+        # while the run reports success. A socket or a device node is the same
+        # question, so the test is "regular file" rather than "not a FIFO".
+        #
+        # Refused rather than warned, unlike a hard-linked target. There the
+        # choice was between a stale second name and no health signal at all;
+        # here nothing has been written, and the endpoint is still there to be
+        # repaired, so the refusal costs nothing. Refusing at the guard also
+        # comes BEFORE the ledger is read — and reading a FIFO with no writer
+        # blocks forever, so this is what keeps the tool from hanging on one.
+        raise OperationalError(
+            f"cannot write {label} {resolved}: it is not a regular file. An "
+            "atomic commit replaces the name, which would unlink it and install "
+            "an ordinary file in its place, permanently disconnecting anything "
+            "reading it. Give the run a regular file of its own."
+        )
+    return resolved
+
+
+def pinned_output(args: argparse.Namespace, flag: str) -> str:
+    """The resolution `reject_aliased_outputs` validated — not a fresh lookup.
+
+    The alias refusal resolves every declared path before the first read. Left
+    at that, each writer resolved its own path again afterwards, and for
+    `report` that is minutes of network passes later. A symlinked output
+    retargeted inside that window bypasses the refusal without defeating it:
+    point `--summary-json`'s stable link at the bank once the run is under way
+    and `os.replace` lands on a file the check never saw. The same window sits
+    before `ledger_lock`, one lookup earlier than the pinning inside the
+    transaction can reach.
+
+    This is not a general cure for the race — anyone able to retarget the link
+    can swap the resolved file too. It is what makes the refusal hold for the
+    whole run rather than for the instant it ran.
+
+    Falls back to resolving when nothing is pinned, so the writers stay callable
+    on their own.
+    """
+    pinned = getattr(args, "pinned_outputs", None) or {}
+    if flag in pinned:
+        return str(pinned[flag])
+    return str(_resolved_target(str(getattr(args, flag))))
+
+
 @contextmanager
 def ledger_lock(path: str):
     """Serialize the ledger read-modify-write across processes.
@@ -202,13 +302,29 @@ def ledger_lock(path: str):
     `write_ledger` swaps the ledger's inode via `os.replace`, so a lock taken on
     the ledger file would be a lock on a file the next writer never opens.
 
+    The sidecar is named after the ledger's RESOLVED path, matching what
+    `write_ledger` actually replaces. Named after the path the operator typed, a
+    run reaching the ledger through a symlink and one reaching it directly would
+    take two different locks, serialise against nothing, and lose a decline to
+    the second replace — the exact update this lock exists to protect.
+
+    That resolution is done ONCE and **yielded**, and the caller must read and
+    write the path it hands back. Resolving again at each step reopens the same
+    hole from the other side: a deployment that retargets the advertised stable
+    symlink after the lock is taken leaves this command holding the old
+    referent's sidecar while it reads and replaces the new one, where a
+    concurrent command is serialising on that file's own lock. One resolution per
+    transaction is what makes the lock, the read and the write the same file by
+    construction rather than by three lookups agreeing.
+
     `fcntl` is POSIX-only, and where it is missing this **refuses** rather than
     proceeding with a warning. A warning is not a mitigation — the lost update
     happens either way, and the operator has no way to notice. Only ledger
     mutation takes this path; coverage, orphans and `--propose` are read-only and
     still run.
     """
-    lock_path = Path(f"{path}.lock")
+    resolved = _resolved_target(path)
+    lock_path = Path(f"{resolved}.lock")
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -228,7 +344,7 @@ def ledger_lock(path: str):
         raise OperationalError(f"cannot open ledger lock {lock_path}: {exc}") from exc
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        yield
+        yield str(resolved)
     finally:
         handle.close()  # releases the flock
 
@@ -251,6 +367,190 @@ def read_ledger(path: Optional[str]) -> List[Any]:
     except ValueError as exc:
         raise OperationalError(f"ledger {path}: {exc}") from exc
     return entries
+
+
+def _copy_xattrs(target: Path, tmp_name: str) -> None:
+    """Carry the target's extended attributes over, POSIX ACLs included.
+
+    An ACL is not a mode bit: on Linux it lives in the `system.posix_acl_access`
+    xattr, so a file whose grant to a monitor is `setfacl -m u:monitor:r` keeps
+    that grant nowhere `chmod` can reach it. Per-attribute failures are skipped
+    rather than raised — `security.*` and `trusted.*` need privileges this tool
+    should not assume, and losing one of those is not worth losing the write.
+    """
+    if not hasattr(os, "listxattr"):  # pragma: no cover - non-Linux
+        return
+    try:
+        names = os.listxattr(str(target))
+    except OSError:  # pragma: no cover - filesystem carries no xattrs
+        return
+    for name in names:
+        try:
+            os.setxattr(tmp_name, name, os.getxattr(str(target), name))
+        except OSError:  # pragma: no cover - a namespace we may not write
+            continue
+
+
+def _copy_ownership(source: os.stat_result, tmp_name: str) -> None:
+    """Move the replacement onto the target's uid/gid, where that is a thing.
+
+    `os.chown` is POSIX-only and simply **absent** elsewhere, so calling it
+    unguarded raises `AttributeError` — which is not an `OSError`, so it escapes
+    the writer's handler before the temp file is unlinked. `_copy_xattrs` already
+    draws this boundary with `hasattr(os, "listxattr")`; the same boundary
+    belongs here.
+
+    The failure is quiet in the worst way: `_preserve_access` returns early when
+    there is no target to copy from, so *creating* a summary works and every
+    refresh after it crashes.
+    """
+    if not hasattr(os, "chown"):  # pragma: no cover - non-POSIX
+        return
+    try:
+        os.chown(tmp_name, source.st_uid, source.st_gid)
+    except OSError:
+        # Not privileged enough to move the uid. The GROUP can still be set by
+        # its own member, and that is the half that usually carries the grant.
+        try:
+            os.chown(tmp_name, -1, source.st_gid)
+        except OSError:  # pragma: no cover - not a member of the target's group
+            pass
+
+
+def _close_quietly(handle) -> None:
+    """Close a staged handle without letting the close become the failure.
+
+    Called from the writers' cleanup, where an exception is usually already in
+    flight. `close()` flushes, so on a full disk it raises the same `ENOSPC` that
+    brought us here — and that second error would replace the first, escape
+    before the temp file is unlinked, and end the run on a traceback.
+    """
+    if handle is None:
+        return
+    try:
+        handle.close()
+    except (OSError, ValueError):
+        pass
+
+
+def _close_fd_quietly(fd: Optional[int]) -> None:
+    """Close a directory descriptor without letting the close become the failure.
+
+    `_close_quietly`'s sibling, for the one cleanup step that sat outside that
+    boundary. `write_ledger`'s `finally` runs while the write's own
+    `OperationalError` is already in flight, and an `OSError` from `close(2)`
+    raised there propagates out of the `finally` and REPLACES it — leaving the
+    operator holding a descriptor error instead of the diagnosis of the disk
+    that failed their write. After the commit it is worse still: it would either
+    replace `LedgerNotDurable` or manufacture a raw `OSError` out of a run that
+    entirely succeeded.
+    """
+    if fd is None:
+        return
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _discard_quietly(tmp_name: str) -> None:
+    """Remove an uncommitted temp file. A failure here has nothing left to say."""
+    if not tmp_name:
+        return
+    try:
+        os.unlink(tmp_name)
+    except OSError:  # pragma: no cover - already gone
+        pass
+
+
+def _preserve_access(target: Path, tmp_name: str) -> None:
+    """Carry an existing target's access metadata onto its replacement.
+
+    `tempfile.mkstemp` creates its file 0600, owned by the writing process, with
+    no extended attributes — and `os.replace` installs all of that along with the
+    contents. So a replace-in-place write silently revokes any access an operator
+    had granted on the target: a `--summary-json` health file readable by a
+    monitor running as another Unix user goes unreadable on the very next report
+    run, and the monitor cannot tell that apart from "nothing to report".
+
+    Three carriers, because any one of them alone can BE the grant, and copying
+    only the first leaves the other two revoked:
+
+    - the mode bits;
+    - the owning uid/gid — `0640 archi:monitor` grants through its GROUP, and
+      mkstemp's file is `archi:archi`, so mode alone still locks the monitor out;
+    - the POSIX ACL, which is an xattr (see `_copy_xattrs`).
+
+    Ordered chown → chmod → xattrs. chown before chmod because chowning clears
+    setuid/setgid; the ACL last because it encodes the base permission bits too,
+    so a chmod after it would rewrite its mask.
+
+    Every step is best-effort. An unprivileged run cannot move a file to another
+    uid, and not every filesystem carries xattrs — failing the write over
+    metadata would trade a cosmetic loss for a lost health signal, which is the
+    worse outcome.
+
+    Applied only when the target already exists. Picking a mode for a NEW file is
+    a policy decision this tool has no business making, and mkstemp's 0600 is the
+    right default for one that can carry error text.
+    """
+    try:
+        source = target.stat()
+    except OSError:  # no target yet, or it raced away — keep mkstemp's 0600
+        return
+    _copy_ownership(source, tmp_name)
+    try:
+        os.chmod(tmp_name, stat.S_IMODE(source.st_mode))
+    except OSError:  # pragma: no cover - a mode-less filesystem
+        pass
+    _copy_xattrs(target, tmp_name)
+
+
+def _warn_if_multiply_linked(target: Path, label: str) -> None:
+    """Say which other name this replacement is about to leave behind.
+
+    `os.replace` installs a NEW inode under the target's name. Any other hard
+    link to the old inode keeps it, and keeps the previous contents — a monitor
+    reading that second name sits on a healthy snapshot forever while every run
+    reports success. `realpath` cannot see this: hard links are not a chain to
+    follow, they are equal names for one inode.
+
+    Neither obvious remedy is available. Truncating in place would put every
+    name back on one inode and reopen the partial-write window this file's
+    atomicity exists to close — and it would not help a consumer holding an open
+    descriptor across the write, which goes stale the same way. Refusing the
+    write is worse: the summary IS the health signal, so a run that declines to
+    write it leaves the monitor on the previous healthy file indefinitely, which
+    is the failure the summary contract exists to close.
+
+    So the write commits and the run names the decoupled path. A symlink is the
+    shape that actually works here, because it IS followed.
+
+    Both halves are contained, because this runs INSIDE the writers' `try` and a
+    diagnostic must not be able to fail the write it is describing. An
+    unwritable stderr (`2>&-` gives `EBADF`) would otherwise be caught as an
+    `OSError` by the writer, delete the staged temp file, and report "cannot
+    write" for a write that was ready to commit; a stderr closed under the
+    process raises `ValueError`, which that handler does not catch at all, so it
+    would escape the writer entirely and leave the temp file as litter.
+    """
+    try:
+        links = target.stat().st_nlink
+    except OSError:  # pragma: no cover - no target yet, or it raced away
+        return
+    if links < 2:
+        return
+    try:
+        print(
+            f"warning: {label} {target} has {links - 1} other hard link(s). "
+            "Committing it atomically gives this name a new inode, so those names "
+            "keep the previous contents and go stale silently. Point every "
+            "consumer at this path, or reach it through a symlink, which is "
+            "followed.",
+            file=sys.stderr,
+        )
+    except (OSError, ValueError):
+        return  # an unsayable warning is not a reason to fail the write
 
 
 def write_ledger(path: str, entries: List[Any]) -> None:
@@ -278,7 +578,7 @@ def write_ledger(path: str, entries: List[Any]) -> None:
       write" would tell the operator nothing happened and invite them to redo a
       change that already took effect.
     """
-    target = Path(path)
+    target = _output_target(path, "the ledger")
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -288,6 +588,7 @@ def write_ledger(path: str, entries: List[Any]) -> None:
     handle = None
     tmp_name = ""
     dir_fd = None
+    committed = False
     try:
         dir_fd = _open_directory(target.parent)
         fd, tmp_name = tempfile.mkstemp(
@@ -299,18 +600,22 @@ def write_ledger(path: str, entries: List[Any]) -> None:
         os.fsync(handle.fileno())
         handle.close()
         handle = None
+        _preserve_access(target, tmp_name)
+        _warn_if_multiply_linked(target, "the ledger")
         os.replace(tmp_name, target)
+        committed = True
     except OSError as exc:
-        if handle is not None:
-            handle.close()
-        if tmp_name:
-            try:
-                os.unlink(tmp_name)
-            except OSError:  # pragma: no cover - already gone
-                pass
-        if dir_fd is not None:
-            os.close(dir_fd)
         raise OperationalError(f"cannot write ledger {path}: {exc}") from exc
+    finally:
+        # In a `finally`, and keyed on `committed`, because the handler above
+        # only sees OSError. Anything else raised in the block — an absent
+        # `os.chown`, an unsayable warning — would otherwise skip the cleanup
+        # and leave the staged temp file behind.
+        _close_quietly(handle)
+        if not committed:
+            _discard_quietly(tmp_name)
+            _close_fd_quietly(dir_fd)
+            dir_fd = None
 
     # --- committed. Everything below is durability, never "did it happen". ---
     if dir_fd is None:  # pragma: no cover - non-POSIX
@@ -324,7 +629,7 @@ def write_ledger(path: str, entries: List[Any]) -> None:
             "host crash. Do not retry it — check the storage instead."
         ) from exc
     finally:
-        os.close(dir_fd)
+        _close_fd_quietly(dir_fd)
 
 
 def _open_directory(directory: Path) -> Optional[int]:
@@ -565,8 +870,8 @@ def run_decline(args: argparse.Namespace, docs, bank) -> int:
     if not args.ledger:
         raise OperationalError("--decline needs --ledger <path> to record the decision")
     require_gap(args.decline, docs, bank, "decline")
-    with ledger_lock(args.ledger):
-        entries = read_ledger(args.ledger)
+    with ledger_lock(pinned_output(args, "ledger")) as ledger_path:
+        entries = read_ledger(ledger_path)
         try:
             stamped = with_decline(
                 entries,
@@ -579,7 +884,7 @@ def run_decline(args: argparse.Namespace, docs, bank) -> int:
         if len(stamped) == len(entries):
             print(f"already declined: {args.decline}")
             return 0
-        write_ledger(args.ledger, stamped)
+        write_ledger(ledger_path, stamped)
     print(f"declined: {args.decline} -> {args.ledger}")
     return 0
 
@@ -595,8 +900,8 @@ def run_undecline(args: argparse.Namespace) -> int:
         raise OperationalError(
             "--undecline needs --ledger <path> — the record to clear lives there"
         )
-    with ledger_lock(args.ledger):
-        entries = read_ledger(args.ledger)
+    with ledger_lock(pinned_output(args, "ledger")) as ledger_path:
+        entries = read_ledger(ledger_path)
         try:
             kept = without_decline(entries, args.undecline)
         except ValueError as exc:
@@ -604,7 +909,7 @@ def run_undecline(args: argparse.Namespace) -> int:
         if len(kept) == len(entries):
             print(f"not declined: {args.undecline} — nothing to clear")
             return 0
-        write_ledger(args.ledger, kept)
+        write_ledger(ledger_path, kept)
     print(f"undeclined: {args.undecline} -> {args.ledger}")
     return 0
 
@@ -1061,6 +1366,80 @@ _REPORT_PASSES = (
 )
 
 
+def _write_summary(args: argparse.Namespace, summary: dict) -> None:
+    """Atomically write the --summary-json file (temp + os.replace).
+
+    Mirrors write_ledger's commit step: the target is never truncated before the
+    replacement is ready, so a crash or full-disk mid-write cannot corrupt an
+    existing file.  Full fsync durability is not required for a re-derivable
+    health signal (non-goal per design.md).
+    """
+    if not args.summary_json:
+        return
+    target = _output_target(pinned_output(args, "summary_json"), "the summary")
+    tmp_name = ""
+    handle = None
+    committed = False
+    try:
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+        )
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+        json.dump(summary, handle, indent=2)
+        handle.close()
+        handle = None
+        _preserve_access(target, tmp_name)
+        _warn_if_multiply_linked(target, "the summary")
+        os.replace(tmp_name, target)
+        committed = True
+    except OSError as exc:
+        raise OperationalError(f"cannot write {args.summary_json}: {exc}") from exc
+    finally:
+        # See write_ledger: cleanup runs for every exception type, not only the
+        # OSError the handler above converts.
+        _close_quietly(handle)
+        if not committed:
+            _discard_quietly(tmp_name)
+
+
+def bank_census(path: str) -> dict:
+    """Bank composition, with a malformed row reported as an operational failure.
+
+    `bank_status_counts` buckets rows by `anchor_type` and uses that value as a
+    dictionary key, so the field's type has to be checked before the census, not
+    after. Any non-text value is valid JSON inside a valid bank array — it passes
+    `load_bank` untouched — and then breaks in one of two ways depending on what
+    else is in the bank:
+
+    - a list or object is **unhashable**, so the census itself dies;
+    - a number is a perfectly good key, so the census succeeds and the run dies
+      later at `sorted(census["anchor_type"].items())`, comparing `int` to `str`.
+
+    Both are `TypeError`, and neither matches `run_report`'s handler or `main`'s:
+    the process ends on a traceback **before** `--summary-json` is written, and
+    the monitor goes on reading the previous run's healthy file — the exact
+    failure this summary contract exists to close. A bank of nothing but numeric
+    anchor types does not even crash: it sorts fine, `json.dump` stringifies the
+    keys, and the census reports a bucket that is nowhere in the bank.
+
+    So the field is validated up front rather than caught downstream. A bank the
+    tool cannot census IS an operational failure, and raising it as one puts it
+    on the failure-summary path with every other unreadable input.
+    """
+    bank = load_bank(path)
+    for index, record in enumerate(bank):
+        if not isinstance(record, dict):
+            continue  # not a row the census reads a bucket from
+        anchor = record.get("anchor_type")
+        if anchor is None or isinstance(anchor, str):
+            continue
+        raise OperationalError(
+            f"cannot census {path}: row {index} has an `anchor_type` of type "
+            f"{type(anchor).__name__}; it must be text or absent"
+        )
+    return bank_status_counts(bank)
+
+
 def run_report(args: argparse.Namespace) -> int:
     """Run all three passes as one unattended summary (design: cron contract).
 
@@ -1077,9 +1456,8 @@ def run_report(args: argparse.Namespace) -> int:
     reprinted together at the end, because on a cron the summary line is the
     part a human actually reads.
     """
-    census = bank_status_counts(load_bank(args.bank))
     summary: dict = {
-        "census": census,
+        "census": None,
         "gaps": 0,
         "needs_reconciliation": 0,
         "orphans": 0,
@@ -1088,7 +1466,59 @@ def run_report(args: argparse.Namespace) -> int:
         "unchecked_sources": 0,
         "refused_sources": 0,
         "drift_check": "hash-only",
+        "failed_passes": [],
+        "notify": True,
     }
+    already_failing = False
+    try:
+        return _report_passes(args, summary)
+    except BaseException as exc:
+        # "Written on every terminating path" has to mean every one, not every
+        # `OperationalError`. Three findings have arrived through that gap — a
+        # `TypeError` from an unvalidated `anchor_type`, a `RuntimeError` from a
+        # symlink loop, an `AttributeError` from a corpus row that is not an
+        # object — each ending the run before the write and leaving the monitor
+        # on the previous healthy file. Validating the next input shape closes
+        # the next instance and leaves the class open.
+        already_failing = True
+        if not summary["failed_passes"]:
+            summary["failed_passes"] = [f"{type(exc).__name__}: {exc}"]
+        summary["notify"] = True
+        raise
+    finally:
+        try:
+            _write_summary(args, summary)
+        except OperationalError as write_exc:
+            # A summary that could not be written still fails the run: silence
+            # would report success over a stale file, which is the failure this
+            # whole contract exists to close.
+            #
+            # Unless something worse is already propagating. Then there are two
+            # failures and only one is actionable — letting the write error out
+            # of here would make it the exception `main` prints, telling the
+            # operator the disk is full and never that their bank is malformed.
+            # Both go to stderr; the original stays the one that propagates.
+            if not already_failing:
+                raise
+            print(f"error: {write_exc}", file=sys.stderr)
+
+
+def _report_passes(args: argparse.Namespace, summary: dict) -> int:
+    """The report itself. Its caller owns writing the summary, exactly once.
+
+    Split out so the write is one `finally` around the whole run rather than a
+    call on each way out, which is what let three exception types slip past it.
+    """
+    try:
+        census = bank_census(args.bank)
+        summary["census"] = census
+        summary["notify"] = False
+    except OperationalError as exc:
+        summary["failed_passes"] = [f"bank: {exc}"]
+        summary["census"] = None
+        summary["notify"] = True
+        raise
+
     args.summary_sink = summary
     # Composition, printed once up front: the spec asks the reporting surface to
     # answer "how much of this bank has anyone actually vouched for?" from the
@@ -1124,15 +1554,6 @@ def run_report(args: argparse.Namespace) -> int:
     # decision, so an unchecked source notifies whether the page or the
     # allowlist is the reason it went unchecked.
     summary["notify"] = any(summary[key] > 0 for key in _NOTIFY_ON)
-    if args.summary_json:
-        # Written on every path, including the failing one: a wrapper that finds
-        # no file after a broken run cannot tell it from a clean one, which is
-        # the exact confusion this file exists to remove.
-        try:
-            with open(args.summary_json, "w", encoding="utf-8") as handle:
-                json.dump(summary, handle, indent=2)
-        except OSError as exc:
-            raise OperationalError(f"cannot write {args.summary_json}: {exc}") from exc
 
     if failures:
         _print_group(
@@ -1366,7 +1787,10 @@ def build_parser() -> argparse.ArgumentParser:
             "Write per-pass finding counts and any failed passes here, as JSON. "
             "The exit code carries only ran/broke, and findings exit zero, so an "
             "unattended wrapper needs this to tell a clean run from one with "
-            "work to do. Written on every path, including a failing run."
+            "work to do. Attempted on every path, including a failing run — but "
+            "a write that itself fails leaves the previous file in place, so a "
+            "monitor still has to check the exit code and the file's age. May "
+            "not name a file this run reads."
         ),
     )
     # The passes are reused verbatim, so the flags they read but `report` does not
@@ -1400,6 +1824,116 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: Every path flag, split by what the tool does with the file. Declared in ONE
+#: table so a new flag has an obvious place to be classified, rather than a
+#: second aliasing check growing somewhere else and going stale.
+_OUTPUT_PATH_FLAGS = ("summary_json", "ledger")
+_INPUT_PATH_FLAGS = ("bank", "corpus_json", "sources")
+#: What each output is called in the refusal that names it.
+_OUTPUT_LABELS = {"summary_json": "the summary", "ledger": "the ledger"}
+
+
+def _same_file(
+    one: Path, other: Path, one_resolved: Path, other_resolved: Path
+) -> bool:
+    """Whether two paths name one file — by identity, not by spelling.
+
+    Two checks, because neither subsumes the other:
+
+    - `samefile` compares device + inode, so it sees a hard link and, more to the
+      point, a second mount path to the same directory entry (a bind mount) that
+      no amount of path resolution can normalise. It needs both files to exist.
+    - resolved paths catch the case `samefile` cannot: an output that does not
+      exist YET but is spelled through a symlinked directory, which is how a
+      deployment reaching its data through `current -> releases/42` names one
+      file two ways.
+
+    Resolved with `_resolved_target`, i.e. `os.path.realpath`, and NOT with
+    `Path.resolve()`. Before 3.13, `Path.resolve()` raises `RuntimeError` on a
+    symlink loop; `main` catches `OperationalError`, so a self-referential input
+    path ended the run on a traceback here — before `run_report`, and therefore
+    before the `--summary-json` the operator is relying on could be refreshed.
+    `realpath` returns the path instead, which lets the loop surface where it
+    actually means something: the `ELOOP` raised when the file is *read*, already
+    reported as a failed pass with a summary written. It also makes this guard
+    and the writers agree, since they resolve the same paths the same way.
+
+    The resolutions are handed IN rather than taken here, so the comparison and
+    the pin that outlives it (`reject_aliased_outputs`) are literally one lookup
+    instead of two that happen to agree. Resolving a second time to pin what was
+    just compared would leave the refusal a check on a path nothing afterwards
+    is guaranteed to use — the hole this whole pinning exists to close, reopened
+    at its own seam.
+    """
+    try:
+        if one.samefile(other):
+            return True
+    except OSError:  # one of them does not exist yet — fall through
+        pass
+    return one_resolved == other_resolved
+
+
+def reject_aliased_outputs(args: argparse.Namespace) -> None:
+    """Refuse a run whose output path is also one of its inputs.
+
+    `os.replace` swaps the target's directory entry, so a `--summary-json`
+    pointed at the bank does not "also write the summary" — it destroys the bank.
+    The failure-summary path made that reachable on the one run where the input
+    matters most: the bank is malformed, the operator is about to go repair it,
+    and the failure summary lands on top of it. The same shape reaches the
+    ledger, whose `--undecline` write replaces a `--corpus-json` dump — a list of
+    objects that each carry a `url` validates as a decline ledger, so nothing
+    downstream refuses it.
+
+    Checked in `main` before the subcommand is dispatched, not at the write
+    itself: this is the one refusal that has to happen while it is still true
+    that nothing was read, printed or written. A tool that discovers the
+    collision at its commit point has already spent the run.
+
+    Each declared path is resolved ONCE here, and every output's resolution is
+    **pinned** on `args` for the writers to use (`pinned_output`). Without that
+    the refusal only describes the instant it ran: the writers looked their own
+    paths up again afterwards, so retargeting a symlinked output mid-run walked
+    straight past it.
+    """
+    declared = []
+    for flag in _OUTPUT_PATH_FLAGS + _INPUT_PATH_FLAGS:
+        value = getattr(args, flag, None)
+        if not value:
+            continue
+        if flag in _OUTPUT_PATH_FLAGS:
+            # Validated HERE, not at the write. Every shape an output path can
+            # already hold and the commit cannot honour is settled before the
+            # first read — which for a FIFO ledger is the difference between a
+            # refusal and a hang, since reading a pipe with no writer never
+            # returns. It is also the last moment at which nothing has been
+            # read, printed or written, which is the whole reason the aliasing
+            # refusal lives here.
+            resolved = _output_target(str(value), _OUTPUT_LABELS[flag])
+        else:
+            resolved = _resolved_target(str(value))
+        declared.append((flag, Path(value), resolved))
+    for flag, path, resolved in declared:
+        if flag not in _OUTPUT_PATH_FLAGS:
+            continue
+        for other_flag, other_path, other_resolved in declared:
+            if other_flag == flag or not _same_file(
+                path, other_path, resolved, other_resolved
+            ):
+                continue
+            raise OperationalError(
+                f"--{flag.replace('_', '-')} and --{other_flag.replace('_', '-')} "
+                f"are the same file ({path}). This run writes one and reads the "
+                "other, so it would destroy its own input — give them separate "
+                "paths."
+            )
+    args.pinned_outputs = {
+        flag: resolved
+        for flag, _path, resolved in declared
+        if flag in _OUTPUT_PATH_FLAGS
+    }
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     if not getattr(args, "func", None):
@@ -1424,6 +1958,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return 2
     try:
+        reject_aliased_outputs(args)
         return args.func(args)
     except OperationalError as exc:
         print(f"error: {exc}", file=sys.stderr)
