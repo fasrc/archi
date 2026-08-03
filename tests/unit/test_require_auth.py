@@ -214,6 +214,64 @@ class TestAuthenticatedAndDisabledPassThrough:
         assert response.status_code == 403
 
 
+def _guard_name(handler):
+    """Name of the decorator a handler argument is wrapped in, or None if it is bare.
+
+    Two shapes appear in ``add_all_endpoints``::
+
+        self.require_auth(self.index)                              # -> "require_auth"
+        self.require_perm(Permission.Upload.PAGE)(self.upload_page)  # -> "require_perm"
+    """
+    if not isinstance(handler, ast.Call):
+        return None
+    func = handler.func
+    if isinstance(func, ast.Call):  # require_perm(permission)(handler)
+        func = func.func
+    return func.attr if isinstance(func, ast.Attribute) else None
+
+
+def _registered_routes(tree):
+    """Map every ``add_endpoint`` route literal to the decorator guarding its handler."""
+    routes = {}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "add_endpoint"
+            and len(node.args) >= 3
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            routes[node.args[0].value] = _guard_name(node.args[2])
+    return routes
+
+
+class TestGuardedPagesAreRegisteredThroughTheDecorators:
+    """The decorators only reach a user if the real routes are registered with them.
+
+    Every other test in this file registers its own routes on a bare Flask app, so none of
+    them would notice a page that shipped undecorated — the fix would be correct and
+    unreachable. Reading the registration calls closes that gap without building the real
+    app, whose constructor needs a pipeline and a database.
+    """
+
+    # The five browser pages whose rejection response this change alters.
+    BROWSER_PAGES = ("/chat", "/terms", "/data", "/upload", "/admin/database")
+
+    @pytest.mark.parametrize("route", BROWSER_PAGES)
+    def test_browser_page_is_registered_behind_an_auth_guard(self, route):
+        routes = _registered_routes(ast.parse(Path(app_module.__file__).read_text()))
+
+        assert route in routes, f"{route} is no longer registered via add_endpoint"
+        assert routes[route] in ("require_auth", "require_perm")
+
+    def test_an_undecorated_page_would_be_caught(self):
+        """Keeps the check above from passing vacuously if the call shape ever changes."""
+        bare = ast.parse('self.add_endpoint("/chat", "index", self.index)')
+
+        assert _registered_routes(bare) == {"/chat": None}
+
+
 class TestNoUnreachableStatementRemains:
     """The acceptance criterion from issue #176, as an executable check."""
 
