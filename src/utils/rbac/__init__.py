@@ -17,6 +17,7 @@ Usage:
 """
 
 from src.utils.rbac.decorators import (
+    is_api_request,
     require_any_permission,
     require_authenticated,
     require_permission,
@@ -49,6 +50,7 @@ __all__ = [
     "require_permission",
     "require_any_permission",
     "require_authenticated",
+    "is_api_request",
     # Permissions
     "has_permission",
     "get_user_permissions",
