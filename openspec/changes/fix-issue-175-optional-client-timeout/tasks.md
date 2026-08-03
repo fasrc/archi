@@ -105,6 +105,27 @@
 - [x] 5b.6 File the nullable-column follow-up, sequenced behind #180 (migrations are not
       applied to existing deployments), rather than shipping the schema change here.
 
+## 5c. Re-repair the api_reference.md anchors after merging dev (review round 3)
+
+- [x] 5c.1 Merge `origin/dev` in first: the anchors are `blob/dev#Lnnn` links, so their correct
+      values are the post-merge line numbers. PR #184 landed +17/−8 in `app.py` after round 1's
+      repair, re-staling all 30 definitions.
+- [x] 5c.2 Retarget the definitions by content-mapping each target line from `625a2043` and
+      asserting byte-identity — the same technique as round 1, re-run against the new base.
+- [x] 5c.3 Fix what round 1 missed: **14 of the inline `[`app.py:nnn`][name]` numbers were left
+      at base numbering when the definitions moved**, so the page displayed one line and linked
+      to another. Repaired from the correct reference revision per reference — head-relative
+      ones follow their definition, base-relative leftovers are content-mapped from
+      `2d532e32`.
+- [x] 5c.4 Include the range form `[`app.py:2434-2440`][chunkyield]`, which a single-number
+      pattern skips.
+- [x] 5c.5 Audit: no dangling uses, no orphaned definitions, and only the four deliberate
+      second citations (`thinkgate`, `thinkgate2`, `stepemit`, `chunkyield`) differ from their
+      definition — verified by target content, and identical in shape to PR #188's copy of the
+      same page.
+- [x] 5c.6 Note the non-convergence: PR #188 edits `app.py` too, so whichever of the two lands
+      second re-stales the other. Issue #190 is the structural fix.
+
 ## 6. Verify and land
 
 - [x] 6.1 Run `bash scripts/gate.sh` **bare** — no pipe, no redirect, since redirecting it
