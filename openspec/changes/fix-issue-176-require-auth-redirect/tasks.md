@@ -55,8 +55,8 @@
 
 - [x] 5.1 Commit (short lowercase subject, no `Co-Authored-By`) and push
   `fix/issue-176-require-auth-redirect`.
-- [ ] 5.2 Run `/codex:adversarial-review --wait` on the branch; address findings that hold,
+- [x] 5.2 Run `/codex:adversarial-review --wait` on the branch; address findings that hold,
   push back with reasons on those that do not; repeat until a clean round or only nits.
-- [ ] 5.3 Open the PR against `fasrc/archi:dev` with `closes #176`. State in the body the two
+- [x] 5.3 Open the PR against `fasrc/archi:dev` with `closes #176`. State in the body the two
   decisions the issue left open: `require_perm` is fixed here (it guards three browser
   pages), and the new redirect emits no audit event (the response it replaces logs nothing).
