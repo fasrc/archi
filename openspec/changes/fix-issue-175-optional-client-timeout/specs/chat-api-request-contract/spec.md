@@ -76,6 +76,48 @@ its twin.
 - **AND** it records that the differing baselines are deliberate, not a bug to be "fixed" by
   making them identical
 
+### Requirement: A timing row records an absent client send time as a specified sentinel
+
+A request that omits `client_sent_msg_ts` and completes SHALL still have its `timing` row
+written, and the absent send time SHALL be recorded as the Unix epoch,
+`1970-01-01T00:00:00Z`, which SHALL be documented as meaning "the client declared no send
+time" so a caller computing client→server latency can exclude it.
+
+Accepting such a request makes it reach `insert_timing` for the first time — on `dev` it was
+refused with 408 before ever getting there. The column `timing.client_sent_msg_ts` is
+`TIMESTAMPTZ NOT NULL` (`src/cli/templates/init.sql:476`), so the row must carry a value and
+"unknown" has no representation. The row is still written because its other ten milestones are
+real measurements and are what the shipped Grafana panels plot
+(`src/cli/templates/grafana/archi-default-dashboard.json` keys off `server_received_msg_ts` and
+`msg_duration`, not this column).
+
+A server-side substitute — recording `server_received_msg_ts` in its place — SHALL NOT be used:
+it reads as a genuinely instantaneous client hop and no query can distinguish it from a real
+measurement, which is the silent-corruption failure mode this project has been removing
+elsewhere (issue #178).
+
+Making the column nullable is the correct end state and is explicitly out of scope here: the
+code change alone raises `NotNullViolation` on any deployment whose schema predates the
+migration, and issue #180 records that migrations are not applied to existing deployments. The
+sequencing is therefore #180 first, then the nullable column, then this sentinel is retired.
+
+#### Scenario: A request with no send time still gets a timing row
+
+- **WHEN** a request omits `client_sent_msg_ts` and completes
+- **THEN** `insert_timing` is called for that message
+- **AND** the server-side milestones on the row are real timestamps
+
+#### Scenario: The absent value is the epoch, not a substitute
+
+- **WHEN** the persisted `client_sent_msg_ts` is read for such a request
+- **THEN** it is `1970-01-01T00:00:00Z`
+- **AND** it is not equal to `server_received_msg_ts`
+
+#### Scenario: A supplied send time is unaffected
+
+- **WHEN** a request supplies `client_sent_msg_ts`
+- **THEN** the persisted value is that timestamp, not the sentinel
+
 ### Requirement: The API reference documents the timing fields as optional
 
 `docs/docs/api_reference.md` SHALL describe `client_sent_msg_ts` and `client_timeout` as

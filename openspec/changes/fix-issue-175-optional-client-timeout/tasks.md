@@ -84,6 +84,27 @@
 - [x] 5.6 Grep the whole `docs/` tree for any other claim that the timing fields are required
       or that omitting them yields 408, and correct anything found.
 
+## 5b. Timing persistence for an absent send time (review round 3)
+
+- [x] 5b.1 Establish what a `timing` row records when `client_sent_msg_ts` is absent. On `dev`
+      such a request was refused with 408 and never reached `insert_timing`; accepting it makes
+      the epoch value reachable for the first time, so the representation is this change's to
+      specify.
+- [x] 5b.2 Confirm the column cannot hold "unknown": `timing.client_sent_msg_ts` is
+      `TIMESTAMPTZ NOT NULL` (`src/cli/templates/init.sql:476`), so a NULL insert raises
+      `NotNullViolation` and the request 500s on any deployment predating a migration.
+- [x] 5b.3 Confirm no shipped consumer reads the column — the Grafana panels key off
+      `server_received_msg_ts` and `msg_duration`
+      (`src/cli/templates/grafana/archi-default-dashboard.json`) — so keeping the row costs
+      nothing and dropping it would lose ten real milestones.
+- [x] 5b.4 Pin the sentinel with tests in `tests/unit/test_chat_timing_persistence.py`,
+      including a discriminating case proving a supplied value is not flattened and that the
+      sentinel is not `server_received_msg_ts`.
+- [x] 5b.5 Add the spec requirement and document the sentinel in the request-body table so a
+      caller computing client→server latency knows to exclude it.
+- [x] 5b.6 File the nullable-column follow-up, sequenced behind #180 (migrations are not
+      applied to existing deployments), rather than shipping the schema change here.
+
 ## 6. Verify and land
 
 - [x] 6.1 Run `bash scripts/gate.sh` **bare** — no pipe, no redirect, since redirecting it
