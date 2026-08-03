@@ -69,7 +69,10 @@ from src.interfaces.chat_app.config_fingerprint import (
 )
 from src.interfaces.chat_app.document_utils import *
 from src.interfaces.chat_app.request_validation import (
+    InvalidClientTiming,
     InvalidLastMessage,
+    parse_client_sent_msg_ts,
+    parse_client_timeout,
     parse_last_message,
 )
 from src.interfaces.chat_app.service_alerts import (
@@ -1705,7 +1708,16 @@ class ChatWrapper:
         # measurement series, which is worse than a visibly wrong number.
         timestamps["query_convo_history_ts"] = datetime.now(timezone.utc)
 
-        if server_received_msg_ts.timestamp() - client_sent_msg_ts > client_timeout:
+        # Both fields must be truthy before comparing elapsed time against the deadline.
+        # A falsey client_timeout means no declared deadline; a falsey client_sent_msg_ts
+        # means there is no baseline to measure from.  The streaming twin at app.py:2173
+        # uses the same "if client_timeout and ..." guard and measures from stream_start_time
+        # instead of client_sent_msg_ts — the differing baselines are deliberate, not a bug.
+        if (
+            client_sent_msg_ts
+            and client_timeout
+            and server_received_msg_ts.timestamp() - client_sent_msg_ts > client_timeout
+        ):
             return None, 408
 
         if not is_refresh:
@@ -2151,6 +2163,14 @@ class ChatWrapper:
                 conversation_id=context.conversation_id,
                 pipeline=request_pipeline,
             ):
+                # Falsey client_timeout means no declared deadline — same rule as the
+                # pre-pipeline check in _prepare_chat_context (app.py:1715).  That check
+                # measures from client_sent_msg_ts; this one measures from stream_start_time.
+                # The differing baselines are deliberate: the first bounds total in-flight
+                # time, the second bounds the streaming phase specifically.
+                # Reached only when the upstream generator yields, so this bounds a slow
+                # stream, not a provider that stalls without emitting.  Issue #191 tracks
+                # enforcing the deadline around stream advancement itself.
                 if client_timeout and time.time() - stream_start_time > client_timeout:
                     if trace_id:
                         total_duration_ms = int(
@@ -4655,10 +4675,10 @@ class FlaskAppWrapper(object):
     def _parse_chat_request(self) -> Dict[str, Any]:
         payload = request.get_json(silent=True) or {}
 
-        client_sent_msg_ts = payload.get("client_sent_msg_ts")
-        client_timeout = payload.get("client_timeout")
-        client_sent_msg_ts = client_sent_msg_ts / 1000 if client_sent_msg_ts else 0
-        client_timeout = client_timeout / 1000 if client_timeout else 0
+        # Both raise InvalidClientTiming rather than returning a sentinel: the ms->s
+        # division is itself failable, so normalizing and validating cannot be separated.
+        client_sent_msg_ts = parse_client_sent_msg_ts(payload.get("client_sent_msg_ts"))
+        client_timeout = parse_client_timeout(payload.get("client_timeout"))
 
         include_agent_steps = payload.get("include_agent_steps", True)
         include_tool_steps = payload.get("include_tool_steps", True)
@@ -4702,7 +4722,10 @@ class FlaskAppWrapper(object):
         server_received_msg_ts = datetime.now(timezone.utc)
 
         # get user input and conversation_id from the request
-        request_data = self._parse_chat_request()
+        try:
+            request_data = self._parse_chat_request()
+        except InvalidClientTiming as exc:
+            return jsonify({"error": str(exc)}), 400
         message = request_data["message"]
         conversation_id = request_data["conversation_id"]
         config_name = request_data["config_name"]
@@ -4777,7 +4800,10 @@ class FlaskAppWrapper(object):
         Streams agent updates and the final response as NDJSON.
         """
         server_received_msg_ts = datetime.now(timezone.utc)
-        request_data = self._parse_chat_request()
+        try:
+            request_data = self._parse_chat_request()
+        except InvalidClientTiming as exc:
+            return jsonify({"error": str(exc)}), 400
 
         message = request_data["message"]
         conversation_id = request_data["conversation_id"]

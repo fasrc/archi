@@ -61,11 +61,13 @@ def _wrapper(created, stored_history=None, touched=None):
 
 
 def _prepare(wrapper, *, is_refresh, conversation_id=None, external_history=None):
-    """Call the real method with a timing pair that does not trip the #175 check.
+    """Call the real method with a valid, in-window deadline.
 
-    ``app.py:1710`` compares ``server_received - client_sent`` against ``client_timeout``
-    with no guard. Sending the same instant for both, with a generous timeout, keeps that
-    unrelated bug out of these results.
+    Sending the same instant for both ``server_received_msg_ts`` and
+    ``client_sent_msg_ts`` with a generous ``client_timeout`` is a deliberate choice of
+    timing values that declare a real deadline and land well within it.  These tests are
+    about refresh semantics, so the deadline is chosen to be satisfied rather than to be
+    the thing under test.
     """
     now = datetime.now(timezone.utc)
     return wrapper._prepare_chat_context(
