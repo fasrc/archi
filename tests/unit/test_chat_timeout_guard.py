@@ -21,6 +21,22 @@ CLIENT_ID = "client-1"
 INCOMING = [["User", "hello"]]
 
 
+class _FakeOutput:
+    """A pipeline output implementing the two members ``stream`` reads off it.
+
+    ``.get`` matters: finalization calls ``last_output.get("source_documents", [])``, so an
+    output without it aborts the stream with an in-band 500 instead of a ``final`` event.
+    """
+
+    def __init__(self, answer):
+        self.answer = answer
+        self.content = answer
+        self.metadata = {"event_type": "text"}
+
+    def get(self, key, default=None):
+        return default
+
+
 def _wrapper(created=None, stored_history=None, touched=None):
     """A ChatWrapper carrying only the collaborators ``_prepare_chat_context`` touches.
 
@@ -163,10 +179,15 @@ class TestTheInStreamCheckNeedsOnlyTheTimeout:
         ``cursor``/``conn`` are None so the ``finally`` block that closes them is a no-op,
         and ``_finalize_result`` is stubbed so the no-timeout case can run to completion
         without a database.
+
+        The yielded output must implement the production interface -- ``stream`` calls
+        ``.get("source_documents", …)`` on the last output during finalization. A bare
+        ``SimpleNamespace`` has no ``.get``, which ends the stream with an in-band 500 and
+        makes any assertion phrased as "no 408" pass while the stream is in fact crashing.
         """
         wrapper = _wrapper()
         wrapper.archi = SimpleNamespace(
-            stream=lambda **kwargs: iter([SimpleNamespace(content="x", metadata=None)]),
+            stream=lambda **kwargs: iter([_FakeOutput("x")]),
             pipeline_name="test-pipeline",
         )
         wrapper._resolve_config_name = lambda config_name: config_name or "default"
@@ -211,10 +232,13 @@ class TestTheInStreamCheckNeedsOnlyTheTimeout:
         assert events[-1]["status"] == 408
 
     def test_no_timeout_at_all_lets_the_stream_run(self, monkeypatch):
-        """The other half of the rule: a falsey timeout means no deadline, as before."""
+        """The other half of the rule: a falsey timeout means no deadline, as before.
+
+        Asserting on the *absence* of a 408 is not enough — a stream that dies of anything
+        else also has no 408 in it, so the test would pass while the thing it is named for
+        never happened. It has to reach a ``final`` event.
+        """
         events = self._run(monkeypatch, 0, 0)
 
-        assert not any(
-            event.get("type") == "error" and event.get("status") == 408
-            for event in events
-        )
+        assert [event.get("type") for event in events] == ["chunk", "final"]
+        assert not any(event.get("type") == "error" for event in events)
