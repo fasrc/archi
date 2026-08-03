@@ -95,6 +95,22 @@ mid-stream.
 The check SHALL be the conversion itself rather than a hardcoded range, so that it cannot
 disagree with the two call sites it protects about where the boundary lies.
 
+**Normalization is part of the validated step, not a preliminary to it.** Both timing fields
+arrive in milliseconds and are divided by 1000, and that division is itself failable on
+well-formed JSON: a 1001-digit integer raises `OverflowError`, and a quoted number raises
+`TypeError`. A range check placed after the division therefore never runs for those inputs, and
+the endpoint returns 500. Normalization and validation SHALL happen in one guarded step, and
+SHALL apply to **both** `client_sent_msg_ts` and `client_timeout` — `client_timeout` needs no
+range check, since it is only compared against an elapsed interval, but it is divided the same
+way and so is exposed the same way.
+
+#### Scenario: A value whose normalization overflows is refused, not crashed
+
+- **WHEN** a request supplies a `client_sent_msg_ts` or `client_timeout` that cannot be divided
+  — an integer too large to become a float, or a non-numeric value
+- **THEN** the endpoint returns HTTP 400 with an error naming that field
+- **AND** the pipeline is not invoked
+
 #### Scenario: An unrepresentable timestamp is refused before any work
 
 - **WHEN** a request supplies a `client_sent_msg_ts` that `datetime.fromtimestamp` cannot

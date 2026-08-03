@@ -112,3 +112,51 @@ class TestAnUnrepresentableTimestampIsRefusedNotCrashed:
 
         assert not isinstance(response, tuple), response
         assert stub.chat.call_args.args[5] == 1_700_000_000.0
+
+
+class TestNormalizationItselfCannotRaise:
+    """The millisecond→second division is part of the untrusted-input surface.
+
+    ``client_sent_msg_ts / 1000`` raises before any range check can run: ``OverflowError``
+    for an integer too large to become a float (a 1001-digit JSON integer is valid JSON),
+    and ``TypeError`` for a non-numeric value such as a quoted number. Both fields are
+    divided, so both are exposed. Left unguarded these are 500s on a well-formed request
+    body, and on the streaming route a 500 the caller sees instead of the documented 400.
+    """
+
+    HUGE = int("9" * 1001)
+
+    CASES = [
+        ("client_sent_msg_ts", HUGE),
+        ("client_timeout", HUGE),
+        ("client_sent_msg_ts", "1700000000000"),
+        ("client_timeout", "600000"),
+        ("client_sent_msg_ts", [1]),
+    ]
+
+    @pytest.mark.parametrize("field,value", CASES)
+    def test_the_non_streaming_route_returns_400(self, field, value):
+        stub, response = _post(
+            FlaskAppWrapper.get_chat_response, {**GOOD_BODY, field: value}
+        )
+
+        assert isinstance(response, tuple) and response[1] == 400
+        assert field in response[0].get_json()["error"]
+        stub.chat.assert_not_called()
+
+    @pytest.mark.parametrize("field,value", CASES)
+    def test_the_streaming_route_returns_400(self, field, value):
+        stub, response = _post(
+            FlaskAppWrapper.get_chat_response_stream, {**GOOD_BODY, field: value}
+        )
+
+        assert isinstance(response, tuple) and response[1] == 400
+        stub.chat.stream.assert_not_called()
+
+    def test_a_normal_timeout_still_reaches_the_pipeline_in_seconds(self):
+        stub, response = _post(
+            FlaskAppWrapper.get_chat_response, {**GOOD_BODY, "client_timeout": 600_000}
+        )
+
+        assert not isinstance(response, tuple), response
+        assert stub.chat.call_args.args[6] == 600.0

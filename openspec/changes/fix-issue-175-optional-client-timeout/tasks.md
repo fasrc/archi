@@ -160,6 +160,12 @@
       JSON body (`tests/unit/test_chat_timing_field_validation.py`), covering the two seams a
       stubbed-method test cannot reach: JSON decoding of an omitted key, and the handler wiring
       that carries the parsed value into `insert_timing`.
+- [x] 6b.5 Move the millisecond→second division inside the guarded step (round 5). A range
+      check after the division never runs when the division is what raises: a 1001-digit JSON
+      integer overflows `float`, and a quoted number is a `TypeError`, so both endpoints
+      returned 500 instead of the documented 400. Cover `client_timeout` too — it needs no
+      range check but is divided identically.
+
 - [ ] 6b.4 **Human, before merge:** run one timestamp-less request against a *running*
       deployment and record the response. Not automatable from here — the deployment installs
       the package non-editable, so it will not contain this branch until it is redeployed, and
