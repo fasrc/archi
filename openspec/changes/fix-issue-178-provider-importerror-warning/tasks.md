@@ -85,7 +85,7 @@ protected-path guard and looks like a failure when it is not.
 
 - [x] 5.1 Run the full gate bare: `bash scripts/gate.sh`. It must pass — format, lint, tests, and
       **≥80% diff coverage on the changed lines**. Never `--no-verify`.
-- [ ] 5.2 Confirm diff coverage specifically covers the changed lines of `app.py`; the deletion
+- [x] 5.2 Confirm diff coverage specifically covers the changed lines of `app.py`; the deletion
       itself is not a coverage target, so the new direct test from 2.1 is what carries the changed
       region.
 - [ ] 5.3 Commit with a short lowercase subject and no `Co-Authored-By` or AI-attribution
