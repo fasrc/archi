@@ -207,7 +207,7 @@ out differs again:
 | **No** — the stream ends | `{"type": "error", "status": 400}` | a construction-time `ValueError` — overrides disabled, or a provider name that does not resolve ([`app.py:2102`][ovrreject]) |
 | **No** — the stream ends mid-answer | in-band `{"type": "error", "status": 500}` | a model string the provider builds happily and rejects on use — `get_chat_model` does not check the provider's catalogue, so an unknown model ID for OpenAI or OpenRouter surfaces at invocation, not at construction ([`app.py:2627`][outerr]) |
 | **Yes** — from the default pipeline | `{"type": "warning", "message": "Using default model: …"}` | most construction failures, and a failed request-local pipeline build ([`app.py:2108`][ovrwarn], [`:2128`][ovrwarn2]) |
-| **Yes** — from the default pipeline | **nothing at all**: no `error`, no `warning` | `_create_provider_llm` returning falsey rather than raising, which is what an `ImportError` does ([`app.py:1645`][ovrimport]); or an active pipeline with no `agent_llm` ([`app.py:2111`][ovrguard]) |
+| **Yes** — from the default pipeline | **nothing at all**: no `error`, no `warning` | an active pipeline with no `agent_llm` ([`app.py:2111`][ovrguard]) |
 
 So "the override failed" does **not** imply "the default answered" — the first two rows
 terminate rather than fall back, and a client that assumes an answer is always coming will wait
@@ -225,7 +225,6 @@ So do not infer the answering model from your own request. Read `final.model_use
 [ovrwarn]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2108
 [ovrwarn2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2128
 [ovrguard]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2111
-[ovrimport]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1645
 [modelused]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2593
 [outerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2627
 [legacygate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2441

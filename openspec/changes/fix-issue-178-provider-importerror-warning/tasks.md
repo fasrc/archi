@@ -70,14 +70,14 @@ protected-path guard and looks like a failure when it is not.
 
 ## 4. Documentation
 
-- [ ] 4.1 In `docs/docs/api_reference.md:210`, edit the override outcome table's "**nothing at
+- [x] 4.1 In `docs/docs/api_reference.md:210`, edit the override outcome table's "**nothing at
       all**: no `error`, no `warning`" row to remove the `ImportError` / falsey-construction half.
       Leave the "active pipeline with no `agent_llm` (`app.py:2111`)" half intact — it is a
       separate silent path and is out of scope for this change.
-- [ ] 4.2 Remove the now-unreferenced `[ovrimport]` link definition at
+- [x] 4.2 Remove the now-unreferenced `[ovrimport]` link definition at
       `docs/docs/api_reference.md:228` if 4.1 left no reference to it, and confirm `[ovrguard]`
       (`:227`) is still referenced.
-- [ ] 4.3 Re-read the surrounding prose at `docs/docs/api_reference.md:198-220` and confirm no
+- [x] 4.3 Re-read the surrounding prose at `docs/docs/api_reference.md:198-220` and confirm no
       sentence still claims an `ImportError` produces no event. In particular check the "A silent
       fallback is a normal-looking success" paragraph below the table.
 
