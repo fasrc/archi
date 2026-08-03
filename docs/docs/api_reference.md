@@ -32,7 +32,7 @@ honour all of it — the last four fields are read only by the streaming endpoin
 |-------|------|----------|-------------|
 | `last_message` | list of `[sender, message]` pairs | yes | The user's turn. A list **containing** the pair, not the pair itself — see below. Only the first pair is read. A malformed value is rejected with **HTTP 400**. |
 | `client_id` | string | yes | Identifies the calling client; the request is rejected without it. |
-| `client_sent_msg_ts` | int (ms since epoch) | no | The time you send the request (milliseconds since epoch); used for latency accounting and as the start of the deadline window when `client_timeout` is also supplied. Generate this value at send time — a stale timestamp paired with a live `client_timeout` looks like an already-expired deadline. |
+| `client_sent_msg_ts` | int (ms since epoch) | no | The time you send the request (milliseconds since epoch); used for latency accounting and as the start of the deadline window when `client_timeout` is also supplied. Generate this value at send time — a stale timestamp paired with a live `client_timeout` looks like an already-expired deadline. Omitting it costs you only the client→server half of the latency profile: the request is still timed and still recorded, but the `timing.client_sent_msg_ts` column stores `1970-01-01T00:00:00Z` as a sentinel meaning *"the client declared no send time"* ([`app.py:4767`][sentinel]). Exclude that value when computing client→server latency; every other milestone on the row is a real measurement. |
 | `client_timeout` | int (ms) | no | How long the client is willing to wait (milliseconds). Two deadlines read it. When both this and `client_sent_msg_ts` are supplied, the server rejects a request that *arrives* after the window has already elapsed with **408**. On the streaming endpoint it is additionally checked **as each event is produced**, measured server-side from the moment the stream opens — so supplying `client_timeout` alone, with no `client_sent_msg_ts`, still ends an over-long stream with the in-band 408 event even though the arrival check cannot run. Because that check runs between events, it bounds a slow stream but **not** a provider that stalls without emitting anything; do not rely on it as a hard ceiling, and keep your own client-side timeout ([issue #191](https://github.com/fasrc/archi/issues/191)). |
 | `conversation_id` | int or `null` | no | Existing conversation to append to. `null` (or omitted) starts a new one. |
 | `config_name` | string | no | Named configuration to answer under. |
@@ -42,7 +42,8 @@ honour all of it — the last four fields are read only by the streaming endpoin
 | `include_agent_steps` | bool | stream only | Include the incremental **answer text** — the `chunk` events ([`app.py:2437`][chunkgate]). Default `true`. Does **not** gate reasoning. Ignored by `POST /api/get_chat_response`. |
 | `include_tool_steps` | bool | stream only | Include tool events (`tool_start`, `tool_output`, `tool_end`) **and reasoning events** (`thinking_start`, `thinking_end`, [`app.py:2417`][thinkgate]). Default `true`. Ignored by `POST /api/get_chat_response`. |
 
-[streamerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2084
+[streamerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2085
+[sentinel]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4767
 
 **`last_message` is nested.** It is a list whose first element is the
 `[sender, message]` pair — `[["User", "How do I submit a job?"]]`, **not**
@@ -101,8 +102,8 @@ curl -sS http://localhost:7861/api/get_chat_response \
     With **SSO** the login is a browser redirect flow that curl cannot complete; copy the
     session cookie out of an already-logged-in browser session instead.
 
-[authwrap]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2805
-[loginform]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L3289
+[authwrap]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2806
+[loginform]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L3290
 
 The body it builds has this shape. This is a **template, not valid JSON** — the placeholder
 is deliberately unquoted so that pasting it unedited fails in your own JSON parser rather
@@ -177,28 +178,28 @@ the provider and comes back as an in-band `500` partway through the stream.
 So do not infer the answering model from your own request. Read `final.model_used`, and treat a
 `warning` event as "my override did not take".
 
-[ovrreject]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2111
-[ovrwarn]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2117
-[ovrwarn2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2137
-[ovrguard]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2120
-[ovrimport]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1645
-[modelused]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2610
-[outerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2644
-[legacygate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2458
-[chunkyield]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2440
-[evmeta]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4822
-[evtoolstart]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2371
-[evtooloutput]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2384
-[evtoolend]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2398
-[evfinal]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2595
-[everror]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2084
-[traceusage]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2571
-[chunkyield2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2482
-[traceevent]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2449
-[stepemit]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1766
-[refreshguard]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1694
+[ovrreject]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2112
+[ovrwarn]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2118
+[ovrwarn2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2138
+[ovrguard]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2121
+[ovrimport]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1646
+[modelused]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2611
+[outerr]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2645
+[legacygate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2459
+[chunkyield]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2441
+[evmeta]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4831
+[evtoolstart]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2372
+[evtooloutput]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2385
+[evtoolend]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2399
+[evfinal]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2596
+[everror]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2085
+[traceusage]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2572
+[chunkyield2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2483
+[traceevent]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2450
+[stepemit]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1767
+[refreshguard]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1695
 
-[override]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2101
+[override]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2102
 
 ### `POST /api/get_chat_response_stream`
 
@@ -265,8 +266,8 @@ be sent [together](#overriding-provider-and-model) or neither takes effect.
     has no counterpart there, because the non-streaming handler ignores `provider` and `model`
     altogether and would answer normally.
 
-[streamopen]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4849
-[clientid]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4805
+[streamopen]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4858
+[clientid]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4814
 
 Each line is a JSON object with a `type` field. Event types:
 
@@ -347,10 +348,10 @@ something not listed here — while still handling `chunk`, which is where the a
     To suppress reasoning, set `include_tool_steps: false` — accepting that tool
     events go with it. The two are not separable through this API.
 
-[chunkgate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2437
-[chunkgate2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2471
-[thinkgate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2417
-[thinkgate2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2431
+[chunkgate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2438
+[chunkgate2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2472
+[thinkgate]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2418
+[thinkgate2]: https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2432
 
 ### `POST /api/cancel_stream`
 
