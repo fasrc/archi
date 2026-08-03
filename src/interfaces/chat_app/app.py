@@ -94,6 +94,7 @@ from src.utils.rbac import (
     get_registry,
     get_user_roles,
     has_permission,
+    is_api_request,
     require_any_permission,
     require_authenticated,
     require_permission,
@@ -3459,14 +3460,8 @@ class FlaskAppWrapper(object):
                         # Redirect to login page which will trigger SSO
                         return redirect(url_for("login"))
 
-                # Return 401 Unauthorized response for API requests
-                return (
-                    jsonify(
-                        {"error": "Unauthorized", "message": "Authentication required"}
-                    ),
-                    401,
-                )
-                if request.path.startswith("/api/"):
+                # API callers get a parseable 401; browsers get the login page
+                if is_api_request():
                     return (
                         jsonify(
                             {
@@ -3509,6 +3504,10 @@ class FlaskAppWrapper(object):
                         registry = get_registry()
                         if not registry.allow_anonymous:
                             return redirect(url_for("login"))
+                    # API callers get a parseable 401; browsers get the login page.
+                    # require_perm also guards /data, /upload and /admin/database.
+                    if not is_api_request():
+                        return redirect(url_for("login"))
                     return (
                         jsonify(
                             {

@@ -49,6 +49,23 @@ def is_authenticated() -> bool:
     return session.get("logged_in", False)
 
 
+def is_api_request() -> bool:
+    """
+    Check whether the current request wants a machine-readable answer.
+
+    This is the canonical predicate for deciding how to reject an unauthenticated or
+    unauthorized caller: API and JSON clients get a status code and a JSON body they can
+    parse, browsers get a redirect to the login page they can render.
+
+    A JSON content type counts even off an `/api/` path, so a programmatic client is never
+    handed HTML it cannot use.
+
+    Returns:
+        True if the caller expects JSON rather than a rendered page
+    """
+    return request.is_json or request.path.startswith("/api/")
+
+
 def require_authenticated(f: Callable) -> Callable:
     """
     Decorator that requires user to be authenticated.
