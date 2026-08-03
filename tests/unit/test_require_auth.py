@@ -177,6 +177,35 @@ class TestSsoRedirectIsPreserved:
         assert response.status_code == 302
         assert logged.call_args.kwargs["event_type"] == "anonymous_redirect"
 
+    def test_permission_guarded_page_also_logs_the_audit_event(self):
+        """``require_perm`` guards the privileged pages, where losing the trail costs most.
+
+        The spec requires the ``anonymous_redirect`` event whenever SSO enforcement takes
+        the redirect — not only on the ``require_auth`` routes. ``/data``, ``/upload`` and
+        ``/admin/database`` are the routes where an unaudited anonymous hit matters.
+        """
+        client, registry = self._sso_client()
+
+        with patch.object(app_module, "get_registry", return_value=registry):
+            with patch.object(app_module, "log_authentication_event") as logged:
+                response = client.get("/upload")
+
+        assert response.status_code == 302
+        assert response.headers["Location"].endswith("/login")
+        assert logged.call_count == 1
+        assert logged.call_args.kwargs["event_type"] == "anonymous_redirect"
+
+    def test_permission_guarded_api_path_also_logs_the_audit_event(self):
+        """Audited for API and browser callers alike, as the spec words it."""
+        client, registry = self._sso_client()
+
+        with patch.object(app_module, "get_registry", return_value=registry):
+            with patch.object(app_module, "log_authentication_event") as logged:
+                response = client.post("/api/upload/file")
+
+        assert response.status_code == 302
+        assert logged.call_args.kwargs["event_type"] == "anonymous_redirect"
+
     def test_sso_allowing_anonymous_falls_through_to_the_split(self):
         client, registry = self._sso_client(allow_anonymous=True)
 

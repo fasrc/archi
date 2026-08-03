@@ -3503,6 +3503,16 @@ class FlaskAppWrapper(object):
                     if self.sso_enabled:
                         registry = get_registry()
                         if not registry.allow_anonymous:
+                            # Audited like require_auth's redirect: these are the
+                            # privileged routes, so an unlogged anonymous hit here is
+                            # the one least affordable to lose.
+                            log_authentication_event(
+                                user="anonymous",
+                                event_type="anonymous_redirect",
+                                success=False,
+                                method="web",
+                                details=f"path={request.path}, method={request.method}",
+                            )
                             return redirect(url_for("login"))
                     # API callers get a parseable 401; browsers get the login page.
                     # require_perm also guards /data, /upload and /admin/database.
