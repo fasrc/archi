@@ -1292,19 +1292,52 @@ class TestPersistedDocumentPath:
         # pre-3.13 route interpolated the RuntimeError's own text ("Symlink loop
         # from '<path>'") while the 3.13+ route emitted the literal "symlink
         # loop". Same input, different message depending on the interpreter.
+        #
+        # BOTH routes are stubbed explicitly rather than letting the host
+        # interpreter pick one: on 3.13+ the unpatched call already takes the
+        # realpath route, so comparing it against a realpath stub would compare
+        # a route with itself and pass no matter how the pre-3.13 route behaves.
+        # An unpatched real-loop refusal is covered by
+        # test_a_self_referential_symlink_is_refused_by_name.
         root = tmp_path / "data"
         root.mkdir()
-        loop = root / "loop.md"
+        loop = root / "loop"
         loop.symlink_to(loop)
 
-        with pytest.raises(ValueError) as raising_route:
-            resolve_persisted_path("loop.md", str(root))
+        def raise_only_on_the_loop(self):
+            # The data root resolves normally on both routes; only the looping
+            # document path takes the interpreter-specific branch, so the two
+            # messages are comparable (same `description`, same path).
+            if "loop" in self.parts:
+                raise RuntimeError(f"Symlink loop from {str(self)!r}")
+            return Path(os.path.realpath(self))
+
+        monkeypatch.setattr(Path, "resolve", raise_only_on_the_loop)
+        with pytest.raises(ValueError) as pre_313_route:
+            resolve_persisted_path("loop/doc.md", str(root))
 
         monkeypatch.setattr(Path, "resolve", lambda self: Path(os.path.realpath(self)))
-        with pytest.raises(ValueError) as realpath_route:
-            resolve_persisted_path("loop.md", str(root))
+        with pytest.raises(ValueError) as post_313_route:
+            resolve_persisted_path("loop/doc.md", str(root))
 
-        assert str(raising_route.value) == str(realpath_route.value)
+        assert str(pre_313_route.value) == str(post_313_route.value)
+        assert str(pre_313_route.value).endswith("cannot be resolved: symlink loop")
+
+    def test_an_unprobeable_component_is_refused_not_raised_as_oserror(self, tmp_path):
+        # Totality is the whole promise here, and it is not only about loops.
+        # `Path.is_symlink()` swallows just ENOENT/ENOTDIR/EBADF/ELOOP, so an
+        # overlong component raises ENAMETOOLONG — which is NOT a ValueError,
+        # so the caller's `except ValueError` in
+        # scripts/benchmarking/goldenset_maintenance.py would not convert it to
+        # a per-row OperationalError and one bad row would abort the entire
+        # maintenance run. A component that cannot be probed cannot be
+        # certified loop-free, so it is refused by name like any other
+        # unresolvable path.
+        root = tmp_path / "data"
+        root.mkdir()
+
+        with pytest.raises(ValueError, match="cannot be resolved"):
+            resolve_persisted_path("x" * 5000, str(root))
 
     def test_a_sibling_root_prefix_is_not_treated_as_contained(self, tmp_path):
         # `/srv/data-old/x` starts with `/srv/data` as a string but is a

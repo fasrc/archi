@@ -301,20 +301,37 @@ def _resolve_totally(path: Path, description: str) -> Path:
     message and type are identical on every interpreter; the interpreter's own
     RuntimeError text is deliberately not interpolated (it names only the path,
     which the message already carries) but is kept as __cause__.
+
+    Refusal is total, not loop-only. `Path.is_symlink()` swallows just
+    ENOENT/ENOTDIR/EBADF/ELOOP, so probing a component can itself raise —
+    ENAMETOOLONG on an overlong name, EACCES on an unreadable parent. Those are
+    normalized to the same ValueError because the caller
+    (`scripts/benchmarking/goldenset_maintenance.py`) converts ValueError to a
+    per-row OperationalError and lets the run continue; a bare OSError escaping
+    here would instead abort the whole maintenance run over one bad row. A
+    component that cannot be probed cannot be certified loop-free, so refusing
+    is also the conservative answer.
     """
-    cause: Optional[BaseException] = None
-    resolved: Optional[Path] = None
     try:
         resolved = path.resolve()
+        looping = any(
+            component.is_symlink() for component in (resolved, *resolved.parents)
+        )
     except RuntimeError as exc:
-        cause = exc
-    if resolved is None or any(
-        component.is_symlink() for component in (resolved, *resolved.parents)
-    ):
-        raise ValueError(
-            f"{description} {str(path)!r} cannot be resolved: symlink loop"
-        ) from cause
-    return resolved
+        # 3.11/3.12: resolve() raises on a symlink loop.
+        reason, cause = "symlink loop", exc
+    except OSError as exc:
+        # resolve(), or probing one component, failed for an errno pathlib does
+        # not swallow. strerror (not str(exc)) keeps the path out of the reason,
+        # which the message already carries.
+        reason, cause = (exc.strerror or str(exc)), exc
+    else:
+        if not looping:
+            return resolved
+        reason, cause = "symlink loop", None
+    raise ValueError(
+        f"{description} {str(path)!r} cannot be resolved: {reason}"
+    ) from cause
 
 
 def resolve_persisted_path(file_path: str, data_path: str) -> Optional[Path]:
