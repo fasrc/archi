@@ -15,14 +15,36 @@ Requires:
   - 30-50 seconds per test on CPU
 """
 
+import importlib
+import socket
+
 import pytest
 
-# Anchored on OSError so ConnectionError, requests.ConnectionError, and
-# huggingface_hub's LocalEntryNotFoundError (all OSError subclasses) are all
-# covered. Extended with huggingface_hub's own offline/HTTP error types when
-# that library is available. Never catches bare Exception — that would absorb
-# AssertionError from a genuine embedding regression (see design D4).
-_NETWORK_ERRORS: tuple[type[BaseException], ...] = (OSError,)
+# The transport failures that mean "the CDN was unreachable" — enumerated by
+# family, NOT anchored on the whole OSError hierarchy. OSError would also absorb
+# PermissionError on the model cache, ENOSPC on a full disk, and an unreadable
+# or corrupt cache directory, reporting each as a network skip and hiding
+# precisely the local benchmark defects _load_model promises to propagate.
+# Never catches bare Exception either — that would absorb AssertionError from a
+# genuine embedding regression (see design D4).
+#
+# Each optional family is appended only when its library is importable, so the
+# tuple stays valid in a minimal environment:
+#   - requests.RequestException covers requests.ConnectionError/Timeout, and
+#     huggingface_hub's HfHubHTTPError, which subclasses it.
+#   - httpx.TransportError covers ConnectError/TimeoutException/ReadError; none
+#     of the httpx errors are OSError subclasses, so they need naming here.
+_NETWORK_ERRORS: tuple[type[BaseException], ...] = (
+    ConnectionError,
+    TimeoutError,
+    socket.gaierror,
+)
+try:
+    from requests.exceptions import RequestException
+
+    _NETWORK_ERRORS += (RequestException,)
+except ImportError:
+    pass
 try:
     from huggingface_hub.errors import (
         HfHubHTTPError,
@@ -33,6 +55,29 @@ try:
     _NETWORK_ERRORS += (HfHubHTTPError, LocalEntryNotFoundError, OfflineModeIsEnabled)
 except ImportError:
     pass
+try:
+    from httpx import TransportError
+
+    _NETWORK_ERRORS += (TransportError,)
+except ImportError:
+    pass
+
+
+def _import_or_skip(module: str, attr: str):
+    """Import *attr* from *module*, or skip naming the missing library.
+
+    Mirrors _load_model's missing-library contract for the benchmark's other
+    imports. The original test wrapped the model and splitter imports in one
+    ``except ImportError``; when the model import moved into _load_model, the
+    splitter and Document imports were left bare, so a missing dependency
+    raised ModuleNotFoundError and errored the documented benchmark command
+    instead of reporting a skip.
+    """
+    try:
+        loaded = importlib.import_module(module)
+    except ImportError:
+        pytest.skip(f"{module} not installed")
+    return getattr(loaded, attr)
 
 
 def _load_model(model_name: str):
@@ -96,7 +141,10 @@ class TestEmbeddingBenchmarks:
         """
         import time
 
-        from langchain_text_splitters.character import CharacterTextSplitter
+        CharacterTextSplitter = _import_or_skip(
+            "langchain_text_splitters.character", "CharacterTextSplitter"
+        )
+        Document = _import_or_skip("langchain_core.documents", "Document")
 
         model = _load_model("sentence-transformers/all-MiniLM-L6-v2")
         splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
@@ -115,8 +163,6 @@ class TestEmbeddingBenchmarks:
 
         # Time the chunking
         start = time.time()
-        from langchain_core.documents import Document
-
         doc = Document(page_content=html_content, metadata={})
         chunks = splitter.split_documents([doc])
         chunk_time = time.time() - start
@@ -177,38 +223,98 @@ class TestEmbeddingGuard:
         assert "network" in str(exc_info.value).lower()
 
     def test_assertion_error_is_not_converted_to_skip(self, monkeypatch):
-        """Negative test (task 2.5): a wrong-dimension embedding fails, not skips.
+        """Negative test (task 2.5): AssertionError propagates OUT of _load_model.
 
-        This test would catch a future widening of the guard to ``except
-        Exception``, which would absorb AssertionError and make the benchmarks
-        incapable of ever failing.
+        The AssertionError must be raised from INSIDE _load_model's try block,
+        because that is the only place the guard could swallow it. An earlier
+        version of this test asserted on a wrong embedding dimension *after*
+        _load_model had returned — outside the helper — so it would still have
+        passed with the guard widened to ``except Exception``, which is exactly
+        the regression it claims to catch.
         """
-        import time
-
-        class FakeModel:
-            def embed_documents(self, texts):
-                # Return wrong dimension (128 instead of 384) to trigger assertion
-                return [[0.0] * 128 for _ in texts]
 
         def fake_init(self, model_name, **kwargs):
-            pass
+            raise AssertionError("embedding regression, not a network problem")
 
         monkeypatch.setattr(
             "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
         )
+
+        # Deliberately not `pytest.raises`: if the guard were widened, the
+        # AssertionError would be converted to a skip, and a bare
+        # `pytest.raises` block would let that skip propagate — reporting this
+        # test as SKIPPED, which reads as green in CI. Catching the skip and
+        # calling pytest.fail makes the regression loud instead of invisible.
+        try:
+            _load_model("sentence-transformers/all-MiniLM-L6-v2")
+        except AssertionError as exc:
+            assert "embedding regression" in str(exc)
+        except pytest.skip.Exception as exc:
+            pytest.fail(f"the guard swallowed AssertionError into a skip: {exc}")
+        else:
+            pytest.fail("_load_model neither raised nor skipped")
+
+    def test_a_local_oserror_is_not_reported_as_a_network_outage(self, monkeypatch):
+        """A local filesystem failure must FAIL the benchmark, not skip it.
+
+        Anchoring the guard on the whole OSError hierarchy made every local
+        failure look like a CDN outage: PermissionError on the model cache, a
+        full disk, an unreadable/corrupt cache directory are all OSError
+        subclasses. Those are precisely the non-network defects _load_model
+        promises to propagate.
+        """
+
+        def fake_init(self, model_name, **kwargs):
+            raise PermissionError(13, "Permission denied", "~/.cache/huggingface/hub")
+
         monkeypatch.setattr(
-            "langchain_huggingface.HuggingFaceEmbeddings.embed_documents",
-            FakeModel.embed_documents,
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
         )
 
-        model = _load_model("sentence-transformers/all-MiniLM-L6-v2")
-        test_texts = ["This is a test document.", "Another test."]
+        with pytest.raises(PermissionError):
+            _load_model("sentence-transformers/all-MiniLM-L6-v2")
 
-        start = time.time()
-        embeddings = model.embed_documents(test_texts)
-        elapsed = time.time() - start
+    def test_an_httpx_transport_error_becomes_a_named_skip(self, monkeypatch):
+        """httpx transport errors are not OSError subclasses.
 
-        # This assertion should fail, not skip, proving the guard does not
-        # swallow AssertionError.
-        with pytest.raises(AssertionError):
-            assert len(embeddings[0]) == 384, "Embedding dimension should be 384"
+        When huggingface_hub runs on its httpx transport, a connection failure
+        or timeout after its retries surfaces as httpx.ConnectError /
+        httpx.TimeoutException. Neither inherits from OSError, so an
+        OSError-anchored guard let them fail the benchmark instead of skipping.
+        """
+        httpx = pytest.importorskip("httpx")
+
+        def fake_init(self, model_name, **kwargs):
+            raise httpx.ConnectError("All connection attempts failed")
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        with pytest.raises(pytest.skip.Exception) as exc_info:
+            _load_model("sentence-transformers/all-MiniLM-L6-v2")
+
+        assert "network" in str(exc_info.value).lower()
+
+    def test_a_missing_benchmark_library_skips_instead_of_erroring(self, monkeypatch):
+        """Every required benchmark import skips, not just the model one.
+
+        The original test wrapped the model AND splitter imports in one
+        ``except ImportError``. Moving only the model import into _load_model
+        left the splitter and Document imports bare, so a missing dependency
+        raised ModuleNotFoundError and errored the documented benchmark command
+        instead of reporting a skip.
+        """
+        import importlib
+
+        def boom(name):
+            raise ModuleNotFoundError(f"No module named {name!r}")
+
+        monkeypatch.setattr(importlib, "import_module", boom)
+
+        with pytest.raises(pytest.skip.Exception) as exc_info:
+            _import_or_skip(
+                "langchain_text_splitters.character", "CharacterTextSplitter"
+            )
+
+        assert "langchain_text_splitters" in str(exc_info.value)
