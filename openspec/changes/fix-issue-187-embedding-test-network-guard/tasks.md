@@ -147,7 +147,7 @@ stop and record why in `docs/questions.md` instead.
       diff-cover reports no measurable lines, that is expected, not a failure. Never `--no-verify`.
 - [x] 6.2 Confirm the gate's own wall-clock did not regress and ideally improved, and record the
       before (task 1.5) and after numbers for the PR body.
-- [ ] 6.3 Commit with a short lowercase subject and no `Co-Authored-By` or AI-attribution
+- [x] 6.3 Commit with a short lowercase subject and no `Co-Authored-By` or AI-attribution
       trailers. Push the branch and open a PR into `fasrc/archi:dev` with `closes #187`.
       The PR body MUST state:
       (i) that **both (a) and (b)** from the issue's menu were taken, and why (a) alone was
