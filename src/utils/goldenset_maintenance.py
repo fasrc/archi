@@ -33,8 +33,10 @@ the **live source inventory**, since the corpus never prunes. Drift re-fetches t
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
+import os
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -283,37 +285,60 @@ def read_corpus_docs(fetch_rows: CorpusRowFetcher) -> List[CorpusDoc]:
 def _resolve_totally(path: Path, description: str) -> Path:
     """Resolve *path* to a real absolute path, refusing if it cannot be resolved.
 
-    Two routes cover both pre-3.13 and 3.13+ behavior:
-    - Python 3.11/3.12: Path.resolve() raises RuntimeError on a symlink loop.
-    - Python 3.13+: Path.resolve() delegates to os.path.realpath(strict=False),
-      which gives up at the looping component and returns the remainder of the
-      path unexpanded — nothing raises, and the result is not fully resolved.
+    `Path.resolve()` alone cannot answer the question, and it answers it
+    differently on every interpreter this code runs on:
 
-    The 3.13+ route is caught by a post-condition rather than by inspecting the
-    final component: a fully resolved path has no symlink in ANY component, by
-    definition of realpath. Checking only the tail misses a loop in an ancestor
-    (`loop/doc.md` under `loop -> loop` resolves to `.../loop/doc.md`, whose
-    final component is an ordinary nonexistent name), which would return an
-    unresolved path and let containment accept it. Verified against 3.13.13
-    and 3.14.5.
+    - 3.11/3.12 raise RuntimeError on a symlink loop.
+    - 3.13+ delegate to `os.path.realpath(strict=False)`, which gives up at the
+      looping component and returns the rest of the path unexpanded — nothing
+      raises and the result is not fully resolved.
+    - 3.14 goes further and gives up *silently* on any probe failure, and its
+      `Path.is_symlink()` returns False instead of letting the OSError through.
 
-    Both routes raise from ONE site with the same normalized reason, so the
-    message and type are identical on every interpreter; the interpreter's own
-    RuntimeError text is deliberately not interpolated (it names only the path,
-    which the message already carries) but is kept as __cause__.
+    So the authority here is a strict probe of the ORIGINAL spelling —
+    `os.path.realpath(path, strict=True)`, which walks the components and
+    reports the first one the kernel cannot traverse. Measured identically on
+    3.11.15, 3.12.13, 3.13.13 and 3.14.5: ELOOP for a loop anywhere in the
+    path, EACCES under a non-searchable parent, ENAMETOOLONG for an overlong
+    component. Inferring the same facts from the resolved output does not work,
+    because resolution is lossy in both directions:
 
-    Refusal is total, not loop-only. `Path.is_symlink()` swallows just
-    ENOENT/ENOTDIR/EBADF/ELOOP, so probing a component can itself raise —
-    ENAMETOOLONG on an overlong name, EACCES on an unreadable parent. Those are
-    normalized to the same ValueError because the caller
+    - A loop can be *erased* by a later `..`. `loop/../safe.md` under
+      `loop -> loop` collapses to `<root>/safe.md` — a real, contained,
+      readable file — so no component of the result is a symlink and the
+      post-condition sees nothing, even though opening the pathname the row
+      actually stored fails ELOOP. The guard would substitute a neighbor.
+    - On 3.14 a component that could not be inspected at all reports False,
+      so the probe cannot distinguish "not a symlink" from "could not look".
+
+    ENOENT is the one failure that is *not* a refusal: a path that merely does
+    not exist yet is still resolvable, and a stale row pointing at a deleted
+    file must reach containment and then fail at the read with a per-row error,
+    which is where that diagnostic has always been. The `is_symlink()`
+    post-condition is kept for exactly that tolerated route — `missing/../a/x`
+    under `a -> a` stops the strict walk at ENOENT before it ever reaches the
+    loop, so the resolved output is the only remaining witness.
+
+    Every route raises from ONE site with the same normalized reason, so the
+    message and type are identical on every interpreter: ELOOP is reported as
+    "symlink loop" rather than the OS's "Too many levels of symbolic links",
+    and `resolve()`'s own ValueError text ("embedded null byte" on 3.11,
+    "lstat: embedded null character in path" on 3.12+) is normalized to
+    "malformed path". The original is kept as __cause__ either way.
+
+    Refusal is total, not loop-only, because the caller
     (`scripts/benchmarking/goldenset_maintenance.py`) converts ValueError to a
-    per-row OperationalError and lets the run continue; a bare OSError escaping
-    here would instead abort the whole maintenance run over one bad row. A
-    component that cannot be probed cannot be certified loop-free, so refusing
-    is also the conservative answer.
+    per-row OperationalError and lets the run continue; a bare OSError — or a
+    ValueError that names no path — would instead abort the whole maintenance
+    run over one bad row, or abort nothing but leave the operator unable to
+    find it.
     """
     try:
         resolved = path.resolve()
+        try:
+            os.path.realpath(path, strict=True)
+        except FileNotFoundError:
+            pass
         looping = any(
             component.is_symlink() for component in (resolved, *resolved.parents)
         )
@@ -321,10 +346,17 @@ def _resolve_totally(path: Path, description: str) -> Path:
         # 3.11/3.12: resolve() raises on a symlink loop.
         reason, cause = "symlink loop", exc
     except OSError as exc:
-        # resolve(), or probing one component, failed for an errno pathlib does
-        # not swallow. strerror (not str(exc)) keeps the path out of the reason,
-        # which the message already carries.
-        reason, cause = (exc.strerror or str(exc)), exc
+        # The strict probe, resolve(), or one component probe failed. strerror
+        # (not str(exc)) keeps the path out of the reason, which the message
+        # already carries; ELOOP gets this guard's one word for a loop so the
+        # strict-probe route and the RuntimeError route read the same.
+        reason = "symlink loop" if exc.errno == errno.ELOOP else exc.strerror
+        reason, cause = (reason or str(exc)), exc
+    except ValueError as exc:
+        # resolve() rejects a malformed path itself — right type, but its
+        # message names neither the path nor this guard, and it differs by
+        # interpreter. Re-raised below with both.
+        reason, cause = "malformed path", exc
     else:
         if not looping:
             return resolved

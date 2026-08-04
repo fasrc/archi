@@ -1339,6 +1339,66 @@ class TestPersistedDocumentPath:
         with pytest.raises(ValueError, match="cannot be resolved"):
             resolve_persisted_path("x" * 5000, str(root))
 
+    def test_a_loop_erased_by_parent_traversal_is_refused(self, tmp_path):
+        # A post-condition on the RESOLVED output cannot see a loop that `..`
+        # erased. `loop/../safe.md` under `loop -> loop` is untraversable —
+        # opening that pathname fails ELOOP — but `Path.resolve()` collapses the
+        # `..` lexically against the unresolved loop and returns
+        # `<root>/safe.md`, measured identically on 3.11.15, 3.12.13, 3.13.13
+        # and 3.14.5. No component of THAT result is a symlink, so the guard
+        # certified it fully resolved and handed back a readable neighbor of the
+        # file the row actually named. Traversability is the kernel's verdict to
+        # give, not something inferable from the collapsed result.
+        root = tmp_path / "data"
+        root.mkdir()
+        (root / "safe.md").write_text("grounding text", encoding="utf-8")
+        loop = root / "loop"
+        loop.symlink_to(loop)
+
+        with pytest.raises(ValueError, match="cannot be resolved: symlink loop"):
+            resolve_persisted_path("loop/../safe.md", str(root))
+
+    def test_a_malformed_path_is_refused_by_its_own_name(self, tmp_path):
+        # An embedded NUL makes `Path.resolve()` raise ValueError itself, so the
+        # refusal never reached this guard's one raise site. The TYPE was
+        # already what the caller converts to a per-row OperationalError, but
+        # the message ("embedded null byte" on 3.11, "lstat: embedded null
+        # character in path" on 3.12+) names neither the offending `file_path`
+        # nor that it was a persisted document — and it differs by interpreter.
+        # An operator reading the run log could not locate the bad row.
+        root = tmp_path / "data"
+        root.mkdir()
+
+        with pytest.raises(ValueError, match="persisted document") as refusal:
+            resolve_persisted_path("a\x00b", str(root))
+
+        # The path is interpolated with !r, so the NUL reaches the operator's
+        # log as an escape rather than as a raw control byte — still locatable,
+        # which is the point, without corrupting the line it is printed on.
+        assert r"a\x00b" in str(refusal.value)
+        assert str(refusal.value).endswith("cannot be resolved: malformed path")
+
+    def test_an_unprobeable_component_is_refused_even_when_probes_stay_silent(
+        self, tmp_path, monkeypatch
+    ):
+        # Python 3.14 defeats BOTH halves of the round-2 post-condition:
+        # `Path.resolve()` gives up and returns the unresolved absolute spelling
+        # instead of raising, and `Path.is_symlink()` returns False instead of
+        # letting the OSError through. Measured on 3.14.5, the very input of
+        # test_an_unprobeable_component_is_refused_not_raised_as_oserror RETURNS
+        # a 5022-character path rather than refusing — the guard accepts a path
+        # whose components it could not inspect. Both 3.14 behaviors are
+        # simulated so the branch is reachable on the gate's 3.11, and the
+        # overlong name keeps the case independent of the runner's uid (a
+        # mode-000 parent proves nothing when the suite runs as root).
+        root = tmp_path / "data"
+        root.mkdir()
+        monkeypatch.setattr(Path, "resolve", lambda self: Path(os.path.abspath(self)))
+        monkeypatch.setattr(Path, "is_symlink", lambda self: False)
+
+        with pytest.raises(ValueError, match="cannot be resolved"):
+            resolve_persisted_path("x" * 5000, str(root))
+
     def test_a_sibling_root_prefix_is_not_treated_as_contained(self, tmp_path):
         # `/srv/data-old/x` starts with `/srv/data` as a string but is a
         # different directory; containment is by path component, not prefix.

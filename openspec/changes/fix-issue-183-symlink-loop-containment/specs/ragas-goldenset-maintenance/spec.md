@@ -27,6 +27,12 @@ so accepting a path whose target is unknown is a file-disclosure channel.
 The requirement MUST hold independently of the interpreter's `Path.resolve()` behavior for
 unresolvable paths, which differs across supported Python versions.
 
+Resolvability SHALL be decided by probing the stored pathname itself, never inferred from the
+resolved output, because resolution is lossy in both directions: a later `..` erases the
+looping component the resolver stepped over, and on some interpreters a component that could
+not be inspected at all is indistinguishable from one that is simply not a symlink. Only a
+path the operating system can actually traverse may be returned.
+
 #### Scenario: A relative path under the data root resolves
 
 - **WHEN** `file_path` is a relative path such as `web/docs/a.md` and `data_path` is the data root
@@ -63,6 +69,30 @@ unresolvable paths, which differs across supported Python versions.
 - **WHEN** `data_path` itself names a symlink loop, so the data root cannot be resolved
 - **THEN** the function raises `ValueError` naming the data root as unresolvable
 - **AND** does NOT raise `RuntimeError` or any other type
+
+#### Scenario: A loop the path's own `..` erased is refused
+
+- **WHEN** `file_path` is `loop/../safe.md`, `loop` is a symlink loop, and `safe.md` is a real
+  readable file under the data root — so the operating system cannot traverse the stored
+  pathname, yet the resolver collapses the `..` and reports `<root>/safe.md`
+- **THEN** the function raises `ValueError` naming that `file_path` as unresolvable
+- **AND** does NOT return the collapsed path, which is contained and readable but is not the
+  file whose pathname the row actually stored
+
+#### Scenario: A component the resolver could not inspect is refused
+
+- **WHEN** a component of `file_path` cannot be probed — an unreadable parent directory, an
+  overlong name — and the interpreter reports that by giving up silently rather than raising
+- **THEN** the function raises `ValueError` naming the path as unresolvable
+- **AND** does NOT treat "the probe reported no symlink" as proof that resolution completed
+
+#### Scenario: A malformed `file_path` is refused by name
+
+- **WHEN** `file_path` contains something the resolver rejects outright, such as an embedded
+  NUL, so it raises `ValueError` itself before the guard inspects anything
+- **THEN** the refusal names the offending `file_path` and identifies it as a persisted
+  document, rather than surfacing the resolver's own bare message
+- **AND** the reason reads the same on every interpreter, whose native wording differs
 
 #### Scenario: The caller reports the refusal per row and continues to be able to run
 
