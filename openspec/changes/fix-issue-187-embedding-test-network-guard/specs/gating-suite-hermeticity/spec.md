@@ -116,10 +116,34 @@ omits whatever the fronting CDN actually emits — a reverse proxy reports origi
 vendor-specific codes — and each omission fails a deliberate benchmark run during exactly the outage
 the guard exists to absorb.
 
-Errors raised before any request leaves the machine — a malformed endpoint URL, a missing scheme —
-are local misconfiguration and SHALL fail, as SHALL a redirect loop, which is the host answering
-repeatedly rather than not answering. These carry no error status, so the guard MUST NOT classify
-them by a shared exception base class that also covers genuine transport failures.
+Errors raised before any request leaves the machine — a malformed endpoint URL, a missing scheme, a
+malformed request of our own — are local misconfiguration and SHALL fail, as SHALL a redirect loop,
+which is the host answering repeatedly rather than not answering. These carry no error status, so the
+guard MUST NOT classify them by a shared exception base class that also covers genuine transport
+failures.
+
+The named exception types SHALL therefore form an **allowlist** whose every member means "no usable
+answer came back" for itself *and for all of its subclasses*. A base class that also covers
+client-side or definitive errors is not admissible, however convenient: naming one is the defect this
+requirement exists to prevent, and it recurred once per HTTP library in the implementation. The
+allowlist SHALL be enforced by a test that inspects the subclasses of every named type, so adding an
+over-broad base fails the suite rather than surfacing as a false skip in a run nobody is watching.
+
+Where a base class must still be consulted — a host HTTP error that carries no response at all, which
+means the request never completed — it SHALL be matched as an exact type, so its specific subclasses
+continue to be treated as the definitive answers they name.
+
+#### Scenario: A client-side protocol or endpoint error fails on either transport
+
+- **WHEN** the endpoint is malformed, or the request the client built is itself invalid, under either
+  HTTP transport the model library may be using
+- **THEN** the benchmark fails and names that error
+- **AND** a protocol error attributable to the SERVER mid-transfer is still reported as an outage
+
+#### Scenario: The allowlist cannot silently readmit an over-broad base class
+
+- **WHEN** a named network type has a subclass that is a client-side or definitive error
+- **THEN** the test suite fails and names the offending pair
 
 #### Scenario: A vendor-specific server-side status is an outage
 

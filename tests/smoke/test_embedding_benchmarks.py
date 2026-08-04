@@ -40,8 +40,29 @@ import pytest
 #     is the transport issue #187 was reported against, so it must be named.
 #     Kept in its own try block so an older hub without it still contributes
 #     the other error types.
-#   - httpx.TransportError covers ConnectError/TimeoutException/ReadError; no
-#     httpx exception is an OSError subclass, so they need naming too.
+#   - The httpx TRANSPORT families are likewise named individually, NOT their
+#     base TransportError, which also covers UnsupportedProtocol (a malformed
+#     HF_ENDPOINT on the httpx transport) and LocalProtocolError (a header WE
+#     sent is illegal). RemoteProtocolError is included, because there the
+#     server broke the protocol mid-transfer; its sibling LocalProtocolError is
+#     not. No httpx exception is an OSError subclass, so naming is required.
+#   - HfHubHTTPError is deliberately ABSENT. Six of its seven subclasses —
+#     RepositoryNotFoundError, GatedRepoError, DisabledRepoError,
+#     RevisionNotFoundError, EntryNotFoundError, BadRequestError — are
+#     definitive answers about a broken model dependency, and they carry a
+#     response, so the status check above is their correct classifier. Only
+#     LocalEntryNotFoundError means unreachable, and it is named directly. A hub
+#     HTTP error carrying NO response is handled by its own clause in
+#     _is_network_failure: with no status there is nothing to classify, and
+#     hf_raise_for_status always attaches one, so that shape only arises when
+#     the request never completed.
+#
+# Every entry here is an ALLOWLIST member: it must mean "no usable answer came
+# back", for itself AND for all of its subclasses. Naming a base class that also
+# covers client-side defects is the defect this file hit three review rounds in a
+# row (HfHubHTTPError, then requests.RequestException, then httpx.TransportError),
+# so test_no_named_network_type_drags_in_a_local_defect now fails the suite if a
+# fourth one is added.
 _NETWORK_ERROR_TYPES: tuple[type[BaseException], ...] = (
     ConnectionError,
     TimeoutError,
@@ -62,6 +83,7 @@ try:
     )
 except ImportError:
     pass
+_HUB_HTTP_ERROR: type[BaseException] | None = None
 try:
     from huggingface_hub.errors import (
         HfHubHTTPError,
@@ -69,11 +91,8 @@ try:
         OfflineModeIsEnabled,
     )
 
-    _NETWORK_ERROR_TYPES += (
-        HfHubHTTPError,
-        LocalEntryNotFoundError,
-        OfflineModeIsEnabled,
-    )
+    _HUB_HTTP_ERROR = HfHubHTTPError
+    _NETWORK_ERROR_TYPES += (LocalEntryNotFoundError, OfflineModeIsEnabled)
 except ImportError:
     pass
 try:
@@ -83,9 +102,17 @@ try:
 except ImportError:
     pass
 try:
-    from httpx import TransportError
+    from httpx import NetworkError as HttpxNetworkError
+    from httpx import ProxyError as HttpxProxyError
+    from httpx import RemoteProtocolError as HttpxRemoteProtocolError
+    from httpx import TimeoutException as HttpxTimeoutException
 
-    _NETWORK_ERROR_TYPES += (TransportError,)
+    _NETWORK_ERROR_TYPES += (
+        HttpxTimeoutException,
+        HttpxNetworkError,
+        HttpxProxyError,
+        HttpxRemoteProtocolError,
+    )
 except ImportError:
     pass
 
@@ -144,23 +171,36 @@ _GUARDED_ERRORS: tuple[type[BaseException], ...] = _NETWORK_ERROR_TYPES + (OSErr
 def _is_network_failure(exc: BaseException) -> bool:
     """True when *exc* means the weights could not be fetched over the network.
 
-    An HTTP ERROR status is checked FIRST, and it is decisive. Every
-    huggingface_hub HTTP error subclasses HfHubHTTPError → RequestException, so
-    the type test below matches all of them unconditionally — including 401, 403
-    and 404, where the Hub was reached and answered definitively. Calling those
-    an outage would turn a renamed, removed or gated model repository into a
-    permanent green-by-skip: the benchmark would stop exercising its only model
-    dependency and never say so.
+    Three questions, in this order, because each is more authoritative than the
+    next:
 
-    Only an error status is decisive, though. requests attaches the successful
+    1. Did the host answer with an error status? Then the status decides. A 401,
+       403 or 404 means it answered definitively about a broken model
+       dependency, and calling that an outage would turn a renamed or gated
+       repository into a permanent green-by-skip — the benchmark would stop
+       exercising its only model dependency and never say so.
+    2. Is it a bare hub HTTP error with no response at all? Then the request
+       never completed, so there is no answer to classify and it is a transport
+       failure. hf_raise_for_status always attaches a response, so that shape
+       only arises when nothing came back — the #187 shape. This tests the EXACT
+       type, not isinstance: the base class alone means only "an HTTP error
+       happened", while every subclass names something specific, and the
+       specific ones — RepositoryNotFoundError, GatedRepoError and the rest —
+       are definitive even if someone constructs one without a response.
+       LocalEntryNotFoundError is a subclass, so it falls through to step 3
+       where it is named directly.
+    3. Otherwise, is the type in the transport allowlist, or a plain OSError
+       carrying a network errno?
+
+    Only an ERROR status is decisive at step 1. requests attaches the successful
     response to a mid-stream failure like ChunkedEncodingError, so a 2xx with an
-    exception is a dropped transfer, not an answer — those fall through to the
-    type and errno tests. So does an error with no response at all, which is the
-    #187 CDN case: nothing came back to read a status from.
+    exception is a dropped transfer, not an answer, and falls through.
     """
     status = getattr(getattr(exc, "response", None), "status_code", None)
     if status is not None and status >= 400:
         return _is_transient_status(status)
+    if _HUB_HTTP_ERROR is not None and type(exc) is _HUB_HTTP_ERROR:
+        return getattr(exc, "response", None) is None
     if isinstance(exc, _NETWORK_ERROR_TYPES):
         return True
     return isinstance(exc, OSError) and exc.errno in _NETWORK_ERRNOS
@@ -848,6 +888,167 @@ class TestEmbeddingGuard:
             _load_model("sentence-transformers/all-MiniLM-L6-v2")
 
         assert "network" in str(exc_info.value).lower()
+
+    @pytest.mark.parametrize("exc_name", ["UnsupportedProtocol", "LocalProtocolError"])
+    def test_an_httpx_client_side_error_fails_instead_of_skipping(
+        self, monkeypatch, exc_name
+    ):
+        """httpx.TransportError has the same problem RequestException had.
+
+        UnsupportedProtocol (`HF_ENDPOINT=htp://…`) and LocalProtocolError (a
+        header WE sent is illegal) are both subclasses of TransportError, and
+        neither carries a >= 400 response, so naming the base turned local
+        misconfiguration into a green skip. Same defect as the requests side, one
+        line below it in the same tuple.
+        """
+        httpx = pytest.importorskip("httpx")
+        exc_type = getattr(httpx, exc_name)
+
+        def fake_init(self, model_name, **kwargs):
+            raise exc_type("client-side protocol problem")
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        _assert_propagates(
+            exc_type, lambda: _load_model("sentence-transformers/all-MiniLM-L6-v2")
+        )
+
+    @pytest.mark.parametrize(
+        "exc_name",
+        [
+            "ConnectError",
+            "ReadError",
+            "WriteError",
+            "CloseError",
+            "ReadTimeout",
+            "PoolTimeout",
+            "ProxyError",
+            "RemoteProtocolError",
+        ],
+    )
+    def test_an_httpx_transport_family_still_skips(self, monkeypatch, exc_name):
+        """The httpx transport families must survive dropping their base class.
+
+        RemoteProtocolError is deliberately in this list while its sibling
+        LocalProtocolError is not: there the SERVER broke the protocol
+        mid-transfer, which is an outage, whereas a local protocol error is our
+        own malformed request.
+        """
+        httpx = pytest.importorskip("httpx")
+        exc_type = getattr(httpx, exc_name)
+
+        def fake_init(self, model_name, **kwargs):
+            raise exc_type("transport failure reaching the CDN")
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        with pytest.raises(pytest.skip.Exception) as exc_info:
+            _load_model("sentence-transformers/all-MiniLM-L6-v2")
+
+        assert "network" in str(exc_info.value).lower()
+
+    @pytest.mark.parametrize(
+        "exc_name",
+        [
+            "RepositoryNotFoundError",
+            "GatedRepoError",
+            "DisabledRepoError",
+            "RevisionNotFoundError",
+            "EntryNotFoundError",
+        ],
+    )
+    def test_a_definitive_hub_error_without_a_response_still_fails(
+        self, monkeypatch, exc_name
+    ):
+        """The status check cannot save us when there is no status to read.
+
+        These six subclasses of HfHubHTTPError all name a definitive condition,
+        and they were reaching the skip through their base class rather than
+        through their status. Normally hf_raise_for_status attaches a response
+        and the status check classifies them, but naming the base meant the
+        classification depended on that attachment. It no longer does: the base
+        is matched by EXACT type, so only a bare HfHubHTTPError with no response
+        is read as "nothing came back".
+        """
+        errors = pytest.importorskip("huggingface_hub.errors")
+        exc_type = getattr(errors, exc_name, None)
+        if exc_type is None:
+            pytest.skip(f"this huggingface_hub has no {exc_name}")
+
+        def fake_init(self, model_name, **kwargs):
+            raise exc_type("definitive answer, no response attached")
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        _assert_propagates(
+            exc_type, lambda: _load_model("sentence-transformers/all-MiniLM-L6-v2")
+        )
+
+    def test_no_named_network_type_drags_in_a_local_defect(self):
+        """Guard the CLASS of defect, not its instances.
+
+        Three consecutive review rounds each found one over-broad base class in
+        `_NETWORK_ERROR_TYPES` — `HfHubHTTPError`, then
+        `requests.RequestException`, then `httpx.TransportError` — and each time
+        the fix was to name the transport families instead. Fixing them one at a
+        time is what produced three rounds.
+
+        This test enumerates the client-side and definitive error types the guard
+        must never absorb and asserts that none of them is a subclass of anything
+        in the allowlist. Adding a convenient base class back fails here, with
+        the offending pair named, instead of surfacing as a false green skip in a
+        run nobody is watching.
+        """
+        local_defects: list[type[BaseException]] = []
+        try:
+            from requests import exceptions as requests_exc
+
+            local_defects += [
+                requests_exc.InvalidURL,
+                requests_exc.MissingSchema,
+                requests_exc.InvalidSchema,
+                requests_exc.TooManyRedirects,
+                requests_exc.URLRequired,
+            ]
+        except ImportError:
+            pass
+        try:
+            import httpx
+
+            local_defects += [httpx.UnsupportedProtocol, httpx.LocalProtocolError]
+        except ImportError:
+            pass
+        try:
+            from huggingface_hub import errors as hub_errors
+
+            local_defects += [
+                hub_errors.RepositoryNotFoundError,
+                hub_errors.GatedRepoError,
+                hub_errors.DisabledRepoError,
+                hub_errors.RevisionNotFoundError,
+                hub_errors.BadRequestError,
+            ]
+        except ImportError:
+            pass
+
+        if not local_defects:
+            pytest.skip("no optional HTTP library installed to audit")
+
+        for defect in local_defects:
+            for named in _NETWORK_ERROR_TYPES:
+                assert not issubclass(defect, named), (
+                    f"{defect.__module__}.{defect.__name__} is a subclass of the "
+                    f"allowlisted {named.__module__}.{named.__name__}, so a local "
+                    "or definitive failure would be reported as a network outage. "
+                    "Name the transport families individually instead of their "
+                    "shared base."
+                )
 
     def test_a_broken_transitive_import_is_not_reported_as_missing(self, monkeypatch):
         """An ImportError from *inside* an installed module is not "not installed".
