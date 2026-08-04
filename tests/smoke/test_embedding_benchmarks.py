@@ -93,6 +93,14 @@ _NETWORK_ERRNOS = frozenset(
     }
 )
 
+# HTTP statuses that mean "the Hub was reached but cannot serve the weights right
+# now". Everything else it answers with — 401, 403, 404, 410 — is a definitive
+# reply about a broken model dependency, not an outage, and must reach the
+# developer as a failure. 408/425 are request-timing, 429 is rate limiting, 5xx
+# is the server's own trouble; all clear on a retry, none indicate the benchmark
+# is wrong.
+_TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
+
 # What _load_model actually catches: a named, bounded set. NEVER bare Exception —
 # that would absorb an AssertionError from a real embedding regression and make
 # the benchmark incapable of failing (see design D4, and the spec requirement
@@ -104,10 +112,36 @@ _GUARDED_ERRORS: tuple[type[BaseException], ...] = _NETWORK_ERROR_TYPES + (OSErr
 
 
 def _is_network_failure(exc: BaseException) -> bool:
-    """True when *exc* means the weights could not be fetched over the network."""
+    """True when *exc* means the weights could not be fetched over the network.
+
+    An HTTP ERROR status is checked FIRST, and it is decisive. Every
+    huggingface_hub HTTP error subclasses HfHubHTTPError → RequestException, so
+    the type test below matches all of them unconditionally — including 401, 403
+    and 404, where the Hub was reached and answered definitively. Calling those
+    an outage would turn a renamed, removed or gated model repository into a
+    permanent green-by-skip: the benchmark would stop exercising its only model
+    dependency and never say so.
+
+    Only an error status is decisive, though. requests attaches the successful
+    response to a mid-stream failure like ChunkedEncodingError, so a 2xx with an
+    exception is a dropped transfer, not an answer — those fall through to the
+    type and errno tests. So does an error with no response at all, which is the
+    #187 CDN case: nothing came back to read a status from.
+    """
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status is not None and status >= 400:
+        return status in _TRANSIENT_HTTP_STATUSES
     if isinstance(exc, _NETWORK_ERROR_TYPES):
         return True
     return isinstance(exc, OSError) and exc.errno in _NETWORK_ERRNOS
+
+
+def _response(status: int):
+    """A minimal requests.Response carrying *status*, for the HTTP guard tests."""
+    requests_mod = pytest.importorskip("requests")
+    response = requests_mod.Response()
+    response.status_code = status
+    return response
 
 
 def _assert_propagates(expected: type[BaseException], call, match: str = ""):
@@ -268,6 +302,81 @@ class TestEmbeddingBenchmarks:
             )
 
 
+class TestTheGuardTestsDegradeLikeTheCodeTheyGuard:
+    """The guard tests must honour the same contract they police.
+
+    `_load_model` promises "langchain_huggingface not installed → skip", and
+    `_import_or_skip` extends that to the benchmark's other imports. But every
+    guard test patches "langchain_huggingface.HuggingFaceEmbeddings.__init__" by
+    STRING, and pytest resolves a string target by importing it — so in a
+    minimal environment the setattr raised ModuleNotFoundError before the skip
+    could ever apply.
+
+    Measured before the fix, running the documented command with the library
+    made unimportable: **6 failed, 2 passed, 2 skipped**. The two skips were the
+    benchmarks, which honour the contract; the six failures were the tests whose
+    whole job is to keep the contract honest.
+    """
+
+    def test_the_guard_tests_skip_when_the_model_library_is_absent(self, tmp_path):
+        import os
+        import subprocess
+        import sys
+
+        # A meta_path hook is the only faithful way to make an INSTALLED package
+        # unimportable for a child process: uninstalling is not available to a
+        # test, and deleting sys.modules entries would not stop a fresh import.
+        (tmp_path / "sitecustomize.py").write_text(
+            "import sys\n"
+            "class _Blocker:\n"
+            "    def find_spec(self, name, path=None, target=None):\n"
+            "        if name.split('.')[0] == 'langchain_huggingface':\n"
+            "            raise ModuleNotFoundError(\n"
+            "                \"No module named 'langchain_huggingface'\",\n"
+            "                name='langchain_huggingface',\n"
+            "            )\n"
+            "        return None\n"
+            "sys.meta_path.insert(0, _Blocker())\n",
+            encoding="utf-8",
+        )
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(tmp_path), env.get("PYTHONPATH", "")]
+        ).rstrip(os.pathsep)
+
+        # -k selects only TestEmbeddingGuard, which excludes THIS class, so the
+        # child cannot re-enter here. It also excludes the two benchmarks, so no
+        # subprocess ever reaches for the CDN.
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                str(__file__),
+                "-k",
+                "TestEmbeddingGuard",
+                "-p",
+                "no:cacheprovider",
+                "-q",
+                "--no-header",
+                "-rs",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            timeout=300,
+        )
+
+        assert proc.returncode == 0, (
+            "the guard tests did not survive a missing langchain_huggingface:\n"
+            f"{proc.stdout[-4000:]}\n{proc.stderr[-2000:]}"
+        )
+        assert "langchain_huggingface not installed" in proc.stdout, (
+            "expected the library-absent skip reason, got:\n" f"{proc.stdout[-4000:]}"
+        )
+
+
 class TestEmbeddingGuard:
     """Guard and negative tests for the network-skip helper.
 
@@ -276,6 +385,23 @@ class TestEmbeddingGuard:
     across refactors: task 2.3 (red) proves the guard works; task 2.5
     (negative) proves it does not swallow AssertionError.
     """
+
+    @pytest.fixture(autouse=True)
+    def _require_the_model_library(self):
+        """Skip this class when langchain_huggingface is absent.
+
+        Not decoration: the string form of monkeypatch.setattr below resolves
+        its target by IMPORTING it (_pytest.monkeypatch.derive_importpath →
+        importlib.import_module), so without this the setattr raises
+        ModuleNotFoundError during the test body and the documented benchmark
+        command reports failures where `_load_model` would have reported a skip.
+        Importing the package is local and network-free — only constructing
+        HuggingFaceEmbeddings reaches the CDN — so this cannot reintroduce the
+        #187 stall. Reuses _import_or_skip so the reason reads the same as every
+        other missing-library skip in this file, and so a package that is present
+        but broken still surfaces instead of being rebranded as absent.
+        """
+        _import_or_skip("langchain_huggingface", "HuggingFaceEmbeddings")
 
     def test_network_guard_converts_connection_error_to_skip(self, monkeypatch):
         """Guard test (task 2.3): a CDN ConnectionError becomes a named skip.
@@ -406,6 +532,146 @@ class TestEmbeddingGuard:
 
         def fake_init(self, model_name, **kwargs):
             raise xet_error("failed to download from cas-server.xethub.hf.co")
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        with pytest.raises(pytest.skip.Exception) as exc_info:
+            _load_model("sentence-transformers/all-MiniLM-L6-v2")
+
+        assert "network" in str(exc_info.value).lower()
+
+    def test_a_missing_model_repository_fails_instead_of_skipping(self, monkeypatch):
+        """A 404 from the Hub is an answer, not an outage.
+
+        Every huggingface_hub HTTP error subclasses HfHubHTTPError, which is in
+        _NETWORK_ERROR_TYPES, so a type-only classifier called all of them
+        "unreachable" — including the ones where the server was reached and
+        replied definitively. If this model repository were renamed or removed,
+        both benchmarks would skip forever and report green while their only
+        model dependency was broken, which is the same going-quiet failure
+        _assert_propagates exists to prevent.
+        """
+        errors = pytest.importorskip("huggingface_hub.errors")
+
+        def fake_init(self, model_name, **kwargs):
+            raise errors.RepositoryNotFoundError(
+                "404 Client Error: Not Found", response=_response(404)
+            )
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        _assert_propagates(
+            errors.RepositoryNotFoundError,
+            lambda: _load_model("sentence-transformers/all-MiniLM-L6-v2"),
+        )
+
+    def test_a_gated_model_repository_fails_instead_of_skipping(self, monkeypatch):
+        """403 on a gated repo is a credentials problem, not a network problem.
+
+        Skipping here would hide a missing or expired HF token behind a message
+        that sends the developer to look at their connection.
+        """
+        errors = pytest.importorskip("huggingface_hub.errors")
+
+        def fake_init(self, model_name, **kwargs):
+            raise errors.GatedRepoError(
+                "403 Client Error: Forbidden", response=_response(403)
+            )
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        _assert_propagates(
+            errors.GatedRepoError,
+            lambda: _load_model("sentence-transformers/all-MiniLM-L6-v2"),
+        )
+
+    @pytest.mark.parametrize("status", [500, 502, 503, 504, 429, 408])
+    def test_a_transient_hub_status_still_skips(self, monkeypatch, status):
+        """The statuses that DO mean "reached, but cannot serve it now" still skip.
+
+        Distinguishing definitive answers from transient ones is the whole point;
+        narrowing the guard must not swing the other way and start failing the
+        benchmark on a Hub hiccup.
+        """
+        errors = pytest.importorskip("huggingface_hub.errors")
+
+        def fake_init(self, model_name, **kwargs):
+            raise errors.HfHubHTTPError(
+                f"{status} Server Error", response=_response(status)
+            )
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        with pytest.raises(pytest.skip.Exception) as exc_info:
+            _load_model("sentence-transformers/all-MiniLM-L6-v2")
+
+        assert "network" in str(exc_info.value).lower()
+
+    def test_a_hub_error_carrying_no_response_still_skips(self, monkeypatch):
+        """No status means the server never answered — a transport failure.
+
+        HfHubHTTPError's `response` is optional, and the CDN case from #187 is
+        exactly the one where nothing came back to read a status from.
+        """
+        errors = pytest.importorskip("huggingface_hub.errors")
+
+        def fake_init(self, model_name, **kwargs):
+            raise errors.HfHubHTTPError("error sending request", response=None)
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        with pytest.raises(pytest.skip.Exception) as exc_info:
+            _load_model("sentence-transformers/all-MiniLM-L6-v2")
+
+        assert "network" in str(exc_info.value).lower()
+
+    def test_a_truncated_download_still_skips(self, monkeypatch):
+        """A mid-stream failure carries a 2xx status, and is still an outage.
+
+        requests attaches the successful response to ChunkedEncodingError, so a
+        classifier that treats "has a status" as "the server answered
+        definitively" would fail the benchmark on a dropped connection. Only an
+        ERROR status is definitive.
+        """
+        requests_exc = pytest.importorskip("requests.exceptions")
+
+        def fake_init(self, model_name, **kwargs):
+            raise requests_exc.ChunkedEncodingError(
+                "connection broken: incomplete read", response=_response(200)
+            )
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        with pytest.raises(pytest.skip.Exception) as exc_info:
+            _load_model("sentence-transformers/all-MiniLM-L6-v2")
+
+        assert "network" in str(exc_info.value).lower()
+
+    def test_offline_with_no_cached_copy_still_skips(self, monkeypatch):
+        """LocalEntryNotFoundError has no status and genuinely means unreachable.
+
+        It subclasses EntryNotFoundError → HfHubHTTPError, so it would be caught
+        by any status-based narrowing that assumed every HfHubHTTPError carries
+        one. It does not, and offline-with-no-cache is a real outage.
+        """
+        errors = pytest.importorskip("huggingface_hub.errors")
+
+        def fake_init(self, model_name, **kwargs):
+            raise errors.LocalEntryNotFoundError(
+                "Cannot reach the Hub and no cached copy exists"
+            )
 
         monkeypatch.setattr(
             "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init

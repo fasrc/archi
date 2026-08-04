@@ -38,7 +38,11 @@ reader of a green run can tell that the embedding path went untested and why. A 
 as "unavailable" does not satisfy this requirement.
 
 The existing missing-library outcome is preserved: when the embedding library itself is absent, the
-test still skips, and that skip is reported distinguishably from the network case.
+test still skips, and that skip is reported distinguishably from the network case. This outcome
+SHALL hold for **every** test in the file, including the guard tests that police the skip logic
+itself. A guard test that reports a failure where the code it guards would report a skip breaks the
+contract it exists to defend — and it breaks it in the one environment, a minimal install, where the
+reader has least reason to suspect the test rather than the code.
 
 #### Scenario: Unreachable weights skip with a network reason
 
@@ -54,6 +58,13 @@ test still skips, and that skip is reported distinguishably from the network cas
 - **WHEN** the embedding library is not installed
 - **THEN** the test is reported as skipped for the missing library
 - **AND** that reason is distinguishable from the network reason
+
+#### Scenario: The guard tests skip too, rather than failing, without the library
+
+- **WHEN** the embedding library is not installed
+- **AND** the documented benchmark command is run
+- **THEN** the guard tests are reported as skipped for the missing library, like the benchmarks
+- **AND** no test in the file is reported as failed or errored
 
 ### Requirement: The network guard names specific exception types
 
@@ -90,6 +101,28 @@ the guard itself, is indistinguishable from deleting the tests.
 
 The embedding assertions are retained as they stand, including that two input texts produce two
 embeddings and that an embedding has 384 dimensions.
+
+A reply from the model host is NOT an outage. When the host answers with a definitive error status —
+the model repository renamed, removed, or gated behind credentials — the benchmark SHALL fail rather
+than skip, because that is a broken model dependency and skipping it would make the benchmarks
+permanently green while nothing is being exercised. Only statuses that mean "reached, but cannot
+serve it right now" — request timeouts, rate limiting, server-side errors — may be treated as an
+outage, alongside failures where no status came back at all. A failure part-way through a transfer
+carries a success status and is still an outage, so the status is decisive only when it is itself an
+error.
+
+#### Scenario: A removed or gated model repository fails the benchmark
+
+- **WHEN** the model host is reached and answers with a definitive error status for the model
+  repository, such as not-found or forbidden
+- **THEN** the benchmark fails and names that error
+- **AND** it is NOT reported as an unreachable network
+
+#### Scenario: A transient host error is still an outage
+
+- **WHEN** the model host answers with a rate-limit or server-side error status
+- **OR** the failure carries no status at all, or a success status from an interrupted transfer
+- **THEN** the benchmark is reported as skipped with a reason naming the network
 
 #### Scenario: A reachable model runs the assertions
 

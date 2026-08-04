@@ -253,6 +253,17 @@ These tests download approximately 90 MB of model weights from the HuggingFace C
 take 30–50 seconds per test on CPU. If the CDN is unreachable they are reported as skipped with a
 reason that names the network, rather than failing.
 
+A skip means "not verified", so the guard is deliberately narrow about what earns one:
+
+| Outcome | When |
+|---------|------|
+| **Skipped** — network | Nothing came back: a connection or transport failure, a timeout, a rate limit or a server-side (5xx) error, or offline mode with a cold cache. |
+| **Skipped** — library | `langchain_huggingface` (or another benchmark dependency) is not installed. |
+| **Failed** | The Hub answered definitively — the model repository is missing, renamed, or gated behind credentials (404/403/401) — or the failure is local, such as a permission error on the model cache or a full disk. |
+
+The last row is the important one: a removed or gated model repository is a broken dependency, not an
+outage, so it fails loudly instead of leaving the benchmarks permanently green-by-skip.
+
 ## CI / CD Architecture
 
 All CI workflows run on GitHub-hosted `ubuntu-latest` runners with Docker (not Podman).
