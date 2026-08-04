@@ -15,26 +15,27 @@ Requires:
   - 30-50 seconds per test on CPU
 """
 
+import errno
 import importlib
 import socket
 
 import pytest
 
-# The transport failures that mean "the CDN was unreachable" — enumerated by
-# family, NOT anchored on the whole OSError hierarchy. OSError would also absorb
-# PermissionError on the model cache, ENOSPC on a full disk, and an unreadable
-# or corrupt cache directory, reporting each as a network skip and hiding
-# precisely the local benchmark defects _load_model promises to propagate.
-# Never catches bare Exception either — that would absorb AssertionError from a
-# genuine embedding regression (see design D4).
-#
-# Each optional family is appended only when its library is importable, so the
-# tuple stays valid in a minimal environment:
+# Exception TYPES that always mean "the weights could not be fetched", whatever
+# errno they carry. Each optional family is appended only when its library is
+# importable, so the tuple stays valid in a minimal environment:
 #   - requests.RequestException covers requests.ConnectionError/Timeout, and
-#     huggingface_hub's HfHubHTTPError, which subclasses it.
-#   - httpx.TransportError covers ConnectError/TimeoutException/ReadError; none
-#     of the httpx errors are OSError subclasses, so they need naming here.
-_NETWORK_ERRORS: tuple[type[BaseException], ...] = (
+#     huggingface_hub's HfHubHTTPError, which subclasses it. Note that
+#     requests.ConnectionError is NOT a builtin ConnectionError — its MRO is
+#     RequestException → IOError — so naming the builtin alone would miss it.
+#   - XetDownloadError subclasses Exception DIRECTLY (not OSError, not
+#     RequestException, not httpx), and the Xet CDN — cas-server.xethub.hf.co —
+#     is the transport issue #187 was reported against, so it must be named.
+#     Kept in its own try block so an older hub without it still contributes
+#     the other error types.
+#   - httpx.TransportError covers ConnectError/TimeoutException/ReadError; no
+#     httpx exception is an OSError subclass, so they need naming too.
+_NETWORK_ERROR_TYPES: tuple[type[BaseException], ...] = (
     ConnectionError,
     TimeoutError,
     socket.gaierror,
@@ -42,7 +43,7 @@ _NETWORK_ERRORS: tuple[type[BaseException], ...] = (
 try:
     from requests.exceptions import RequestException
 
-    _NETWORK_ERRORS += (RequestException,)
+    _NETWORK_ERROR_TYPES += (RequestException,)
 except ImportError:
     pass
 try:
@@ -52,15 +53,82 @@ try:
         OfflineModeIsEnabled,
     )
 
-    _NETWORK_ERRORS += (HfHubHTTPError, LocalEntryNotFoundError, OfflineModeIsEnabled)
+    _NETWORK_ERROR_TYPES += (
+        HfHubHTTPError,
+        LocalEntryNotFoundError,
+        OfflineModeIsEnabled,
+    )
+except ImportError:
+    pass
+try:
+    from huggingface_hub.errors import XetDownloadError
+
+    _NETWORK_ERROR_TYPES += (XetDownloadError,)
 except ImportError:
     pass
 try:
     from httpx import TransportError
 
-    _NETWORK_ERRORS += (TransportError,)
+    _NETWORK_ERROR_TYPES += (TransportError,)
 except ImportError:
     pass
+
+# Network failures that arrive as a PLAIN OSError. Python maps only a few errnos
+# to dedicated subclasses (ECONNREFUSED → ConnectionRefusedError, ETIMEDOUT →
+# TimeoutError); ENETUNREACH, EHOSTUNREACH and ENETDOWN stay bare OSError, so a
+# type-only guard would let a genuine outage fail the benchmark.
+_NETWORK_ERRNOS = frozenset(
+    {
+        errno.ECONNABORTED,
+        errno.ECONNREFUSED,
+        errno.ECONNRESET,
+        errno.EHOSTDOWN,
+        errno.EHOSTUNREACH,
+        errno.ENETDOWN,
+        errno.ENETRESET,
+        errno.ENETUNREACH,
+        errno.ENOTCONN,
+        errno.EPIPE,
+        errno.ETIMEDOUT,
+    }
+)
+
+# What _load_model actually catches: a named, bounded set. NEVER bare Exception —
+# that would absorb an AssertionError from a real embedding regression and make
+# the benchmark incapable of failing (see design D4, and the spec requirement
+# "The network guard names specific exception types"). OSError is in the set so
+# the plain-OSError errnos above are reachable; it is then classified by errno,
+# so PermissionError on the model cache, ENOSPC on a full disk and a corrupt
+# cache directory still propagate as the local defects they are.
+_GUARDED_ERRORS: tuple[type[BaseException], ...] = _NETWORK_ERROR_TYPES + (OSError,)
+
+
+def _is_network_failure(exc: BaseException) -> bool:
+    """True when *exc* means the weights could not be fetched over the network."""
+    if isinstance(exc, _NETWORK_ERROR_TYPES):
+        return True
+    return isinstance(exc, OSError) and exc.errno in _NETWORK_ERRNOS
+
+
+def _assert_propagates(expected: type[BaseException], call, match: str = ""):
+    """Assert *call* raises *expected*, failing LOUDLY if it skips instead.
+
+    Every negative test here checks that something is NOT converted into a skip,
+    so a bare `pytest.raises(expected)` is the wrong tool: when the guard does
+    swallow the error, pytest's Skipped exception propagates out of the
+    `raises` block and the test reports as SKIPPED — which reads as green in CI.
+    A regression guard that goes quiet instead of red is barely a guard, so the
+    skip is caught and turned into an explicit failure.
+    """
+    try:
+        call()
+    except expected as exc:
+        if match:
+            assert match in str(exc)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"the guard swallowed {expected.__name__} into a skip: {exc}")
+    else:
+        pytest.fail(f"{expected.__name__} was not raised, and nothing skipped")
 
 
 def _import_or_skip(module: str, attr: str):
@@ -72,11 +140,19 @@ def _import_or_skip(module: str, attr: str):
     splitter and Document imports were left bare, so a missing dependency
     raised ModuleNotFoundError and errored the documented benchmark command
     instead of reporting a skip.
+
+    Only a genuinely ABSENT module skips. An ImportError raised from inside an
+    installed module — a missing or incompatible transitive dependency — is a
+    broken environment, and reporting it as "not installed" would hide a real
+    defect behind a skip.
     """
     try:
         loaded = importlib.import_module(module)
-    except ImportError:
-        pytest.skip(f"{module} not installed")
+    except ModuleNotFoundError as exc:
+        missing = exc.name or ""
+        if missing and (module == missing or module.startswith(f"{missing}.")):
+            pytest.skip(f"{module} not installed")
+        raise
     return getattr(loaded, attr)
 
 
@@ -93,7 +169,9 @@ def _load_model(model_name: str):
         return HuggingFaceEmbeddings(model_name=model_name)
     except ImportError:
         pytest.skip("langchain_huggingface not installed")
-    except _NETWORK_ERRORS as exc:
+    except _GUARDED_ERRORS as exc:
+        if not _is_network_failure(exc):
+            raise
         pytest.skip(
             f"embedding weights unreachable over the network ({model_name}): {exc!r}"
         )
@@ -240,19 +318,11 @@ class TestEmbeddingGuard:
             "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
         )
 
-        # Deliberately not `pytest.raises`: if the guard were widened, the
-        # AssertionError would be converted to a skip, and a bare
-        # `pytest.raises` block would let that skip propagate — reporting this
-        # test as SKIPPED, which reads as green in CI. Catching the skip and
-        # calling pytest.fail makes the regression loud instead of invisible.
-        try:
-            _load_model("sentence-transformers/all-MiniLM-L6-v2")
-        except AssertionError as exc:
-            assert "embedding regression" in str(exc)
-        except pytest.skip.Exception as exc:
-            pytest.fail(f"the guard swallowed AssertionError into a skip: {exc}")
-        else:
-            pytest.fail("_load_model neither raised nor skipped")
+        _assert_propagates(
+            AssertionError,
+            lambda: _load_model("sentence-transformers/all-MiniLM-L6-v2"),
+            match="embedding regression",
+        )
 
     def test_a_local_oserror_is_not_reported_as_a_network_outage(self, monkeypatch):
         """A local filesystem failure must FAIL the benchmark, not skip it.
@@ -271,8 +341,10 @@ class TestEmbeddingGuard:
             "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
         )
 
-        with pytest.raises(PermissionError):
-            _load_model("sentence-transformers/all-MiniLM-L6-v2")
+        _assert_propagates(
+            PermissionError,
+            lambda: _load_model("sentence-transformers/all-MiniLM-L6-v2"),
+        )
 
     def test_an_httpx_transport_error_becomes_a_named_skip(self, monkeypatch):
         """httpx transport errors are not OSError subclasses.
@@ -296,6 +368,79 @@ class TestEmbeddingGuard:
 
         assert "network" in str(exc_info.value).lower()
 
+    def test_a_plain_oserror_network_errno_still_skips(self, monkeypatch):
+        """A network failure with no dedicated exception subclass still skips.
+
+        ENETUNREACH, EHOSTUNREACH and ENETDOWN all surface as a *plain* OSError
+        — Python only maps a handful of errnos (ECONNREFUSED, ECONNRESET, …) to
+        dedicated ConnectionError subclasses. Enumerating exception types alone
+        therefore missed real outages, which is why OSError is still caught and
+        then classified by errno rather than being excluded outright.
+        """
+        import errno as errno_mod
+
+        def fake_init(self, model_name, **kwargs):
+            raise OSError(errno_mod.ENETUNREACH, "Network is unreachable")
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        with pytest.raises(pytest.skip.Exception) as exc_info:
+            _load_model("sentence-transformers/all-MiniLM-L6-v2")
+
+        assert "network" in str(exc_info.value).lower()
+
+    def test_a_xet_download_error_becomes_a_named_skip(self, monkeypatch):
+        """The Xet CDN family subclasses Exception directly, not OSError.
+
+        Issue #187's own reproduction names `cas-server.xethub.hf.co`, so this
+        is the exact transport the incident came through. XetDownloadError
+        inherits straight from Exception — it is not an OSError, not a
+        RequestException and not an httpx error — so it has to be named.
+        """
+        errors = pytest.importorskip("huggingface_hub.errors")
+        xet_error = getattr(errors, "XetDownloadError", None)
+        if xet_error is None:
+            pytest.skip("this huggingface_hub has no XetDownloadError")
+
+        def fake_init(self, model_name, **kwargs):
+            raise xet_error("failed to download from cas-server.xethub.hf.co")
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        with pytest.raises(pytest.skip.Exception) as exc_info:
+            _load_model("sentence-transformers/all-MiniLM-L6-v2")
+
+        assert "network" in str(exc_info.value).lower()
+
+    def test_a_broken_transitive_import_is_not_reported_as_missing(self, monkeypatch):
+        """An ImportError from *inside* an installed module is not "not installed".
+
+        If the splitter package is present but one of its own imports is missing
+        or incompatible, that is a broken environment and must surface, not be
+        rebranded as an absent optional dependency and skipped.
+        """
+        import importlib
+
+        def boom(name):
+            raise ModuleNotFoundError(
+                "No module named 'some_unrelated_transitive_dep'",
+                name="some_unrelated_transitive_dep",
+            )
+
+        monkeypatch.setattr(importlib, "import_module", boom)
+
+        _assert_propagates(
+            ModuleNotFoundError,
+            lambda: _import_or_skip(
+                "langchain_text_splitters.character", "CharacterTextSplitter"
+            ),
+            match="some_unrelated_transitive_dep",
+        )
+
     def test_a_missing_benchmark_library_skips_instead_of_erroring(self, monkeypatch):
         """Every required benchmark import skips, not just the model one.
 
@@ -308,7 +453,7 @@ class TestEmbeddingGuard:
         import importlib
 
         def boom(name):
-            raise ModuleNotFoundError(f"No module named {name!r}")
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
 
         monkeypatch.setattr(importlib, "import_module", boom)
 
