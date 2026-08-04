@@ -111,6 +111,29 @@ outage, alongside failures where no status came back at all. A failure part-way 
 carries a success status and is still an outage, so the status is decisive only when it is itself an
 error.
 
+The server-side statuses SHALL be classified as a **range**, not as an enumerated list. A list
+omits whatever the fronting CDN actually emits — a reverse proxy reports origin trouble with its own
+vendor-specific codes — and each omission fails a deliberate benchmark run during exactly the outage
+the guard exists to absorb.
+
+Errors raised before any request leaves the machine — a malformed endpoint URL, a missing scheme —
+are local misconfiguration and SHALL fail, as SHALL a redirect loop, which is the host answering
+repeatedly rather than not answering. These carry no error status, so the guard MUST NOT classify
+them by a shared exception base class that also covers genuine transport failures.
+
+#### Scenario: A vendor-specific server-side status is an outage
+
+- **WHEN** the model host is reached and answers with any server-side error status, including the
+  codes a fronting CDN emits for origin trouble rather than only the common four
+- **THEN** the benchmark is reported as skipped with a reason naming the network
+
+#### Scenario: A malformed endpoint or a redirect loop fails the benchmark
+
+- **WHEN** the configured endpoint URL is malformed, so the request is rejected before it is sent
+- **OR** the host answers with a redirect loop
+- **THEN** the benchmark fails and names that error
+- **AND** it is NOT reported as an unreachable network
+
 #### Scenario: A removed or gated model repository fails the benchmark
 
 - **WHEN** the model host is reached and answers with a definitive error status for the model

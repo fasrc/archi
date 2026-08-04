@@ -24,10 +24,17 @@ import pytest
 # Exception TYPES that always mean "the weights could not be fetched", whatever
 # errno they carry. Each optional family is appended only when its library is
 # importable, so the tuple stays valid in a minimal environment:
-#   - requests.RequestException covers requests.ConnectionError/Timeout, and
-#     huggingface_hub's HfHubHTTPError, which subclasses it. Note that
-#     requests.ConnectionError is NOT a builtin ConnectionError — its MRO is
-#     RequestException → IOError — so naming the builtin alone would miss it.
+#   - The requests TRANSPORT families are named one by one, deliberately NOT
+#     their shared base RequestException. That base is also the base of
+#     InvalidURL, MissingSchema and TooManyRedirects — a malformed HF_ENDPOINT
+#     or a redirect loop, which are local misconfiguration and a definitive
+#     server answer respectively. Neither carries a >= 400 response, so the
+#     status check cannot filter them and naming the base turned both into a
+#     green skip claiming the network was unreachable. Naming the families is
+#     still required: requests.ConnectionError is NOT a builtin ConnectionError
+#     (its MRO is RequestException → OSError) and its errno is None, so neither
+#     the builtin type nor the errno table below would catch it. SSLError,
+#     ProxyError and ConnectTimeout arrive via ConnectionError/Timeout.
 #   - XetDownloadError subclasses Exception DIRECTLY (not OSError, not
 #     RequestException, not httpx), and the Xet CDN — cas-server.xethub.hf.co —
 #     is the transport issue #187 was reported against, so it must be named.
@@ -41,9 +48,18 @@ _NETWORK_ERROR_TYPES: tuple[type[BaseException], ...] = (
     socket.gaierror,
 )
 try:
-    from requests.exceptions import RequestException
+    from requests.exceptions import ChunkedEncodingError
+    from requests.exceptions import ConnectionError as RequestsConnectionError
+    from requests.exceptions import ContentDecodingError, RetryError
+    from requests.exceptions import Timeout as RequestsTimeout
 
-    _NETWORK_ERROR_TYPES += (RequestException,)
+    _NETWORK_ERROR_TYPES += (
+        RequestsConnectionError,
+        RequestsTimeout,
+        ChunkedEncodingError,
+        ContentDecodingError,
+        RetryError,
+    )
 except ImportError:
     pass
 try:
@@ -96,10 +112,24 @@ _NETWORK_ERRNOS = frozenset(
 # HTTP statuses that mean "the Hub was reached but cannot serve the weights right
 # now". Everything else it answers with — 401, 403, 404, 410 — is a definitive
 # reply about a broken model dependency, not an outage, and must reach the
-# developer as a failure. 408/425 are request-timing, 429 is rate limiting, 5xx
-# is the server's own trouble; all clear on a retry, none indicate the benchmark
-# is wrong.
-_TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
+# developer as a failure. 408/425 are request-timing and 429 is rate limiting;
+# all clear on a retry, none indicate the benchmark is wrong.
+_TRANSIENT_4XX_STATUSES = frozenset({408, 425, 429})
+
+
+def _is_transient_status(status: int) -> bool:
+    """True when *status* means the host could not serve the weights right now.
+
+    Any 5xx counts, expressed as a RANGE rather than a list. Enumerating the
+    familiar four (500/502/503/504) left out the codes an outage most often
+    actually arrives as: HuggingFace sits behind Cloudflare, whose origin-trouble
+    statuses are 520/521/522/524, and a 507 or any other server-side code was in
+    the same gap. Those were failing the deliberate benchmark while the developer
+    guide promised that a server-side 5xx skips. A range cannot develop that gap
+    again when a vendor invents the next code.
+    """
+    return status >= 500 or status in _TRANSIENT_4XX_STATUSES
+
 
 # What _load_model actually catches: a named, bounded set. NEVER bare Exception —
 # that would absorb an AssertionError from a real embedding regression and make
@@ -130,7 +160,7 @@ def _is_network_failure(exc: BaseException) -> bool:
     """
     status = getattr(getattr(exc, "response", None), "status_code", None)
     if status is not None and status >= 400:
-        return status in _TRANSIENT_HTTP_STATUSES
+        return _is_transient_status(status)
     if isinstance(exc, _NETWORK_ERROR_TYPES):
         return True
     return isinstance(exc, OSError) and exc.errno in _NETWORK_ERRNOS
@@ -672,6 +702,143 @@ class TestEmbeddingGuard:
             raise errors.LocalEntryNotFoundError(
                 "Cannot reach the Hub and no cached copy exists"
             )
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        with pytest.raises(pytest.skip.Exception) as exc_info:
+            _load_model("sentence-transformers/all-MiniLM-L6-v2")
+
+        assert "network" in str(exc_info.value).lower()
+
+    @pytest.mark.parametrize("status", [507, 520, 521, 522, 524, 530, 599])
+    def test_any_server_side_status_is_an_outage(self, monkeypatch, status):
+        """5xx is 5xx — enumerating four of them left the CDN's own codes out.
+
+        HuggingFace sits behind Cloudflare, whose origin-trouble codes are
+        520/521/522/524 — precisely the shape of the #187 incident. A fixed set
+        of {500, 502, 503, 504} failed the deliberate benchmark on those, and
+        contradicted the developer guide, which promises that a server-side 5xx
+        is a skip. The rule is now "any 5xx", so the next code nobody enumerated
+        is covered by construction rather than by another list entry.
+        """
+        errors = pytest.importorskip("huggingface_hub.errors")
+
+        def fake_init(self, model_name, **kwargs):
+            raise errors.HfHubHTTPError(
+                f"{status} Server Error", response=_response(status)
+            )
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        with pytest.raises(pytest.skip.Exception) as exc_info:
+            _load_model("sentence-transformers/all-MiniLM-L6-v2")
+
+        assert "network" in str(exc_info.value).lower()
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 404, 410, 422])
+    def test_a_definitive_client_status_is_not_an_outage(self, monkeypatch, status):
+        """The 4xx boundary, pinned so widening 5xx cannot drift into 4xx."""
+        errors = pytest.importorskip("huggingface_hub.errors")
+
+        def fake_init(self, model_name, **kwargs):
+            raise errors.HfHubHTTPError(
+                f"{status} Client Error", response=_response(status)
+            )
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        _assert_propagates(
+            errors.HfHubHTTPError,
+            lambda: _load_model("sentence-transformers/all-MiniLM-L6-v2"),
+        )
+
+    def test_a_malformed_endpoint_url_fails_instead_of_skipping(self, monkeypatch):
+        """A bad HF_ENDPOINT is local misconfiguration, not an outage.
+
+        requests.RequestException is the base of the whole requests hierarchy,
+        including the URL-validation errors — InvalidURL, MissingSchema — that
+        never touch the network at all. They carry no response, so the status
+        check cannot filter them either, and naming the base class turned "you
+        typed the endpoint wrong" into a green skip that says the network is
+        unreachable.
+        """
+        requests_exc = pytest.importorskip("requests.exceptions")
+
+        def fake_init(self, model_name, **kwargs):
+            raise requests_exc.InvalidURL("Invalid URL 'htp://huggingface.co'")
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        _assert_propagates(
+            requests_exc.InvalidURL,
+            lambda: _load_model("sentence-transformers/all-MiniLM-L6-v2"),
+        )
+
+    def test_a_missing_url_scheme_fails_instead_of_skipping(self, monkeypatch):
+        """MissingSchema is the same class of local defect as InvalidURL."""
+        requests_exc = pytest.importorskip("requests.exceptions")
+
+        def fake_init(self, model_name, **kwargs):
+            raise requests_exc.MissingSchema("Invalid URL 'huggingface.co': No scheme")
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        _assert_propagates(
+            requests_exc.MissingSchema,
+            lambda: _load_model("sentence-transformers/all-MiniLM-L6-v2"),
+        )
+
+    def test_a_redirect_loop_fails_instead_of_skipping(self, monkeypatch):
+        """A redirect loop is the server answering, repeatedly and wrongly.
+
+        TooManyRedirects carries a 3xx response, so it slips under the >= 400
+        status check as well — the type test is the only thing that can classify
+        it, and the base class said "outage".
+        """
+        requests_exc = pytest.importorskip("requests.exceptions")
+
+        def fake_init(self, model_name, **kwargs):
+            raise requests_exc.TooManyRedirects(
+                "Exceeded 30 redirects", response=_response(302)
+            )
+
+        monkeypatch.setattr(
+            "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
+        )
+
+        _assert_propagates(
+            requests_exc.TooManyRedirects,
+            lambda: _load_model("sentence-transformers/all-MiniLM-L6-v2"),
+        )
+
+    @pytest.mark.parametrize(
+        "exc_name",
+        ["ConnectionError", "Timeout", "ReadTimeout", "SSLError", "RetryError"],
+    )
+    def test_a_requests_transport_failure_still_skips(self, monkeypatch, exc_name):
+        """The transport families must survive dropping the base class.
+
+        RequestException was originally named for a good reason:
+        requests.ConnectionError is NOT a builtin ConnectionError (its MRO is
+        RequestException → OSError) and its errno is None, so neither the builtin
+        type nor the errno table catches it. Narrowing to the transport families
+        must not lose that — a real CDN failure has to keep skipping.
+        """
+        requests_exc = pytest.importorskip("requests.exceptions")
+        exc_type = getattr(requests_exc, exc_name)
+
+        def fake_init(self, model_name, **kwargs):
+            raise exc_type("transport failure reaching the CDN")
 
         monkeypatch.setattr(
             "langchain_huggingface.HuggingFaceEmbeddings.__init__", fake_init
