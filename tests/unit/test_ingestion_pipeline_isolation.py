@@ -113,46 +113,6 @@ class TestIngestionPipelineIsolation:
             result = VectorStoreManager._collect_indexed_documents(manager, sources)
             assert "hash3" not in result, "Should filter out directories"
 
-    def test_embedding_model_works(self):
-        """
-        HYPOTHESIS: The embedding model fails silently.
-
-        This tests that the HuggingFace embedding model can actually
-        generate embeddings.
-
-        NOTE: This also serves as a performance benchmark. On CPU,
-        embedding is very slow (30-50+ seconds per file).
-        """
-        import time
-
-        try:
-            from langchain_huggingface import HuggingFaceEmbeddings
-
-            model = HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-MiniLM-L6-v2"
-            )
-
-            test_texts = ["This is a test document.", "Another test."]
-
-            start = time.time()
-            embeddings = model.embed_documents(test_texts)
-            elapsed = time.time() - start
-
-            assert len(embeddings) == 2, "Should generate 2 embeddings"
-            assert len(embeddings[0]) == 384, "Embedding dimension should be 384"
-
-            print(f"Embedding 2 short texts took {elapsed:.2f} seconds")
-
-            # Test with longer text (more realistic)
-            long_text = "This is a longer test document. " * 100
-            start = time.time()
-            _embeddings = model.embed_documents([long_text])
-            elapsed = time.time() - start
-            print(f"Embedding 1 long text took {elapsed:.2f} seconds")
-
-        except ImportError:
-            pytest.skip("langchain_huggingface not installed")
-
     def test_text_splitter_produces_chunks(self):
         """
         HYPOTHESIS: The text splitter produces no chunks.
@@ -213,69 +173,6 @@ class TestIngestionPipelineIsolation:
             ), f"Content should be extracted. Got: {content[:200]}"
         finally:
             os.unlink(temp_path)
-
-    def test_embedding_performance_realistic(self):
-        """
-        Performance test for realistic HTML content embedding.
-
-        This test measures how long it takes to embed content similar to
-        scraped web pages to identify performance bottlenecks.
-        """
-        import time
-
-        try:
-            from langchain_huggingface import HuggingFaceEmbeddings
-            from langchain_text_splitters.character import CharacterTextSplitter
-
-            model = HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-MiniLM-L6-v2"
-            )
-            splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-
-            # Simulate a ~65KB HTML page (typical scraped page size)
-            html_content = (
-                """
-            <html><head><title>Test Page</title></head><body>
-            <h1>Welcome to the Test Page</h1>
-            <p>This is paragraph content that represents typical web page text.
-            It contains various sentences and information that would be found
-            on a real website about computing, research, or education.</p>
-            """
-                * 500
-            )  # ~65KB
-
-            # Time the chunking
-            start = time.time()
-            from langchain_core.documents import Document
-
-            doc = Document(page_content=html_content, metadata={})
-            chunks = splitter.split_documents([doc])
-            chunk_time = time.time() - start
-
-            # Time the embedding
-            chunk_texts = [c.page_content for c in chunks]
-            start = time.time()
-            _embeddings = model.embed_documents(chunk_texts)
-            embed_time = time.time() - start
-
-            print(f"\n=== PERFORMANCE RESULTS ===")
-            print(f"Content size: {len(html_content)} bytes")
-            print(f"Chunks generated: {len(chunks)}")
-            print(f"Chunking time: {chunk_time:.2f}s")
-            print(f"Embedding time: {embed_time:.2f}s")
-            print(f"Time per chunk: {embed_time/len(chunks):.2f}s")
-            print(
-                f"Estimated time for 46 files (3 chunks each): {46 * 3 * embed_time/len(chunks) / 60:.1f} minutes"
-            )
-
-            # Warn if embedding is too slow
-            if embed_time > 30:
-                print(
-                    f"\nWARNING: Embedding took {embed_time:.0f}s - consider GPU acceleration!"
-                )
-
-        except ImportError:
-            pytest.skip("langchain_huggingface not installed")
 
 
 class TestDockerDeploymentDiagnostics:

@@ -239,6 +239,20 @@ export METADATA_SEARCH_QUERY="ppc.mit.edu"
 export VECTORSTORE_QUERY="cms"
 ```
 
+### Embedding benchmarks
+
+The embedding benchmarks live in `tests/smoke/test_embedding_benchmarks.py` and are deliberately
+**outside the gating suite** so a HuggingFace CDN outage cannot red a pull request (see issue #187).
+Run them manually when you need to verify the embedding pipeline:
+
+```bash
+python -m pytest tests/smoke/test_embedding_benchmarks.py -v
+```
+
+These tests download approximately 90 MB of model weights from the HuggingFace CDN on first run and
+take 30–50 seconds per test on CPU. If the CDN is unreachable they are reported as skipped with a
+reason that names the network, rather than failing.
+
 ## CI / CD Architecture
 
 All CI workflows run on GitHub-hosted `ubuntu-latest` runners with Docker (not Podman).
