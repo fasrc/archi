@@ -29,9 +29,16 @@ unresolvable paths, which differs across supported Python versions.
 
 Resolvability SHALL be decided by probing the stored pathname itself, never inferred from the
 resolved output, because resolution is lossy in both directions: a later `..` erases the
-looping component the resolver stepped over, and on some interpreters a component that could
+failing component the resolver stepped over, and on some interpreters a component that could
 not be inspected at all is indistinguishable from one that is simply not a symlink. Only a
-path the operating system can actually traverse may be returned.
+path the operating system can actually traverse may be returned. The probe MUST NOT depend on
+an API newer than the project's declared Python floor.
+
+A path whose target does not exist is the single tolerated failure, so that a stale row
+reaches containment and then fails at the read where that diagnostic belongs. That tolerance
+SHALL be withheld whenever the spelling contains `..`, because normalization can erase the
+very component that was missing — the gate is on the erasing construct, not on the particular
+error it hid.
 
 #### Scenario: A relative path under the data root resolves
 
@@ -79,12 +86,37 @@ path the operating system can actually traverse may be returned.
 - **AND** does NOT return the collapsed path, which is contained and readable but is not the
   file whose pathname the row actually stored
 
+#### Scenario: A missing component erased by parent traversal is refused
+
+- **WHEN** `file_path` is `missing/../safe.md`, `missing` does not exist, and `safe.md` is a
+  real readable file under the data root — so the pathname cannot be traversed, yet
+  normalization collapses it to `<root>/safe.md`
+- **THEN** the function raises `ValueError` naming that `file_path` as unresolvable
+- **AND** the missing-target tolerance does NOT apply, because the `..` erased the component
+  that was missing
+
+#### Scenario: A deleted document still reaches the read
+
+- **WHEN** `file_path` names a file that no longer exists but whose spelling contains no `..`,
+  so nothing can have been erased
+- **THEN** the function returns the contained resolved path
+- **AND** the failure surfaces at the read as a per-row error, not as a refusal here
+
 #### Scenario: A component the resolver could not inspect is refused
 
 - **WHEN** a component of `file_path` cannot be probed — an unreadable parent directory, an
   overlong name — and the interpreter reports that by giving up silently rather than raising
 - **THEN** the function raises `ValueError` naming the path as unresolvable
 - **AND** does NOT treat "the probe reported no symlink" as proof that resolution completed
+
+#### Scenario: A symlink swapped in after resolution is refused
+
+- **WHEN** resolution gives up on an unresolvable component and that component is replaced by
+  a symlink pointing outside the data root before the traversability probe runs, so the probe
+  itself succeeds
+- **THEN** the function raises `ValueError` rather than returning the path
+- **AND** it does NOT rely on containment to catch this, which compares the path as spelled and
+  would accept it
 
 #### Scenario: A malformed `file_path` is refused by name
 

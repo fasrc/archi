@@ -1358,6 +1358,39 @@ class TestPersistedDocumentPath:
         with pytest.raises(ValueError, match="cannot be resolved: symlink loop"):
             resolve_persisted_path("loop/../safe.md", str(root))
 
+    def test_a_missing_component_erased_by_parent_traversal_is_refused(self, tmp_path):
+        # The same substitution as test_a_loop_erased_by_parent_traversal, but
+        # reached through the ENOENT that the guard deliberately tolerates. A
+        # path that does not exist yet IS resolvable, so a stale row must pass
+        # the guard and fail at the read — but that tolerance is only sound when
+        # nothing can have been erased. `missing/../safe.md` collapses to
+        # `<root>/safe.md`, discarding the very component the kernel could not
+        # traverse: opening the stored pathname fails ENOENT on 3.11.15 and
+        # 3.14.5, yet the guard returned the readable neighbour.
+        #
+        # `..` is what makes the difference, so it is what gates the tolerance —
+        # not the errno, which is why this closes the class rather than one more
+        # instance of it.
+        root = tmp_path / "data"
+        root.mkdir()
+        (root / "safe.md").write_text("grounding text", encoding="utf-8")
+
+        with pytest.raises(ValueError, match=r"missing component erased by '\.\.'"):
+            resolve_persisted_path("missing/../safe.md", str(root))
+
+    def test_a_deleted_document_still_reaches_the_read_to_fail_there(self, tmp_path):
+        # The other side of that tolerance, pinned so the fix above cannot be
+        # tightened into refusing every nonexistent path. A stale row pointing
+        # at a deleted file has no `..`, so nothing can have been erased: it
+        # resolves, containment passes, and the diagnostic stays where it has
+        # always been — at the read.
+        root = tmp_path / "data"
+        (root / "web").mkdir(parents=True)
+
+        assert resolve_persisted_path("web/deleted.md", str(root)) == (
+            root / "web" / "deleted.md"
+        )
+
     def test_a_malformed_path_is_refused_by_its_own_name(self, tmp_path):
         # An embedded NUL makes `Path.resolve()` raise ValueError itself, so the
         # refusal never reached this guard's one raise site. The TYPE was
@@ -1398,6 +1431,34 @@ class TestPersistedDocumentPath:
 
         with pytest.raises(ValueError, match="cannot be resolved"):
             resolve_persisted_path("x" * 5000, str(root))
+
+    def test_a_symlink_swapped_in_after_resolution_is_refused(
+        self, tmp_path, monkeypatch
+    ):
+        # `resolve()` and the traversability probe are two syscalls, so the tree
+        # can change in between. The dangerous ordering: resolve() gives up on a
+        # loop, then that loop is replaced by a symlink pointing OUT of the data
+        # root before the probe runs. The probe now succeeds, so nothing refuses
+        # on traversability, and the path handed back is spelled inside the root
+        # — while the read would follow the new link outside it. Containment
+        # cannot catch it either, because it compares the path as spelled.
+        #
+        # The race is simulated deterministically by pinning resolve() to the
+        # output it produced BEFORE the swap, which is exactly what the losing
+        # interleaving hands the guard. This is what the post-condition on the
+        # resolved path is for, now that the probe handles every ordinary input.
+        root = tmp_path / "data"
+        root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "doc.md").write_text("secret", encoding="utf-8")
+        (root / "link").symlink_to(outside)
+        monkeypatch.setattr(Path, "resolve", lambda self: Path(os.path.abspath(self)))
+
+        with pytest.raises(
+            ValueError, match="cannot be resolved: resolution left a symlink"
+        ):
+            resolve_persisted_path("link/doc.md", str(root))
 
     def test_a_sibling_root_prefix_is_not_treated_as_contained(self, tmp_path):
         # `/srv/data-old/x` starts with `/srv/data` as a string but is a
