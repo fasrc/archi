@@ -22,6 +22,7 @@ Postgres or the network.
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
 
 import pytest
@@ -1260,6 +1261,50 @@ class TestPersistedDocumentPath:
 
         with pytest.raises(ValueError, match="loop_root"):
             resolve_persisted_path("a.md", str(loop_root))
+
+    def test_a_loop_in_an_ancestor_component_is_refused(self, tmp_path, monkeypatch):
+        # Python 3.13+ changed `Path.resolve()`: instead of raising RuntimeError
+        # on a symlink loop it delegates to `os.path.realpath(strict=False)`,
+        # which gives up at the looping component and returns the rest of the
+        # path unexpanded. For `loop/doc.md` the result is `<root>/loop/doc.md`,
+        # whose FINAL component is an ordinary (nonexistent) name — so a guard
+        # that only inspects the final component sees no symlink and hands back
+        # a path whose target is unknown. Verified against 3.13.13 and 3.14.5.
+        #
+        # The gate runs 3.11, where resolve() still raises and this input is
+        # refused for the wrong reason, so the 3.13+ contract is simulated here
+        # by pointing resolve() at realpath — exactly what 3.13 does — making
+        # the branch reachable on every interpreter.
+        root = tmp_path / "data"
+        root.mkdir()
+        loop = root / "loop"
+        loop.symlink_to(loop)
+        monkeypatch.setattr(Path, "resolve", lambda self: Path(os.path.realpath(self)))
+
+        with pytest.raises(ValueError, match="loop"):
+            resolve_persisted_path("loop/doc.md", str(root))
+
+    def test_the_refusal_reason_is_identical_on_every_interpreter(
+        self, tmp_path, monkeypatch
+    ):
+        # `_resolve_totally` promises one message and type on every
+        # interpreter, but the two detection routes reached it separately: the
+        # pre-3.13 route interpolated the RuntimeError's own text ("Symlink loop
+        # from '<path>'") while the 3.13+ route emitted the literal "symlink
+        # loop". Same input, different message depending on the interpreter.
+        root = tmp_path / "data"
+        root.mkdir()
+        loop = root / "loop.md"
+        loop.symlink_to(loop)
+
+        with pytest.raises(ValueError) as raising_route:
+            resolve_persisted_path("loop.md", str(root))
+
+        monkeypatch.setattr(Path, "resolve", lambda self: Path(os.path.realpath(self)))
+        with pytest.raises(ValueError) as realpath_route:
+            resolve_persisted_path("loop.md", str(root))
+
+        assert str(raising_route.value) == str(realpath_route.value)
 
     def test_a_sibling_root_prefix_is_not_treated_as_contained(self, tmp_path):
         # `/srv/data-old/x` starts with `/srv/data` as a string but is a

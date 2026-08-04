@@ -285,22 +285,35 @@ def _resolve_totally(path: Path, description: str) -> Path:
 
     Two routes cover both pre-3.13 and 3.13+ behavior:
     - Python 3.11/3.12: Path.resolve() raises RuntimeError on a symlink loop.
-    - Python 3.13+: Path.resolve() returns the loop path (still a symlink)
-      instead of raising, so a post-condition check catches it.
-    Both funnel into one ValueError so the message and type are identical on
-    every interpreter.
+    - Python 3.13+: Path.resolve() delegates to os.path.realpath(strict=False),
+      which gives up at the looping component and returns the remainder of the
+      path unexpanded — nothing raises, and the result is not fully resolved.
+
+    The 3.13+ route is caught by a post-condition rather than by inspecting the
+    final component: a fully resolved path has no symlink in ANY component, by
+    definition of realpath. Checking only the tail misses a loop in an ancestor
+    (`loop/doc.md` under `loop -> loop` resolves to `.../loop/doc.md`, whose
+    final component is an ordinary nonexistent name), which would return an
+    unresolved path and let containment accept it. Verified against 3.13.13
+    and 3.14.5.
+
+    Both routes raise from ONE site with the same normalized reason, so the
+    message and type are identical on every interpreter; the interpreter's own
+    RuntimeError text is deliberately not interpolated (it names only the path,
+    which the message already carries) but is kept as __cause__.
     """
+    cause: Optional[BaseException] = None
+    resolved: Optional[Path] = None
     try:
         resolved = path.resolve()
     except RuntimeError as exc:
-        raise ValueError(
-            f"{description} {str(path)!r} cannot be resolved: {exc}"
-        ) from exc
-    if resolved.is_symlink():
-        # 3.13+: resolve() returned the loop path without raising.
+        cause = exc
+    if resolved is None or any(
+        component.is_symlink() for component in (resolved, *resolved.parents)
+    ):
         raise ValueError(
             f"{description} {str(path)!r} cannot be resolved: symlink loop"
-        )
+        ) from cause
     return resolved
 
 
