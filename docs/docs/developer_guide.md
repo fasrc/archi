@@ -239,6 +239,39 @@ export METADATA_SEARCH_QUERY="ppc.mit.edu"
 export VECTORSTORE_QUERY="cms"
 ```
 
+### Embedding benchmarks
+
+The embedding benchmarks live in `tests/smoke/test_embedding_benchmarks.py` and are deliberately
+**outside the gating suite** so a HuggingFace CDN outage cannot red a pull request (see issue #187).
+Run them manually when you need to verify the embedding pipeline:
+
+```bash
+python -m pytest tests/smoke/test_embedding_benchmarks.py -v
+```
+
+These tests download approximately 90 MB of model weights from the HuggingFace CDN on first run and
+take 30–50 seconds per test on CPU. If the CDN is unreachable they are reported as skipped with a
+reason that names the network, rather than failing.
+
+A skip means "not verified", so the guard is deliberately narrow about what earns one:
+
+| Outcome | When |
+|---------|------|
+| **Skipped** — network | A connection or transport failure, a TLS error, a timeout, an interrupted transfer, a protocol error from the *server*, `429` rate limiting, **any** `5xx` (including the `520`–`524` codes Cloudflare emits for origin trouble), or offline mode with a cold cache. |
+| **Skipped** — library | `langchain_huggingface` (or another benchmark dependency) is not installed. |
+| **Failed** | The Hub answered definitively — the model repository is missing, renamed, or gated behind credentials (`404`/`403`/`401`); the endpoint is misconfigured (a malformed `HF_ENDPOINT`, a redirect loop, a protocol error in the request *we* built); or the failure is local, such as a permission error on the model cache or a full disk. |
+
+The last row is the important one: a removed model repository or a mistyped `HF_ENDPOINT` is a broken
+dependency, not an outage, so it fails loudly instead of leaving the benchmarks permanently
+green-by-skip. The `5xx` side is a range rather than a list of codes, because a fronting CDN reports
+origin trouble with its own status numbers.
+
+The distinction that decides every row is **"did a usable answer come back?"** — not which library
+raised. That is why the guard names transport exception types individually rather than the convenient
+shared base class of each HTTP library: those bases also cover URL-validation and client-side protocol
+errors, which never touch the network. A test enumerates the subclasses of everything the guard names
+and fails if an over-broad base is added, so this cannot regress quietly.
+
 ## CI / CD Architecture
 
 All CI workflows run on GitHub-hosted `ubuntu-latest` runners with Docker (not Podman).
