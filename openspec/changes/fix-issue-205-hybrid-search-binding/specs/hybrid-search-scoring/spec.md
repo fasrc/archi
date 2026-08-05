@@ -23,6 +23,8 @@ Every parameter `hybrid_search` passes to `cursor.execute` SHALL fill the placeh
 
 When `hybrid_search` cannot return hybrid results and falls back to semantic-only retrieval, it SHALL emit a warning-level record carrying **structured fields** that identify the event. Silent degradation is not acceptable: a hybrid search that is not running MUST NOT be indistinguishable from one that is.
 
+Those fields SHALL be present in the **emitted output**, not merely attached to the in-process log record. Attaching a field to a `LogRecord` is not the same as emitting it: the configured formatter decides what reaches the collected stream, and a formatter that renders only the message discards every field supplied out-of-band. An implementation whose fields are visible to a test that inspects records, but absent from what the deployment collects, does not satisfy this requirement — it reproduces the very defect this capability exists to prevent, a check that passes while production stays blind.
+
 The record SHALL NOT include the raw query text. User queries may contain personal or confidential content, and warning-level records typically reach centralized logging with broader access and longer retention than conversation storage — so emitting query text here would move user content into a less-governed store as a side effect of a diagnostic. Diagnosing this fallback does not require the query's content: the fields below identify it, and an operator who needs the text can reach it through the conversation store under its existing controls.
 
 #### Scenario: The empty-result fallback warns with structured, non-sensitive fields
@@ -39,6 +41,11 @@ The record SHALL NOT include the raw query text. User queries may contain person
 
 - **WHEN** a test verifies the fallback is observable
 - **THEN** it SHALL assert on the structured field values rather than exact message wording, so that rephrasing the message does not break the test and so the test cannot be satisfied by prose that omits the fields
+
+#### Scenario: The fields survive the configured formatter
+
+- **WHEN** the fallback record is rendered through the formatter the application actually configures, rather than read as record attributes
+- **THEN** every required field's key and value SHALL appear in the formatted output. A test that inspects only in-process record attributes SHALL NOT satisfy this scenario, because it passes identically whether or not the deployment emits the fields.
 
 #### Scenario: A successful hybrid query does not warn
 

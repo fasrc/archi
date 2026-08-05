@@ -24,7 +24,7 @@ The same defect exists upstream in `archi-physics/archi` and is tracked for repo
 ## What Changes
 
 - **Fix the parameter binding** so the values line up with the placeholders positionally. Build the parameter list in the same pass that assembles the SQL fragments so the two cannot drift apart again — the sibling method `similarity_search_by_vector_with_score:362` avoids this by using `params.insert(0, …)`; `hybrid_search` is the one place the pattern was open-coded.
-- **Make the failure loud.** Add a `logger.warning` at the empty-result fallback naming the query and `k`. A silently-inert hybrid search must never again look healthy.
+- **Make the failure loud.** Add a `logger.warning` at the empty-result fallback carrying structured, non-sensitive fields — fallback reason, collection, requested `k`, and a request/trace id — and **not** the raw query text, which may contain personal or confidential content that a warning-level record would copy into centralized logging. A silently-inert hybrid search must never again look healthy. The fields must also survive the configured formatter: `setup_logging` (`utils/logging.py:26,29`) renders `%(message)s` only and drops anything passed via `extra=`, so a record that carries the fields as attributes is observable in tests and invisible in the deployment.
 - **Extract SQL construction** into a helper returning `(sql, params)` so tests can assert on both without a database.
 - **Negate the BM25 term** so higher means a better match, matching the existing `ORDER BY … DESC`.
 - **Min-max normalize both components** to `0..1` across the scored set, inside the CTE and before the `LIMIT`, so the configured weights express the proportions they document. Both, not just BM25: `1.0 - distance` at line 485 is applied unconditionally while `distance_metric` may be `l2` (unbounded) or `inner_product` (`0..2`), so the semantic half is not reliably `0..1` either.
@@ -55,11 +55,11 @@ Not breaking: the `hybrid_search` signature, return type, and the `search_vector
 
 **Tests**
 - `tests/unit/test_postgres_vectorstore.py` — generated-SQL and parameter-order assertions; fallback-warning assertion; six fixtures corrected to the real negative BM25 convention.
-- New integration tests against real PostgreSQL + `pg_textsearch`, skipping cleanly where unavailable without silently hiding the suite.
+- New integration tests against real PostgreSQL + `pg_textsearch`. **Absence of the service is a blocking failure, not a clean skip** — a run that could not execute the database invariants must fail rather than report success, because a skip that swallows the suite is the exact gap that let this defect ship for ~6 months. If CI cannot host the service within this change, the fallback is a recorded pre-merge run pasted into the PR, never a skip.
 - `tests/unit/test_hierarchical_retriever.py`, `tests/unit/test_retriever_factory.py` — audited for the same wrong-sign assumption.
 
 **Behavior / operations**
-- Retrieval ranking changes for every query on the default path: BM25 begins contributing for the first time. Graded through `archi evaluate` (RAGAS `context_precision` / `context_recall` + SOURCES hit-rate) against the goldenset bank, reported before vs. after.
+- Retrieval ranking changes for every query on the default path: BM25 begins contributing for the first time. Graded through `archi evaluate` against the goldenset bank on four named aggregates — RAGAS `context_precision`, `context_recall`, and **both** SOURCES keys, `source_accuracy` (strict) and `relative_source_accuracy` (lenient) — reported before vs. after.
 - Query-time only — **no re-ingest, re-embed, or schema migration**.
 - Requires a dev redeploy to take effect (the container runs a non-editable `pip install .`).
 - Verified healthy and deliberately untouched: hierarchical parent expansion (5450 chunks carry `parent_id`, 4414 parent rows) and the agent tool's tuple coercion (`tools/retriever.py:17-28`).
@@ -69,6 +69,7 @@ Not breaking: the `hybrid_search` signature, return type, and the `search_vector
 
 **Deliberately out of scope** — each needs its own issue, and folding any of them in would make the PR unreviewable:
 - Weight-default reconciliation: three distinct pairs across ten sites. Mechanical; separate PR.
+- The citation layer's inverted score convention — **#208**. `get_top_sources` and `format_citations` both treat retriever scores as distances while every producer returns a similarity under the default `cosine` metric. Live today, independent of this change, and not made worse by it; see the corrected consumer audit in `design.md`.
 - The index-scan restructure (`<@>` in a SELECT list forces a sequential scan).
 - Write-only `dynamic_config` retrieval knobs — read by nothing in the retrieval path.
 - The duplicate, incompatible `static_config` definition (`init.sql:102` vs `config_service.py:195-216`).
