@@ -109,6 +109,13 @@
       before this change, so read the hits rather than trusting the number.
 - [x] 5.5 Grep the rest of `docs/` for any other claim that a boolean or a non-finite value is
       accepted in these fields, and correct anything found.
+- [x] 5.6 Remove `false` from the omitted-value ("falsey") enumeration in **both** rows, and
+      state the boolean rule *before* the falsey rule so the prose runs in the order the code
+      does. 5.1/5.2 only added booleans to the rejected list; each row then listed `false` in
+      both lists at once, so a client reading the table would send `false` to omit a field and
+      get a 400 (Codex, PR #203). Guarded by `tests/unit/test_api_reference_timing_contract.py`,
+      which parses the enumeration out of the table and runs every literal in it through the
+      real parser — the same drift cannot pass review-by-eye twice.
 
 ## 6. Verify and land
 
