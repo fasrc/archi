@@ -107,7 +107,12 @@ Because `hybrid_search` delegates scoring and ordering to PostgreSQL and returns
 #### Scenario: Scoring behavior is covered by database-executed tests
 
 - **WHEN** the test suite verifies orientation, normalization, degenerate-input handling, or `NULL` placement
-- **THEN** at least one test SHALL execute the generated statement against a real PostgreSQL instance with `pg_textsearch`, and its absence in an environment lacking the extension SHALL be reported as a skip rather than silently passing
+- **THEN** at least one test SHALL execute the generated statement against a real PostgreSQL instance with `pg_textsearch` installed
+
+#### Scenario: A wholly-skipped database suite is a failure, not a pass
+
+- **WHEN** the database-executed portion of the suite runs in an environment where `pg_textsearch` is unavailable, or where every such test is skipped for any other reason
+- **THEN** the run SHALL fail rather than report success — a count of zero executed database tests MUST be treated as a failing condition, because reporting the skip while passing recreates exactly the coverage gap that allowed an unexecuted-SQL defect to ship
 
 #### Scenario: Reintroducing the sign inversion fails the suite
 

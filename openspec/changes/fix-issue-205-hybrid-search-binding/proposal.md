@@ -2,7 +2,18 @@
 
 `PostgresVectorStore.hybrid_search` binds its SQL parameters in an order that does not match its own placeholders. The `%s` for `to_bm25query()` sits **before** the `WHERE` placeholders in the generated SQL, but `all_params` supplies collection-then-query (`postgres_vectorstore.py:485-506`). So the BM25 query receives the **collection name**, and the user's question is bound as the **collection equality predicate**.
 
-Measured on the dev deployment: every one of 5450 chunks carries a non-null collection, so the mis-bound `WHERE` matches **0 rows** where the correctly-bound one matches **5450**. Zero rows trips the unlogged empty-result guard at lines 513-516, which returns `similarity_search_with_score`. **Hybrid search silently degrades to semantic-only on every query and BM25 has never contributed.** `use_hybrid_search=true` in `dynamic_config` is effectively a lie, and because the fallback logs nothing, the failure is invisible.
+Measured on the `postgres-dev` snapshot (2026-08-05, `origin/dev` @ `9144918`): every one of 5450 chunks carries a non-null collection, so the mis-bound `WHERE` matches **0 rows** where the correctly-bound one matches **5450**. Zero rows trips the unlogged empty-result guard at lines 513-516, which returns `similarity_search_with_score`. **On that deployment, hybrid search silently degrades to semantic-only for every query and BM25 contributes nothing.** `use_hybrid_search=true` in `dynamic_config` is effectively a lie, and because the fallback logs nothing, the failure is invisible.
+
+Scope that claim to the measured configuration rather than generalizing it. The predicate is `(collection = %s OR collection IS NULL)`, so the zero-row outcome depends on the collection metadata actually present:
+
+| Collection metadata | Mis-bound behavior |
+|---|---|
+| All non-null (**measured: 5450/5450 on dev**) | 0 rows → silent semantic-only fallback, corpus-wide |
+| All null | Every row passes; BM25 scores against the *collection name*, so ~0 for nearly every chunk → effectively semantic ordering, with the sign defect live for any chunk whose text happens to contain the collection name |
+| **Mixed** | Only the null-collection subset passes → hybrid runs, but over a **silent subset of the corpus** — a distinct and arguably worse failure than the fallback |
+| Query string equals the collection value | Degenerate exception; rows pass |
+
+Only the first row is measured here. The mixed case is the one to be careful about: it does not fall back, so it produces results without any signal that most of the corpus was excluded. Whether any deployment is in that state is unverified, and claims about other deployments' historical retrieval baselines should not be made on this evidence alone.
 
 Behind that defect sit two more, currently masked. The `pg_textsearch` `<@>` operator [returns negative scores](https://github.com/timescale/pg_textsearch/blob/main/README.md) (lower = better, for ascending index scans); line 498 adds that to a positive semantic score and line 500 orders `DESC`, so better keyword matches would sort *lower*. And the two components are never put on a common scale — BM25 spans `0..14.47` after negation while the semantic term is nominally `0..1`.
 

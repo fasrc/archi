@@ -39,7 +39,11 @@ The 0-vs-5450 contrast is the proof of the binding defect. It matters that this 
 2. **Sign** — `<@>` is negative-oriented; summed into a positive score and ordered `DESC`. Latent behind (1).
 3. **Scale** — BM25 spans `0..14.47` against a nominally `0..1` semantic term. Latent behind (1).
 
-**Fixing (1) alone regresses retrieval below today's behavior**, because it activates (2) and (3) at `bm25_weight=0.6`. This dependency is the central constraint on the change.
+**Fixing (1) alone is expected to regress retrieval below today's behavior**, because it activates (2) and (3) at `bm25_weight=0.6`. This dependency is the central constraint on the change.
+
+Be precise about the status of that claim — it is a **deduction, not a measurement**. The mechanism: with the binding fixed but the sign and scale defects live, `combined = 0.4·sem + 0.6·bm25` where `bm25 ∈ [−14.47, 0]`. Every chunk with keyword overlap takes a penalty of up to `−8.68`, while every chunk with no overlap scores `0.4·sem ∈ [0, 0.4]`. So the ordering places all 3987 zero-overlap chunks above all 1463 keyword-matching ones, and the top-`k` is drawn only from the zero-overlap subset. Today's semantic-only fallback ranks the *whole* corpus by semantic score. Bind-only therefore retrieves from a strict subset of what production retrieves from today, excluding precisely the chunks that share terms with the query.
+
+That is a strong a priori argument, but "excludes keyword-matching candidates" is not the same statement as "scores worse on RAGAS", and this design elsewhere insists neither fusion method may be *assumed* better than the semantic-only baseline. The same discipline has to apply here. So the bundling requirement rests on the deduction above, and group 6 of the task list adds a **bind-only benchmark arm** to settle it empirically rather than leaving the central constraint resting on reasoning alone. The marginal cost is one extra arm on a harness already being run for three.
 
 ### Why it survived ~6 months
 
@@ -89,9 +93,11 @@ Min-max normalize semantic and BM25 to `0..1` using `min(...) OVER ()` / `max(..
 
 | metric | distance range | `1 - distance` | bounded `0..1`? |
 |---|---|---|---|
-| `cosine` (default) | `0..2` | `−1..1` | no |
-| `l2` | `0..∞` | `−∞..1` | **no, unbounded** |
-| `inner_product` | `−1..1` | `0..2` | no |
+| `cosine` (default) | `0..2` | `−1..1` | no — negative for opposed vectors |
+| `l2` (`<->`) | `0..∞` | `−∞..1` | **no, unbounded** |
+| `inner_product` (`<#>`) | unbounded | unbounded | **no, unbounded** |
+
+On `inner_product`: pgvector's `<#>` returns the *negative* inner product, which is bounded to `−1..1` only if the embeddings are unit-normalized. Nothing in the codebase enforces that invariant — a grep for normalization in the vectorstore and embedding paths finds none — so it must be treated as unbounded. (An earlier revision of this design claimed `−1..1` / `0..2` here; that was unsupported by the code.)
 
 Note `similarity_search_by_vector_with_score:397-401` converts only for cosine and returns a raw distance otherwise, so the two methods already disagree for non-cosine metrics. Normalizing both removes the dependence rather than preserving the disagreement.
 

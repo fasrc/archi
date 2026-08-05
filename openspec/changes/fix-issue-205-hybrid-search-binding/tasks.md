@@ -32,7 +32,9 @@
 - [ ] 4.2 Triage each newly-failing assertion individually. A test that only passed under the inverted sign was asserting the bug — fix the expectation, do not restore the old fixture value.
 - [ ] 4.3 Audit `tests/unit/test_hierarchical_retriever.py` and `tests/unit/test_retriever_factory.py` for the same wrong-sign assumption and correct them.
 - [ ] 4.4 Add integration tests that execute the generated statement against real PostgreSQL + `pg_textsearch`, covering negative, zero, all-equal, mixed-`NULL`, and magnitude-scaled score sets.
-- [ ] 4.5 Make the extension-unavailable case a reported **skip**, and confirm in CI that the skip does not silently hide the whole integration suite. Determine whether CI has `pg_textsearch` available at all; if not, say so explicitly in the PR rather than leaving the coverage theoretical.
+- [ ] 4.5 Add collection-metadata reproduction cases to the same integration suite: all-non-null (the measured dev case → 0 rows → fallback), all-null, and **mixed** (only the null subset passes → hybrid runs over a silent corpus subset). The mixed case does not fall back, so it must be pinned by a test; it is the variant with no observable signal.
+- [ ] 4.6 **Make database execution blocking, not merely reported.** Provision a PostgreSQL + `pg_textsearch` service for CI (or, if that is not achievable in this change, a recorded pre-merge run whose output is pasted into the PR). Add a check that **fails when zero database-executed tests ran** — a wholly-skipped suite must not be able to report success. Reporting a skip while passing recreates the exact gap that let an unexecuted-SQL defect ship for ~6 months.
+- [ ] 4.7 Verify 4.6 actually bites: temporarily point the suite at an instance without `pg_textsearch` and confirm the run **fails** rather than passing with skips.
 
 ## 5. Document the contract
 
@@ -40,19 +42,34 @@
 - [ ] 5.2 Update the hybrid-search description in `docs/` with the same contract.
 - [ ] 5.3 Add a note at `base-config.yaml:240-243` that the weights apply to normalized components and should sum to `1.0`.
 
-## 6. Grade it — blocking, not advisory
+## 6. Grade it — a deterministic gate, not a judgement call
 
-- [ ] 6.1 Measure the goldenset metrics for sign-corrected **min-max**: RAGAS `context_precision`, `context_recall`, SOURCES hit-rate.
-- [ ] 6.2 Implement **RRF** behind the same seam and measure it on the same bank, same run conditions.
-- [ ] 6.3 Report all three result sets — baseline (1.3), min-max, RRF — in the PR body.
-- [ ] 6.4 Ship min-max unless RRF is materially better. **If every option regresses any of the three metrics against baseline, do not ship** — report the finding and stop, because activating BM25 would then be a net loss.
-- [ ] 6.5 If the chosen option's gain falls within run-to-run noise, state that explicitly rather than claiming an improvement.
-- [ ] 6.6 Audit benchmark and A/B tooling for any consumer treating `combined_score` as an absolute threshold, now that it is query-relative.
+Fix the run conditions before measuring anything, or the comparison is not reproducible and the gate is waivable by interpretation.
+
+- [ ] 6.1 **Pin the inputs.** Record and hold constant for every arm: goldenset bank file + its git SHA, corpus snapshot (`corpus_snapshot_id`), embedding model, judge LLM + its version/temperature, `k` / `candidate_pool_size`, and the weight pair. Any arm run under different inputs is void, not merely noisy.
+- [ ] 6.2 **Establish the noise floor.** Run the baseline arm **3 times** under identical pinned inputs and compute the per-metric standard deviation. Define the non-inferiority margin per metric as `max(2·stdev, 0.01)` absolute. This number is derived from data, not chosen — record it before any treatment arm is measured, so it cannot be adjusted afterwards to fit a result.
+- [ ] 6.3 Measure **four** arms, 3 runs each, under the pinned inputs — reporting per-metric mean and stdev for `context_precision`, `context_recall`, and SOURCES hit-rate:
+  - **A. baseline** — current `origin/dev` (semantic-only in practice)
+  - **B. bind-only** — binding fixed, sign and scale defects left live. This arm exists to empirically settle the design's central bundling claim; the deduction predicts it is the worst arm.
+  - **C. bind + sign + min-max normalization**
+  - **D. bind + sign + RRF**
+- [ ] 6.4 Emit a machine-readable artifact (JSON: arm → metric → mean/stdev/n, plus the pinned-input manifest and the margins from 6.2) and commit it with the change so the gate is re-checkable rather than a prose claim in a PR body.
+- [ ] 6.5 **Apply this selection rule literally; it is not advisory.**
+  1. An arm **passes** only if, for *every one* of the three metrics, `mean(arm) >= mean(A) − margin(metric)`.
+  2. Among passing arms, ship the one with the highest mean `context_recall`; break ties on `context_precision`.
+  3. **If the arm you intend to ship does not itself pass, do not ship it** — even if another arm passes and even if the difference looks small. There is no "default" that survives a regression: min-max is only the presumption *among passing arms*.
+  4. If **no** arm passes, do not ship anything. Report that activating BM25 is a net loss on this bank and stop.
+  5. Any deviation from this rule requires explicit operator sign-off recorded on #205, not reviewer discretion.
+- [ ] 6.6 State each shipped metric as `mean ± stdev (n=3)` against its margin. If the winning arm's gain over baseline is *within* the margin, say plainly that the change is non-inferior but not demonstrably better — do not describe it as an improvement.
+- [ ] 6.7 Report arm B's result explicitly, whichever way it falls. If B does **not** measure worse than A, the design's "must ship together" rationale is weakened and the bundling decision must be revisited with the operator rather than carried forward unexamined.
+- [ ] 6.8 Audit benchmark and A/B tooling for any consumer treating `combined_score` as an absolute threshold, now that it is query-relative.
 
 ## 7. Verify and land
 
 - [ ] 7.1 `pytest tests/unit/test_postgres_vectorstore.py tests/unit/test_hierarchical_retriever.py tests/unit/test_retriever_factory.py -v` green.
 - [ ] 7.2 `bash scripts/gate.sh` bare, exit 0, ≥80% diff coverage. Needs the miniforge `archi` env on `PATH`. Never `--no-verify`.
+- [ ] 7.2a **Blocking:** the database-executed suite ran with a non-zero executed count (4.6). A green `gate.sh` plus green unit tests is **not** sufficient evidence for this change — those were all green while the defect shipped. Paste the executed-test count into the PR body.
+- [ ] 7.2b **Blocking:** the group 6 artifact (6.4) is committed, and the shipped arm passes every metric per the 6.5 rule. Do not open the PR describing the change as verified until both hold.
 - [ ] 7.3 Confirm `argilla` / `ragas` did not leak into `pyproject.toml` or `requirements-base.txt`.
 - [ ] 7.4 Confirm the hierarchical path is still healthy — 5450 chunks with `parent_id`, 4414 parent rows — so the change did not disturb parent expansion.
 - [ ] 7.5 Run `/codex:adversarial-review`; verify each finding against the code before acting, and address them before opening the PR.
