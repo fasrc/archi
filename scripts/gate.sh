@@ -35,6 +35,11 @@
 
 set -euo pipefail
 
+# Add the repo's own bin/ to PATH so bundled tools (e.g. jq, used by the CI
+# shell suites) are found without requiring a system-wide install.
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+export PATH="$REPO_ROOT/bin:$PATH"
+
 BASE="${DIFF_COVER_BASE:-origin/dev}"
 
 # Enforcement scope: the dirs normalized black/isort-clean in #69 — src/ (incl src/bin),

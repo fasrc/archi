@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,16 +20,28 @@ _MS_ERRORS = (OverflowError, TypeError)
 
 
 def _milliseconds_to_seconds(value: Any, field: str) -> float:
+    # bool is a subclass of int, so True/False divide by 1000 without raising and slip
+    # past the OverflowError/TypeError guard below.  This check must come before the
+    # falsey guard: False is falsey, so a check placed after `if not value` cannot see it.
+    if isinstance(value, bool):
+        raise InvalidClientTiming(
+            f"{field} must be a number of milliseconds; got a boolean"
+        )
     if not value:
         # Falsey means "not supplied" -- the documented optional case, not a bad one.
         return 0
     try:
-        return value / 1000
+        seconds = value / 1000
     except _MS_ERRORS as exc:
         raise InvalidClientTiming(
             f"{field} must be a number of milliseconds; got a value that cannot be "
             f"converted ({type(value).__name__})"
         ) from exc
+    if not math.isfinite(seconds):
+        raise InvalidClientTiming(
+            f"{field} must be a finite number of milliseconds; got {value!r}"
+        )
+    return seconds
 
 
 def parse_client_sent_msg_ts(value: Any) -> float:
