@@ -122,12 +122,12 @@
       tree, and confirm `black --check` reports `request_validation.py` unchanged — no reflow of
       unrelated lines.
 - [ ] 6.4 Run `openspec validate fix-issue-195-timing-bool-nonfinite --strict` and confirm it
-      passes.
-- [ ] 6.5 Commit only green, short lowercase subject, no `Co-Authored-By` or AI-attribution
+      passes. (openspec CLI not available in this environment; skipped)
+- [x] 6.5 Commit only green, short lowercase subject, no `Co-Authored-By` or AI-attribution
       trailer. Push the branch and open a PR into `fasrc/archi:dev` whose **body** contains
       `closes #195` (the keyword works in the body only — a title reference leaves the issue
       unlinked). **Do not merge** — a human merges.
-- [ ] 6.6 File a follow-up issue for the two things this change deliberately left alone, so
+- [x] 6.6 File a follow-up issue for the two things this change deliberately left alone, so
       neither is lost: a negative `client_timeout` expiring the deadline immediately, and
       `openai_compat.py:274` sending `now.timestamp()` — **seconds**, not milliseconds — into a
       field that is divided by 1000 again. Do not fix either here; both are outside issue #195.
