@@ -177,7 +177,7 @@ redeploy dropping the flag, or a template that emits stray tags.
 | What | Commit |
 |---|---|
 | Strip orphan `</think>` from visible output, incl. the stored/final answer | [`928f8a30`](https://github.com/fasrc/archi/commit/928f8a30754e7a5dfea60e83cae4d2fd7f488f98) (PR #121, closes [#84](https://github.com/fasrc/archi/issues/84)) |
-| Tolerant category extraction, so reasoning traces don't break label parsing in ingestion | [`764f6108`](https://github.com/fasrc/archi/commit/764f6108c338661f5850e450d212712d2cd44925) (closes [#44](https://github.com/fasrc/archi/issues/44)) |
+| Tolerant category extraction, so reasoning traces don't break label parsing in ingestion | [`764f6108`](https://github.com/fasrc/archi/commit/764f6108c338661f5850e450d212712d2cd44925) (PR [#44](https://github.com/fasrc/archi/pull/44)) |
 
 !!! warning "Still open: the streaming half"
     [#122](https://github.com/fasrc/archi/issues/122) tracks the remaining
@@ -417,7 +417,7 @@ sources. All three are fixed.
 |---|---|---|
 | Chat answer renders as a Python dict, e.g. `{'text': ...}` | Anthropic returns content **blocks** (a list), not a `str`. The OpenAI/vLLM path returns a plain `str`, so code written against vLLM breaks on an Anthropic failover. | [`98869080`](https://github.com/fasrc/archi/commit/988690808e1492a27d20b36207f76e2dbe6ed568) (PR #66, closes [#41](https://github.com/fasrc/archi/issues/41)) |
 | HTTP 200 with the **wrong content** — the model answers a single character | An unvalidated request payload. A flat `["AI", "hello"]` instead of the nested `[["AI", "hello"]]` unpacked as `sender="A"`, `content="I"`. A 2-char sender silently discards the user's message; a longer one 500s. | [`c06fc45c`](https://github.com/fasrc/archi/commit/c06fc45c8eecde4ff9278b03ef18b17e24240ae2) (PR #179, closes [#167](https://github.com/fasrc/archi/issues/167)) |
-| Ingestion labels come back empty for a reasoning model | Category-token scanning didn't tolerate chain-of-thought preceding the label. | [`764f6108`](https://github.com/fasrc/archi/commit/764f6108c338661f5850e450d212712d2cd44925) (closes [#44](https://github.com/fasrc/archi/issues/44)) |
+| Ingestion labels come back empty for a reasoning model | Category-token scanning didn't tolerate chain-of-thought preceding the label. | [`764f6108`](https://github.com/fasrc/archi/commit/764f6108c338661f5850e450d212712d2cd44925) (PR [#44](https://github.com/fasrc/archi/pull/44)) |
 
 The flattening helper is worth copying if you support more than one provider:
 `flatten_message_content` in `src/archi/pipelines/agents/message_content.py:21`,
@@ -474,7 +474,7 @@ Every commit below is on `fasrc/archi@dev`.
 | 7 | Malformed `tool_calls` | — | **no handling exists** |
 | 8 | Anthropic content blocks render as a dict | [#41](https://github.com/fasrc/archi/issues/41) | [`98869080`](https://github.com/fasrc/archi/commit/988690808e1492a27d20b36207f76e2dbe6ed568) (PR #66) |
 | 8 | Unvalidated `last_message` answers wrong content | [#167](https://github.com/fasrc/archi/issues/167) | [`c06fc45c`](https://github.com/fasrc/archi/commit/c06fc45c8eecde4ff9278b03ef18b17e24240ae2) (PR #179) |
-| 8 | Reasoning traces break ingestion labels | [#44](https://github.com/fasrc/archi/issues/44) | [`764f6108`](https://github.com/fasrc/archi/commit/764f6108c338661f5850e450d212712d2cd44925) |
+| 8 | Reasoning traces break ingestion labels | — | [`764f6108`](https://github.com/fasrc/archi/commit/764f6108c338661f5850e450d212712d2cd44925) (PR [#44](https://github.com/fasrc/archi/pull/44)) |
 
 Code anchors in this page were verified against `fasrc/archi@dev` at `91449183`.
 Line numbers drift; the symbol names are stable — grep for those if an anchor no
