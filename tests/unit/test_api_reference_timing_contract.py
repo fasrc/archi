@@ -8,15 +8,15 @@ check in front of the falsey guard, ``false`` stopped being an omission and beca
 client following the table would send ``false`` to omit a field and get the 400 instead
 (Codex review, PR #203).
 
-Rather than pin a fixed wording, this reads the enumeration out of the table and
-*executes* every literal in it against the real parser. Any value the doc calls an
-omission must normalize to ``0``, so a value the code refuses cannot be listed there
-without turning this test red.
+Rather than pin a fixed wording, this reads the enumeration out of the table and compares
+it -- as a set, in both directions -- against the literals the real parser actually
+normalizes to ``0``. Listing a value the code refuses fails, and so does dropping one the
+code accepts.
 
-Only the omission list is checked, not the doc's rejection list. The rejection side is
-already pinned from the code end by ``test_chat_timing_field_validation.py``, and it is
-written as prose rather than a delimited enumeration, so extracting it would mean guessing
-at sentence shape -- a brittle test guarding an already-covered claim.
+The doc's *rejection* prose is only checked to the extent that the row must still mention
+the boolean rule and name a 400 (automating a manual `grep` from this change's task list).
+Pinning it any harder would mean guessing at sentence shape, and the behaviour itself is
+already covered from the code end by ``test_chat_timing_field_validation.py``.
 """
 
 import re
@@ -43,9 +43,16 @@ _OMISSION_LIST = re.compile(
 
 _BACKTICKED = re.compile(r"`([^`]+)`")
 
+_BOOLEAN_REFUSAL = re.compile(r"boolean")
+
 # A JSON literal as written in the table -> the Python value the JSON decoder produces.
 # An unmapped literal fails the test rather than being skipped: a doc rewritten into a
 # notation this table does not know would otherwise pass vacuously.
+#
+# This is deliberately the COMPLETE set of falsey JSON values, plus `true` as the control.
+# JSON has exactly six falsey literals -- `null`, `false`, `0`, `""`, `[]`, `{}` (`0.0`,
+# `-0` and `0e0` all decode to the same zero) -- which is what lets the parity check below
+# treat "the parser accepts it" as the whole truth rather than a sample of it.
 _JSON_LITERALS = {
     "null": None,
     "0": 0,
@@ -81,40 +88,72 @@ def _documented_omission_literals(field):
     return _BACKTICKED.findall(match.group(1))
 
 
+def _literals_the_parser_treats_as_absent(field):
+    """Ground truth: which JSON literals ``field``'s parser normalizes to ``0``.
+
+    Derived by execution rather than hardcoded, so the expected set cannot itself drift
+    away from the code it is supposed to describe.
+    """
+    parse = FIELD_PARSERS[field]
+    absent = set()
+    for literal, value in _JSON_LITERALS.items():
+        try:
+            result = parse(value)
+        except InvalidClientTiming:
+            continue
+        if result == 0:
+            absent.add(literal)
+    return absent
+
+
 @pytest.mark.parametrize("field", sorted(FIELD_PARSERS))
 class TestDocumentedOmissionValuesAreActuallyOmissions:
-    def test_the_enumeration_is_present_and_not_vacuous(self, field):
-        """Guards the guard: an empty or truncated list would pass every check below."""
-        literals = _documented_omission_literals(field)
+    def test_the_documented_list_matches_the_parser_exactly(self, field):
+        """Parity in both directions, against a set derived from the parser itself.
 
-        assert len(literals) >= 4, (
-            f"the `{field}` omission list shrank to {literals}. The falsey guard accepts "
-            "null, 0, \"\", [] and {} as 'not supplied'; a shorter list means the doc "
-            "stopped describing the code."
+        Equality rather than "everything listed works" is the point. A one-directional
+        check passes when the table quietly drops `[]` or `{}`, which is drift in the
+        opposite direction: a client is then told a value it may legitimately send is
+        invalid. Because `_JSON_LITERALS` is the complete set of falsey JSON literals,
+        set equality here means the row is exactly right, not merely not-wrong.
+        """
+        documented = _documented_omission_literals(field)
+        expected = _literals_the_parser_treats_as_absent(field)
+
+        assert set(documented) == expected, (
+            f"the `{field}` omission list is {sorted(set(documented))} but the parser "
+            f"treats exactly {sorted(expected)} as 'not supplied'.\n"
+            f"  listed but refused: {sorted(set(documented) - expected)} -- a client "
+            "following the table gets a 400 instead of the documented omission.\n"
+            f"  accepted but unlisted: {sorted(expected - set(documented))} -- a client "
+            "is told a usable value is invalid.\n"
+            "Fix the doc or the code, not this test."
         )
 
-    def test_every_listed_value_normalizes_to_zero(self, field):
-        parse = FIELD_PARSERS[field]
+    def test_no_duplicate_entries_in_the_documented_list(self, field):
+        """Set equality above would hide a literal listed twice."""
+        documented = _documented_omission_literals(field)
 
-        for literal in _documented_omission_literals(field):
-            assert literal in _JSON_LITERALS, (
-                f"the `{field}` omission list contains `{literal}`, which this test "
-                f"cannot map to a JSON value. Add it to _JSON_LITERALS so the claim is "
-                "actually executed."
-            )
-            value = _JSON_LITERALS[literal]
+        assert len(documented) == len(
+            set(documented)
+        ), f"the `{field}` omission list repeats an entry: {documented}."
 
-            try:
-                result = parse(value)
-            except InvalidClientTiming as exc:
-                raise AssertionError(
-                    f"the API reference lists `{literal}` as a way to omit "
-                    f"`{field}`, but the parser refuses it with a 400: {exc}. A client "
-                    "following the table would get an error instead of the documented "
-                    "omission behaviour -- fix the doc or the code, not this test."
-                ) from exc
+    def test_the_row_still_documents_that_a_boolean_is_refused(self, field):
+        """Automates task 5.4's manual `grep -c boolean` on this change.
 
-            assert result == 0, (
-                f"`{literal}` is documented as omitting `{field}`, so it must normalize "
-                f"to 0 (the absent-value sentinel), not {result!r}."
-            )
+        Deliberately narrow: it proves the row still *mentions* the boolean rule and that
+        a 400 is named on the row, not that the sentence around it is correct. The
+        parity check above is what actually pins behaviour; this only stops the boolean
+        guarantee from vanishing from the table without anyone noticing, which is how
+        `false` came to be listed in two contradictory places to begin with.
+        """
+        row = _field_row(field)
+
+        assert _BOOLEAN_REFUSAL.search(row), (
+            f"the `{field}` row no longer mentions booleans at all. Both booleans are a "
+            "400 (`request_validation.py:26`); a client reading this row would not know."
+        )
+        assert "**400**" in row, (
+            f"the `{field}` row documents no 400 response, so its rejection rules went "
+            "missing along with the boolean one."
+        )
