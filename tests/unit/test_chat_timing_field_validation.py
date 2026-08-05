@@ -27,6 +27,11 @@ import pytest
 flask = pytest.importorskip("flask", reason="Flask not installed")
 
 from src.interfaces.chat_app.app import FlaskAppWrapper
+from src.interfaces.chat_app.request_validation import (
+    InvalidClientTiming,
+    parse_client_sent_msg_ts,
+    parse_client_timeout,
+)
 
 _APP = flask.Flask(__name__)
 
@@ -132,6 +137,28 @@ class TestNormalizationItselfCannotRaise:
         ("client_sent_msg_ts", "1700000000000"),
         ("client_timeout", "600000"),
         ("client_sent_msg_ts", [1]),
+        # Booleans: bool is an int subclass, so both divide without raising and slip
+        # past the OverflowError/TypeError guard that catches every other non-numeric type.
+        # False is listed separately from True because it is falsey — a bool check placed
+        # after the `if not value` guard cannot see it, leaving `false` silently accepted
+        # as "field omitted" while `true` is refused.  Deleting the False cases removes
+        # the only test that pins this ordering constraint.
+        ("client_sent_msg_ts", True),
+        ("client_sent_msg_ts", False),
+        ("client_timeout", True),
+        ("client_timeout", False),
+        # Non-finite floats for client_timeout: unguarded before this fix — inf / 1000 is
+        # still inf, and NaN disables the deadline silently because every comparison with
+        # NaN evaluates False.
+        ("client_timeout", float("inf")),
+        ("client_timeout", float("-inf")),
+        ("client_timeout", float("nan")),
+        # Non-finite floats for client_sent_msg_ts: already refused today via
+        # datetime.fromtimestamp, but pinned here so a regression in _milliseconds_to_seconds
+        # cannot hide behind the downstream representable-time check.
+        ("client_sent_msg_ts", float("inf")),
+        ("client_sent_msg_ts", float("-inf")),
+        ("client_sent_msg_ts", float("nan")),
     ]
 
     @pytest.mark.parametrize("field,value", CASES)
@@ -160,3 +187,16 @@ class TestNormalizationItselfCannotRaise:
 
         assert not isinstance(response, tuple), response
         assert stub.chat.call_args.args[6] == 600.0
+
+    @pytest.mark.parametrize(
+        "fn,value",
+        [
+            (parse_client_timeout, True),
+            (parse_client_timeout, False),
+            (parse_client_sent_msg_ts, True),
+            (parse_client_sent_msg_ts, False),
+        ],
+    )
+    def test_direct_call_raises_for_boolean(self, fn, value):
+        with pytest.raises(InvalidClientTiming):
+            fn(value)
