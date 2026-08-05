@@ -128,8 +128,9 @@
 - [x] 6.3 Re-check every acceptance criterion in issue #195 one at a time against the working
       tree, and confirm `black --check` reports `request_validation.py` unchanged — no reflow of
       unrelated lines.
-- [ ] 6.4 Run `openspec validate fix-issue-195-timing-bool-nonfinite --strict` and confirm it
-      passes. (openspec CLI not available in this environment; skipped)
+- [x] 6.4 Run `openspec validate fix-issue-195-timing-bool-nonfinite --strict` and confirm it
+      passes. (Skipped in the unattended run — no openspec CLI there. Run on the operator host
+      2026-08-05 with openspec 1.4.1: `Change 'fix-issue-195-timing-bool-nonfinite' is valid`.)
 - [x] 6.5 Commit only green, short lowercase subject, no `Co-Authored-By` or AI-attribution
       trailer. Push the branch and open a PR into `fasrc/archi:dev` whose **body** contains
       `closes #195` (the keyword works in the body only — a title reference leaves the issue
@@ -138,3 +139,33 @@
       neither is lost: a negative `client_timeout` expiring the deadline immediately, and
       `openai_compat.py:274` sending `now.timestamp()` — **seconds**, not milliseconds — into a
       field that is divided by 1000 again. Do not fix either here; both are outside issue #195.
+
+## 7. Live deployment validation (Deployment & Validation Policy, `AGENTS.md`)
+
+Unit and gate evidence cannot satisfy the policy on its own: it requires at least one
+end-to-end check against the *running* deployment, naming the service and the code path that
+service actually imports. Recorded here rather than only in a PR comment so the evidence
+travels with the change.
+
+- [x] 7.1 Deploy the PR head to the dev stack and name what ran. `deploy/fasrc-dev/scripts/redeploy.sh`
+      on 2026-08-05, deployment `dev`, services `chatbot-dev` + `postgres-dev` + `data-manager-dev`,
+      `SOURCE_COMMIT=fd73066d-dirty` (the `-dirty` suffix is untracked operator files, no tracked
+      edits), config pin `deploy-pin-2026-07e@4d6873e3` `match=yes`.
+- [x] 7.2 Confirm the *running* service imports the changed code, not a stale copy. `chatbot-dev`
+      runs `python -u src/bin/service_chat.py` from `WorkingDir=/root/archi`; the imported file
+      `/root/archi/src/interfaces/chat_app/request_validation.py` hashes
+      `sha256:925c5856f8db73dc…`, byte-identical to the branch. (The pre-deploy image predated the
+      file entirely, so this check is what separates "deployed" from "assumed deployed".)
+- [x] 7.3 Exercise the rejection matrix the review asked for: `true`, `false`, `Infinity`,
+      `-Infinity`, `NaN` in each of `client_sent_msg_ts` and `client_timeout`, on **both**
+      `POST /api/get_chat_response` and `POST /api/get_chat_response_stream` — 20 requests, all
+      **HTTP 400**. Each assertion requires the JSON error body to name the offending field, so a
+      400 from a malformed-JSON parse failure cannot be mistaken for a validator rejection.
+- [x] 7.4 Confirm the 400 precedes the pipeline and any write. Row counts for `conversations`,
+      `timing`, `agent_traces`, `conversation_metadata` and `feedback` were identical before and
+      after the 20 rejections (`14,7,3,8,0` → `14,7,3,8,0`), and the batch took **0.03s** total
+      against a ~15s served turn — no generation was paid for.
+- [x] 7.5 Confirm the guards reject narrowly. `client_timeout: null` still returns **200** (the
+      documented "same as omitting" path), and a valid request answers on both routes — 200 with a
+      real answer on `/api/get_chat_response`, 200 with an NDJSON stream on the streaming route.
+      23/23 live checks passed.
