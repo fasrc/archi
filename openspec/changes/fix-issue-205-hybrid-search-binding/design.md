@@ -130,7 +130,21 @@ The reason to measure rather than assert: this change **activates a retrieval si
 1. No schema change, no re-ingest, no re-embed. Query-time only.
 2. Deploy requires a redeploy — the container runs a non-editable `pip install .`, so `docker cp` is invisible. Use `archi-dev-deploy-verify`.
 3. Post-deploy verification must confirm the corrected path actually ran: container logs showing hybrid candidate generation **without** the fallback warning, plus a keyword-heavy live query returning keyword-relevant sources in the persisted response. An HTTP 200 is not acceptance — the defect being fixed is precisely one that returns 200 while doing the wrong thing.
-4. Rollback: `git revert` + redeploy.
+4. **Rollback is clean in the database but not in the artifacts.** `git revert` + redeploy restores the old ranking, and no `document_chunks` row, embedding, or schema needs unwinding. But "nothing persisted to unwind" was too strong, and it contradicted this change's own acceptance step, which requires evidence in a *persisted* response. Outputs produced while the new ranking is live do persist and outlive a revert:
+
+   | Artifact | Effect of a revert |
+   |---|---|
+   | Conversations / persisted responses with cited sources | Retain treatment-ranked sources, now mixed with pre- and post-revert rows that look identical |
+   | The committed group-6 benchmark artifact | Continues to describe a treatment that is no longer deployed — actively misleading unless marked |
+   | Goldenset baselines captured after deploy | Become treatment-derived baselines attributed to the reverted code |
+   | A/B comparison rows | Attribution silently spans two ranking behaviors |
+
+   Therefore:
+   - **Record ranking provenance.** Stamp persisted retrieval outputs and every benchmark artifact with a ranking-behavior identifier, so a row can be attributed to a ranking after the fact. Without it, no later benchmark can be trusted to describe one behavior — which is precisely the position this change is already in with respect to every baseline captured before the binding defect was found.
+   - **Treat the redeploy as a mixed-version window.** A rolling redeploy can serve both rankings concurrently, so any measurement taken during it spans both. Define the window, take no baseline inside it, and note whether any response cache can return pre-revert rankings afterwards.
+   - **Rollback steps must mark, not just revert:** annotate the committed benchmark artifact as describing an un-deployed treatment, flag or invalidate goldenset baselines and A/B rows captured while it was live, and state explicitly whether pre-treatment outputs remain valid and how an operator distinguishes them.
+
+   Add these as implementation tasks; the code revert alone is not a complete rollback.
 
 ## Open Questions
 

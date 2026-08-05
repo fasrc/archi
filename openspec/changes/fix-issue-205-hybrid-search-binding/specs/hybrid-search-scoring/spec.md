@@ -21,12 +21,24 @@ Every parameter `hybrid_search` passes to `cursor.execute` SHALL fill the placeh
 
 ### Requirement: A degraded retrieval path is observable
 
-When `hybrid_search` cannot return hybrid results and falls back to semantic-only retrieval, it SHALL emit a warning-level log record identifying the fallback and the query. Silent degradation is not acceptable: a hybrid search that is not running MUST NOT be indistinguishable from one that is.
+When `hybrid_search` cannot return hybrid results and falls back to semantic-only retrieval, it SHALL emit a warning-level record carrying **structured fields** that identify the event. Silent degradation is not acceptable: a hybrid search that is not running MUST NOT be indistinguishable from one that is.
 
-#### Scenario: The empty-result fallback warns
+The record SHALL NOT include the raw query text. User queries may contain personal or confidential content, and warning-level records typically reach centralized logging with broader access and longer retention than conversation storage — so emitting query text here would move user content into a less-governed store as a side effect of a diagnostic. Diagnosing this fallback does not require the query's content: the fields below identify it, and an operator who needs the text can reach it through the conversation store under its existing controls.
+
+#### Scenario: The empty-result fallback warns with structured, non-sensitive fields
 
 - **WHEN** the hybrid statement returns zero rows and `hybrid_search` falls back to `similarity_search_with_score`
-- **THEN** a warning-level log record SHALL be emitted before returning, naming the fallback and the query
+- **THEN** a warning-level record SHALL be emitted before returning, carrying a fallback-reason field, the collection name, the requested `k`, and a request or trace identifier for correlation — and **not** the query text
+
+#### Scenario: Query content does not reach the log record
+
+- **WHEN** the fallback warning is emitted for a query containing a distinctive string
+- **THEN** that string SHALL NOT appear anywhere in the emitted record
+
+#### Scenario: Observability tests assert on fields, not prose
+
+- **WHEN** a test verifies the fallback is observable
+- **THEN** it SHALL assert on the structured field values rather than exact message wording, so that rephrasing the message does not break the test and so the test cannot be satisfied by prose that omits the fields
 
 #### Scenario: A successful hybrid query does not warn
 
@@ -104,15 +116,20 @@ Because `hybrid_search` delegates scoring and ordering to PostgreSQL and returns
 - **WHEN** a unit test supplies fabricated `bm25_score` values
 - **THEN** those values SHALL be negative or zero, as the raw `<@>` operator emits, rather than positive
 
-#### Scenario: Scoring behavior is covered by database-executed tests
+#### Scenario: Every scoring invariant has its own database-executed test
 
-- **WHEN** the test suite verifies orientation, normalization, degenerate-input handling, or `NULL` placement
-- **THEN** at least one test SHALL execute the generated statement against a real PostgreSQL instance with `pg_textsearch` installed
+- **WHEN** the suite covers the scoring invariants — parameter correspondence, BM25 orientation, normalization applied before candidate selection, the zero-range degenerate case, and `NULL` placement
+- **THEN** **each** invariant SHALL have its own named test that executes the generated statement against a real PostgreSQL instance with `pg_textsearch` installed, and each SHALL individually report as executed and passed. An aggregate count of executed database tests SHALL NOT satisfy this requirement, because a single happy-path database test would otherwise discharge coverage for every invariant while the consequential cases stayed mocked or skipped.
 
 #### Scenario: A wholly-skipped database suite is a failure, not a pass
 
-- **WHEN** the database-executed portion of the suite runs in an environment where `pg_textsearch` is unavailable, or where every such test is skipped for any other reason
-- **THEN** the run SHALL fail rather than report success — a count of zero executed database tests MUST be treated as a failing condition, because reporting the skip while passing recreates exactly the coverage gap that allowed an unexecuted-SQL defect to ship
+- **WHEN** the database-executed portion of the suite runs in an environment where `pg_textsearch` is unavailable, or where any named invariant test above is skipped for any other reason
+- **THEN** the run SHALL fail rather than report success — a zero or incomplete count of executed invariant tests MUST be treated as a failing condition, because reporting the skip while passing recreates exactly the coverage gap that allowed an unexecuted-SQL defect to ship
+
+#### Scenario: Each invariant test fails when its own invariant is broken
+
+- **WHEN** any single correction is individually reverted — the parameter ordering, the BM25 negation, the normalization, its placement before the row limit, or the zero-range guard
+- **THEN** the named database-executed test for *that specific* invariant SHALL fail. Verifying only that the suite fails when the extension is absent tests the counter rather than the coverage, and does not satisfy this scenario.
 
 #### Scenario: Reintroducing the sign inversion fails the suite
 
