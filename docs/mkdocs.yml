@@ -19,6 +19,7 @@ nav:
   - Adding Providers: adding_providers.md
   - Developer Guide: developer_guide.md
   - Troubleshooting: troubleshooting.md
+  - vLLM Failure Modes: vllm_issues.md
 theme: readthedocs
 markdown_extensions:
   # Renders `!!! note` / `!!! warning` callouts. Without this they appear as

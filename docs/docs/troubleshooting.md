@@ -106,11 +106,19 @@ docker ps --filter "name=archi-myapp"
 1. **No data ingested**: Check the data viewer to verify documents exist.
 2. **Wrong provider config**: Verify your API key is set and the provider/model names are correct.
 3. **Retrieval issues**: Check `data_manager.retrievers.hybrid_retriever` settings — `num_documents_to_retrieve` may be too low, or `bm25_weight`/`semantic_weight` may need tuning.
+4. **Self-hosted vLLM with a reasoning model**: a reasoning parser can route the
+   entire answer into a discarded channel, so `content` arrives empty while the
+   server looks healthy. See [vLLM failure modes](vllm_issues.md#1-the-reasoning-parser-eats-the-answer-empty-content).
 
 Enable verbose logging by checking container logs:
 ```bash
 docker logs -f archi-myapp-chat
 ```
+
+If you are running against a self-hosted vLLM server, the
+[vLLM failure modes field guide](vllm_issues.md) covers empty answers, leaked
+chain-of-thought, context-length 400s, and OOM crashes that take the server down —
+each with the symptom, the cause, and the fix commit.
 
 ---
 
