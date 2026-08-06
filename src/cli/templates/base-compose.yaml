@@ -27,7 +27,7 @@ services:
     image: {{ data_manager_image }}:{{ data_manager_tag }}
     build:
       context: .
-      dockerfile: archi_code/cli/templates/dockerfiles/Dockerfile-data-manager
+      dockerfile: archi_code/cli/templates/dockerfiles/Dockerfile-data-manager{{ '-gpu' if gpu_ids else '' }}
       args:
         APP_VERSION: {{ app_version }}
     container_name: {{ data_manager_container_name }}
@@ -45,12 +45,25 @@ services:
       PGUSER: archi
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
+      {% if gpu_ids -%}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      {% endif %}
       {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
       {% endfor %}
     env_file:
       - .env
+    {% if gpu_ids and not use_podman -%}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    {% endif %}
     secrets:
       {% for secret in required_secrets | default([]) -%}
       - {{ secret.lower() }}
