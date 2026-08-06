@@ -381,5 +381,20 @@ else
   notok "a normal run is written whole"
 fi
 
+# 24. the bank no longer ships in this repo — it lives in archi-config, provisioned
+#     at config/ on deploy. With GOLDENSET_BANK unset the wrapper must default
+#     there, not at the examples/ path the bank used to occupy. Asserted as a
+#     path string, not a file that exists: config/ is gitignored, so a fresh
+#     clone and CI both run this test without the checkout present.
+sb="$(new_sandbox)"
+( GOLDENSET_BANK= GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) >/dev/null 2>&1 || true
+calls="$(cat "$sb/calls" 2>/dev/null || true)"
+repo_root="$(cd "$SCRIPT_DIR/../.." && pwd)"
+case "$calls" in
+  *"--bank $repo_root/config/benchmarking/fasrc_ragas_queries.json"*)
+    ok "defaults the bank to the provisioned config checkout" ;;
+  *) notok "defaults the bank to the provisioned config checkout (got: $calls)" ;;
+esac
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

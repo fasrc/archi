@@ -85,7 +85,8 @@ Prereqs (this is a `needs-deploy` task — the local gate cannot run it):
   pass (chunk size changes ingestion → same two-run protocol).
 - **`bm25_weight` sweep** — clone the configs varying only
   `retrievers.hybrid_retriever.bm25_weight`, one pass each.
-- **SOURCES mode is off.** The in-repo `fasrc_ragas_queries.json` is RAGAS-only; its
+- **SOURCES mode is off.** `fasrc_ragas_queries.json` (in the archi-config checkout at
+  `config/benchmarking/`) is RAGAS-only; its
   zero-source `should_refuse` rows carry an empty `source_match_field`. For a
   headline run against real tickets, drop the operator-local
   `snow_ragas_queries_pt1.json` (gitignored real ServiceNow data) on disk and point

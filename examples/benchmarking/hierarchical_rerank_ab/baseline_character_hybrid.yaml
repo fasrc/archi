@@ -69,8 +69,9 @@ services:
     provider: local
     model: "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4"
     ollama_url: http://archi.rc.fas.harvard.edu:8001/v1
-    queries_path: examples/benchmarking/fasrc_ragas_queries.json
-    # ^ typed FASRC bank, in-repo (sliceable by question type). For the headline
+    queries_path: config/benchmarking/fasrc_ragas_queries.json
+    # ^ typed FASRC bank, from the archi-config checkout provisioned at config/ on
+    #   deploy (sliceable by question type). For the headline
     #   quality delta, swap to examples/benchmarking/snow_ragas_queries_pt1.json
     #   (27 real ServiceNow tickets) — that bank is operator-local and gitignored
     #   (real ticket data), so place it on disk before running.

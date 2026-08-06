@@ -25,7 +25,7 @@
 # the allowlist because it is the one setting that is normally a list.
 # Recognized settings:
 #
-#   GOLDENSET_BANK          bank JSON       (default: examples/benchmarking/…)
+#   GOLDENSET_BANK          bank JSON         (default: config/benchmarking/…)
 #   GOLDENSET_PG_DSN        live catalog DSN     ) exactly one
 #   GOLDENSET_CORPUS_JSON   or a corpus dump     ) of these two
 #   GOLDENSET_SOURCES       source list the KB ingests from   (required)
@@ -55,7 +55,7 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
-BANK="${GOLDENSET_BANK:-$REPO_ROOT/examples/benchmarking/fasrc_ragas_queries.json}"
+BANK="${GOLDENSET_BANK:-$REPO_ROOT/config/benchmarking/fasrc_ragas_queries.json}"
 LOG_DIR="${GOLDENSET_LOG_DIR:-$HOME/.ralph/log}"
 LOG="$LOG_DIR/goldenset-report.log"
 PYTHON="${GOLDENSET_PYTHON:-python}"
