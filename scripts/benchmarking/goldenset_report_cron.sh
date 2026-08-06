@@ -70,8 +70,6 @@ RUN_STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
 # with its own header is a thing nobody should have to reason about.
 RUN_ISO="${RUN_STAMP:0:4}-${RUN_STAMP:4:2}-${RUN_STAMP:6:2}"
 RUN_ISO="${RUN_ISO}T${RUN_STAMP:9:2}:${RUN_STAMP:11:2}:${RUN_STAMP:13:2}Z"
-LOG_NAME="goldenset-report-$RUN_STAMP.log"
-LOG="$LOG_DIR/$LOG_NAME"
 # A stable path for the overwhelmingly common question — "what did the last run
 # say?" — so answering it needs no glob and no timestamp arithmetic.
 LATEST="$LOG_DIR/goldenset-report-latest.log"
@@ -114,6 +112,32 @@ args+=(--summary-json "$SUMMARY")
 
 mkdir -p "$LOG_DIR"
 
+# Claim this run's filename atomically. A second-resolution stamp alone does not
+# guarantee one file per run: a hand-run can start in the same UTC second as the
+# timer, and both would then open the same path with `>>` — interleaving two runs
+# into one file and mutating the earlier run's log. `set -C` makes the create
+# fail rather than truncate, which is the only check that cannot lose a race to a
+# process starting between our test and our write.
+LOG_NAME="goldenset-report-$RUN_STAMP.log"
+LOG="$LOG_DIR/$LOG_NAME"
+attempt=1
+set -C
+until : > "$LOG" 2>/dev/null; do
+  if [ ! -e "$LOG" ]; then
+    # Not a collision — the directory is unwritable, or worse. Say which.
+    set +C
+    die "cannot write $LOG"
+  fi
+  attempt=$((attempt + 1))
+  if [ "$attempt" -gt 99 ]; then
+    set +C
+    die "cannot claim a log name in $LOG_DIR after 99 attempts"
+  fi
+  LOG_NAME="goldenset-report-$RUN_STAMP-$attempt.log"
+  LOG="$LOG_DIR/$LOG_NAME"
+done
+set +C
+
 # Bounds ONE run's logged output, not the directory. Coverage prints every gap and
 # drift can span the whole bank, so a single run can be enormous; a file nobody can
 # open is a file nobody reads. The number of files is deliberately unbounded — a
@@ -126,11 +150,18 @@ if ! printf '===== goldenset report %s =====\n' "$RUN_ISO" >> "$LOG"; then
 fi
 
 # Repointed only after the run's own file exists, so `latest` can never name a
-# file that could not be created. `-n` treats an existing symlink as a file to
-# replace rather than a directory to write inside, which is what turns the second
-# night into a repoint instead of a link nested under the first night's target.
-ln -sfn "$LOG_NAME" "$LATEST" 2>/dev/null ||
-  printf 'goldenset-report: could not update %s\n' "$LATEST" >&2
+# file that could not be created.
+#
+# `-T` (--no-target-directory), not just `-n`: `-n` only declines to follow a
+# symlink-to-a-directory. If a REAL directory of this name exists, `ln -sfn`
+# succeeds by creating the link *inside* it, exit 0 and silent — and the
+# documented `tail …-latest.log` then fails with "Is a directory" having warned
+# nobody. `-T` always treats the destination as a plain name, so that case fails
+# loudly here and the report itself still lands: a broken pointer is not a broken
+# run, and the dated file is the record of record.
+ln -sfnT "$LOG_NAME" "$LATEST" 2>/dev/null ||
+  printf 'goldenset-report: could not update %s (not a symlink?); this run is at %s\n' \
+    "$LATEST" "$LOG" >&2
 
 # Appended within this run's own file, never truncating it: the history that makes
 # a slow drift visible (a page edited a little each month) now lives across the

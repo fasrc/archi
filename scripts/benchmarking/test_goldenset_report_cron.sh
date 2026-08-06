@@ -68,6 +68,20 @@ EOF
   chmod +x "$sb/bin/python"
 }
 
+# A fake `date` pinned to one instant, so two runs collide on the same UTC second
+# deterministically instead of us trying to race the real clock.
+freeze_clock() { # $1 = sandbox
+  cat > "$1/bin/date" <<'EOF'
+#!/usr/bin/env bash
+# Only the wrapper's stamp call is pinned; anything else defers to the real date.
+case "$*" in
+  *"+%Y%m%dT%H%M%SZ"*) echo "20260101T000000Z" ;;
+  *) exec /usr/bin/date "$@" ;;
+esac
+EOF
+  chmod +x "$1/bin/date"
+}
+
 # Run the wrapper in a sandbox with the fake python ahead of the real one.
 # HOME is pinned to the sandbox so the wrapper's default env-file lookup
 # (${GOLDENSET_ENV_FILE:-$HOME/.ralph/goldenset-report.env}) can never resolve to
@@ -460,6 +474,54 @@ if [ "$(readlink "$sb/log/goldenset-report-latest.log")" = "goldenset-report-202
   ok "a misconfigured run writes no log and leaves latest alone"
 else
   notok "a misconfigured run writes no log and leaves latest alone"
+fi
+
+# 25. two runs starting in the SAME UTC second (a hand-run meeting the timer) must
+#     still produce one file per run. A second-resolution stamp alone does not
+#     guarantee that: `>>` would interleave both runs into one file and mutate the
+#     earlier run's log, breaking the contract case 4 asserts.
+sb="$(new_sandbox)"
+freeze_clock "$sb"
+( GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) >/dev/null 2>&1 || true
+( GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) >/dev/null 2>&1 || true
+n_logs="$(find "$sb/log" -name 'goldenset-report-*.log' -not -name '*latest*' | wc -l)"
+if [ "$n_logs" -eq 2 ]; then
+  ok "two runs in the same UTC second write two separate files"
+else
+  notok "two runs in the same UTC second write two separate files (found $n_logs)"
+fi
+doubled=""
+for f in "$sb"/log/goldenset-report-*.log; do
+  case "$f" in *latest*) continue ;; esac
+  [ "$(grep -c '^===== exit' "$f")" -gt 1 ] && doubled="$f"
+done
+if [ -z "$doubled" ]; then
+  ok "no log file contains two runs' output"
+else
+  notok "no log file contains two runs' output ($doubled has 2+ exit footers)"
+fi
+
+# 26. `latest` is documented as the path an operator tails. If a real DIRECTORY of
+#     that name exists, `ln -sfn` SUCCEEDS by creating the link inside it — the
+#     documented path then fails with "Is a directory" and nothing warned. Refuse
+#     loudly instead of silently breaking the one path the docs promise.
+sb="$(new_sandbox)"
+mkdir -p "$sb/log/goldenset-report-latest.log"
+err_out="$( ( GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) 2>&1 >/dev/null || true )"
+if [ -z "$(find "$sb/log/goldenset-report-latest.log" -mindepth 1 -print -quit)" ]; then
+  ok "a latest/ directory is not silently filled with the link"
+else
+  notok "a latest/ directory is not silently filled with the link"
+fi
+case "$err_out" in
+  *goldenset-report-latest.log*) ok "the operator is warned that latest could not be updated" ;;
+  *) notok "the operator is warned that latest could not be updated (got: $err_out)" ;;
+esac
+# The run itself must still succeed — a broken pointer is not a broken report.
+if run_log "$sb/log" >/dev/null 2>&1; then
+  ok "the run still writes its own log despite the latest conflict"
+else
+  notok "the run still writes its own log despite the latest conflict"
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

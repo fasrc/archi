@@ -1249,7 +1249,7 @@ symlink to the newest. So the usual question needs no glob and no timestamp arit
 
 ```bash
 tail -n 40 ~/.ralph/log/goldenset-report-latest.log   # what did the last run say?
-ls -t ~/.ralph/log/goldenset-report-*Z.log | head     # the recent history, newest first
+ls -t ~/.ralph/log/goldenset-report-[0-9]*.log | head  # the recent history, newest first
 ```
 
 ```
@@ -1263,6 +1263,12 @@ Files accumulate — one per run, roughly 60 KB each. That is deliberate: an aut
 would trade immaterial disk for a way to lose history to a config typo, so pruning is yours to
 do (`rm` the dates you no longer want; the symlink always names a file that still exists as long
 as you keep the newest).
+
+Two runs can start in the same second — a hand-run meeting the timer. The second one takes
+`…Z-2.log` rather than sharing the first's file, so one run is always one file. If
+`goldenset-report-latest.log` exists as something other than a symlink, the run still writes its
+dated file and warns on stderr that the pointer could not be updated; the report is never lost to
+a broken pointer.
 
 **Rollback** — delete that line (`crontab -e`, remove, save). The wrapper holds no state, installs
 no unit, and writes only its logs, so removing the line is the whole rollback. The env file and
