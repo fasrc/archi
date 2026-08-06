@@ -5,7 +5,7 @@
 #    1. it invokes `goldenset_maintenance.py report` with the configured inputs
 #    2. findings (exit 0) stay exit 0 — the cron must not alert on work-to-do
 #    3. an operational failure (exit 1) propagates, so cron mails the operator
-#    4. output is appended to the log, never truncated
+#    4. each run writes its own dated log file; earlier runs' files are untouched
 #    5. the log directory is created if absent
 #    6. a missing required setting fails before running anything
 #    7. no model is passed unless GOLDENSET_MODEL is set
@@ -16,7 +16,11 @@
 #          (crontab has no line continuation, so the entry must carry no env)
 #   13-15. the third state: findings exit ZERO, so notification cannot key on
 #          the exit status — a concise digest, not the whole report
-#   16-17. the append-only log is rotated once past a size cap
+#   16-17. `goldenset-report-latest.log` tracks the newest run by relative name,
+#          earlier files survive, and nothing is ever rotated to a `.1` suffix
+#      24. with GOLDENSET_BANK unset the bank defaults to the provisioned config
+#          checkout, not the examples/ path the bank used to occupy
+#      25. a run that refuses up front writes no log and leaves `latest` alone
 # Run: bash scripts/benchmarking/test_goldenset_report_cron.sh
 set -euo pipefail
 
@@ -90,6 +94,19 @@ new_sandbox() {
   echo "$sb"
 }
 
+# Each run names its log for its own UTC start time, so no test can hardcode the
+# filename. Resolve it by glob and insist on exactly one match: a case holding two
+# run logs has almost certainly invoked the wrapper twice, and a silent
+# "newest wins" would hide that rather than fail on it.
+run_log() { # $1 = log dir
+  local matches=( "$1"/goldenset-report-*Z.log )
+  if [ "${#matches[@]}" -ne 1 ] || [ ! -f "${matches[0]}" ]; then
+    echo "expected exactly 1 run log in $1, found: ${matches[*]}" >&2
+    return 1
+  fi
+  printf '%s\n' "${matches[0]}"
+}
+
 # 1. the report subcommand is invoked with the configured inputs
 sb="$(new_sandbox)"
 ( GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) >/dev/null 2>&1 || true
@@ -123,23 +140,36 @@ else
   ok "an operational failure exits non-zero"
 fi
 
-# 4. the log is appended to, never truncated
+# 4. each run writes its OWN dated file, and an earlier run's file is not touched.
+#    One file per run is what makes "what did last night say" a file you open
+#    rather than a region you locate inside a growing log.
 sb="$(new_sandbox)"
 mkdir -p "$sb/log"
-echo "PREVIOUS RUN" > "$sb/log/goldenset-report.log"
+prior="$sb/log/goldenset-report-20260101T000000Z.log"
+echo "PREVIOUS RUN" > "$prior"
 ( GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) >/dev/null 2>&1 || true
-if grep -q "PREVIOUS RUN" "$sb/log/goldenset-report.log" \
-   && grep -q "fake report output" "$sb/log/goldenset-report.log"; then
-  ok "appends to the log rather than truncating it"
+fresh=""
+for f in "$sb"/log/goldenset-report-*Z.log; do
+  [ "$f" = "$prior" ] && continue
+  fresh="$f"
+done
+if [ -n "$fresh" ] && grep -q "fake report output" "$fresh" \
+   && grep -q "===== exit" "$fresh"; then
+  ok "each run writes its own dated log file"
 else
-  notok "appends to the log rather than truncating it"
+  notok "each run writes its own dated log file (found: $fresh)"
+fi
+if [ "$(cat "$prior")" = "PREVIOUS RUN" ]; then
+  ok "an earlier run's log is left byte-for-byte alone"
+else
+  notok "an earlier run's log is left byte-for-byte alone"
 fi
 
 # 5. a missing log directory is created rather than losing the run
 sb="$(new_sandbox)"
 ( GOLDENSET_PG_DSN="postgresql://x" GOLDENSET_LOG_DIR="$sb/deep/log" run_cron "$sb" ) \
   >/dev/null 2>&1 || true
-if [ -f "$sb/deep/log/goldenset-report.log" ]; then
+if run_log "$sb/deep/log" >/dev/null 2>&1; then
   ok "creates a missing log directory"
 else
   notok "creates a missing log directory"
@@ -261,35 +291,56 @@ case "$out" in
   *"fake report output"*) notok "the findings notice is a digest, not the report" ;;
   *) ok "the findings notice is a digest, not the report" ;;
 esac
-case "$out" in
-  *goldenset-report.log*) ok "the findings notice points at the log" ;;
-  *) notok "the findings notice points at the log (got: $out)" ;;
-esac
+# The digest must name THIS run's file. A shared path would make the operator
+# hunt for the right banner, which is the ergonomics the per-run rename fixed.
+# Guard on a resolved path first: an unresolvable one substitutes as the empty
+# string, and every `case` pattern matches that — a vacuous pass.
+digest_log="$(run_log "$sb/log" 2>/dev/null || true)"
+if [ -n "$digest_log" ] && printf '%s' "$out" | grep -qF -- "$digest_log"; then
+  ok "the findings notice points at this run's log"
+else
+  notok "the findings notice points at this run's log (got: $out)"
+fi
 
-# 16. an unbounded nightly append eventually fills the filesystem
+# 16. `latest` is the whole point of the rename: reading the most recent report
+#     must need no glob, no listing, and no timestamp arithmetic. The target is
+#     relative so the log directory can be moved or copied without dangling.
+sb="$(new_sandbox)"
+( GOLDENSET_PG_DSN="postgresql://x" run_cron "$sb" ) >/dev/null 2>&1 || true
+link="$sb/log/goldenset-report-latest.log"
+if [ -L "$link" ] && [ "$(readlink "$link")" = "$(basename "$(run_log "$sb/log")")" ]; then
+  ok "the latest symlink points at this run's file, by relative name"
+else
+  notok "the latest symlink points at this run's file, by relative name (got: $(readlink "$link" 2>&1))"
+fi
+if [ -r "$link" ] && grep -q "fake report output" "$link"; then
+  ok "reading through the latest symlink yields the run's report"
+else
+  notok "reading through the latest symlink yields the run's report"
+fi
+
+# 17. a second run repoints `latest` without destroying the first run's file, and
+#     no rotation happens at any size: there is no shared log left to rotate, so a
+#     stray `.log.1` would mean the old append path survived the rename.
 sb="$(new_sandbox)"
 mkdir -p "$sb/log"
+head -c 4096 /dev/zero | tr '\0' 'x' > "$sb/log/goldenset-report-20260101T000000Z.log"
+ln -sfn "goldenset-report-20260101T000000Z.log" "$sb/log/goldenset-report-latest.log"
+# Also seed the legacy shared name, over the cap. The old append path would
+# rotate exactly this file, so its survival is what proves the path is gone.
 head -c 4096 /dev/zero | tr '\0' 'x' > "$sb/log/goldenset-report.log"
 ( GOLDENSET_PG_DSN="postgresql://x" GOLDENSET_LOG_MAX_BYTES=1024 run_cron "$sb" ) \
   >/dev/null 2>&1 || true
-if [ -f "$sb/log/goldenset-report.log.1" ] \
-   && [ "$(wc -c < "$sb/log/goldenset-report.log")" -lt 4096 ]; then
-  ok "an oversized log is rotated before appending"
+if [ "$(readlink "$sb/log/goldenset-report-latest.log")" != "goldenset-report-20260101T000000Z.log" ] \
+   && [ "$(wc -c < "$sb/log/goldenset-report-20260101T000000Z.log")" -eq 4096 ]; then
+  ok "a later run repoints latest and keeps the earlier file"
 else
-  notok "an oversized log is rotated before appending"
+  notok "a later run repoints latest and keeps the earlier file"
 fi
-
-# 17. and a log under the cap is left alone
-sb="$(new_sandbox)"
-mkdir -p "$sb/log"
-echo "PREVIOUS RUN" > "$sb/log/goldenset-report.log"
-( GOLDENSET_PG_DSN="postgresql://x" GOLDENSET_LOG_MAX_BYTES=1048576 run_cron "$sb" ) \
-  >/dev/null 2>&1 || true
-if [ ! -f "$sb/log/goldenset-report.log.1" ] \
-   && grep -q "PREVIOUS RUN" "$sb/log/goldenset-report.log"; then
-  ok "a log under the cap is not rotated"
+if [ -z "$(find "$sb/log" -name '*.log.1' -print -quit)" ]; then
+  ok "no log is ever rotated to a .1 suffix"
 else
-  notok "a log under the cap is not rotated"
+  notok "no log is ever rotated to a .1 suffix"
 fi
 
 # 18. drift "succeeds" as long as ONE source was readable, so a run that checked
@@ -347,13 +398,13 @@ case "$(cat "$sb/calls" 2>/dev/null || true)" in
   *) notok "a quoted multi-host allowlist survives the env file (got: $(cat "$sb/calls" 2>/dev/null))" ;;
 esac
 
-# 21. rotation before the run does not bound anything on its own: coverage
-#     prints every gap and drift can span the whole bank, so ONE run can append
-#     far more than the cap and fill the disk before the next rotation.
+# 21. one file per run bounds the file COUNT at one per night, not the SIZE of any
+#     one of them: coverage prints every gap and drift can span the whole bank, so
+#     a single run can be enormous. The cap is what keeps each file readable.
 sb="$(new_sandbox)"
 ( STUB_BYTES=20000 GOLDENSET_PG_DSN="postgresql://x" GOLDENSET_LOG_MAX_BYTES=2048 \
   run_cron "$sb" ) >/dev/null 2>&1 || true
-size="$(wc -c < "$sb/log/goldenset-report.log")"
+size="$(wc -c < "$(run_log "$sb/log")")"
 if [ "$size" -le 4096 ]; then
   ok "a single oversized run cannot blow past the cap (log is $size bytes)"
 else
@@ -364,7 +415,7 @@ fi
 sb="$(new_sandbox)"
 ( STUB_BYTES=20000 GOLDENSET_PG_DSN="postgresql://x" GOLDENSET_LOG_MAX_BYTES=2048 \
   run_cron "$sb" ) >/dev/null 2>&1 || true
-if grep -q "truncated" "$sb/log/goldenset-report.log"; then
+if grep -q "truncated" "$(run_log "$sb/log")"; then
   ok "a truncated log says so"
 else
   notok "a truncated log says so"
@@ -374,8 +425,8 @@ fi
 sb="$(new_sandbox)"
 ( GOLDENSET_PG_DSN="postgresql://x" GOLDENSET_LOG_MAX_BYTES=1048576 run_cron "$sb" ) \
   >/dev/null 2>&1 || true
-if grep -q "fake report output" "$sb/log/goldenset-report.log" \
-   && ! grep -q "truncated" "$sb/log/goldenset-report.log"; then
+whole="$(run_log "$sb/log")"
+if grep -q "fake report output" "$whole" && ! grep -q "truncated" "$whole"; then
   ok "a normal run is written whole"
 else
   notok "a normal run is written whole"
@@ -395,6 +446,21 @@ case "$calls" in
     ok "defaults the bank to the provisioned config checkout" ;;
   *) notok "defaults the bank to the provisioned config checkout (got: $calls)" ;;
 esac
+# 25. a wrapper that refuses before invoking anything must not disturb the pointer:
+#     `latest` resolving to a run that never happened is worse than no pointer,
+#     because a stale report reads exactly like a current one.
+sb="$(new_sandbox)"
+mkdir -p "$sb/log"
+echo "PREVIOUS RUN" > "$sb/log/goldenset-report-20260101T000000Z.log"
+ln -sfn "goldenset-report-20260101T000000Z.log" "$sb/log/goldenset-report-latest.log"
+( GOLDENSET_PG_DSN="postgresql://x" GOLDENSET_SOURCES="" run_cron "$sb" ) \
+  >/dev/null 2>&1 || true
+if [ "$(readlink "$sb/log/goldenset-report-latest.log")" = "goldenset-report-20260101T000000Z.log" ] \
+   && [ "$(find "$sb/log" -name 'goldenset-report-*Z.log' | wc -l)" -eq 1 ]; then
+  ok "a misconfigured run writes no log and leaves latest alone"
+else
+  notok "a misconfigured run writes no log and leaves latest alone"
+fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -36,7 +36,9 @@
 #   GOLDENSET_MODEL         OPTIONAL provider/model for the advisory drift diff.
 #                           Unset by default: an unattended job should not spend
 #                           a provider call per drifted row without being asked.
-#   GOLDENSET_LOG_DIR       where to append   (default: ~/.ralph/log)
+#   GOLDENSET_LOG_DIR       where each run's dated log lands, alongside a
+#                           `goldenset-report-latest.log` symlink to the newest
+#                           (default: ~/.ralph/log)
 #   GOLDENSET_PYTHON        interpreter       (default: python)
 #
 # Install and rollback are documented in docs/docs/benchmarking.md.
@@ -57,8 +59,22 @@ fi
 
 BANK="${GOLDENSET_BANK:-$REPO_ROOT/config/benchmarking/fasrc_ragas_queries.json}"
 LOG_DIR="${GOLDENSET_LOG_DIR:-$HOME/.ralph/log}"
-LOG="$LOG_DIR/goldenset-report.log"
 PYTHON="${GOLDENSET_PYTHON:-python}"
+
+# One file per run, named for the run's UTC start. Colons are legal in a filename
+# but make globs, completion and scp quoting tedious, so the compact form.
+# Lexicographic order is chronological order, which is what makes `ls` useful.
+RUN_STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
+# The in-file banner is derived from that same string rather than a second `date`
+# call: two calls can straddle a second boundary, and a file whose name disagrees
+# with its own header is a thing nobody should have to reason about.
+RUN_ISO="${RUN_STAMP:0:4}-${RUN_STAMP:4:2}-${RUN_STAMP:6:2}"
+RUN_ISO="${RUN_ISO}T${RUN_STAMP:9:2}:${RUN_STAMP:11:2}:${RUN_STAMP:13:2}Z"
+LOG_NAME="goldenset-report-$RUN_STAMP.log"
+LOG="$LOG_DIR/$LOG_NAME"
+# A stable path for the overwhelmingly common question — "what did the last run
+# say?" — so answering it needs no glob and no timestamp arithmetic.
+LATEST="$LOG_DIR/goldenset-report-latest.log"
 
 die() { printf 'goldenset-report: %s\n' "$1" >&2; exit 2; }
 
@@ -98,23 +114,27 @@ args+=(--summary-json "$SUMMARY")
 
 mkdir -p "$LOG_DIR"
 
-# A nightly append with no ceiling eventually fills the filesystem, and the
-# first thing to break is the logging itself — so the failure that finally
-# needs reading is the one that cannot be written. One rotation is enough: the
-# log is a history to skim, not an archive to audit, and a hard 2x bound needs
-# no logrotate unit, which keeps rollback "delete the cron line".
+# Bounds ONE run's logged output, not the directory. Coverage prints every gap and
+# drift can span the whole bank, so a single run can be enormous; a file nobody can
+# open is a file nobody reads. The number of files is deliberately unbounded — a
+# nightly run is tens of KB, and an automatic pruner would trade immaterial disk
+# for a way to lose history to a config typo. Operators prune by hand.
 LOG_MAX_BYTES="${GOLDENSET_LOG_MAX_BYTES:-5242880}"
-if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -ge "$LOG_MAX_BYTES" ]; then
-  mv -f "$LOG" "$LOG.1"
-fi
 
-if ! printf '\n===== goldenset report %s =====\n' \
-     "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$LOG"; then
+if ! printf '===== goldenset report %s =====\n' "$RUN_ISO" >> "$LOG"; then
   die "cannot write $LOG"
 fi
 
-# Appended, never truncated: the value of this log is the history, which is how
-# a slow drift (a page edited a little each month) becomes visible at all.
+# Repointed only after the run's own file exists, so `latest` can never name a
+# file that could not be created. `-n` treats an existing symlink as a file to
+# replace rather than a directory to write inside, which is what turns the second
+# night into a repoint instead of a link nested under the first night's target.
+ln -sfn "$LOG_NAME" "$LATEST" 2>/dev/null ||
+  printf 'goldenset-report: could not update %s\n' "$LATEST" >&2
+
+# Appended within this run's own file, never truncating it: the history that makes
+# a slow drift visible (a page edited a little each month) now lives across the
+# dated files rather than inside one, so the directory is the record to skim.
 set +e
 if [ -t 1 ]; then
   # Interactive: stream, so a slow drift pass is visible while it runs.
@@ -124,12 +144,10 @@ else
   RUN_OUT="$(mktemp)"
   "$PYTHON" "${args[@]}" > "$RUN_OUT" 2>&1
   status=$?
-  # Rotating before the run bounds what was already there, not what is about to
-  # arrive. Coverage prints every gap and drift can span the whole bank, so ONE
-  # run can be enormous — and an unbounded append fills the disk long before the
-  # next night's rotation, taking the logging down with it. Cap the appended
-  # copy; the full text still goes to stderr when the run failed, so nothing
-  # diagnostic is lost at the moment it matters.
+  # One file per run bounds the file COUNT, not the size of any one of them:
+  # coverage prints every gap and drift can span the whole bank, so ONE run can be
+  # enormous. Cap what lands on disk; the full text still goes to stderr when the
+  # run failed, so nothing diagnostic is lost at the moment it matters.
   if [ "$(wc -c < "$RUN_OUT")" -gt "$LOG_MAX_BYTES" ]; then
     head -c "$LOG_MAX_BYTES" "$RUN_OUT" >> "$LOG"
     printf '\n[... truncated at %s bytes; raise GOLDENSET_LOG_MAX_BYTES to keep more ...]\n' \
