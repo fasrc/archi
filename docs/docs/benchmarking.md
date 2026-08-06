@@ -1222,8 +1222,8 @@ with half a list.
 | `GOLDENSET_MIN_PAGES` / `GOLDENSET_MAX_PAGES` | Sitemap floor/cap — match the deployment |
 | `GOLDENSET_LEDGER` | Decision ledger, so declined pages stay suppressed |
 | `GOLDENSET_MODEL` | Optional advisory drift diff; unset means no provider calls |
-| `GOLDENSET_LOG_DIR` | Where to append (default `~/.ralph/log`) |
-| `GOLDENSET_LOG_MAX_BYTES` | Rotate the log once past this size (default 5 MiB) |
+| `GOLDENSET_LOG_DIR` | Where each run's dated log lands (default `~/.ralph/log`) |
+| `GOLDENSET_LOG_MAX_BYTES` | Truncate one run's logged output past this size (default 5 MiB) |
 | `GOLDENSET_PYTHON` | Interpreter, if `python` is not on cron's minimal `PATH` |
 
 Values in the file win over anything already in the environment, the way systemd's
@@ -1244,14 +1244,40 @@ Use absolute paths: cron does not expand `$HOME` or `~` in the command, and runs
 `PATH`. If `python` is not on that `PATH`, set `GOLDENSET_PYTHON` in the env file to the
 interpreter's full path.
 
+**Reading the results** — each run writes its own file, named for the run's UTC start time, plus a
+symlink to the newest. So the usual question needs no glob and no timestamp arithmetic:
+
+```bash
+tail -n 40 ~/.ralph/log/goldenset-report-latest.log   # what did the last run say?
+ls -t ~/.ralph/log/goldenset-report-[0-9]*.log | head  # the recent history, newest first
+```
+
+```
+~/.ralph/log/
+  goldenset-report-20260806T061843Z.log
+  goldenset-report-20260805T204623Z.log
+  goldenset-report-latest.log -> goldenset-report-20260806T061843Z.log
+```
+
+Files accumulate — one per run, roughly 60 KB each. That is deliberate: an automatic pruner
+would trade immaterial disk for a way to lose history to a config typo, so pruning is yours to
+do (`rm` the dates you no longer want; the symlink always names a file that still exists as long
+as you keep the newest).
+
+Two runs can start in the same second — a hand-run meeting the timer. The second one takes
+`…Z-2.log` rather than sharing the first's file, so one run is always one file. If
+`goldenset-report-latest.log` exists as something other than a symlink, the run still writes its
+dated file and warns on stderr that the pointer could not be updated; the report is never lost to
+a broken pointer.
+
 **Rollback** — delete that line (`crontab -e`, remove, save). The wrapper holds no state, installs
-no unit, and writes only its log, so removing the line is the whole rollback. The env file and
-`~/.ralph/log/goldenset-report.log` can be deleted too, or left as a record.
+no unit, and writes only its logs, so removing the line is the whole rollback. The env file and
+the dated logs in `~/.ralph/log/` can be deleted too, or left as a record.
 
 **Verify without waiting for the timer** by running the wrapper by hand. On a terminal it streams
 the full report; under cron it does not.
 
-Three properties make it safe unattended, each pinned by
+These properties make it safe unattended, each pinned by
 `scripts/benchmarking/test_goldenset_report_cron.sh`:
 
 - **You hear about findings, and only about findings.** There are three outcomes but cron gives
@@ -1281,15 +1307,15 @@ Three properties make it safe unattended, each pinned by
     mail, which costs the one case that matters. A misconfigured wrapper refuses up front
     because a half-run report reads exactly like a clean one.
 
-- **The log is a bounded history.** Keeping it is the point — a page edited a little each month
-  only becomes visible across runs — but a nightly append with no ceiling eventually fills the
-  filesystem, and the first thing to break would be the logging itself. Two bounds, because
-  rotation alone is not one: the log rotates to `…log.1` once it passes
-  `GOLDENSET_LOG_MAX_BYTES` (default 5 MiB), *and* any single run's output is truncated to that
-  size before being appended, with a marker saying so. Coverage prints every gap and drift can
-  span the whole bank, so one run really can be enormous. When a run fails, its full output still
-  goes to stderr untruncated — nothing diagnostic is lost at the moment it matters. One rotation,
-  not a logrotate unit, so rollback stays "delete the cron line".
+- **Each run is its own readable file.** Keeping the history is the point — a page edited a little
+  each month only becomes visible across runs — and it lives across the dated files rather than
+  inside one growing log, so "what did last night say" is a file you open rather than a banner you
+  locate. Each file is bounded: a single run's output is truncated at `GOLDENSET_LOG_MAX_BYTES`
+  (default 5 MiB) with a marker saying so, because coverage prints every gap and drift can span
+  the whole bank, so one run really can be enormous. When a run fails, its full output still goes
+  to stderr untruncated — nothing diagnostic is lost at the moment it matters. The file *count* is
+  unbounded on purpose: no logrotate unit and no pruner, so rollback stays "delete the cron line"
+  and no config typo can delete history.
 - **The evidence is captured when it is detected.** Unlike the interactive `drift` pass, where
   page text is behind `--show-text`, `report` always includes the re-fetched content for each
   drifted row. Interactively you can re-run to see it; unattended you cannot, and by the time
