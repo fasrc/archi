@@ -315,6 +315,9 @@ data_manager:
       enabled: {{ data_manager.sources.git.enabled | default(true, true) }}
       visible: {{ data_manager.sources.git.visible | default(true, true) }}
       schedule: '{{ data_manager.sources.git.schedule | default("", true) }}'
+      {% if data_manager.sources.git.code_suffixes is defined -%}
+      code_suffixes: {{ data_manager.sources.git.code_suffixes }}
+      {% endif -%}
     sso:
       enabled: {{ data_manager.sources.sso.enabled | default(true, true) }}
       visible: {{ data_manager.sources.sso.visible | default(true, true) }}

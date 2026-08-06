@@ -18,6 +18,7 @@ CONFIG="deploy/fasrc-dev/config.yaml"         # repo-relative (git-excluded; cop
 # defaults to ~/.secrets/archi-secrets.env so the scripts aren't tied to one user.
 ENV_FILE="${ARCHI_ENV_FILE:-$HOME/.secrets/archi-secrets.env}"
 SERVICES="chatbot"                            # auto-pulls postgres + data-manager
+GPU_IDS="${GPU_IDS:-0}"                       # GPU(s) for the data-manager embedding pass
 
 # --- config repo pin (fasrc/archi-config) ------------------------------------
 # The config/ checkout (source lists, environments, agent prompts) is provisioned
@@ -32,8 +33,8 @@ SERVICES="chatbot"                            # auto-pulls postgres + data-manag
 # CONFIG_REPO/CONFIG_DIR are overridable so test_ensure_config.sh can run
 # against a local fixture instead of the real remote/checkout.
 CONFIG_REPO="${CONFIG_REPO:-git@github.com:fasrc/archi-config.git}"
-CONFIG_REF="${CONFIG_REF:-deploy-pin-2026-07e}"
-CONFIG_SHA="${CONFIG_SHA:-4d6873e3cf6e2e10751ba58133eff1b1f106b13c}"
+CONFIG_REF="${CONFIG_REF:-deploy-pin-2026-08a}"
+CONFIG_SHA="${CONFIG_SHA:-889008390d4d3ca30b52282b83bb07fe5716c377}"
 CONFIG_DIR="${CONFIG_DIR:-$REPO_ROOT/config}"
 
 # Resolve the secrets file: absolute path used as-is, relative path is repo-relative.
@@ -199,6 +200,8 @@ archi_deploy() {
   check_llm
   cd "$REPO_ROOT"
   log "Deploying (hostmode, --force; data volumes preserved)…"
+  local gpu_flag=""
+  [ -n "$GPU_IDS" ] && gpu_flag="--gpu-ids $GPU_IDS"
   archi create \
     --name "$DEPLOYMENT" \
     --config "$CONFIG" \
@@ -206,6 +209,7 @@ archi_deploy() {
     --services "$SERVICES" \
     --hostmode \
     --force \
+    $gpu_flag \
     -v "$VERBOSITY"
   log "Up. Chat UI: $CHAT_URL"
 }
