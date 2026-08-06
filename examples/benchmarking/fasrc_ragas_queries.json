@@ -938,26 +938,26 @@
     "status": "draft",
     "user_input": "We're wrapping up a project and want to push the raw data off to tape. Before we start, what constraints are there on how the data has to be laid out, and what does it cost per year?",
     "sources": [
-      "https://docs.rc.fas.harvard.edu/kb/storage-service-center"
+      "https://docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm"
     ],
     "reference": "Tape (NESE) storage is sold in 20TB increments, allows ten thousand files per folder, and requires file sizes between 1GiB and 100GiB. It costs $15/yr per TB, is externally managed by the Northeast Storage Exchange (NESE), and data is transferred to tape using Globus. It is intended for long-term storage of inactive research data after project completion or for data retention purposes.",
     "source_match_field": [
       "url"
     ],
-    "notes": "IMPORTANT — this article is TRIPLICATED in the live corpus: the identical 'Data Storage (Offerings, Workflow, Costs)' text is ingested under three URLs (storage-service-center-bill, data-storage-workflow-rdm, storage-service-center), verified by querying document_chunks. Listing only one URL would score a false miss whenever the retriever surfaces one of the identical twins, so all three verified URLs are listed. Why hard: the answer is not prose — it is spread across three separate cells (Size, Folder Path, Cost) of the FOURTH column of a 5-column markdown table, so a retriever must return the right table chunk and a reader must track column position. Nothing in the user's phrasing ('push data off to tape', 'constraints', 'laid out') matches the source tokens ('increments', 'NESE', 'per folder'). No heading in the article contains 'tape'. [Collapsed byte-identical duplicate corpus documents to one canonical gold URL; the strict source metric requires all listed sources, so listing twins false-missed when retrieval returned only one.]"
+    "notes": "Grounded in the 'Data Storage (Offerings, Workflow, Costs)' article. Why hard: the answer is not prose — it is spread across three separate cells (Size, Folder Path, Cost) of the FOURTH column of a 5-column markdown table, so a retriever must return the right table chunk and a reader must track column position. Nothing in the user's phrasing ('push data off to tape', 'constraints', 'laid out') matches the source tokens ('increments', 'NESE', 'per folder'). No heading in the article contains 'tape'. [History: this article was once TRIPLICATED in the corpus (storage-service-center-bill / data-storage-workflow-rdm / storage-service-center, byte-identical), and the twins were collapsed to one canonical gold URL because the strict source metric requires ALL listed sources, so listing twins false-missed when retrieval returned only one. The URL picked then — storage-service-center — was later retired upstream (301 to data-storage-workflow-rdm, dropped from the sitemap), which orphaned this row; data-storage-workflow-rdm is the only surviving twin and now carries every fact the reference asserts. Lesson for the next collapse: prefer the URL the sitemap advertises, since that is the one that survives a reorganization.]"
   },
   {
     "anchor_type": "reasoning",
     "status": "draft",
     "user_input": "I put a dataset in the Everyone folder so another lab could grab it, but it never shows up in Globus. Is Globus broken?",
     "sources": [
-      "https://docs.rc.fas.harvard.edu/kb/storage-service-center"
+      "https://docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm"
     ],
     "reference": "No, that is expected behavior. The Everyone subdirectory is visible to anyone on the HPC cluster and is intended only for internal sharing with other labs on the cluster — it is not available on Globus. The Lab subdirectory is the one shared out via Globus, so data that has to move over Globus needs to live under Lab.",
     "source_match_field": [
       "url"
     ],
-    "notes": "Same triplicated article as the tape question (storage-service-center-bill / data-storage-workflow-rdm / storage-service-center are byte-identical in the corpus), hence three gold URLs. Tests the Lab-vs-Everyone default directory gotcha — requires combining the Lab paragraph ('shared out via Globus') with the Everyone paragraph ('not available on Globus'). Why hard: a keyword query containing 'Globus' overwhelmingly retrieves the dedicated globus-file-transfer article (and the tape-globus page), which cannot answer this — the Lab/Everyone distinction exists only in the storage-offerings article, under the heading 'Default Directory Structure', which contains neither 'Globus' nor 'Everyone'. [Collapsed byte-identical duplicate corpus documents to one canonical gold URL; the strict source metric requires all listed sources, so listing twins false-missed when retrieval returned only one.]"
+    "notes": "Same article as the tape question (see that row's history note: the byte-identical triplicate collapsed to one canonical URL, and the URL picked then was later retired upstream, orphaning both rows; data-storage-workflow-rdm is the surviving twin). Tests the Lab-vs-Everyone default directory gotcha — requires combining the Lab paragraph ('shared out via Globus') with the Everyone paragraph ('not available on Globus'). Why hard: a keyword query containing 'Globus' overwhelmingly retrieves the dedicated globus-file-transfer article (and the tape-globus page), which cannot answer this — the Lab/Everyone distinction exists only in the storage-offerings article, under the heading 'Default Directory Structure', which contains neither 'Globus' nor 'Everyone'."
   },
   {
     "anchor_type": "easy_retrieve",
