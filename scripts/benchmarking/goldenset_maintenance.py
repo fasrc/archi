@@ -23,7 +23,7 @@ an unreadable bank, corpus, or source list.
 Usage:
     # coverage against a JSON dump of the corpus (hermetic / offline)
     python scripts/benchmarking/goldenset_maintenance.py coverage \\
-        --bank examples/benchmarking/fasrc_ragas_queries.json \\
+        --bank config/benchmarking/fasrc_ragas_queries.json \\
         --corpus-json corpus.json [--source-type web] [--path-glob 'https://…/kb/*']
 
     # coverage straight from the live catalog

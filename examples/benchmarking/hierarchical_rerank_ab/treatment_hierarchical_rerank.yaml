@@ -64,7 +64,7 @@ services:
     provider: local
     model: "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4"
     ollama_url: http://archi.rc.fas.harvard.edu:8001/v1
-    queries_path: examples/benchmarking/fasrc_ragas_queries.json
+    queries_path: config/benchmarking/fasrc_ragas_queries.json
     # ^ keep both arms on the SAME bank. snow_ragas_queries_pt1.json (real
     #   ServiceNow tickets) is operator-local + gitignored; swap it in on disk for
     #   the headline run, matching the baseline arm.

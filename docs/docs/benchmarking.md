@@ -400,18 +400,18 @@ pages a confirmed answer was checked against. Three read-only subcommands find e
 ```bash
 # Which ingested pages does no bank row ground against?
 python scripts/benchmarking/goldenset_maintenance.py coverage \
-    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
     --pg-dsn "postgresql://archi@localhost/archi-db"
 
 # Which bank rows cite a page the live KB no longer publishes?
 python scripts/benchmarking/goldenset_maintenance.py orphans \
-    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
     --sources config/lists/sources.list \
     --min-pages 150
 
 # Which confirmed rows were grounded in a page that has since changed?
 python scripts/benchmarking/goldenset_maintenance.py drift \
-    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
     --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com \
     --tripwire-only
 ```
@@ -487,7 +487,7 @@ single greenlights — which is what the conversational skill does on your behal
 
 ```bash
 python scripts/benchmarking/goldenset_maintenance.py coverage \
-    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
     --pg-dsn "postgresql://archi@localhost/archi-db" \
     --propose https://docs.rc.fas.harvard.edu/kb/running-jobs \
     --model anthropic/claude-sonnet-5 \
@@ -546,7 +546,7 @@ Some pages will never earn a question. Record that once instead of re-reading it
 ```bash
 # dismiss a page
 python scripts/benchmarking/goldenset_maintenance.py coverage \
-    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
     --pg-dsn "postgresql://archi@localhost/archi-db" \
     --decline https://docs.rc.fas.harvard.edu/kb/contact \
     --reason "contact page — nothing to ask" \
@@ -554,13 +554,13 @@ python scripts/benchmarking/goldenset_maintenance.py coverage \
 
 # change your mind — the supported reversal
 python scripts/benchmarking/goldenset_maintenance.py coverage \
-    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
     --undecline https://docs.rc.fas.harvard.edu/kb/contact \
     --ledger .ralph/log/goldenset-declines.json
 
 # later runs suppress it
 python scripts/benchmarking/goldenset_maintenance.py coverage \
-    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
     --pg-dsn "postgresql://archi@localhost/archi-db" \
     --ledger .ralph/log/goldenset-declines.json
 ```
@@ -916,7 +916,7 @@ lists together. It is the shape meant for an unattended nightly job:
 
 ```bash
 python scripts/benchmarking/goldenset_maintenance.py report \
-    --bank examples/benchmarking/fasrc_ragas_queries.json \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
     --pg-dsn "postgresql://archi@localhost/archi-db" \
     --sources config/lists/sources.list \
     --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com \
@@ -1215,7 +1215,7 @@ with half a list.
 
 | Variable | Meaning |
 | --- | --- |
-| `GOLDENSET_BANK` | Bank JSON (defaults to `examples/benchmarking/fasrc_ragas_queries.json`) |
+| `GOLDENSET_BANK` | Bank JSON (defaults to `config/benchmarking/fasrc_ragas_queries.json`) |
 | `GOLDENSET_PG_DSN` / `GOLDENSET_CORPUS_JSON` | The corpus — exactly one of the two |
 | `GOLDENSET_SOURCES` | Source list the KB ingests from (**required**) |
 | `GOLDENSET_ALLOWED_HOSTS` | Space-separated hosts to contact (**required**) |
