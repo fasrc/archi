@@ -18,7 +18,7 @@ CONFIG="deploy/fasrc-dev/config.yaml"         # repo-relative (git-excluded; cop
 # defaults to ~/.secrets/archi-secrets.env so the scripts aren't tied to one user.
 ENV_FILE="${ARCHI_ENV_FILE:-$HOME/.secrets/archi-secrets.env}"
 SERVICES="chatbot"                            # auto-pulls postgres + data-manager
-GPU_IDS="${GPU_IDS:-0}"                       # GPU(s) for the data-manager embedding pass
+GPU_IDS="${GPU_IDS-0}"                        # GPU(s) for the data-manager embedding pass; GPU_IDS="" disables
 
 # --- config repo pin (fasrc/archi-config) ------------------------------------
 # The config/ checkout (source lists, environments, agent prompts) is provisioned
@@ -200,8 +200,8 @@ archi_deploy() {
   check_llm
   cd "$REPO_ROOT"
   log "Deploying (hostmode, --force; data volumes preserved)…"
-  local gpu_flag=""
-  [ -n "$GPU_IDS" ] && gpu_flag="--gpu-ids $GPU_IDS"
+  local -a gpu_flag=()
+  [ -n "$GPU_IDS" ] && gpu_flag=(--gpu-ids "$GPU_IDS")
   archi create \
     --name "$DEPLOYMENT" \
     --config "$CONFIG" \
@@ -209,7 +209,7 @@ archi_deploy() {
     --services "$SERVICES" \
     --hostmode \
     --force \
-    $gpu_flag \
+    "${gpu_flag[@]}" \
     -v "$VERBOSITY"
   log "Up. Chat UI: $CHAT_URL"
 }
