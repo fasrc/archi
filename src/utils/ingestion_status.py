@@ -6,8 +6,11 @@ protects the status dict so the reader never blocks on the ingestion
 mutual-exclusion lock, which is held for the entire ingest (22–64 min).
 """
 
+import logging
 import threading
 from typing import Any, Callable, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def build_ingestion_helpers(
@@ -50,6 +53,7 @@ def build_ingestion_helpers(
                 )
             set_ingestion_status("completed", step="done")
         except Exception as exc:
+            logger.exception("Initial ingestion failed")
             set_ingestion_status("error", step="failed", error=str(exc))
 
     return {

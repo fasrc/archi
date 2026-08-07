@@ -1,0 +1,417 @@
+{
+    "benchmarking_results": [
+        {
+            "single_question_results": {},
+            "total_results": {
+                "aggregate_answer_relevancy": NaN,
+                "aggregate_faithfulness": NaN,
+                "aggregate_context_precision": NaN,
+                "aggregate_context_recall": NaN,
+                "relative_source_accuracy": 0.0,
+                "source_accuracy": 0.0
+            },
+            "configuration_file": "configs/config.yaml",
+            "configuration": {
+                "name": "ragas-bench",
+                "global": {
+                    "DATA_PATH": "/root/data/",
+                    "ACCOUNTS_PATH": "/root/.accounts/",
+                    "ACCEPTED_FILES": [
+                        ".pdf",
+                        ".md",
+                        ".txt",
+                        ".docx",
+                        ".html",
+                        ".htm",
+                        ".json",
+                        ".yaml",
+                        ".yml",
+                        ".py",
+                        ".js",
+                        ".ts",
+                        ".jsx",
+                        ".tsx",
+                        ".java",
+                        ".go",
+                        ".rs",
+                        ".c",
+                        ".cpp",
+                        ".h",
+                        ".sh"
+                    ],
+                    "LOGGING": {
+                        "input_output_filename": "chain_input_output.log"
+                    }
+                },
+                "mcp_servers": null,
+                "services": {
+                    "benchmarking": {
+                        "agent_class": "FASRCDocsAgent",
+                        "agent_md_file": "/root/archi/agents/fasrc-inline-v1.md",
+                        "provider": "openai",
+                        "model": "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4",
+                        "ollama_url": null,
+                        "out_dir": "bench_out",
+                        "queries_path": "config/benchmarking/ragas-snow-pt1-clean.json",
+                        "modes": [
+                            "RAGAS",
+                            "SOURCES"
+                        ],
+                        "mode_settings": {
+                            "sources_settings": {
+                                "default_match_field": "url"
+                            },
+                            "ragas_settings": {
+                                "enabled_metrics": [
+                                    "answer_relevancy",
+                                    "faithfulness",
+                                    "context_precision",
+                                    "context_recall"
+                                ],
+                                "embedding_model": "HuggingFace",
+                                "timeout": 180,
+                                "batch_size": false,
+                                "evaluator_provider": "huit_bedrock",
+                                "evaluator_model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                                "evaluator_ollama_url": null
+                            }
+                        }
+                    },
+                    "piazza": {
+                        "agent_class": "QAPipeline",
+                        "provider": null,
+                        "model": null,
+                        "network_id": null,
+                        "update_time": 60
+                    },
+                    "mattermost": {
+                        "update_time": 60
+                    },
+                    "redmine_mailbox": {
+                        "agent_class": "CMSCompOpsAgent",
+                        "agents_dir": "",
+                        "provider": null,
+                        "model": null,
+                        "url": null,
+                        "project": null,
+                        "redmine_update_time": 10,
+                        "answer_tag": "-- archi -- Resolving email was sent",
+                        "imap4_port": 143,
+                        "mailbox_update_time": 10
+                    },
+                    "postgres": {
+                        "port": 5433,
+                        "user": "archi",
+                        "database": "archi-db",
+                        "host": "localhost"
+                    },
+                    "chat_app": {
+                        "agent_class": "CMSCompOpsAgent",
+                        "agents_dir": "/root/archi/agents",
+                        "recursion_limit": 50,
+                        "client_timeout_seconds": 600,
+                        "default_provider": "local",
+                        "default_model": "llama3.2",
+                        "skills_dir": "",
+                        "tools": {},
+                        "prompts": {},
+                        "providers": {
+                            "openai": {
+                                "api_key": "EMPTY",
+                                "base_url": "http://localhost:8001/v1",
+                                "default_model": "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4",
+                                "enabled": true,
+                                "extra_kwargs": {
+                                    "extra_body": {
+                                        "chat_template_kwargs": {
+                                            "enable_thinking": false
+                                        }
+                                    },
+                                    "temperature": 0.3
+                                }
+                            }
+                        },
+                        "trained_on": "No description provided.",
+                        "port": 7861,
+                        "external_port": 7861,
+                        "host": "0.0.0.0",
+                        "hostname": "localhost",
+                        "template_folder": "/root/archi/src/interfaces/chat_app/templates",
+                        "static_folder": "/root/archi/src/interfaces/chat_app/static",
+                        "num_responses_until_feedback": 3,
+                        "include_copy_button": false,
+                        "flask_debug_mode": true,
+                        "auth": {
+                            "enabled": false,
+                            "sso": {
+                                "enabled": false,
+                                "server_metadata_url": null,
+                                "authorize_url": null,
+                                "client_kwargs": {
+                                    "scope": "openid profile email"
+                                }
+                            },
+                            "basic": {
+                                "enabled": false
+                            }
+                        },
+                        "openai_compat": {
+                            "enabled": false
+                        },
+                        "alerts": {
+                            "managers": null
+                        }
+                    },
+                    "data_manager": {
+                        "auth": {
+                            "enabled": false
+                        },
+                        "enabled": true,
+                        "port": 7881,
+                        "external_port": 7881,
+                        "host": "0.0.0.0",
+                        "hostname": "localhost",
+                        "template_folder": "/root/archi/src/interfaces/chat_app/templates",
+                        "static_folder": "/root/archi/src/interfaces/chat_app/static",
+                        "flask_debug_mode": false
+                    },
+                    "grader_app": {
+                        "provider": null,
+                        "model": null,
+                        "prompts": {
+                            "grading": {
+                                "final_grade_prompt": ""
+                            },
+                            "image_processing": {
+                                "image_processing_prompt": ""
+                            }
+                        },
+                        "port": 7861,
+                        "external_port": 7862,
+                        "host": "0.0.0.0",
+                        "hostname": "localhost",
+                        "template_folder": "/root/archi/src/interfaces/grader_app/templates",
+                        "num_problems": 1,
+                        "local_rubric_dir": "",
+                        "local_users_csv_dir": "",
+                        "flask_debug_mode": true
+                    },
+                    "vectorstore": {
+                        "backend": "postgres",
+                        "distance_metric": "cosine"
+                    },
+                    "grafana": {
+                        "port": 3000,
+                        "external_port": 3000
+                    }
+                },
+                "data_manager": {
+                    "collection_name": "default_collection",
+                    "embedding_name": "HuggingFaceEmbeddings",
+                    "embedding_class_map": {
+                        "OpenAIEmbeddings": {
+                            "class": "OpenAIEmbeddings",
+                            "kwargs": {
+                                "model": "text-embedding-3-small"
+                            },
+                            "similarity_score_reference": 10
+                        },
+                        "HuggingFaceEmbeddings": {
+                            "class": "HuggingFaceEmbeddings",
+                            "kwargs": {
+                                "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                                "model_kwargs": {
+                                    "device": "cpu"
+                                },
+                                "encode_kwargs": {
+                                    "normalize_embeddings": true
+                                }
+                            },
+                            "similarity_score_reference": 10,
+                            "query_embedding_instructions": null
+                        }
+                    },
+                    "chunk_size": 1000,
+                    "chunk_overlap": 0,
+                    "chunking": {
+                        "strategy": "sentence"
+                    },
+                    "parallel_workers": 32,
+                    "reset_collection": true,
+                    "stemming": {
+                        "enabled": false
+                    },
+                    "distance_metric": "cosine",
+                    "retrievers": {
+                        "semantic_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "bm25_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "hybrid_retriever": {
+                            "num_documents_to_retrieve": 5,
+                            "bm25_weight": 0.6,
+                            "semantic_weight": 0.4
+                        },
+                        "hierarchical_rerank": {
+                            "enabled": true,
+                            "candidate_pool_size": 20,
+                            "num_documents_to_retrieve": 5,
+                            "reranker": {
+                                "model": "ms-marco-MiniLM-L-12-v2"
+                            }
+                        }
+                    },
+                    "sources": {
+                        "local_files": {
+                            "enabled": true,
+                            "visible": true,
+                            "schedule": "",
+                            "paths": null
+                        },
+                        "links": {
+                            "base_source_depth": 1,
+                            "max_pages": null,
+                            "enabled": true,
+                            "visible": true,
+                            "schedule": "",
+                            "input_lists": [
+                                "config/lists/sources.list"
+                            ],
+                            "html_scraper": {
+                                "reset_data": true,
+                                "verify_urls": false,
+                                "enable_warnings": false
+                            },
+                            "selenium_scraper": {
+                                "enabled": false,
+                                "visible": false,
+                                "use_for_scraping": false,
+                                "selenium_class": "CERNSSOScraper",
+                                "selenium_url": null,
+                                "selenium_class_map": {
+                                    "CERNSSOScraper": {
+                                        "class": "CERNSSOScraper",
+                                        "kwargs": {
+                                            "headless": true
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "git": {
+                            "enabled": true,
+                            "visible": true,
+                            "schedule": ""
+                        },
+                        "sso": {
+                            "enabled": true,
+                            "visible": true,
+                            "schedule": ""
+                        },
+                        "indico": {
+                            "enabled": false,
+                            "visible": true,
+                            "schedule": "",
+                            "base_url": "https://indico.cern.ch",
+                            "use_sso": true,
+                            "sso_kwargs": {
+                                "headless": true,
+                                "site_type": "generic"
+                            },
+                            "slide_conversion": {
+                                "enabled": true,
+                                "store_originals": false,
+                                "formats": [
+                                    "pdf",
+                                    "pptx",
+                                    "ppt",
+                                    "odp"
+                                ],
+                                "llm_enabled": false,
+                                "llm_model": null
+                            },
+                            "plot_extraction": {
+                                "enabled": false
+                            }
+                        },
+                        "jira": {
+                            "enabled": true,
+                            "url": null,
+                            "visible": true,
+                            "schedule": "",
+                            "projects": null,
+                            "anonymize_data": false,
+                            "max_tickets": 10000000000.0,
+                            "cutoff_date": null
+                        },
+                        "redmine": {
+                            "enabled": true,
+                            "url": null,
+                            "projects": null,
+                            "visible": false,
+                            "schedule": "",
+                            "anonymize_data": true
+                        },
+                        "elog": {
+                            "enabled": false,
+                            "visible": false,
+                            "url": "",
+                            "max_entries": null,
+                            "verify_ssl": true,
+                            "schedule": ""
+                        }
+                    },
+                    "processing": {
+                        "html_to_markdown": {
+                            "enabled": true
+                        },
+                        "categorization": {
+                            "enabled": true,
+                            "provider": "openai",
+                            "model": "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4",
+                            "max_chars": 4000,
+                            "categories": [
+                                "job-scheduling",
+                                "storage",
+                                "account-access",
+                                "software",
+                                "compute",
+                                "data-transfer"
+                            ]
+                        }
+                    },
+                    "utils": {
+                        "anonymizer": {
+                            "nlp_model": "en_core_web_sm",
+                            "excluded_words": [
+                                "John",
+                                "Jane",
+                                "Doe"
+                            ],
+                            "greeting_patterns": [
+                                "^(hi|hello|hey|greetings|dear)\\b",
+                                "^\\w+,\\s*"
+                            ],
+                            "signoff_patterns": [
+                                "\\b(regards|sincerely|best regards|cheers|thank you)\\b",
+                                "^\\s*[-~]+\\s*$"
+                            ],
+                            "email_pattern": "[\\w\\.-]+@[\\w\\.-]+\\.\\w+",
+                            "username_pattern": "\\[~[^\\]]+\\]"
+                        }
+                    }
+                }
+            }
+        }
+    ],
+    "metadata": {
+        "time": "2026-07-08 23:05:29.870301+00:00",
+        "git_info": {
+            "git_diff": "",
+            "last_commit": "b6d9a87cb7420d243ea81901641a5297e6707270\n"
+        },
+        "corpus_snapshot_id": "e1a3235a-8f39-4d0e-b6d4-08e9609a1b7a"
+    }
+}

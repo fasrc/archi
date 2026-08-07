@@ -1,0 +1,140 @@
+
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Benchmark Results Comparison</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 20px;
+                background: #f5f5f5;
+            }
+            .header {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 30px;
+                border-radius: 10px;
+                margin-bottom: 30px;
+            }
+            .metrics {
+                background: white;
+                padding: 20px;
+                border-radius: 10px;
+                margin-bottom: 20px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .question-card {
+                background: white;
+                padding: 30px;
+                border-radius: 10px;
+                margin-bottom: 30px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            }
+            .section {
+                margin: 20px 0;
+            }
+            .section-title {
+                font-weight: bold;
+                font-size: 1.1em;
+                margin-bottom: 10px;
+                color: #667eea;
+            }
+            .answer-box {
+                background: #f8f9fa;
+                padding: 15px;
+                border-radius: 5px;
+                border-left: 4px solid #667eea;
+                margin: 10px 0;
+                white-space: pre-wrap;
+                font-family: 'Monaco', 'Courier New', monospace;
+                font-size: 0.9em;
+            }
+            .expected-box {
+                border-left-color: #28a745;
+            }
+            .context-box {
+                background: #fff3cd;
+                padding: 10px;
+                border-radius: 5px;
+                margin: 5px 0;
+                font-size: 0.85em;
+            }
+            .metrics-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+                margin-top: 15px;
+            }
+            .metric-item {
+                background: #f8f9fa;
+                padding: 15px;
+                border-radius: 5px;
+                text-align: center;
+            }
+            .metric-value {
+                font-size: 2em;
+                font-weight: bold;
+                color: #667eea;
+            }
+            .metric-label {
+                font-size: 0.9em;
+                color: #666;
+                margin-top: 5px;
+            }
+            .score-low { color: #dc3545; }
+            .score-medium { color: #ffc107; }
+            .score-high { color: #28a745; }
+        </style>
+    </head>
+    <body>
+    
+
+    <div class="header">
+        <h1>📊 Benchmark Results Comparison</h1>
+        <p><strong>Configuration:</strong> configs/config.yaml</p>
+        <p><strong>Timestamp:</strong> 2026-07-08 23:05:29.870301+00:00</p>
+        <p><strong>Questions Processed:</strong> 0</p>
+    </div>
+
+<div class="metrics">
+<h2>🎯 Retrieval Accuracy</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; max-width: 900px; margin: 0 auto;">
+
+            <div class="metric-item">
+                <div class="metric-value score-low">0.0%</div>
+                <div class="metric-label">Fully Correct: 0/0</div>
+            </div>
+        
+</div></div>
+<div class="metrics">
+<h2>Aggregate RAGAS Metrics</h2>
+<div class="metrics-grid">
+
+                    <div class="metric-item">
+                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-label">Answer Relevancy</div>
+                    </div>
+                    
+
+                    <div class="metric-item">
+                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-label">Faithfulness</div>
+                    </div>
+                    
+
+                    <div class="metric-item">
+                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-label">Context Precision</div>
+                    </div>
+                    
+
+                    <div class="metric-item">
+                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-label">Context Recall</div>
+                    </div>
+                    
+</div></div>
+</body></html>

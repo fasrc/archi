@@ -9,6 +9,7 @@ The fix gives ingestion_status its own lock, decoupled from the ingestion
 mutual-exclusion lock.
 """
 
+import logging
 import threading
 import time
 
@@ -78,6 +79,21 @@ def test_status_shows_error_on_ingestion_failure():
     status = helpers["get_ingestion_status"]()
     assert status["state"] == "error"
     assert "disk full" in status["error"]
+
+
+def test_ingestion_failure_logs_traceback(caplog):
+    """A failed ingestion must log the full traceback, not just the status dict."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    def fake_run_ingestion(progress_callback=None):
+        raise RuntimeError("disk full")
+
+    helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock())
+    with caplog.at_level(logging.ERROR, logger="src.utils.ingestion_status"):
+        helpers["run_initial_ingestion_async"]()
+
+    assert any("Initial ingestion failed" in r.message for r in caplog.records)
+    assert any(r.exc_info is not None for r in caplog.records)
 
 
 def test_concurrent_ingestions_are_serialized():
