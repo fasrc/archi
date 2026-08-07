@@ -255,8 +255,9 @@ def get_model(
     extra_kwargs = {}
     if isinstance(provider_config, dict):
         extra_kwargs.update(provider_config.get("extra_kwargs", {}) or {})
-        if "mode" in provider_config and "local_mode" not in extra_kwargs:
-            extra_kwargs["local_mode"] = provider_config.get("mode")
+        mode = provider_config.get("mode")
+        if mode and "local_mode" not in extra_kwargs:
+            extra_kwargs["local_mode"] = mode
 
     if isinstance(provider_type, str):
         try:
