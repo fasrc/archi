@@ -192,34 +192,14 @@ def main() -> None:
         static_folder=data_manager_cfg.get("static_folder"),
     )
 
-    ingestion_status: Dict[str, object] = {
-        "state": "pending",
-        "step": None,
-        "error": None,
-    }
+    from src.utils.ingestion_status import build_ingestion_helpers
 
-    def set_ingestion_status(
-        state: str, *, step: str | None = None, error: str | None = None
-    ) -> None:
-        with lock:
-            ingestion_status.update({"state": state, "step": step, "error": error})
-
-    def run_initial_ingestion_async() -> None:
-        set_ingestion_status("running", step="initializing")
-        try:
-            with lock:
-                data_manager.run_ingestion(
-                    progress_callback=lambda step: set_ingestion_status(
-                        "running", step=step
-                    )
-                )
-            set_ingestion_status("completed", step="done")
-        except Exception as exc:
-            logger.exception("Initial ingestion failed")
-            set_ingestion_status("error", step="failed", error=str(exc))
+    _ing = build_ingestion_helpers(data_manager.run_ingestion, lock)
 
     ingestion_thread = threading.Thread(
-        target=run_initial_ingestion_async, name="ingestion-thread", daemon=True
+        target=_ing["run_initial_ingestion_async"],
+        name="ingestion-thread",
+        daemon=True,
     )
     ingestion_thread.start()
 
@@ -228,8 +208,7 @@ def main() -> None:
     )
 
     def get_ingestion_status():
-        with lock:
-            return jsonify(dict(ingestion_status))
+        return jsonify(_ing["get_ingestion_status"]())
 
     app.add_url_rule(
         "/api/ingestion/status",
