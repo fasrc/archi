@@ -1644,7 +1644,7 @@ class Benchmarker:
         )
 
     def wait_for_ingestion_completion(self):
-        timeout_seconds = int(os.environ.get("BENCH_INGEST_WAIT_TIMEOUT", "3600"))
+        timeout_seconds = int(os.environ.get("BENCH_INGEST_WAIT_TIMEOUT", "7200"))
         poll_interval_seconds = int(os.environ.get("BENCH_INGEST_POLL_INTERVAL", "5"))
         dm_cfg = self.config.get("services", {}).get("data_manager", {})
         # external_port is the HOST-side mapping (e.g. 7881 for benchmarks);

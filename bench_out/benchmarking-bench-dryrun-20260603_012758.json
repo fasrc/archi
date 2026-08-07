@@ -1,0 +1,988 @@
+{
+    "benchmarking_results": [
+        {
+            "single_question_results": {
+                "question_1": {
+                    "time_elapsed": 2.7072247969917953,
+                    "question": "Who was Annie Jump Cannon?",
+                    "reference_answer": "Annie Jump Cannon was an American astronomer known for her pioneering work classifying stars by spectral type, creating the stellar classification system still used today.",
+                    "answer": "I cannot answer this question using the FASRC documentation, as it does not contain information about Annie Jump Cannon.\n\nThe available tools are designed to help with technical questions about the Cannon high-performance computing cluster, such as SLURM job submission, software installation, storage quotas, and troubleshooting errors.\n\nFor general historical information about Annie Jump Cannon, I recommend checking external sources like Wikipedia or the Harvard University archives. If you have questions about using the Cannon cluster itself, I am happy to help with those.",
+                    "messages": [
+                        {
+                            "type": "ai_message",
+                            "content": "I cannot answer this question using the FASRC documentation, as it does not contain information about Annie Jump Cannon.\n\nThe available tools are designed to help with technical questions about the Cannon high-performance computing cluster, such as SLURM job submission, software installation, storage quotas, and troubleshooting errors.\n\nFor general historical information about Annie Jump Cannon, I recommend checking external sources like Wikipedia or the Harvard University archives. If you have questions about using the Cannon cluster itself, I am happy to help with those.",
+                            "total_duration": null
+                        }
+                    ],
+                    "reference_sources_match_fields": [
+                        "url"
+                    ],
+                    "reference_sources_metadata": [
+                        {
+                            "url": "https://en.wikipedia.org/wiki/Annie_Jump_Cannon",
+                            "matched": false
+                        }
+                    ],
+                    "sources_metadata": [],
+                    "sources_trunc_content": [],
+                    "answer_relevancy": 0.0,
+                    "faithfulness": 0.0,
+                    "context_precision": 0.0,
+                    "context_recall": 0.0
+                },
+                "question_2": {
+                    "time_elapsed": 7.164019973017275,
+                    "question": "What is Slurm and what does it do?",
+                    "reference_answer": "Slurm is an open-source, fault-tolerant, and highly scalable cluster management and job scheduling system for large and small Linux clusters. It allocates access to compute resources, provides a framework for starting and monitoring work on allocated nodes, and arbitrates contention for resources by managing a queue of pending jobs.",
+                    "answer": "Based on the FASRC documentation:\n\n**Slurm** (Simple Linux Utility for Resource Management) is the **leading HPC (High-Performance Computing) Workload Manager** used at FASRC and on the majority of TOP500 supercomputers worldwide.\n\n**What Slurm does:**\n\nSlurm functions as both a **Scheduler** and a **Resource Manager** (roughly equivalent to an \"Orchestrator\"):\n\n1. **Scheduler**: \n   - Prioritizes jobs\n   - Decides which jobs to run on which parts of the system\n\n2. **Resource Manager**:\n   - Tracks node state and available resources\n   - Launches jobs\n\n**Key characteristics:**\n- Manages most AI/ML training workloads\n- Scales beyond 15,000 nodes in a cluster\n- Open-source software (GPL-v2+)\n\nThis is the system that manages job submissions, resource allocation, and execution on the Cannon cluster and other HPC systems at Harvard.\n\n*Source: FASRC documentation on Slurm workload management*",
+                    "messages": [
+                        {
+                            "type": "tool_call",
+                            "tool_name": "search_vectorstore_hybrid",
+                            "tool_args": "What is Slurm and what does it do",
+                            "total_duration": null
+                        },
+                        {
+                            "type": "ai_message",
+                            "content": "Based on the FASRC documentation:\n\n**Slurm** (Simple Linux Utility for Resource Management) is the **leading HPC (High-Performance Computing) Workload Manager** used at FASRC and on the majority of TOP500 supercomputers worldwide.\n\n**What Slurm does:**\n\nSlurm functions as both a **Scheduler** and a **Resource Manager** (roughly equivalent to an \"Orchestrator\"):\n\n1. **Scheduler**: \n   - Prioritizes jobs\n   - Decides which jobs to run on which parts of the system\n\n2. **Resource Manager**:\n   - Tracks node state and available resources\n   - Launches jobs\n\n**Key characteristics:**\n- Manages most AI/ML training workloads\n- Scales beyond 15,000 nodes in a cluster\n- Open-source software (GPL-v2+)\n\nThis is the system that manages job submissions, resource allocation, and execution on the Cannon cluster and other HPC systems at Harvard.\n\n*Source: FASRC documentation on Slurm workload management*",
+                            "total_duration": null
+                        }
+                    ],
+                    "reference_sources_match_fields": [
+                        "url"
+                    ],
+                    "reference_sources_metadata": [
+                        {
+                            "url": "https://slurm.schedmd.com/overview.html",
+                            "matched": false
+                        }
+                    ],
+                    "sources_metadata": [
+                        {
+                            "url": "https://slurm.schedmd.com/sacctmgr.html",
+                            "path": "websites/324580800151.html",
+                            "title": "Slurm Workload Manager - sacctmgr",
+                            "source": "/root/data/websites/324580800151.html",
+                            "suffix": "html",
+                            "encoding": "ISO-8859-1",
+                            "filename": "324580800151.html",
+                            "file_name": "324580800151.html",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "size_bytes": "164369",
+                            "chunk_index": 104,
+                            "source_type": "web",
+                            "content_type": "text/html",
+                            "display_name": "slurm.schedmd.com/sacctmgr.html",
+                            "resource_hash": "324580800151",
+                            "ingestion_status": "embedding"
+                        },
+                        {
+                            "url": "https://slurm.schedmd.com/MISC25/Slurm_Bridge_KubeCon_25.pdf",
+                            "page": 1,
+                            "path": "websites/866005529092.pdf",
+                            "title": "Slurm Bridge - KubeCon 25",
+                            "source": "/root/data/websites/866005529092.pdf",
+                            "suffix": "pdf",
+                            "creator": "Google",
+                            "filename": "866005529092.pdf",
+                            "producer": "PyPDF",
+                            "file_name": "866005529092.pdf",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "page_label": "2",
+                            "size_bytes": "1524854",
+                            "chunk_index": 1,
+                            "source_type": "web",
+                            "total_pages": 26,
+                            "content_type": "application/pdf",
+                            "creationdate": "",
+                            "display_name": "slurm.schedmd.com/MISC25/Slurm_Bridge_KubeCon_25.pdf",
+                            "resource_hash": "866005529092",
+                            "ingestion_status": "embedding"
+                        },
+                        {
+                            "url": "https://slurm.schedmd.com/MISC25/Slinky-CUG2025.pdf",
+                            "page": 2,
+                            "path": "websites/113238929639.pdf",
+                            "title": "Slinky - CUG 2025 - Public",
+                            "source": "/root/data/websites/113238929639.pdf",
+                            "suffix": "pdf",
+                            "creator": "Google",
+                            "filename": "113238929639.pdf",
+                            "producer": "PyPDF",
+                            "file_name": "113238929639.pdf",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "page_label": "3",
+                            "size_bytes": "1636811",
+                            "chunk_index": 2,
+                            "source_type": "web",
+                            "total_pages": 50,
+                            "content_type": "application/pdf",
+                            "creationdate": "",
+                            "display_name": "slurm.schedmd.com/MISC25/Slinky-CUG2025.pdf",
+                            "resource_hash": "113238929639",
+                            "ingestion_status": "embedding"
+                        },
+                        {
+                            "url": "https://slurm.schedmd.com/MISC25/Slinky-KubeConEurope2025.pdf",
+                            "page": 4,
+                            "path": "websites/287131854407.pdf",
+                            "title": "Slinky - KubeCon Europe 2025 - Shared",
+                            "source": "/root/data/websites/287131854407.pdf",
+                            "suffix": "pdf",
+                            "creator": "Google",
+                            "filename": "287131854407.pdf",
+                            "producer": "PyPDF",
+                            "file_name": "287131854407.pdf",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "page_label": "5",
+                            "size_bytes": "2288317",
+                            "chunk_index": 3,
+                            "source_type": "web",
+                            "total_pages": 65,
+                            "content_type": "application/pdf",
+                            "creationdate": "",
+                            "display_name": "slurm.schedmd.com/MISC25/Slinky-KubeConEurope2025.pdf",
+                            "resource_hash": "287131854407",
+                            "ingestion_status": "embedding"
+                        },
+                        {
+                            "url": "https://slurm.schedmd.com/MISC25/Slinky-CUG2025.pdf",
+                            "page": 15,
+                            "path": "websites/113238929639.pdf",
+                            "title": "Slinky - CUG 2025 - Public",
+                            "source": "/root/data/websites/113238929639.pdf",
+                            "suffix": "pdf",
+                            "creator": "Google",
+                            "filename": "113238929639.pdf",
+                            "producer": "PyPDF",
+                            "file_name": "113238929639.pdf",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "page_label": "16",
+                            "size_bytes": "1636811",
+                            "chunk_index": 15,
+                            "source_type": "web",
+                            "total_pages": 50,
+                            "content_type": "application/pdf",
+                            "creationdate": "",
+                            "display_name": "slurm.schedmd.com/MISC25/Slinky-CUG2025.pdf",
+                            "resource_hash": "113238929639",
+                            "ingestion_status": "embedding"
+                        }
+                    ],
+                    "sources_trunc_content": [
+                        "Slurm is distributed in the hope that it will be useful, but WITHOUT ANY\nWARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS\nFOR A PARTICULAR PURPOSE. See the GNU General Public License for more\ndetails.\n\n\u00a0\nSEE ALSO\nslurm.conf(5),\nslurmdbd(8)\n\n\n\u00a0Index",
+                        "What is Slurm? \n\u25cfLeading HPC Workload Manager \n\u25cbWorkload Manager = Scheduler + Resource Manager \n\u25a0Roughly equivalent to \"Orchestrator\" \n\u25cbScheduler: \n\u25a0Prioritize and decide which jobs to run on which parts of the system \n\u25cbResource Manager: \n\u25a0Track node state and resources \n\u25a0Launch jobs \n\u25cfManages the ",
+                        "What is Slurm? \n\u25cfLeading HPC Workload Manager \n\u25cbWorkload Manager = Scheduler + Resource Manager \n\u25a0Roughly equivalent to \"Orchestrator\" \n\u25cbScheduler: \n\u25a0Prioritize and decide which jobs to run on which parts of the system \n\u25cbResource Manager: \n\u25a0Track node state and resources \n\u25a0Launch jobs \n\u25cfManages the ",
+                        "What is Slurm? \n\u25cfLeading HPC Workload Manager \n\u25cbWorkload Manager = Scheduler + Resource Manager \n\u25a0Roughly equivalent to \"Orchestrator\" \n\u25cbScheduler: \n\u25a0Prioritize and decide which jobs to run on which parts of the system \n\u25cbResource Manager: \n\u25a0Track node state and resources \n\u25a0Launch jobs \n\u25cfManages the ",
+                        "Slurm Operator"
+                    ],
+                    "answer_relevancy": 0.7534532468129056,
+                    "faithfulness": 0.5263157894736842,
+                    "context_precision": 0.6388888888675925,
+                    "context_recall": 0.0
+                },
+                "question_3": {
+                    "time_elapsed": 66.38565831910819,
+                    "question": "How do I submit a job array in Slurm?",
+                    "reference_answer": "Job arrays in Slurm are submitted using the --array or -a option to sbatch, specifying a range of array indices. Each element of the array is scheduled and run as an independent job, sharing most of the submission parameters.",
+                    "answer": "Perfect! I now have detailed information about job arrays from the FASRC documentation. Let me provide a comprehensive answer.\n\n---\n\nTo submit a job array in Slurm on FASRC's Cannon cluster, you use the `--array` flag with your `sbatch` command. Here's how it works:\n\n## Basic Syntax\n\n```bash\nsbatch --array=1-30 your_script.sh\n```\n\nThis creates a job array with 30 elements (indices 1 through 30).\n\n## Array Range Formats\n\nYou can specify arrays in several ways:\n\n- **Range**: `--array=1-30` (indices 1 through 30)\n- **Specific indices**: `--array=1,3,5,7` (indices 1, 3, 5, and 7)\n- **Step value**: `--array=1-7:2` (indices 1, 3, 5, 7 with step of 2)\n- **From variable**: `--array=0-$ZBNUMFASTQ` (indices 0 through the value of the variable)\n\n## Environment Variables Available\n\nWhen running a job array, these environment variables are set:\n\n- **`$SLURM_ARRAY_TASK_ID`** - The current array index (most commonly used in scripts)\n- **`$SLURM_ARRAY_JOB_ID`** - The first job ID of the array\n- **`$SLURM_ARRAY_TASK_COUNT`** - Total number of tasks in the array\n- **`$SLURM_ARRAY_TASK_MAX`** - Highest array index value\n- **`$SLURM_ARRAY_TASK_MIN`** - Lowest array index value\n\n## Output File Naming\n\nUse `%A` and `%a` in your output/error file specifications to get unique filenames per array element:\n\n```bash\n#SBATCH -o output_%A_%a.out\n#SBATCH -e error_%A_%a.err\n```\n\n- `%A` = Job ID\n- `%a` = Array index\n\n## Example Script\n\nHere's a complete example from the FASRC documentation:\n\n```bash\n#!/bin/bash\n#SBATCH -J tophat                    # Single job name for the array\n#SBATCH -c 1                         # Number of cores\n#SBATCH -p serial_requeue            # Partition\n#SBATCH --mem 4000                   # Memory request (4Gb)\n#SBATCH -t 0-2:00                    # Maximum execution time (D-HH:MM)\n#SBATCH -o tophat_%A_%a.out          # Standard output\n#SBATCH -e tophat_%A_%a.err          # Standard error\n\nsource activate tophat\ntophat /n/netscratch/informatics_public/ref/ucsc/Mus_musculus/mm10/chromFatrans\"${SLURM_ARRAY_TASK_ID}\".fq\n```\n\nThis script would be submitted with:\n```bash\nsbatch --array=1-30 tophat.sh\n```\n\nEach of the 30 jobs would process a different input file (trans1.fq through trans30.fq).\n\n## Important Notes\n\n- Each array element is treated as an independent job for scheduling purposes\n- The default maximum array size (`MaxArraySize`) is 1001, with a maximum supported value of 4,000,001\n- Some Slurm commands (like `sstat`, `sreport`, `sshares`) don't recognize job arrays and require specific job IDs\n- The `sacct`, `sattach`, and `strigger` commands can accept either job IDs or job array elements\n\n**Source**: FASRC documentation on [Running Jobs](https://docs.rc.fas.harvard.edu/kb/running-jobs/) and [Submitting Large Numbers of Jobs](https://docs.rc.fas.harvard.edu/kb/submitting-large-numbers-of-jobs/)",
+                    "messages": [
+                        {
+                            "type": "tool_call",
+                            "tool_name": "search_vectorstore_hybrid",
+                            "tool_args": "Slurm job array submission array ID",
+                            "total_duration": null
+                        },
+                        {
+                            "type": "tool_call",
+                            "tool_name": "search_local_files",
+                            "tool_args": "sbatch --array",
+                            "total_duration": null
+                        },
+                        {
+                            "type": "tool_call",
+                            "tool_name": "fetch_catalog_document",
+                            "tool_args": "No query found.",
+                            "total_duration": null
+                        },
+                        {
+                            "type": "tool_call",
+                            "tool_name": "search_local_files",
+                            "tool_args": "SLURM_ARRAY_TASK_ID",
+                            "total_duration": null
+                        },
+                        {
+                            "type": "tool_call",
+                            "tool_name": "fetch_catalog_document",
+                            "tool_args": "No query found.",
+                            "total_duration": null
+                        },
+                        {
+                            "type": "tool_call",
+                            "tool_name": "search_local_files",
+                            "tool_args": "--array=1-30",
+                            "total_duration": null
+                        },
+                        {
+                            "type": "tool_call",
+                            "tool_name": "search_local_files",
+                            "tool_args": "#SBATCH --array=1-30 # Array range",
+                            "total_duration": null
+                        },
+                        {
+                            "type": "ai_message",
+                            "content": "Perfect! I now have detailed information about job arrays from the FASRC documentation. Let me provide a comprehensive answer.\n\n---\n\nTo submit a job array in Slurm on FASRC's Cannon cluster, you use the `--array` flag with your `sbatch` command. Here's how it works:\n\n## Basic Syntax\n\n```bash\nsbatch --array=1-30 your_script.sh\n```\n\nThis creates a job array with 30 elements (indices 1 through 30).\n\n## Array Range Formats\n\nYou can specify arrays in several ways:\n\n- **Range**: `--array=1-30` (indices 1 through 30)\n- **Specific indices**: `--array=1,3,5,7` (indices 1, 3, 5, and 7)\n- **Step value**: `--array=1-7:2` (indices 1, 3, 5, 7 with step of 2)\n- **From variable**: `--array=0-$ZBNUMFASTQ` (indices 0 through the value of the variable)\n\n## Environment Variables Available\n\nWhen running a job array, these environment variables are set:\n\n- **`$SLURM_ARRAY_TASK_ID`** - The current array index (most commonly used in scripts)\n- **`$SLURM_ARRAY_JOB_ID`** - The first job ID of the array\n- **`$SLURM_ARRAY_TASK_COUNT`** - Total number of tasks in the array\n- **`$SLURM_ARRAY_TASK_MAX`** - Highest array index value\n- **`$SLURM_ARRAY_TASK_MIN`** - Lowest array index value\n\n## Output File Naming\n\nUse `%A` and `%a` in your output/error file specifications to get unique filenames per array element:\n\n```bash\n#SBATCH -o output_%A_%a.out\n#SBATCH -e error_%A_%a.err\n```\n\n- `%A` = Job ID\n- `%a` = Array index\n\n## Example Script\n\nHere's a complete example from the FASRC documentation:\n\n```bash\n#!/bin/bash\n#SBATCH -J tophat                    # Single job name for the array\n#SBATCH -c 1                         # Number of cores\n#SBATCH -p serial_requeue            # Partition\n#SBATCH --mem 4000                   # Memory request (4Gb)\n#SBATCH -t 0-2:00                    # Maximum execution time (D-HH:MM)\n#SBATCH -o tophat_%A_%a.out          # Standard output\n#SBATCH -e tophat_%A_%a.err          # Standard error\n\nsource activate tophat\ntophat /n/netscratch/informatics_public/ref/ucsc/Mus_musculus/mm10/chromFatrans\"${SLURM_ARRAY_TASK_ID}\".fq\n```\n\nThis script would be submitted with:\n```bash\nsbatch --array=1-30 tophat.sh\n```\n\nEach of the 30 jobs would process a different input file (trans1.fq through trans30.fq).\n\n## Important Notes\n\n- Each array element is treated as an independent job for scheduling purposes\n- The default maximum array size (`MaxArraySize`) is 1001, with a maximum supported value of 4,000,001\n- Some Slurm commands (like `sstat`, `sreport`, `sshares`) don't recognize job arrays and require specific job IDs\n- The `sacct`, `sattach`, and `strigger` commands can accept either job IDs or job array elements\n\n**Source**: FASRC documentation on [Running Jobs](https://docs.rc.fas.harvard.edu/kb/running-jobs/) and [Submitting Large Numbers of Jobs](https://docs.rc.fas.harvard.edu/kb/submitting-large-numbers-of-jobs/)",
+                            "total_duration": null
+                        }
+                    ],
+                    "reference_sources_match_fields": [
+                        "url"
+                    ],
+                    "reference_sources_metadata": [
+                        {
+                            "url": "https://slurm.schedmd.com/job_array.html",
+                            "matched": true
+                        }
+                    ],
+                    "sources_metadata": [
+                        {
+                            "url": "https://slurm.schedmd.com/job_array.html",
+                            "path": "websites/303351179438.html",
+                            "title": "Slurm Workload Manager - Job Array Support",
+                            "source": "/root/data/websites/303351179438.html",
+                            "suffix": "html",
+                            "encoding": "ISO-8859-1",
+                            "filename": "303351179438.html",
+                            "file_name": "303351179438.html",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "size_bytes": "18649",
+                            "chunk_index": 16,
+                            "source_type": "web",
+                            "content_type": "text/html",
+                            "display_name": "slurm.schedmd.com/job_array.html",
+                            "resource_hash": "303351179438",
+                            "ingestion_status": "embedding"
+                        },
+                        {
+                            "url": "https://slurm.schedmd.com/job_array.html",
+                            "path": "websites/303351179438.html",
+                            "title": "Slurm Workload Manager - Job Array Support",
+                            "source": "/root/data/websites/303351179438.html",
+                            "suffix": "html",
+                            "encoding": "ISO-8859-1",
+                            "filename": "303351179438.html",
+                            "file_name": "303351179438.html",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "size_bytes": "18649",
+                            "chunk_index": 4,
+                            "source_type": "web",
+                            "content_type": "text/html",
+                            "display_name": "slurm.schedmd.com/job_array.html",
+                            "resource_hash": "303351179438",
+                            "ingestion_status": "embedding"
+                        },
+                        {
+                            "url": "https://slurm.schedmd.com/job_array.html",
+                            "path": "websites/303351179438.html",
+                            "title": "Slurm Workload Manager - Job Array Support",
+                            "source": "/root/data/websites/303351179438.html",
+                            "suffix": "html",
+                            "encoding": "ISO-8859-1",
+                            "filename": "303351179438.html",
+                            "file_name": "303351179438.html",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "size_bytes": "18649",
+                            "chunk_index": 17,
+                            "source_type": "web",
+                            "content_type": "text/html",
+                            "display_name": "slurm.schedmd.com/job_array.html",
+                            "resource_hash": "303351179438",
+                            "ingestion_status": "embedding"
+                        },
+                        {
+                            "url": "https://docs.rc.fas.harvard.edu/kb/running-jobs/",
+                            "path": "websites/528349951962.html",
+                            "title": "> Running Jobs \u2013 FASRC DOCS",
+                            "source": "/root/data/websites/528349951962.html",
+                            "suffix": "html",
+                            "encoding": "UTF-8",
+                            "filename": "528349951962.html",
+                            "file_name": "528349951962.html",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "size_bytes": "151339",
+                            "chunk_index": 40,
+                            "source_type": "web",
+                            "content_type": "text/html; charset=UTF-8",
+                            "display_name": "docs.rc.fas.harvard.edu/kb/running-jobs",
+                            "resource_hash": "528349951962",
+                            "ingestion_status": "embedding"
+                        },
+                        {
+                            "url": "https://slurm.schedmd.com/prolog_epilog.html",
+                            "path": "websites/744142849673.html",
+                            "title": "Slurm Workload Manager - Prolog and Epilog Guide",
+                            "source": "/root/data/websites/744142849673.html",
+                            "suffix": "html",
+                            "encoding": "ISO-8859-1",
+                            "filename": "744142849673.html",
+                            "file_name": "744142849673.html",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "size_bytes": "30570",
+                            "chunk_index": 9,
+                            "source_type": "web",
+                            "content_type": "text/html",
+                            "display_name": "slurm.schedmd.com/prolog_epilog.html",
+                            "resource_hash": "744142849673",
+                            "ingestion_status": "embedding"
+                        },
+                        {
+                            "content_type": "text/html; charset=UTF-8",
+                            "display_name": "docs.rc.fas.harvard.edu/kb/submitting-large-numbers-of-jobs",
+                            "encoding": "UTF-8",
+                            "file_name": "157109968692.html",
+                            "ingested_at": "2026-06-03T01:21:58.653123+00:00",
+                            "ingestion_status": "embedded",
+                            "path": "websites/157109968692.html",
+                            "resource_hash": "157109968692",
+                            "size_bytes": "88948",
+                            "source_type": "web",
+                            "suffix": "html",
+                            "url": "https://docs.rc.fas.harvard.edu/kb/submitting-large-numbers-of-jobs/"
+                        },
+                        {
+                            "content_type": "text/html",
+                            "display_name": "slurm.schedmd.com/job_array.html",
+                            "encoding": "ISO-8859-1",
+                            "file_name": "303351179438.html",
+                            "ingested_at": "2026-06-03T01:22:38.972076+00:00",
+                            "ingestion_status": "embedded",
+                            "path": "websites/303351179438.html",
+                            "resource_hash": "303351179438",
+                            "size_bytes": "18649",
+                            "source_type": "web",
+                            "suffix": "html",
+                            "url": "https://slurm.schedmd.com/job_array.html"
+                        },
+                        {
+                            "content_type": "text/html; charset=UTF-8",
+                            "display_name": "docs.rc.fas.harvard.edu/kb/running-jobs",
+                            "encoding": "UTF-8",
+                            "file_name": "528349951962.html",
+                            "ingested_at": "2026-06-03T01:22:48.858027+00:00",
+                            "ingestion_status": "embedded",
+                            "path": "websites/528349951962.html",
+                            "resource_hash": "528349951962",
+                            "size_bytes": "151339",
+                            "source_type": "web",
+                            "suffix": "html",
+                            "url": "https://docs.rc.fas.harvard.edu/kb/running-jobs/"
+                        },
+                        {
+                            "content_type": "text/html",
+                            "display_name": "slurm.schedmd.com/prolog_epilog.html",
+                            "encoding": "ISO-8859-1",
+                            "file_name": "744142849673.html",
+                            "ingested_at": "2026-06-03T01:21:38.326437+00:00",
+                            "ingestion_status": "embedded",
+                            "path": "websites/744142849673.html",
+                            "resource_hash": "744142849673",
+                            "size_bytes": "30570",
+                            "source_type": "web",
+                            "suffix": "html",
+                            "url": "https://slurm.schedmd.com/prolog_epilog.html"
+                        },
+                        {
+                            "content_type": "application/pdf",
+                            "display_name": "slurm.schedmd.com/pdfs/summary.pdf",
+                            "file_name": "155371979342.pdf",
+                            "ingested_at": "2026-06-03T01:22:38.972076+00:00",
+                            "ingestion_status": "embedded",
+                            "path": "websites/155371979342.pdf",
+                            "resource_hash": "155371979342",
+                            "size_bytes": "678179",
+                            "source_type": "web",
+                            "suffix": "pdf",
+                            "url": "https://slurm.schedmd.com/pdfs/summary.pdf"
+                        },
+                        {
+                            "content_type": "text/html",
+                            "display_name": "slurm.schedmd.com/sbatch.html",
+                            "encoding": "ISO-8859-1",
+                            "file_name": "115913870751.html",
+                            "ingested_at": "2026-06-03T01:22:05.723615+00:00",
+                            "ingestion_status": "embedded",
+                            "path": "websites/115913870751.html",
+                            "resource_hash": "115913870751",
+                            "size_bytes": "171206",
+                            "source_type": "web",
+                            "suffix": "html",
+                            "url": "https://slurm.schedmd.com/sbatch.html"
+                        }
+                    ],
+                    "sources_trunc_content": [
+                        "The following Slurm commands do not currently recognize job arrays and their\nuse requires the use of Slurm job IDs, which are unique for each array element:\nsbcast, sprio, sreport, sshare and sstat.\nThe sacct, sattach and strigger commands have been modified to permit\nspecification of either job IDs",
+                        "Job arrays will have additional environment variables set.\nSLURM_ARRAY_JOB_ID will be set to the first job ID of the array.\nSLURM_ARRAY_TASK_ID will be set to the job array index value.\nSLURM_ARRAY_TASK_COUNT will be set to the number of tasks in the job\narray.\nSLURM_ARRAY_TASK_MAX will be set to th",
+                        "A new configuration parameter has been added to control the maximum\njob array size: MaxArraySize. The smallest index that can be specified\nby a user is zero and the maximum index is MaxArraySize minus one.\nThe default value of MaxArraySize is 1001.\nThe maximum MaxArraySize supported in Slurm is 4000",
+                        "source activate tophat\ntophat /n/netscratch/informatics_public/ref/ucsc/Mus_musculus/mm10/chromFatrans\"${SLURM_ARRAY_TASK_ID}\".fq\nThe --array flag sets the number of elements to be run. Each array element is treated by the scheduler as an independent job for the sake fo scheduling.\nIn the script, tw",
+                        "SLURM_ARRAY_JOB_ID\nIf this job is part of a job array, this will be set to the job ID.\nOtherwise it will not be set.\nTo reference this specific task of a job array, combine\nSLURM_ARRAY_JOB_ID with SLURM_ARRAY_TASK_ID (e.g.\nscontrol update ${SLURM_ARRAY_JOB_ID}_{$SLURM_ARRAY_TASK_ID} ...);\nAvailable ",
+                        "<!doctype html><!-- Overlay Pro -->\n<html lang=\"en-US\">\n<head>\n\t<meta charset=\"UTF-8\">\n\t<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\t<link rel=\"profile\" href=\"https://gmpg.org/xfn/11\">\n\t<title>Submitting Large Numbers of Jobs to the FASRC cluster &#8211; FASRC DOCS</title>\n<",
+                        "<!DOCTYPE html>\n<html lang=\"en-US\">\n<head>\n    <meta charset=\"UTF-8\">\n\t<meta name=\"viewport\" content=\"width=device-width\">\n\n\t<title>Slurm Workload Manager - Job Array Support</title>\n\t<link rel=\"canonical\" href=\"https://slurm.schedmd.com/job_array.html\">\n\n\t<link rel=\"shortcut icon\" href=\"favicon.ico",
+                        "<!doctype html><!-- Overlay Pro -->\n<html lang=\"en-US\">\n<head>\n\t<meta charset=\"UTF-8\">\n\t<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\t<link rel=\"profile\" href=\"https://gmpg.org/xfn/11\">\n\t<title>&gt; Running Jobs &#8211; FASRC DOCS</title>\n<meta name='robots' content='max-imag",
+                        "<!DOCTYPE html>\n<html lang=\"en-US\">\n<head>\n    <meta charset=\"UTF-8\">\n\t<meta name=\"viewport\" content=\"width=device-width\">\n\n\t<title>Slurm Workload Manager - Prolog and Epilog Guide</title>\n\t<link rel=\"canonical\" href=\"https://slurm.schedmd.com/prolog_epilog.html\">\n\n\t<link rel=\"shortcut icon\" href=\"f",
+                        "--gres=<name[:count]>\n--job-name=<name>\n--label\n--licenses=<name[:count]\n--mem=<MB>\n--mem-per-cpu=<MB>Generic resources required per \nnode.\nJob name.\nPrepend task ID to output. (srun \ncommand only)\nLicense resources required for \nentire job.\nMemory required per node.\nMemory required per allocated \nC",
+                        "<!DOCTYPE html>\n<html lang=\"en-US\">\n<head>\n    <meta charset=\"UTF-8\">\n\t<meta name=\"viewport\" content=\"width=device-width\">\n\n\t<title>Slurm Workload Manager - sbatch</title>\n\t<link rel=\"canonical\" href=\"https://slurm.schedmd.com/sbatch.html\" />\n\n\t<link rel=\"shortcut icon\" href=\"favicon.ico\">\n\n\t<link r"
+                    ],
+                    "answer_relevancy": 0.8582008617274455,
+                    "faithfulness": 0.5142857142857142,
+                    "context_precision": 0.4571428571314286,
+                    "context_recall": 1.0
+                },
+                "question_4": {
+                    "time_elapsed": 3.712765387725085,
+                    "question": "How do I get a research computing account at FAS RC?",
+                    "reference_answer": "To get a research computing account at FAS RC, you apply through the account signup process on the FASRC website. A Principal Investigator (PI) must sponsor or approve the account.",
+                    "answer": "I don't have specific information in the FASRC documentation about the account application process. This type of procedural information (how to apply for an account, eligibility requirements, etc.) is typically found in general FASRC onboarding guides or policy documents that may not be in the technical documentation I have access to.\n\nFor the most accurate and up-to-date information on how to get a research computing account, I recommend:\n\n1. **Visit the FASRC website**: https://www.rc.fas.harvard.edu/\n2. **Attend office hours**: https://www.rc.fas.harvard.edu/office-hours/\n3. **Email rchelp@rc.fas.harvard.edu**\n\nThese channels will have the current account application procedures and requirements.\n\nIs there anything else about using the Cannon cluster or FASRC services that I can help you with based on the technical documentation I do have access to?",
+                    "messages": [
+                        {
+                            "type": "ai_message",
+                            "content": "I don't have specific information in the FASRC documentation about the account application process. This type of procedural information (how to apply for an account, eligibility requirements, etc.) is typically found in general FASRC onboarding guides or policy documents that may not be in the technical documentation I have access to.\n\nFor the most accurate and up-to-date information on how to get a research computing account, I recommend:\n\n1. **Visit the FASRC website**: https://www.rc.fas.harvard.edu/\n2. **Attend office hours**: https://www.rc.fas.harvard.edu/office-hours/\n3. **Email rchelp@rc.fas.harvard.edu**\n\nThese channels will have the current account application procedures and requirements.\n\nIs there anything else about using the Cannon cluster or FASRC services that I can help you with based on the technical documentation I do have access to?",
+                            "total_duration": null
+                        }
+                    ],
+                    "reference_sources_match_fields": [
+                        "url"
+                    ],
+                    "reference_sources_metadata": [
+                        {
+                            "url": "https://docs.rc.fas.harvard.edu/kb/how-do-i-get-a-research-computing-account/",
+                            "matched": false
+                        }
+                    ],
+                    "sources_metadata": [],
+                    "sources_trunc_content": [],
+                    "answer_relevancy": 0.0,
+                    "faithfulness": 0.0,
+                    "context_precision": 0.0,
+                    "context_recall": 0.0
+                },
+                "question_5": {
+                    "time_elapsed": 12.719202995765954,
+                    "question": "What is a job reason code in Slurm?",
+                    "reference_answer": "A job reason code in Slurm is a short code that explains why a pending job has not yet started running, such as waiting for resources, priority, dependencies, or other reasons.",
+                    "answer": "Based on the FASRC documentation retrieved from the official Slurm Workload Manager website:\n\n**Job reason codes** in Slurm are status messages that identify why a pending job has not yet been started by the scheduler. When a job is in a pending state, the reason code tells you what is preventing it from running.\n\nIf multiple reasons exist for a job not starting, Slurm displays only the reason that was encountered first by the attempted scheduling method.\n\n**Common reason codes include:**\n\n- **AssocGrp\\*** \u2014 The job's association has reached an aggregate resource limit\n- **AssocMax\\*** \u2014 A portion of the job request exceeds a maximum limit\n\nFor a complete list of reason codes and their meanings, you can refer to the [Slurm Job Reason Codes documentation](https://slurm.schedmd.com/job_reason_codes.html).\n\nTo see the reason code for your specific pending job, you can use:\n```bash\nscontrol show job <job_id>\n```\n\nOr check the \"Reason\" field in:\n```bash\nsqueue -j <job_id>\n```\n\nIf you need more details about a specific reason code you're encountering, please share the exact code and I can help interpret it based on the documentation.",
+                    "messages": [
+                        {
+                            "type": "tool_call",
+                            "tool_name": "search_vectorstore_hybrid",
+                            "tool_args": "Slurm job reason code definition",
+                            "total_duration": null
+                        },
+                        {
+                            "type": "tool_call",
+                            "tool_name": "fetch_catalog_document",
+                            "tool_args": "No query found.",
+                            "total_duration": null
+                        },
+                        {
+                            "type": "ai_message",
+                            "content": "Based on the FASRC documentation retrieved from the official Slurm Workload Manager website:\n\n**Job reason codes** in Slurm are status messages that identify why a pending job has not yet been started by the scheduler. When a job is in a pending state, the reason code tells you what is preventing it from running.\n\nIf multiple reasons exist for a job not starting, Slurm displays only the reason that was encountered first by the attempted scheduling method.\n\n**Common reason codes include:**\n\n- **AssocGrp\\*** \u2014 The job's association has reached an aggregate resource limit\n- **AssocMax\\*** \u2014 A portion of the job request exceeds a maximum limit\n\nFor a complete list of reason codes and their meanings, you can refer to the [Slurm Job Reason Codes documentation](https://slurm.schedmd.com/job_reason_codes.html).\n\nTo see the reason code for your specific pending job, you can use:\n```bash\nscontrol show job <job_id>\n```\n\nOr check the \"Reason\" field in:\n```bash\nsqueue -j <job_id>\n```\n\nIf you need more details about a specific reason code you're encountering, please share the exact code and I can help interpret it based on the documentation.",
+                            "total_duration": null
+                        }
+                    ],
+                    "reference_sources_match_fields": [
+                        "url"
+                    ],
+                    "reference_sources_metadata": [
+                        {
+                            "url": "https://slurm.schedmd.com/job_reason_codes.html",
+                            "matched": true
+                        }
+                    ],
+                    "sources_metadata": [
+                        {
+                            "url": "https://slurm.schedmd.com/job_reason_codes.html",
+                            "path": "websites/854878809700.html",
+                            "title": "Slurm Workload Manager - Job Reason Codes",
+                            "source": "/root/data/websites/854878809700.html",
+                            "suffix": "html",
+                            "encoding": "ISO-8859-1",
+                            "filename": "854878809700.html",
+                            "file_name": "854878809700.html",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "size_bytes": "33189",
+                            "chunk_index": 0,
+                            "source_type": "web",
+                            "content_type": "text/html",
+                            "display_name": "slurm.schedmd.com/job_reason_codes.html",
+                            "resource_hash": "854878809700",
+                            "ingestion_status": "embedding"
+                        },
+                        {
+                            "url": "https://slurm.schedmd.com/squeue.html",
+                            "path": "websites/224738403929.html",
+                            "title": "Slurm Workload Manager - squeue",
+                            "source": "/root/data/websites/224738403929.html",
+                            "suffix": "html",
+                            "encoding": "ISO-8859-1",
+                            "filename": "224738403929.html",
+                            "file_name": "224738403929.html",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "size_bytes": "83682",
+                            "chunk_index": 49,
+                            "source_type": "web",
+                            "content_type": "text/html",
+                            "display_name": "slurm.schedmd.com/squeue.html",
+                            "resource_hash": "224738403929",
+                            "ingestion_status": "embedding"
+                        },
+                        {
+                            "url": "https://slurm.schedmd.com/srun.html",
+                            "path": "websites/160466707815.html",
+                            "title": "Slurm Workload Manager - srun",
+                            "source": "/root/data/websites/160466707815.html",
+                            "suffix": "html",
+                            "encoding": "ISO-8859-1",
+                            "filename": "160466707815.html",
+                            "file_name": "160466707815.html",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "size_bytes": "224023",
+                            "chunk_index": 155,
+                            "source_type": "web",
+                            "content_type": "text/html",
+                            "display_name": "slurm.schedmd.com/srun.html",
+                            "resource_hash": "160466707815",
+                            "ingestion_status": "embedding"
+                        },
+                        {
+                            "url": "https://slurm.schedmd.com/burst_buffer.html",
+                            "path": "websites/269983859399.html",
+                            "title": "Slurm Workload Manager - Slurm Burst Buffer Guide",
+                            "source": "/root/data/websites/269983859399.html",
+                            "suffix": "html",
+                            "encoding": "ISO-8859-1",
+                            "filename": "269983859399.html",
+                            "file_name": "269983859399.html",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "size_bytes": "41050",
+                            "chunk_index": 16,
+                            "source_type": "web",
+                            "content_type": "text/html",
+                            "display_name": "slurm.schedmd.com/burst_buffer.html",
+                            "resource_hash": "269983859399",
+                            "ingestion_status": "embedding"
+                        },
+                        {
+                            "url": "https://slurm.schedmd.com/salloc.html",
+                            "path": "websites/142176670365.html",
+                            "title": "Slurm Workload Manager - salloc",
+                            "source": "/root/data/websites/142176670365.html",
+                            "suffix": "html",
+                            "encoding": "ISO-8859-1",
+                            "filename": "142176670365.html",
+                            "file_name": "142176670365.html",
+                            "collection": "default_collection_with_HuggingFaceEmbeddings",
+                            "size_bytes": "147887",
+                            "chunk_index": 110,
+                            "source_type": "web",
+                            "content_type": "text/html",
+                            "display_name": "slurm.schedmd.com/salloc.html",
+                            "resource_hash": "142176670365",
+                            "ingestion_status": "embedding"
+                        }
+                    ],
+                    "sources_trunc_content": [
+                        "Slurm Workload Manager - Job Reason Codes\n\n\nSlurm Workload Manager\n\n\nSchedMD\n\nNavigation\n\nSlurm Workload Manager\nVersion 26.05\n\nAbout\n\nOverview\nRelease Notes\n\nUsing\n\nDocumentation\nFAQ\nPublications\n\nInstalling\n\nDownload\nRelated Software\nInstallation Guide\n\nGetting Help\n\nMailing Lists\nSupport and Trai",
+                        "Slurm is distributed in the hope that it will be useful, but WITHOUT ANY\nWARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS\nFOR A PARTICULAR PURPOSE. See the GNU General Public License for more\ndetails.\n\u00a0\nSEE ALSO\nscancel(1), scontrol(1), sinfo(1), srun(1),\nslurm_load_ctl_conf",
+                        "SLURM_DEBUGSame as -v, --verbose, when set to 1, when set to 2 gives -vv, etc.\n\n\nSLURM_DEBUG_FLAGSSpecify debug flags for srun to use. See DebugFlags in the\nslurm.conf(5) man page for a full list of flags. The environment\nvariable takes precedence over the setting in the slurm.conf.\n\n\nSLURM_DELAY_BO",
+                        "At job submission, Slurm performs basic directive validation and also runs a\nfunction in the burst buffer script. This function can perform validation of\nthe directives used in the job script. If Slurm determines options are invalid,\nor if the burst buffer script returns an error, the job will be re",
+                        "SLURM_DEBUG_FLAGSSpecify debug flags for salloc to use. See DebugFlags in the\nslurm.conf(5) man page for a full list of flags. The environment\nvariable takes precedence over the setting in the slurm.conf.\n\n\nSLURM_EXIT_ERRORSpecifies the exit code generated when a Slurm error occurs\n(e.g. invalid opt"
+                    ],
+                    "answer_relevancy": 0.9732475282459611,
+                    "faithfulness": 0.2222222222222222,
+                    "context_precision": 0.9999999999,
+                    "context_recall": 1.0
+                }
+            },
+            "total_results": {
+                "aggregate_answer_relevancy": 0.5169803273572624,
+                "aggregate_faithfulness": 0.2525647451963241,
+                "aggregate_context_precision": 0.41920634917980426,
+                "aggregate_context_recall": 0.4,
+                "relative_source_accuracy": 0.4,
+                "source_accuracy": 0.4
+            },
+            "configuration_file": "configs/config.yaml",
+            "configuration": {
+                "name": "ragas-bench",
+                "global": {
+                    "DATA_PATH": "/root/data/",
+                    "ACCOUNTS_PATH": "/root/.accounts/",
+                    "ACCEPTED_FILES": [
+                        ".pdf",
+                        ".md",
+                        ".txt",
+                        ".docx",
+                        ".html",
+                        ".htm",
+                        ".json",
+                        ".yaml",
+                        ".yml",
+                        ".py",
+                        ".js",
+                        ".ts",
+                        ".jsx",
+                        ".tsx",
+                        ".java",
+                        ".go",
+                        ".rs",
+                        ".c",
+                        ".cpp",
+                        ".h",
+                        ".sh"
+                    ],
+                    "LOGGING": {
+                        "input_output_filename": "chain_input_output.log"
+                    }
+                },
+                "mcp_servers": null,
+                "services": {
+                    "benchmarking": {
+                        "agent_class": "CMSCompOpsAgent",
+                        "agent_md_file": "/root/archi/agents/fasrc-cannon-v1-strict.md",
+                        "provider": "openai",
+                        "model": "Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
+                        "ollama_url": null,
+                        "out_dir": "bench_out",
+                        "queries_path": "config/benchmarking/queries.json",
+                        "modes": [
+                            "RAGAS",
+                            "SOURCES"
+                        ],
+                        "mode_settings": {
+                            "sources_settings": {
+                                "default_match_field": "url"
+                            },
+                            "ragas_settings": {
+                                "enabled_metrics": [
+                                    "answer_relevancy",
+                                    "faithfulness",
+                                    "context_precision",
+                                    "context_recall"
+                                ],
+                                "embedding_model": "HuggingFace",
+                                "timeout": 180,
+                                "batch_size": false,
+                                "evaluator_provider": "huit_bedrock",
+                                "evaluator_model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                                "evaluator_ollama_url": null
+                            }
+                        }
+                    },
+                    "piazza": {
+                        "agent_class": "QAPipeline",
+                        "provider": null,
+                        "model": null,
+                        "network_id": null,
+                        "update_time": 60
+                    },
+                    "mattermost": {
+                        "update_time": 60
+                    },
+                    "redmine_mailbox": {
+                        "agent_class": "CMSCompOpsAgent",
+                        "agents_dir": "",
+                        "provider": null,
+                        "model": null,
+                        "url": null,
+                        "project": null,
+                        "redmine_update_time": 10,
+                        "answer_tag": "-- archi -- Resolving email was sent",
+                        "imap4_port": 143,
+                        "mailbox_update_time": 10
+                    },
+                    "postgres": {
+                        "port": 5433,
+                        "user": "archi",
+                        "database": "archi-db",
+                        "host": "localhost"
+                    },
+                    "chat_app": {
+                        "agent_class": "CMSCompOpsAgent",
+                        "agents_dir": "/root/archi/agents",
+                        "recursion_limit": 50,
+                        "client_timeout_seconds": 600,
+                        "default_provider": "local",
+                        "default_model": "llama3.2",
+                        "skills_dir": "",
+                        "tools": {},
+                        "prompts": {},
+                        "providers": {
+                            "openai": {
+                                "api_key": "EMPTY",
+                                "base_url": "http://localhost:8000/v1",
+                                "default_model": "Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
+                                "enabled": true,
+                                "extra_kwargs": {
+                                    "extra_body": {
+                                        "chat_template_kwargs": {
+                                            "enable_thinking": false
+                                        }
+                                    },
+                                    "temperature": 0.3
+                                }
+                            }
+                        },
+                        "trained_on": "No description provided.",
+                        "port": 7861,
+                        "external_port": 7861,
+                        "host": "0.0.0.0",
+                        "hostname": "localhost",
+                        "template_folder": "/root/archi/src/interfaces/chat_app/templates",
+                        "static_folder": "/root/archi/src/interfaces/chat_app/static",
+                        "num_responses_until_feedback": 3,
+                        "include_copy_button": false,
+                        "flask_debug_mode": true,
+                        "auth": {
+                            "enabled": false,
+                            "sso": {
+                                "enabled": false,
+                                "server_metadata_url": null,
+                                "authorize_url": null,
+                                "client_kwargs": {
+                                    "scope": "openid profile email"
+                                }
+                            },
+                            "basic": {
+                                "enabled": false
+                            }
+                        },
+                        "openai_compat": {
+                            "enabled": false
+                        },
+                        "alerts": {
+                            "managers": null
+                        }
+                    },
+                    "data_manager": {
+                        "auth": {
+                            "enabled": false
+                        },
+                        "enabled": true,
+                        "port": 7881,
+                        "external_port": 7881,
+                        "host": "0.0.0.0",
+                        "hostname": "localhost",
+                        "template_folder": "/root/archi/src/interfaces/chat_app/templates",
+                        "static_folder": "/root/archi/src/interfaces/chat_app/static",
+                        "flask_debug_mode": false
+                    },
+                    "grader_app": {
+                        "provider": null,
+                        "model": null,
+                        "prompts": {
+                            "grading": {
+                                "final_grade_prompt": ""
+                            },
+                            "image_processing": {
+                                "image_processing_prompt": ""
+                            }
+                        },
+                        "port": 7861,
+                        "external_port": 7862,
+                        "host": "0.0.0.0",
+                        "hostname": "localhost",
+                        "template_folder": "/root/archi/src/interfaces/grader_app/templates",
+                        "num_problems": 1,
+                        "local_rubric_dir": "",
+                        "local_users_csv_dir": "",
+                        "flask_debug_mode": true
+                    },
+                    "vectorstore": {
+                        "backend": "postgres",
+                        "distance_metric": "cosine"
+                    },
+                    "grafana": {
+                        "port": 3000,
+                        "external_port": 3000
+                    }
+                },
+                "data_manager": {
+                    "collection_name": "default_collection",
+                    "embedding_name": "HuggingFaceEmbeddings",
+                    "embedding_class_map": {
+                        "OpenAIEmbeddings": {
+                            "class": "OpenAIEmbeddings",
+                            "kwargs": {
+                                "model": "text-embedding-3-small"
+                            },
+                            "similarity_score_reference": 10
+                        },
+                        "HuggingFaceEmbeddings": {
+                            "class": "HuggingFaceEmbeddings",
+                            "kwargs": {
+                                "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                                "model_kwargs": {
+                                    "device": "cpu"
+                                },
+                                "encode_kwargs": {
+                                    "normalize_embeddings": true
+                                }
+                            },
+                            "similarity_score_reference": 10,
+                            "query_embedding_instructions": null
+                        }
+                    },
+                    "chunk_size": 1000,
+                    "chunk_overlap": 0,
+                    "parallel_workers": 32,
+                    "reset_collection": true,
+                    "stemming": {
+                        "enabled": false
+                    },
+                    "distance_metric": "cosine",
+                    "retrievers": {
+                        "semantic_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "bm25_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "hybrid_retriever": {
+                            "num_documents_to_retrieve": 5,
+                            "bm25_weight": 0.6,
+                            "semantic_weight": 0.4
+                        }
+                    },
+                    "sources": {
+                        "local_files": {
+                            "enabled": true,
+                            "visible": true,
+                            "schedule": "",
+                            "paths": null
+                        },
+                        "links": {
+                            "base_source_depth": 1,
+                            "max_pages": null,
+                            "enabled": true,
+                            "visible": true,
+                            "schedule": "",
+                            "input_lists": [
+                                "config/lists/sources.list"
+                            ],
+                            "html_scraper": {
+                                "reset_data": true,
+                                "verify_urls": false,
+                                "enable_warnings": false
+                            },
+                            "selenium_scraper": {
+                                "enabled": false,
+                                "visible": false,
+                                "use_for_scraping": false,
+                                "selenium_class": "CERNSSOScraper",
+                                "selenium_url": null,
+                                "selenium_class_map": {
+                                    "CERNSSOScraper": {
+                                        "class": "CERNSSOScraper",
+                                        "kwargs": {
+                                            "headless": true
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "git": {
+                            "enabled": true,
+                            "visible": true,
+                            "schedule": ""
+                        },
+                        "sso": {
+                            "enabled": true,
+                            "visible": true,
+                            "schedule": ""
+                        },
+                        "indico": {
+                            "enabled": false,
+                            "visible": true,
+                            "schedule": "",
+                            "base_url": "https://indico.cern.ch",
+                            "use_sso": true,
+                            "sso_kwargs": {
+                                "headless": true,
+                                "site_type": "generic"
+                            },
+                            "slide_conversion": {
+                                "enabled": true,
+                                "store_originals": false,
+                                "formats": [
+                                    "pdf",
+                                    "pptx",
+                                    "ppt",
+                                    "odp"
+                                ],
+                                "llm_enabled": false,
+                                "llm_model": null
+                            },
+                            "plot_extraction": {
+                                "enabled": false
+                            }
+                        },
+                        "jira": {
+                            "enabled": true,
+                            "url": null,
+                            "visible": true,
+                            "schedule": "",
+                            "projects": null,
+                            "anonymize_data": false,
+                            "max_tickets": 10000000000.0,
+                            "cutoff_date": null
+                        },
+                        "redmine": {
+                            "enabled": true,
+                            "url": null,
+                            "projects": null,
+                            "visible": false,
+                            "schedule": "",
+                            "anonymize_data": true
+                        },
+                        "elog": {
+                            "enabled": false,
+                            "visible": false,
+                            "url": "",
+                            "max_entries": null,
+                            "verify_ssl": false,
+                            "schedule": ""
+                        }
+                    },
+                    "utils": {
+                        "anonymizer": {
+                            "nlp_model": "en_core_web_sm",
+                            "excluded_words": [
+                                "John",
+                                "Jane",
+                                "Doe"
+                            ],
+                            "greeting_patterns": [
+                                "^(hi|hello|hey|greetings|dear)\\b",
+                                "^\\w+,\\s*"
+                            ],
+                            "signoff_patterns": [
+                                "\\b(regards|sincerely|best regards|cheers|thank you)\\b",
+                                "^\\s*[-~]+\\s*$"
+                            ],
+                            "email_pattern": "[\\w\\.-]+@[\\w\\.-]+\\.\\w+",
+                            "username_pattern": "\\[~[^\\]]+\\]"
+                        }
+                    }
+                }
+            }
+        }
+    ],
+    "metadata": {
+        "time": "2026-06-03 01:27:58.678204+00:00",
+        "git_info": {
+            "git_diff": "",
+            "last_commit": "8b21aeb49bc58fc04f036ae8873e61d98b12e32f\n"
+        },
+        "corpus_snapshot_id": "a2be132b-2cd8-45b7-aa4f-09d493f55ad3"
+    }
+}

@@ -1,0 +1,607 @@
+{
+    "benchmarking_results": [
+        {
+            "single_question_results": {
+                "question_1": {
+                    "question": "I am getting a bit crazy trying to find the location of our folder in globus from our project. I need to use globus to create an end point to share our data.\n\nI can see our folder using OnDemand or WinSCP at this path: '/net/rcstorenfs02/ifs/rc_labs/[LAB]/Lab/Projects/DARPA/Phase0/Data/Co-Aligned HP'\n\nI can not find that folder in 'Harvard FAS RC Holyoke' like '/n/holylabs/[LAB]/Lab/' since that is not part of the lab space (we pay for project space).\n\nCan you gide me where I can find it in globus? This should be a easy ticket, sorry for bother you.",
+                    "reference_answer": "Looks like that folder wasn't actually shared anywhere. I've added it to the Harvard FAS RC Boston endpoint (as that is where that data lives). You can find it under [LAB]",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_2": {
+                    "question": "Is it possible to use EGL for off-screen graphics rendering in the gpu_h200 partition? When I try, my program returns an error about not having a display.",
+                    "reference_answer": "Sadly no. Confusingly GPU's in have two modes, compute mode and graphics mode. Our GPU's are in compute node so they can't actually render graphics... Which is pretty hilarious given the name Graphics Processing Unit.\nWe do have a V100 GPU set in graphics mode in the remoteviz partition which you are welcome to use. We don't have any of our other GPU in graphics mode due to lack of demand and the fact that it is nontrivial to setup.",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_3": {
+                    "question": "I\u2019m trying to submit jobs to get notebooks via the UI of FasRC, and for some reason, I\u2019m getting the job but can\u2019t enter the notebook.\njob<[URL]> id for example (13950798)",
+                    "reference_answer": "Apologies for the inconvenience. We updated the Jupyter app during our maintenance earlier today. It looks like the cuda/10.0.130-fasrc01 module that you are loading (see screenshot cuda_module.png) in the Jupyter app form is causing the issue. Can you remove that and see if Jupyter starts properly?",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_4": {
+                    "question": "I had a job, 59923907, in queue for around a day. However, the salloc and\neven the h200 queues are way faster. Are there any errors in the queue?\nThanks!",
+                    "reference_answer": "Can you provide a job ID for the interactive job? The only interactive job that I see is in gpu_test, not gpu_h200.\nThe cluster has been very busy for the past few days and your lab's fairshare is low (0.151609):\n$ sshare --account=[LAB] -a",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_5": {
+                    "question": "I am trying to connect to FASSE from my Mac using VS Code Remote-SSH, but VS Code gets stuck at \u201cOpening Remote...\u201d after I select the SSH host. I can connect through a regular terminal SSH session, but VS Code Remote-SSH does not proceed.\n\nIn VS Code, the Remote-SSH log only shows lines like:\n\n[[DATE_TIME]] Log Level: 2\n[[DATE_TIME]] Picking SSH host\n[[DATE_TIME]] Selected fasselogin.rc.fas.harvard.edu\n\nAfter that, nothing else happens. It does not proceed to the usual SSH/server installation steps.\n\nI have already tried:\n- Reinstalling the VS Code Remote-SSH extension\n- Removing local Remote-SSH cache\n- Killing/removing the remote VS Code server with:\n  pkill -u $USER -f vscode\n  rm -rf ~/.vscode-server ~/.vscode-remote\n- Restarting VS Code\n- Testing regular SSH from the terminal\n\nCould you please advise  whether there are any recommended VS Code settings or known issues for connecting to FASSE login nodes?",
+                    "reference_answer": "To launch VSCode on FASSE, are you following the instructions here: [URL] [[URL]] to get that going?\nYou would need to initiate a remote tunnel session for launching VSCode on FASSE. Also, if you are interested in starting the tunnel using your local VSCode interface, then you would need to turn off the FASSE VPN, start the tunnel session, and then turn the FASSE VPN back on.\nIf that doesn't work, then let me know a good time to meet tomorrow afternoon and we can troubleshoot this issue then.",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_6": {
+                    "question": "I'm reaching out to you because I am getting basically no gpu allocation, it takes me very very long to even ask for 1 gpu_requeue or itc_gpu for 15mins... For days I have been waiting for h200 gpus, but I assume someone is running a big job and am happy to wait on that. However, I can't even run small jobs now, so I would like to know if there is a problem, if I have overused my fair-share or if there is any other reason.",
+                    "reference_answer": "The reason for you pending is that your lab's fairshare is low:\n[root@holy8a24507 general]# sshare --account=[LAB] -a",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_7": {
+                    "question": "I'm often getting this error message:\n\nsrun: fatal: --cpus-per-task, --tres-per-task=cpu:#, and --cpus-per-gpu\nare mutually exclusive\n\nwith my SLURM script, although sometimes, the exact same script works\nfine without errors. It is not clear to me what could be causing the\nerror, and why it only happens sometimes (in particular, I'm only\nspecifying cpus-per-task, but non of the other arguments). This is my\ncomplete script:\n\n#!/bin/bash\n#SBATCH --nodes=1\n#SBATCH --ntasks-per-node=1\n#SBATCH --gpus-per-node=1\n#SBATCH --cpus-per-task=24\n#SBATCH --mem=360G\n#SBATCH --array=1-1%1\n#SBATCH --time=72[DATE_TIME]\n#SBATCH --job-name=icot\n#SBATCH --account=[LAB]\n#SBATCH -o /n/netscratch/[LAB]/Lab/[USER]/ICOT/outs/icot_%A/%a_%A.out\n#SBATCH -e /n/netscratch/[LAB]/Lab/[USER]/ICOT/errs/icot_%A/%a_%A_%j.err\n#SBATCH --partition=seas_gpu\n#SBATCH --constraint=h100\n#SBATCH --open-mode=truncate\n#SBATCH --mail-type=ALL             # Options: BEGIN, END, FAIL,\nREQUEUE, ALL\n#SBATCH --mail-user=[EMAIL]\nEXPERIMENT_NAME=\"icot\"\n# NOTE: CHOOSE EXP NAME RIGHT! -----------------------------------------\n# Make sure this matches the dirs above, as well as the job name\nmkdir\n-p/n/netscratch/[LAB]/Lab/[USER]/ICOT/outs/${EXPERIMENT_NAME}_$SLURM_ARRAY_JOB_ID\nmkdir\n-p/n/netscratch/[LAB]/Lab/[USER]/ICOT/errs/${EXPERIMENT_NAME}_$SLURM_ARRAY_JOB_ID\n# NOTE: Switch back to array ID\nmodule loadpython/3.10.13-fasrc01\nsource /n/netscratch/[LAB]/Lab/[USER]/ICOT/venv/bin/activate\nsrun\npython/n/netscratch/[LAB]/Lab/[USER]/ICOT/ICOT/run_all_experiments.py\n\n\nDo you see anything that could be causing this error? Anything that\nlooks wrong/suspicious?\n(For example, this happened in the job with JOBID 16604596, if you want\nto have a look at that job's output.)",
+                    "reference_answer": "You might try changing from gpus-per-node to gpus-per-task? Though its sort of weird that it works sometimes and not other times. Is it working right now?",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_8": {
+                    "question": "My user name is [USERNAME] on fasrc and I have two lab access: *[LAB]* and\n*[LAB]*. I am trying to use seas_gpu or gpu_h200 but I noticed that I\ncan access these compute only through [LAB] but not [LAB]. I tried to\nspecify --account and that does not work. Do you know how I can use the\n[LAB] account to assess seas gpus? I know [LAB] should have access\nbecause other users under the lab can use these partitions. Therefore, I\nsuspect the issue is on my end. Thank you!",
+                    "reference_answer": "You cannot submit jobs under [LAB] because you have not been added to the [LAB]'s fairshare account. Currently, you can access [LAB] storage, but the fairshare requires additional settings.\nWe need approval from Prof. [NAME], cc'd in this ticket. Prof. [NAME], do you approve adding [NAME] to the [LAB] fairshare?",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_9": {
+                    "question": "Yesterday, I submitted jobs. The earlier ones were running correctly and\nexecuting as expected; however, all subsequent jobs failed with this error\n(job id: 1338487):\n\n/bin/bash: /n/sw/helmod-rocky8/apps/lmod/lmod/init/bash: Stale file handle\nenvironment: line 17: /n/sw/helmod-rocky8/apps/lmod/lmod/libexec/lmod:\nStale file handle\nbash: /n/sw/helmod-rocky8/apps/lmod/lmod/init/bash: Stale file handle\n./c8_air_shower: /lib64/libstdc++.so.6: version `GLIBCXX_3.4.32' not found\n(required by ./c8_air_shower)\n./c8_air_shower: /lib64/libstdc++.so.6: version `GLIBCXX_3.4.30' not found\n(required by ./c8_air_shower)\n./c8_air_shower: /lib64/libstdc++.so.6: version `GLIBCXX_3.4.29' not found\n(required by ./c8_air_shower)\n./c8_air_shower: /lib64/libstdc++.so.6: version `CXXABI_1.3.13' not found\n(required by ./c8_air_shower)\n./c8_air_shower: /lib64/libstdc++.so.6: version `GLIBCXX_3.4.26' not found\n(required by ./c8_air_shower)\n./c8_air_shower: /lib64/libstdc++.so.6: version `GLIBCXX_3.4.32' not found\n(required by\n/n/holylfs05/LABS/[LAB]/Everyone/[USERNAME]/corsika_package/corsika-install/lib/libCONEXsibyll.so)\n./c8_air_shower: /lib64/libstdc++.so.6: version `GLIBCXX_3.4.32' not found\n(required by\n/n/holylfs05/LABS/[LAB]/Everyone/[USERNAME]/corsika_package/corsika-install/lib/libfluka.so)\n\nCould you help identify the issue? Is it system-related, and should I wait\nfor it to be resolved?",
+                    "reference_answer": "We\u2019re currently experiencing an issue affecting mounts to the Holyoke Isilon filesystem (specifically /n/sw) on a number of cluster nodes. As a result, the cluster is in a degraded state.\n\nJobs running during this time may fail or terminate unexpectedly if they encounter affected nodes. We are actively identifying and remediating impacted nodes, which will involve draining and rebooting them. During this process, parts of the cluster may become temporarily unavailable.\n\nWe recommend avoiding starting new jobs for approximately the next hour while remediation is underway.\n\nAt this time, there is no indication of underlying issues with the Isilon storage itself beyond the impact on cluster nodes. We will provide updates if that changes. You may look for detailed status information and updates at our status page:\n\n[URL] [[URL]] [[URL] [[URL]]]\n\nThank you for your patience, and please let us know if you have any questions.",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_10": {
+                    "question": "Since yesterday when I try to submit jobs, they just PD with the following message\n\"(ReqNodeNotAvail, May be reserved for other job)\u201d\n\ndo you know why that is?",
+                    "reference_answer": "Your job is slated for 20 days. That means that this job would not complete before our scheduled OS upgrades: [URL] [[URL]] The error you are seeing there is an indication that it is intersecting with one of the reservations we have setup for this upgrade.\nTo run you will either need to ask for less time or wait until after the OS upgrade work is complete.",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_11": {
+                    "question": "I seem to have access to all the partitions under [LAB], but I have a limit of 0 jobs I\u2019m able to request. Could you please help me understand how I can request jobs on these partitions under this account?",
+                    "reference_answer": "As a HMS lab Zitnik lab is not allowed to use nonKempner partitions. If you need general compute you will want to talk to HMS RC ([URL] [[URL]]).",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_12": {
+                    "question": "We're running into issues with submitting SLURM jobs on -p eddy.\nSubmitting a job with -t 0 or that requests more than 20 days of run time\ngives a \"Required node not available\" error.  In the past, our partition\nhas allowed unlimited-time requests, and that's how we'd like it to work,\nparticularly as we have some very long-running experiments coming up.\nCould someone please take a look at this?",
+                    "reference_answer": "In this case you are hitting the reservations we have in place for the OS Upgrade: [URL] [[URL]] These are being used so we don't have to cancel people's jobs. You will need to either ask for less time than the time between now and the scheduled upgrade, or your jobs will pend until after the upgrade is complete.",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_13": {
+                    "question": "This is a very dumb question, so please feel free to refer me to some basic\nstep-by-step quide if it exists.\n\nI am trying to test a small webpage I created that needs to access\nsome data file for its work. Apparently, when I open it in my usual\nbrowser, it is prevented from doing this properly, so I was recommended to\nuse python for serving it.\n\nSpecifically, to run\npython -m http.server 8000\nand then to open in my browser\n[URL]\n\nI do not have python installed on my machine so I tried to use RC machine\nfor this. Can you please tell me how to do it? I think I managed to serve\nthe page by running the first line, but not sure how to view it.",
+                    "reference_answer": "You can use Python on the cluster by loading a module, for example, the command:\nmodule load python\nwill load the latest python module.\nTo search for available modules, you can use the command:\nmodule spider python.\nFor more information about modules, see our Module intro [[URL]] documentation.",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_14": {
+                    "question": "I am wondering whether it is possible to install Quarto<[URL]> globally on FASRC? It works with many common notebooks and seems like it may be useful for a number of people. Thanks!",
+                    "reference_answer": "Which application are you planning to use? Quarto is installed in the RStudio Server app on Open OnDemand. I was able to follow the penguin example in the Quarto guide [[URL]] (see attached screenshot).",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_15": {
+                    "question": "I recently got a new computer and am trying to set up Globus Connect Personal again. However when I try to login (including using my own setup key generated from the website), I get the following error: \n\n\"Error: ('relaytool setup failed', CompletedProcess(args='/Applications/Globus Connect Personal.app/Contents/MacOS/bin/relaytool', returncode=1, stdout=b'', stderr=b'\u2019))\u201d\n\nThe Globus website suggests generating your own setup key could help, but in my case did not. The website does say \u201dThese sort of errors indicate that the workstation where you are attempting to install the Globus Connect Personal Software cannot connect to the Globus service.\nYou can work around this issue and complete your Endpoint setup process by  creating a GCP Setup key <[URL]>; however, without the network block which is preventing access to [URL] [[IP_ADDRESS]/29 (IPv4) and [IP_ADDRESS] (IPv6)] being addressed by your Networking team, you will not be able to initiate transfers without moving your machine to a different network (eg. from a home/other network without the network restriction in place).\u201d I don\u2019t fully understands- but seems It maybe an admin (or location for installing?) issue. \n\nHow can I get Globus Connect Personal to work for me?",
+                    "reference_answer": "My colleagues and I are familiar with this particular error. Can you join Virtual Office Hours [[URL]] tomorrow, [DATE_TIME], so we can help you troubleshoot?",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_16": {
+                    "question": "I have some questions about temporary file storage at FASRC. I reviewed the pages I listed below, but I want to be sure I have the correct understanding.\n\nGeneral temporary files:  netscratch & local scratch \n\nQuestions: \n\n1. For Globus, do you have any scratch space related to that? Or is it really on the user's Lab file area as source? Same for destination, receiving files via Globus \u2013 only into Lab area? \n\n2. Regarding the stated policy for netscratch, is the deletion policy enforced strictly, as stated on the FASRC web site?",
+                    "reference_answer": "Thanks for reaching out. I opened a ticket for wider visibility of this question for our group. But, to answer your questions:\n1. General temporary files: netscratch & local scratch - That's correct. However, local scratch is attached to a job. So it will be available to the user for as long as their job is running on a compute node. The moment the job ends, local scratch goes away. So, if someone intends to use local scratch because it is the most performant for storage, they should consider moving the data out to a different storage before the job is done running, as in make it a part of their job launching script to pull the data out before the job ends. See [URL] [[URL]]\n2. No, Globus can access /n/netscratch but will not have visibility into anything else other than the Lab and Users/$USER directories. So, if you were to access /n/netscratch/[LAB] via Globus, then that's possible. But Globus will only show Lab and Users folders inside /n/netscratch/[LAB]. If they have not been created, then /n/netscratch/[LAB] will be empty on Globus. See [URL] [[URL]]\nAlso, if you're interested in moving data around on the cluster from netscratch, then you can consider other CLI tools for accomplishing that. See [URL] [[URL]]\n3. You are right, as stated on [URL] [[URL]], the purge policy is strictly enforced unless and until an exception is raised with us, in which case, one will have to open a ticket with FASRC, explain the reason for raising that exception and the duration for which the exception must be honored/active.\nHope that helped. Feel free to drop in our office hours, if you would like to discuss this further. See [URL] [[URL]]",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_17": {
+                    "question": "I'm processing 8.7 TB of data to collapse to a smaller sample. Each day's\n(i have 365) processing needs ~750+ GB of RAM for DuckDB window operations.\nThe fasse_ultramem node works but is currently drained (and will take 35+\ndays of compute), and the bigmem nodes don't have enough memory. Is there a\nway to run this on AWS or GCP through Harvard? Thank you.",
+                    "reference_answer": "Have you tried using serial_requeue on FASSE? There are several nodes in that partition that could meet your needs and allow you to scale out. The only danger is that your job might be preempted by higher priority work.\nIf that won't work we can talk about other options internal to the cluster as I would imagine that would be cheaper for all around.\nFor the record you would need to talk to HUIT for access to AWS and GCP but then you would also have to make sure you DUA's would cover that and work and any storage that is on FASSE is not generally available to those locations except via Globus.",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_18": {
+                    "question": "What is the difference in I/O speed between reading files from scratch and reading files from storage?\n\nscratch: /n/netscratch/[LAB]/Lab/[USER]\nstorage: /n/holystore01/LABS/[LAB]/Lab/[USER]\n\nI am running a program on scratch and am deciding whether I need to continue my practice of first copying over the relevant files to scratch before running the job, or if I can just keep them in storage.  \n\nThere are about a dozen files that need to be read in.  Most are small, but a few are 0.5-2GB in size.\n\nI usually run a job array of ~400 jobs at once, in which each of these jobs has to read in the relevant files once at startup.  I sometimes run as many as 5,000 such jobs at once.",
+                    "reference_answer": "On a practical level I think they are comparable with netscratch being faster by maybe 10% or so. holystore01 is Lustre and so is known to be fast. netscratch is SSD's mounted via RDMA and thus also fast. By our benchmarks they came out roughly neck and neck, we went with VAST due to the ease of operation as Lustre is a pain in the butt to operate well.\nAnyways you should be safe reading from holystore01 and shouldn't need to move the data.",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_19": {
+                    "question": "I have noticed that there has been a dramatic increase in the amount of time it takes to compile software on RC, particularly in the linking steps.\nAfter changing a few lines of code and running `make [executable] -j32` with GNU Make 4.2.1 in an interactive session on a single node, a compilation that took a few seconds a few days ago is now taking many minutes.\nThis issue does not appear to be specific to a particular node.",
+                    "reference_answer": "My guess is that the storage you are using is getting hammered. What storage are you compiling on?",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_20": {
+                    "question": "Could you give me pricing of computer cluster e.g. price per node.hour \nfor both CPU and GPU nodes? So far I was not able to find those information.",
+                    "reference_answer": "Our pricing model doesn't really work that way. The cluster is funded via two streams:\n1. Overhead from grants: This funds our base operations and general cluster.\n2. Hardware Purchases: People can buy additional hardware to add to the cluster.\nWe don't lease or sell cycles. We do let labs buy hardware if they need it. That said its a pretty bad time to buy as prices are crazy and highly in flux.\nDo you need the price per hour for something? If you need a quote or an estimate I can try to provide one if I know what you are looking for.",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_21": {
+                    "question": "I am having trouble accessing a gpu_test node for an interactive session via vscode. This is my config file in ~/.ssh:\n\n'''\nHost cannon\nUser [USERNAME]\nHostname [URL]\nControlMaster auto\nControlPath ~/.ssh/%r@%h:%p\n\nHost compute\nUserKnownHostsFile=/dev/null\nForwardAgent yes\nStrictHostKeyChecking no\nLogLevel ERROR\n# substitute your username here\nUser [USERNAME]\nRequestTTY yes\n# Uncomment the command below to get a GPU node on the gpu_test partition. Comment out the 2nd ProxyCommand\nProxyCommand ssh -q cannon \"salloc --immediate=180 --job-name=vscode --partition gpu_test --gres=gpu:1 --time=0-04:00 --mem=4GB --quiet /bin/bash -c 'echo $SLURM_JOBID > ~/vscode-job-id; nc \\$SLURM_NODELIST 22'\"\n\n# Uncomment the command below to get a non-GPU node on the test partition. Comment out the 1st ProxyCommand\n# ProxyCommand ssh -q cannon \"salloc --immediate=180 --job-name=vscode --partition test --time=0-01:00 --mem=4GB --quiet /bin/bash -c 'echo $SLURM_JOBID > ~/vscode-job-id; nc \\$SLURM_NODELIST 22'\"\n'''\n\nThis is the error I receive:\n\n[DATE_TIME] [DATE_TIME] [info] Resolving ssh remote authority 'compute' (Unparsed 'ssh-remote+7b22686f73744e616d65223a22636f6d70757465227d') (attempt #1)\n[DATE_TIME] [DATE_TIME] [info] SSH askpass server listening on /var/folders/9c/x7pb3nqj3kz9wvf4qnhmtq_r0000gt/T/cursor-ssh-U9VXjp/socket.sock\n[DATE_TIME] [DATE_TIME] [info] Using configured platform linux for remote host compute\n[DATE_TIME] [DATE_TIME] [info] Using askpass script: /Users/[USERNAME]/.cursor/extensions/anysphere.remote-ssh-1.0.53/dist/scripts/launchSSHAskpass.sh with javascript file /Users/[USERNAME]/.cursor/extensions/anysphere.remote-ssh-1.0.53/dist/scripts/sshAskClient.js. Askpass handle: /var/folders/9c/x7pb3nqj3kz9wvf4qnhmtq_r0000gt/T/cursor-ssh-U9VXjp/socket.sock\n[DATE_TIME] [DATE_TIME] [info] Launching SSH server via shell with command: cat \"/var/folders/9c/x7pb3nqj3kz9wvf4qnhmtq_r0000gt/T/cursor_remote_install_df76cf19-7137-45ac-a3de-264e089a6bcd.sh\" | ssh -T -D 49672 compute bash --login -c bash\n[DATE_TIME] [DATE_TIME] [info] Establishing SSH connection: cat \"/var/folders/9c/x7pb3nqj3kz9wvf4qnhmtq_r0000gt/T/cursor_remote_install_df76cf19-7137-45ac-a3de-264e089a6bcd.sh\" | ssh -T -D 49672 compute bash --login -c bash\n[DATE_TIME] [DATE_TIME] [info] Started installation script. Waiting for it to finish...\n[DATE_TIME] [DATE_TIME] [info] Waiting for SSH handshake (timeout: 120s). Install timeout: 30s.\n[DATE_TIME] [DATE_TIME] [info] Askpass server received request: POST /\n[DATE_TIME] [DATE_TIME] [info] Askpass server received request body: {\"request\":\"([EMAIL]) Password: \"}\n[DATE_TIME] [DATE_TIME] [info] Pausing timeout; waiting for askpass response\n[DATE_TIME] [DATE_TIME] [info] Received SSH askpass request: ([USERNAME]) Password:\n[DATE_TIME] [DATE_TIME] [info] Resuming timeout; askpass response received\n[DATE_TIME] [DATE_TIME] [error] Error installing server: SSH connection timed out after 120s without receiving any data from the remote host\n[DATE_TIME] [DATE_TIME] [info] Deleting local script /var/folders/9c/x7pb3nqj3kz9wvf4qnhmtq_r0000gt/T/cursor_remote_install_df76cf19-7137-45ac-a3de-264e089a6bcd.sh\n[DATE_TIME] [DATE_TIME] [error] Error resolving SSH authority SSH connection timed out after 120s without receiving any data from the remote host",
+                    "reference_answer": "Are you still facing this issue? If yes, then can you conduct a test by directly SSH'ing into the cluster via the terminal and let me know the result.\nAlso, were you on the VPN while connecting to the cluster via VSCode using Remote SSH? Few of our users were facing VPN-related problem today, so it's possible that when you tried it there might have been some connectivity issue due to a network glitch.",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_22": {
+                    "question": "I just realized that I don\u2019t have a folder in the [URL]. Would it be possible for you to create a folder there for me?\n\nI am currently planning to increase my use of the RC but I am unsure what the path to the above mentioned folder is if I am logged in through an interactive session. So far, I was running batch jobs only from netscratch and saving the data locally on a hard drive, since it is several terabytes in size, which has not been the most comfortable way to work with the data.\n\nAdditionally, I was planning to use the VS Code tunneling to access the RC resources through my local VS Code but when I tried to run it in the browser I got the error in the image attached. I also could not find the session in my local VS Code installation \u2018cannontunnel\u2019, so I am not sure how else I can access it. I was using the Microsoft login option.",
+                    "reference_answer": "I've created a Users for you: [URL]/Users/[USERNAME], however the Users folder is now deprecated. We recommend that you use the Labs folder because you can make your own folder there. It is also easier to share data and allows others to save and clean up your folder if you ever leave the lab. Please see: [URL] [[URL]]\nOn the system, the path is /n/boslfs02/LABS/[LAB] Engert Lab has about 14 TiB available out of 50 TiB total.\n# quota -g [LAB] /n/boslfs02\nDisk quotas for grp [LAB] (gid 402114):\nFilesystem used quota limit grace files quota limit grace\n/n/boslfs02 36.03T 50T 50T - 2736911 45088768 45088768\nI'll pass this ticket on to our VSCode specialists to investigate that issue. You should hear from them soon.",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_23": {
+                    "question": "Hello! I have some sequencing data on Harvard storage that I need to upload to NCBI. I am sure that a lot of people need to do this, but I am having trouble figuring out how to make it work, and I would be grateful for some advice!\n\nNCBI recommends using \u201caspera\u201d to upload, although I am not sure if this is the right choice because it seems designed to be used with web browsers. I see there is no module for aspera, so I think I would have to download it onto my home directory.\n\nNCBI also gives instructions for using ftp, but I don\u2019t think I can do that from the cluster login node \u2014 when I try the command \u201cftp\u201d it says command not found.\n\nDo you recommend that I try to download and install aspera? How have other Harvard cluster users done these transfers?",
+                    "reference_answer": "That's great! We really appreciate the update. Just a note that the login nodes have better bandwidth (i.e., better transfer rates) than compute nodes. So the login nodes are is the best option to transfer data externally!",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_24": {
+                    "question": "I\u2019m currently working on a paper, which involves analyzing sales data from my research group in [ADDRESS]. The data is hosted on a secure server in [ADDRESS], which requires a VPN connection through UFRGS\u2019s institutional network.\nTo access it, I need to install and run a VPN client (OpenVPN) on my FASRC remote desktop environment. I\u2019ve already downloaded the .ovpn configuration file, but when I try to install the client using the terminal, I realized I don\u2019t have sudo privileges.\nI also checked, and the system currently does not have OpenVPN pre-installed (which openvpn returns nothing).\nWould it be possible to either:\n\n  *\nTemporarily grant me sudo access to install OpenVPN, or\n  *\nAsk the FASRC team to install OpenVPN on my remote desktop environment?\n\nThis would allow me to securely retrieve the data needed for our ongoing research without compromising the system.\nThank you so much for your help \u2014 I really appreciate it! Let me know how you\u2019d prefer me to proceed.",
+                    "reference_answer": "First, I would like to check with you if you are following Harvard [[URL]]'s and also FASRC's data security policies. At FASRC, the you can have DSL1 and 2 on Cannon. And DSL3 on FASSE [[URL]], our secure environment.\nIf you are in agreement with those, you are likely installing the software in a location where you don't have write access. You should install the software in a location that you have write access to, such as your home directory. Can you explain how you are installing?\nIf you prefer to chat one-on-one, we have office hours on Wednesdays from [DATE_TIME]. For how to join, see [URL] [[URL]].",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_25": {
+                    "question": "I am writing to request assistance with an issue where my Jupyter Notebook session terminates immediately after starting. I tried updating my .bashrc file as stated in FAQ, but there is no content related to conda initialization, and the problem persists.\n\nCould you please advise on how to resolve this issue? Thank you very much for your help.",
+                    "reference_answer": "If you look at the output.log file (/n/home11/cfu/.fasrcood/data/sys/dashboard/batch_connect/sys/Jupyter/output/866f3e99-de4a-42ac-90eb-424de7c95eb9.output.log), there is this error:\n\nImportError: cannot import name 'run_sync_in_worker_thread' from 'anyio' (/n/home11/cfu/.local/lib/python3.8/site-packages/anyio/__init__.py)\nWe are currently working on an update that will potentially resolve this issue. I will send an update when you can test it. (Open OnDemand is under maintenance right now, and we cannot test it until maintenance is over).",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_26": {
+                    "question": "I attended FAS RC office hours today and was just starting a ticket as\nrequested by Manasvita to follow up on our discussion.\nWe were hoping to figure out a way to keep models (llama-3.3-70b,\nllama-3.2-vision-90b) loaded into VRAM on the FASSE H200s, to reduce time\nand computational overhead associated with reinstantiating models for each\nuser query. We would just need this for the time when we will be running\nour study (<= 1 month, approx [DATE_TIME]).",
+                    "reference_answer": "Thanks for generating the ticket. I had a chat with my team and the most straightforward way is to just download the models you need on /n/netscratch. You need it only for a month, so you won't have to worry about our purge policy. Netscratch has 50TiB of space ([URL] [[URL]]), so storing few tens of GBs wouldn't be an issue. While this won't solve the problem of models loaded into VRAM, at least this would reduce some latency on the user side.\nAnother option is to have a cron job running on the cluster via Slurm, called scrontab ([URL] [[URL]]), and use that script to load the models during the time you think it would be needed by your users.\nA third option is to submit a 3-day job that would just idle waiting for work, it would have the LLM loaded and be ready to go, but it would tie up the GPU for 3 days. Then when it ended you would launch another one. This way, you would ensure that the LLM is always loaded but at the expense of fairshare. I guess this option could be used with setting up an ollama server.\nLet me know how you would like to approach this and we'll go from there.",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                },
+                "question_27": {
+                    "question": "I previously reached out regarding options for transferring data between a local server at the Center for Astrophysics (CfA) and the Harvard cluster, and Globus was recommended as the preferred solution. After further investigation, I\u2019m following up to explore how best to implement this in a more automated workflow.\n\nMy goal is to:\n\n1. Transfer data automatically from a local CfA server (or directly from an acquisition source) to the Harvard cluster using Globus.\n2. Trigger the execution of analysis scripts on the cluster as soon as (or on a scheduled basis) new data arrives.\n3. Store the processed results locally on the cluster.\n4. Transfer the resulting data products back downstream to our server at the CfA.\n\nIn short, I\u2019m aiming for a fully automated data pipeline where data ingestion, analysis, and result synchronization occur without manual intervention.\n\nCould you please advise on the best way to set this up? Specifically:\n\n* Whether Globus is suitable for this.\n* If not, what alternative solutions exist?\n* Whether it is possible to automate job submission or triggering on the cluster (e.g., a scheduled or event-driven script, cron job, or perhaps even the deployment and execution of a singularity container from our server local to the CfA).\n* Any configuration details or permissions required to enable automated two-way transfers between the CfA server and the cluster, ideally without 2FA as 2FA would prevent automated executions.",
+                    "reference_answer": "Globus should be suitable for this assuming you have the endpoint set up. The workflow would be something like:\n1. Push data to globus\n2. Have script on cluster check storage on cluster for new thing and process it.\n3. Have script on CfA end check globus endpoint for update and pull the data\nStep 2 could be done via scrontab.\nNote that the cluster is not intended for immediate turn around. We cannot guarantee your jobs will run in any give amount of time as that is dependent on your fairshare. As such any work flow you develop will have to accommodate possibly waiting days or weeks for processing. If you need more timely processing I recommend looking at NERC or some cloud provider.\n\nTo your final question, the cluster has full access to the internet so if the server is out there then cluster can pull the data down. The trick is going the opposite way, we have no way of exposing our storage aside from Globus. So what works then is:\nPush/Pull from the cluster -> Internet\nPush/Pull via Globus endpoint from host mounting endpoint\nThere is not option for:\nPush/Pull from Internet -> cluster\nSo you have to architect around those limitations.",
+                    "answer": "",
+                    "status": "failed",
+                    "error": "ValueError: Mismatch between number of match fields and reference sources."
+                }
+            },
+            "total_results": {
+                "aggregate_answer_relevancy": NaN,
+                "aggregate_faithfulness": NaN,
+                "aggregate_context_precision": NaN,
+                "aggregate_context_recall": NaN,
+                "relative_source_accuracy": 0.0,
+                "source_accuracy": 0.0
+            },
+            "configuration_file": "configs/config.yaml",
+            "configuration": {
+                "name": "ragas-bench",
+                "global": {
+                    "DATA_PATH": "/root/data/",
+                    "ACCOUNTS_PATH": "/root/.accounts/",
+                    "ACCEPTED_FILES": [
+                        ".pdf",
+                        ".md",
+                        ".txt",
+                        ".docx",
+                        ".html",
+                        ".htm",
+                        ".json",
+                        ".yaml",
+                        ".yml",
+                        ".py",
+                        ".js",
+                        ".ts",
+                        ".jsx",
+                        ".tsx",
+                        ".java",
+                        ".go",
+                        ".rs",
+                        ".c",
+                        ".cpp",
+                        ".h",
+                        ".sh"
+                    ],
+                    "LOGGING": {
+                        "input_output_filename": "chain_input_output.log"
+                    }
+                },
+                "mcp_servers": null,
+                "services": {
+                    "benchmarking": {
+                        "agent_class": "FASRCDocsAgent",
+                        "agent_md_file": "/root/archi/agents/fasrc-inline-v1.md",
+                        "provider": "openai",
+                        "model": "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4",
+                        "ollama_url": null,
+                        "out_dir": "bench_out",
+                        "queries_path": "config/benchmarking/ragas-snow-pt1-clean.json",
+                        "modes": [
+                            "RAGAS",
+                            "SOURCES"
+                        ],
+                        "mode_settings": {
+                            "sources_settings": {
+                                "default_match_field": "url"
+                            },
+                            "ragas_settings": {
+                                "enabled_metrics": [
+                                    "answer_relevancy",
+                                    "faithfulness",
+                                    "context_precision",
+                                    "context_recall"
+                                ],
+                                "embedding_model": "HuggingFace",
+                                "timeout": 180,
+                                "batch_size": false,
+                                "evaluator_provider": "huit_bedrock",
+                                "evaluator_model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                                "evaluator_ollama_url": null
+                            }
+                        }
+                    },
+                    "piazza": {
+                        "agent_class": "QAPipeline",
+                        "provider": null,
+                        "model": null,
+                        "network_id": null,
+                        "update_time": 60
+                    },
+                    "mattermost": {
+                        "update_time": 60
+                    },
+                    "redmine_mailbox": {
+                        "agent_class": "CMSCompOpsAgent",
+                        "agents_dir": "",
+                        "provider": null,
+                        "model": null,
+                        "url": null,
+                        "project": null,
+                        "redmine_update_time": 10,
+                        "answer_tag": "-- archi -- Resolving email was sent",
+                        "imap4_port": 143,
+                        "mailbox_update_time": 10
+                    },
+                    "postgres": {
+                        "port": 5433,
+                        "user": "archi",
+                        "database": "archi-db",
+                        "host": "localhost"
+                    },
+                    "chat_app": {
+                        "agent_class": "CMSCompOpsAgent",
+                        "agents_dir": "/root/archi/agents",
+                        "recursion_limit": 50,
+                        "client_timeout_seconds": 600,
+                        "default_provider": "local",
+                        "default_model": "llama3.2",
+                        "skills_dir": "",
+                        "tools": {},
+                        "prompts": {},
+                        "providers": {
+                            "openai": {
+                                "api_key": "EMPTY",
+                                "base_url": "http://localhost:8001/v1",
+                                "default_model": "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4",
+                                "enabled": true,
+                                "extra_kwargs": {
+                                    "extra_body": {
+                                        "chat_template_kwargs": {
+                                            "enable_thinking": false
+                                        }
+                                    },
+                                    "temperature": 0.3
+                                }
+                            }
+                        },
+                        "trained_on": "No description provided.",
+                        "port": 7861,
+                        "external_port": 7861,
+                        "host": "0.0.0.0",
+                        "hostname": "localhost",
+                        "template_folder": "/root/archi/src/interfaces/chat_app/templates",
+                        "static_folder": "/root/archi/src/interfaces/chat_app/static",
+                        "num_responses_until_feedback": 3,
+                        "include_copy_button": false,
+                        "flask_debug_mode": true,
+                        "auth": {
+                            "enabled": false,
+                            "sso": {
+                                "enabled": false,
+                                "server_metadata_url": null,
+                                "authorize_url": null,
+                                "client_kwargs": {
+                                    "scope": "openid profile email"
+                                }
+                            },
+                            "basic": {
+                                "enabled": false
+                            }
+                        },
+                        "openai_compat": {
+                            "enabled": false
+                        },
+                        "alerts": {
+                            "managers": null
+                        }
+                    },
+                    "data_manager": {
+                        "auth": {
+                            "enabled": false
+                        },
+                        "enabled": true,
+                        "port": 7881,
+                        "external_port": 7881,
+                        "host": "0.0.0.0",
+                        "hostname": "localhost",
+                        "template_folder": "/root/archi/src/interfaces/chat_app/templates",
+                        "static_folder": "/root/archi/src/interfaces/chat_app/static",
+                        "flask_debug_mode": false
+                    },
+                    "grader_app": {
+                        "provider": null,
+                        "model": null,
+                        "prompts": {
+                            "grading": {
+                                "final_grade_prompt": ""
+                            },
+                            "image_processing": {
+                                "image_processing_prompt": ""
+                            }
+                        },
+                        "port": 7861,
+                        "external_port": 7862,
+                        "host": "0.0.0.0",
+                        "hostname": "localhost",
+                        "template_folder": "/root/archi/src/interfaces/grader_app/templates",
+                        "num_problems": 1,
+                        "local_rubric_dir": "",
+                        "local_users_csv_dir": "",
+                        "flask_debug_mode": true
+                    },
+                    "vectorstore": {
+                        "backend": "postgres",
+                        "distance_metric": "cosine"
+                    },
+                    "grafana": {
+                        "port": 3000,
+                        "external_port": 3000
+                    }
+                },
+                "data_manager": {
+                    "collection_name": "default_collection",
+                    "embedding_name": "HuggingFaceEmbeddings",
+                    "embedding_class_map": {
+                        "OpenAIEmbeddings": {
+                            "class": "OpenAIEmbeddings",
+                            "kwargs": {
+                                "model": "text-embedding-3-small"
+                            },
+                            "similarity_score_reference": 10
+                        },
+                        "HuggingFaceEmbeddings": {
+                            "class": "HuggingFaceEmbeddings",
+                            "kwargs": {
+                                "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                                "model_kwargs": {
+                                    "device": "cpu"
+                                },
+                                "encode_kwargs": {
+                                    "normalize_embeddings": true
+                                }
+                            },
+                            "similarity_score_reference": 10,
+                            "query_embedding_instructions": null
+                        }
+                    },
+                    "chunk_size": 1000,
+                    "chunk_overlap": 0,
+                    "chunking": {
+                        "strategy": "sentence"
+                    },
+                    "parallel_workers": 32,
+                    "reset_collection": true,
+                    "stemming": {
+                        "enabled": false
+                    },
+                    "distance_metric": "cosine",
+                    "retrievers": {
+                        "semantic_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "bm25_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "hybrid_retriever": {
+                            "num_documents_to_retrieve": 5,
+                            "bm25_weight": 0.6,
+                            "semantic_weight": 0.4
+                        },
+                        "hierarchical_rerank": {
+                            "enabled": true,
+                            "candidate_pool_size": 20,
+                            "num_documents_to_retrieve": 5,
+                            "reranker": {
+                                "model": "ms-marco-MiniLM-L-12-v2"
+                            }
+                        }
+                    },
+                    "sources": {
+                        "local_files": {
+                            "enabled": true,
+                            "visible": true,
+                            "schedule": "",
+                            "paths": null
+                        },
+                        "links": {
+                            "base_source_depth": 1,
+                            "max_pages": null,
+                            "enabled": true,
+                            "visible": true,
+                            "schedule": "",
+                            "input_lists": [
+                                "config/lists/sources.list"
+                            ],
+                            "html_scraper": {
+                                "reset_data": true,
+                                "verify_urls": false,
+                                "enable_warnings": false
+                            },
+                            "selenium_scraper": {
+                                "enabled": false,
+                                "visible": false,
+                                "use_for_scraping": false,
+                                "selenium_class": "CERNSSOScraper",
+                                "selenium_url": null,
+                                "selenium_class_map": {
+                                    "CERNSSOScraper": {
+                                        "class": "CERNSSOScraper",
+                                        "kwargs": {
+                                            "headless": true
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "git": {
+                            "enabled": true,
+                            "visible": true,
+                            "schedule": ""
+                        },
+                        "sso": {
+                            "enabled": true,
+                            "visible": true,
+                            "schedule": ""
+                        },
+                        "indico": {
+                            "enabled": false,
+                            "visible": true,
+                            "schedule": "",
+                            "base_url": "https://indico.cern.ch",
+                            "use_sso": true,
+                            "sso_kwargs": {
+                                "headless": true,
+                                "site_type": "generic"
+                            },
+                            "slide_conversion": {
+                                "enabled": true,
+                                "store_originals": false,
+                                "formats": [
+                                    "pdf",
+                                    "pptx",
+                                    "ppt",
+                                    "odp"
+                                ],
+                                "llm_enabled": false,
+                                "llm_model": null
+                            },
+                            "plot_extraction": {
+                                "enabled": false
+                            }
+                        },
+                        "jira": {
+                            "enabled": true,
+                            "url": null,
+                            "visible": true,
+                            "schedule": "",
+                            "projects": null,
+                            "anonymize_data": false,
+                            "max_tickets": 10000000000.0,
+                            "cutoff_date": null
+                        },
+                        "redmine": {
+                            "enabled": true,
+                            "url": null,
+                            "projects": null,
+                            "visible": false,
+                            "schedule": "",
+                            "anonymize_data": true
+                        },
+                        "elog": {
+                            "enabled": false,
+                            "visible": false,
+                            "url": "",
+                            "max_entries": null,
+                            "verify_ssl": true,
+                            "schedule": ""
+                        }
+                    },
+                    "processing": {
+                        "html_to_markdown": {
+                            "enabled": true
+                        },
+                        "categorization": {
+                            "enabled": true,
+                            "provider": "openai",
+                            "model": "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4",
+                            "max_chars": 4000,
+                            "categories": [
+                                "job-scheduling",
+                                "storage",
+                                "account-access",
+                                "software",
+                                "compute",
+                                "data-transfer"
+                            ]
+                        }
+                    },
+                    "utils": {
+                        "anonymizer": {
+                            "nlp_model": "en_core_web_sm",
+                            "excluded_words": [
+                                "John",
+                                "Jane",
+                                "Doe"
+                            ],
+                            "greeting_patterns": [
+                                "^(hi|hello|hey|greetings|dear)\\b",
+                                "^\\w+,\\s*"
+                            ],
+                            "signoff_patterns": [
+                                "\\b(regards|sincerely|best regards|cheers|thank you)\\b",
+                                "^\\s*[-~]+\\s*$"
+                            ],
+                            "email_pattern": "[\\w\\.-]+@[\\w\\.-]+\\.\\w+",
+                            "username_pattern": "\\[~[^\\]]+\\]"
+                        }
+                    }
+                }
+            }
+        }
+    ],
+    "metadata": {
+        "time": "2026-07-09 04:35:53.225464+00:00",
+        "git_info": {
+            "git_diff": "",
+            "last_commit": "b6d9a87cb7420d243ea81901641a5297e6707270\n"
+        },
+        "corpus_snapshot_id": "6ae37494-7b90-4da9-81d6-610c2ac45b5e"
+    }
+}
