@@ -24,9 +24,9 @@ def test_status_endpoint_responds_during_ingestion():
     ingestion_release = threading.Event()
 
     def fake_run_ingestion(progress_callback=None):
-        ingestion_started.set()
         if progress_callback:
             progress_callback("embedding")
+        ingestion_started.set()
         ingestion_release.wait(timeout=10)
 
     helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock())

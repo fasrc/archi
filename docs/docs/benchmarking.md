@@ -125,6 +125,13 @@ archi evaluate -n benchmark -c config.yaml -e .secrets.env --gpu-ids all
 
 Make sure the `out_dir` exists before running.
 
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | Seconds the benchmark container waits for the data-manager's ingestion to complete before giving up. CPU-only ingest of the full FASRC corpus takes ~64 min (3840s); the default allows headroom for larger corpora. |
+| `BENCH_INGEST_POLL_INTERVAL` | `5` | Seconds between ingestion-status polls. |
+
 ---
 
 ## Results
