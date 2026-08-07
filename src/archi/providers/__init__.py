@@ -255,8 +255,6 @@ def get_model(
     extra_kwargs = {}
     if isinstance(provider_config, dict):
         extra_kwargs.update(provider_config.get("extra_kwargs", {}) or {})
-        if "mode" in provider_config and "local_mode" not in extra_kwargs:
-            extra_kwargs["local_mode"] = provider_config.get("mode")
 
     if isinstance(provider_type, str):
         try:
@@ -268,6 +266,13 @@ def get_model(
             raise ValueError(message) from exc
     else:
         provider_type_enum = provider_type
+
+    if provider_type_enum == ProviderType.LOCAL:
+        mode = (
+            provider_config.get("mode") if isinstance(provider_config, dict) else None
+        )
+        if mode and "local_mode" not in extra_kwargs:
+            extra_kwargs["local_mode"] = mode
 
     config = ProviderConfig(
         provider_type=provider_type_enum,
