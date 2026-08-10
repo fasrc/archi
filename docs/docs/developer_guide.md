@@ -152,15 +152,14 @@ automatically-maintained labels close that gap — see
 
 | Chip | Meaning |
 |------|---------|
-| `ready-to-merge` | Nothing blocks a merge: not a draft, no conflicts, checks green, and no review finding still pointing at current code. |
+| `ready-to-merge` | Nothing blocks a merge: not a draft, no conflicts, checks green, and no unresolved review finding. |
 | `conflicts` | Merge-conflicted with `dev`, drafts included. Resolve it before spending another review round — answering findings cannot land the PR. |
 | *neither* | In flight: review findings outstanding, or checks not green. |
 
-`ready-to-merge` is **not** a claim that review is provably complete. It cannot be
-one yet: the "no outstanding finding" test relies on GitHub's `isOutdated` flag as
-a proxy, because no review thread in this repository has ever been marked resolved.
-[Issue #169](https://github.com/fasrc/archi/issues/169) makes the signal exact.
-Read it before treating the chip as an approval.
+`ready-to-merge` is **not** a claim that review is provably complete — it is a
+mechanical predicate: no unresolved review threads, checks green, not conflicted.
+The review-response skill resolves threads as it addresses them, so `isResolved`
+is the authoritative signal.
 
 Filter for what is actually mergeable:
 [`is:pr is:open label:ready-to-merge`](https://github.com/fasrc/archi/pulls?q=is%3Apr+is%3Aopen+label%3Aready-to-merge).
@@ -335,7 +334,7 @@ bash scripts/ci/pr_readiness_labels.sh --dry-run     # decide and print, change 
 
 `ready-to-merge` requires all three of: not a draft, `mergeStateStatus == CLEAN`
 (mergeable **and** checks green), and zero *live* review findings — a review thread
-that is unresolved and not outdated.
+that is unresolved (`isResolved == false`).
 
 Five design notes worth knowing before changing it:
 
@@ -372,11 +371,10 @@ Five design notes worth knowing before changing it:
   be asserted) and asserts nothing else — no `conflicts` either, since that is
   equally unverified.
 
-The predicate keys on GitHub's `isOutdated` rather than `isResolved` because review
-threads in this repo are not marked resolved, so an `isResolved` predicate would
-label nothing. That is a documented proxy: a push touching the same lines outdates a
-finding without fixing it. Resolving threads as they are addressed would make the
-signal exact.
+The predicate keys on `isResolved`: a review thread blocks the chip until it is
+explicitly resolved. The review-response skill resolves threads as it addresses
+findings, so the signal tracks real work rather than the `isOutdated` proxy it
+replaced.
 
 ### Docker Layer Caching
 

@@ -5,13 +5,13 @@
 # The contract under test is a PREDICATE plus an ASYMMETRY. `ready-to-merge`
 # means "a human can merge this now": not a draft, mergeStateStatus CLEAN
 # (mergeable AND checks green), and zero LIVE review findings. A finding is
-# live when it is unresolved AND not outdated — GitHub marks a thread outdated
-# once a later push moved the code it pointed at, and this repo has never
-# resolved a thread, so `isOutdated` is the signal that carries the
-# information. `conflicts` means mergeStateStatus DIRTY and nothing else.
+# live when it is unresolved — `isResolved` is the authoritative signal,
+# regardless of `isOutdated`. `conflicts` means mergeStateStatus DIRTY and
+# nothing else.
 #
 #    1-2. the happy path adds the chip, and a live finding withholds it
-#    3-4. an outdated or resolved finding does NOT withhold it
+#      3. an unresolved-but-outdated finding STILL withholds it
+#      4. a resolved finding does NOT withhold it
 #     5.  DIRTY earns the conflicts chip
 #     6.  DIRTY REVOKES a stale ready-to-merge — the asymmetry that makes a
 #         green chip trustworthy is that revocation is unconditional
@@ -233,14 +233,20 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
-# ---- 3: only an OUTDATED finding -> still ready ----------------------------
+# ---- 3: an unresolved-but-outdated finding STILL withholds ----------------
+# isResolved is the signal; isOutdated is irrelevant. An unresolved thread
+# blocks the chip whether or not a later push outdated it.
 sb="$(new_sandbox)"
-mk_page false "" "$(mk_node 158 false CLEAN "" "false:true")" > "$sb/resp_1.json"
+mk_page false "" \
+  "$(mk_node 158 false CLEAN "ready-to-merge" "false:true")" \
+  "$(mk_node 258 false CLEAN "" "false:true")" > "$sb/resp_1.json"
 run_reconciler "$sb" >/dev/null 2>&1
-if grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
-  ok "an outdated finding does not withhold ready-to-merge"
+if grep -q '158 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "an unresolved-but-outdated finding withholds and revokes ready-to-merge"
 else
-  notok "an outdated finding does not withhold ready-to-merge"
+  notok "an unresolved-but-outdated finding withholds and revokes ready-to-merge"
+  cat "$sb/calls" 2>/dev/null
 fi
 
 # ---- 4: only a RESOLVED finding -> still ready -----------------------------
