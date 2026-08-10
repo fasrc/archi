@@ -10,9 +10,7 @@
 # so this reconciles two of them:
 #
 #   ready-to-merge  nothing blocks a human merge: not a draft, no conflicts,
-#                   checks green, and no review finding still pointing at current
-#                   code. NOT a claim that review is provably complete — see the
-#                   isOutdated note below and issue #169.
+#                   checks green, and no unresolved review finding.
 #   conflicts       merge-conflicted; further review rounds are wasted effort
 #
 # THE PREDICATE. `ready-to-merge` requires all three:
@@ -20,25 +18,10 @@
 #   2. mergeStateStatus == CLEAN — folds in "mergeable" AND "checks green" in
 #      one field. UNSTABLE (mergeable, red non-required check) is deliberately
 #      NOT ready; DIRTY is conflicted; BLOCKED is a required check outstanding.
-#   3. zero LIVE review findings — a review thread that is unresolved AND not
-#      outdated.
-#
-# WHY `isOutdated` AND NOT `isResolved`. Codex posts findings as inline review
-# threads (not issue comments), and in this repo no thread has EVER been marked
-# resolved — so a predicate keyed on `isResolved` would label nothing, forever.
-# GitHub sets `isOutdated` once a later push moved the code a finding pointed
-# at, which is the available proxy for "addressed". It IS a proxy: a push that
-# touches the same lines without fixing the finding also outdates it. The
-# honest fix is for the review-response loop to resolve threads it has
-# addressed, at which point `isResolved` becomes exact and belongs in the
-# predicate too — that is issue #169, and it must land in that order: resolving
-# first, tightening second, or every chip in the repo disappears at once.
-#
-# Until then this errs toward the proxy rather than toward a chip that never
-# appears, and the label's stated meaning is limited to match (above). Adversarial
-# review flagged the proxy twice; the counter-proposal — require isResolved now —
-# was measured and would grant the chip to ZERO of 9 open PRs, so it delivers an
-# always-empty index instead of a best-available one.
+#   3. zero LIVE review findings — a review thread that is unresolved.
+#      `isResolved` is the authoritative signal; `isOutdated` is ignored.
+#      The review-response skill resolves threads it addresses, so resolution
+#      tracks real work rather than proxy heuristics (issue #169).
 #
 # THE ASYMMETRY. Granting is conservative; revocation is unconditional. Any
 # PR that stops satisfying the predicate loses the chip on the next sweep, and
@@ -153,7 +136,7 @@ FILTER='
           .mergeable,
           .mergeStateStatus,
           ([.reviewThreads.nodes[]
-             | select(.isResolved == false and .isOutdated == false)] | length | tostring),
+             | select(.isResolved == false)] | length | tostring),
           (.reviewThreads.totalCount | tostring),
           (.labels.totalCount | tostring),
           ([.labels.nodes[].name] | any(. == $ready) | tostring),
