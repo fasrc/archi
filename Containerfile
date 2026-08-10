@@ -41,6 +41,11 @@ RUN pip install --no-cache-dir --upgrade pip \
  && grep -ivE '^[[:space:]]*duckdb([=<>!~ ]|$)' /tmp/requirements-base.txt > /tmp/requirements-loop.txt \
  && pip install --no-cache-dir -r /tmp/requirements-loop.txt
 
+# openspec CLI — pinned to the same version as the host (~/.npm-global/bin/openspec)
+# so Loop 1 (propose/validate, runs on host) and Loop 2 (implement, runs here)
+# cannot silently disagree on what passes --strict. Bump both together.
+RUN npm install -g @fission-ai/openspec@1.4.1
+
 ENV PYTHONPATH=/workspace
 USER claude
 # --- end archi toolchain ----------------------------------------------------
