@@ -5,16 +5,71 @@
 -- New deployments using init.sql already have the correct column names.
 
 -- feedback table: rename 'mid' -> 'message_id'
-ALTER TABLE feedback RENAME COLUMN mid TO message_id;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'feedback' AND column_name = 'mid'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'feedback' AND column_name = 'message_id'
+  ) THEN
+    ALTER TABLE feedback RENAME COLUMN mid TO message_id;
+  END IF;
+END $$;
 ALTER INDEX IF EXISTS idx_feedback_mid RENAME TO idx_feedback_message_id;
 
 -- timing table: rename 'mid' -> 'message_id'
-ALTER TABLE timing RENAME COLUMN mid TO message_id;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'timing' AND column_name = 'mid'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'timing' AND column_name = 'message_id'
+  ) THEN
+    ALTER TABLE timing RENAME COLUMN mid TO message_id;
+  END IF;
+END $$;
 
 -- ab_comparisons table: rename the three *_mid columns
-ALTER TABLE ab_comparisons RENAME COLUMN user_prompt_mid TO user_prompt_message_id;
-ALTER TABLE ab_comparisons RENAME COLUMN response_a_mid TO response_a_message_id;
-ALTER TABLE ab_comparisons RENAME COLUMN response_b_mid TO response_b_message_id;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'ab_comparisons' AND column_name = 'user_prompt_mid'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'ab_comparisons' AND column_name = 'user_prompt_message_id'
+  ) THEN
+    ALTER TABLE ab_comparisons RENAME COLUMN user_prompt_mid TO user_prompt_message_id;
+  END IF;
+END $$;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'ab_comparisons' AND column_name = 'response_a_mid'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'ab_comparisons' AND column_name = 'response_a_message_id'
+  ) THEN
+    ALTER TABLE ab_comparisons RENAME COLUMN response_a_mid TO response_a_message_id;
+  END IF;
+END $$;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'ab_comparisons' AND column_name = 'response_b_mid'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'ab_comparisons' AND column_name = 'response_b_message_id'
+  ) THEN
+    ALTER TABLE ab_comparisons RENAME COLUMN response_b_mid TO response_b_message_id;
+  END IF;
+END $$;
 
 -- ---------------------------------------------------------------------------
 -- /v1 OpenAI-compatible API columns.

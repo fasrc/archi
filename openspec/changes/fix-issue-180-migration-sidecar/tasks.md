@@ -13,8 +13,8 @@
 
 ## 3. Make every migration re-runnable
 
-- [ ] 3.1 Write a failing test that reads every file in `src/cli/templates/migrations/` and asserts no bare `ALTER TABLE ... RENAME COLUMN` remains — each rename must be guarded (an `information_schema.columns` presence check). Watch it fail on `rename_mid_to_message_id.sql`.
-- [ ] 3.2 Wrap all six renames in `rename_mid_to_message_id.sql` (`feedback.mid`, `timing.mid`, and the three `ab_comparisons.*_mid`, plus the already-guarded `ALTER INDEX`) in `DO $$ ... END $$` blocks conditioned on the old column existing AND the new column not existing, per design Decision 3. Make 3.1 pass.
+- [x] 3.1 Write a failing test that reads every file in `src/cli/templates/migrations/` and asserts no bare `ALTER TABLE ... RENAME COLUMN` remains — each rename must be guarded (an `information_schema.columns` presence check). Watch it fail on `rename_mid_to_message_id.sql`.
+- [x] 3.2 Wrap all six renames in `rename_mid_to_message_id.sql` (`feedback.mid`, `timing.mid`, and the three `ab_comparisons.*_mid`, plus the already-guarded `ALTER INDEX`) in `DO $$ ... END $$` blocks conditioned on the old column existing AND the new column not existing, per design Decision 3. Make 3.1 pass.
 - [ ] 3.3 Add a test that applies every migration file, in lexicographic order, against a schema shaped like the current `init.sql` and asserts each exits successfully with the schema unchanged — so a future non-idempotent migration is caught by the gate rather than by a broken deploy. Prefer an in-process SQL-shape assertion over a live Postgres; if no fixture exists, assert every statement is either idempotent-by-syntax (`IF EXISTS` / `IF NOT EXISTS`) or guarded by a `DO` block.
 
 ## 4. Catalog startup schema precondition
