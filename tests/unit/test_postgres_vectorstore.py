@@ -616,14 +616,10 @@ class TestHybridSearchParameterBinding:
                 return sql, args[1]
         pytest.fail("hybrid scoring query not found in execute calls")
 
-    def test_query_reaches_bm25_placeholder(
-        self, vector_store, mock_pg_connection
-    ):
+    def test_query_reaches_bm25_placeholder(self, vector_store, mock_pg_connection):
         """The user's query text must bind to to_bm25query(), not the
         collection predicate."""
-        sql, params = self._capture_hybrid_sql(
-            vector_store, mock_pg_connection
-        )
+        sql, params = self._capture_hybrid_sql(vector_store, mock_pg_connection)
         bm25_idx = sql.index("to_bm25query(%s")
         collection_idx = sql.index("collection' = %s")
         bm25_param_pos = sql[:bm25_idx].count("%s")
@@ -631,34 +627,136 @@ class TestHybridSearchParameterBinding:
         assert params[bm25_param_pos] == "user question text"
         assert params[collection_param_pos] == "test_collection"
 
-    def test_binding_with_metadata_filter(
-        self, vector_store, mock_pg_connection
-    ):
+    def test_binding_with_metadata_filter(self, vector_store, mock_pg_connection):
         """Added WHERE placeholders from a metadata filter must not shift
         the BM25 query into the wrong slot."""
         sql, params = self._capture_hybrid_sql(
             vector_store, mock_pg_connection, filter={"topic": "gpu"}
         )
         bm25_param_pos = sql[: sql.index("to_bm25query(%s")].count("%s")
-        collection_param_pos = sql[
-            : sql.index("collection' = %s")
-        ].count("%s")
+        collection_param_pos = sql[: sql.index("collection' = %s")].count("%s")
         assert params[bm25_param_pos] == "user question text"
         assert params[collection_param_pos] == "test_collection"
         assert "gpu" in params
 
-    def test_guard_reorder_collection_to_bm25(
-        self, vector_store, mock_pg_connection
-    ):
+    def test_guard_reorder_collection_to_bm25(self, vector_store, mock_pg_connection):
         """If the collection name ever reaches the BM25 expression,
         this test must fail."""
-        sql, params = self._capture_hybrid_sql(
-            vector_store, mock_pg_connection
-        )
+        sql, params = self._capture_hybrid_sql(vector_store, mock_pg_connection)
         bm25_param_pos = sql[: sql.index("to_bm25query(%s")].count("%s")
         assert (
             params[bm25_param_pos] != "test_collection"
         ), "collection name bound to BM25 expression"
+
+
+class TestHybridSearchRRFFusion:
+    """Arm D fuses the two rankings by reciprocal rank, not by score.
+
+    Rationale (measured on the dev corpus, 6837 chunks): BM25 returns ``0``
+    for a non-matching row, never NULL.  Even a rare three-term query matches
+    ~71 chunks, so a naive full-table rank would seat the ~6766 non-matching
+    rows at rank ~72 and hand each of them ``1/(60+72)`` — 46% of the credit
+    earned by the single best lexical match.  Two invariants follow, and both
+    are pinned below: non-matching rows must receive no BM25 rank at all, and
+    the ranking must use ``RANK()`` (ties share a rank) rather than
+    ``ROW_NUMBER()`` (ties break on arbitrary physical row order, which makes
+    the same query return different results run to run).
+    """
+
+    def _capture_hybrid_sql(self, vector_store, mock_pg_connection, **kwargs):
+        conn, cursor = mock_pg_connection
+        cursor.fetchone.return_value = {"relname": "idx_bm25"}
+        cursor.fetchall.return_value = [
+            {
+                "id": 1,
+                "chunk_text": "x",
+                "metadata": "{}",
+                "semantic_score": 0.8,
+                "bm25_score": 0.5,
+                "combined_score": 0.02,
+                "resource_hash": None,
+                "display_name": None,
+                "source_type": None,
+                "url": None,
+            }
+        ]
+        with patch.object(vector_store, "_get_connection", return_value=conn):
+            vector_store.hybrid_search("user question text", k=3, **kwargs)
+
+        for call in cursor.execute.call_args_list:
+            args = call[0]
+            sql = args[0]
+            if "combined_score" in sql.lower() and len(args) > 1:
+                return sql, args[1]
+        pytest.fail("hybrid scoring query not found in execute calls")
+
+    def test_fuses_by_rank_not_by_normalized_score(
+        self, vector_store, mock_pg_connection
+    ):
+        """Both components must be ranked; arm C's min-max terms must be gone."""
+        sql, _ = self._capture_hybrid_sql(vector_store, mock_pg_connection)
+        lowered = sql.lower()
+        assert "rank() over (order by semantic_score desc)" in lowered
+        assert "rank() over (order by bm25_score desc)" in lowered
+        assert (
+            "min(semantic_score) over ()" not in lowered
+        ), "min-max normalization is arm C's fusion, not arm D's"
+
+    def test_ties_use_rank_not_row_number(self, vector_store, mock_pg_connection):
+        """ROW_NUMBER over the ~3800-way tie at bm25_score=0 would break ties on
+        physical row order, making results nondeterministic between runs."""
+        sql, _ = self._capture_hybrid_sql(vector_store, mock_pg_connection)
+        lowered = sql.lower()
+        assert "rank() over" in lowered, "no ranking present to tie-break"
+        assert "row_number()" not in lowered
+
+    def test_non_matching_rows_get_no_bm25_rank(self, vector_store, mock_pg_connection):
+        """A row BM25 never matched (score 0) must contribute 0, not a floor rank."""
+        sql, _ = self._capture_hybrid_sql(vector_store, mock_pg_connection)
+        lowered = sql.lower()
+        assert "when bm25_score > 0" in lowered, "no guard excluding non-matches"
+        guard_pos = lowered.index("when bm25_score > 0")
+        rank_pos = lowered.index("rank() over (order by bm25_score desc)")
+        assert guard_pos < rank_pos, "guard must gate the BM25 rank"
+        assert "bm25_rank is null then 0" in lowered
+
+    def test_bm25_score_is_negated(self, vector_store, mock_pg_connection):
+        """``<@>`` returns negative scores (lower = better); arm D keeps arm C's
+        orientation fix so DESC ordering means 'better'."""
+        sql, _ = self._capture_hybrid_sql(vector_store, mock_pg_connection)
+        assert "-1.0 *" in sql or "-1 *" in sql
+
+    def test_weights_cast_to_float(self, vector_store, mock_pg_connection):
+        """Integer weights must not silently floor-divide: ``1 / (60 + 5)`` is
+        integer division in Postgres and evaluates to 0, zeroing the component."""
+        sql, _ = self._capture_hybrid_sql(vector_store, mock_pg_connection)
+        assert sql.count("%s::float8 /") == 2, "both weights must divide as float8"
+        assert sql.count("%s::float8 +") == 2, "both rrf_k terms must add as float8"
+
+    def test_rrf_parameters_bind_in_placeholder_order(
+        self, vector_store, mock_pg_connection
+    ):
+        """The fusion params must land in their own placeholders, and adding a
+        metadata filter must not shift them."""
+        sql, params = self._capture_hybrid_sql(
+            vector_store, mock_pg_connection, filter={"topic": "gpu"}
+        )
+        first_div = sql.index("%s::float8 /")
+        sem_weight_pos = sql[:first_div].count("%s")
+        second_div = sql.index("%s::float8 /", first_div + 1)
+        bm25_weight_pos = sql[:second_div].count("%s")
+
+        assert params[sem_weight_pos] == pytest.approx(0.7)
+        assert params[sem_weight_pos + 1] == 60
+        assert params[bm25_weight_pos] == pytest.approx(0.3)
+        assert params[bm25_weight_pos + 1] == 60
+        assert params[-1] == 3, "LIMIT must still bind k last"
+
+    def test_rrf_k_is_configurable(self, vector_store, mock_pg_connection):
+        """rrf_k is a tunable, so the campaign can record the value it used."""
+        _, params = self._capture_hybrid_sql(vector_store, mock_pg_connection, rrf_k=10)
+        assert 10 in params
+        assert 60 not in params
 
 
 # =============================================================================

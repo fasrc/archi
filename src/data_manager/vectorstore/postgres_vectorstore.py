@@ -410,20 +410,46 @@ class PostgresVectorStore(VectorStore):
         *,
         semantic_weight: float = 0.7,
         bm25_weight: float = 0.3,
+        rrf_k: int = 60,
         **kwargs: Any,
     ) -> List[Tuple[Document, float]]:
         """
         Hybrid search combining semantic similarity and BM25 full-text search.
 
+        The two components are fused by **reciprocal rank** rather than by
+        their raw scores::
+
+            combined = semantic_weight / (rrf_k + semantic_rank)
+                     + bm25_weight    / (rrf_k + bm25_rank)
+
+        Rank fusion needs no normalization, so it is immune to the two scales
+        being incomparable (cosine similarity lives in ``0..1``; BM25 is
+        unbounded).  The BM25 ``<@>`` operator returns negative scores where
+        lower means a better match, so the SQL negates them and both rankings
+        read highest-first.
+
+        A row that BM25 never matched scores exactly ``0`` (not NULL) and is
+        given **no** BM25 rank at all — it contributes nothing from that
+        component.  Ranking such rows anyway would seat them just past the
+        last real match and award them a large share of the credit earned by
+        genuine matches.  Ties share a rank (``RANK()``, not
+        ``ROW_NUMBER()``), so the ~55% of rows tied at zero cannot be ordered
+        by arbitrary physical row order.
+
+        ``combined_score`` is relative to this query's candidate set and is
+        **not** comparable across queries.
+
         Args:
             query: Query text
             k: Number of results to return
-            semantic_weight: Weight for semantic similarity (0-1)
-            bm25_weight: Weight for BM25 score (0-1)
+            semantic_weight: Weight for the semantic rank term
+            bm25_weight: Weight for the BM25 rank term
+            rrf_k: Reciprocal-rank damping constant; larger flattens the
+                difference between adjacent ranks (60 is the standard default)
             **kwargs: Additional filters
 
         Returns:
-            List of (Document, combined_score) tuples
+            List of (Document, combined_score) tuples, highest first
         """
         logger.debug("Performing hybrid search: query='%s', k=%d", query, k)
 
@@ -477,13 +503,13 @@ class PostgresVectorStore(VectorStore):
                 )
 
                 query_sql = f"""
-                    WITH scored AS (
-                        SELECT 
+                    WITH raw AS (
+                        SELECT
                             c.id,
                             c.chunk_text,
                             c.metadata,
                             1.0 - (c.embedding {self._distance_op} %s::vector) AS semantic_score,
-                            {bm25_score_expr} AS bm25_score,
+                            -1.0 * COALESCE({bm25_score_expr}, 0) AS bm25_score,
                             d.resource_hash,
                             d.display_name,
                             d.source_type,
@@ -492,11 +518,27 @@ class PostgresVectorStore(VectorStore):
                         FROM document_chunks c
                         LEFT JOIN documents d ON c.document_id = d.id
                         WHERE {where_sql}
+                    ),
+                    ranked AS (
+                        SELECT
+                            *,
+                            RANK() OVER (ORDER BY semantic_score DESC) AS sem_rank,
+                            CASE
+                                WHEN bm25_score > 0
+                                THEN RANK() OVER (ORDER BY bm25_score DESC)
+                            END AS bm25_rank
+                        FROM raw
                     )
-                    SELECT 
+                    SELECT
                         *,
-                        (semantic_score * %s + COALESCE(bm25_score, 0) * %s) AS combined_score
-                    FROM scored
+                        (
+                            %s::float8 / (%s::float8 + sem_rank)
+                            + CASE
+                                WHEN bm25_rank IS NULL THEN 0
+                                ELSE %s::float8 / (%s::float8 + bm25_rank)
+                              END
+                        ) AS combined_score
+                    FROM ranked
                     ORDER BY combined_score DESC
                     LIMIT %s
                 """
@@ -504,7 +546,7 @@ class PostgresVectorStore(VectorStore):
                 all_params = (
                     [embedding_str, query]
                     + params
-                    + [semantic_weight, bm25_weight, k]
+                    + [semantic_weight, rrf_k, bm25_weight, rrf_k, k]
                 )
                 cursor.execute(query_sql, all_params)
                 rows = cursor.fetchall()
