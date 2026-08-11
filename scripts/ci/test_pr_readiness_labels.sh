@@ -672,5 +672,23 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
+# ---- 29: truncated rollup → fail closed; chip not granted, held chip revoked --
+# The rollup is present but totalCount (5) exceeds the fetched count (1), so the
+# reconciler cannot rule out a blocking check in the unfetched tail. A PR already
+# holding the chip must have it revoked, and an unlabelled PR must not receive it.
+sb="$(new_sandbox)"
+_trunc_checks="$(mk_checks "C:unit-tests:COMPLETED:SUCCESS")"
+mk_page false "" \
+  "$(mk_node 390 false CLEAN "ready-to-merge" "" "" "" "" "$_trunc_checks" 5)" \
+  "$(mk_node 490 false CLEAN "" "" "" "" "" "$_trunc_checks" 5)" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '390 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "truncated rollup (totalCount > fetched) fails closed: held chip revoked, unlabelled PR not granted"
+else
+  notok "truncated rollup (totalCount > fetched) fails closed: held chip revoked, unlabelled PR not granted"
+  cat "$sb/calls" 2>/dev/null
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
