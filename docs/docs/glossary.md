@@ -109,7 +109,8 @@ so archi doesn't need a separate vector database.
 ### hybrid search
 Blending two ways of ranking results — meaning-based (embeddings) and keyword-based (BM25) —
 into one score, so a passage can win either by being *about* the right thing or by containing
-the right words. archi weights these by default.
+the right words. Both components are min-max normalized to 0–1 before weighting, so neither
+raw scale dominates. archi weights these by default.
 
 ### BM25
 A long-standing keyword-relevance formula: it scores a passage higher when it contains the

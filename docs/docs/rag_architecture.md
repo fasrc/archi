@@ -46,12 +46,15 @@ BM25 index on `chunk_text` (GIN tsvector fallback). Distance: cosine
 (`postgres_vectorstore.py`).
 
 **4. Retrieval** — `data_manager/vectorstore/retrievers/`. Production default is
-**HybridRetriever**: `semantic_weight=0.4`, `bm25_weight=0.6`, `k=5`. Score =
-`(1 − cosine_distance)·0.4 + bm25·0.6` (`postgres_vectorstore.hybrid_search`).
-`hybrid_search` **already accepts a `filter` dict** over any JSONB metadata key —
-so metadata-scoped retrieval (e.g. by category/source_type) needs no schema
-change, just a populated key + a caller that passes the filter. BM25-empty falls
-back to semantic-only. No re-ranking stage exists.
+**HybridRetriever**: `semantic_weight=0.4`, `bm25_weight=0.6`, `k=5`.
+Both semantic and BM25 components are min-max normalized to `0..1` over
+each query's candidate set before weighting (`postgres_vectorstore.hybrid_search`).
+The BM25 `<@>` term is negated so higher = better; `combined_score` is
+query-relative and not comparable across queries. `hybrid_search` **already
+accepts a `filter` dict** over any JSONB metadata key — so metadata-scoped
+retrieval (e.g. by category/source_type) needs no schema change, just a
+populated key + a caller that passes the filter. BM25-empty falls back to
+semantic-only (with a structured warning). No re-ranking stage exists.
 
 **5. Agent & generation** — `src/archi/pipelines/agents/`. LangGraph ReAct loop
 (`base_react.py`); production agent `CMSCompOpsAgent` (`cms_comp_ops_agent.py`).

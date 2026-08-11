@@ -412,18 +412,24 @@ class PostgresVectorStore(VectorStore):
         bm25_weight: float = 0.3,
         **kwargs: Any,
     ) -> List[Tuple[Document, float]]:
-        """
-        Hybrid search combining semantic similarity and BM25 full-text search.
+        """Hybrid search combining semantic similarity and BM25 full-text search.
+
+        Both components are oriented higher-is-better and min-max normalized
+        to ``0..1`` over the candidate set before weighting.  The BM25 ``<@>``
+        operator returns negative scores (lower = better match); the SQL
+        negates them so the convention is uniform.  ``combined_score`` is
+        relative to this query's candidates and is **not** comparable across
+        queries.
 
         Args:
             query: Query text
             k: Number of results to return
-            semantic_weight: Weight for semantic similarity (0-1)
-            bm25_weight: Weight for BM25 score (0-1)
-            **kwargs: Additional filters
+            semantic_weight: Weight for the normalized semantic component (0-1)
+            bm25_weight: Weight for the normalized BM25 component (0-1)
+            **kwargs: Additional filters (``filter``, ``include_deleted``)
 
         Returns:
-            List of (Document, combined_score) tuples
+            List of (Document, combined_score) tuples, highest first
         """
         logger.debug("Performing hybrid search: query='%s', k=%d", query, k)
 
