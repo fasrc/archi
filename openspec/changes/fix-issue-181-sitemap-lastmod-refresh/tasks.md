@@ -66,7 +66,7 @@
 - [x] 4.2 Write the test for wholesale replacement (design D5): a page present in the first
       expansion and absent from the second has no entry after the refresh, so nothing stamps
       it and its stored value returns to `NULL`. Assert the map does not retain the old entry.
-- [ ] 4.3 Write the test that the scheduled crawl set is unchanged: a page newly present in
+- [x] 4.3 Write the test that the scheduled crawl set is unchanged: a page newly present in
       the sitemap but absent from the catalog gains a map entry and is **not** passed to
       `collect_links`.
 

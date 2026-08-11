@@ -636,3 +636,72 @@ class TestScheduledMapWholesaleReplacement:
         assert h["manager"]._sitemap_lastmod_map.get("https://x.example.edu/a") == (
             "2025-06-01"
         ), "page still present in the sitemap must appear with its new lastmod"
+
+
+# ---------------------------------------------------------------------------
+# Task 4.3 — scheduled crawl set unchanged: new sitemap pages skip collect_links
+# ---------------------------------------------------------------------------
+
+
+class TestScheduledCrawlSetUnchanged:
+    """A page newly present in the sitemap but absent from the catalog gains a
+    map entry after ``schedule_collect_links`` but is **not** passed to
+    ``collect_links`` — the crawl set is the catalog's result, not the sitemap
+    expansion result.
+
+    This pins the separation between the lastmod map (all current sitemap pages)
+    and the crawl target list (only already-ingested catalog pages).
+    """
+
+    def test_new_sitemap_page_enters_map_but_not_crawl_set(
+        self, refresh_harness, monkeypatch
+    ):
+        """A page ``/c`` newly present in the sitemap but absent from the catalog
+        must appear in ``_sitemap_lastmod_map`` (so its lastmod can be stamped if
+        it is ever ingested) but must **not** appear in the ``link_urls`` argument
+        passed to ``collect_links`` (so the crawl set does not silently grow).
+
+        Scenario:
+        - Catalog holds ``/a`` and ``/b`` (set up by the harness).
+        - Scheduled expansion returns ``/a``, ``/b``, and a new ``/c``.
+        - After ``schedule_collect_links``: ``/c`` is in the map, and the
+          ``link_urls`` seen by ``collect_links`` contains only catalog URLs
+          (``/a``, ``/b``), not ``/c``.
+        """
+        h = refresh_harness
+        manager = h["manager"]
+
+        new_page = "https://x.example.edu/c"
+
+        monkeypatch.setattr(
+            manager,
+            "_expand_sitemaps",
+            lambda _: [
+                ("https://x.example.edu/a", "2025-06-01"),
+                ("https://x.example.edu/b", "2025-07-01"),
+                (new_page, "2025-08-01"),
+            ],
+        )
+
+        crawled_urls = []
+
+        def spy_collect_links(persistence, link_urls=(), **kwargs):
+            crawled_urls.extend(link_urls)
+            return 0
+
+        monkeypatch.setattr(manager, "collect_links", spy_collect_links)
+
+        manager.schedule_collect_links(h["persistence"])
+
+        assert new_page in manager._sitemap_lastmod_map, (
+            f"{new_page!r} must enter _sitemap_lastmod_map so its lastmod can be "
+            "stamped; it is missing"
+        )
+        assert manager._sitemap_lastmod_map[new_page] == "2025-08-01"
+
+        assert new_page not in crawled_urls, (
+            f"{new_page!r} must not be passed to collect_links — the crawl set "
+            "is the catalog result, not the sitemap expansion"
+        )
+        assert "https://x.example.edu/a" in crawled_urls
+        assert "https://x.example.edu/b" in crawled_urls
