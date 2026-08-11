@@ -26,6 +26,6 @@
 
 ## 5. Verify and ship
 
-- [ ] 5.1 Run `bash scripts/gate.sh` from the worktree root and confirm it exits 0 with ≥80% diff coverage. Fix anything red — never bypass.
+- [x] 5.1 Run `bash scripts/gate.sh` from the worktree root and confirm it exits 0 with ≥80% diff coverage. Fix anything red — never bypass.
 - [ ] 5.2 Confirm `black --check` still passes on both edited Python files (they were clean at `origin/dev`; a reflow would swamp the diff).
 - [ ] 5.3 Push the branch and open a PR into `fasrc/archi:dev` whose body contains `Closes #180`, and note in it that `rename_mid_to_message_id.sql` was made idempotent because the issue's premise that it already was is false — a fresh deploy would otherwise have failed to start.
