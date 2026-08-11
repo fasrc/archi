@@ -525,3 +525,56 @@ class TestMapAtomicReplacement:
             f"expected {expected_map!r} inside the spy, "
             f"got {map_state_during_expansion!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Task 4.1 — scheduled path: hand-listed pages excluded from refreshed map
+# ---------------------------------------------------------------------------
+
+
+class TestScheduledHandListExclusion:
+    """On the scheduled path, a page that is both hand-listed in ``input_lists``
+    and present in the sitemap must get **no** entry in the refreshed map (design
+    D2 / spec exclusion rule).
+
+    The test uses a normalization-variant pair: the hand-list contains
+    ``/hand/`` (trailing slash) while the sitemap emits the trailing-slash-stripped
+    form ``/hand`` — they are the same page via ``normalize_page_url`` and must
+    collide so the sitemap entry is excluded.  A sitemap-only page must still get
+    an entry, confirming the exclusion is selective.
+    """
+
+    def test_hand_listed_page_excluded_from_scheduled_map(
+        self, refresh_harness, monkeypatch
+    ):
+        """A page hand-listed as ``/hand/`` (trailing slash) that also appears in
+        the sitemap as the normalized ``/hand`` must not appear in
+        ``_sitemap_lastmod_map`` after ``schedule_collect_links``.
+
+        A sitemap-only page must appear, confirming that only the hand-listed URL
+        is excluded, not the whole map.
+        """
+        h = refresh_harness
+        # The harness hand-list contains "https://x.example.edu/hand/" (trailing
+        # slash).  The sitemap emits the one-slash-stripped variant — same page
+        # after normalize_page_url, so the match must happen via normalization, not
+        # raw string equality.
+        monkeypatch.setattr(
+            h["manager"],
+            "_expand_sitemaps",
+            lambda _: [
+                ("https://x.example.edu/hand", "2024-03-01"),  # also hand-listed
+                ("https://x.example.edu/a", "2024-01-01"),  # sitemap-only
+            ],
+        )
+
+        h["manager"].schedule_collect_links(h["persistence"])
+
+        assert "https://x.example.edu/hand" not in h["manager"]._sitemap_lastmod_map, (
+            "hand-listed page (matched via normalization) must not appear in the "
+            "refreshed map — its last_modified must stay NULL"
+        )
+        assert (
+            h["manager"]._sitemap_lastmod_map.get("https://x.example.edu/a")
+            == "2024-01-01"
+        ), "sitemap-only page must appear in the refreshed map"
