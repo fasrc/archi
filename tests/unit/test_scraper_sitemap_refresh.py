@@ -212,3 +212,71 @@ class TestScheduledMapRefresh:
             "https://x.example.edu/a": "2025-06-01",
             "https://x.example.edu/b": "2025-07-01",
         }
+
+
+# ---------------------------------------------------------------------------
+# Task 1.3 — refresh happens BEFORE collect_links is invoked
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshPrecedesCollectLinks:
+    """``schedule_collect_links`` must refresh ``_sitemap_lastmod_map`` before
+    it invokes ``collect_links``, not after.  A spy on ``collect_links``
+    captures the map's contents at call time; the test asserts those contents
+    are the *new* values, not the original ones.
+
+    This test is RED against the current implementation (the scheduled path
+    never calls ``_expand_sitemaps`` at all, so the map is never updated).
+    """
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "RED (issue #181): scheduled path never calls _expand_sitemaps so the "
+            "map is stale when collect_links is called. Remove this marker once "
+            "schedule_collect_links refreshes the map before calling collect_links "
+            "(task 3.1)."
+        ),
+    )
+    def test_map_is_refreshed_before_collect_links_is_called(self, refresh_harness):
+        """The map seen by ``collect_links`` must contain the *updated* lastmod
+        values, not the values seeded by ``collect_all_from_config``.
+
+        This distinguishes "refresh happens before the call" from "attribute is
+        updated somewhere after the call returns" — the spy reads the map at the
+        exact moment ``collect_links`` is entered.
+        """
+        h = refresh_harness
+        manager = h["manager"]
+
+        h["manager"].collect_all_from_config(h["persistence"])
+
+        # Advance the sitemap before the scheduled run.
+        updated_pairs = [
+            ("https://x.example.edu/a", "2025-06-01"),
+            ("https://x.example.edu/b", "2025-07-01"),
+        ]
+        h["set_expand_pairs"](updated_pairs)
+
+        # Spy: capture a *copy* of the map at the moment collect_links is entered.
+        map_at_collect_links_call = {}
+
+        original_collect_links = manager.__class__.collect_links
+
+        def spy_collect_links(self, *args, **kwargs):
+            map_at_collect_links_call.update(self._sitemap_lastmod_map)
+            return original_collect_links(self, *args, **kwargs)
+
+        manager.collect_links = lambda *a, **k: (
+            map_at_collect_links_call.update(manager._sitemap_lastmod_map) or 0
+        )
+
+        manager.schedule_collect_links(h["persistence"])
+
+        assert map_at_collect_links_call == {
+            "https://x.example.edu/a": "2025-06-01",
+            "https://x.example.edu/b": "2025-07-01",
+        }, (
+            "collect_links was invoked with the stale map; "
+            f"got {map_at_collect_links_call!r}"
+        )

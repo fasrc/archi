@@ -11,7 +11,7 @@
       builds the map, make `_expand_sitemaps` return *updated* `lastmod` values, call
       `schedule_collect_links`, and assert `_sitemap_lastmod_map` holds the new values.
       Red today (the scheduled path never re-expands).
-- [ ] 1.3 Write the failing test that the scheduled collection is actually scraped under the
+- [x] 1.3 Write the failing test that the scheduled collection is actually scraped under the
       refreshed map — assert the refresh happens **before** `collect_links` is invoked (e.g.
       record the map's contents from a `collect_links` spy), not merely that the attribute is
       updated by the time the call returns.
