@@ -29,8 +29,8 @@
 
 ## 4. Mutation-verify the own-job match
 
-- [ ] 4.1 Temporarily change the excluded job name constant to a different string, run the suite, and confirm at least one case fails. Paste the failing output into the PR body, then restore the constant.
-- [ ] 4.2 Confirm the restored suite is green, so the mutation was demonstrated rather than merely asserted.
+- [x] 4.1 Temporarily change the excluded job name constant to a different string, run the suite, and confirm at least one case fails. Paste the failing output into the PR body, then restore the constant.
+- [x] 4.2 Confirm the restored suite is green, so the mutation was demonstrated rather than merely asserted.
 
 ## 5. Docs, gate, PR
 
