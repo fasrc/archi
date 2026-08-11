@@ -589,5 +589,23 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
+# ---- 24: non-reconcile FAILURE revokes a held ready-to-merge ----------
+# The exclusion is specific to the reconciler's own job: every other non-passing
+# check still blocks. A PR already holding the chip with a different job concluding
+# FAILURE must have the chip removed, proving the exclusion is narrow.
+sb="$(new_sandbox)"
+_fail_check24="$(mk_checks "C:build:COMPLETED:FAILURE")"
+mk_page false "" \
+  "$(mk_node 320 false UNSTABLE "ready-to-merge" "" "" "" "" "$_fail_check24")" \
+  "$(mk_node 420 false UNSTABLE "" "" "" "" "" "$_fail_check24")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '320 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "non-reconcile FAILURE revokes a held ready-to-merge and withholds on an unlabelled PR"
+else
+  notok "non-reconcile FAILURE revokes a held ready-to-merge and withholds on an unlabelled PR"
+  cat "$sb/calls" 2>/dev/null
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
