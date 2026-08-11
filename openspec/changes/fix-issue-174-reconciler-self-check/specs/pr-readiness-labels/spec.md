@@ -58,6 +58,23 @@ truncated review-thread connection and the authoritative re-read used for a trun
 - **WHEN** the rollup's `totalCount` equals the number of contexts returned
 - **THEN** the checks are evaluated on their conclusions with no truncation penalty
 
+### Requirement: A PR behind its base is not ready
+
+The readiness predicate SHALL withhold `ready-to-merge` when `mergeStateStatus` is `BEHIND`.
+The status-check rollup hangs off the PR's head commit and is base-agnostic: it records that the checks
+passed, never which base they were merged against. Retargeting a PR arrives as an `edited` event, which the
+reconciler observes but neither check producer does, so the head commit keeps the green rollup it earned
+against the old base. `BEHIND` is the one base-relative signal the API offers — the head ref is out of date,
+so the checks on record cannot have tested the merge result.
+
+#### Scenario: Behind the base with green checks
+- **WHEN** a PR reports `mergeStateStatus == BEHIND` and every check on its head commit has concluded `SUCCESS`
+- **THEN** `ready-to-merge` is not granted, and a held chip is revoked
+
+#### Scenario: Behind is not a conflict
+- **WHEN** a PR reports `mergeStateStatus == BEHIND` and `mergeable == MERGEABLE`
+- **THEN** the `conflicts` chip is not applied
+
 ### Requirement: Conflict labelling stays sourced from mergeable
 
 The system SHALL continue to derive the `conflicts` chip from `mergeable == CONFLICTING` alone, independent of check state.

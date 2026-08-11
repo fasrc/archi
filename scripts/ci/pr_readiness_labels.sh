@@ -351,12 +351,30 @@ while IFS=$'\t' read -r _tag number isdraft mergeable state live \
   # the UNKNOWN retry path, but the readiness clause consults the blocking count.
   # A null rollup (no checks on record) is treated as 0 blocking — it does not
   # withhold. A truncated rollup (totalCount > fetched) is fail-closed.
+  #
+  # BEHIND is kept as an explicit clause because the rollup is BASE-AGNOSTIC. It
+  # hangs off the PR's head commit and records that the checks passed, never which
+  # base they were merged against. Retargeting a PR arrives as `edited` — which
+  # this reconciler observes but neither check producer does (ci.yml uses the
+  # default pull_request activity types, pr-preview.yml selects only
+  # opened/synchronize/reopened) — so the head commit keeps the green rollup it
+  # earned against the OLD base and blocking_checks reads 0. BEHIND is the one
+  # base-relative signal GitHub hands us: the head ref is out of date, so the
+  # checks on record cannot have tested the merge result. Withhold on it.
+  #
+  # This does NOT make the predicate fully base-aware — BEHIND is only reported
+  # when the base requires branches to be up to date before merging. Where that
+  # setting is off, a retargeted PR still reads CLEAN with stale green checks, and
+  # no signal in the API distinguishes it. That residue is a branch-protection
+  # setting, not something this script can close (issue #231).
   want_ready=false
   why="blocking check"
   if [ "$isdraft" = "true" ]; then
     why="draft"
   elif [ "$mergeable" = "CONFLICTING" ]; then
     why="conflicting"
+  elif [ "$state" = "BEHIND" ]; then
+    why="behind the base — checks on record did not test the current base"
   elif [ "$rollup_total" -gt "$rollup_fetched" ]; then
     why="rollup truncated ($rollup_total checks seen, $rollup_fetched fetched) — cannot verify"
   elif [ "$blocking_checks" -gt 0 ]; then

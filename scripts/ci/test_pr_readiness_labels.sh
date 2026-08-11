@@ -786,5 +786,45 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
+# ---- 35: BEHIND withholds readiness — checks never ran against the current base --
+# The rollup hangs off the PR's HEAD COMMIT, so it is base-agnostic by construction:
+# it records that the checks passed, never which base they were merged against.
+# Retargeting a PR arrives as `edited`, which this reconciler observes but neither
+# check producer does (ci.yml uses the default pull_request activity types;
+# pr-preview.yml selects opened/synchronize/reopened), so the head commit keeps its
+# green rollup from the OLD base and blocking_checks reads 0.
+#
+# BEHIND is the one base-relative signal GitHub gives us: the head ref is out of date
+# with the base, so the checks on record cannot have tested the merge result. Treat it
+# like a blocking check — withhold, and revoke a chip already held.
+sb="$(new_sandbox)"
+_green_35="$(mk_checks "C:gate:COMPLETED:SUCCESS")"
+mk_page false "" \
+  "$(mk_node 460 false BEHIND "ready-to-merge" "" "" "" MERGEABLE "$_green_35")" \
+  "$(mk_node 461 false BEHIND "" "" "" "" MERGEABLE "$_green_35")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '460 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "BEHIND withholds ready-to-merge even with green checks: held chip revoked, unlabelled PR not granted"
+else
+  notok "BEHIND withholds ready-to-merge even with green checks: held chip revoked, unlabelled PR not granted"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 36: BEHIND does NOT attract the conflicts chip --------------------------
+# A PR that is merely out of date is not conflicted. Withholding readiness must not
+# tip over into asserting a conflict that `mergeable` does not report — the same
+# both-directions discipline the UNKNOWN path already follows.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 470 false BEHIND "" "" "" "" MERGEABLE "$_green_35")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if ! grep -q -- '--add-label conflicts' "$sb/calls"; then
+  ok "BEHIND does not attract the conflicts chip"
+else
+  notok "BEHIND does not attract the conflicts chip"
+  cat "$sb/calls" 2>/dev/null
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
