@@ -72,10 +72,10 @@
 
 ## 5. Gate and scope
 
-- [ ] 5.1 Run `bash scripts/gate.sh` from the branch worktree and ensure it exits 0
+- [x] 5.1 Run `bash scripts/gate.sh` from the branch worktree and ensure it exits 0
       (format → lint → test, ≥80% diff coverage vs `origin/dev`). Fix any format, lint, or
       coverage gap before committing; never bypass the gate.
-- [ ] 5.2 Confirm the out-of-scope items are absent from the diff: no TTL/ETag cadence, no
+- [x] 5.2 Confirm the out-of-scope items are absent from the diff: no TTL/ETag cadence, no
       edit to `_expand_sitemaps` or `sitemap_source.py`, no change to the initial-ingest error
       contract, no growth of the scheduled crawl set, and no `deploy/`, `config/`, schema, or
       migration change. The diff should touch `scraper_manager.py` and the new test file only.
