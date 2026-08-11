@@ -511,8 +511,13 @@ class PostgresVectorStore(VectorStore):
             self._close_connection(conn)
 
         results: List[Tuple[Document, float]] = []
-        # If BM25 returned zero rows, fall back to semantic similarity to avoid empty results
         if not rows:
+            logger.warning(
+                "hybrid_search fallback to semantic-only:"
+                " reason=zero_rows collection=%s k=%d",
+                self._collection_name,
+                k,
+            )
             return self.similarity_search_with_score(query, k=k, **kwargs)
 
         for row in rows:

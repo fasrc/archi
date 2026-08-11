@@ -478,6 +478,120 @@ class TestHybridSearchExcludesParents:
         assert doc.page_content == "A small embedded child sentence."
 
 
+class TestHybridSearchFallbackWarning:
+    """The silent fallback at lines 513-516 must emit a structured warning."""
+
+    SENSITIVE_QUERY = "CANARY_private_data_do_not_log"
+
+    def _run_hybrid_with_rows(self, vector_store, mock_pg_connection, rows):
+        conn, cursor = mock_pg_connection
+        cursor.fetchone.return_value = {"relname": "idx_bm25"}
+        cursor.fetchall.return_value = rows
+
+        with patch.object(vector_store, "_get_connection", return_value=conn):
+            with patch.object(
+                vector_store, "similarity_search_with_score", return_value=[]
+            ) as fallback:
+                results = vector_store.hybrid_search(
+                    self.SENSITIVE_QUERY, k=5
+                )
+                return results, fallback
+
+    def test_fallback_emits_warning_on_zero_rows(
+        self, vector_store, mock_pg_connection, caplog
+    ):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            self._run_hybrid_with_rows(vector_store, mock_pg_connection, [])
+
+        warning_records = [
+            r for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert warning_records, "no WARNING emitted on zero-row fallback"
+        msg = warning_records[0].getMessage()
+        assert "collection=" in msg
+        assert "k=" in msg
+        assert "reason=" in msg
+
+    def test_fallback_warning_contains_collection_and_k(
+        self, vector_store, mock_pg_connection, caplog
+    ):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            self._run_hybrid_with_rows(vector_store, mock_pg_connection, [])
+
+        msg = [
+            r.getMessage()
+            for r in caplog.records
+            if r.levelno == logging.WARNING
+        ][0]
+        assert "collection=test_collection" in msg
+        assert "k=5" in msg
+
+    def test_no_warning_when_rows_returned(
+        self, vector_store, mock_pg_connection, caplog
+    ):
+        import logging
+
+        rows = [
+            {
+                "id": 1,
+                "chunk_text": "content",
+                "metadata": "{}",
+                "semantic_score": 0.8,
+                "bm25_score": -0.5,
+                "combined_score": 0.6,
+                "resource_hash": None,
+                "display_name": None,
+                "source_type": None,
+                "url": None,
+            }
+        ]
+        with caplog.at_level(logging.WARNING):
+            self._run_hybrid_with_rows(vector_store, mock_pg_connection, rows)
+
+        warning_records = [
+            r for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert not warning_records, "WARNING emitted when rows were returned"
+
+    def test_query_text_never_in_log_record(
+        self, vector_store, mock_pg_connection, caplog
+    ):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            self._run_hybrid_with_rows(vector_store, mock_pg_connection, [])
+
+        for record in caplog.records:
+            assert self.SENSITIVE_QUERY not in record.getMessage()
+            assert self.SENSITIVE_QUERY not in str(record.__dict__)
+
+    def test_warning_fields_survive_configured_formatter(
+        self, vector_store, mock_pg_connection, caplog
+    ):
+        """Task 1.5: fields must appear in the formatted output, not just
+        the LogRecord attributes — setup_logging uses %(message)s only."""
+        import logging
+
+        fmt = logging.Formatter(
+            "(%(asctime)s) [%(name)s] %(levelname)s: %(message)s"
+        )
+        with caplog.at_level(logging.WARNING):
+            self._run_hybrid_with_rows(vector_store, mock_pg_connection, [])
+
+        warning_records = [
+            r for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert warning_records
+        formatted = fmt.format(warning_records[0])
+        assert "collection=test_collection" in formatted
+        assert "k=5" in formatted
+        assert "reason=" in formatted
+
+
 # =============================================================================
 # Document Operations Tests
 # =============================================================================
