@@ -66,3 +66,38 @@ def test_refresh_raises_runtime_error_when_last_modified_column_missing():
 
     with pytest.raises(RuntimeError, match="last_modified"):
         service.refresh()
+
+
+def test_refresh_does_not_raise_when_schema_is_complete():
+    """refresh() completes without raising when all required columns are present."""
+    cursor = MagicMock()
+    cursor.fetchall.side_effect = [_ALL_REQUIRED_COLUMNS, []]
+
+    service = _make_service(cursor)
+    service.refresh()  # must not raise
+
+
+def test_schema_verification_query_issued_once_not_per_upsert():
+    """The information_schema check runs once in refresh(), never in upsert_resource()."""
+    cursor = MagicMock()
+    cursor.fetchall.side_effect = [_ALL_REQUIRED_COLUMNS, []]
+    cursor.fetchone.return_value = (1,)
+
+    service = _make_service(cursor)
+    service.refresh()
+
+    service.upsert_resource(
+        resource_hash="hash1",
+        path="/data/page.html",
+        metadata={"source_type": "web"},
+    )
+    service.upsert_resource(
+        resource_hash="hash2",
+        path="/data/other.html",
+        metadata={"source_type": "web"},
+    )
+
+    schema_checks = [
+        c for c in cursor.execute.call_args_list if "information_schema" in str(c)
+    ]
+    assert len(schema_checks) == 1
