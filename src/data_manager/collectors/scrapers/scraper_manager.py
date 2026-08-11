@@ -317,7 +317,12 @@ class ScraperManager:
                 # `last_modified = EXCLUDED.last_modified` writes NULL over every one
                 # of those rows. Skipping one scheduled refresh is recoverable; losing
                 # the timestamps is not.
-                if not getattr(self, "_sitemap_lastmod_map", None):
+                #
+                # Keyed on whether a refresh ever SUCCEEDED, not on whether the map
+                # has entries. A sitemap whose pages all omit the optional <lastmod>
+                # publishes {} from a completely successful expansion, and treating
+                # that as "no map yet" would skip the whole crawl over nothing.
+                if not getattr(self, "_sitemap_map_valid", False):
                     logger.error(
                         "sitemap expansion failed with no previous lastmod map (%s); "
                         "skipping this scheduled crawl rather than overwriting stored "
@@ -326,12 +331,23 @@ class ScraperManager:
                     )
                     return
                 logger.warning(str(exc))
-        else:
+        elif getattr(self, "_input_lists_complete", True):
             # Every sitemap source has been removed or reclassified. Wholesale
             # replacement is the semantics used when an individual page disappears,
             # so a source disappearing must clear the map too — otherwise the crawl
             # keeps stamping pages from a sitemap that is no longer configured.
+            #
+            # Guarded on a COMPLETE read: a configured list that was missing this
+            # cycle also yields zero sitemap sources, and clearing on that would turn
+            # a transient IO failure into NULL for every stored last_modified.
             self._sitemap_lastmod_map = {}
+            self._sitemap_map_valid = True
+        else:
+            logger.warning(
+                "no sitemap sources found, but at least one configured input list "
+                "could not be read; retaining the previous lastmod map rather than "
+                "treating an unreadable list as an intentional removal"
+            )
         self.collect_links(persistence, link_urls=catalog_urls)
 
     def schedule_collect_git(
@@ -540,15 +556,24 @@ class ScraperManager:
             }
 
     def _collect_urls_from_lists(self, input_lists) -> List[str]:
-        """Collect URLs from the configured weblists."""
+        """Collect URLs from the configured weblists.
+
+        Also records whether EVERY configured list was actually readable, in
+        ``_input_lists_complete``. Callers need that to tell "the configuration no
+        longer lists any sitemap source" from "the file that listed them was missing
+        this cycle" — the two are otherwise identical (an empty result), and acting
+        on the second as if it were the first discards live state.
+        """
         # Handle case where input_lists might be None
         urls: List[str] = []
+        self._input_lists_complete = True
         if not input_lists:
             return urls
         for list_name in input_lists:
             list_path = Path("weblists") / Path(list_name).name
             if not list_path.exists():
                 logger.warning(f"Input list {list_path} not found.")
+                self._input_lists_complete = False
                 continue
 
             urls.extend(self._extract_urls_from_file(list_path))
@@ -697,6 +722,9 @@ class ScraperManager:
             )
             return new_urls
         self._sitemap_lastmod_map = new_map
+        # Latched on a successful PUBLISH, including publishing an empty map: every
+        # page legitimately lacking <lastmod> is a success, not an absence.
+        self._sitemap_map_valid = True
         return new_urls
 
     @staticmethod

@@ -945,3 +945,95 @@ class TestExpansionCompletenessSignal:
         manager._expand_sitemaps(["https://x.example.edu/sitemap.xml"])
 
         assert manager._sitemap_expansion_incomplete is False
+
+
+class TestEmptyButValidMap:
+    """A successfully-published empty map is not the same as "no map yet".
+
+    Every page in a sitemap may legitimately omit the optional ``<lastmod>``, in
+    which case a fully successful refresh publishes ``{}``. Testing the map for
+    truthiness conflates that with "initial ingest never built one", so a later
+    expansion error would skip the whole scheduled crawl instead of degrading with
+    the valid empty map.
+    """
+
+    def test_expansion_error_after_a_valid_empty_map_still_crawls(
+        self, refresh_harness, monkeypatch
+    ):
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        # Initial ingest succeeds, but no page carries a lastmod → map is {}.
+        refresh_harness["set_expand_pairs"](
+            [("https://x.example.edu/a", None), ("https://x.example.edu/b", None)]
+        )
+        manager.collect_all_from_config(persistence)
+        assert manager._sitemap_lastmod_map == {}, "precondition: valid but empty map"
+
+        def _boom(_sitemap_urls):
+            raise SitemapExpansionError("temporarily unreachable", reason="below_floor")
+
+        monkeypatch.setattr(manager, "_expand_sitemaps", _boom)
+        crawled = []
+        monkeypatch.setattr(
+            manager, "collect_links", lambda *a, **k: crawled.append(k.get("link_urls"))
+        )
+
+        manager.schedule_collect_links(persistence)
+
+        assert len(crawled) == 1, (
+            "a previously published empty map is a successful refresh, so the crawl "
+            "must still run rather than being skipped as 'no map'"
+        )
+
+
+class TestMissingInputListDoesNotClearTheMap:
+    """An unreadable list is not a configuration that dropped its sitemap sources.
+
+    ``_collect_urls_from_lists`` warns and skips a configured file that is missing,
+    so ``sitemap_urls`` comes back empty for a transient IO reason. Clearing the map
+    on that is indistinguishable from an intentional removal, and the ensuing crawl
+    re-persists every page with no timestamp — which the unconditional upsert turns
+    into NULL.
+    """
+
+    def test_unreadable_list_preserves_the_map(self, refresh_harness, monkeypatch):
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        manager.collect_all_from_config(persistence)
+        good_map = dict(manager._sitemap_lastmod_map)
+        assert good_map, "precondition: map populated"
+
+        # The list file vanished this cycle: no sitemap sources seen, and the read
+        # was incomplete.
+        monkeypatch.setattr(
+            manager,
+            "_collect_urls_from_lists_by_type",
+            lambda _lists: (["https://x.example.edu/hand/"], [], [], [], [], []),
+        )
+        manager._input_lists_complete = False
+
+        manager.schedule_collect_links(persistence)
+
+        assert manager._sitemap_lastmod_map == good_map, (
+            "an unreadable input list must not be treated as an intentional removal "
+            f"of every sitemap source; got {manager._sitemap_lastmod_map!r}"
+        )
+
+    def test_missing_file_marks_the_read_incomplete(self, make_manager, tmp_path):
+        """The flag the guard above depends on is really set by the read path."""
+        manager = make_manager({})
+        manager._collect_urls_from_lists(["definitely-not-there.list"])
+        assert manager._input_lists_complete is False
+
+    def test_all_lists_readable_marks_the_read_complete(
+        self, make_manager, tmp_path, monkeypatch
+    ):
+        manager = make_manager({})
+        weblists = tmp_path / "weblists"
+        weblists.mkdir()
+        (weblists / "a.list").write_text("https://x.example.edu/one\n")
+        monkeypatch.chdir(tmp_path)
+        manager._collect_urls_from_lists(["a.list"])
+        assert manager._input_lists_complete is True
