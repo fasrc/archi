@@ -1,7 +1,7 @@
 ## 1. Red: pin the bug
 
 - [x] 1.1 Extend `mk_node()` in `scripts/ci/test_pr_readiness_labels.sh` to accept a status-check rollup: a contexts JSON array plus an optional `totalCount` override for simulating truncation, defaulting to an empty rollup so all 22 existing cases keep passing unchanged.
-- [ ] 1.2 Add a `mk_checks()` helper that builds rollup context nodes for both union members — `CheckRun` (`__typename`, `name`, `status`, `conclusion`) and `StatusContext` (`__typename`, `context`, `state`).
+- [x] 1.2 Add a `mk_checks()` helper that builds rollup context nodes for both union members — `CheckRun` (`__typename`, `name`, `status`, `conclusion`) and `StatusContext` (`__typename`, `context`, `state`).
 - [ ] 1.3 Add the failing case: a non-draft, `MERGEABLE` PR with zero live threads whose only non-successful check is the `reconcile` job in progress. Assert it IS granted `ready-to-merge`.
 - [ ] 1.4 Run the suite and watch 1.3 fail against today's predicate (it sees `UNSTABLE`). Record the failure output before writing any implementation.
 

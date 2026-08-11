@@ -98,6 +98,36 @@ mk_labels() {
   printf '[%s]' "${out%,}"
 }
 
+# mk_checks [spec,spec,...]
+# Each spec is one of:
+#   C:<name>:<status>:<conclusion>   CheckRun  (conclusion: null or SUCCESS/FAILURE/etc.)
+#   S:<context>:<state>              StatusContext
+# Returns a JSON array suitable for the checks-json parameter of mk_node().
+mk_checks() {
+  local spec="${1:-}" out="" entry rest name status conclusion context state
+  [ -z "$spec" ] && { printf '[]'; return; }
+  local IFS=','
+  for entry in $spec; do
+    rest="${entry#*:}"
+    case "$entry" in
+      C:*)
+        name="${rest%%:*}"; rest="${rest#*:}"
+        status="${rest%%:*}"; conclusion="${rest##*:}"
+        if [ "$conclusion" = "null" ]; then
+          out+="{\"__typename\":\"CheckRun\",\"name\":\"$name\",\"status\":\"$status\",\"conclusion\":null},"
+        else
+          out+="{\"__typename\":\"CheckRun\",\"name\":\"$name\",\"status\":\"$status\",\"conclusion\":\"$conclusion\"},"
+        fi
+        ;;
+      S:*)
+        context="${rest%%:*}"; state="${rest##*:}"
+        out+="{\"__typename\":\"StatusContext\",\"context\":\"$context\",\"state\":\"$state\"},"
+        ;;
+    esac
+  done
+  printf '[%s]' "${out%,}"
+}
+
 # mk_node <number> <isDraft> <mergeStateStatus> <labels> <threads-csv> \
 #         [threads-totalCount] [labels-totalCount] [mergeable] \
 #         [checks-json] [checks-totalCount]
