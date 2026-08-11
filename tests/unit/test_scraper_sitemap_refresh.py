@@ -578,3 +578,61 @@ class TestScheduledHandListExclusion:
             h["manager"]._sitemap_lastmod_map.get("https://x.example.edu/a")
             == "2024-01-01"
         ), "sitemap-only page must appear in the refreshed map"
+
+
+# ---------------------------------------------------------------------------
+# Task 4.2 — scheduled path: wholesale map replacement (design D5)
+# ---------------------------------------------------------------------------
+
+
+class TestScheduledMapWholesaleReplacement:
+    """Design D5: the scheduled refresh wholly replaces ``_sitemap_lastmod_map``
+    from the new expansion result — it does not merge with or augment the previous
+    map.
+
+    A page present in the first (initial-ingest) expansion but absent from the
+    second (scheduled-refresh) expansion must have no entry after
+    ``schedule_collect_links`` returns, so ``_handle_standard_url`` will not stamp
+    it and its stored ``last_modified`` returns to NULL.
+
+    This distinguishes wholesale replacement from an incremental update where
+    old entries survive a refresh that doesn't mention them.
+    """
+
+    def test_page_dropped_from_sitemap_is_removed_from_map(
+        self, refresh_harness, monkeypatch
+    ):
+        """A page that was in the initial map but is absent from the scheduled
+        expansion must not appear in ``_sitemap_lastmod_map`` after
+        ``schedule_collect_links``.
+
+        Scenario:
+        - Initial expansion: ``/a`` at ``2024-01-01``, ``/b`` at ``2024-02-01``
+          → both enter the map.
+        - Scheduled expansion: only ``/a`` at ``2025-06-01`` — ``/b`` is gone.
+        - After ``schedule_collect_links``: map holds ``/a`` at ``2025-06-01``
+          and has NO entry for ``/b``.
+        """
+        h = refresh_harness
+        h["manager"].collect_all_from_config(h["persistence"])
+
+        # Precondition: both pages are in the map after initial ingest.
+        assert "https://x.example.edu/a" in h["manager"]._sitemap_lastmod_map
+        assert "https://x.example.edu/b" in h["manager"]._sitemap_lastmod_map
+
+        # Second expansion: /b is no longer in the sitemap.
+        monkeypatch.setattr(
+            h["manager"],
+            "_expand_sitemaps",
+            lambda _: [("https://x.example.edu/a", "2025-06-01")],
+        )
+
+        h["manager"].schedule_collect_links(h["persistence"])
+
+        assert "https://x.example.edu/b" not in h["manager"]._sitemap_lastmod_map, (
+            "page dropped from the sitemap must not survive in the map; "
+            "the refresh must wholesale-replace, not incrementally update"
+        )
+        assert h["manager"]._sitemap_lastmod_map.get("https://x.example.edu/a") == (
+            "2025-06-01"
+        ), "page still present in the sitemap must appear with its new lastmod"

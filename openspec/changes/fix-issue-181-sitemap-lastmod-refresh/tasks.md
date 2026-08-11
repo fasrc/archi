@@ -58,12 +58,12 @@
 
 ## 4. Hand-list exclusion and map-replacement semantics
 
-- [ ] 4.1 Write the failing test for the exclusion rule on the *scheduled* path: a page that
+- [x] 4.1 Write the failing test for the exclusion rule on the *scheduled* path: a page that
       is both hand-listed in `input_lists` and present in the sitemap gets **no** entry in the
       refreshed map (so its `last_modified` stays `NULL`), while a sitemap-only page does get
       one. Use a normalization-variant pair (`/x/` hand-listed vs `/x` in the sitemap) so the
       test pins matching on the normalized URL, not the raw string.
-- [ ] 4.2 Write the test for wholesale replacement (design D5): a page present in the first
+- [x] 4.2 Write the test for wholesale replacement (design D5): a page present in the first
       expansion and absent from the second has no entry after the refresh, so nothing stamps
       it and its stored value returns to `NULL`. Assert the map does not retain the old entry.
 - [ ] 4.3 Write the test that the scheduled crawl set is unchanged: a page newly present in
