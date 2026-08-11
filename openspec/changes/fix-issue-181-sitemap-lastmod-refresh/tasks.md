@@ -21,16 +21,16 @@
 - [x] 2.1 Lift the `_dedup_key` closure (`scraper_manager.py:194–198`) to a shared
       module-level function (or `@staticmethod`) keeping the normalize-or-fall-back-to-raw
       behavior, so both call sites share one definition (design D4).
-- [ ] 2.2 Extract `_refresh_sitemap_lastmod_map(self, sitemap_urls, existing_keys) ->
+- [x] 2.2 Extract `_refresh_sitemap_lastmod_map(self, sitemap_urls, existing_keys) ->
       List[str]` from `collect_all_from_config:207–220`: expand, walk pairs in order, skip
       URLs already in `existing_keys` (adding as it goes), and return the not-already-seen
       page URLs in order. It always lets `SitemapExpansionError` propagate — no `strict`
       flag (design D1, D2).
-- [ ] 2.3 Build the map into a **local** dict and assign `self._sitemap_lastmod_map` once,
+- [x] 2.3 Build the map into a **local** dict and assign `self._sitemap_lastmod_map` once,
       after expansion fully succeeds. Do not clear-then-populate in place (design D3 — the
       degraded path's fallback depends on this, and `_handle_standard_url:693` stamps only
       while the map is non-empty).
-- [ ] 2.4 Rewrite `collect_all_from_config` to call the helper and
+- [x] 2.4 Rewrite `collect_all_from_config` to call the helper and
       `link_urls.extend(...)` its return value. Confirm the existing suites that pin this
       path stay green **unmodified**: `test_scraper_sitemap_dedup_unaffected.py`,
       `test_scraper_no_duplication.py`, `test_scraper_determinism.py`.

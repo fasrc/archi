@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from src.data_manager.collectors.persistence import PersistenceService
 from src.data_manager.collectors.scrapers.scrape_pool import (
@@ -203,20 +203,9 @@ class ScraperManager:
             # hand-list -> sitemap migration window. Expanded URLs are already
             # normalized, so they compare directly against these keys.
             existing_keys = {_dedup_key(u) for u in link_urls}
-            sitemap_pairs = self._expand_sitemaps(sitemap_urls)
-            # Populated INSIDE the dedup loop, for the URLs actually appended —
-            # not from every expanded pair. A page that is both hand-listed and
-            # in a sitemap belongs to the hand-list: its URL is deliberately not
-            # appended, and the spec says a hand-listed source's `last_modified`
-            # is NULL. Building the map first would still hand that page a
-            # timestamp, because `_handle_standard_url` looks the map up by the
-            # resource's NORMALIZED url — which is exactly what collided.
-            for url, lastmod in sitemap_pairs:
-                if url not in existing_keys:
-                    existing_keys.add(url)
-                    link_urls.append(url)
-                    if lastmod is not None:
-                        self._sitemap_lastmod_map[url] = lastmod
+            link_urls.extend(
+                self._refresh_sitemap_lastmod_map(sitemap_urls, existing_keys)
+            )
 
         self.collect_links(persistence, link_urls=link_urls)
         self.collect_sso(persistence, sso_urls=sso_urls)
@@ -608,6 +597,32 @@ class ScraperManager:
             verify=self.config.get("verify_urls", False),
         )
         return list(sitemap_source.expand_sitemaps(sitemap_urls, fetch, policy))
+
+    def _refresh_sitemap_lastmod_map(
+        self, sitemap_urls: List[str], existing_keys: Set[str]
+    ) -> List[str]:
+        """Expand sitemaps, rebuild ``_sitemap_lastmod_map``, return new page URLs.
+
+        Walks the expanded pairs in order, skipping URLs already in
+        ``existing_keys`` (mutating that set as it goes so the caller's dedup
+        state stays correct).  Builds the map into a local dict and assigns it
+        to ``self._sitemap_lastmod_map`` only after expansion fully succeeds —
+        a partial failure therefore leaves the previous map intact (design D3).
+
+        ``SitemapExpansionError`` always propagates; the caller decides whether
+        to catch it (design D1).
+        """
+        sitemap_pairs = self._expand_sitemaps(sitemap_urls)
+        new_map: Dict[str, str] = {}
+        new_urls: List[str] = []
+        for url, lastmod in sitemap_pairs:
+            if url not in existing_keys:
+                existing_keys.add(url)
+                new_urls.append(url)
+                if lastmod is not None:
+                    new_map[url] = lastmod
+        self._sitemap_lastmod_map = new_map
+        return new_urls
 
     @staticmethod
     def _is_elog_url(url: str) -> bool:
