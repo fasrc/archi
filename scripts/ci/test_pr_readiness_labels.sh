@@ -690,5 +690,44 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
+# ---- 30: mergeable == CONFLICTING → conflicts applied, ready-to-merge withheld ---
+# The conflict derivation comes from mergeable, not mergeStateStatus. All-green
+# checks prove the check-state clause cannot override the conflict gate — even a PR
+# with every check passing must never receive ready-to-merge when it is conflicted.
+# The PR already holding ready-to-merge must have it revoked; the unlabelled PR
+# must not receive it.
+sb="$(new_sandbox)"
+_green_30="$(mk_checks "C:unit-tests:COMPLETED:SUCCESS")"
+mk_page false "" \
+  "$(mk_node 400 false DIRTY "ready-to-merge" "" "" "" "" "$_green_30")" \
+  "$(mk_node 410 false DIRTY "" "" "" "" "" "$_green_30")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '400 .*--remove-label ready-to-merge' "$sb/calls" \
+   && grep -q '400 .*--add-label conflicts' "$sb/calls" \
+   && grep -q '410 .*--add-label conflicts' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "mergeable==CONFLICTING: conflicts applied and ready-to-merge withheld even with green checks"
+else
+  notok "mergeable==CONFLICTING: conflicts applied and ready-to-merge withheld even with green checks"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 31: conflicted draft still gets the conflicts chip ----------------------
+# mergeStateStatus is a priority field that reports DRAFT on a draft PR, masking
+# DIRTY. A conflicted draft would appear unconflicted through mergeStateStatus
+# alone — which is why conflicts is derived from mergeable == CONFLICTING, not
+# from mergeStateStatus == DIRTY. The draft is explicitly given mergeable=CONFLICTING
+# while mergeStateStatus=DRAFT so the fixture mirrors the real API's behaviour.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 420 true DRAFT "" "" "" "" CONFLICTING)" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '420 .*--add-label conflicts' "$sb/calls"; then
+  ok "conflicted draft (mergeable=CONFLICTING, mergeStateStatus=DRAFT) still gets the conflicts chip"
+else
+  notok "conflicted draft (mergeable=CONFLICTING, mergeStateStatus=DRAFT) still gets the conflicts chip"
+  cat "$sb/calls" 2>/dev/null
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

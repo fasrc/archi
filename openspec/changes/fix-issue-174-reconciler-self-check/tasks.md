@@ -23,7 +23,7 @@
 - [x] 3.3 Case: all non-`reconcile` checks `SUCCESS`/`NEUTRAL`/`SKIPPED` → granted.
 - [x] 3.4 Case: empty/null rollup on an otherwise-ready PR → granted (check state does not withhold).
 - [x] 3.5 Case: rollup `totalCount` exceeds fetched contexts → fail closed; not granted, and a held chip is revoked.
-- [ ] 3.6 Case: `mergeable == CONFLICTING` → `conflicts` applied, `ready-to-merge` never applied — including the conflicted-draft variant.
+- [x] 3.6 Case: `mergeable == CONFLICTING` → `conflicts` applied, `ready-to-merge` never applied — including the conflicted-draft variant.
 - [ ] 3.7 Case: draft PR with all checks green → still not ready. Case: one unresolved review thread with all checks green → still not ready.
 - [ ] 3.8 Case: a failing `StatusContext` (legacy commit status) blocks, proving the non-`CheckRun` union member is handled.
 
