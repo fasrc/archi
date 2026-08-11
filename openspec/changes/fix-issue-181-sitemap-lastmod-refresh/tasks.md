@@ -44,7 +44,7 @@
       `self._collect_urls_from_lists_by_type(self.input_lists)`, then call the helper before
       `collect_links` and **discard** its return value — the crawl set stays the catalog
       query's result (design D2, D4).
-- [ ] 3.2 Write the failing test for the degraded path: `_expand_sitemaps` raises
+- [x] 3.2 Write the failing test for the degraded path: `_expand_sitemaps` raises
       `SitemapExpansionError` during `schedule_collect_links`; assert the call does **not**
       raise, `collect_links` still runs over the catalog URLs, and the previous map is intact
       entry-for-entry.

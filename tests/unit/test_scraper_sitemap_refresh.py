@@ -344,3 +344,109 @@ class TestInitialIngestFailsFast:
             manager.collect_all_from_config(FakePersistence())
 
         assert calls == [], f"collectors were called after expansion error: {calls}"
+
+
+# ---------------------------------------------------------------------------
+# Task 3.2 — degraded path: SitemapExpansionError during schedule_collect_links
+# ---------------------------------------------------------------------------
+
+
+class TestScheduledDegradedPath:
+    """When ``_expand_sitemaps`` raises ``SitemapExpansionError`` during
+    ``schedule_collect_links``, the call must not propagate the exception,
+    ``collect_links`` must still run over the catalog URLs, and the map from
+    the last successful refresh must be intact entry-for-entry.
+
+    These tests are RED against the current implementation, which does not
+    catch ``SitemapExpansionError`` in the scheduled path.
+    """
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="degraded fallback not yet implemented (task 3.4)",
+    )
+    def test_expansion_error_does_not_propagate_from_schedule(
+        self, refresh_harness, monkeypatch
+    ):
+        """``SitemapExpansionError`` raised by ``_expand_sitemaps`` during
+        ``schedule_collect_links`` must not propagate to the caller.
+        """
+        h = refresh_harness
+        h["manager"].collect_all_from_config(h["persistence"])
+
+        monkeypatch.setattr(
+            h["manager"],
+            "_expand_sitemaps",
+            lambda _: (_ for _ in ()).throw(
+                SitemapExpansionError("transient DNS failure", reason="below_floor")
+            ),
+        )
+
+        # Must not raise — the degraded path swallows the error.
+        h["manager"].schedule_collect_links(h["persistence"])
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="degraded fallback not yet implemented (task 3.4)",
+    )
+    def test_collect_links_runs_after_expansion_error(
+        self, refresh_harness, monkeypatch
+    ):
+        """When the refresh fails, ``collect_links`` must still be invoked
+        so the scheduled scrape of catalog URLs proceeds.
+        """
+        h = refresh_harness
+        h["manager"].collect_all_from_config(h["persistence"])
+
+        monkeypatch.setattr(
+            h["manager"],
+            "_expand_sitemaps",
+            lambda _: (_ for _ in ()).throw(
+                SitemapExpansionError("over cap", reason="over_cap")
+            ),
+        )
+
+        collect_links_called = []
+
+        def spy_collect_links(*args, **kwargs):
+            collect_links_called.append(True)
+            return 0
+
+        monkeypatch.setattr(h["manager"], "collect_links", spy_collect_links)
+
+        h["manager"].schedule_collect_links(h["persistence"])
+
+        assert (
+            collect_links_called
+        ), "collect_links was not called after expansion error"
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="degraded fallback not yet implemented (task 3.4)",
+    )
+    def test_previous_map_intact_after_expansion_error(
+        self, refresh_harness, monkeypatch
+    ):
+        """The map from the last successful refresh must be preserved entry-for-entry
+        after a failed refresh — neither empty nor partially rebuilt.
+        """
+        h = refresh_harness
+        h["manager"].collect_all_from_config(h["persistence"])
+
+        expected_map = dict(h["manager"]._sitemap_lastmod_map)
+        assert expected_map, "precondition: map must be non-empty after initial ingest"
+
+        monkeypatch.setattr(
+            h["manager"],
+            "_expand_sitemaps",
+            lambda _: (_ for _ in ()).throw(
+                SitemapExpansionError("server error", reason="below_floor")
+            ),
+        )
+
+        h["manager"].schedule_collect_links(h["persistence"])
+
+        assert h["manager"]._sitemap_lastmod_map == expected_map, (
+            f"map was modified by a failed refresh; "
+            f"expected {expected_map!r}, got {h['manager']._sitemap_lastmod_map!r}"
+        )
