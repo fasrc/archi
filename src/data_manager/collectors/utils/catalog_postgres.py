@@ -87,6 +87,32 @@ _NON_TEXT_COLUMNS = frozenset(
     }
 )
 
+# All columns written by upsert_resource's INSERT statement. refresh() checks
+# that every one exists at startup so a missing column fails fast rather than
+# silently swallowing every upsert at ingest time.
+_REQUIRED_DOCUMENT_COLUMNS = frozenset(
+    {
+        "resource_hash",
+        "file_path",
+        "display_name",
+        "source_type",
+        "url",
+        "ticket_id",
+        "suffix",
+        "size_bytes",
+        "original_path",
+        "base_path",
+        "relative_path",
+        "file_modified_at",
+        "ingested_at",
+        "last_modified",
+        "ingestion_status",
+        "extra_json",
+        "extra_text",
+        "is_deleted",
+    }
+)
+
 
 @dataclass
 class PostgresCatalogService:
@@ -152,11 +178,26 @@ class PostgresCatalogService:
         self._id_cache = {}
 
         with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'documents'
+                """
+                )
+                existing = {row[0] for row in cur.fetchall()}
+            missing = _REQUIRED_DOCUMENT_COLUMNS - existing
+            if missing:
+                raise RuntimeError(
+                    f"documents table is missing required columns: {sorted(missing)}"
+                )
+
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT id, resource_hash, file_path 
-                    FROM documents 
+                    SELECT id, resource_hash, file_path
+                    FROM documents
                     WHERE NOT is_deleted
                 """
                 )

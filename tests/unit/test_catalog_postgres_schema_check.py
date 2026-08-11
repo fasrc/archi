@@ -1,0 +1,68 @@
+"""
+Tests for PostgresCatalogService schema verification at startup.
+
+Spec: openspec/changes/fix-issue-180-migration-sidecar/specs/schema-migration-provisioning/spec.md
+Requirement: The catalog verifies its required columns at startup
+"""
+
+from contextlib import contextmanager
+from unittest.mock import MagicMock, call
+
+import pytest
+
+from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogService
+
+# All 18 columns the upsert_resource INSERT writes, excluding last_modified
+_ALL_REQUIRED_EXCEPT_LAST_MODIFIED = [
+    ("resource_hash",),
+    ("file_path",),
+    ("display_name",),
+    ("source_type",),
+    ("url",),
+    ("ticket_id",),
+    ("suffix",),
+    ("size_bytes",),
+    ("original_path",),
+    ("base_path",),
+    ("relative_path",),
+    ("file_modified_at",),
+    ("ingested_at",),
+    ("ingestion_status",),
+    ("extra_json",),
+    ("extra_text",),
+    ("is_deleted",),
+]
+
+_ALL_REQUIRED_COLUMNS = _ALL_REQUIRED_EXCEPT_LAST_MODIFIED + [("last_modified",)]
+
+
+def _make_service(cursor):
+    """Build a PostgresCatalogService with a fully mocked connection (no __init__)."""
+    service = PostgresCatalogService.__new__(PostgresCatalogService)
+    service._file_index = {}
+    service._metadata_index = {}
+    service._id_cache = {}
+
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+    conn.cursor.return_value.__exit__.return_value = False
+
+    @contextmanager
+    def _connect():
+        yield conn
+
+    service._connect = _connect
+    return service
+
+
+def test_refresh_raises_runtime_error_when_last_modified_column_missing():
+    """refresh() raises RuntimeError naming last_modified when that column is absent."""
+    cursor = MagicMock()
+    # Schema check returns all required columns except last_modified;
+    # RuntimeError is raised before the main refresh SELECT runs.
+    cursor.fetchall.side_effect = [_ALL_REQUIRED_EXCEPT_LAST_MODIFIED, []]
+
+    service = _make_service(cursor)
+
+    with pytest.raises(RuntimeError, match="last_modified"):
+        service.refresh()
