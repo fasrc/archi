@@ -19,7 +19,7 @@
 ## 3. Cover the rest of the contract
 
 - [x] 3.1 Negative case: a PR **already holding** `ready-to-merge` with a non-`reconcile` check concluding `FAILURE` → assert the chip is removed.
-- [ ] 3.2 Case: a non-`reconcile` check pending/in-progress (null conclusion) → not granted.
+- [x] 3.2 Case: a non-`reconcile` check pending/in-progress (null conclusion) → not granted.
 - [ ] 3.3 Case: all non-`reconcile` checks `SUCCESS`/`NEUTRAL`/`SKIPPED` → granted.
 - [ ] 3.4 Case: empty/null rollup on an otherwise-ready PR → granted (check state does not withhold).
 - [ ] 3.5 Case: rollup `totalCount` exceeds fetched contexts → fail closed; not granted, and a held chip is revoked.

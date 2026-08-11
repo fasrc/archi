@@ -607,5 +607,21 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
+# ---- 25: non-reconcile in-progress blocks; chip not granted ----------
+# A CheckRun whose conclusion is null (status IN_PROGRESS) is blocking when its
+# name does not match the excluded reconciler job. The PR must NOT receive the
+# chip while the check runs.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 340 false UNSTABLE "" "" "" "" MERGEABLE \
+     "$(mk_checks "C:build:IN_PROGRESS:null")")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "non-reconcile in-progress (null conclusion) blocks; ready-to-merge not granted"
+else
+  notok "non-reconcile in-progress (null conclusion) blocks; ready-to-merge not granted"
+  cat "$sb/calls" 2>/dev/null
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
