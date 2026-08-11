@@ -8,8 +8,8 @@
 
 ## 2. Ship the migration files with the deployment
 
-- [ ] 2.1 Write a failing test asserting `templates_manager` copies `src/cli/templates/migrations/` into the rendered deployment directory, with the same `.sql` file set, and that a second render into the same directory succeeds and leaves the same set. Watch it fail.
-- [ ] 2.2 Add the copy step to `src/cli/managers/templates_manager.py` next to the `init.sql` write at `:595–629`, using a module-level constant alongside `BASE_INIT_SQL_TEMPLATE` (`:60`). Make 2.1 pass.
+- [x] 2.1 Write a failing test asserting `templates_manager` copies `src/cli/templates/migrations/` into the rendered deployment directory, with the same `.sql` file set, and that a second render into the same directory succeeds and leaves the same set. Watch it fail.
+- [x] 2.2 Add the copy step to `src/cli/managers/templates_manager.py` next to the `init.sql` write at `:595–629`, using a module-level constant alongside `BASE_INIT_SQL_TEMPLATE` (`:60`). Make 2.1 pass.
 
 ## 3. Make every migration re-runnable
 

@@ -58,6 +58,7 @@ def _render_config_target_name(
 BASE_CONFIG_TEMPLATE = "base-config.yaml"
 BASE_COMPOSE_TEMPLATE = "base-compose.yaml"
 BASE_INIT_SQL_TEMPLATE = "init.sql"  # PostgreSQL + pgvector schema
+MIGRATIONS_TEMPLATE_DIR = "migrations"  # catch-up SQL files shipped with the package
 BASE_GRAFANA_DATASOURCES_TEMPLATE = "grafana/datasources.yaml"
 BASE_GRAFANA_DASHBOARDS_TEMPLATE = "grafana/dashboards.yaml"
 BASE_GRAFANA_ARCHI_DEFAULT_DASHBOARDS_TEMPLATE = "grafana/archi-default-dashboard.json"
@@ -628,6 +629,13 @@ class TemplateManager:
         with open(dest, "w") as f:
             f.write(init_sql)
         logger.debug(f"Wrote PostgreSQL init script to {dest}")
+
+        migrations_src = (
+            Path(__file__).parent.parent / "templates" / MIGRATIONS_TEMPLATE_DIR
+        )
+        migrations_dest = context.base_dir / MIGRATIONS_TEMPLATE_DIR
+        shutil.copytree(migrations_src, migrations_dest, dirs_exist_ok=True)
+        logger.debug(f"Copied migrations to {migrations_dest}")
 
     def _render_compose_file(self, context: TemplateContext) -> None:
         template_vars = context.plan.to_template_vars()
