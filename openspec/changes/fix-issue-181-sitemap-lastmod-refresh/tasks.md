@@ -1,6 +1,6 @@
 ## 1. Red tests for the refresh contract
 
-- [ ] 1.1 Create `tests/unit/test_scraper_sitemap_refresh.py` with a fixture that builds a
+- [x] 1.1 Create `tests/unit/test_scraper_sitemap_refresh.py` with a fixture that builds a
       `ScraperManager` whose `input_lists` derivation and `_expand_sitemaps` are patched
       (no network, no live catalog): `_expand_sitemaps` returns a controllable list of
       `(page_url, lastmod|None)` pairs, and `persistence.catalog.get_metadata_by_filter`
