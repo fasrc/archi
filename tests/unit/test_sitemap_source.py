@@ -1158,7 +1158,7 @@ class TestWiring:
         }
         captured = {}
 
-        def fake_expand(sitemap_urls, fetch, policy):
+        def fake_expand(sitemap_urls, fetch, policy, on_document_failure=None):
             captured["urls"] = sitemap_urls
             captured["policy"] = policy
             captured["fetch"] = fetch
@@ -1182,7 +1182,7 @@ class TestWiring:
         mgr.sitemap_config = {"allowed_hosts": "cdn.example.com"}
         captured = {}
 
-        def fake(urls, fetch, policy):
+        def fake(urls, fetch, policy, on_document_failure=None):
             captured["policy"] = policy
             return []
 
@@ -1196,7 +1196,7 @@ class TestWiring:
         mgr.sitemap_config = {"min_pages": None, "max_pages": ""}
         captured = {}
 
-        def fake(urls, fetch, policy):
+        def fake(urls, fetch, policy, on_document_failure=None):
             captured["policy"] = policy
             return []
 
@@ -1447,7 +1447,7 @@ class TestLastmodBridge:
         mgr.config = {}
         mgr.sitemap_config = {}
 
-        def fake_expand(urls, fetch, policy):
+        def fake_expand(urls, fetch, policy, on_document_failure=None):
             return [
                 (f"https://{HOST}/kb/a", "2026-04-21"),
                 (f"https://{HOST}/kb/b", None),

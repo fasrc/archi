@@ -15,7 +15,11 @@ import pytest
 
 from src.data_manager.collectors.scrapers import scraper_manager as sm_module
 from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
-from src.data_manager.collectors.scrapers.sitemap_source import SitemapExpansionError
+from src.data_manager.collectors.scrapers import sitemap_source as sitemap_source_module
+from src.data_manager.collectors.scrapers.sitemap_source import (
+    SitemapExpansionError,
+    SitemapFetchError,
+)
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -705,3 +709,234 @@ class TestScheduledCrawlSetUnchanged:
         )
         assert "https://x.example.edu/a" in crawled_urls
         assert "https://x.example.edu/b" in crawled_urls
+
+
+# ---------------------------------------------------------------------------
+# Review findings on PR #230
+# ---------------------------------------------------------------------------
+
+
+class TestAllSitemapSourcesRemoved:
+    """Dropping the last ``sitemap-`` entry must clear the map, not freeze it.
+
+    The scheduled refresh is guarded by ``if sitemap_urls:``. When an input list is
+    edited at runtime to remove or reclassify its final sitemap source, that guard
+    skips the refresh and the previous map survives, so the ensuing catalog crawl
+    keeps stamping pages with timestamps from a sitemap that is no longer
+    configured. Removal of a whole source should behave like the removal of an
+    individual page, which the wholesale-replacement semantics already handle.
+    """
+
+    def test_map_is_cleared_when_no_sitemap_sources_remain(
+        self, refresh_harness, monkeypatch
+    ):
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        manager.collect_all_from_config(persistence)
+        assert manager._sitemap_lastmod_map, "precondition: map populated by ingest"
+
+        # The sitemap source is gone from the lists on the next scheduled pass.
+        monkeypatch.setattr(
+            manager,
+            "_collect_urls_from_lists_by_type",
+            lambda _lists: (["https://x.example.edu/hand/"], [], [], [], [], []),
+        )
+        manager.schedule_collect_links(persistence)
+
+        assert manager._sitemap_lastmod_map == {}, (
+            "a configuration with no sitemap sources must leave an empty map; "
+            f"got {manager._sitemap_lastmod_map!r}"
+        )
+
+
+class TestPartialExpansionRetainsPreviousMap:
+    """A truncated expansion is not a successful refresh.
+
+    ``_fetch_and_parse`` fails open for a per-document fetch/parse error: it logs a
+    WARNING and contributes zero pairs. For a ``<sitemapindex>`` whose child fails
+    while its siblings succeed, the source can still clear ``min_pages``, so
+    ``expand_sitemaps`` returns a TRUNCATED list and raises nothing. Publishing that
+    as the new map discards every timestamp belonging to the failed child, and the
+    catalog crawl then conflict-upserts NULL over those rows.
+    """
+
+    def test_incomplete_expansion_does_not_replace_a_good_map(
+        self, refresh_harness, monkeypatch
+    ):
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        manager.collect_all_from_config(persistence)
+        good_map = dict(manager._sitemap_lastmod_map)
+        assert set(good_map) == {
+            "https://x.example.edu/a",
+            "https://x.example.edu/b",
+        }, "precondition: both pages carry timestamps"
+
+        # /b's child sitemap fails to fetch: it contributes nothing, /a still
+        # clears min_pages, so expansion returns truncated WITHOUT raising.
+        refresh_harness["set_expand_pairs"]([("https://x.example.edu/a", "2024-01-01")])
+        manager._sitemap_expansion_incomplete = True
+
+        manager.schedule_collect_links(persistence)
+
+        assert manager._sitemap_lastmod_map == good_map, (
+            "an incomplete expansion must leave the previous map intact; "
+            f"got {manager._sitemap_lastmod_map!r}"
+        )
+
+    def test_complete_expansion_still_replaces_wholesale(
+        self, refresh_harness, monkeypatch
+    ):
+        """The retention above must not weaken genuine removals.
+
+        When expansion completes, a page that has genuinely left the sitemap must
+        still drop out of the map — otherwise the fix for a truncated fetch would
+        quietly reintroduce the stale-timestamp bug it was meant to prevent.
+        """
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        manager.collect_all_from_config(persistence)
+        refresh_harness["set_expand_pairs"]([("https://x.example.edu/a", "2024-01-01")])
+        manager._sitemap_expansion_incomplete = False
+
+        manager.schedule_collect_links(persistence)
+
+        assert manager._sitemap_lastmod_map == {
+            "https://x.example.edu/a": "2024-01-01"
+        }, f"a complete expansion replaces wholesale; got {manager._sitemap_lastmod_map!r}"
+
+
+class TestNoDegradeWithoutAPriorMap:
+    """Swallowing the expansion error is only safe when a map already exists.
+
+    ``service_data_manager`` keeps running after an asynchronous initial ingest
+    reports an error, so the scheduled pass can arrive with no map at all while the
+    catalog still holds rows from an earlier process. Continuing then crawls with an
+    empty map and conflict-upserts NULL into every affected ``last_modified``.
+    """
+
+    def test_expansion_error_without_a_map_skips_the_crawl(
+        self, refresh_harness, monkeypatch
+    ):
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        def _boom(_sitemap_urls):
+            raise SitemapExpansionError("sitemap below min_pages", reason="below_floor")
+
+        monkeypatch.setattr(manager, "_expand_sitemaps", _boom)
+
+        crawled = []
+        monkeypatch.setattr(
+            manager,
+            "collect_links",
+            lambda *a, **k: crawled.append(k.get("link_urls")),
+        )
+
+        manager.schedule_collect_links(persistence)
+
+        assert crawled == [], (
+            "with no usable map, the crawl must be skipped rather than stamping "
+            f"every page NULL; collect_links got {crawled!r}"
+        )
+
+    def test_expansion_error_with_a_good_map_still_degrades_gracefully(
+        self, refresh_harness, monkeypatch
+    ):
+        """With a usable map in hand, the documented degrade path is preserved."""
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        manager.collect_all_from_config(persistence)
+        good_map = dict(manager._sitemap_lastmod_map)
+
+        def _boom(_sitemap_urls):
+            raise SitemapExpansionError("sitemap temporarily unreachable", reason="below_floor")
+
+        monkeypatch.setattr(manager, "_expand_sitemaps", _boom)
+
+        crawled = []
+        monkeypatch.setattr(
+            manager,
+            "collect_links",
+            lambda *a, **k: crawled.append(k.get("link_urls")),
+        )
+
+        manager.schedule_collect_links(persistence)
+
+        assert len(crawled) == 1, "the crawl still runs when a good map is available"
+        assert manager._sitemap_lastmod_map == good_map, "the prior map is preserved"
+
+
+class TestExpansionCompletenessSignal:
+    """The incompleteness flag must come from real expansion, not just be settable.
+
+    The retention tests above set ``_sitemap_expansion_incomplete`` directly, which
+    would pass even if nothing ever set it in production. This exercises the whole
+    path: a ``<sitemapindex>`` whose child 404s, through the real
+    ``expand_sitemaps``, must mark the expansion incomplete while still returning
+    the surviving sibling's pages.
+    """
+
+    def test_failed_child_sets_the_incomplete_flag(self, make_manager, monkeypatch):
+        index_xml = (
+            '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            "<sitemap><loc>https://x.example.edu/good.xml</loc></sitemap>"
+            "<sitemap><loc>https://x.example.edu/bad.xml</loc></sitemap>"
+            "</sitemapindex>"
+        )
+        good_xml = (
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            "<url><loc>https://x.example.edu/a</loc>"
+            "<lastmod>2024-01-01</lastmod></url>"
+            "</urlset>"
+        )
+
+        def fake_fetch(url, **_kwargs):
+            if url.endswith("/sitemap.xml"):
+                return index_xml
+            if url.endswith("/good.xml"):
+                return good_xml
+            raise SitemapFetchError(f"404 fetching {url}")
+
+        monkeypatch.setattr(
+            sitemap_source_module, "fetch_sitemap_text", fake_fetch, raising=True
+        )
+
+        manager = make_manager({})
+        pairs = manager._expand_sitemaps(["https://x.example.edu/sitemap.xml"])
+
+        assert ("https://x.example.edu/a", "2024-01-01") in pairs, (
+            "the surviving sibling's pages must still be returned"
+        )
+        assert manager._sitemap_expansion_incomplete is True, (
+            "a child that failed to fetch must mark the expansion incomplete"
+        )
+
+    def test_all_children_succeed_leaves_the_flag_clear(self, make_manager, monkeypatch):
+        index_xml = (
+            '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            "<sitemap><loc>https://x.example.edu/good.xml</loc></sitemap>"
+            "</sitemapindex>"
+        )
+        good_xml = (
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            "<url><loc>https://x.example.edu/a</loc>"
+            "<lastmod>2024-01-01</lastmod></url>"
+            "</urlset>"
+        )
+
+        def fake_fetch(url, **_kwargs):
+            return index_xml if url.endswith("/sitemap.xml") else good_xml
+
+        monkeypatch.setattr(
+            sitemap_source_module, "fetch_sitemap_text", fake_fetch, raising=True
+        )
+
+        manager = make_manager({})
+        manager._expand_sitemaps(["https://x.example.edu/sitemap.xml"])
+
+        assert manager._sitemap_expansion_incomplete is False

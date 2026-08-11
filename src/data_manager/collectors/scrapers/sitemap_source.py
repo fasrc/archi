@@ -410,20 +410,34 @@ def fetch_sitemap_text(
 # Expansion (per source, no aggregate counting — design D10)
 # --------------------------------------------------------------------------- #
 def _fetch_and_parse(
-    url: str, fetch_text: FetchText
+    url: str,
+    fetch_text: FetchText,
+    on_document_failure: Optional[Callable[[str, Exception], None]] = None,
 ) -> Tuple[Optional[str], List[Tuple[str, Optional[str]]]]:
     """Fetch + parse one document, failing open: log a WARNING and return
-    ``(None, [])`` on any per-document fetch/parse failure."""
+    ``(None, [])`` on any per-document fetch/parse failure.
+
+    Failing open keeps one bad child from failing a whole ingest, but it also makes
+    the result silently INCOMPLETE — indistinguishable, to the caller, from a
+    sitemap that genuinely lists fewer pages. ``on_document_failure`` exists so a
+    caller that cares about the difference can observe it; callers that do not pass
+    it get exactly the previous behaviour.
+    """
     try:
         text = fetch_text(url)
         return parse_sitemap_entries(text)
     except (SitemapFetchError, SitemapParseError) as exc:
         logger.warning("sitemap: skipping %s (%s)", url, exc)
+        if on_document_failure is not None:
+            on_document_failure(url, exc)
         return None, []
 
 
 def expand_sitemap_source(
-    sitemap_url: str, fetch_text: FetchText, policy: SitemapPolicy
+    sitemap_url: str,
+    fetch_text: FetchText,
+    policy: SitemapPolicy,
+    on_document_failure: Optional[Callable[[str, Exception], None]] = None,
 ) -> List[Tuple[str, Optional[str]]]:
     """Expand ONE ``sitemap-`` source into validated ``(page_url, lastmod|None)`` pairs.
 
@@ -452,7 +466,7 @@ def expand_sitemap_source(
         )
         kind, entries = None, []
     else:
-        kind, entries = _fetch_and_parse(sitemap_url, fetch_text)
+        kind, entries = _fetch_and_parse(sitemap_url, fetch_text, on_document_failure)
     if kind == "urlset":
         raw_pages.extend(entries)
     elif kind == "sitemapindex":
@@ -470,7 +484,9 @@ def expand_sitemap_source(
                     sitemap_url,
                 )
                 continue
-            child_kind, child_entries = _fetch_and_parse(child_url, fetch_text)
+            child_kind, child_entries = _fetch_and_parse(
+                child_url, fetch_text, on_document_failure
+            )
             if child_kind == "urlset":
                 raw_pages.extend(child_entries)
             elif child_kind == "sitemapindex":
@@ -534,7 +550,10 @@ def expand_sitemap_source(
 
 
 def expand_sitemaps(
-    sitemap_urls: List[str], fetch_text: FetchText, policy: SitemapPolicy
+    sitemap_urls: List[str],
+    fetch_text: FetchText,
+    policy: SitemapPolicy,
+    on_document_failure: Optional[Callable[[str, Exception], None]] = None,
 ) -> List[Tuple[str, Optional[str]]]:
     """Expand every ``sitemap-`` source and merge the results (order-preserving
     dedupe). Each source is expanded and validated independently; the first
@@ -545,7 +564,9 @@ def expand_sitemaps(
     merged: List[Tuple[str, Optional[str]]] = []
     seen = set()
     for sitemap_url in sitemap_urls:
-        for url, lastmod in expand_sitemap_source(sitemap_url, fetch_text, policy):
+        for url, lastmod in expand_sitemap_source(
+            sitemap_url, fetch_text, policy, on_document_failure
+        ):
             if url not in seen:
                 seen.add(url)
                 merged.append((url, lastmod))

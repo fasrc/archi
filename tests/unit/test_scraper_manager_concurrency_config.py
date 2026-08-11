@@ -124,7 +124,7 @@ class TestNonFiniteConfigValues:
         )
         captured = {}
 
-        def fake_expand(urls, fetch, policy):
+        def fake_expand(urls, fetch, policy, on_document_failure=None):
             captured["policy"] = policy
             return []
 
