@@ -501,9 +501,10 @@ class PostgresVectorStore(VectorStore):
                     LIMIT %s
                 """
 
-                # Params order: embedding, collection (+ any filters), query, semantic_weight, bm25_weight, k
                 all_params = (
-                    [embedding_str] + params + [query, semantic_weight, bm25_weight, k]
+                    [embedding_str, query]
+                    + params
+                    + [semantic_weight, bm25_weight, k]
                 )
                 cursor.execute(query_sql, all_params)
                 rows = cursor.fetchall()
