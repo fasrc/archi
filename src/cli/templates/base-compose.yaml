@@ -144,6 +144,30 @@ services:
     {%- if host_mode %}
     network_mode: host
     {%- endif %}
+
+  db-migrate:
+    build:
+      context: .
+      dockerfile: archi_code/cli/templates/dockerfiles/Dockerfile-postgres
+    container_name: {{ name }}-db-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
+      PGPORT: {{ postgres_port }}
+      PGDATABASE: archi-db
+      PGUSER: archi
+      PG_PASSWORD: ${PG_PASSWORD}
+    env_file:
+      - .env
+    volumes:
+      - ./migrations:/migrations:ro
+    command: ["bash", "-c", "for f in $(ls /migrations/*.sql 2>/dev/null | sort); do psql -v ON_ERROR_STOP=1 -f \"$$f\"; done"]
+    restart: "no"
+    {%- if host_mode %}
+    network_mode: host
+    {%- endif %}
   {%- endif %}
 
   # Application services (conditional)
