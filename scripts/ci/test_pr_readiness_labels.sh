@@ -767,5 +767,24 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
+# ---- 34: failing StatusContext (legacy commit status) blocks ready-to-merge --
+# A StatusContext whose state is not SUCCESS must count as a blocking check.
+# This proves the non-CheckRun union member of the rollup is handled: a PR
+# carrying only a FAILURE StatusContext must not receive ready-to-merge, and
+# an already-labelled PR must have the chip revoked.
+sb="$(new_sandbox)"
+_fail_sc="$(mk_checks "S:ci/jenkins/branch:FAILURE")"
+mk_page false "" \
+  "$(mk_node 450 false CLEAN "ready-to-merge" "" "" "" "" "$_fail_sc")" \
+  "$(mk_node 451 false CLEAN "" "" "" "" "" "$_fail_sc")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '450 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "failing StatusContext blocks ready-to-merge: held chip revoked, unlabelled PR not granted"
+else
+  notok "failing StatusContext blocks ready-to-merge: held chip revoked, unlabelled PR not granted"
+  cat "$sb/calls" 2>/dev/null
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
