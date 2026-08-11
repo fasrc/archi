@@ -202,6 +202,13 @@ a specific model so scores stay comparable run to run).
 **S**ystem **U**nder **T**est — the exact archi configuration being benchmarked in a given
 round.
 
+### arm
+One competing variant of the system in a benchmark comparison — the word is borrowed from
+clinical trials, where each treatment group is an "arm". Every arm answers the same question
+bank under otherwise identical conditions (same corpus, same judge), so any score difference
+can be pinned on the one thing that varies — for example, the current code as a *baseline*
+arm against a proposed fix as a *treatment* arm.
+
 ### anchor / anchor questions
 A small set of fixed benchmark questions, never edited and never tuned against, run every round
 to catch regressions. If an anchor's score moves, something changed.
