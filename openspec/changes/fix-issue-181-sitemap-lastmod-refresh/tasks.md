@@ -7,7 +7,7 @@
       returns a controllable catalog URL list. Assert the fixture alone reproduces today's
       behavior: after `collect_all_from_config`, `_sitemap_lastmod_map` holds the initial
       values.
-- [ ] 1.2 Write the failing test for the headline bug: after `collect_all_from_config`
+- [x] 1.2 Write the failing test for the headline bug: after `collect_all_from_config`
       builds the map, make `_expand_sitemaps` return *updated* `lastmod` values, call
       `schedule_collect_links`, and assert `_sitemap_lastmod_map` holds the new values.
       Red today (the scheduled path never re-expands).

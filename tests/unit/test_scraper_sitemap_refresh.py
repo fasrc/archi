@@ -159,3 +159,56 @@ class TestInitialMapPopulation:
         assert h["manager"]._sitemap_lastmod_map == {
             "https://x.example.edu/b": "2024-02-01",
         }
+
+
+# ---------------------------------------------------------------------------
+# Task 1.2 — headline bug: scheduled path must refresh the map
+# ---------------------------------------------------------------------------
+
+
+class TestScheduledMapRefresh:
+    """``schedule_collect_links`` must re-expand sitemaps and rebuild
+    ``_sitemap_lastmod_map`` so an advanced ``<lastmod>`` reaches the map
+    without a process restart (spec scenario: "A changed lastmod reaches the
+    map without a restart").
+
+    These tests are RED against the current implementation (the scheduled path
+    never calls ``_expand_sitemaps``).
+    """
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "RED (issue #181): scheduled path never calls _expand_sitemaps so the "
+            "map is not refreshed. Remove this marker once schedule_collect_links "
+            "re-expands sitemaps and rebuilds _sitemap_lastmod_map (task 3.1)."
+        ),
+    )
+    def test_scheduled_refresh_updates_lastmod_map(self, refresh_harness):
+        """After ``collect_all_from_config`` seeds the map, a subsequent
+        ``schedule_collect_links`` with updated sitemap values must produce a
+        map that holds the new lastmod values, not the original ones.
+        """
+        h = refresh_harness
+        h["manager"].collect_all_from_config(h["persistence"])
+
+        # Precondition: map was seeded from the initial expansion.
+        assert h["manager"]._sitemap_lastmod_map == {
+            "https://x.example.edu/a": "2024-01-01",
+            "https://x.example.edu/b": "2024-02-01",
+        }
+
+        # Simulate the sitemap advancing while the process is running.
+        h["set_expand_pairs"](
+            [
+                ("https://x.example.edu/a", "2025-06-01"),
+                ("https://x.example.edu/b", "2025-07-01"),
+            ]
+        )
+
+        h["manager"].schedule_collect_links(h["persistence"])
+
+        assert h["manager"]._sitemap_lastmod_map == {
+            "https://x.example.edu/a": "2025-06-01",
+            "https://x.example.edu/b": "2025-07-01",
+        }
