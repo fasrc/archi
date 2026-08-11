@@ -361,10 +361,6 @@ class TestScheduledDegradedPath:
     catch ``SitemapExpansionError`` in the scheduled path.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="degraded fallback not yet implemented (task 3.4)",
-    )
     def test_expansion_error_does_not_propagate_from_schedule(
         self, refresh_harness, monkeypatch
     ):
@@ -385,10 +381,6 @@ class TestScheduledDegradedPath:
         # Must not raise — the degraded path swallows the error.
         h["manager"].schedule_collect_links(h["persistence"])
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="degraded fallback not yet implemented (task 3.4)",
-    )
     def test_collect_links_runs_after_expansion_error(
         self, refresh_harness, monkeypatch
     ):
@@ -420,10 +412,6 @@ class TestScheduledDegradedPath:
             collect_links_called
         ), "collect_links was not called after expansion error"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="degraded fallback not yet implemented (task 3.4)",
-    )
     def test_previous_map_intact_after_expansion_error(
         self, refresh_harness, monkeypatch
     ):
@@ -451,6 +439,36 @@ class TestScheduledDegradedPath:
             f"expected {expected_map!r}, got {h['manager']._sitemap_lastmod_map!r}"
         )
 
+    def test_expansion_error_is_logged_as_warning(
+        self, refresh_harness, monkeypatch, caplog
+    ):
+        """A ``SitemapExpansionError`` during the scheduled refresh must emit a
+        ``WARNING`` log record whose message contains the exception text (design D6).
+        """
+        import logging
+
+        h = refresh_harness
+        h["manager"].collect_all_from_config(h["persistence"])
+
+        error_text = "transient DNS failure"
+        monkeypatch.setattr(
+            h["manager"],
+            "_expand_sitemaps",
+            lambda _: (_ for _ in ()).throw(
+                SitemapExpansionError(error_text, reason="below_floor")
+            ),
+        )
+
+        with caplog.at_level(logging.WARNING):
+            h["manager"].schedule_collect_links(h["persistence"])
+
+        warning_messages = [
+            r.message for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert any(
+            error_text in msg for msg in warning_messages
+        ), f"expected warning containing {error_text!r}; got {warning_messages!r}"
+
 
 # ---------------------------------------------------------------------------
 # Task 3.3 — map is never blanked: atomic replacement (design D3)
@@ -473,10 +491,6 @@ class TestMapAtomicReplacement:
     clear-then-populate antipattern.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="degraded fallback not yet implemented (task 3.4)",
-    )
     def test_map_is_not_cleared_before_expansion(self, refresh_harness, monkeypatch):
         """The old map must be intact at the moment ``_expand_sitemaps`` is called.
 

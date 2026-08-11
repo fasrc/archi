@@ -13,7 +13,10 @@ from src.data_manager.collectors.scrapers.scrape_pool import (
 )
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 from src.data_manager.collectors.scrapers.scraper import LinkScraper
-from src.data_manager.collectors.scrapers.sitemap_source import normalize_page_url
+from src.data_manager.collectors.scrapers.sitemap_source import (
+    SitemapExpansionError,
+    normalize_page_url,
+)
 from src.utils.config_access import get_global_config
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
@@ -303,7 +306,10 @@ class ScraperManager:
         )
         if sitemap_urls:
             existing_keys = {_dedup_key(u) for u in link_urls}
-            self._refresh_sitemap_lastmod_map(sitemap_urls, existing_keys)
+            try:
+                self._refresh_sitemap_lastmod_map(sitemap_urls, existing_keys)
+            except SitemapExpansionError as exc:
+                logger.warning(str(exc))
         self.collect_links(persistence, link_urls=catalog_urls)
 
     def schedule_collect_git(

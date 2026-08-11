@@ -52,7 +52,7 @@
       is neither empty nor partially rebuilt after the raising refresh, so pages are still
       stamped. Make it fail against a deliberate clear-then-populate implementation, so the
       test pins design D3 rather than restating 3.2.
-- [ ] 3.4 Wrap the helper call in `try/except SitemapExpansionError`, logging one `warning`
+- [x] 3.4 Wrap the helper call in `try/except SitemapExpansionError`, logging one `warning`
       with the exception text, and continue to `collect_links`. Assert the warning via
       `caplog` (design D6).
 
