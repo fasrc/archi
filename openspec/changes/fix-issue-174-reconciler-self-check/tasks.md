@@ -2,19 +2,19 @@
 
 - [x] 1.1 Extend `mk_node()` in `scripts/ci/test_pr_readiness_labels.sh` to accept a status-check rollup: a contexts JSON array plus an optional `totalCount` override for simulating truncation, defaulting to an empty rollup so all 22 existing cases keep passing unchanged.
 - [x] 1.2 Add a `mk_checks()` helper that builds rollup context nodes for both union members — `CheckRun` (`__typename`, `name`, `status`, `conclusion`) and `StatusContext` (`__typename`, `context`, `state`).
-- [ ] 1.3 Add the failing case: a non-draft, `MERGEABLE` PR with zero live threads whose only non-successful check is the `reconcile` job in progress. Assert it IS granted `ready-to-merge`.
-- [ ] 1.4 Run the suite and watch 1.3 fail against today's predicate (it sees `UNSTABLE`). Record the failure output before writing any implementation.
+- [x] 1.3 Add the failing case: a non-draft, `MERGEABLE` PR with zero live threads whose only non-successful check is the `reconcile` job in progress. Assert it IS granted `ready-to-merge`.
+- [x] 1.4 Run the suite and watch 1.3 fail against today's predicate (it sees `UNSTABLE`). Record the failure output before writing any implementation.
 
 ## 2. Green: replace the check-state clause
 
-- [ ] 2.1 Define the excluded job name once in `scripts/ci/pr_readiness_labels.sh`, near the other configuration constants, with a comment tying it to the `jobs.<id>` key in `.github/workflows/pr-readiness-labels.yml` (which this change must NOT modify).
-- [ ] 2.2 Add the status-check rollup to `QUERY`: `commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){ totalCount nodes{ __typename ... on CheckRun{name status conclusion} ... on StatusContext{context state} } }}}}}`.
-- [ ] 2.3 Extend `FILTER` with three TSV columns — blocking-check count, rollup `totalCount`, fetched-context count — passing the excluded job name in via `--arg`. Treat a null `statusCheckRollup` as `0`/`0`/`0`.
-- [ ] 2.4 Implement the blocking rule in the `jq` filter: skip `CheckRun`s whose name equals the excluded job; count a `CheckRun` as passing only when its conclusion is `SUCCESS`, `NEUTRAL` or `SKIPPED`; count a `StatusContext` as passing only when its state is `SUCCESS`; everything else, including a null conclusion, is blocking.
-- [ ] 2.5 Widen the `while IFS=$'\t' read -r ...` destructuring to bind the three new columns.
-- [ ] 2.6 Replace the `[ "$state" != "CLEAN" ]` readiness clause with a blocking-count test, and add a preceding fail-closed clause for rollup truncation (`totalCount` greater than fetched). Set a precise `why` string for each.
-- [ ] 2.7 Keep `mergeStateStatus` in the query and in the `UNKNOWN` retry/unverifiable handling — only the readiness clause stops consulting it. Leave the `mergeable == CONFLICTING` conflict derivation untouched.
-- [ ] 2.8 Run the suite; 1.3 now passes and all 22 pre-existing cases still pass.
+- [x] 2.1 Define the excluded job name once in `scripts/ci/pr_readiness_labels.sh`, near the other configuration constants, with a comment tying it to the `jobs.<id>` key in `.github/workflows/pr-readiness-labels.yml` (which this change must NOT modify).
+- [x] 2.2 Add the status-check rollup to `QUERY`: `commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){ totalCount nodes{ __typename ... on CheckRun{name status conclusion} ... on StatusContext{context state} } }}}}}`.
+- [x] 2.3 Extend `FILTER` with three TSV columns — blocking-check count, rollup `totalCount`, fetched-context count — passing the excluded job name in via `--arg`. Treat a null `statusCheckRollup` as `0`/`0`/`0`.
+- [x] 2.4 Implement the blocking rule in the `jq` filter: skip `CheckRun`s whose name equals the excluded job; count a `CheckRun` as passing only when its conclusion is `SUCCESS`, `NEUTRAL` or `SKIPPED`; count a `StatusContext` as passing only when its state is `SUCCESS`; everything else, including a null conclusion, is blocking.
+- [x] 2.5 Widen the `while IFS=$'\t' read -r ...` destructuring to bind the three new columns.
+- [x] 2.6 Replace the `[ "$state" != "CLEAN" ]` readiness clause with a blocking-count test, and add a preceding fail-closed clause for rollup truncation (`totalCount` greater than fetched). Set a precise `why` string for each.
+- [x] 2.7 Keep `mergeStateStatus` in the query and in the `UNKNOWN` retry/unverifiable handling — only the readiness clause stops consulting it. Leave the `mergeable == CONFLICTING` conflict derivation untouched.
+- [x] 2.8 Run the suite; 1.3 now passes and all 22 pre-existing cases still pass.
 
 ## 3. Cover the rest of the contract
 

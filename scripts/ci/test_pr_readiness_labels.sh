@@ -394,10 +394,14 @@ fi
 # ---- 12: UNSTABLE (mergeable, red check) earns neither chip -------------
 # A check going red on a PR that already holds the chip must revoke it; and
 # UNSTABLE must not attract `conflicts` either, since the PR is not conflicted.
+# Provides an actual failing CheckRun so the individual-check predicate can see
+# the blocking conclusion — required now that the predicate reads check contexts
+# rather than consulting mergeStateStatus directly.
 sb="$(new_sandbox)"
+_fail_check="$(mk_checks "C:some-check:COMPLETED:FAILURE")"
 mk_page false "" \
-  "$(mk_node 162 false UNSTABLE "ready-to-merge" "")" \
-  "$(mk_node 262 false UNSTABLE "" "")" > "$sb/resp_1.json"
+  "$(mk_node 162 false UNSTABLE "ready-to-merge" "" "" "" "" "$_fail_check")" \
+  "$(mk_node 262 false UNSTABLE "" "" "" "" "" "$_fail_check")" > "$sb/resp_1.json"
 run_reconciler "$sb" >/dev/null 2>&1
 if grep -q '162 .*--remove-label ready-to-merge' "$sb/calls" \
    && ! grep -q -- '--add-label' "$sb/calls"; then
@@ -565,6 +569,23 @@ if grep -q '220 .*--add-label ready-to-merge' "$sb/calls"; then
   ok "a label whose name merely contains the chip name does not count as holding it"
 else
   notok "a label whose name merely contains the chip name does not count as holding it"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 23: reconcile in-progress is excluded; PR with no other blocking check → ready ---
+# A non-draft MERGEABLE PR whose only non-successful check is the reconciler's own
+# job (name: "reconcile", IN_PROGRESS, null conclusion) should get ready-to-merge.
+# The old predicate sees UNSTABLE (not CLEAN) and withholds it — this case is the
+# red step that drove the new individual-check predicate.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 300 false UNSTABLE "" "" "" "" MERGEABLE \
+     "$(mk_checks "C:reconcile:IN_PROGRESS:null")")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "reconcile in-progress is excluded from blocking checks; PR with no other blocking check gets ready-to-merge"
+else
+  notok "reconcile in-progress is excluded from blocking checks; PR with no other blocking check gets ready-to-merge"
   cat "$sb/calls" 2>/dev/null
 fi
 
