@@ -623,5 +623,22 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
+# ---- 26: all non-reconcile checks SUCCESS/NEUTRAL/SKIPPED → granted --------
+# The three permitted passing conclusions must all be treated as passing by the
+# individual-check predicate. A mix of SUCCESS, NEUTRAL, and SKIPPED with no
+# other blocking check must grant ready-to-merge, proving each conclusion type
+# is individually accepted.
+sb="$(new_sandbox)"
+_pass_checks="$(mk_checks "C:unit-tests:COMPLETED:SUCCESS,C:lint:COMPLETED:NEUTRAL,C:format:COMPLETED:SKIPPED")"
+mk_page false "" \
+  "$(mk_node 360 false CLEAN "" "" "" "" MERGEABLE "$_pass_checks")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "all non-reconcile checks SUCCESS/NEUTRAL/SKIPPED are treated as passing; PR is granted ready-to-merge"
+else
+  notok "all non-reconcile checks SUCCESS/NEUTRAL/SKIPPED are treated as passing; PR is granted ready-to-merge"
+  cat "$sb/calls" 2>/dev/null
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
