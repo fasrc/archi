@@ -14,8 +14,8 @@ patched so every assertion is deterministic:
 import pytest
 
 from src.data_manager.collectors.scrapers import scraper_manager as sm_module
-from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
 from src.data_manager.collectors.scrapers import sitemap_source as sitemap_source_module
+from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
 from src.data_manager.collectors.scrapers.sitemap_source import (
     SitemapExpansionError,
     SitemapFetchError,
@@ -854,7 +854,9 @@ class TestNoDegradeWithoutAPriorMap:
         good_map = dict(manager._sitemap_lastmod_map)
 
         def _boom(_sitemap_urls):
-            raise SitemapExpansionError("sitemap temporarily unreachable", reason="below_floor")
+            raise SitemapExpansionError(
+                "sitemap temporarily unreachable", reason="below_floor"
+            )
 
         monkeypatch.setattr(manager, "_expand_sitemaps", _boom)
 
@@ -909,14 +911,17 @@ class TestExpansionCompletenessSignal:
         manager = make_manager({})
         pairs = manager._expand_sitemaps(["https://x.example.edu/sitemap.xml"])
 
-        assert ("https://x.example.edu/a", "2024-01-01") in pairs, (
-            "the surviving sibling's pages must still be returned"
-        )
-        assert manager._sitemap_expansion_incomplete is True, (
-            "a child that failed to fetch must mark the expansion incomplete"
-        )
+        assert (
+            "https://x.example.edu/a",
+            "2024-01-01",
+        ) in pairs, "the surviving sibling's pages must still be returned"
+        assert (
+            manager._sitemap_expansion_incomplete is True
+        ), "a child that failed to fetch must mark the expansion incomplete"
 
-    def test_all_children_succeed_leaves_the_flag_clear(self, make_manager, monkeypatch):
+    def test_all_children_succeed_leaves_the_flag_clear(
+        self, make_manager, monkeypatch
+    ):
         index_xml = (
             '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
             "<sitemap><loc>https://x.example.edu/good.xml</loc></sitemap>"
