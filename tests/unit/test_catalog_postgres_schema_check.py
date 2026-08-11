@@ -5,12 +5,17 @@ Spec: openspec/changes/fix-issue-180-migration-sidecar/specs/schema-migration-pr
 Requirement: The catalog verifies its required columns at startup
 """
 
+import inspect
+import re
 from contextlib import contextmanager
 from unittest.mock import MagicMock, call
 
 import pytest
 
-from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogService
+from src.data_manager.collectors.utils.catalog_postgres import (
+    _REQUIRED_DOCUMENT_COLUMNS,
+    PostgresCatalogService,
+)
 
 # All 18 columns the upsert_resource INSERT writes, excluding last_modified
 _ALL_REQUIRED_EXCEPT_LAST_MODIFIED = [
@@ -101,3 +106,22 @@ def test_schema_verification_query_issued_once_not_per_upsert():
         c for c in cursor.execute.call_args_list if "information_schema" in str(c)
     ]
     assert len(schema_checks) == 1
+
+
+def test_required_document_columns_matches_insert_statement():
+    """_REQUIRED_DOCUMENT_COLUMNS must exactly match the INSERT INTO documents column list.
+
+    If a column is added to or removed from the INSERT without updating the
+    constant (or vice versa), this test catches the drift before a deploy would.
+    """
+    source = inspect.getsource(PostgresCatalogService.upsert_resource)
+    match = re.search(r"INSERT INTO documents \((.*?)\)\s*VALUES", source, re.DOTALL)
+    assert match, "INSERT INTO documents (...) not found in upsert_resource source"
+    insert_cols = frozenset(
+        col.strip() for col in match.group(1).split(",") if col.strip()
+    )
+    assert insert_cols == _REQUIRED_DOCUMENT_COLUMNS, (
+        "constant drift detected:\n"
+        f"  in INSERT but not in constant: {sorted(insert_cols - _REQUIRED_DOCUMENT_COLUMNS)}\n"
+        f"  in constant but not in INSERT: {sorted(_REQUIRED_DOCUMENT_COLUMNS - insert_cols)}"
+    )

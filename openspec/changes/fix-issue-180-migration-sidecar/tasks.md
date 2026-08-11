@@ -22,7 +22,7 @@
 - [x] 4.1 Write a failing test in `tests/unit/` asserting that `PostgresCatalogService` initialization raises `RuntimeError` naming `last_modified` when the mocked `documents` table lacks that column (mock the connection the way `tests/unit/test_catalog_postgres_upsert_last_modified.py` does). Watch it fail.
 - [x] 4.2 Add `_REQUIRED_DOCUMENT_COLUMNS` as a module-level frozenset next to `_METADATA_COLUMN_MAP` / `_NON_TEXT_COLUMNS` in `src/data_manager/collectors/utils/catalog_postgres.py`, holding the 18 columns named in the `upsert_resource` INSERT (`:225–241`). Add a check in `refresh()` (`:147`) that queries `information_schema.columns` for `documents`, set-differences against the frozenset, and raises `RuntimeError` naming the sorted missing columns. Make 4.1 pass.
 - [x] 4.3 Add tests for the two remaining scenarios: a complete schema initializes without raising, and the verification query is issued once during initialization rather than once per `upsert_resource` call.
-- [ ] 4.4 Add a test asserting `_REQUIRED_DOCUMENT_COLUMNS` matches the column list in the INSERT statement, so the constant cannot drift from the query it guards.
+- [x] 4.4 Add a test asserting `_REQUIRED_DOCUMENT_COLUMNS` matches the column list in the INSERT statement, so the constant cannot drift from the query it guards.
 
 ## 5. Verify and ship
 
