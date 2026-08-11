@@ -175,3 +175,23 @@ def test_db_migrate_command_does_not_parse_ls_output(render_compose):
     joined = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
     assert "ls /migrations" not in joined, f"parses ls output: {joined}"
     assert "/migrations/*.sql" in joined
+
+
+def test_postgres_healthcheck_probes_tcp_not_the_unix_socket(render_compose):
+    """`healthy` must mean "accepting TCP", because that is what dependents use.
+
+    The upstream postgres entrypoint starts a socket-only server with
+    `listen_addresses=''` while it processes init files, so a `pg_isready` with no
+    `-h` can report ready over the Unix socket before TCP is listening. Every
+    dependent here connects over TCP via PGHOST, and db-migrate in particular does
+    so with no retry — on a fresh volume whose init.sql outlives the first 10s
+    health interval, it would be released early and exit with connection refused,
+    blocking everything gated on its successful completion.
+    """
+    svc = render_compose(postgres_enabled=True)["services"]["postgres"]
+    probe = " ".join(svc["healthcheck"]["test"])
+    assert "pg_isready" in probe
+    assert "-h" in probe, (
+        "pg_isready without -h probes the Unix socket, which is ready before TCP is; "
+        f"got: {probe}"
+    )

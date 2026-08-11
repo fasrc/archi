@@ -112,7 +112,14 @@ services:
     network_mode: host
     {% endif %}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U archi -d archi-db -p {{ postgres_port }}"]
+      # -h is load-bearing: without it pg_isready probes the UNIX SOCKET, and the
+      # upstream entrypoint runs a socket-only server (listen_addresses='') while it
+      # processes init files. On a fresh volume whose init.sql outlives the first
+      # interval, the socket answers before TCP is listening, so "healthy" fires
+      # early. Every dependent connects over TCP via PGHOST — db-migrate with no
+      # retry — so an early release means connection refused and, because dependents
+      # gate on its successful completion, a stack that never starts.
+      test: ["CMD-SHELL", "pg_isready -h localhost -U archi -d archi-db -p {{ postgres_port }}"]
       interval: 10s
       timeout: 5s
       retries: 5
