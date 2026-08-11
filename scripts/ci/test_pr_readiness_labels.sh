@@ -51,8 +51,14 @@ RECONCILER="$SCRIPT_DIR/pr_readiness_labels.sh"
 # Hermetic against the developer's own environment: every knob the reconciler
 # honours is cleared once, so an ambient PR_LABELS_REPO cannot point this suite
 # at a real repository and an ambient delay cannot make it sleep.
+#
+# This list MUST name every PR_LABELS_* variable the reconciler reads. Adding a
+# knob without adding it here leaves an ambient value in control of the suite:
+# `PR_LABELS_RECONCILER_JOB=not-reconcile` changes which check the exclusion case
+# expects to be skipped and turns a green run into 35 passed / 1 failed, which
+# reads as a real regression rather than a leaked environment.
 unset PR_LABELS_REPO PR_LABELS_RETRY_MAX PR_LABELS_RETRY_DELAY \
-  PR_LABELS_READY PR_LABELS_CONFLICT
+  PR_LABELS_READY PR_LABELS_CONFLICT PR_LABELS_RECONCILER_JOB
 
 PASS=0; FAIL=0
 ok()    { printf 'ok - %s\n' "$1"; PASS=$((PASS + 1)); }
