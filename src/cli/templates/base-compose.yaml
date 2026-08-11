@@ -37,6 +37,8 @@ services:
         condition: service_healthy
       config-seed:
         condition: service_completed_successfully
+      db-migrate:
+        condition: service_completed_successfully
     {% endif -%}
     environment:
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
@@ -127,6 +129,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
     environment:
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}

@@ -2,9 +2,9 @@
 
 - [x] 1.1 Write a failing test in `tests/unit/test_migration_sidecar_render.py` that renders `base-compose.yaml` with Postgres enabled (follow the rendering precedent in `tests/unit/test_dev_mode_compose_render.py`), parses the YAML, and asserts a `db-migrate` service exists with `restart: "no"` and `depends_on.postgres.condition == "service_healthy"`. Watch it fail.
 - [x] 1.2 Add the `db-migrate` service to `src/cli/templates/base-compose.yaml` inside the existing `{% if postgres_enabled %}` block, mirroring the `config-seed` block at `:119–146`: build from `archi_code/cli/templates/dockerfiles/Dockerfile-postgres`, `container_name: {{ name }}-db-migrate`, the same `PGHOST`/`PGPORT`/`PGDATABASE`/`PGUSER`/`PG_PASSWORD` environment as `config-seed`, `env_file: .env`, `volumes: - ./migrations:/migrations:ro`, `restart: "no"`, and the `{%- if host_mode %}network_mode: host{%- endif %}` guard. Command: loop over `/migrations/*.sql` in lexicographic order running `psql -v ON_ERROR_STOP=1 -f` on each. Make 1.1 pass.
-- [ ] 1.3 Extend the test to assert ordering: `config-seed` and the data-manager service each list `db-migrate` under `depends_on` with `condition: service_completed_successfully`. Watch it fail.
-- [ ] 1.4 Add those two `depends_on` edges (`config-seed` at `:127–129`, data-manager at `:35–39`). Make 1.3 pass.
-- [ ] 1.5 Add a test asserting that rendering with Postgres **disabled** produces no `db-migrate` service, and make it pass (it should already, via the existing `{% if postgres_enabled %}` guard — confirm the placement is inside it).
+- [x] 1.3 Extend the test to assert ordering: `config-seed` and the data-manager service each list `db-migrate` under `depends_on` with `condition: service_completed_successfully`. Watch it fail.
+- [x] 1.4 Add those two `depends_on` edges (`config-seed` at `:127–129`, data-manager at `:35–39`). Make 1.3 pass.
+- [x] 1.5 Add a test asserting that rendering with Postgres **disabled** produces no `db-migrate` service, and make it pass (it should already, via the existing `{% if postgres_enabled %}` guard — confirm the placement is inside it).
 
 ## 2. Ship the migration files with the deployment
 

@@ -111,3 +111,21 @@ def test_db_migrate_absent_when_postgres_disabled(render_compose):
     assert (
         "db-migrate" not in compose["services"]
     ), "db-migrate should not appear when postgres disabled"
+
+
+def test_config_seed_depends_on_db_migrate(render_compose):
+    svc = render_compose(postgres_enabled=True)["services"]["config-seed"]
+    depends_on = svc.get("depends_on", {})
+    assert "db-migrate" in depends_on, "config-seed missing depends_on.db-migrate"
+    assert (
+        depends_on["db-migrate"]["condition"] == "service_completed_successfully"
+    ), "config-seed.depends_on.db-migrate.condition must be service_completed_successfully"
+
+
+def test_data_manager_depends_on_db_migrate(render_compose):
+    svc = render_compose(postgres_enabled=True)["services"]["data-manager"]
+    depends_on = svc.get("depends_on", {})
+    assert "db-migrate" in depends_on, "data-manager missing depends_on.db-migrate"
+    assert (
+        depends_on["db-migrate"]["condition"] == "service_completed_successfully"
+    ), "data-manager.depends_on.db-migrate.condition must be service_completed_successfully"
