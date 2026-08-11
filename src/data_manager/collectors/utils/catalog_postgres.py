@@ -87,9 +87,16 @@ _NON_TEXT_COLUMNS = frozenset(
     }
 )
 
-# All columns written by upsert_resource's INSERT statement. refresh() checks
-# that every one exists at startup so a missing column fails fast rather than
-# silently swallowing every upsert at ingest time.
+# Every column upsert_resource writes, on EITHER path: the INSERT column list plus the
+# columns assigned in its ON CONFLICT ... DO UPDATE SET branch. The check runs once at
+# startup so a missing column fails fast rather than silently swallowing every upsert at
+# ingest time.
+#
+# The UPDATE branch matters as much as the INSERT: re-ingesting an existing resource takes
+# that path, and it writes `deleted_at = NULL`, which the INSERT never names. Checking the
+# INSERT list alone would let a table predating that column pass startup and then raise
+# UndefinedColumn on the first re-ingest — the same silent per-resource failure this
+# precondition exists to prevent.
 _REQUIRED_DOCUMENT_COLUMNS = frozenset(
     {
         "resource_hash",
@@ -110,8 +117,22 @@ _REQUIRED_DOCUMENT_COLUMNS = frozenset(
         "extra_json",
         "extra_text",
         "is_deleted",
+        "deleted_at",
     }
 )
+
+# Resolve the columns of the relation the INSERT will actually hit. `to_regclass` walks
+# the same search_path the INSERT does, so this cannot be fooled by a same-named table in
+# another visible schema — an unqualified `information_schema.columns WHERE table_name =
+# 'documents'` unions every such table's columns, and a complete `archive.documents` would
+# mask a missing column in the real target.
+_SCHEMA_CHECK_SQL = """
+    SELECT attname
+    FROM pg_attribute
+    WHERE attrelid = to_regclass('documents')
+      AND attnum > 0
+      AND NOT attisdropped
+"""
 
 
 @dataclass
@@ -133,6 +154,11 @@ class PostgresCatalogService:
     _id_cache: Dict[str, int] = field(
         init=False, default_factory=dict
     )  # resource_hash -> document id
+
+    # Latches True after the startup column check passes, so the scan runs once per
+    # process rather than on every refresh(). init=False: internal state, not
+    # construction input.
+    _schema_verified: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
         self.data_path = Path(self.data_path)
@@ -178,20 +204,21 @@ class PostgresCatalogService:
         self._id_cache = {}
 
         with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT column_name
-                    FROM information_schema.columns
-                    WHERE table_name = 'documents'
-                """
-                )
-                existing = {row[0] for row in cur.fetchall()}
-            missing = _REQUIRED_DOCUMENT_COLUMNS - existing
-            if missing:
-                raise RuntimeError(
-                    f"documents table is missing required columns: {sorted(missing)}"
-                )
+            # Once per process, not once per refresh. refresh() is called well past
+            # startup — after index flushes and deletions, and twice consecutively on
+            # the ingestion path — so an unguarded check would repeat this catalog scan
+            # for the whole life of a long-running data-manager. The schema cannot
+            # change under us without a restart, so the first verdict stands.
+            if not self._schema_verified:
+                with conn.cursor() as cur:
+                    cur.execute(_SCHEMA_CHECK_SQL)
+                    existing = {row[0] for row in cur.fetchall()}
+                missing = _REQUIRED_DOCUMENT_COLUMNS - existing
+                if missing:
+                    raise RuntimeError(
+                        f"documents table is missing required columns: {sorted(missing)}"
+                    )
+                self._schema_verified = True
 
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(

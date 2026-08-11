@@ -163,11 +163,24 @@ services:
       PGDATABASE: archi-db
       PGUSER: archi
       PG_PASSWORD: ${PG_PASSWORD}
+      # psql authenticates through libpq, which recognises PGPASSWORD and ignores
+      # PG_PASSWORD. Every other service here is a Python process that reads
+      # PG_PASSWORD itself and hands it to psycopg, so this is the one service that
+      # needs both spellings. This sidecar connects over TCP and has no .pgpass, so
+      # without PGPASSWORD it cannot authenticate at all — and because dependents
+      # gate on service_completed_successfully, that blocks the entire stack.
+      PGPASSWORD: ${PG_PASSWORD}
     env_file:
       - .env
     volumes:
       - ./migrations:/migrations:ro
-    command: ["bash", "-c", "for f in $(ls /migrations/*.sql 2>/dev/null | sort); do psql -v ON_ERROR_STOP=1 -f \"$$f\"; done"]
+    # `set -e` is load-bearing: ON_ERROR_STOP ends only the psql that hit the error,
+    # so without it the loop runs on and `bash -c` exits with the LAST migration's
+    # status — Compose would mark a half-migrated schema successful and start the
+    # dependents against it. nullglob plus a direct glob avoids parsing `ls` output
+    # and the `$(` ambiguity with Compose's own interpolation; `$$f` is the escape
+    # that passes a literal `$f` through to the shell.
+    command: ["bash", "-c", "set -euo pipefail; shopt -s nullglob; for f in /migrations/*.sql; do echo \"db-migrate: applying $$f\"; psql -v ON_ERROR_STOP=1 -f \"$$f\"; done"]
     restart: "no"
     {%- if host_mode %}
     network_mode: host

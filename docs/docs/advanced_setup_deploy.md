@@ -108,6 +108,33 @@ To see what volumes are currently present, run:
 docker/podman volume ls
 ```
 
+### Schema migrations run automatically at startup
+
+When Postgres is enabled, every deployment renders a one-shot `db-migrate` container that
+applies each `migrations/*.sql` file, in filename order, against the database before any
+application service starts. It exists so an existing deployment picks up schema changes on
+redeploy instead of failing at ingest time against an out-of-date `documents` table.
+
+What this means in practice:
+
+- **`db-migrate` is on the critical path.** `config-seed` and the data manager both wait on
+  it with `condition: service_completed_successfully`, so if it fails, neither starts. That
+  is deliberate — a half-migrated schema that silently swallows writes is worse than a stack
+  that refuses to come up.
+- **It stops at the first error.** The container runs under `set -e` with psql's
+  `ON_ERROR_STOP=1`, so one bad statement ends the run and exits non-zero rather than
+  continuing through the remaining files.
+- **It is safe to re-run.** Migrations are written to be no-ops against a schema `init.sql`
+  already created, so a fresh deployment applies them and changes nothing.
+- **It does not restart.** `restart: "no"` — a migration that failed should stay failed and
+  visible, not loop.
+
+The migration files are copied into your deployment directory next to `init.sql`, and
+mounted read-only at `/migrations`.
+
+If the stack does not come up after a redeploy, check this container first — see
+[Stack will not start: `db-migrate` failed](troubleshooting.md#stack-will-not-start-db-migrate-failed).
+
 ### HTTPS Configuration for Production
 
 For production deployments, especially when using BYOK (Bring Your Own Key), HTTPS is strongly recommended to protect API keys in transit.

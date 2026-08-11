@@ -129,3 +129,49 @@ def test_data_manager_depends_on_db_migrate(render_compose):
     assert (
         depends_on["db-migrate"]["condition"] == "service_completed_successfully"
     ), "data-manager.depends_on.db-migrate.condition must be service_completed_successfully"
+
+
+def test_db_migrate_exposes_pgpassword_for_libpq(render_compose):
+    """psql reads PGPASSWORD, not PG_PASSWORD.
+
+    The other services here are Python processes that read PG_PASSWORD themselves and
+    hand it to psycopg. db-migrate is the only service whose command is psql, which
+    authenticates through libpq and recognises PGPASSWORD alone. Without it the sidecar
+    cannot authenticate over TCP (there is no .pgpass in the image), exits non-zero, and
+    every service gated on service_completed_successfully stays blocked — the whole stack.
+    """
+    env = render_compose(postgres_enabled=True)["services"]["db-migrate"]["environment"]
+    assert "PGPASSWORD" in env, (
+        "db-migrate must expose PGPASSWORD for libpq; " f"got only {sorted(env)}"
+    )
+    assert env["PGPASSWORD"] == "${PG_PASSWORD}"
+
+
+def test_db_migrate_command_aborts_on_first_failed_migration(render_compose):
+    """ON_ERROR_STOP only ends the failing psql, not the loop around it.
+
+    Without fail-fast in the shell, a failure in any migration but the last is swallowed:
+    the loop continues and `bash -c` returns the status of the final iteration, so Compose
+    marks db-migrate successful and starts dependents against a half-migrated schema.
+    """
+    cmd = render_compose(postgres_enabled=True)["services"]["db-migrate"]["command"]
+    joined = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+    assert (
+        "ON_ERROR_STOP=1" in joined
+    ), "psql must still stop at the first bad statement"
+    assert "-e" in cmd or "set -e" in joined, (
+        "the shell running the migration loop must abort on the first failure; "
+        f"got: {joined}"
+    )
+
+
+def test_db_migrate_command_does_not_parse_ls_output(render_compose):
+    """Iterate the glob directly rather than command-substituting `ls`.
+
+    A bare `$(...)` in a Compose command string is also ambiguous with Compose's own
+    variable interpolation, which is why the escaped `$$f` sits next to it.
+    """
+    cmd = render_compose(postgres_enabled=True)["services"]["db-migrate"]["command"]
+    joined = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+    assert "ls /migrations" not in joined, f"parses ls output: {joined}"
+    assert "/migrations/*.sql" in joined
