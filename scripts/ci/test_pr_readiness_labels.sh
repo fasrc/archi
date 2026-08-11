@@ -729,5 +729,43 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
+# ---- 32: draft with all-green checks → still not ready ----------------------
+# A draft PR with every check concluding SUCCESS must not receive ready-to-merge.
+# The draft gate is independent of the check-state clause: no combination of green
+# checks can override it.  An existing held chip must be revoked, and an unlabelled
+# draft must not receive one.
+sb="$(new_sandbox)"
+_green_32="$(mk_checks "C:unit-tests:COMPLETED:SUCCESS,C:lint:COMPLETED:SUCCESS")"
+mk_page false "" \
+  "$(mk_node 430 true CLEAN "ready-to-merge" "" "" "" "" "$_green_32")" \
+  "$(mk_node 431 true CLEAN "" "" "" "" "" "$_green_32")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '430 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "draft with all-green checks: held ready-to-merge revoked and not granted to unlabelled draft"
+else
+  notok "draft with all-green checks: held ready-to-merge revoked and not granted to unlabelled draft"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 33: one unresolved thread + all-green checks → still not ready ---------
+# An open review thread (isResolved=false) must block ready-to-merge even when
+# every check concludes SUCCESS.  The thread-count gate is independent of the
+# check-state clause.  An existing chip must be revoked; an unlabelled PR must not
+# receive one.
+sb="$(new_sandbox)"
+_green_33="$(mk_checks "C:unit-tests:COMPLETED:SUCCESS")"
+mk_page false "" \
+  "$(mk_node 440 false CLEAN "ready-to-merge" "false:false" "" "" "" "$_green_33")" \
+  "$(mk_node 441 false CLEAN "" "false:false" "" "" "" "$_green_33")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '440 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "unresolved review thread + all-green checks: held ready-to-merge revoked and not granted to unlabelled PR"
+else
+  notok "unresolved review thread + all-green checks: held ready-to-merge revoked and not granted to unlabelled PR"
+  cat "$sb/calls" 2>/dev/null
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
