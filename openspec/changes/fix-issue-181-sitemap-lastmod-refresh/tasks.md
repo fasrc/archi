@@ -34,13 +34,13 @@
       `link_urls.extend(...)` its return value. Confirm the existing suites that pin this
       path stay green **unmodified**: `test_scraper_sitemap_dedup_unaffected.py`,
       `test_scraper_no_duplication.py`, `test_scraper_determinism.py`.
-- [ ] 2.5 Add the test asserting initial ingest still fails fast: `_expand_sitemaps` raising
+- [x] 2.5 Add the test asserting initial ingest still fails fast: `_expand_sitemaps` raising
       `SitemapExpansionError` inside `collect_all_from_config` propagates to the caller and
       no collection proceeds. Keep the intent comment at `:184–187` accurate.
 
 ## 3. Wire the scheduled path with the degraded fallback
 
-- [ ] 3.1 In `schedule_collect_links`, re-derive the sitemap sources and hand-list keys from
+- [x] 3.1 In `schedule_collect_links`, re-derive the sitemap sources and hand-list keys from
       `self._collect_urls_from_lists_by_type(self.input_lists)`, then call the helper before
       `collect_links` and **discard** its return value — the crawl set stays the catalog
       query's result (design D2, D4).

@@ -177,14 +177,6 @@ class TestScheduledMapRefresh:
     never calls ``_expand_sitemaps``).
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "RED (issue #181): scheduled path never calls _expand_sitemaps so the "
-            "map is not refreshed. Remove this marker once schedule_collect_links "
-            "re-expands sitemaps and rebuilds _sitemap_lastmod_map (task 3.1)."
-        ),
-    )
     def test_scheduled_refresh_updates_lastmod_map(self, refresh_harness):
         """After ``collect_all_from_config`` seeds the map, a subsequent
         ``schedule_collect_links`` with updated sitemap values must produce a
@@ -230,15 +222,6 @@ class TestRefreshPrecedesCollectLinks:
     never calls ``_expand_sitemaps`` at all, so the map is never updated).
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "RED (issue #181): scheduled path never calls _expand_sitemaps so the "
-            "map is stale when collect_links is called. Remove this marker once "
-            "schedule_collect_links refreshes the map before calling collect_links "
-            "(task 3.1)."
-        ),
-    )
     def test_map_is_refreshed_before_collect_links_is_called(self, refresh_harness):
         """The map seen by ``collect_links`` must contain the *updated* lastmod
         values, not the values seeded by ``collect_all_from_config``.

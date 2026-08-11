@@ -298,6 +298,12 @@ class ScraperManager:
         logger.info(
             "Scheduled links collection found %d URL(s) in catalog", len(catalog_urls)
         )
+        link_urls, _, _, _, _, sitemap_urls = self._collect_urls_from_lists_by_type(
+            self.input_lists
+        )
+        if sitemap_urls:
+            existing_keys = {_dedup_key(u) for u in link_urls}
+            self._refresh_sitemap_lastmod_map(sitemap_urls, existing_keys)
         self.collect_links(persistence, link_urls=catalog_urls)
 
     def schedule_collect_git(
