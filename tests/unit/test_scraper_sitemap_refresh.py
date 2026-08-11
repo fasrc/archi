@@ -15,6 +15,7 @@ import pytest
 
 from src.data_manager.collectors.scrapers import scraper_manager as sm_module
 from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
+from src.data_manager.collectors.scrapers.sitemap_source import SitemapExpansionError
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -280,3 +281,83 @@ class TestRefreshPrecedesCollectLinks:
             "collect_links was invoked with the stale map; "
             f"got {map_at_collect_links_call!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Task 2.5 — initial ingest fails fast on SitemapExpansionError
+# ---------------------------------------------------------------------------
+
+
+class TestInitialIngestFailsFast:
+    """``collect_all_from_config`` must propagate ``SitemapExpansionError`` from
+    ``_expand_sitemaps`` immediately, without calling any collector.
+
+    This pins design D1: the initial-ingest path never catches the error so a
+    below-floor / over-cap expansion aborts the ingest rather than proceeding
+    with a bad (or empty) corpus.
+    """
+
+    def test_expansion_error_propagates_from_collect_all(
+        self, make_manager, monkeypatch
+    ):
+        """``SitemapExpansionError`` raised by ``_expand_sitemaps`` during
+        ``collect_all_from_config`` propagates to the caller unchanged.
+        """
+        manager = make_manager({})
+        sitemap_marker = ["sitemap-https://x.example.edu/sitemap.xml"]
+
+        monkeypatch.setattr(
+            manager,
+            "_collect_urls_from_lists_by_type",
+            lambda _lists: ([], [], [], [], [], list(sitemap_marker)),
+        )
+
+        def _raise_below_floor(_urls):
+            raise SitemapExpansionError("below floor", reason="below_floor")
+
+        monkeypatch.setattr(manager, "_expand_sitemaps", _raise_below_floor)
+
+        class FakePersistence:
+            pass
+
+        with pytest.raises(SitemapExpansionError, match="below floor"):
+            manager.collect_all_from_config(FakePersistence())
+
+    def test_no_collection_proceeds_after_expansion_error(
+        self, make_manager, monkeypatch
+    ):
+        """When ``_expand_sitemaps`` raises, none of the collector methods are
+        called — the ingest stops before any data is written.
+        """
+        manager = make_manager({})
+        sitemap_marker = ["sitemap-https://x.example.edu/sitemap.xml"]
+        calls = []
+
+        monkeypatch.setattr(
+            manager,
+            "_collect_urls_from_lists_by_type",
+            lambda _lists: ([], [], [], [], [], list(sitemap_marker)),
+        )
+
+        def _raise_over_cap(_urls):
+            raise SitemapExpansionError("over cap", reason="over_cap")
+
+        monkeypatch.setattr(manager, "_expand_sitemaps", _raise_over_cap)
+        for name in (
+            "collect_links",
+            "collect_sso",
+            "collect_git",
+            "collect_elog",
+            "collect_indico",
+        ):
+            monkeypatch.setattr(
+                manager, name, lambda *a, _n=name, **k: calls.append(_n)
+            )
+
+        class FakePersistence:
+            pass
+
+        with pytest.raises(SitemapExpansionError):
+            manager.collect_all_from_config(FakePersistence())
+
+        assert calls == [], f"collectors were called after expansion error: {calls}"
