@@ -640,5 +640,37 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
+# ---- 27: null rollup (no checks on record) does not withhold ready-to-merge --
+# A PR with no statusCheckRollup at all (never had a check run) is treated as
+# having 0 blocking checks — it should not be withheld on the check-state clause.
+# Uses mergeStateStatus=UNSTABLE to show that the predicate consults individual
+# check counts, not the mergeStateStatus field.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 370 false UNSTABLE "" "" "" "" MERGEABLE)" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "null statusCheckRollup (no checks on record) does not withhold ready-to-merge"
+else
+  notok "null statusCheckRollup (no checks on record) does not withhold ready-to-merge"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 28: empty (non-null, zero-context) rollup does not withhold -----------
+# A statusCheckRollup that exists but has no contexts (totalCount=0, nodes=[])
+# must also not trigger the fail-closed truncation rule or count any blocking
+# checks — it is indistinguishable from "all checks passed" and must grant.
+sb="$(new_sandbox)"
+_empty_checks="$(mk_checks "")"
+mk_page false "" \
+  "$(mk_node 380 false CLEAN "" "" "" "" "" "$_empty_checks")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "empty statusCheckRollup (non-null, zero contexts) does not withhold ready-to-merge"
+else
+  notok "empty statusCheckRollup (non-null, zero contexts) does not withhold ready-to-merge"
+  cat "$sb/calls" 2>/dev/null
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
