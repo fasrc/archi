@@ -13,6 +13,7 @@ from src.data_manager.collectors.scrapers.scrape_pool import (
 )
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 from src.data_manager.collectors.scrapers.scraper import LinkScraper
+from src.data_manager.collectors.scrapers.sitemap_source import normalize_page_url
 from src.utils.config_access import get_global_config
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
@@ -48,6 +49,14 @@ def _parse_worker_knob(value: Any, name: str, default: int) -> int:
             )
             resolved = default
     return max(1, resolved)
+
+
+def _dedup_key(u: str) -> str:
+    """Normalize a URL for deduplication; fall back to the raw string on ValueError."""
+    try:
+        return normalize_page_url(u)
+    except ValueError:
+        return u
 
 
 if TYPE_CHECKING:
@@ -187,16 +196,6 @@ class ScraperManager:
         # propagates out and fails the ingest rather than shipping a bad corpus.
         self._sitemap_lastmod_map: Dict[str, str] = {}
         if sitemap_urls:
-            from src.data_manager.collectors.scrapers.sitemap_source import (
-                normalize_page_url,
-            )
-
-            def _dedup_key(u: str) -> str:
-                try:
-                    return normalize_page_url(u)
-                except ValueError:
-                    return u
-
             # Dedup expanded pages against the NORMALIZED hand-list keys, not the
             # raw strings, so a hand-listed `/x/` and a sitemap-derived `/x` are the
             # same page. LinkScraper does not dedup across seeds, so without this a
@@ -685,10 +684,6 @@ class ScraperManager:
         # Parallel seed crawls pass their own per-worker scraper; the sequential
         # and selenium/SSO callers fall back to the shared ``self.web_scraper``.
         scraper = scraper if scraper is not None else self.web_scraper
-
-        from src.data_manager.collectors.scrapers.sitemap_source import (
-            normalize_page_url,
-        )
 
         lastmod_map: Dict[str, str] = getattr(self, "_sitemap_lastmod_map", {})
         count = 0

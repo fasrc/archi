@@ -18,7 +18,7 @@
 
 ## 2. Extract the refresh helper without changing initial ingest
 
-- [ ] 2.1 Lift the `_dedup_key` closure (`scraper_manager.py:194–198`) to a shared
+- [x] 2.1 Lift the `_dedup_key` closure (`scraper_manager.py:194–198`) to a shared
       module-level function (or `@staticmethod`) keeping the normalize-or-fall-back-to-raw
       behavior, so both call sites share one definition (design D4).
 - [ ] 2.2 Extract `_refresh_sitemap_lastmod_map(self, sitemap_urls, existing_keys) ->
