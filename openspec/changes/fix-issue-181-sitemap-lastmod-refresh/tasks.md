@@ -48,7 +48,7 @@
       `SitemapExpansionError` during `schedule_collect_links`; assert the call does **not**
       raise, `collect_links` still runs over the catalog URLs, and the previous map is intact
       entry-for-entry.
-- [ ] 3.3 Write the failing test that a failed refresh never blanks the map — assert the map
+- [x] 3.3 Write the failing test that a failed refresh never blanks the map — assert the map
       is neither empty nor partially rebuilt after the raising refresh, so pages are still
       stamped. Make it fail against a deliberate clear-then-populate implementation, so the
       test pins design D3 rather than restating 3.2.

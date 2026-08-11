@@ -450,3 +450,64 @@ class TestScheduledDegradedPath:
             f"map was modified by a failed refresh; "
             f"expected {expected_map!r}, got {h['manager']._sitemap_lastmod_map!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Task 3.3 — map is never blanked: atomic replacement (design D3)
+# ---------------------------------------------------------------------------
+
+
+class TestMapAtomicReplacement:
+    """Design D3: ``_sitemap_lastmod_map`` is replaced atomically, never cleared
+    in place before expansion is attempted.
+
+    A clear-then-populate implementation would blank the map *before* calling
+    ``_expand_sitemaps``; if expansion then raises, the map is left empty and
+    every page is silently un-stamped.  This test pins the absence of that
+    pattern by reading the map from *inside* the expansion spy — distinct from
+    the 3.2 tests, which only verify the final map state after the call returns.
+
+    The test is RED against the current implementation because
+    ``schedule_collect_links`` does not yet catch ``SitemapExpansionError``
+    (task 3.4).  Once that fallback is wired, the spy assertion drives away the
+    clear-then-populate antipattern.
+    """
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="degraded fallback not yet implemented (task 3.4)",
+    )
+    def test_map_is_not_cleared_before_expansion(self, refresh_harness, monkeypatch):
+        """The old map must be intact at the moment ``_expand_sitemaps`` is called.
+
+        A clear-then-populate implementation clears ``_sitemap_lastmod_map``
+        *before* calling ``_expand_sitemaps``; the spy would then see an empty
+        map.  With the local-dict approach (design D3), the assignment only
+        happens after expansion succeeds, so the spy sees the full previous map.
+        """
+        h = refresh_harness
+        manager = h["manager"]
+
+        h["manager"].collect_all_from_config(h["persistence"])
+
+        expected_map = dict(manager._sitemap_lastmod_map)
+        assert expected_map, "precondition: map must be non-empty after initial ingest"
+
+        map_state_during_expansion = {}
+
+        def _raising_spy(_sitemap_urls):
+            # Read the live attribute — empty here means the map was cleared
+            # before expansion, which is the antipattern design D3 forbids.
+            map_state_during_expansion.update(manager._sitemap_lastmod_map)
+            raise SitemapExpansionError("transient failure", reason="below_floor")
+
+        monkeypatch.setattr(manager, "_expand_sitemaps", _raising_spy)
+
+        # Must not raise — the degraded path (task 3.4) swallows the error.
+        manager.schedule_collect_links(h["persistence"])
+
+        assert map_state_during_expansion == expected_map, (
+            "the map was cleared before _expand_sitemaps was called; "
+            f"expected {expected_map!r} inside the spy, "
+            f"got {map_state_during_expansion!r}"
+        )
