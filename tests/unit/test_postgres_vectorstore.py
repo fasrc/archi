@@ -580,6 +580,66 @@ class TestHybridSearchFallbackWarning:
         assert "reason=" in formatted
 
 
+class TestHybridSearchScoringOrientation:
+    """BM25 scores from <@> are negative; the SQL must negate and normalize."""
+
+    def _capture_sql(self, vector_store, mock_pg_connection):
+        conn, cursor = mock_pg_connection
+        cursor.fetchone.return_value = {"relname": "idx_bm25"}
+        cursor.fetchall.return_value = [
+            {
+                "id": 1,
+                "chunk_text": "x",
+                "metadata": "{}",
+                "semantic_score": 0.8,
+                "bm25_score": -0.5,
+                "combined_score": 0.6,
+                "resource_hash": None,
+                "display_name": None,
+                "source_type": None,
+                "url": None,
+            }
+        ]
+        with patch.object(vector_store, "_get_connection", return_value=conn):
+            vector_store.hybrid_search("q", k=3)
+        for call in cursor.execute.call_args_list:
+            args = call[0]
+            if "combined_score" in args[0].lower():
+                return args[0]
+        pytest.fail("scoring SQL not found")
+
+    def test_bm25_term_is_negated(self, vector_store, mock_pg_connection):
+        sql = self._capture_sql(vector_store, mock_pg_connection)
+        assert "-1.0 *" in sql or "-1 *" in sql, (
+            f"BM25 <@> term not negated in SQL:\n{sql}"
+        )
+
+    def test_both_components_normalized(self, vector_store, mock_pg_connection):
+        sql = self._capture_sql(vector_store, mock_pg_connection).lower()
+        assert "min(" in sql and "max(" in sql, (
+            "min-max normalization window functions missing"
+        )
+
+    def test_combined_score_uses_normalized_components(
+        self, vector_store, mock_pg_connection
+    ):
+        sql = self._capture_sql(vector_store, mock_pg_connection).lower()
+        assert "nullif" in sql, (
+            "zero-range NULLIF guard missing from normalization"
+        )
+
+    def test_normalization_before_limit(
+        self, vector_store, mock_pg_connection
+    ):
+        sql = self._capture_sql(vector_store, mock_pg_connection).lower()
+        limit_pos = sql.rfind("limit")
+        min_pos = sql.find("min(")
+        assert min_pos >= 0, "min() window function not found in SQL"
+        assert min_pos < limit_pos, (
+            "normalization must happen before the LIMIT"
+        )
+
+
 class TestHybridSearchParameterBinding:
     """The SQL parameter order must match the placeholder order.
 
@@ -616,14 +676,10 @@ class TestHybridSearchParameterBinding:
                 return sql, args[1]
         pytest.fail("hybrid scoring query not found in execute calls")
 
-    def test_query_reaches_bm25_placeholder(
-        self, vector_store, mock_pg_connection
-    ):
+    def test_query_reaches_bm25_placeholder(self, vector_store, mock_pg_connection):
         """The user's query text must bind to to_bm25query(), not the
         collection predicate."""
-        sql, params = self._capture_hybrid_sql(
-            vector_store, mock_pg_connection
-        )
+        sql, params = self._capture_hybrid_sql(vector_store, mock_pg_connection)
         bm25_idx = sql.index("to_bm25query(%s")
         collection_idx = sql.index("collection' = %s")
         bm25_param_pos = sql[:bm25_idx].count("%s")
@@ -631,30 +687,22 @@ class TestHybridSearchParameterBinding:
         assert params[bm25_param_pos] == "user question text"
         assert params[collection_param_pos] == "test_collection"
 
-    def test_binding_with_metadata_filter(
-        self, vector_store, mock_pg_connection
-    ):
+    def test_binding_with_metadata_filter(self, vector_store, mock_pg_connection):
         """Added WHERE placeholders from a metadata filter must not shift
         the BM25 query into the wrong slot."""
         sql, params = self._capture_hybrid_sql(
             vector_store, mock_pg_connection, filter={"topic": "gpu"}
         )
         bm25_param_pos = sql[: sql.index("to_bm25query(%s")].count("%s")
-        collection_param_pos = sql[
-            : sql.index("collection' = %s")
-        ].count("%s")
+        collection_param_pos = sql[: sql.index("collection' = %s")].count("%s")
         assert params[bm25_param_pos] == "user question text"
         assert params[collection_param_pos] == "test_collection"
         assert "gpu" in params
 
-    def test_guard_reorder_collection_to_bm25(
-        self, vector_store, mock_pg_connection
-    ):
+    def test_guard_reorder_collection_to_bm25(self, vector_store, mock_pg_connection):
         """If the collection name ever reaches the BM25 expression,
         this test must fail."""
-        sql, params = self._capture_hybrid_sql(
-            vector_store, mock_pg_connection
-        )
+        sql, params = self._capture_hybrid_sql(vector_store, mock_pg_connection)
         bm25_param_pos = sql[: sql.index("to_bm25query(%s")].count("%s")
         assert (
             params[bm25_param_pos] != "test_collection"

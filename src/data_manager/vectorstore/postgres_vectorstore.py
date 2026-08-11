@@ -477,13 +477,13 @@ class PostgresVectorStore(VectorStore):
                 )
 
                 query_sql = f"""
-                    WITH scored AS (
-                        SELECT 
+                    WITH raw AS (
+                        SELECT
                             c.id,
                             c.chunk_text,
                             c.metadata,
                             1.0 - (c.embedding {self._distance_op} %s::vector) AS semantic_score,
-                            {bm25_score_expr} AS bm25_score,
+                            -1.0 * COALESCE({bm25_score_expr}, 0) AS bm25_score,
                             d.resource_hash,
                             d.display_name,
                             d.source_type,
@@ -492,19 +492,32 @@ class PostgresVectorStore(VectorStore):
                         FROM document_chunks c
                         LEFT JOIN documents d ON c.document_id = d.id
                         WHERE {where_sql}
+                    ),
+                    normed AS (
+                        SELECT
+                            *,
+                            COALESCE(
+                                (semantic_score - MIN(semantic_score) OVER ())
+                                / NULLIF(MAX(semantic_score) OVER () - MIN(semantic_score) OVER (), 0),
+                                0
+                            ) AS sem_norm,
+                            COALESCE(
+                                (bm25_score - MIN(bm25_score) OVER ())
+                                / NULLIF(MAX(bm25_score) OVER () - MIN(bm25_score) OVER (), 0),
+                                0
+                            ) AS bm25_norm
+                        FROM raw
                     )
-                    SELECT 
+                    SELECT
                         *,
-                        (semantic_score * %s + COALESCE(bm25_score, 0) * %s) AS combined_score
-                    FROM scored
+                        (sem_norm * %s + bm25_norm * %s) AS combined_score
+                    FROM normed
                     ORDER BY combined_score DESC
                     LIMIT %s
                 """
 
                 all_params = (
-                    [embedding_str, query]
-                    + params
-                    + [semantic_weight, bm25_weight, k]
+                    [embedding_str, query] + params + [semantic_weight, bm25_weight, k]
                 )
                 cursor.execute(query_sql, all_params)
                 rows = cursor.fetchall()
