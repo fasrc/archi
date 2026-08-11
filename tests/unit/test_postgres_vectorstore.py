@@ -266,8 +266,8 @@ class TestHybridSearch:
                 "chunk_text": "Machine learning fundamentals",
                 "metadata": "{}",
                 "semantic_score": 0.85,
-                "bm25_score": 0.9,
-                "combined_score": 0.865,  # 0.85*0.7 + 0.9*0.3
+                "bm25_score": -0.9,
+                "combined_score": 0.865,
                 "resource_hash": "abc",
                 "display_name": "ML Doc",
                 "source_type": "web",
@@ -311,8 +311,8 @@ class TestHybridSearch:
                 "chunk_text": "test content",
                 "metadata": {},
                 "semantic_score": 0.8,
-                "bm25_score": 0.7,
-                "combined_score": 0.74,  # 0.8*0.4 + 0.7*0.6
+                "bm25_score": -0.7,
+                "combined_score": 0.74,
                 "resource_hash": "hash123",
                 "display_name": "Test Doc",
                 "source_type": "web",
@@ -362,8 +362,8 @@ class TestHybridSearch:
                 "chunk_text": "High semantic, low keyword",
                 "metadata": "{}",
                 "semantic_score": 0.95,
-                "bm25_score": 0.2,
-                "combined_score": 0.725,  # 0.95*0.7 + 0.2*0.3
+                "bm25_score": -0.2,
+                "combined_score": 0.725,
                 "resource_hash": None,
                 "display_name": None,
                 "source_type": None,
@@ -374,8 +374,8 @@ class TestHybridSearch:
                 "chunk_text": "Balanced scores",
                 "metadata": "{}",
                 "semantic_score": 0.7,
-                "bm25_score": 0.8,
-                "combined_score": 0.73,  # 0.7*0.7 + 0.8*0.3
+                "bm25_score": -0.8,
+                "combined_score": 0.73,
                 "resource_hash": None,
                 "display_name": None,
                 "source_type": None,
@@ -419,7 +419,7 @@ class TestHybridSearchExcludesParents:
                 "chunk_text": "Child leaf chunk",
                 "metadata": json.dumps({"parent_id": 42}),
                 "semantic_score": 0.8,
-                "bm25_score": 0.7,
+                "bm25_score": -0.7,
                 "combined_score": 0.77,
                 "resource_hash": "abc",
                 "display_name": "Doc",
@@ -460,7 +460,7 @@ class TestHybridSearchExcludesParents:
                 "chunk_text": "A small embedded child sentence.",
                 "metadata": json.dumps({"parent_id": 100, "chunk_id": "c7"}),
                 "semantic_score": 0.9,
-                "bm25_score": 0.5,
+                "bm25_score": -0.5,
                 "combined_score": 0.78,
                 "resource_hash": None,
                 "display_name": None,
@@ -610,34 +610,28 @@ class TestHybridSearchScoringOrientation:
 
     def test_bm25_term_is_negated(self, vector_store, mock_pg_connection):
         sql = self._capture_sql(vector_store, mock_pg_connection)
-        assert "-1.0 *" in sql or "-1 *" in sql, (
-            f"BM25 <@> term not negated in SQL:\n{sql}"
-        )
+        assert (
+            "-1.0 *" in sql or "-1 *" in sql
+        ), f"BM25 <@> term not negated in SQL:\n{sql}"
 
     def test_both_components_normalized(self, vector_store, mock_pg_connection):
         sql = self._capture_sql(vector_store, mock_pg_connection).lower()
-        assert "min(" in sql and "max(" in sql, (
-            "min-max normalization window functions missing"
-        )
+        assert (
+            "min(" in sql and "max(" in sql
+        ), "min-max normalization window functions missing"
 
     def test_combined_score_uses_normalized_components(
         self, vector_store, mock_pg_connection
     ):
         sql = self._capture_sql(vector_store, mock_pg_connection).lower()
-        assert "nullif" in sql, (
-            "zero-range NULLIF guard missing from normalization"
-        )
+        assert "nullif" in sql, "zero-range NULLIF guard missing from normalization"
 
-    def test_normalization_before_limit(
-        self, vector_store, mock_pg_connection
-    ):
+    def test_normalization_before_limit(self, vector_store, mock_pg_connection):
         sql = self._capture_sql(vector_store, mock_pg_connection).lower()
         limit_pos = sql.rfind("limit")
         min_pos = sql.find("min(")
         assert min_pos >= 0, "min() window function not found in SQL"
-        assert min_pos < limit_pos, (
-            "normalization must happen before the LIMIT"
-        )
+        assert min_pos < limit_pos, "normalization must happen before the LIMIT"
 
 
 class TestHybridSearchParameterBinding:
