@@ -332,18 +332,31 @@ All the logic lives in `scripts/ci/pr_readiness_labels.sh` (22-case suite wired 
 bash scripts/ci/pr_readiness_labels.sh --dry-run     # decide and print, change nothing
 ```
 
-`ready-to-merge` requires all three of: not a draft, `mergeStateStatus == CLEAN`
-(mergeable **and** checks green), and zero *live* review findings — a review thread
-that is unresolved (`isResolved == false`).
+`ready-to-merge` requires all four: not a draft, no merge conflicts (`mergeable !=
+CONFLICTING`), zero blocking checks, and zero *live* review findings — a review thread
+that is unresolved (`isResolved == false`). Check state is evaluated from the individual
+contexts in the commit's status-check rollup, not from `mergeStateStatus`.
 
-Five design notes worth knowing before changing it:
+Seven design notes worth knowing before changing it:
 
-- **`mergeable` and `mergeStateStatus` answer different questions**, and the chips use
-  different ones. `mergeStateStatus` is a *priority* field: on a draft it reports
-  `DRAFT`, masking `DIRTY`. So `conflicts` is derived from `mergeable ==
-  CONFLICTING` — otherwise a conflicted draft gets no chip, which is where it is
-  arguably most useful. Readiness needs `mergeStateStatus == CLEAN`, because that
-  single value folds in draft, conflict *and* check state.
+- **`mergeable` and `mergeStateStatus` answer different questions.** `mergeStateStatus`
+  is a *priority* field: on a draft it reports `DRAFT`, masking `DIRTY`. So `conflicts`
+  is derived from `mergeable == CONFLICTING` — otherwise a conflicted draft gets no chip,
+  which is where it is arguably most useful. `mergeStateStatus` is retained in the query
+  for the `UNKNOWN` retry/revoke path but is no longer the readiness gating field; check
+  state comes from individual rollup contexts instead.
+
+- **Check state comes from individual rollup contexts, not from `mergeStateStatus`.**
+  A `CheckRun` is passing when its `conclusion` is `SUCCESS`, `NEUTRAL`, or `SKIPPED`;
+  anything else — including a null conclusion (still in progress) — is blocking. A
+  `StatusContext` (legacy commit status) is passing when its `state` is `SUCCESS`. The
+  reconciler's own job (name `reconcile`, matching `jobs.reconcile` in
+  `pr-readiness-labels.yml`) is excluded from the blocking count so the script does not
+  block on its own in-progress check when triggered by pull-request events. A null rollup
+  (no checks on record) is treated as zero blocking and does not withhold the chip. A
+  truncated rollup (`totalCount` greater than the fetched count) is fail-closed: the chip
+  is withheld rather than guessed at, since a blocking check could be sitting in the
+  unfetched tail.
 
 - **An incomplete snapshot is never guessed at**, and the two cases are not
   symmetric. Connections are fetched one page (100) deep and each `totalCount` is

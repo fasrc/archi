@@ -34,7 +34,7 @@
 
 ## 5. Docs, gate, PR
 
-- [ ] 5.1 Update the "PR Readiness Labels" section of `docs/docs/developer_guide.md` (line ~304) to describe the new predicate: individual checks, the reconciler's own job excluded by name, permitted conclusions, and the fail-closed truncation rule.
+- [x] 5.1 Update the "PR Readiness Labels" section of `docs/docs/developer_guide.md` (line ~304) to describe the new predicate: individual checks, the reconciler's own job excluded by name, permitted conclusions, and the fail-closed truncation rule.
 - [ ] 5.2 Run `bash scripts/gate.sh` and confirm it exits 0 with ≥80% diff coverage.
 - [ ] 5.3 Run `bash scripts/ci/pr_readiness_labels.sh --dry-run --repo fasrc/archi` and capture the output for the PR body. It changes nothing.
 - [ ] 5.4 Open the PR against `dev` referencing this issue and including the `--dry-run` output and the 4.1 mutation evidence. Confirm `.github/workflows/**` is absent from the diff (`git diff --name-only origin/dev...HEAD`).
