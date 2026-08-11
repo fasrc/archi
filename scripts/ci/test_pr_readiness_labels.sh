@@ -99,7 +99,8 @@ mk_labels() {
 }
 
 # mk_node <number> <isDraft> <mergeStateStatus> <labels> <threads-csv> \
-#         [threads-totalCount] [labels-totalCount] [mergeable]
+#         [threads-totalCount] [labels-totalCount] [mergeable] \
+#         [checks-json] [checks-totalCount]
 #
 # `mergeable` defaults to a value consistent with the merge state, but is
 # OVERRIDABLE, because the two fields are independent in the real API and the
@@ -111,9 +112,17 @@ mk_labels() {
 # Each connection's totalCount is counted from the nodes actually supplied; the
 # overrides exist to simulate a TRUNCATED connection where totalCount exceeds
 # what was fetched.
+#
+# checks-json: a JSON array of context objects built by mk_checks(). Omit or
+#              pass "" for the default null rollup (PR has no checks on record).
+#              The FILTER treats a null statusCheckRollup as 0/0/0.
+# checks-totalCount: override to simulate a truncated rollup where totalCount
+#              exceeds the fetched contexts; defaults to the array's actual length.
 mk_node() {
   local n="$1" draft="$2" state="$3" labels="${4:-}" threads="${5:-}"
-  local tt="${6:-}" lt="${7:-}" mergeable="${8:-}" tcount lcount ljson tjson
+  local tt="${6:-}" lt="${7:-}" mergeable="${8:-}"
+  local checks="${9:-}" ct="${10:-}"
+  local tcount lcount ljson tjson cjson ccount rollup_json
   if [ -z "$mergeable" ]; then
     case "$state" in
       UNKNOWN) mergeable=UNKNOWN ;;
@@ -128,8 +137,19 @@ mk_node() {
   tcount="$(printf '%s' "$tjson" | jq 'length')"
   if [ -n "$tt" ]; then tcount="$tt"; fi
   if [ -n "$lt" ]; then lcount="$lt"; fi
-  printf '{"number":%s,"isDraft":%s,"mergeable":"%s","mergeStateStatus":"%s","labels":{"totalCount":%s,"nodes":%s},"reviewThreads":{"totalCount":%s,"nodes":%s}}' \
-    "$n" "$draft" "$mergeable" "$state" "$lcount" "$ljson" "$tcount" "$tjson"
+  # Build the statusCheckRollup. Null when no checks are requested (default),
+  # so all pre-existing cases keep working unchanged. Non-null when a checks
+  # array or a totalCount override is given, so truncation can be simulated.
+  if [ -n "$checks" ] || [ -n "$ct" ]; then
+    cjson="${checks:-[]}"
+    ccount="$(printf '%s' "$cjson" | jq 'length')"
+    if [ -n "$ct" ]; then ccount="$ct"; fi
+    rollup_json="{\"contexts\":{\"totalCount\":$ccount,\"nodes\":$cjson}}"
+  else
+    rollup_json='null'
+  fi
+  printf '{"number":%s,"isDraft":%s,"mergeable":"%s","mergeStateStatus":"%s","labels":{"totalCount":%s,"nodes":%s},"reviewThreads":{"totalCount":%s,"nodes":%s},"commits":{"nodes":[{"commit":{"statusCheckRollup":%s}}]}}' \
+    "$n" "$draft" "$mergeable" "$state" "$lcount" "$ljson" "$tcount" "$tjson" "$rollup_json"
 }
 
 # mk_page <hasNextPage> <endCursor> <node-json>...
