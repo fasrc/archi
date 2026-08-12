@@ -1,24 +1,24 @@
 ## 1. Confirm the premise on the current tree
 
-- [ ] 1.1 Re-read `ChatWrapper.stream` in `src/interfaces/chat_app/app.py` — the consume
+- [x] 1.1 Re-read `ChatWrapper.stream` in `src/interfaces/chat_app/app.py` — the consume
       loop is at `:2161-2165` and the in-loop deadline check at `:2174` on
       `origin/dev@0a157cdc`; re-anchor on the symbol names if they moved. Confirm the check
       is still the *first statement of the loop body* rather than of the loop header. That
       ordering is the entire defect; if it changed, stop and report instead of proceeding.
-- [ ] 1.2 Confirm the pipeline really is lazy — `BaseReActAgent.stream`
+- [x] 1.2 Confirm the pipeline really is lazy — `BaseReActAgent.stream`
       (`src/archi/pipelines/agents/base_react.py:422`) contains `yield`, so its body,
       including `_prepare_agent_inputs` at `:425`, does not run until the first `next()`.
       If the body ran eagerly, a stall would happen before the loop and this design would
       not cover it.
-- [ ] 1.3 Confirm nothing downstream already bounds the wait:
+- [x] 1.3 Confirm nothing downstream already bounds the wait:
       `grep -rn "request_timeout\|timeout=" src/archi/providers/ src/archi/pipelines/`
       returns nothing. If a provider timeout has appeared since the issue was written, say
       so in the PR body — it changes the argument for this change, though not its scope.
-- [ ] 1.4 Confirm `app.py` and `tests/unit/test_chat_timeout_guard.py` are `black`-clean
+- [x] 1.4 Confirm `app.py` and `tests/unit/test_chat_timeout_guard.py` are `black`-clean
       **before** editing (`black --check`). A file that is already dirty will be reflowed on
       commit, dragging unrelated lines into the diff and sinking diff coverage — the ~17%
       failure recorded in `fix-issue-175`'s proposal.
-- [ ] 1.5 Read `TestTheInStreamCheckNeedsOnlyTheTimeout`
+- [x] 1.5 Read `TestTheInStreamCheckNeedsOnlyTheTimeout`
       (`tests/unit/test_chat_timeout_guard.py:162-244`) and note its clock stub:
       `SimpleNamespace(time=...)` with no `monotonic`. This is the constraint behind
       Decision 2 — verify it for yourself rather than trusting the design doc, because the
@@ -26,7 +26,7 @@
 
 ## 2. Bound the stall — failing test and fix in one task
 
-- [ ] 2.1 Add a stall test to `tests/unit/test_chat_timeout_guard.py`, in a new class
+- [x] 2.1 Add a stall test to `tests/unit/test_chat_timeout_guard.py`, in a new class
       alongside the existing ones. Its `archi.stream` must be a generator that really
       `time.sleep()`s past a short `client_timeout` (0.5s or less — keep the suite fast)
       before yielding, and the test must **not** monkeypatch the clock; wall-clock
@@ -36,7 +36,7 @@
       the observed failure mode in the commit body. Give the test a hard upper bound (e.g.
       assert the elapsed time is well under the sleep) so a regression fails fast instead
       of hanging CI.
-- [ ] 2.2 In the same task, implement the fix so the suite ends green — never leave the
+- [x] 2.2 In the same task, implement the fix so the suite ends green — never leave the
       tree red at a task boundary, since the gate refuses to commit and the loop halts. In
       `ChatWrapper.stream`:
       - `from concurrent.futures import ThreadPoolExecutor` and `from time import
@@ -57,15 +57,15 @@
         this generator. Use a module-level sentinel object.
       - On `concurrent.futures.TimeoutError`, emit the 408 and close the trace via the
         shared helper from §4, then `return`.
-- [ ] 2.3 Do **not** call `gen.close()` on the timeout path — the worker is still inside
+- [x] 2.3 Do **not** call `gen.close()` on the timeout path — the worker is still inside
       the generator, so it raises `ValueError: generator already executing`. Leave a comment
       saying so; the next reader will otherwise "fix" the missing cleanup.
-- [ ] 2.4 Comment the accepted trade-off at the timeout site: the abandoned thread keeps
+- [x] 2.4 Comment the accepted trade-off at the timeout site: the abandoned thread keeps
       running until the provider returns, so this bounds client-visible latency, not
       server-side resource usage. Note the second-order consequence too —
       `concurrent.futures.thread` joins non-daemon workers at interpreter exit, so process
       shutdown can block on a still-parked worker. Both belong in the PR body as well.
-- [ ] 2.5 Re-run the new test and confirm it now produces the 408 event and the trace
+- [x] 2.5 Re-run the new test and confirm it now produces the 408 event and the trace
       closure (`status="error"`, `cancelled_by="system"`,
       `cancellation_reason="Client timeout"`), then run the whole file and confirm
       `TestTheInStreamCheckNeedsOnlyTheTimeout` passes **with no edit to it**. If it needed
@@ -73,42 +73,42 @@
 
 ## 3. Preserve the caller's context across the worker boundary
 
-- [ ] 3.1 Add a test that fails without context propagation and passes with it, then make
+- [x] 3.1 Add a test that fails without context propagation and passes with it, then make
       it pass in the same task. Assert the *positive*: an advance performed through the
       worker sees a Flask request context (`has_request_context()` is true inside the
       generator body), and a context variable set on the first advance is still readable on
       the second. Absence-of-crash proves nothing here — both real regressions fail open
       silently.
-- [ ] 3.2 Implement: capture `contextvars.copy_context()` once in the request thread at
+- [x] 3.2 Implement: capture `contextvars.copy_context()` once in the request thread at
       stream start and submit `ctx.run(next, gen, sentinel)`. **One snapshot per stream,
       reused for every advance** — a fresh snapshot per advance discards what earlier
       advances set, and `start_run_memory()` runs on the first advance
       (`base_react.py:1418`), so `_ACTIVE_MEMORY` would read `None` from advance 2 onward
       and `if self.active_memory:` (`base_react.py:466`) would silently stop recording
       tool calls.
-- [ ] 3.3 Comment why the snapshot exists, naming both fail-open sites —
+- [x] 3.3 Comment why the snapshot exists, naming both fail-open sites —
       `src/archi/pipelines/agents/tools/base.py:36-42` (no request context → tool access
       *allowed*) and `prompt_utils.py:14-18` (no request context → roles dropped from the
       prompt). Without that note the `ctx.run` looks like ceremony and will be simplified
       away.
-- [ ] 3.4 Confirm the RBAC gate's behaviour is genuinely unchanged for a normal streaming
+- [x] 3.4 Confirm the RBAC gate's behaviour is genuinely unchanged for a normal streaming
       request by running the existing RBAC/tool suites
       (`grep -rl "has_request_context\|tools:.*permission" tests/` and run what it names).
       A green run here is what says this change did not quietly disable permission checks.
 
 ## 4. One emission path for both timeout branches
 
-- [ ] 4.1 Extract the 408 emission from the in-loop branch (`:2174-2192`) into a single
+- [x] 4.1 Extract the 408 emission from the in-loop branch (`:2174-2192`) into a single
       local helper that closes the trace (`status="error"`, `cancelled_by="system"`,
       `cancellation_reason="Client timeout"`, `total_duration_ms`) and returns the
       `{"type": "error", "status": 408, "message": _chat_error_message(408)}` event, and
       call it from both branches. The issue requires the stall path to close the trace
       *identically*; sharing the code makes that true by construction.
-- [ ] 4.2 Confirm the existing
+- [x] 4.2 Confirm the existing
       `test_timeout_without_a_timestamp_still_ends_the_stream_with_408` still passes — it
       covers the helper through the original path, so it is the regression test for the
       extraction.
-- [ ] 4.3 Keep `total_duration_ms` measured the way the existing branch measures it, so
+- [x] 4.3 Keep `total_duration_ms` measured the way the existing branch measures it, so
       traces from the two paths stay comparable. If the wall-clock and monotonic baselines
       make that awkward, prefer matching the existing field's meaning over internal
       tidiness, and say why in a comment.
@@ -125,7 +125,7 @@
       server may still be occupied by the abandoned provider call after the 408. State that,
       briefly — an integrator reading "hard ceiling" as "the server stopped working" would
       be wrong.
-- [ ] 5.3 Update the code comment at `app.py:2166-2173`: the sentence saying the check is
+- [x] 5.3 Update the code comment at `app.py:2166-2173`: the sentence saying the check is
       "reached only when the upstream generator yields, so this bounds a slow stream, not a
       provider that stalls" and the `Issue #191 tracks…` pointer are both obsolete. **Keep**
       the cross-reference to the twin check in `_prepare_chat_context` and the note that the

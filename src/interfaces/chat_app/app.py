@@ -1,14 +1,18 @@
+import concurrent.futures
+import contextvars
 import copy
 import json
 import os
 import re
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 from threading import Lock
+from time import monotonic
 from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import urlparse
 
@@ -138,6 +142,11 @@ from src.utils.sql import (
 from src.utils.user_service import UserService
 
 logger = get_logger(__name__)
+
+# Sentinel returned by next(gen, _STREAM_EXHAUSTED) to signal generator exhaustion
+# without raising StopIteration.  A bare next() would raise StopIteration inside
+# the stream generator, which PEP 479 converts to RuntimeError.
+_STREAM_EXHAUSTED = object()
 
 
 def _build_provider_config_from_payload(
@@ -2158,37 +2167,76 @@ class ChatWrapper:
                 ),
             )
 
-            for output in self.archi.stream(
+            # Closes the active trace and returns the 408 event dict.  Called from
+            # both the per-yield deadline check and the executor-based stall path so
+            # both timeout branches produce identical trace records (issue #191 §4).
+            def _emit_client_timeout():
+                if trace_id:
+                    self.update_agent_trace(
+                        trace_id=trace_id,
+                        events=trace_events,
+                        status="error",
+                        cancelled_by="system",
+                        cancellation_reason="Client timeout",
+                        total_duration_ms=int((time.time() - stream_start_time) * 1000),
+                    )
+                return {
+                    "type": "error",
+                    "status": 408,
+                    "message": _chat_error_message(408),
+                }
+
+            gen = self.archi.stream(
                 history=context.history,
                 conversation_id=context.conversation_id,
                 pipeline=request_pipeline,
-            ):
+            )
+            # Snapshot the caller's context once and reuse it for every advance.
+            # A fresh copy_context() per advance would discard mutations from
+            # earlier advances — start_run_memory() runs on advance 1, so advance
+            # 2 onward would read _ACTIVE_MEMORY as None and tool recording would
+            # stop silently.  Two sites fail open without this propagation:
+            # tools/base.py:36-42 (no request context → RBAC allows all tools)
+            # and prompt_utils.py:14-18 (no request context → roles dropped).
+            ctx = contextvars.copy_context()
+            if client_timeout:
+                deadline = monotonic() + client_timeout
+                # One executor per stream, created only when there is a declared
+                # deadline.  The abandoned thread on timeout keeps running until the
+                # provider returns, so this bounds client-visible latency, not
+                # server-side resource usage.  concurrent.futures.thread joins
+                # non-daemon workers at interpreter exit, so process shutdown may
+                # block on a still-parked worker if one is outstanding.
+                executor = ThreadPoolExecutor(max_workers=1)
+            else:
+                executor = None
+            while True:
+                if executor is not None:
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        yield _emit_client_timeout()
+                        return
+                    try:
+                        output = executor.submit(
+                            ctx.run, next, gen, _STREAM_EXHAUSTED
+                        ).result(timeout=remaining)
+                    except concurrent.futures.TimeoutError:
+                        # Do not call gen.close() here — the worker is still inside
+                        # the generator, so it raises ValueError: generator already
+                        # executing.
+                        yield _emit_client_timeout()
+                        return
+                else:
+                    output = next(gen, _STREAM_EXHAUSTED)
+                if output is _STREAM_EXHAUSTED:
+                    break
                 # Falsey client_timeout means no declared deadline — same rule as the
                 # pre-pipeline check in _prepare_chat_context (app.py:1715).  That check
                 # measures from client_sent_msg_ts; this one measures from stream_start_time.
                 # The differing baselines are deliberate: the first bounds total in-flight
                 # time, the second bounds the streaming phase specifically.
-                # Reached only when the upstream generator yields, so this bounds a slow
-                # stream, not a provider that stalls without emitting.  Issue #191 tracks
-                # enforcing the deadline around stream advancement itself.
                 if client_timeout and time.time() - stream_start_time > client_timeout:
-                    if trace_id:
-                        total_duration_ms = int(
-                            (time.time() - stream_start_time) * 1000
-                        )
-                        self.update_agent_trace(
-                            trace_id=trace_id,
-                            events=trace_events,
-                            status="error",
-                            cancelled_by="system",
-                            cancellation_reason="Client timeout",
-                            total_duration_ms=total_duration_ms,
-                        )
-                    yield {
-                        "type": "error",
-                        "status": 408,
-                        "message": _chat_error_message(408),
-                    }
+                    yield _emit_client_timeout()
                     return
                 last_output = output
 

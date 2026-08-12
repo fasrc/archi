@@ -11,6 +11,7 @@ not removed.  If the test were deleted rather than corrected it would give a fal
 a completely absent check.
 """
 
+import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -242,3 +243,197 @@ class TestTheInStreamCheckNeedsOnlyTheTimeout:
 
         assert [event.get("type") for event in events] == ["chunk", "final"]
         assert not any(event.get("type") == "error" for event in events)
+
+
+class TestProviderStallDetection:
+    """Executor-based deadline ends a provider that stalls before the first yield.
+
+    Wall-clock enforcement is the thing under test here — the clock is NOT monkeypatched.
+    The generator sleeps longer than the declared deadline; the stream must produce a 408
+    well before the sleep completes.
+    """
+
+    _TIMEOUT = 0.2  # declared client deadline (200 ms)
+    _SLEEP = 0.5  # generator stalls for 500 ms before yielding
+
+    def _stalling_wrapper(self):
+        sleep = self._SLEEP
+
+        def stalling_stream(**kwargs):
+            time.sleep(sleep)
+            yield _FakeOutput("x")
+
+        wrapper = _wrapper()
+        wrapper.archi = SimpleNamespace(
+            stream=stalling_stream,
+            pipeline_name="test-pipeline",
+        )
+        wrapper._resolve_config_name = lambda config_name: config_name or "default"
+        wrapper.update_config = lambda config_name=None: None
+        wrapper.current_model_used = "test-model"
+        wrapper.number_of_queries = 0
+        wrapper.cursor = None
+        wrapper.conn = None
+        wrapper.create_agent_trace = lambda **kwargs: None
+        wrapper.update_agent_trace = lambda **kwargs: None
+        wrapper.insert_timing = lambda *a, **k: None
+        wrapper._finalize_result = lambda result, **kwargs: ("out", [])
+        return wrapper
+
+    def test_stall_before_first_yield_produces_408(self):
+        start = time.monotonic()
+        events = list(
+            self._stalling_wrapper().stream(
+                INCOMING,
+                None,
+                CLIENT_ID,
+                False,
+                datetime.now(timezone.utc),
+                0,
+                self._TIMEOUT,
+                "default",
+            )
+        )
+        elapsed = time.monotonic() - start
+
+        assert events[-1]["type"] == "error"
+        assert events[-1]["status"] == 408
+        # Must complete well before the sleep completes — executor fires at the deadline.
+        assert elapsed < self._SLEEP, (
+            f"stream took {elapsed:.3f}s but generator sleeps {self._SLEEP}s — "
+            "the stall deadline did not fire"
+        )
+
+    def test_no_deadline_means_direct_iteration_no_executor(self):
+        """A falsey client_timeout must not create a worker thread.
+
+        The generator yields normally; the stream reaches a ``final`` event.
+        No 408 is produced.
+        """
+        events = list(
+            self._stalling_wrapper().stream(
+                INCOMING,
+                None,
+                CLIENT_ID,
+                False,
+                datetime.now(timezone.utc),
+                0,
+                0,  # falsey — no deadline
+                "default",
+            )
+        )
+
+        assert not any(e.get("type") == "error" for e in events)
+
+
+class TestContextPropagation:
+    """The executor advance must run inside a snapshot of the caller's contextvars.
+
+    Python 3.12 ThreadPoolExecutor workers start with an empty context, so without
+    explicit ctx.run two failure modes are silent and fail open:
+    - tools/base.py:36-42: has_request_context() False → RBAC allows every tool
+    - prompt_utils.py:14-18: no request context → roles dropped from prompt
+    Each test asserts the positive (the worker sees the expected value) rather than
+    the absence of a crash, which would prove nothing.
+    """
+
+    _TIMEOUT = 5.0  # generous; tests are about context, not timing
+
+    def _context_wrapper(self, gen_fn):
+        wrapper = _wrapper()
+        wrapper.archi = SimpleNamespace(
+            stream=gen_fn,
+            pipeline_name="test-pipeline",
+        )
+        wrapper._resolve_config_name = lambda config_name: config_name or "default"
+        wrapper.update_config = lambda config_name=None: None
+        wrapper.current_model_used = "test-model"
+        wrapper.number_of_queries = 0
+        wrapper.cursor = None
+        wrapper.conn = None
+        wrapper.create_agent_trace = lambda **kwargs: None
+        wrapper.update_agent_trace = lambda **kwargs: None
+        wrapper.insert_timing = lambda *a, **k: None
+        wrapper._finalize_result = lambda result, **kwargs: ("out", [])
+        return wrapper
+
+    def test_request_context_visible_in_worker(self):
+        """has_request_context() must be True inside the generator on every advance.
+
+        Without ctx.run the worker starts with an empty context, so
+        has_request_context() returns False and the RBAC gate allows all tools.
+        """
+        from flask import Flask, has_request_context
+
+        seen = []
+
+        def gen(**kwargs):
+            seen.append(has_request_context())
+            yield _FakeOutput("x")
+            seen.append(has_request_context())
+            yield _FakeOutput("y")
+
+        flask_app = Flask(__name__)
+        with flask_app.test_request_context("/"):
+            list(
+                self._context_wrapper(gen).stream(
+                    INCOMING,
+                    None,
+                    CLIENT_ID,
+                    False,
+                    datetime.now(timezone.utc),
+                    0,
+                    self._TIMEOUT,
+                    "default",
+                )
+            )
+
+        assert seen == [True, True], (
+            f"Generator saw has_request_context()={seen!r} — "
+            "ctx.run() is not propagating the Flask request context to the worker"
+        )
+
+    def test_contextvar_mutation_persists_across_advances(self):
+        """A ContextVar written on advance 1 must be readable on advance 2.
+
+        Without ctx.run the worker sees an empty context, so a value set in the
+        caller is invisible on advance 1.  With one reused ctx snapshot, advance 1
+        sees the caller's value and advance 2 sees advance 1's mutation — proving
+        that mutations are not discarded between advances.
+        """
+        import contextvars
+
+        _VAR: contextvars.ContextVar[str] = contextvars.ContextVar(
+            "_ctx_prop_test", default="unset"
+        )
+        _VAR.set("set-in-caller")
+        seen = []
+
+        def gen(**kwargs):
+            seen.append(_VAR.get())  # advance 1: must see "set-in-caller"
+            _VAR.set("set-by-advance-1")
+            yield _FakeOutput("x")
+            seen.append(_VAR.get())  # advance 2: must see "set-by-advance-1"
+            yield _FakeOutput("y")
+
+        list(
+            self._context_wrapper(gen).stream(
+                INCOMING,
+                None,
+                CLIENT_ID,
+                False,
+                datetime.now(timezone.utc),
+                0,
+                self._TIMEOUT,
+                "default",
+            )
+        )
+
+        assert seen[0] == "set-in-caller", (
+            f"Advance 1 saw {seen[0]!r} — ctx.run() is not propagating the "
+            "caller's context to the worker"
+        )
+        assert seen[1] == "set-by-advance-1", (
+            f"Advance 2 saw {seen[1]!r} — mutations from advance 1 are not "
+            "preserved; each submit may be using a fresh copy_context()"
+        )
