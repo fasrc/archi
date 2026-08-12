@@ -46,7 +46,7 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
   must still pass, without the network:
   `python -m pytest tests/smoke/test_embedding_benchmarks.py --collect-only -q | tail -3` and
   `python -m pytest tests/smoke/test_embedding_benchmarks.py -k no_named_network_type -q`.
-- [ ] 2.5 Gate, then commit. Subject: `refactor(#200): extract the embedding network classifier`.
+- [x] 2.5 Gate, then commit. Subject: `refactor(#200): extract the embedding network classifier`.
 
 ## 3. Gate the classifier: types, errnos, and the allowlist invariant
 
