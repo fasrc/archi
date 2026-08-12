@@ -115,13 +115,13 @@
 
 ## 5. Documentation and the stale comment
 
-- [ ] 5.1 In the `client_timeout` row of the request-body table in
+- [x] 5.1 In the `client_timeout` row of the request-body table in
       `docs/docs/api_reference.md` (line 36), delete the clause saying the check "bounds a
       slow stream but **not** a provider that stalls without emitting anything", the "do not
       rely on it as a hard ceiling" advice, and the `issue #191` link. Replace with what is
       now true: a declared deadline ends the client's wait whether the stream is slow or the
       provider is silent.
-- [ ] 5.2 Do not overclaim in that replacement. The bound is on client-visible latency; the
+- [x] 5.2 Do not overclaim in that replacement. The bound is on client-visible latency; the
       server may still be occupied by the abandoned provider call after the 408. State that,
       briefly — an integrator reading "hard ceiling" as "the server stopped working" would
       be wrong.
@@ -131,13 +131,13 @@
       the cross-reference to the twin check in `_prepare_chat_context` and the note that the
       differing baselines are deliberate — an existing `chat-api-request-contract`
       requirement pins that, and deleting it would regress #175.
-- [ ] 5.4 `grep -rn "issues/191\|#191" docs/ src/ tests/` and confirm the only surviving
+- [x] 5.4 `grep -rn "issues/191\|#191" docs/ src/ tests/` and confirm the only surviving
       hits are unrelated (CSS colour literals in
       `src/interfaces/chat_app/static/style.css`) or historical records in other changes'
       `tasks.md`. Do **not** edit `fix-issue-195-timing-bool-nonfinite/tasks.md`, whose
       task 5.2 says to keep the #191 reference: that instruction was correct when written,
       and this change is what retires it. Note the reconciliation in the PR body.
-- [ ] 5.5 Verify no doc-anchor drift: `git diff origin/dev -- docs/docs/api_reference.md |
+- [x] 5.5 Verify no doc-anchor drift: `git diff origin/dev -- docs/docs/api_reference.md |
       grep -c '#L[0-9]'` must return `0`. Do not renumber any `…/app.py#Lnnn` link even
       though this change moves lines in `app.py` — issue #190 owns anchor remapping, and
       hand-remapping here has already halted one run.
