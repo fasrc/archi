@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
-from threading import Lock
+from threading import TIMEOUT_MAX, Lock
 from time import monotonic
 from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import urlparse
@@ -2017,6 +2017,14 @@ class ChatWrapper:
         trace_events: List[Dict[str, Any]] = []
         tool_call_count = 0
         stream_start_time = time.time()
+        # Monotonic twin of stream_start_time, captured at the same point so the stall
+        # deadline below shares the per-yield check's baseline: method entry.  Reading
+        # the clock later — after _prepare_chat_context, update_config, provider-override
+        # creation and trace insertion — would restart the budget after setup and let a
+        # stalled provider run for setup time *plus* the declared timeout.  A monotonic
+        # baseline rather than stream_start_time because a deadline must not move when
+        # the wall clock is stepped (NTP, DST).
+        stream_start_monotonic = monotonic()
         emitted_tool_call_ids = set()
         emitted_tool_start_ids = set()
         pending_tool_call_ids: List[str] = []
@@ -2200,7 +2208,7 @@ class ChatWrapper:
             # and prompt_utils.py:14-18 (no request context → roles dropped).
             ctx = contextvars.copy_context()
             if client_timeout:
-                deadline = monotonic() + client_timeout
+                deadline = stream_start_monotonic + client_timeout
                 # One executor per stream, created only when there is a declared
                 # deadline.  The abandoned thread on timeout keeps running until the
                 # provider returns, so this bounds client-visible latency, not
@@ -2216,11 +2224,30 @@ class ChatWrapper:
                     if remaining <= 0:
                         yield _emit_client_timeout()
                         return
+                    future = executor.submit(ctx.run, next, gen, _STREAM_EXHAUSTED)
                     try:
-                        output = executor.submit(
-                            ctx.run, next, gen, _STREAM_EXHAUSTED
-                        ).result(timeout=remaining)
+                        # Clamp the wait: parse_client_timeout accepts any finite
+                        # magnitude, treating a huge one as "no deadline in practice"
+                        # (request_validation.py:78-80), but Future.result() bottoms out
+                        # in a condition-variable wait that converts now + timeout to the
+                        # platform time_t — an oversized value raises OverflowError and
+                        # turns a valid request into a 500.  TIMEOUT_MAX is the documented
+                        # ceiling for that wait (~292 years), so clamping to it is
+                        # overflow-safe and still means "no deadline in practice".
+                        output = future.result(timeout=min(remaining, TIMEOUT_MAX))
                     except concurrent.futures.TimeoutError:
+                        # concurrent.futures.TimeoutError IS the builtin TimeoutError on
+                        # 3.11+, so a timeout raised inside the generator by a provider,
+                        # network read or tool arrives here too — Future.result()
+                        # re-raises it.  An unfinished future is the only thing that
+                        # means the deadline expired; a finished one carries the
+                        # generator's own exception, which must follow the normal error
+                        # path (500) rather than be relabelled a client 408.
+                        generator_error = (
+                            future.exception(timeout=0) if future.done() else None
+                        )
+                        if generator_error is not None:
+                            raise generator_error
                         # Do not call gen.close() here — the worker is still inside
                         # the generator, so it raises ValueError: generator already
                         # executing.
