@@ -50,26 +50,26 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
 
 ## 3. Gate the classifier: types, errnos, and the allowlist invariant
 
-- [ ] 3.1 Create `tests/unit/test_embedding_guard_classifier.py` importing from
+- [x] 3.1 Create `tests/unit/test_embedding_guard_classifier.py` importing from
   `tests.support.embedding_guard`. It must import **no** third-party library and **no**
   `langchain_huggingface`; build every exception it needs synthetically.
-- [ ] 3.2 Test: every type in `_NETWORK_ERROR_TYPES` is classified as a network failure. Iterate the
+- [x] 3.2 Test: every type in `_NETWORK_ERROR_TYPES` is classified as a network failure. Iterate the
   tuple rather than retyping a list of names, so a family added later is covered automatically.
   Construct each instance defensively — some types need arguments; fall back to
   `type.__new__(cls)`-style construction or `pytest.skip` for a type that cannot be instantiated
   bare, and assert the tuple is non-empty so a tuple that silently emptied cannot pass vacuously.
-- [ ] 3.3 Test: every errno in `_NETWORK_ERRNOS` is classified as a network failure via
+- [x] 3.3 Test: every errno in `_NETWORK_ERRNOS` is classified as a network failure via
   `OSError(errno_value, "…")`. Iterate the frozenset; assert it is non-empty.
-- [ ] 3.4 Test: the allowlist invariant — for every type in `_NETWORK_ERROR_TYPES`, walk
+- [x] 3.4 Test: the allowlist invariant — for every type in `_NETWORK_ERROR_TYPES`, walk
   `__subclasses__()` recursively and assert no subclass is a client-side or definitive error. Mirror
   the assertion in `test_no_named_network_type_drags_in_a_local_defect`; read that test first and
   keep the same offending-pair message shape so a failure names the type and the subclass.
-- [ ] 3.5 Prove 3.2–3.4 bind: temporarily append a known over-broad base (for example
+- [x] 3.5 Prove 3.2–3.4 bind: temporarily append a known over-broad base (for example
   `requests.exceptions.RequestException`, guarded by an import check) to `_NETWORK_ERROR_TYPES` in
   the support module, run `python -m pytest tests/unit/test_embedding_guard_classifier.py -q`,
   observe 3.4 fail and name the pair, then revert. Record the observed failure text in the
   pull-request body.
-- [ ] 3.6 Gate, then commit. Subject: `test(#200): gate the network classifier's allowlist`.
+- [x] 3.6 Gate, then commit. Subject: `test(#200): gate the network classifier's allowlist`.
 
 ## 4. Gate the classifier: statuses, local defects, and the import helper
 
