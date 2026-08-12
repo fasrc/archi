@@ -97,8 +97,8 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
 
 ## 5. Verify the gate now sees it, and both documented commands still work
 
-- [ ] 5.1 `python -m pytest tests/unit/ --collect-only -q | grep -ci embedding_guard` → **greater
-  than 0** (this is the acceptance criterion from the issue's "Start here", inverted).
+- [x] 5.1 `python -m pytest tests/unit/ --collect-only -q | grep -ci embedding_guard` → **greater
+  than 0** (this is the acceptance criterion from the issue's "Start here", inverted). Confirmed: 1.
 - [ ] 5.2 Confirm the gated suite imports no embedding library:
   `python -m pytest tests/unit/test_embedding_guard_classifier.py -q` passes, and
   `grep -rn 'langchain' tests/unit/test_embedding_guard_classifier.py tests/support/embedding_guard.py`
