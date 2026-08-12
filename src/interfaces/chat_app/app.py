@@ -2169,7 +2169,7 @@ class ChatWrapper:
 
             # Closes the active trace and returns the 408 event dict.  Called from
             # both the per-yield deadline check and the executor-based stall path so
-            # both timeout branches produce identical trace records (issue #191 §4).
+            # both timeout branches produce identical trace records.
             def _emit_client_timeout():
                 if trace_id:
                     self.update_agent_trace(
