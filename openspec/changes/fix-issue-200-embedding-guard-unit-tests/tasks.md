@@ -76,7 +76,7 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
 - [x] 4.1 Test: a definitive client error status is **not** an outage. Attach
   `types.SimpleNamespace(status_code=404)` (and `401`, `403`, `410`) as `.response` on a synthetic
   exception and assert `_is_network_failure` is `False` — no `requests` import (design D5).
-- [ ] 4.2 Test: transient and server-side statuses **are** outages — `408`, `425`, `429`, `500`,
+- [x] 4.2 Test: transient and server-side statuses **are** outages — `408`, `425`, `429`, `500`,
   `503`, and a fronting-CDN code such as `520`/`524`. Assert `_is_transient_status` treats 5xx as a
   range by testing a code no list would contain.
 - [ ] 4.3 Test: a failure carrying a **success** status (an interrupted transfer) falls through to

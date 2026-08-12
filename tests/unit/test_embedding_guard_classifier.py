@@ -15,6 +15,7 @@ from tests.support.embedding_guard import (
     _NETWORK_ERRNOS,
     _NETWORK_ERROR_TYPES,
     _is_network_failure,
+    _is_transient_status,
 )
 
 
@@ -165,3 +166,30 @@ def test_a_definitive_client_status_is_not_a_network_failure(status):
     assert not _is_network_failure(
         exc
     ), f"status {status} is a definitive client answer but was classified as a network failure"
+
+
+@pytest.mark.parametrize("status", [408, 425, 429, 500, 503, 520, 524])
+def test_a_transient_or_server_side_status_is_a_network_failure(status):
+    """The statuses that mean "reached, but cannot serve it now" are network failures.
+
+    Mirrors tests/smoke/test_embedding_benchmarks.py::test_a_transient_hub_status_still_skips and
+    test_any_server_side_status_is_an_outage: 408/425 are request-timing, 429 is rate limiting, and
+    520/524 are Cloudflare's own origin-trouble codes fronting the Hub — the exact shape of the
+    #187 incident. All must count as an outage, not a definitive answer.
+    """
+    exc = Exception(f"{status} Server Error")
+    exc.response = types.SimpleNamespace(status_code=status)
+    assert _is_network_failure(exc), (
+        f"status {status} means the host could not serve the weights right now but was not "
+        "classified as a network failure"
+    )
+
+
+def test_is_transient_status_treats_5xx_as_a_range():
+    """A 5xx code no list enumerates must still count, because the check is a range.
+
+    Enumerating the familiar four (500/502/503/504) is exactly the defect this file's docstring
+    warns about: the next vendor-invented code, such as 599 here, would fall through a fixed list.
+    ``status >= 500`` cannot develop that gap.
+    """
+    assert _is_transient_status(599)
