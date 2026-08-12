@@ -8,6 +8,8 @@ embedding library.
 """
 
 import errno
+import json
+import sys
 import types
 
 import pytest
@@ -17,6 +19,7 @@ from tests.support.embedding_guard import (
     _NETWORK_ERRNOS,
     _NETWORK_ERROR_TYPES,
     _assert_propagates,
+    _import_or_skip,
     _is_network_failure,
     _is_transient_status,
 )
@@ -274,3 +277,56 @@ def test_is_transient_status_treats_5xx_as_a_range():
     ``status >= 500`` cannot develop that gap.
     """
     assert _is_transient_status(599)
+
+
+@pytest.fixture
+def broken_transitive_import(tmp_path, monkeypatch):
+    """A real, importable module whose OWN top-level import statement fails.
+
+    Mirrors tests/smoke/test_embedding_benchmarks.py::test_a_broken_transitive_import_is_not_reported_as_missing,
+    but drives the actual import machinery instead of monkeypatching importlib.import_module: the
+    module file is placed on sys.path so import_module finds and executes it, and Python's own
+    import statement inside raises ModuleNotFoundError naming a DIFFERENT, unrelated module — the
+    exact shape _import_or_skip must not mistake for its own target module being absent.
+    """
+    module_name = "embedding_guard_test_broken_transitive_dep"
+    (tmp_path / f"{module_name}.py").write_text(
+        "import some_unrelated_transitive_dep_that_does_not_exist\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    yield module_name
+    sys.modules.pop(module_name, None)
+
+
+def test_import_or_skip_returns_the_attribute_for_an_installed_module():
+    """A genuinely installed module's requested attribute comes back untouched.
+
+    Uses a stdlib module so the test needs no optional dependency: json is always importable.
+    """
+    assert _import_or_skip("json", "dumps") is json.dumps
+
+
+def test_import_or_skip_skips_naming_a_genuinely_absent_module():
+    """A module that is not installed at all produces a skip naming it, not an error."""
+    with pytest.raises(pytest.skip.Exception) as exc_info:
+        _import_or_skip(
+            "embedding_guard_test_genuinely_absent_module", "whatever_attribute"
+        )
+    assert "embedding_guard_test_genuinely_absent_module" in str(exc_info.value)
+
+
+def test_import_or_skip_propagates_a_broken_transitive_import(
+    broken_transitive_import,
+):
+    """A ModuleNotFoundError raised from INSIDE an installed module must propagate, not skip.
+
+    Gated counterpart to test_a_broken_transitive_import_is_not_reported_as_missing (tests/smoke/):
+    the requested module (broken_transitive_import) IS present on sys.path, so import_module finds
+    it; it is the module's own import of an unrelated, missing dependency that fails. Reporting that
+    as "broken_transitive_import not installed" would hide a real broken environment behind a skip.
+    """
+    _assert_propagates(
+        ModuleNotFoundError,
+        lambda: _import_or_skip(broken_transitive_import, "whatever_attribute"),
+        match="some_unrelated_transitive_dep_that_does_not_exist",
+    )

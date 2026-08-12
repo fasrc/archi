@@ -84,7 +84,7 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
 - [x] 4.4 Test: local defects propagate — an `AssertionError` and an `OSError(errno.ENOSPC)` /
   `PermissionError` are not network failures. Use `_assert_propagates` for the shape that would
   otherwise report SKIPPED, so a swallowed error is a red failure and not a green skip.
-- [ ] 4.5 Test: `_import_or_skip` returns the attribute for an installed module (use a stdlib module,
+- [x] 4.5 Test: `_import_or_skip` returns the attribute for an installed module (use a stdlib module,
   e.g. `("json", "dumps")`); raises `pytest.skip.Exception` naming a genuinely absent module; and
   **propagates** a `ModuleNotFoundError` raised from *inside* an installed module rather than
   reporting it as "not installed". For the last one, install a temporary module in `sys.modules`
