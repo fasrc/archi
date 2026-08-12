@@ -144,26 +144,26 @@
 
 ## 6. Verify and land
 
-- [ ] 6.1 Run `black` over the touched files and `git status` before staging — the
+- [x] 6.1 Run `black` over the touched files and `git status` before staging — the
       pre-commit hook *writes* formatting while CI *asserts* it, so a file formatted after
       `git add` commits misformatted and fails CI.
-- [ ] 6.2 Run `bash scripts/gate.sh` **bare** — no pipe, no redirect (the harness guard
+- [x] 6.2 Run `bash scripts/gate.sh` **bare** — no pipe, no redirect (the harness guard
       rejects a redirected run and it reads as a failure that is not one) — from the
       repository root of this branch. Confirm format, lint and tests pass.
-- [ ] 6.3 Confirm diff coverage is **≥80%** on the changed lines. The new lines are all in
+- [x] 6.3 Confirm diff coverage is **≥80%** on the changed lines. The new lines are all in
       the deadline path, and §2/§3's tests execute them; if coverage lands short, the
       likeliest cause is an accidental reflow of the loop body (§2.2) rather than a missing
       test — check `git diff --stat` before writing more tests.
-- [ ] 6.4 Re-check each acceptance criterion in issue #191 one at a time against the working
+- [x] 6.4 Re-check each acceptance criterion in issue #191 one at a time against the working
       tree. Criterion 7 (end-to-end) was removed by the operator's 2026-08-10 decision — see
       §7.
-- [ ] 6.5 Run `openspec validate fix-issue-191-stream-stall-deadline --strict` and confirm
+- [x] 6.5 Run `openspec validate fix-issue-191-stream-stall-deadline --strict` and confirm
       it passes. If the CLI is absent in the execution environment, say so explicitly rather
       than marking the task done — it was validated on the operator host during Loop 1.
-- [ ] 6.6 Commit only green, short lowercase subject, no `Co-Authored-By` or AI-attribution
+- [x] 6.6 Commit only green, short lowercase subject, no `Co-Authored-By` or AI-attribution
       trailer. Push with `git push -u origin fix/issue-191-stream-stall-deadline` — the
       branch was created from `origin/dev` and so tracks the trunk until `-u` fixes it.
-- [ ] 6.7 Open a PR into `fasrc/archi:dev` whose **body** contains `closes #191` (the
+- [x] 6.7 Open a PR into `fasrc/archi:dev` whose **body** contains `closes #191` (the
       keyword only links from the body; a title mention leaves the issue unlinked). The body
       must also carry: the abandoned-worker caveat and its interpreter-shutdown consequence
       (§2.4), the deferred-e2e note (§7), and the #195 cross-change note (§5.4).
@@ -176,10 +176,10 @@ deployment. The operator explicitly deferred it for this change on 2026-08-10 (i
 "Auto-ok with deferred e2e"): acceptance criterion 7 was struck and the code/tests/gate PR
 lands without it.
 
-- [ ] 7.1 State the deferral in the PR body verbatim enough to be unambiguous: "E2e
+- [x] 7.1 State the deferral in the PR body verbatim enough to be unambiguous: "E2e
       validation deferred — operator verifies after deploy." Do not silently omit it, and do
       not attempt a live check from the unattended run.
-- [ ] 7.2 Leave a note for the post-merge redeploy naming what to exercise: a streaming
+- [x] 7.2 Leave a note for the post-merge redeploy naming what to exercise: a streaming
       request against a provider that stalls, confirming the in-band 408 arrives at the
       declared deadline, and — because §3 is the risky half — one authenticated streaming
       request whose tool call must still be refused by the RBAC gate.
