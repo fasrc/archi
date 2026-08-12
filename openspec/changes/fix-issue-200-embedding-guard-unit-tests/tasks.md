@@ -81,7 +81,7 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
   range by testing a code no list would contain.
 - [x] 4.3 Test: a failure carrying a **success** status (an interrupted transfer) falls through to
   type classification rather than being read as an answer.
-- [ ] 4.4 Test: local defects propagate — an `AssertionError` and an `OSError(errno.ENOSPC)` /
+- [x] 4.4 Test: local defects propagate — an `AssertionError` and an `OSError(errno.ENOSPC)` /
   `PermissionError` are not network failures. Use `_assert_propagates` for the shape that would
   otherwise report SKIPPED, so a swallowed error is a red failure and not a green skip.
 - [ ] 4.5 Test: `_import_or_skip` returns the attribute for an installed module (use a stdlib module,

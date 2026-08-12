@@ -7,13 +7,16 @@ tests/smoke/test_embedding_benchmarks.py::TestEmbeddingGuard, minus the parts th
 embedding library.
 """
 
+import errno
 import types
 
 import pytest
 
 from tests.support.embedding_guard import (
+    _GUARDED_ERRORS,
     _NETWORK_ERRNOS,
     _NETWORK_ERROR_TYPES,
+    _assert_propagates,
     _is_network_failure,
     _is_transient_status,
 )
@@ -203,6 +206,63 @@ def test_a_success_status_falls_through_to_type_classification(status):
     assert _is_network_failure(exc), (
         f"status {status} is a success status on a network-type exception, but was not classified "
         "as a network failure — it looks like the success status was read as a definitive answer"
+    )
+
+
+def _guarded_call(to_raise: BaseException):
+    """Mirror _load_model's catch-classify-reraise-or-skip shape, hermetically.
+
+    tests/smoke/test_embedding_benchmarks.py::_load_model needs langchain_huggingface installed
+    to construct the model that raises. This drives the exact same contract —
+    ``except _GUARDED_ERRORS: if not _is_network_failure(exc): raise`` — directly against a
+    synthetic exception, so the contract is gated without the embedding library.
+    """
+    try:
+        raise to_raise
+    except _GUARDED_ERRORS as exc:
+        if not _is_network_failure(exc):
+            raise
+        pytest.skip(f"embedding weights unreachable over the network: {exc!r}")
+
+
+def test_an_assertion_error_is_not_converted_to_skip():
+    """AssertionError is not in _GUARDED_ERRORS at all, so it must propagate untouched.
+
+    Gated counterpart to test_assertion_error_is_not_converted_to_skip (tests/smoke/): an
+    embedding regression must fail the benchmark, not be swallowed into a network skip.
+    """
+    _assert_propagates(
+        AssertionError,
+        lambda: _guarded_call(
+            AssertionError("embedding regression, not a network problem")
+        ),
+        match="embedding regression",
+    )
+
+
+def test_a_full_disk_oserror_is_not_converted_to_skip():
+    """OSError(ENOSPC) is caught by the OSError branch of _GUARDED_ERRORS but carries no network errno.
+
+    Gated counterpart to test_a_local_oserror_is_not_reported_as_a_network_outage (tests/smoke/):
+    a full disk must fail the benchmark, not be misreported as a CDN outage.
+    """
+    _assert_propagates(
+        OSError,
+        lambda: _guarded_call(OSError(errno.ENOSPC, "No space left on device")),
+    )
+
+
+def test_a_permission_error_is_not_converted_to_skip():
+    """PermissionError is an OSError subclass without a network errno, so it must propagate.
+
+    Gated counterpart to the same smoke test: a permission failure on the model cache directory
+    must fail the benchmark, not be misreported as a CDN outage.
+    """
+    _assert_propagates(
+        PermissionError,
+        lambda: _guarded_call(
+            PermissionError(13, "Permission denied", "~/.cache/huggingface/hub")
+        ),
     )
 
 
