@@ -13,7 +13,7 @@
   citation — `(doc_line, spelling, start, end_or_None, tag)` — matching
   `` [`app.py:N`][tag] ``, `` [`:N`][tag] ``, and `` [`app.py:N-M`][tag] `` (42 citations:
   24 canonical, 17 abbreviated, 1 range).
-- [ ] 1.3 Add the **expected-substring table** as a module-level dict `{line_no: substring}`
+- [x] 1.3 Add the **expected-substring table** as a module-level dict `{line_no: substring}`
   covering all 33 distinct anchored line numbers. Derive each from the current content of
   `src/interfaces/chat_app/app.py`, choosing the most distinctive short fragment (a dict key
   with its literal, a whole `if` condition), not the whole line — see design.md Decision 4.
