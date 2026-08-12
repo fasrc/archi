@@ -7,7 +7,7 @@
   docs/docs/api_reference.md, not this test." Read both files with `pathlib.Path`, following
   `tests/unit/test_require_auth.py::TestNoUnreachableStatementRemains`; import nothing from
   `src`.
-- [ ] 1.2 Add the parsers. `_link_definitions(text)` returns `{tag: line_no}` from
+- [x] 1.2 Add the parsers. `_link_definitions(text)` returns `{tag: line_no}` from
   `^\[([^\]]+)\]:\s*https://github\.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app\.py#L(\d+)\s*$`
   (30 tags at `origin/dev` 0a157cdc). `_inline_citations(text)` returns one record per
   citation — `(doc_line, spelling, start, end_or_None, tag)` — matching
