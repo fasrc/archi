@@ -215,8 +215,8 @@ def test_a_success_status_falls_through_to_type_classification(status):
 def _guarded_call(to_raise: BaseException):
     """Mirror _load_model's catch-classify-reraise-or-skip shape, hermetically.
 
-    tests/smoke/test_embedding_benchmarks.py::_load_model needs langchain_huggingface installed
-    to construct the model that raises. This drives the exact same contract —
+    tests/smoke/test_embedding_benchmarks.py::_load_model needs the third-party embedding
+    library installed to construct the model that raises. This drives the exact same contract —
     ``except _GUARDED_ERRORS: if not _is_network_failure(exc): raise`` — directly against a
     synthetic exception, so the contract is gated without the embedding library.
     """
