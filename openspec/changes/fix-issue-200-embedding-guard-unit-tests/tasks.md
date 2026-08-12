@@ -28,7 +28,7 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
 
 ## 2. Extract the pure layer (refactor only — no behaviour change)
 
-- [ ] 2.1 Create `tests/support/__init__.py` (empty, or a one-line docstring).
+- [x] 2.1 Create `tests/support/__init__.py` (empty, or a one-line docstring).
 - [ ] 2.2 Create `tests/support/embedding_guard.py` and **move** — do not copy — from
   `tests/smoke/test_embedding_benchmarks.py`: the four conditional-import blocks and
   `_NETWORK_ERROR_TYPES`, `_HUB_HTTP_ERROR`, `_NETWORK_ERRNOS`, `_TRANSIENT_4XX_STATUSES`,
