@@ -1,6 +1,6 @@
 ## 1. Red test (TDD)
 
-- [ ] 1.1 Create `tests/unit/test_doc_anchor_guard.py`. Module docstring states the policy and
+- [x] 1.1 Create `tests/unit/test_doc_anchor_guard.py`. Module docstring states the policy and
   the two spellings: `` [`app.py:NNNN`][tag] `` is canonical and MUST equal `[tag]`'s link
   definition; `` [`:NNNN`][tag] `` is abbreviated and MAY cite another line in the same
   region. Include the line: "A red result means the doc anchors drifted — update
