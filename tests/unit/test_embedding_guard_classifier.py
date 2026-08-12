@@ -7,6 +7,8 @@ tests/smoke/test_embedding_benchmarks.py::TestEmbeddingGuard, minus the parts th
 embedding library.
 """
 
+import types
+
 import pytest
 
 from tests.support.embedding_guard import (
@@ -147,3 +149,19 @@ def test_no_allowlisted_type_covers_a_client_side_or_definitive_error_via_subcla
             "__subclasses__(), so a client-side or definitive failure would be reported as a "
             "network outage. Name the transport families individually instead of their shared base."
         )
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 410])
+def test_a_definitive_client_status_is_not_a_network_failure(status):
+    """A 401/403/404/410 is a definitive answer about a broken model dependency, not an outage.
+
+    Mirrors tests/smoke/test_embedding_benchmarks.py::test_a_definitive_client_status_is_not_an_outage,
+    but stays hermetic (design D5): _is_network_failure only reads `.response.status_code` via
+    getattr, so a bare types.SimpleNamespace exercises the branch exactly as a real
+    requests.Response would, with no requests import.
+    """
+    exc = Exception(f"{status} Client Error")
+    exc.response = types.SimpleNamespace(status_code=status)
+    assert not _is_network_failure(
+        exc
+    ), f"status {status} is a definitive client answer but was classified as a network failure"
