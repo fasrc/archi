@@ -29,7 +29,7 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
 ## 2. Extract the pure layer (refactor only — no behaviour change)
 
 - [x] 2.1 Create `tests/support/__init__.py` (empty, or a one-line docstring).
-- [ ] 2.2 Create `tests/support/embedding_guard.py` and **move** — do not copy — from
+- [x] 2.2 Create `tests/support/embedding_guard.py` and **move** — do not copy — from
   `tests/smoke/test_embedding_benchmarks.py`: the four conditional-import blocks and
   `_NETWORK_ERROR_TYPES`, `_HUB_HTTP_ERROR`, `_NETWORK_ERRNOS`, `_TRANSIENT_4XX_STATUSES`,
   `_is_transient_status`, `_GUARDED_ERRORS`, `_is_network_failure`, `_response`,
@@ -38,11 +38,11 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
   is. Preserve each `except ImportError: pass` so the module imports in a minimal environment.
   Give the module a docstring saying it is a test-support seam shared by `tests/unit/` and
   `tests/smoke/`, and that the names stay private because they are not a public API.
-- [ ] 2.3 In `tests/smoke/test_embedding_benchmarks.py`, replace the moved definitions with
+- [x] 2.3 In `tests/smoke/test_embedding_benchmarks.py`, replace the moved definitions with
   `from tests.support.embedding_guard import (...)`. Keep `_load_model`, all four test classes and
   the module docstring where they are. Leave `test_no_named_network_type_drags_in_a_local_defect` in
   place — it now inspects the imported tuple (see design D4).
-- [ ] 2.4 Prove the refactor is inert. The whole smoke file must still collect, and the pure test
+- [x] 2.4 Prove the refactor is inert. The whole smoke file must still collect, and the pure test
   must still pass, without the network:
   `python -m pytest tests/smoke/test_embedding_benchmarks.py --collect-only -q | tail -3` and
   `python -m pytest tests/smoke/test_embedding_benchmarks.py -k no_named_network_type -q`.
