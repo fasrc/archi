@@ -103,7 +103,7 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
   `python -m pytest tests/unit/test_embedding_guard_classifier.py -q` passes, and
   `grep -rn 'langchain' tests/unit/test_embedding_guard_classifier.py tests/support/embedding_guard.py`
   returns nothing.
-- [ ] 5.3 Confirm the smoke suite still degrades correctly with the library absent — run
+- [x] 5.3 Confirm the smoke suite still degrades correctly with the library absent — run
   `python -m pytest tests/smoke/test_embedding_benchmarks.py -k TestTheGuardTests -q`, which spawns
   the subprocess that re-runs the file with `langchain_huggingface` blocked. This is the check that
   the extracted import resolves in the child process (design D3). If it cannot run in this
