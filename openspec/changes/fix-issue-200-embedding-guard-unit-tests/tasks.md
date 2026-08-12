@@ -15,7 +15,7 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
 
 ## 1. Confirm the premise
 
-- [ ] 1.1 Confirm the gate collects nothing for the guard today:
+- [x] 1.1 Confirm the gate collects nothing for the guard today:
   `python -m pytest tests/unit/ --collect-only -q | grep -ci embedding_guard` → `0`.
 - [ ] 1.2 Confirm the symbols to extract and their current lines:
   `grep -n '_NETWORK_ERROR_TYPES\|_HUB_HTTP_ERROR\|_NETWORK_ERRNOS\|_TRANSIENT_4XX_STATUSES\|def _is_transient_status\|_GUARDED_ERRORS\|def _is_network_failure\|def _response\|def _assert_propagates\|def _import_or_skip' tests/smoke/test_embedding_benchmarks.py`
