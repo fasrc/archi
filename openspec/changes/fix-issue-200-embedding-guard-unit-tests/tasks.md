@@ -93,7 +93,7 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
 - [x] 4.6 Prove 4.1–4.5 bind: temporarily change `_is_network_failure` to `return True`, run the new
   unit module, observe the negative tests fail (not skip), and revert. Then temporarily make
   `_import_or_skip` swallow the broken-transitive case and observe 4.5 fail; revert.
-- [ ] 4.7 Gate, then commit. Subject: `test(#200): gate the classifier's status and skip contracts`.
+- [x] 4.7 Gate, then commit. Subject: `test(#200): gate the classifier's status and skip contracts`.
 
 ## 5. Verify the gate now sees it, and both documented commands still work
 
