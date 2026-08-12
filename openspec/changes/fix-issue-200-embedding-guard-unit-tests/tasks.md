@@ -23,7 +23,7 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
   `:238`). If they have drifted, use what the grep says and note it in the pull-request body.
 - [x] 1.3 Confirm `tests/support/` does not exist and `tests/` has no `__init__.py`, so the new
   package is additive: `ls tests/` and `ls tests/__init__.py` (expect "No such file").
-- [ ] 1.4 Confirm the one pure test that must gain a gated equivalent:
+- [x] 1.4 Confirm the one pure test that must gain a gated equivalent:
   `grep -n 'def test_no_named_network_type_drags_in_a_local_defect' tests/smoke/test_embedding_benchmarks.py`.
 
 ## 2. Extract the pure layer (refactor only — no behaviour change)
