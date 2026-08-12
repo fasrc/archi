@@ -79,7 +79,7 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
 - [x] 4.2 Test: transient and server-side statuses **are** outages — `408`, `425`, `429`, `500`,
   `503`, and a fronting-CDN code such as `520`/`524`. Assert `_is_transient_status` treats 5xx as a
   range by testing a code no list would contain.
-- [ ] 4.3 Test: a failure carrying a **success** status (an interrupted transfer) falls through to
+- [x] 4.3 Test: a failure carrying a **success** status (an interrupted transfer) falls through to
   type classification rather than being read as an answer.
 - [ ] 4.4 Test: local defects propagate — an `AssertionError` and an `OSError(errno.ENOSPC)` /
   `PermissionError` are not network failures. Use `_assert_propagates` for the shape that would

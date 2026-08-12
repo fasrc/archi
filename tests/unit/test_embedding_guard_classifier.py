@@ -185,6 +185,27 @@ def test_a_transient_or_server_side_status_is_a_network_failure(status):
     )
 
 
+@pytest.mark.parametrize("status", [200, 206])
+def test_a_success_status_falls_through_to_type_classification(status):
+    """A success status on a failing call is not an answer; type classification decides.
+
+    Mirrors tests/smoke/test_embedding_benchmarks.py::test_a_truncated_download_still_skips:
+    requests attaches the successful response to a mid-stream failure like ChunkedEncodingError, so
+    a 2xx status means the transfer started and then dropped, not that the server answered
+    definitively. Only an ERROR status (>= 400) is decisive at step 1 of _is_network_failure; a
+    success status must fall through to the type/errno checks in step 3. Using a builtin
+    ConnectionError (always allowlisted, no third-party import needed) makes the correct answer
+    True — a regression that treated "has a status" as decisive regardless of range would read the
+    200 as a definitive reply and wrongly return False here.
+    """
+    exc = ConnectionError("connection broken: incomplete read")
+    exc.response = types.SimpleNamespace(status_code=status)
+    assert _is_network_failure(exc), (
+        f"status {status} is a success status on a network-type exception, but was not classified "
+        "as a network failure — it looks like the success status was read as a definitive answer"
+    )
+
+
 def test_is_transient_status_treats_5xx_as_a_range():
     """A 5xx code no list enumerates must still count, because the check is a range.
 
