@@ -90,7 +90,7 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
   reporting it as "not installed". For the last one, install a temporary module in `sys.modules`
   (or a `tmp_path` on `sys.path`) whose import raises `ModuleNotFoundError` for a *different* name,
   and clean it up in a fixture.
-- [ ] 4.6 Prove 4.1–4.5 bind: temporarily change `_is_network_failure` to `return True`, run the new
+- [x] 4.6 Prove 4.1–4.5 bind: temporarily change `_is_network_failure` to `return True`, run the new
   unit module, observe the negative tests fail (not skip), and revert. Then temporarily make
   `_import_or_skip` swallow the broken-transitive case and observe 4.5 fail; revert.
 - [ ] 4.7 Gate, then commit. Subject: `test(#200): gate the classifier's status and skip contracts`.
