@@ -108,11 +108,11 @@ Prefix shell work with `export PATH=/home/austin/miniforge3/envs/archi/bin:$PATH
   the subprocess that re-runs the file with `langchain_huggingface` blocked. This is the check that
   the extracted import resolves in the child process (design D3). If it cannot run in this
   environment, say so explicitly in the pull-request body rather than marking it done.
-- [ ] 5.4 Gate, then commit any fixes 5.1–5.3 required. If nothing changed, no commit.
+- [x] 5.4 Gate, then commit any fixes 5.1–5.3 required. If nothing changed, no commit.
 
 ## 6. Mutation verification against the gate itself
 
-- [ ] 6.1 Break `_is_network_failure` to `return True`, run `bash scripts/gate.sh`, and confirm the
+- [x] 6.1 Break `_is_network_failure` to `return True`, run `bash scripts/gate.sh`, and confirm the
   **gate** goes red (not just the module in isolation). Revert.
 - [ ] 6.2 Drop one exception family from `_NETWORK_ERROR_TYPES` (delete one conditional block's
   `+=`), run the gate, confirm red. Revert.
