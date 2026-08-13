@@ -20,7 +20,7 @@ the suite red can never clear the gate and would deadlock the loop.
 
 ## 1. Refuse a stored spelling the kernel cannot traverse (red, then green, one commit)
 
-- [ ] 1.1 Reproduce → red → green → gate → commit, in this order:
+- [x] 1.1 Reproduce → red → green → gate → commit, in this order:
 
       **Reproduce.** Run the snippet in the issue's **Commands** section. Expect
       `Path('safe.md/') -> PosixPath('safe.md')`, `open('<root>/safe.md/')` raising

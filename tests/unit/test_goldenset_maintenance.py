@@ -1358,6 +1358,36 @@ class TestPersistedDocumentPath:
         with pytest.raises(ValueError, match="cannot be resolved: symlink loop"):
             resolve_persisted_path("loop/../safe.md", str(root))
 
+    def test_a_trailing_separator_on_a_regular_file_is_refused(self, tmp_path):
+        # `Path('safe.md/')` normalizes to `PosixPath('safe.md')` in the
+        # constructor, so a probe fed the constructed path never sees the
+        # spelling the row stored — and `open('<root>/safe.md/')` fails
+        # NotADirectoryError (ENOTDIR) even though `safe.md` is a real,
+        # readable file. The guard must refuse by the kernel's verdict on the
+        # RAW spelling, not resolve a normalized rendering of it.
+        root = tmp_path / "data"
+        root.mkdir()
+        (root / "safe.md").write_text("grounding text", encoding="utf-8")
+
+        with pytest.raises(
+            ValueError, match=r"safe\.md/'.*cannot be resolved: Not a directory"
+        ):
+            resolve_persisted_path("safe.md/", str(root))
+
+    def test_a_trailing_dot_component_on_a_regular_file_is_refused(self, tmp_path):
+        # Same erasure as the trailing separator above, reached through a
+        # trailing `.` component instead: `Path('safe.md/.')` also normalizes
+        # to `PosixPath('safe.md')`, but `open('<root>/safe.md/.')` fails the
+        # same ENOTDIR.
+        root = tmp_path / "data"
+        root.mkdir()
+        (root / "safe.md").write_text("grounding text", encoding="utf-8")
+
+        with pytest.raises(
+            ValueError, match=r"safe\.md/\.'.*cannot be resolved: Not a directory"
+        ):
+            resolve_persisted_path("safe.md/.", str(root))
+
     def test_a_missing_component_erased_by_parent_traversal_is_refused(self, tmp_path):
         # The same substitution as test_a_loop_erased_by_parent_traversal, but
         # reached through the ENOENT that the guard deliberately tolerates. A
