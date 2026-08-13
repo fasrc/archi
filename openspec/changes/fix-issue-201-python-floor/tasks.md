@@ -25,11 +25,11 @@
 
 ## 2. Correct the one surviving stale claim in prose
 
-- [ ] 2.1 Change `- Python 3.7+` at `docs/docs/adding_providers.md:244` to state the declared
+- [x] 2.1 Change `- Python 3.7+` at `docs/docs/adding_providers.md:244` to state the declared
   floor. Confirm `grep -rn "Python 3\.7" CLAUDE.md docs/` returns nothing, and that
   `grep -rn "3\.7" pyproject.toml` returns nothing. Do **not** repair unrelated
   `api_reference.md` line anchors — that is issue #190 and belongs in its own PR.
-- [ ] 2.2 Run the gate bare and commit.
+- [x] 2.2 Run the gate bare and commit.
 
 ## 3. Validate and open the PR
 
