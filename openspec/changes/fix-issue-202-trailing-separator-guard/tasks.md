@@ -115,7 +115,7 @@ the suite red can never clear the gate and would deadlock the loop.
 
 ## 5. Push and open the PR
 
-- [ ] 5.1 Push the branch with an explicit upstream — `git push -u origin fix/issue-202-trailing-separator-guard`
+- [x] 5.1 Push the branch with an explicit upstream — `git push -u origin fix/issue-202-trailing-separator-guard`
       — because the branch was created from `origin/dev` and therefore tracks the trunk, not
       itself. Then open the PR; the change is not done without it:
       `gh pr create --repo fasrc/archi --base dev --title "fix(goldenset): refuse a persisted path spelling the OS cannot traverse (closes #202)"`.
