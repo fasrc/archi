@@ -127,4 +127,4 @@ the suite red can never clear the gate and would deadlock the loop.
       unmodified and that the ENOENT tolerance is untouched.
       Link the first use of any project term to the glossary.
 
-- [ ] 5.2 Request review on the PR. Do NOT merge — a human merges in daylight.
+- [x] 5.2 Request review on the PR. Do NOT merge — a human merges in daylight.
