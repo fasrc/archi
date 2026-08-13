@@ -7,6 +7,7 @@ floor understating the target (declared ``>=3.7`` while pyright checked ``3.11``
 3.10), which means static analysis has never once checked the declared floor.
 """
 
+import sys
 import tomllib
 from pathlib import Path
 
@@ -41,4 +42,17 @@ def test_declared_floor_is_not_below_the_pyright_target():
     assert floor >= pyright_target, (
         f"declared requires-python floor {floor} is below the pyright target "
         f"{pyright_target} -- static analysis never checks the declared floor"
+    )
+
+
+def test_running_interpreter_satisfies_declared_specifier():
+    data = _load_pyproject()
+    requires_python = SpecifierSet(data["project"]["requires-python"])
+    running_version = Version(
+        f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    )
+
+    assert requires_python.contains(running_version), (
+        f"running interpreter {running_version} does not satisfy the declared "
+        f"requires-python specifier {requires_python}"
     )

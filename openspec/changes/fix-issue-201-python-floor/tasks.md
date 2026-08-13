@@ -11,7 +11,7 @@
   `requires-python = ">=3.11"` in `pyproject.toml:5` and re-run to green. Do not split the
   red step into its own task: a task that ends with the suite red can never pass the gate,
   so the loop would deadlock before it could commit.
-- [ ] 1.2 Add the second guard to the same file: assert the **running** interpreter satisfies
+- [x] 1.2 Add the second guard to the same file: assert the **running** interpreter satisfies
   the declared specifier. Verify it can fail — temporarily set `requires-python = ">=3.99"`,
   watch that test go red, then revert to `>=3.11` and confirm the file is green again. End
   this task with the suite passing.
