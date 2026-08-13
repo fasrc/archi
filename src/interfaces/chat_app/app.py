@@ -80,6 +80,7 @@ from src.interfaces.chat_app.service_alerts import (
     is_alert_manager,
     register_service_alerts,
 )
+from src.interfaces.chat_app.similarity_threshold import normalize_similarity_threshold
 from src.interfaces.chat_app.utils import collapse_assistant_sequences
 from src.utils.config_access import (
     get_dynamic_config,
@@ -398,9 +399,13 @@ class ChatWrapper:
         # initialize data manager (ingestion handled by data-manager service)
         # self.data_manager = DataManager(run_ingestion=False)
         embedding_name = self.config["data_manager"]["embedding_name"]
-        self.similarity_score_reference = self.config["data_manager"][
-            "embedding_class_map"
-        ][embedding_name]["similarity_score_reference"]
+        self.similarity_score_reference = (
+            normalize_similarity_threshold(  # pragma: no cover
+                self.config["data_manager"]["embedding_class_map"][embedding_name][
+                    "similarity_score_reference"
+                ]
+            )
+        )
         self.sources_config = self.config["data_manager"]["sources"]
 
         # initialize vectorstore manager for embedding uploads (needs class-mapped config)
