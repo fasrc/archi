@@ -82,7 +82,7 @@ the suite red can never clear the gate and would deadlock the loop.
 
 ## 3. Mutation-check the new tests, and document the reasoning in place
 
-- [ ] 3.1 Revert ONLY the probe change (keep every test), re-run
+- [x] 3.1 Revert ONLY the probe change (keep every test), re-run
       `python -m pytest tests/unit/test_goldenset_maintenance.py -q`, and confirm **exactly** the
       two refusal tests from task 1.1 fail and nothing else — that is what proves they pin the
       new behavior rather than passing incidentally. Also revert only the string join back to
