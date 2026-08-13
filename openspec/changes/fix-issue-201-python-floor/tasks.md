@@ -1,6 +1,6 @@
 ## 1. Declare the real floor, driven by a test that fails first
 
-- [ ] 1.1 Add `tests/unit/test_python_version_declaration.py` and fix the declaration in the
+- [x] 1.1 Add `tests/unit/test_python_version_declaration.py` and fix the declaration in the
   same task. **Red first, inside this task:** write the guard that reads `pyproject.toml`
   with `tomllib`, parses `project.requires-python` with
   `packaging.specifiers.SpecifierSet`, takes its lower bound, reads
