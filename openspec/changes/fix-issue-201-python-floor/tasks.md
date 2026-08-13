@@ -18,7 +18,7 @@
 - [x] 1.3 Derive the floor from the parsed specifier rather than string-comparing `">=3.11"`,
   so a later `">=3.11,<4"` or `"~=3.11"` still reads as satisfied. Add a test that pins this:
   feed the comparison helper a bounded specifier and assert it is accepted.
-- [ ] 1.4 Run `black` on the new test file **before** `git add` — the pre-commit hook
+- [x] 1.4 Run `black` on the new test file **before** `git add` — the pre-commit hook
   reformats after staging, so a file staged unformatted is committed unformatted and CI's
   `--check` then fails. Confirm `git status` is clean after committing. Run the gate bare —
   `bash scripts/gate.sh`, no pipe and no redirect — then commit.
