@@ -69,30 +69,30 @@ produce one, and both belong in the PR body.
 Rationale in `design.md`, Decision 2. This is what makes the change safe to deploy ahead of a
 config update, so it is not optional.
 
-- [ ] 3.1 Add tests: a configured `similarity_score_reference` of `10` behaves as no floor
+- [x] 3.1 Add tests: a configured `similarity_score_reference` of `10` behaves as no floor
       (nothing filtered) and logs a warning naming the value; a configured `1.0` is still
       applied as a floor; a configured `0.3` is applied unchanged.
-- [ ] 3.2 Implement at the read site in `__init__` (`app.py:401-403`), not inside the loop:
+- [x] 3.2 Implement at the read site in `__init__` (`app.py:401-403`), not inside the loop:
       after reading the value, if it is `> 1.0`, log a warning naming the configured value and
       substitute `0.0`. Once per process, so the loop keeps one meaning for the attribute.
-- [ ] 3.3 Gate and commit: `fix(citations): ignore a distance-era relevance threshold`
+- [x] 3.3 Gate and commit: `fix(citations): ignore a distance-era relevance threshold`
 
 ## 4. Migrate every in-repo config and doc carrying the distance-era `10`
 
-- [ ] 4.1 `src/cli/templates/base-config.yaml:182,191` — `default(10, true)` → `default(0.0,
+- [x] 4.1 `src/cli/templates/base-config.yaml:182,191` — `default(10, true)` → `default(0.0,
       true)`. Note the Jinja `true` argument means "use the default when the value is falsey";
       an operator setting `0` and an operator setting nothing both resolve to `0.0`, which is
       the same value, so the filter needs no restructuring.
-- [ ] 4.2 `examples/deployments/basic-agent/local-config.yaml:51` → `0.0`.
-- [ ] 4.3 `tests/pr_preview_config/pr_preview_config.yaml:40` → `0.0`. Leaving this one stale
+- [x] 4.2 `examples/deployments/basic-agent/local-config.yaml:51` → `0.0`.
+- [x] 4.3 `tests/pr_preview_config/pr_preview_config.yaml:40` → `0.0`. Leaving this one stale
       would make the PR preview cite nothing and give reviewers a false read on this very
       change.
-- [ ] 4.4 `docs/docs/models_providers.md:150,169` and `docs/docs/configuration.md:410` → `0.0`,
+- [x] 4.4 `docs/docs/models_providers.md:150,169` and `docs/docs/configuration.md:410` → `0.0`,
       with a sentence saying the value is a minimum cosine similarity in `0..1` and that `0.0`
       means "cite everything retrieved".
-- [ ] 4.5 Re-grep to prove none is left:
+- [x] 4.5 Re-grep to prove none is left:
       `grep -rn 'similarity_score_reference' --include=*.yaml --include=*.md . | grep -v openspec/changes/archive`
-- [ ] 4.6 Gate and commit: `chore(config): default the relevance threshold to a similarity`
+- [x] 4.6 Gate and commit: `chore(config): default the relevance threshold to a similarity`
 
 ## 5. Follow-up and PR
 
