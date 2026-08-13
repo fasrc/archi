@@ -1388,6 +1388,47 @@ class TestPersistedDocumentPath:
         ):
             resolve_persisted_path("safe.md/.", str(root))
 
+    def test_a_clean_spelling_still_resolves(self, tmp_path):
+        # The positive counterpart to the two refusals above, and the
+        # acceptance criterion that fails if the probe change over-refuses: a
+        # spelling with no trailing separator or `.` component must still
+        # resolve.
+        root = tmp_path / "data"
+        root.mkdir()
+        (root / "safe.md").write_text("grounding text", encoding="utf-8")
+
+        assert resolve_persisted_path("safe.md", str(root)) == (root / "safe.md")
+
+    def test_traversable_dot_and_dotdot_spellings_still_resolve(self, tmp_path):
+        # Refusal is the kernel's verdict on the spelling, never a rule about
+        # which characters it contains (design.md Decision 2) — a `.` or `..`
+        # component that every real component can actually traverse must
+        # still resolve, exactly as the docstring for `web/../web/a.md`
+        # promises.
+        root = tmp_path / "data"
+        web = root / "web"
+        web.mkdir(parents=True)
+        (root / "safe.md").write_text("grounding text", encoding="utf-8")
+        (web / "a.md").write_text("grounding text", encoding="utf-8")
+
+        assert resolve_persisted_path("./safe.md", str(root)) == (root / "safe.md")
+        assert resolve_persisted_path("web/./a.md", str(root)) == (web / "a.md")
+        assert resolve_persisted_path("web/../web/a.md", str(root)) == (web / "a.md")
+
+    def test_a_trailing_separator_on_the_data_root_still_resolves(self, tmp_path):
+        # The data root is probed with its own raw spelling too (`raw=
+        # data_path`), so a hand-written config ending in `/` hits the same
+        # probe rule as `file_path` above — but `os.stat` accepts a trailing
+        # separator on a real DIRECTORY and only rejects one on a
+        # non-directory, so one probe rule serves both arguments and resolves
+        # them asymmetrically only because the root is always a directory
+        # (design.md Decision 3). This is not a carve-out for `data_path`.
+        root = tmp_path / "data"
+        root.mkdir()
+        (root / "safe.md").write_text("grounding text", encoding="utf-8")
+
+        assert resolve_persisted_path("safe.md", str(root) + "/") == (root / "safe.md")
+
     def test_a_missing_component_erased_by_parent_traversal_is_refused(self, tmp_path):
         # The same substitution as test_a_loop_erased_by_parent_traversal, but
         # reached through the ENOENT that the guard deliberately tolerates. A
