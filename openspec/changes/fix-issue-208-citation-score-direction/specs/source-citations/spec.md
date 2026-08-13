@@ -11,8 +11,14 @@ score. The consumers are the only place the opposite convention survives, and it
 prose in a docstring as much as in code, so the docstring is part of the contract rather than
 a comment on it.
 
-This requirement covers the `cosine` metric only. Under `l2` and `inner_product` the producer
-returns a raw distance, and normalizing that is a separate, producer-side concern.
+This holds under every supported distance metric, not just `cosine`. `1.0 - distance` is
+monotonically decreasing in distance for `<=>`, `<->` and `<#>` alike, so every producer
+returns a higher-is-better score and the consumers need no metric-aware branch.
+
+What the score is *measured in* still varies — only `cosine` yields a bounded range, and the
+hybrid path returns a weighted blend including an unbounded BM25 term — so the ordering is
+metric-independent while the threshold's calibration is not. That is why the floor ships
+disabled.
 
 #### Scenario: The stated convention matches the code
 
@@ -86,7 +92,20 @@ effect of the sort — so it needs pinning by test rather than by inspection.
 
 ### Requirement: The relevance threshold is a similarity floor
 
-`get_top_sources` SHALL treat `similarity_score_reference` as a minimum similarity, stopping at the first source scoring below it, and the shipped default SHALL be `0.0` so that no source is filtered unless an operator opts in.
+`get_top_sources` SHALL treat `similarity_score_reference` as a minimum similarity, stopping at the first source scoring below it, and a configured value at or below `0.0` SHALL disable the floor entirely so that no source is filtered unless an operator opts in.
+
+The shipped default is `0.0`, and "no floor" has to mean *no comparison*, not a comparison
+against zero. A cosine similarity is `1.0 - distance` over a 0..2 distance, so it runs down to
+-1.0: applied literally, a `0.0` floor would drop an anti-correlated source and — because the
+list is ordered best-first — every source after it, which is filtering that no operator asked
+for. A negative floor is therefore not expressible; that is deliberate, since the values below
+zero are exactly the ones an operator cannot calibrate across the metric and hybrid scales.
+
+#### Scenario: A source scoring below zero is still cited under the default
+
+- **WHEN** the shipped default is in effect and a retrieved source scores below `0.0`
+- **THEN** that source is cited
+- **AND** so is every source retrieved after it
 
 The comparison is a ceiling today (`score > threshold`), which is the distance reading. Its
 default of `10` made it inert, because a cosine similarity never approaches `10` — so the

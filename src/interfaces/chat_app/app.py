@@ -13,7 +13,6 @@ from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import urlparse
 
 import mistune as mt
-import numpy as np
 import psycopg2
 import psycopg2.extras
 import requests
@@ -80,7 +79,10 @@ from src.interfaces.chat_app.service_alerts import (
     is_alert_manager,
     register_service_alerts,
 )
-from src.interfaces.chat_app.similarity_threshold import normalize_similarity_threshold
+from src.interfaces.chat_app.similarity_threshold import (
+    normalize_similarity_threshold,
+    order_and_filter_by_similarity,
+)
 from src.interfaces.chat_app.utils import collapse_assistant_sequences
 from src.utils.config_access import (
     get_dynamic_config,
@@ -634,28 +636,13 @@ class ChatWrapper:
         """
         Build a de-duplicated list of reference entries (link or ticket id).
         """
-        if scores:
-            sorted_indices = np.argsort(scores)[::-1]
-            scores = [scores[i] for i in sorted_indices]
-            documents = [documents[i] for i in sorted_indices]
-
         top_sources = []
         seen_refs = set()
-        pairs = zip(scores, documents) if scores else ((None, doc) for doc in documents)
+        pairs = order_and_filter_by_similarity(
+            documents, scores, self.similarity_score_reference
+        )
 
         for score, document in pairs:
-            # Skip threshold filtering for placeholder scores (-1)
-            # Otherwise, stop at the first source scoring below the similarity floor
-            if (
-                score is not None
-                and score != -1.0
-                and score < self.similarity_score_reference
-            ):
-                logger.debug(
-                    f"Skipping document with score {score} below threshold {self.similarity_score_reference}"
-                )
-                break
-
             metadata = document.metadata or {}
 
             display_name = self._get_display_name(metadata)
