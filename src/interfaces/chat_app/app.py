@@ -630,7 +630,7 @@ class ChatWrapper:
         Build a de-duplicated list of reference entries (link or ticket id).
         """
         if scores:
-            sorted_indices = np.argsort(scores)
+            sorted_indices = np.argsort(scores)[::-1]
             scores = [scores[i] for i in sorted_indices]
             documents = [documents[i] for i in sorted_indices]
 
@@ -640,14 +640,14 @@ class ChatWrapper:
 
         for score, document in pairs:
             # Skip threshold filtering for placeholder scores (-1)
-            # Otherwise, filter out documents with score > threshold
+            # Otherwise, stop at the first source scoring below the similarity floor
             if (
                 score is not None
                 and score != -1.0
-                and score > self.similarity_score_reference
+                and score < self.similarity_score_reference
             ):
                 logger.debug(
-                    f"Skipping document with score {score} above threshold {self.similarity_score_reference}"
+                    f"Skipping document with score {score} below threshold {self.similarity_score_reference}"
                 )
                 break
 

@@ -19,18 +19,18 @@ produce one, and both belong in the PR body.
 
 ## 1. `format_citations`: sort descending and dedup on the highest score
 
-- [ ] 1.1 In `tests/unit/test_citation_formatter.py`, flip the two tests that pin the old
+- [x] 1.1 In `tests/unit/test_citation_formatter.py`, flip the two tests that pin the old
       direction:
       - `test_sorting_lower_is_better` (`:90`) → assert the **higher**-scoring source appears
         first. Rename it to match (`test_sorting_higher_is_better`).
       - `test_duplicate_chunks_deduplicated_best_score_kept` (`:63`) → assert the **highest**
         score is kept for a repeated display name.
-- [ ] 1.2 Add a test mixing real scores with `-1.0` sentinels, asserting every real score
+- [x] 1.2 Add a test mixing real scores with `-1.0` sentinels, asserting every real score
       sorts before every sentinel and the real ones are ordered highest first.
-- [ ] 1.3 Run `python -m pytest tests/unit/test_citation_formatter.py -q` and **save the
+- [x] 1.3 Run `python -m pytest tests/unit/test_citation_formatter.py -q` and **save the
       failure output** — this is acceptance criterion 1's "fails on `origin/dev` before the
       fix". Paste it into the PR body verbatim.
-- [ ] 1.4 Fix `src/archi/utils/citation_formatter.py`:
+- [x] 1.4 Fix `src/archi/utils/citation_formatter.py`:
       - docstring `:18-19` — scores are similarities, higher = more relevant; `-1.0` means
         "no score".
       - dedup `:49` — `score > existing_score` instead of `score < existing_score`. Keep the
@@ -40,13 +40,13 @@ produce one, and both belong in the PR body.
         element only) so real scores order descending. **Do not** put `reverse=True` on the
         whole `sorted()` call: that would also reverse the first element and float the
         sentinels to the top. Update the `# Sort:` comment at `:61`.
-- [ ] 1.5 Confirm the sentinel still renders with no `(relevance: …)` suffix — `:75-76` is
+- [x] 1.5 Confirm the sentinel still renders with no `(relevance: …)` suffix — `:75-76` is
       untouched, and `test_score_minus_one_omitted` (`:84`) should stay green without edits.
-- [ ] 1.6 Gate and commit: `fix(citations): order sources by descending similarity`
+- [x] 1.6 Gate and commit: `fix(citations): order sources by descending similarity`
 
 ## 2. `get_top_sources`: reverse the sort and make the threshold a floor
 
-- [ ] 2.1 `get_top_sources` has no unit test today. Add `tests/unit/test_get_top_sources.py`
+- [x] 2.1 `get_top_sources` has no unit test today. Add `tests/unit/test_get_top_sources.py`
       covering, against a real `ChatWrapper` instance or a minimal stand-in that sets
       `similarity_score_reference`:
       - the highest-scoring document leads the returned list;
@@ -55,14 +55,14 @@ produce one, and both belong in the PR body.
       - a `-1.0` sentinel is neither threshold-filtered nor treated as a stopping point, and
         sorts after the real scores;
       - with the shipped default (`0.0`), nothing is filtered.
-- [ ] 2.2 Run the new file and **save the failure output** for the PR body.
-- [ ] 2.3 Fix `src/interfaces/chat_app/app.py` in `get_top_sources` (`:628-651`):
+- [x] 2.2 Run the new file and **save the failure output** for the PR body.
+- [x] 2.3 Fix `src/interfaces/chat_app/app.py` in `get_top_sources` (`:628-651`):
       - `:633` — `np.argsort(scores)[::-1]` for descending order.
       - `:647` — `score < self.similarity_score_reference` (a floor). **Keep the `break`**:
         with the list ordered best-first, the first source below the floor guarantees the rest
         are too. Keep the `score is not None` and `score != -1.0` guards exactly as they are.
       - `:648-651` — reword the debug log; "above threshold" is now "below threshold".
-- [ ] 2.4 Gate and commit: `fix(citations): apply the relevance threshold as a similarity floor`
+- [x] 2.4 Gate and commit: `fix(citations): apply the relevance threshold as a similarity floor`
 
 ## 3. Refuse a threshold that cannot be a similarity
 
