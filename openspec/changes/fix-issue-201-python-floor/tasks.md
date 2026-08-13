@@ -33,7 +33,7 @@
 
 ## 3. Validate and open the PR
 
-- [ ] 3.1 Run `openspec validate fix-issue-201-python-floor --strict` and confirm it passes.
+- [x] 3.1 Run `openspec validate fix-issue-201-python-floor --strict` and confirm it passes.
 - [ ] 3.2 Push with `git push -u origin fix/issue-201-python-floor`. The `-u` matters: the
   branch was created with `git checkout -b ... origin/dev`, so its upstream is currently the
   trunk rather than its own remote branch.
