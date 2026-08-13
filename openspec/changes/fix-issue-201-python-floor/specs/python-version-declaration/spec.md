@@ -36,3 +36,19 @@ Contributor-facing documentation SHALL NOT state a minimum Python version lower 
 #### Scenario: A documentation page names the old floor
 - **WHEN** a documentation page states a Python minimum below the declared floor
 - **THEN** that statement is corrected to the declared floor
+
+### Requirement: Container base images SHALL satisfy the declared Python floor
+Every deployment Dockerfile template that pins an official CPython base image SHALL pin an interpreter satisfying the declared `requires-python` floor, so raising the floor cannot turn `pip install .` into a build failure for every service image.
+
+#### Scenario: A base image pins an interpreter below the floor
+- **WHEN** a Dockerfile template under `src/cli/templates/dockerfiles/` pins `FROM python:<version>` below the declared floor
+- **THEN** the test suite fails
+- **AND** the failure message names each offending template and the interpreter it pins
+
+#### Scenario: A base image pins a satisfying interpreter
+- **WHEN** every pinned official CPython base image satisfies the declared floor
+- **THEN** the test suite passes
+
+#### Scenario: An image pinning no readable interpreter version
+- **WHEN** a template builds `FROM` a derived base image or a vendor image whose tag names no CPython version
+- **THEN** the guard skips it rather than inferring a version from the tag
