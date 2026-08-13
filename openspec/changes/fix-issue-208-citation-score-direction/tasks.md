@@ -96,7 +96,7 @@ config update, so it is not optional.
 
 ## 5. Follow-up and PR
 
-- [ ] 5.1 File the P3 follow-up for producer-side normalization under `l2` /
+- [x] 5.1 File the P3 follow-up for producer-side normalization under `l2` /
       `inner_product` (`postgres_vectorstore.py:396-401` returns a raw distance for both, so
       the consumer-side convention this change establishes is wrong for them). Record its
       number — acceptance criteria require it in the PR body.
