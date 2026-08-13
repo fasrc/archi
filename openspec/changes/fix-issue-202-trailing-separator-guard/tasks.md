@@ -55,7 +55,7 @@ the suite red can never clear the gate and would deadlock the loop.
 
 ## 2. Prove the fix over-refuses nothing, and pin the data-root decision
 
-- [ ] 2.1 Add the discriminating tests (tests-only; still gate before committing):
+- [x] 2.1 Add the discriminating tests (tests-only; still gate before committing):
 
       - the clean spelling still resolves: `resolve_persisted_path("safe.md", str(root))` returns
         the resolved path (this is an acceptance criterion, and it is what fails if the fix
