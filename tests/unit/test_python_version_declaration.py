@@ -45,6 +45,18 @@ def test_declared_floor_is_not_below_the_pyright_target():
     )
 
 
+def test_declared_floor_accepts_a_bounded_respelling_of_the_same_floor():
+    pyright_target = Version("3.11")
+
+    for spec_str in (">=3.11,<4", "~=3.11"):
+        floor = _declared_floor(SpecifierSet(spec_str))
+
+        assert floor >= pyright_target, (
+            f"specifier {spec_str!r} floors at {pyright_target} but the parsed "
+            f"floor {floor} was reported as lower"
+        )
+
+
 def test_running_interpreter_satisfies_declared_specifier():
     data = _load_pyproject()
     requires_python = SpecifierSet(data["project"]["requires-python"])

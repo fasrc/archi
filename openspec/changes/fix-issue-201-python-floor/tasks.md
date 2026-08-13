@@ -15,7 +15,7 @@
   the declared specifier. Verify it can fail — temporarily set `requires-python = ">=3.99"`,
   watch that test go red, then revert to `>=3.11` and confirm the file is green again. End
   this task with the suite passing.
-- [ ] 1.3 Derive the floor from the parsed specifier rather than string-comparing `">=3.11"`,
+- [x] 1.3 Derive the floor from the parsed specifier rather than string-comparing `">=3.11"`,
   so a later `">=3.11,<4"` or `"~=3.11"` still reads as satisfied. Add a test that pins this:
   feed the comparison helper a bounded specifier and assert it is accepted.
 - [ ] 1.4 Run `black` on the new test file **before** `git add` — the pre-commit hook
