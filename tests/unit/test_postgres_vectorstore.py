@@ -494,9 +494,10 @@ class TestDocumentOperations:
         texts = ["First document", "Second document"]
         metadatas = [{"source": "test"}, {"source": "test"}]
 
-        with patch.object(vector_store, "_get_connection", return_value=conn), patch(
-            "psycopg2.extras.execute_values"
-        ) as mock_execute_values:
+        with (
+            patch.object(vector_store, "_get_connection", return_value=conn),
+            patch("psycopg2.extras.execute_values") as mock_execute_values,
+        ):
             ids = vector_store.add_texts(texts, metadatas=metadatas)
 
         assert len(ids) == 2
@@ -515,9 +516,10 @@ class TestDocumentOperations:
             Document(page_content="Doc 2", metadata={"key": "value2"}),
         ]
 
-        with patch.object(vector_store, "_get_connection", return_value=conn), patch(
-            "psycopg2.extras.execute_values"
-        ) as mock_execute_values:
+        with (
+            patch.object(vector_store, "_get_connection", return_value=conn),
+            patch("psycopg2.extras.execute_values") as mock_execute_values,
+        ):
             ids = vector_store.add_documents(docs)
 
         assert len(ids) == 2
