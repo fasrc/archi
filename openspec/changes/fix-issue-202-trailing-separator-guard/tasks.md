@@ -100,7 +100,7 @@ the suite red can never clear the gate and would deadlock the loop.
 
 ## 4. Validate the spec and the whole suite
 
-- [ ] 4.1 Run `openspec validate fix-issue-202-trailing-separator-guard --strict` and confirm it
+- [x] 4.1 Run `openspec validate fix-issue-202-trailing-separator-guard --strict` and confirm it
       passes. The delta is a `## MODIFIED Requirements` restatement of *"Persisted-document path
       resolution is total and contained"* — one requirement carrying the tightened clause and the
       new scenarios, never a second requirement contradicting the first. Note in the PR body that
