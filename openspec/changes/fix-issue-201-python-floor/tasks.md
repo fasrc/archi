@@ -37,7 +37,7 @@
 - [x] 3.2 Push with `git push -u origin fix/issue-201-python-floor`. The `-u` matters: the
   branch was created with `git checkout -b ... origin/dev`, so its upstream is currently the
   trunk rather than its own remote branch.
-- [ ] 3.3 Open the PR against `fasrc/archi:dev` with
+- [x] 3.3 Open the PR against `fasrc/archi:dev` with
   `gh pr create --repo fasrc/archi --base dev`. Put `Closes #201` in the **body** — a
   closing keyword in the title does not link the issue. The body must carry the evidence
   that this one-line change is the *correct* line: the output of
