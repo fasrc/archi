@@ -100,7 +100,7 @@ config update, so it is not optional.
       `inner_product` (`postgres_vectorstore.py:396-401` returns a raw distance for both, so
       the consumer-side convention this change establishes is wrong for them). Record its
       number — acceptance criteria require it in the PR body.
-- [ ] 5.2 Open the PR against `fasrc/archi:dev` with `Closes #208`. The body must carry:
+- [x] 5.2 Open the PR against `fasrc/archi:dev` with `Closes #208`. The body must carry:
       - the two saved red-test outputs from tasks 1.3 and 2.2;
       - the non-cosine scope-out and the follow-up issue number;
       - **a deploy note**: the shipped default changed, so a redeploy is needed for a
