@@ -15,8 +15,8 @@ def format_citations(source_documents: List, scores: List) -> str:
     Args:
         source_documents: LangChain-style Document objects with .metadata dict
             and .page_content attributes.
-        scores: Corresponding relevance scores (lower = more relevant, as they
-            represent distances). A score of -1.0 means "no score".
+        scores: Corresponding relevance scores (similarities — higher = more
+            relevant). A score of -1.0 means "no score".
 
     Returns:
         A markdown string with deduplicated, sorted source citations, or an
@@ -29,7 +29,7 @@ def format_citations(source_documents: List, scores: List) -> str:
     while len(padded_scores) < len(source_documents):
         padded_scores.append(-1.0)
 
-    # Deduplicate by display name, keeping the best (lowest) score
+    # Deduplicate by display name, keeping the best (highest) score
     best_by_name = {}
     for doc, score in zip(source_documents, padded_scores):
         metadata = getattr(doc, "metadata", None) or {}
@@ -46,7 +46,7 @@ def format_citations(source_documents: List, scores: List) -> str:
             }
         else:
             existing_score = best_by_name[display_name]["score"]
-            if score != -1.0 and (existing_score == -1.0 or score < existing_score):
+            if score != -1.0 and (existing_score == -1.0 or score > existing_score):
                 best_by_name[display_name]["score"] = score
 
     if not best_by_name:
@@ -58,12 +58,12 @@ def format_citations(source_documents: List, scores: List) -> str:
     }
     show_collection = len(collections) > 1
 
-    # Sort: real scores first (ascending — lower is better), then no-score entries
+    # Sort: real scores first (descending — higher is better), then no-score entries
     entries = sorted(
         best_by_name.items(),
         key=lambda item: (
             0 if item[1]["score"] != -1.0 else 1,
-            item[1]["score"] if item[1]["score"] != -1.0 else 0,
+            -item[1]["score"] if item[1]["score"] != -1.0 else 0,
         ),
     )
 
