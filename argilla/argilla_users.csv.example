@@ -1,0 +1,21 @@
+# Argilla roster template — copy to a path OUTSIDE this repository, fill it in,
+# and pass that path to create_argilla_users.py:
+#
+#     python argilla/create_argilla_users.py ~/.archi/rosters/evaluators.csv
+#
+# Rosters hold real names, real email addresses, and optionally plaintext
+# passwords. They are operator data, not repository content, and argilla/*.csv
+# is git-ignored so a filled-in roster cannot be committed.
+#
+# Prefer omitting the password column entirely: create_argilla_users.py then
+# generates a secure random password per user and prints it once, which keeps
+# the credential out of any file that can be copied, backed up, or committed.
+#
+# Format (one user per line; '#' comments and blank lines ignored):
+#     username,Full Name,email[,role][,password]
+#
+# role     optional; defaults to --role (default: annotator)
+#          one of: owner | admin | annotator
+# password optional; omit it — see above
+jdoe,Jane Doe,jdoe@example.edu,annotator
+rroe,Richard Roe,rroe@example.edu,admin
