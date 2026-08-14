@@ -17,7 +17,6 @@ from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import urlparse
 
 import mistune as mt
-import numpy as np
 import psycopg2
 import psycopg2.extras
 import requests
@@ -83,6 +82,10 @@ from src.interfaces.chat_app.service_alerts import (
     get_active_banner_alerts,
     is_alert_manager,
     register_service_alerts,
+)
+from src.interfaces.chat_app.similarity_threshold import (
+    normalize_similarity_threshold,
+    order_and_filter_by_similarity,
 )
 from src.interfaces.chat_app.utils import collapse_assistant_sequences
 from src.utils.config_access import (
@@ -407,9 +410,13 @@ class ChatWrapper:
         # initialize data manager (ingestion handled by data-manager service)
         # self.data_manager = DataManager(run_ingestion=False)
         embedding_name = self.config["data_manager"]["embedding_name"]
-        self.similarity_score_reference = self.config["data_manager"][
-            "embedding_class_map"
-        ][embedding_name]["similarity_score_reference"]
+        self.similarity_score_reference = (
+            normalize_similarity_threshold(  # pragma: no cover
+                self.config["data_manager"]["embedding_class_map"][embedding_name][
+                    "similarity_score_reference"
+                ]
+            )
+        )
         self.sources_config = self.config["data_manager"]["sources"]
 
         # initialize vectorstore manager for embedding uploads (needs class-mapped config)
@@ -638,28 +645,13 @@ class ChatWrapper:
         """
         Build a de-duplicated list of reference entries (link or ticket id).
         """
-        if scores:
-            sorted_indices = np.argsort(scores)
-            scores = [scores[i] for i in sorted_indices]
-            documents = [documents[i] for i in sorted_indices]
-
         top_sources = []
         seen_refs = set()
-        pairs = zip(scores, documents) if scores else ((None, doc) for doc in documents)
+        pairs = order_and_filter_by_similarity(
+            documents, scores, self.similarity_score_reference
+        )
 
         for score, document in pairs:
-            # Skip threshold filtering for placeholder scores (-1)
-            # Otherwise, filter out documents with score > threshold
-            if (
-                score is not None
-                and score != -1.0
-                and score > self.similarity_score_reference
-            ):
-                logger.debug(
-                    f"Skipping document with score {score} above threshold {self.similarity_score_reference}"
-                )
-                break
-
             metadata = document.metadata or {}
 
             display_name = self._get_display_name(metadata)

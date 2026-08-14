@@ -214,6 +214,64 @@ class TestSimilaritySearch:
         assert isinstance(doc, Document)
         assert score == 0.9  # 1 - 0.1 cosine distance
 
+    @pytest.mark.parametrize("metric", ["l2", "inner_product"])
+    def test_non_cosine_scores_are_higher_is_better(
+        self, pg_config, mock_embeddings, mock_pg_connection, metric
+    ):
+        """Every metric must hand the citation layer a higher-is-better score.
+
+        `hybrid_search` already computes `1.0 - (embedding <op> vec)` for whatever
+        operator is configured, so it is higher-is-better under all three metrics.
+        This method returned the raw distance for anything but cosine, so the two
+        producers disagreed -- and the semantic-only fallback in HybridRetriever
+        routes here, which is how a raw distance reaches `get_top_sources` and
+        gets sorted best-last.
+        """
+        conn, cursor = mock_pg_connection
+
+        with patch.object(PostgresVectorStore, "_get_connection", return_value=conn):
+            store = PostgresVectorStore(
+                pg_config=pg_config,
+                embedding_function=mock_embeddings,
+                collection_name="test_collection",
+                distance_metric=metric,
+            )
+
+        cursor.fetchall.return_value = [
+            {
+                "id": 1,
+                "chunk_text": "near",
+                "metadata": "{}",
+                "distance": 0.2,
+                "resource_hash": None,
+                "display_name": None,
+                "source_type": None,
+                "url": None,
+            },
+            {
+                "id": 2,
+                "chunk_text": "far",
+                "metadata": "{}",
+                "distance": 0.8,
+                "resource_hash": None,
+                "display_name": None,
+                "source_type": None,
+                "url": None,
+            },
+        ]
+
+        with patch.object(store, "_get_connection", return_value=conn):
+            results = store.similarity_search_with_score("query", k=2)
+
+        (near_doc, near_score), (far_doc, far_score) = results
+        assert near_doc.page_content == "near"
+        assert far_doc.page_content == "far"
+        assert near_score > far_score, (
+            f"under {metric!r} the nearer document scored {near_score} and the "
+            f"farther one {far_score} -- the citation layer sorts descending, so "
+            f"this orders the least relevant source first"
+        )
+
     def test_similarity_search_with_filter(self, vector_store, mock_pg_connection):
         """Test similarity search with metadata filter."""
         conn, cursor = mock_pg_connection

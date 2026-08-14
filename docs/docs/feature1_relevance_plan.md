@@ -3,6 +3,17 @@
 > Planning artifact only. No code has been changed. Companion to
 > `notes_response_tuning.md` (the exploration + locked decisions).
 
+> **Partly superseded.** This plan assumes classic QA stays mis-ordered and that
+> the agent path therefore needs its own opt-in `similarity_mode` branch. Issue
+> #208 fixed the shared path instead: `get_top_sources` sorts descending for
+> every caller, `similarity_score_reference` is a lower bound that ships
+> disabled, and all `PostgresVectorStore` producers return `1.0 - distance`. So
+> the "Q3 fix scope — agent path only now" row and **Step 4**'s `similarity_mode`
+> flag no longer describe work that needs doing; building them now would add a
+> second code path around behaviour that is already correct. The normalization
+> and presentation questions (buckets vs raw score) are untouched by that fix and
+> remain open.
+
 ---
 
 ## Context

@@ -147,10 +147,10 @@ data_manager:
       class: OpenAIEmbeddings
       kwargs:
         model: text-embedding-3-small
-      similarity_score_reference: 10
+      similarity_score_reference: 0.0
 ```
 
-Requires `OPENAI_API_KEY` in your secrets file.
+`similarity_score_reference` is a minimum cosine similarity in the range `0..1`; `0.0` means cite everything retrieved. Requires `OPENAI_API_KEY` in your secrets file.
 
 ### HuggingFace Embeddings
 
@@ -166,10 +166,10 @@ data_manager:
           device: cpu
         encode_kwargs:
           normalize_embeddings: true
-      similarity_score_reference: 10
+      similarity_score_reference: 0.0
 ```
 
-Uses HuggingFace models locally. Optionally requires `HUGGINGFACEHUB_API_TOKEN` for private models.
+`similarity_score_reference` is a minimum cosine similarity in the range `0..1`; `0.0` means cite everything retrieved. Uses HuggingFace models locally. Optionally requires `HUGGINGFACEHUB_API_TOKEN` for private models.
 
 ---
 
