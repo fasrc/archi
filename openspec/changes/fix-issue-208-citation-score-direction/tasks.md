@@ -26,12 +26,12 @@
 
 ## 2. Verify the full test suite passes
 
-- [ ] 2.1 Run `bash scripts/gate.sh` bare (no pipe, no redirect). Format, lint, tests,
+- [x] 2.1 Run `bash scripts/gate.sh` bare (no pipe, no redirect). Format, lint, tests,
       and ≥80 % diff coverage on changed lines must all pass. Never `--no-verify`.
       The changed lines are in `citation_formatter.py` (importable, fully covered by
       `test_citation_formatter.py`) and the test file itself, so coverage is
       straightforward.
-- [ ] 2.2 Confirm no other test asserts old ascending-order / lower-is-better semantics
+- [x] 2.2 Confirm no other test asserts old ascending-order / lower-is-better semantics
       for `format_citations`:
       `grep -rn "lower.*better\|ascending.*lower\|lower.*relevant" tests/ src/archi/utils/citation_formatter.py`
       must return nothing (or only comments that were already updated in 1.2c).
