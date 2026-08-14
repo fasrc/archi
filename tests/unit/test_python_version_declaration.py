@@ -38,8 +38,29 @@ _DOC_FLOOR_ANCHORS = (
         re.compile(r"`python (?P<version>\d+\.\d+(?:\.\d+)?)\+`"),
         1,
     ),
+    (
+        "docs/docs/adding_providers.md",
+        re.compile(r"Python (?P<version>\d+\.\d+(?:\.\d+)?)\+"),
+        1,
+    ),
     ("openspec/project.md", re.compile(r"Python (?P<version>\d+\.\d+(?:\.\d+)?)\+"), 2),
 )
+
+# Any statement of a Python minimum, in any wording the anchors above accept.
+_ANY_FLOOR_RE = re.compile(r"[Pp]ython (?P<version>\d+\.\d+(?:\.\d+)?)\+")
+
+
+def _ACTIVE_DOC_PAGES():
+    """Markdown that states the project's *current* requirements.
+
+    `openspec/changes/` is excluded: proposals and their archive record what was true when
+    they were written, so a change that legitimately mentions 3.7 or 3.13 is history, not a
+    live declaration a reader would act on.
+    """
+    pages = sorted(REPO_ROOT.glob("*.md"))
+    pages += sorted((REPO_ROOT / "docs").rglob("*.md"))
+    pages += sorted((REPO_ROOT / "openspec").glob("*.md"))
+    return pages
 
 
 def _load_pyproject():
@@ -193,6 +214,32 @@ def test_container_base_images_satisfy_the_declared_floor():
     assert not offenders, (
         f"base image(s) below the declared requires-python floor {requires_python}: "
         f"{offenders} -- `pip install .` rejects the project on these interpreters"
+    )
+
+
+def test_every_page_stating_a_minimum_is_guarded():
+    """An unanchored page stating a floor is unguarded, and silently so.
+
+    `_DOC_FLOOR_ANCHORS` is an allowlist, so a page that states a Python minimum without
+    being listed there is simply never checked -- the floor can move again and that page
+    keeps advertising the old one with every test still green. Corrected pages have been
+    left off the list twice during this change alone, so make the omission fail loudly here
+    instead of waiting for a reviewer to notice it.
+    """
+    anchored = {relative_path for relative_path, _, _ in _DOC_FLOOR_ANCHORS}
+
+    unguarded = []
+    for path in _ACTIVE_DOC_PAGES():
+        relative_path = path.relative_to(REPO_ROOT).as_posix()
+        if relative_path in anchored:
+            continue
+        stated = _ANY_FLOOR_RE.findall(path.read_text())
+        if stated:
+            unguarded.append(f"{relative_path}: states {stated}")
+
+    assert not unguarded, (
+        f"page(s) state a Python minimum but are not in _DOC_FLOOR_ANCHORS, so the floor "
+        f"guard never checks them: {unguarded}"
     )
 
 

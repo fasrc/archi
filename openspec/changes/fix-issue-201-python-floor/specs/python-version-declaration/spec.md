@@ -42,6 +42,11 @@ Contributor-facing documentation SHALL NOT state a minimum Python version lower 
 - **WHEN** a documentation page states a Python minimum below the declared floor
 - **THEN** that statement is corrected to the declared floor
 
+#### Scenario: A page states a minimum the guard does not cover
+- **WHEN** a page stating the project's current requirements names a Python minimum but is not among the guard's anchored pages
+- **THEN** the test suite fails and names the unanchored page, so the omission cannot pass silently
+- **AND** change proposals under `openspec/changes/` are out of scope, since they record what was true when written rather than a live requirement
+
 ### Requirement: Container base images SHALL satisfy the declared Python floor
 Every deployment Dockerfile template that pins an official CPython base image SHALL pin an interpreter satisfying the declared `requires-python` floor, so raising the floor cannot turn `pip install .` into a build failure for every service image.
 
