@@ -1,6 +1,6 @@
 ## 1. Preserve a stored last_modified on the conflict path (TDD)
 
-- [ ] 1.1 Make the pinned assertion red, then green — **in this one task**, because the
+- [x] 1.1 Make the pinned assertion red, then green — **in this one task**, because the
       gate runs before every commit and a task that ends with the suite red can never be
       committed. First edit
       `tests/unit/test_catalog_postgres_upsert_last_modified.py:80`, which today asserts
@@ -17,7 +17,7 @@
       `last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified),`.
       Re-run: green. Change nothing else in the statement — not the column list, not the
       `VALUES` tuple, not the params (design D1/D2).
-- [ ] 1.2 Add the two cases the fix exists for, both green against 1.1's implementation.
+- [x] 1.2 Add the two cases the fix exists for, both green against 1.1's implementation.
       (a) A re-upsert whose metadata omits `last_modified` still emits the COALESCE clause
       **and** still passes `None` through in the params tuple — assert both, so the
       preservation is proven to be decided in SQL rather than smuggled into Python by
@@ -26,12 +26,12 @@
       one is the sharper case, since `COALESCE` must not be mistaken for "keep the newest".
       Keep the existing two passing tests (`..._includes_column_in_sql`,
       `..._passes_parsed_value`) as-is.
-- [ ] 1.3 Confirm no other test or caller pins the old clause:
+- [x] 1.3 Confirm no other test or caller pins the old clause:
       `grep -rn "last_modified = EXCLUDED" tests/ src/` must return nothing.
 
 ## 2. State the contract where the next caller reads it
 
-- [ ] 2.1 Extend the `upsert_resource` docstring in
+- [x] 2.1 Extend the `upsert_resource` docstring in
       `src/data_manager/collectors/utils/catalog_postgres.py` to state the semantics
       explicitly: a `last_modified` supplied in metadata is written on insert and on
       conflict-update; an absent one stores `NULL` on insert but **leaves an existing
@@ -43,14 +43,14 @@
 
 ## 3. Verify against the issue's acceptance criteria
 
-- [ ] 3.1 Run `bash scripts/gate.sh` **bare — no pipe, no redirect** (it refuses to run
+- [x] 3.1 Run `bash scripts/gate.sh` **bare — no pipe, no redirect** (it refuses to run
       when its output is piped or redirected). Format, lint, tests, and ≥80% diff coverage
       on changed lines must all pass. Never `--no-verify`. Note that the changed production
       line lives inside a SQL string literal and so carries no executable-line coverage of
       its own (design D5) — the patch coverage comes from the test file.
-- [ ] 3.2 Run `openspec validate fix-issue-233-coalesce-last-modified --strict` and confirm
+- [x] 3.2 Run `openspec validate fix-issue-233-coalesce-last-modified --strict` and confirm
       it passes.
-- [ ] 3.3 Confirm the two behavioural acceptance criteria from issue #233 are covered by
+- [x] 3.3 Confirm the two behavioural acceptance criteria from issue #233 are covered by
       real tests: re-ingest without a timestamp leaves a stored value intact, and a
       genuinely different timestamp still overwrites. Both are in
       `tests/unit/test_catalog_postgres_upsert_last_modified.py` after task 1.

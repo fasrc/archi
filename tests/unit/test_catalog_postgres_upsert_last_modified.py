@@ -65,7 +65,13 @@ def test_upsert_resource_with_last_modified_passes_parsed_value():
 
 
 def test_upsert_resource_conflict_update_includes_last_modified():
-    """ON CONFLICT DO UPDATE SET must include last_modified = EXCLUDED.last_modified."""
+    """ON CONFLICT DO UPDATE SET must use COALESCE to preserve a stored value when absent.
+
+    The clause must be
+    ``last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified)``
+    so that an incoming NULL (no new information) leaves an existing stored
+    timestamp unchanged rather than overwriting it.
+    """
     cursor = MagicMock()
     cursor.fetchone.return_value = (3,)
     service = _make_service(cursor)
@@ -77,7 +83,10 @@ def test_upsert_resource_conflict_update_includes_last_modified():
     )
 
     sql, _params = cursor.execute.call_args[0]
-    assert "last_modified = EXCLUDED.last_modified" in sql
+    assert (
+        "last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified)"
+        in sql
+    )
 
 
 def test_upsert_resource_without_last_modified_no_error():
@@ -97,6 +106,55 @@ def test_upsert_resource_without_last_modified_no_error():
     assert "last_modified" in sql
     # No datetime values in params since no datetime metadata was provided
     assert not any(isinstance(p, datetime) for p in params)
+
+
+def test_upsert_resource_without_last_modified_uses_coalesce_and_passes_none():
+    """Re-upsert without last_modified emits COALESCE clause AND passes None as the param.
+
+    Both conditions must hold together: the clause must be the COALESCE form so
+    the database decides (not Python omitting a parameter), and the param must be
+    None (NULL) so an absent timestamp is explicitly represented rather than
+    silently dropped.  This proves preservation is decided in SQL (design D5).
+    """
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (7,)
+    service = _make_service(cursor)
+
+    service.upsert_resource(
+        resource_hash="hash7",
+        path="/data/page.html",
+        metadata={"source_type": "web"},
+    )
+
+    sql, params = cursor.execute.call_args[0]
+    assert (
+        "last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified)"
+        in sql
+    )
+    assert None in params
+
+
+def test_upsert_resource_older_last_modified_still_overwrites():
+    """A supplied last_modified replaces the stored one even when it is older.
+
+    COALESCE must not be mistaken for "keep the newest": it only activates when
+    the incoming value is NULL.  A non-NULL incoming timestamp — even an older
+    one — must be passed through and will overwrite the stored value.
+    """
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (8,)
+    service = _make_service(cursor)
+
+    older_ts = "2020-01-01T00:00:00+00:00"
+    service.upsert_resource(
+        resource_hash="hash8",
+        path="/data/page.html",
+        metadata={"source_type": "web", "last_modified": older_ts},
+    )
+
+    _sql, params = cursor.execute.call_args[0]
+    expected = datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    assert expected in params
 
 
 def test_row_to_metadata_returns_last_modified():

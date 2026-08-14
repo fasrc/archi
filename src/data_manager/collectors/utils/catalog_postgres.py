@@ -203,6 +203,15 @@ class PostgresCatalogService:
         """
         Insert or update a resource in the documents table.
 
+        A ``last_modified`` value supplied in *metadata* is written to the
+        ``documents.last_modified`` column on both insert and conflict-update.
+        When no ``last_modified`` is present, ``NULL`` is stored on insert (no
+        prior value exists to keep) and any already-stored value is left
+        unchanged on conflict-update: an absent incoming timestamp means "no new
+        information", not "clear the column".  This applies to ``last_modified``
+        only — other nullable columns represent properties observed in the
+        current ingest, where absence legitimately means "not set".
+
         Returns:
             The document ID (for linking to document_chunks)
         """
@@ -254,7 +263,7 @@ class PostgresCatalogService:
                         relative_path = EXCLUDED.relative_path,
                         file_modified_at = EXCLUDED.file_modified_at,
                         ingested_at = EXCLUDED.ingested_at,
-                        last_modified = EXCLUDED.last_modified,
+                        last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified),
                         extra_json = EXCLUDED.extra_json,
                         extra_text = EXCLUDED.extra_text,
                         is_deleted = FALSE,
