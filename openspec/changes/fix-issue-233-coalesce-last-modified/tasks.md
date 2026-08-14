@@ -57,7 +57,7 @@
 
 ## 4. Ship it (no merge)
 
-- [ ] 4.1 Open the PR against `dev`:
+- [x] 4.1 Open the PR against `dev`:
       `gh pr create --repo fasrc/archi --base dev`. The body MUST contain `closes #233` —
       a closes-keyword in the *title* does not link the issue. State in the body that this
       needs **no migration and no deploy ordering** (the column is already nullable — only
