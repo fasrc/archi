@@ -1,128 +1,118 @@
+# Design
+
 ## Context
 
-`format_citations` (`src/archi/utils/citation_formatter.py`) is a pure function that
-receives a list of LangChain `Document` objects and a parallel list of float scores, then
-formats them into a markdown citations block. It is called by both the native chat UI
-path (via `app.py` which passes `retriever_scores` from the QA pipeline) and the OpenAI-
-compatible `/v1` endpoint (`openai_compat.py:339,420`).
+Two consumers read retriever scores with the wrong polarity. The fix itself is four small
+edits. Everything hard about this change is in the blast radius of flipping a comparison that
+a live config participates in, so most of this document is about what must move with it.
 
-The score list comes from `qa.py:118`: `"retriever_scores": scores`, where `scores` is
-extracted via `zip(*retriever_output)` from the retriever's return value. The active
-retriever in production is `HybridRetriever`, which delegates to
-`PostgresVectorStore.hybrid_search`. That function computes
-`combined_score = semantic_score × bm25_weight + bm25_score × semantic_weight` and orders
-by `combined_score DESC` (`:500`), so the scores are already in descending-relevance order
-when they reach `format_citations`. The function then re-sorts them ascending, reversing
-the retriever's ordering.
+Ground truth re-derived at `origin/dev@0a157cdc` (the issue's anchors were recorded at
+`bd2d519c`; line numbers drifted, the code did not).
 
-The same reversal appears in `app.py:get_top_sources` (`np.argsort(scores)` ascending),
-but that function lives in a file the unit-test suite cannot import, so fixing it here
-would break the diff-cover gate. It is tracked separately.
+## Decision 1: keep the `break` in `get_top_sources`, do not turn it into `continue`
 
-## Goals / Non-Goals
+Today `get_top_sources` sorts ascending and `break`s on the first score above the ceiling.
+With the list sorted best-first and the test inverted to a floor, `break` remains exactly
+right: the first source below the floor guarantees every later one is too. Rewriting it as a
+`continue` would change the shape of the loop for no behavioural gain and would obscure the
+fact that the ordering is what makes the early exit sound.
 
-**Goals**: correct the direction in `format_citations` so the most relevant source is
-listed first; keep the `−1.0` sentinel (no-score) entries after scored ones; remove the
-misleading "distances" comment.
+The two guards in front of it are preserved verbatim: `score is not None` and
+`score != -1.0`. The sentinel must never be compared against the threshold.
 
-**Non-Goals**: changing the score type or range; changing the `-1.0` sentinel protocol;
-fixing `app.py:get_top_sources` (separate diff-cover constraint); touching
-`LlamaIndexHierarchicalRetriever` or any retriever internals.
+## Decision 2: a threshold above `1.0` is not a floor
 
-## Decisions
+This is the one place the change goes beyond the issue's plan, and the reason is that the
+plan as written is unsafe to deploy.
 
-### D1 — Reverse the deduplication comparator
+A cosine similarity is in `0..1`. A configured `similarity_score_reference` above `1.0`
+therefore cannot be a similarity floor — it can only be a distance ceiling left over from the
+convention this change retires. Applied literally as a floor it filters *everything*, and the
+user sees a response with no sources at all.
 
-Current (wrong):
-```python
-if score != -1.0 and (existing_score == -1.0 or score < existing_score):
-    best_by_name[display_name]["score"] = score
-```
+That is not a hypothetical. Deployments read a config fetched at deploy time from outside
+this repo, so a live `similarity_score_reference: 10` is unaffected by anything in this PR.
+The gate cannot catch it; CI cannot catch it; the first signal would be users reporting
+missing citations.
 
-Correct:
-```python
-if score != -1.0 and (existing_score == -1.0 or score > existing_score):
-    best_by_name[display_name]["score"] = score
-```
+The issue's decision text says the new default exists "so the guard remains effectively
+disabled (same behavior as today)". Preserving that property on a config this PR cannot edit
+is only possible if the writer refuses a value that cannot be a similarity. So: read the
+threshold, and if it is `> 1.0`, treat it as `0.0` (no floor) and log a warning naming the
+configured value and the file it should be changed in.
 
-`score > existing_score` keeps whichever score is numerically larger, i.e., the chunk
-that the retriever judged most relevant. The sentinel guard is unchanged — a real score
-always wins over `−1.0`.
+**Where:** at the read site in `__init__` (`app.py:401-403`), not inside the loop. Normalizing
+once at startup means the loop keeps a single meaning for the attribute, the warning is
+emitted once per process rather than once per document, and the guard is trivially testable
+without constructing a retrieval.
 
-### D2 — Reverse the sort key
+**Why `> 1.0` and not `>= 1.0`:** a floor of exactly `1.0` is degenerate but coherent — it
+means "only cite an exact-match similarity". Refusing it would be the tool second-guessing a
+legal, if strict, choice. `10` is not coherent under any reading.
 
-Current (wrong, ascending — lowest first):
-```python
-entries = sorted(
-    best_by_name.items(),
-    key=lambda item: (
-        0 if item[1]["score"] != -1.0 else 1,
-        item[1]["score"] if item[1]["score"] != -1.0 else 0,
-    ),
-)
-```
+**Rejected alternative — clamp to `1.0` instead of `0.0`.** Clamping keeps the guard live and
+still filters nearly everything, which fails the "same behavior as today" requirement in a
+quieter and more confusing way. Disabling is the honest reading of a value that means
+"threshold from the old convention".
 
-Correct (descending — highest first):
-```python
-entries = sorted(
-    best_by_name.items(),
-    key=lambda item: (
-        0 if item[1]["score"] != -1.0 else 1,
-        -item[1]["score"] if item[1]["score"] != -1.0 else 0,
-    ),
-)
-```
+**Rejected alternative — ship the flip and rely on a redeploy.** This makes correctness depend
+on an out-of-band step that this PR cannot verify, ordered *before* the code lands. The repo
+has a standing record of exactly that assumption failing (#180: migrations are not applied to
+existing deployments).
 
-Negating the score inside the key flips the numeric comparison for scored entries while
-keeping the two-tier structure (scored before unscored). An alternative is `reverse=True`
-on `sorted`, but that would also reverse the no-score tier relative to the scored tier,
-which is unwanted.
+## Decision 3: migrate every in-repo config carrying `10`, not just the template
 
-### D3 — Update tests rather than the implementation to match old tests
+The issue names `src/cli/templates/base-config.yaml:182,191`. A repo-wide grep finds the same
+distance-era value in three more places that are read, not illustrative:
 
-Two tests in `tests/unit/test_citation_formatter.py` pin the wrong direction:
+- `examples/deployments/basic-agent/local-config.yaml:51`
+- `tests/pr_preview_config/pr_preview_config.yaml:40` — this one drives the PR preview
+  deployment, so leaving it would make previews cite nothing and hand reviewers a false
+  signal about the very change under review
+- `docs/docs/models_providers.md:150,169` and `docs/docs/configuration.md:410`
 
-- `test_sorting_lower_is_better` (`:90`) asserts the lower-score entry comes first.
-  Rename to `test_sorting_higher_is_better` and flip the assertion.
-- `test_duplicate_chunks_deduplicated_best_score_kept` (`:63`) asserts `(relevance: 0.50)`
-  is kept (the lower score). Flip to assert `(relevance: 0.90)` is kept.
+Decision 2 means none of these can *break* after the flip — they would be warned about and
+disabled rather than silently filtering. They are still migrated, because leaving a value the
+code now warns about in the repo's own examples teaches the wrong convention.
 
-The implementation must match the spec; the tests must match the implementation. Editing
-the tests to silence a finding would be wrong — editing them because they tested the wrong
-behaviour is correct. Both tests were testing an incorrect assumption, not correct
-behaviour that the implementation should continue to satisfy.
+Nothing under `deploy/` is touched; the issue puts it out of scope and it is off-limits to
+this workflow regardless.
 
-### D4 — No change to the `−1.0` sentinel or the two-tier ordering
+## Decision 4: the sentinel keeps its current handling exactly
 
-The `−1.0` sentinel means "no score available". Keeping no-score entries after scored ones
-is correct regardless of direction: a scored entry is strictly more informative than an
-unscored one. The only change is the relative order *within* the scored tier.
+`-1.0` means "no score". It must not become the best entry when the sort reverses.
 
-### D5 — `app.py:get_top_sources` is out of scope
+In `format_citations` the sort key is already a tuple whose first element partitions real
+scores from the sentinel; only the second element's direction changes. The sentinel therefore
+stays last for free, and it still renders without a `(relevance: …)` suffix.
 
-`get_top_sources` also sorts `np.argsort(scores)` ascending and filters with
-`score > similarity_score_reference`, which is also inverted. However, `app.py` is
-excluded from unit-test imports, so any changed line there fails diff-cover. The
-practical impact is also lower: the `similarity_score_reference` default is 10, which
-exceeds any similarity score in [0, 1] and is therefore a no-op filter. The sort
-direction error remains, but correcting it requires extracting a tested helper module
-(a separate PR). This is tracked as a follow-up.
+In `get_top_sources` there is no such partition — `np.argsort` puts `-1.0` first today,
+because it is the numerically lowest value. Reversing the sort moves the sentinel to the end,
+which is an incidental improvement in the right direction. It is worth a test precisely
+because it is incidental: nothing in the code states it.
 
-## Risks / Trade-offs
+## Decision 5: non-cosine metrics stay out of scope
 
-- **Existing callers that depend on ascending order**: None. `format_citations` returns a
-  markdown string; no caller parses the order programmatically.
-- **Diff-coverage**: The changed lines are in `citation_formatter.py`, which is imported
-  by `test_citation_formatter.py`. Coverage is straightforward.
-- **`−1.0` no-score entries in the no-score tier**: their relative order within the tier
-  is determined by the placeholder `0` in the key; reversing the scored tier does not
-  affect them.
+`postgres_vectorstore.py:396-401` converts to a similarity only for `cosine` and returns a raw
+distance for `l2` and `inner_product`. On those metrics the consumers are correct today and
+this change would invert them. The correct fix is producer-side normalization, which is a
+different module and a different risk profile.
 
-## Migration Plan
+Per the issue's resolved decision: scope out, and file a P3 follow-up. `cosine` is the default
+and the only metric in production, so the exposure is bounded. The follow-up issue number goes
+in the PR body.
 
-None. This is a pure logic correction in a pure function. No data migration, no schema
-change, no deploy ordering. The change takes effect the next time the code runs.
+## Risks
 
-## Open Questions
+| Risk | Mitigation |
+|---|---|
+| A deployed config still carries a distance ceiling | Decision 2 disables it with a warning instead of filtering everything |
+| A non-cosine deployment exists that nobody knows about | It would now be ordered backwards. Bounded and documented; the follow-up carries the real fix. The warning from Decision 2 does not fire for it, since its raw distances can legitimately exceed `1.0` — noted here so the follow-up does not assume the warning provides coverage |
+| The `(relevance: …)` figure changes meaning for anyone reading historical output | Cosmetic and strictly a correction; the number was already being shown next to a backwards ranking |
 
-None.
+## Verification beyond the gate
+
+The gate proves the unit behaviour. It cannot prove the user-visible ordering end to end,
+because that needs a retrieval against a live index. The acceptance criterion "a test fails on
+`origin/dev` before the fix" is the substitute, and the PR body should record that failure
+output rather than merely assert it happened.

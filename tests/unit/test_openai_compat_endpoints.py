@@ -138,9 +138,15 @@ def _patch_rbac():
     mock_registry.default_role = "base-user"
     mock_registry.allow_anonymous = False
 
-    with patch(
-        "src.interfaces.chat_app.openai_compat.get_registry", return_value=mock_registry
-    ), patch("src.interfaces.chat_app.openai_compat.has_permission", return_value=True):
+    with (
+        patch(
+            "src.interfaces.chat_app.openai_compat.get_registry",
+            return_value=mock_registry,
+        ),
+        patch(
+            "src.interfaces.chat_app.openai_compat.has_permission", return_value=True
+        ),
+    ):
         yield
 
 
@@ -513,11 +519,15 @@ class TestAuthMiddleware:
         mock_registry.allow_anonymous = True
         mock_registry.default_role = "base-user"
 
-        with patch(
-            "src.interfaces.chat_app.openai_compat.get_registry",
-            return_value=mock_registry,
-        ), patch(
-            "src.interfaces.chat_app.openai_compat.has_permission", return_value=True
+        with (
+            patch(
+                "src.interfaces.chat_app.openai_compat.get_registry",
+                return_value=mock_registry,
+            ),
+            patch(
+                "src.interfaces.chat_app.openai_compat.has_permission",
+                return_value=True,
+            ),
         ):
             client = app.test_client()
             resp = client.post(
@@ -573,11 +583,15 @@ class TestAuthMiddleware:
         mock_registry.allow_anonymous = True
         mock_registry.default_role = "base-user"
 
-        with patch(
-            "src.interfaces.chat_app.openai_compat.get_registry",
-            return_value=mock_registry,
-        ), patch(
-            "src.interfaces.chat_app.openai_compat.has_permission", return_value=True
+        with (
+            patch(
+                "src.interfaces.chat_app.openai_compat.get_registry",
+                return_value=mock_registry,
+            ),
+            patch(
+                "src.interfaces.chat_app.openai_compat.has_permission",
+                return_value=True,
+            ),
         ):
             client = app.test_client()
             resp = client.post(

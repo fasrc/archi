@@ -97,6 +97,18 @@ class TestFormatCitationsScoreHandling:
         pos_b = result.index("`b.md`")
         assert pos_b < pos_a
 
+    def test_real_scores_descending_before_sentinels(self):
+        docs = [
+            FakeDocument(metadata={"display_name": "sentinel.md"}),
+            FakeDocument(metadata={"display_name": "low.md"}),
+            FakeDocument(metadata={"display_name": "high.md"}),
+        ]
+        result = format_citations(docs, [-1.0, 0.30, 0.80])
+        pos_high = result.index("`high.md`")
+        pos_low = result.index("`low.md`")
+        pos_sentinel = result.index("`sentinel.md`")
+        assert pos_high < pos_low < pos_sentinel
+
     def test_no_score_entries_sorted_after_scored(self):
         docs = [
             FakeDocument(metadata={"display_name": "noscore.md"}),

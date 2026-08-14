@@ -1,9 +1,0 @@
-# username,Full Name,email[,role][,password]
-# - role     optional; default from --role (default: annotator).
-#            one of: owner | admin | annotator
-# - password optional; if omitted a secure random one is generated and printed.
-pdibello, Paul Dibello, pdibello@hbs.edu, annotator, password123
-sgoshev, Simo Goshev, sgoshev@hks.harvard.edu, annotator, password123
-jguillette, Jeremy Guillette, jeremy_guillette@harvard.edu, annotator, password123
-sduncan, Sarah Duncan, slduncan@g.harvard.edu, annotator, password123
-djain, Devika Jain, kakkar@g.harvard.edu, annotator, password123

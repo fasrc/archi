@@ -9,7 +9,13 @@ Roster CSV (one user per line; '#' comments and blank lines ignored):
     username,Full Name,email[,role][,password]
 - role     optional; default from --role (default: annotator).
            one of: owner | admin | annotator
-- password optional; if omitted a secure random one is generated and printed.
+- password optional; omit it. If omitted a secure random one is generated and
+           printed once, which keeps the credential out of any file at all.
+
+A roster holds real names and real email addresses, so keep it OUTSIDE this
+repository — `argilla/*.csv` and `argilla/*.txt` are git-ignored precisely so a
+filled-in one cannot be committed again. See argilla/argilla_users.csv.example
+for the format.
 
 Connection (same convention as the other argilla scripts):
     ARGILLA_API_URL   default http://localhost:3080
@@ -17,8 +23,9 @@ Connection (same convention as the other argilla scripts):
 
 Usage:
     export ARGILLA_API_KEY=$(cat ~/.archi/secrets/argilla_api_key.txt)
-    python scripts/create_argilla_users.py argilla/evaluators.txt
-    python scripts/create_argilla_users.py roster.csv --workspace archi --role annotator
+    python argilla/create_argilla_users.py ~/.archi/rosters/evaluators.csv
+    python argilla/create_argilla_users.py ~/.archi/rosters/evaluators.csv \
+        --workspace archi --role annotator
 """
 import argparse
 import os

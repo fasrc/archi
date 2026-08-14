@@ -282,7 +282,7 @@ def read_corpus_docs(fetch_rows: CorpusRowFetcher) -> List[CorpusDoc]:
     return docs
 
 
-def _resolve_totally(path: Path, description: str) -> Path:
+def _resolve_totally(path: Path, description: str, raw: Optional[str] = None) -> Path:
     """Resolve *path* to a real absolute path, refusing if it cannot be resolved.
 
     `Path.resolve()` alone cannot answer the question, and it answers it
@@ -362,11 +362,19 @@ def _resolve_totally(path: Path, description: str) -> Path:
     ValueError that names no path — would instead abort the whole maintenance
     run over one bad row, or abort nothing but leave the operator unable to
     find it.
+
+    The probe's authority comes from receiving the pathname as the row spelled
+    it: `Path()` erases a trailing separator and `.` components in its own
+    constructor (`Path('safe.md/') -> PosixPath('safe.md')`), so a probe fed a
+    constructed `path` reports on a pathname nobody stored. *raw*, when given,
+    is that stored spelling and is what is actually probed; it defaults to
+    `str(path)` so every existing caller keeps today's behavior.
     """
+    raw_spelling = str(path) if raw is None else raw
     try:
         resolved = path.resolve()
         try:
-            os.stat(path)
+            os.stat(raw_spelling)
             erased = None
         except FileNotFoundError as exc:
             # Tolerated only when no `..` could have erased the missing
@@ -398,7 +406,7 @@ def _resolve_totally(path: Path, description: str) -> Path:
         else:
             reason, cause = "resolution left a symlink in the path", None
     raise ValueError(
-        f"{description} {str(path)!r} cannot be resolved: {reason}"
+        f"{description} {raw_spelling!r} cannot be resolved: {reason}"
     ) from cause
 
 
@@ -428,14 +436,26 @@ def resolve_persisted_path(file_path: str, data_path: str) -> Optional[Path]:
     would hand back a path whose target is unknown, failing later at `read_text`.
     Refusing is the correct and conservative answer: a symlink loop is never a
     legitimate persisted document.
+
+    The probe target is composed with a plain string join
+    (`os.path.join(str(root), file_path)`), never `root / candidate` — a
+    `pathlib` join re-erases the trailing separator or `.` component this guard
+    exists to catch, which would make the whole fix a no-op. The resolved
+    *output* still comes from `Path.resolve()` exactly as before; only the
+    probe input is composed differently, so do not "tidy" this back into a
+    `pathlib` join.
     """
     if not file_path:
         return None
-    root = _resolve_totally(Path(data_path), "data root")
+    root = _resolve_totally(Path(data_path), "data root", raw=data_path)
     candidate = Path(file_path)
+    raw_target = (
+        file_path if os.path.isabs(file_path) else os.path.join(str(root), file_path)
+    )
     resolved = _resolve_totally(
         candidate if candidate.is_absolute() else root / candidate,
         "persisted document",
+        raw=raw_target,
     )
     try:
         resolved.relative_to(root)

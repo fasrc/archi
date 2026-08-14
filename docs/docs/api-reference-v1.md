@@ -145,12 +145,8 @@ When the pipeline returns source documents, a citation block is appended to the 
 ```markdown
 ---
 **Sources:**
-- `guide.md` [collection-name] (relevance: 0.92)
 - `document.md` (relevance: 0.85)
+- `guide.md` [collection-name] (relevance: 0.92)
 ```
-
-Sources are ordered by relevance, highest first; a higher score means a closer match. When the
-same document contributes more than one chunk it is listed once, at its best score. Sources the
-pipeline returned without a score are listed last, without a `(relevance: ...)` suffix.
 
 Collection labels appear only when sources span multiple collections.

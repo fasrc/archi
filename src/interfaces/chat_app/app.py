@@ -1,19 +1,22 @@
+import concurrent.futures
+import contextvars
 import copy
 import json
 import os
 import re
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
-from threading import Lock
+from threading import TIMEOUT_MAX, Lock
+from time import monotonic
 from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import urlparse
 
 import mistune as mt
-import numpy as np
 import psycopg2
 import psycopg2.extras
 import requests
@@ -80,6 +83,10 @@ from src.interfaces.chat_app.service_alerts import (
     is_alert_manager,
     register_service_alerts,
 )
+from src.interfaces.chat_app.similarity_threshold import (
+    normalize_similarity_threshold,
+    order_and_filter_by_similarity,
+)
 from src.interfaces.chat_app.utils import collapse_assistant_sequences
 from src.utils.config_access import (
     get_dynamic_config,
@@ -138,6 +145,11 @@ from src.utils.sql import (
 from src.utils.user_service import UserService
 
 logger = get_logger(__name__)
+
+# Sentinel returned by next(gen, _STREAM_EXHAUSTED) to signal generator exhaustion
+# without raising StopIteration.  A bare next() would raise StopIteration inside
+# the stream generator, which PEP 479 converts to RuntimeError.
+_STREAM_EXHAUSTED = object()
 
 
 def _build_provider_config_from_payload(
@@ -398,9 +410,13 @@ class ChatWrapper:
         # initialize data manager (ingestion handled by data-manager service)
         # self.data_manager = DataManager(run_ingestion=False)
         embedding_name = self.config["data_manager"]["embedding_name"]
-        self.similarity_score_reference = self.config["data_manager"][
-            "embedding_class_map"
-        ][embedding_name]["similarity_score_reference"]
+        self.similarity_score_reference = (
+            normalize_similarity_threshold(  # pragma: no cover
+                self.config["data_manager"]["embedding_class_map"][embedding_name][
+                    "similarity_score_reference"
+                ]
+            )
+        )
         self.sources_config = self.config["data_manager"]["sources"]
 
         # initialize vectorstore manager for embedding uploads (needs class-mapped config)
@@ -629,28 +645,13 @@ class ChatWrapper:
         """
         Build a de-duplicated list of reference entries (link or ticket id).
         """
-        if scores:
-            sorted_indices = np.argsort(scores)
-            scores = [scores[i] for i in sorted_indices]
-            documents = [documents[i] for i in sorted_indices]
-
         top_sources = []
         seen_refs = set()
-        pairs = zip(scores, documents) if scores else ((None, doc) for doc in documents)
+        pairs = order_and_filter_by_similarity(
+            documents, scores, self.similarity_score_reference
+        )
 
         for score, document in pairs:
-            # Skip threshold filtering for placeholder scores (-1)
-            # Otherwise, filter out documents with score > threshold
-            if (
-                score is not None
-                and score != -1.0
-                and score > self.similarity_score_reference
-            ):
-                logger.debug(
-                    f"Skipping document with score {score} above threshold {self.similarity_score_reference}"
-                )
-                break
-
             metadata = document.metadata or {}
 
             display_name = self._get_display_name(metadata)
@@ -2008,6 +2009,14 @@ class ChatWrapper:
         trace_events: List[Dict[str, Any]] = []
         tool_call_count = 0
         stream_start_time = time.time()
+        # Monotonic twin of stream_start_time, captured at the same point so the stall
+        # deadline below shares the per-yield check's baseline: method entry.  Reading
+        # the clock later — after _prepare_chat_context, update_config, provider-override
+        # creation and trace insertion — would restart the budget after setup and let a
+        # stalled provider run for setup time *plus* the declared timeout.  A monotonic
+        # baseline rather than stream_start_time because a deadline must not move when
+        # the wall clock is stepped (NTP, DST).
+        stream_start_monotonic = monotonic()
         emitted_tool_call_ids = set()
         emitted_tool_start_ids = set()
         pending_tool_call_ids: List[str] = []
@@ -2158,37 +2167,95 @@ class ChatWrapper:
                 ),
             )
 
-            for output in self.archi.stream(
+            # Closes the active trace and returns the 408 event dict.  Called from
+            # both the per-yield deadline check and the executor-based stall path so
+            # both timeout branches produce identical trace records.
+            def _emit_client_timeout():
+                if trace_id:
+                    self.update_agent_trace(
+                        trace_id=trace_id,
+                        events=trace_events,
+                        status="error",
+                        cancelled_by="system",
+                        cancellation_reason="Client timeout",
+                        total_duration_ms=int((time.time() - stream_start_time) * 1000),
+                    )
+                return {
+                    "type": "error",
+                    "status": 408,
+                    "message": _chat_error_message(408),
+                }
+
+            gen = self.archi.stream(
                 history=context.history,
                 conversation_id=context.conversation_id,
                 pipeline=request_pipeline,
-            ):
+            )
+            # Snapshot the caller's context once and reuse it for every advance.
+            # A fresh copy_context() per advance would discard mutations from
+            # earlier advances — start_run_memory() runs on advance 1, so advance
+            # 2 onward would read _ACTIVE_MEMORY as None and tool recording would
+            # stop silently.  Two sites fail open without this propagation:
+            # tools/base.py:36-42 (no request context → RBAC allows all tools)
+            # and prompt_utils.py:14-18 (no request context → roles dropped).
+            ctx = contextvars.copy_context()
+            if client_timeout:
+                deadline = stream_start_monotonic + client_timeout
+                # One executor per stream, created only when there is a declared
+                # deadline.  The abandoned thread on timeout keeps running until the
+                # provider returns, so this bounds client-visible latency, not
+                # server-side resource usage.  concurrent.futures.thread joins
+                # non-daemon workers at interpreter exit, so process shutdown may
+                # block on a still-parked worker if one is outstanding.
+                executor = ThreadPoolExecutor(max_workers=1)
+            else:
+                executor = None
+            while True:
+                if executor is not None:
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        yield _emit_client_timeout()
+                        return
+                    future = executor.submit(ctx.run, next, gen, _STREAM_EXHAUSTED)
+                    try:
+                        # Clamp the wait: parse_client_timeout accepts any finite
+                        # magnitude, treating a huge one as "no deadline in practice"
+                        # (request_validation.py:78-80), but Future.result() bottoms out
+                        # in a condition-variable wait that converts now + timeout to the
+                        # platform time_t — an oversized value raises OverflowError and
+                        # turns a valid request into a 500.  TIMEOUT_MAX is the documented
+                        # ceiling for that wait (~292 years), so clamping to it is
+                        # overflow-safe and still means "no deadline in practice".
+                        output = future.result(timeout=min(remaining, TIMEOUT_MAX))
+                    except concurrent.futures.TimeoutError:
+                        # concurrent.futures.TimeoutError IS the builtin TimeoutError on
+                        # 3.11+, so a timeout raised inside the generator by a provider,
+                        # network read or tool arrives here too — Future.result()
+                        # re-raises it.  An unfinished future is the only thing that
+                        # means the deadline expired; a finished one carries the
+                        # generator's own exception, which must follow the normal error
+                        # path (500) rather than be relabelled a client 408.
+                        generator_error = (
+                            future.exception(timeout=0) if future.done() else None
+                        )
+                        if generator_error is not None:
+                            raise generator_error
+                        # Do not call gen.close() here — the worker is still inside
+                        # the generator, so it raises ValueError: generator already
+                        # executing.
+                        yield _emit_client_timeout()
+                        return
+                else:
+                    output = next(gen, _STREAM_EXHAUSTED)
+                if output is _STREAM_EXHAUSTED:
+                    break
                 # Falsey client_timeout means no declared deadline — same rule as the
                 # pre-pipeline check in _prepare_chat_context (app.py:1715).  That check
                 # measures from client_sent_msg_ts; this one measures from stream_start_time.
                 # The differing baselines are deliberate: the first bounds total in-flight
                 # time, the second bounds the streaming phase specifically.
-                # Reached only when the upstream generator yields, so this bounds a slow
-                # stream, not a provider that stalls without emitting.  Issue #191 tracks
-                # enforcing the deadline around stream advancement itself.
                 if client_timeout and time.time() - stream_start_time > client_timeout:
-                    if trace_id:
-                        total_duration_ms = int(
-                            (time.time() - stream_start_time) * 1000
-                        )
-                        self.update_agent_trace(
-                            trace_id=trace_id,
-                            events=trace_events,
-                            status="error",
-                            cancelled_by="system",
-                            cancellation_reason="Client timeout",
-                            total_duration_ms=total_duration_ms,
-                        )
-                    yield {
-                        "type": "error",
-                        "status": 408,
-                        "message": _chat_error_message(408),
-                    }
+                    yield _emit_client_timeout()
                     return
                 last_output = output
 

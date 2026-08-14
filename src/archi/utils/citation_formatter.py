@@ -15,8 +15,8 @@ def format_citations(source_documents: List, scores: List) -> str:
     Args:
         source_documents: LangChain-style Document objects with .metadata dict
             and .page_content attributes.
-        scores: Corresponding relevance scores (higher = more relevant). A score
-            of -1.0 means "no score".
+        scores: Corresponding relevance scores (similarities — higher = more
+            relevant). A score of -1.0 means "no score".
 
     Returns:
         A markdown string with deduplicated, sorted source citations, or an

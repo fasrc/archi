@@ -407,10 +407,10 @@ data_manager:
       class: OpenAIEmbeddings
       kwargs:
         model: text-embedding-3-small
-      similarity_score_reference: 10
+      similarity_score_reference: 0.0
 ```
 
-See [Models & Providers](models_providers.md#embedding-models) for all embedding options.
+`similarity_score_reference` is a minimum cosine similarity in the range `0..1`; `0.0` means cite everything retrieved. See [Models & Providers](models_providers.md#embedding-models) for all embedding options.
 
 ### Anonymizer
 
