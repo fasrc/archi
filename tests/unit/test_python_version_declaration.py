@@ -24,12 +24,21 @@ DOCKERFILE_TEMPLATE_DIR = REPO_ROOT / "src" / "cli" / "templates" / "dockerfiles
 # which pin no interpreter version we can read, are not mistaken for it.
 _FROM_PYTHON_RE = re.compile(r"^FROM\s+(?P<ref>\S+)", re.MULTILINE)
 
-# Prose that states a supported Python minimum. Each anchor matches exactly one line in its
-# file; a doc that merely records a historical version (the migration notes) is out of scope
-# on purpose, so the guard cannot be defeated by rewording an unrelated page.
+# Prose that states a supported Python minimum, with the number of stated minimums each
+# anchor is expected to match. A doc that merely records a historical version (the migration
+# notes) is out of scope on purpose, so the guard cannot be defeated by rewording an unrelated
+# page. The count is a drift tripwire: a page that gains or loses a declaration fails here
+# with a pointed message rather than silently going unchecked. Every match is checked against
+# the floor, so a file may legitimately state its minimum more than once —
+# `openspec/project.md` states it twice, once as a stack entry and once as a constraint.
 _DOC_FLOOR_ANCHORS = (
-    ("AGENTS.md", re.compile(r"Python (?P<version>\d+\.\d+(?:\.\d+)?)\+")),
-    ("docs/docs/install.md", re.compile(r"`python (?P<version>\d+\.\d+(?:\.\d+)?)\+`")),
+    ("AGENTS.md", re.compile(r"Python (?P<version>\d+\.\d+(?:\.\d+)?)\+"), 1),
+    (
+        "docs/docs/install.md",
+        re.compile(r"`python (?P<version>\d+\.\d+(?:\.\d+)?)\+`"),
+        1,
+    ),
+    ("openspec/project.md", re.compile(r"Python (?P<version>\d+\.\d+(?:\.\d+)?)\+"), 2),
 )
 
 
@@ -47,9 +56,13 @@ def _declared_floor(specifier_set):
     ``>=3.7,>=3.11`` is floored by its *tightest* constraint — pip installs nothing below
     3.11 — and reporting 3.7 there would fail the guard on a specifier that is in fact
     compliant.
+
+    ``==`` admits a trailing ``.*`` wildcard (``==3.11.*`` means "any 3.11 release"), which
+    ``packaging`` hands back verbatim and ``Version`` refuses. Its floor is the version with
+    the wildcard dropped, so strip the suffix rather than rejecting the specifier.
     """
     lower_bounds = [
-        Version(spec.version)
+        Version(spec.version.removesuffix(".*"))
         for spec in specifier_set
         if spec.operator in (">=", ">", "~=", "==")
     ]
@@ -61,8 +74,24 @@ def _declared_specifier():
     return SpecifierSet(_load_pyproject()["project"]["requires-python"])
 
 
+def _tag_version(tag):
+    """The interpreter version an official Python image tag pins, or ``None``.
+
+    Official tags carry the version first and the variant after it — ``3.11-slim``,
+    ``3.11-bookworm``, ``3.11.9-slim`` — so the leading numeric component is the
+    interpreter. Tags that name no version (``latest``, ``slim-bookworm``) pin nothing this
+    guard can check, and are reported as unreadable rather than crashing PEP 440 parsing.
+    """
+    match = re.match(r"(\d+(?:\.\d+)*)(?:[-.].*)?$", tag)
+    return Version(match.group(1)) if match else None
+
+
 def _pinned_python_base_images():
-    """Every ``FROM python:<version>`` pin in the deployment Dockerfile templates."""
+    """Every ``FROM python:<tag>`` pin in the deployment Dockerfile templates.
+
+    Returns ``(path, tag, version)``; ``version`` is ``None`` for a tag that pins no
+    readable interpreter.
+    """
     pins = []
     for dockerfile in sorted(DOCKERFILE_TEMPLATE_DIR.rglob("Dockerfile*")):
         for match in _FROM_PYTHON_RE.finditer(dockerfile.read_text()):
@@ -72,7 +101,7 @@ def _pinned_python_base_images():
             repository, _, tag = ref.rpartition(":")
             if repository.rsplit("/", 1)[-1] != "python":
                 continue
-            pins.append((dockerfile.relative_to(REPO_ROOT), tag))
+            pins.append((dockerfile.relative_to(REPO_ROOT), tag, _tag_version(tag)))
     return pins
 
 
@@ -107,6 +136,33 @@ def test_declared_floor_uses_the_strictest_lower_bound():
     assert _declared_floor(SpecifierSet(">3.10,>=3.9")) == Version("3.10")
 
 
+def test_declared_floor_accepts_wildcard_equality():
+    """``==3.11.*`` is a valid PEP 440 spelling whose effective floor is 3.11.
+
+    ``packaging`` exposes that bound as the string ``"3.11.*"``, which ``Version`` refuses.
+    Since ``==`` is in the operator set the helper claims to read, the wildcard form it
+    permits must parse too -- otherwise the guard rejects compliant metadata outright
+    instead of reading its floor.
+    """
+    assert _declared_floor(SpecifierSet("==3.11.*")) == Version("3.11")
+    assert _declared_floor(SpecifierSet("==3.11")) == Version("3.11")
+
+
+def test_base_image_tag_variants_expose_their_interpreter_version():
+    """Official variant tags pin a readable interpreter; tags without one pin nothing.
+
+    ``python:3.11-slim`` and ``python:3.11-bookworm`` are standard official images that
+    satisfy a 3.11 floor. Handing the whole tag to ``Version`` raises ``InvalidVersion``,
+    so the guard would block a valid base-image change rather than check its floor.
+    """
+    assert _tag_version("3.11") == Version("3.11")
+    assert _tag_version("3.11-slim") == Version("3.11")
+    assert _tag_version("3.11-bookworm") == Version("3.11")
+    assert _tag_version("3.11.9-slim") == Version("3.11.9")
+    assert _tag_version("latest") is None
+    assert _tag_version("slim-bookworm") is None
+
+
 def test_container_base_images_satisfy_the_declared_floor():
     """A base image below the floor makes `pip install .` fail when the image is built.
 
@@ -117,12 +173,22 @@ def test_container_base_images_satisfy_the_declared_floor():
     requires_python = _declared_specifier()
     pins = _pinned_python_base_images()
 
-    assert pins, f"no `FROM python:<version>` pin found under {DOCKERFILE_TEMPLATE_DIR}"
+    assert pins, f"no `FROM python:<tag>` pin found under {DOCKERFILE_TEMPLATE_DIR}"
+
+    # A readable pin must remain, or retagging every base to `latest` would silently empty
+    # the check rather than fail it.
+    readable = [
+        (path, tag, version) for path, tag, version in pins if version is not None
+    ]
+    assert readable, (
+        f"no `FROM python:<tag>` pin under {DOCKERFILE_TEMPLATE_DIR} names a readable "
+        f"interpreter version: {[f'{path}: python:{tag}' for path, tag, _ in pins]}"
+    )
 
     offenders = [
         f"{path}: python:{tag}"
-        for path, tag in pins
-        if not requires_python.contains(Version(tag))
+        for path, tag, version in readable
+        if not requires_python.contains(version)
     ]
     assert not offenders, (
         f"base image(s) below the declared requires-python floor {requires_python}: "
@@ -135,15 +201,18 @@ def test_documentation_does_not_state_a_superseded_floor():
     requires_python = _declared_specifier()
 
     offenders = []
-    for relative_path, pattern in _DOC_FLOOR_ANCHORS:
+    for relative_path, pattern, expected_count in _DOC_FLOOR_ANCHORS:
         text = (REPO_ROOT / relative_path).read_text()
         matches = pattern.findall(text)
-        assert len(matches) == 1, (
-            f"{relative_path}: expected exactly one stated Python minimum, found "
+        assert len(matches) == expected_count, (
+            f"{relative_path}: expected {expected_count} stated Python minimum(s), found "
             f"{matches} -- the guard's anchor needs updating"
         )
-        if not requires_python.contains(Version(matches[0])):
-            offenders.append(f"{relative_path}: states {matches[0]}+")
+        offenders.extend(
+            f"{relative_path}: states {stated}+"
+            for stated in matches
+            if not requires_python.contains(Version(stated))
+        )
 
     assert not offenders, (
         f"documentation states a Python minimum below the declared floor "

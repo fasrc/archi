@@ -30,6 +30,11 @@ The guard SHALL parse `requires-python` as a PEP 440 version specifier and compa
 - **WHEN** `requires-python` is spelled with an upper bound or a compatible-release operator that still floors at the type-checked version
 - **THEN** the guard treats the floor as satisfied and the test suite passes
 
+#### Scenario: A wildcard equality specifier declaring the same floor
+- **WHEN** `requires-python` is spelled as a wildcard equality such as `==3.11.*`, whose effective floor is the type-checked version
+- **THEN** the guard reads its floor as that version rather than rejecting the specifier as unparseable
+- **AND** the test suite passes
+
 ### Requirement: Documentation SHALL NOT state a superseded Python floor
 Contributor-facing documentation SHALL NOT state a minimum Python version lower than the declared `requires-python` floor, so a reader is not told the project supports an interpreter it refuses to install on.
 
@@ -49,6 +54,12 @@ Every deployment Dockerfile template that pins an official CPython base image SH
 - **WHEN** every pinned official CPython base image satisfies the declared floor
 - **THEN** the test suite passes
 
+#### Scenario: An official image pinning a variant tag
+- **WHEN** a template pins an official CPython image whose tag names a version followed by a distribution variant, such as `python:3.11-slim` or `python:3.11-bookworm`
+- **THEN** the guard reads the interpreter version from the leading numeric component and checks it against the floor
+- **AND** a satisfying variant tag passes rather than being rejected as unparseable
+
 #### Scenario: An image pinning no readable interpreter version
 - **WHEN** a template builds `FROM` a derived base image or a vendor image whose tag names no CPython version
 - **THEN** the guard skips it rather than inferring a version from the tag
+- **AND** the guard still fails if no pinned official CPython image names a readable version, so the check cannot be silently emptied
