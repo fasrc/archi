@@ -5,11 +5,49 @@ Spec: openspec/changes/fix-issue-155-sitemap-lastmod-persist/specs/incremental-r
 Requirement: The documents catalog persists a last_modified value
 """
 
+import re
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogService
+
+
+def _param_for_column(sql, params, column):
+    """Return the bound parameter that lands in *column*'s slot.
+
+    ``assert <value> in params`` is positionally blind: the INSERT binds many
+    nullable columns, so ``None in params`` holds whenever *any* of them is
+    NULL, and ``expected in params`` holds wherever the value landed.  Both
+    pass even when the ``last_modified`` slot is wrong — swapping the
+    ``last_modified`` and ``ingested_at`` bindings leaves every assertion in
+    this file green.  Pairing the INSERT column list with its VALUES list
+    instead lets each assertion name the column it actually means.
+    """
+    match = re.search(
+        r"INSERT INTO documents\s*\((.*?)\)\s*VALUES\s*\((.*?)\)", sql, re.S
+    )
+    assert match, "could not locate the INSERT column/VALUES lists in the SQL"
+
+    columns = [c.strip() for c in match.group(1).split(",")]
+    values = [v.strip() for v in match.group(2).split(",")]
+    assert len(columns) == len(
+        values
+    ), f"INSERT lists disagree: {len(columns)} columns vs {len(values)} values"
+
+    bound = {}
+    next_param = 0
+    for col, value in zip(columns, values):
+        if value == "%s":
+            bound[col] = params[next_param]
+            next_param += 1
+        else:
+            bound[col] = value  # SQL literal, not a bound parameter
+    assert next_param == len(
+        params
+    ), f"{len(params)} params supplied but {next_param} placeholders in the SQL"
+    assert column in bound, f"{column!r} is not an INSERT column"
+    return bound[column]
 
 
 def _make_service(cursor):
@@ -59,9 +97,9 @@ def test_upsert_resource_with_last_modified_passes_parsed_value():
         metadata={"source_type": "web", "last_modified": "2026-04-21T19:19:35+00:00"},
     )
 
-    _sql, params = cursor.execute.call_args[0]
+    sql, params = cursor.execute.call_args[0]
     expected = datetime(2026, 4, 21, 19, 19, 35, tzinfo=timezone.utc)
-    assert expected in params
+    assert _param_for_column(sql, params, "last_modified") == expected
 
 
 def test_upsert_resource_conflict_update_includes_last_modified():
@@ -104,8 +142,7 @@ def test_upsert_resource_without_last_modified_no_error():
     assert doc_id == 4
     sql, params = cursor.execute.call_args[0]
     assert "last_modified" in sql
-    # No datetime values in params since no datetime metadata was provided
-    assert not any(isinstance(p, datetime) for p in params)
+    assert _param_for_column(sql, params, "last_modified") is None
 
 
 def test_upsert_resource_without_last_modified_uses_coalesce_and_passes_none():
@@ -131,7 +168,7 @@ def test_upsert_resource_without_last_modified_uses_coalesce_and_passes_none():
         "last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified)"
         in sql
     )
-    assert None in params
+    assert _param_for_column(sql, params, "last_modified") is None
 
 
 def test_upsert_resource_older_last_modified_still_overwrites():
@@ -152,9 +189,9 @@ def test_upsert_resource_older_last_modified_still_overwrites():
         metadata={"source_type": "web", "last_modified": older_ts},
     )
 
-    _sql, params = cursor.execute.call_args[0]
+    sql, params = cursor.execute.call_args[0]
     expected = datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-    assert expected in params
+    assert _param_for_column(sql, params, "last_modified") == expected
 
 
 def test_row_to_metadata_returns_last_modified():
