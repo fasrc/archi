@@ -38,7 +38,7 @@
 
 ## 3. Ship it (no merge)
 
-- [ ] 3.1 Open the PR against `dev`:
+- [x] 3.1 Open the PR against `dev`:
       `gh pr create --repo fasrc/archi --base dev`. The body MUST contain `closes #208`.
       State in the body that no migration and no deploy ordering is needed — this is a
       pure logic fix in a pure function. Name the follow-up item: `app.py:get_top_sources`
