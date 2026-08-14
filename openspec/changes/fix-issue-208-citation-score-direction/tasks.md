@@ -1,6 +1,6 @@
 ## 1. Flip the two misdirected tests to red, then fix the implementation to green (TDD)
 
-- [ ] 1.1 In `tests/unit/test_citation_formatter.py`, make the two tests that pin the
+- [x] 1.1 In `tests/unit/test_citation_formatter.py`, make the two tests that pin the
       wrong score direction fail:
       (a) Rename `test_sorting_lower_is_better` → `test_sorting_higher_is_better` and
       flip its assertion: given docs with scores `[0.90, 0.10]`, `b.md` (score 0.90)
@@ -12,7 +12,7 @@
       Run `python -m pytest tests/unit/test_citation_formatter.py -q` and confirm both
       tests **fail** on those assertions (not on an import error). This is the red step.
 
-- [ ] 1.2 Fix `src/archi/utils/citation_formatter.py` to make 1.1 green:
+- [x] 1.2 Fix `src/archi/utils/citation_formatter.py` to make 1.1 green:
       (a) In the deduplication block, change the comparator from `score < existing_score`
       to `score > existing_score` so the **highest** score is retained per source.
       (b) In the sort key, negate the score: change

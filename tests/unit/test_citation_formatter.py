@@ -67,8 +67,8 @@ class TestFormatCitationsDeduplication:
         ]
         result = format_citations(docs, [0.90, 0.50])
         assert result.count("`faq.md`") == 1
-        assert "(relevance: 0.50)" in result
-        assert "(relevance: 0.90)" not in result
+        assert "(relevance: 0.90)" in result
+        assert "(relevance: 0.50)" not in result
 
     def test_duplicate_keeps_real_score_over_no_score(self):
         docs = [
@@ -87,7 +87,7 @@ class TestFormatCitationsScoreHandling:
         assert "relevance" not in result
         assert "`readme.md`" in result
 
-    def test_sorting_lower_is_better(self):
+    def test_sorting_higher_is_better(self):
         docs = [
             FakeDocument(metadata={"display_name": "b.md"}),
             FakeDocument(metadata={"display_name": "a.md"}),
@@ -95,7 +95,7 @@ class TestFormatCitationsScoreHandling:
         result = format_citations(docs, [0.90, 0.10])
         pos_a = result.index("`a.md`")
         pos_b = result.index("`b.md`")
-        assert pos_a < pos_b
+        assert pos_b < pos_a
 
     def test_no_score_entries_sorted_after_scored(self):
         docs = [
