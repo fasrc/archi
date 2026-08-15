@@ -5,7 +5,7 @@
 Archi is deployed using a Python-based CLI onto containers. It requires:
 
 - `docker` version 24+ or `podman` version 5.4.0+ (for containers)
-- `python 3.10.0+` (for the CLI)
+- `python 3.11.0+` (for the CLI)
 
 > **Note:** We support either running open-source models locally or connecting to existing APIs. If you plan to run open-source models on your machine's GPUs, see the [Advanced Setup & Deployment](advanced_setup_deploy.md) section.
 

@@ -5,11 +5,49 @@ Spec: openspec/changes/fix-issue-155-sitemap-lastmod-persist/specs/incremental-r
 Requirement: The documents catalog persists a last_modified value
 """
 
+import re
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogService
+
+
+def _param_for_column(sql, params, column):
+    """Return the bound parameter that lands in *column*'s slot.
+
+    ``assert <value> in params`` is positionally blind: the INSERT binds many
+    nullable columns, so ``None in params`` holds whenever *any* of them is
+    NULL, and ``expected in params`` holds wherever the value landed.  Both
+    pass even when the ``last_modified`` slot is wrong — swapping the
+    ``last_modified`` and ``ingested_at`` bindings leaves every assertion in
+    this file green.  Pairing the INSERT column list with its VALUES list
+    instead lets each assertion name the column it actually means.
+    """
+    match = re.search(
+        r"INSERT INTO documents\s*\((.*?)\)\s*VALUES\s*\((.*?)\)", sql, re.S
+    )
+    assert match, "could not locate the INSERT column/VALUES lists in the SQL"
+
+    columns = [c.strip() for c in match.group(1).split(",")]
+    values = [v.strip() for v in match.group(2).split(",")]
+    assert len(columns) == len(
+        values
+    ), f"INSERT lists disagree: {len(columns)} columns vs {len(values)} values"
+
+    bound = {}
+    next_param = 0
+    for col, value in zip(columns, values):
+        if value == "%s":
+            bound[col] = params[next_param]
+            next_param += 1
+        else:
+            bound[col] = value  # SQL literal, not a bound parameter
+    assert next_param == len(
+        params
+    ), f"{len(params)} params supplied but {next_param} placeholders in the SQL"
+    assert column in bound, f"{column!r} is not an INSERT column"
+    return bound[column]
 
 
 def _make_service(cursor):
@@ -59,13 +97,19 @@ def test_upsert_resource_with_last_modified_passes_parsed_value():
         metadata={"source_type": "web", "last_modified": "2026-04-21T19:19:35+00:00"},
     )
 
-    _sql, params = cursor.execute.call_args[0]
+    sql, params = cursor.execute.call_args[0]
     expected = datetime(2026, 4, 21, 19, 19, 35, tzinfo=timezone.utc)
-    assert expected in params
+    assert _param_for_column(sql, params, "last_modified") == expected
 
 
 def test_upsert_resource_conflict_update_includes_last_modified():
-    """ON CONFLICT DO UPDATE SET must include last_modified = EXCLUDED.last_modified."""
+    """ON CONFLICT DO UPDATE SET must use COALESCE to preserve a stored value when absent.
+
+    The clause must be
+    ``last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified)``
+    so that an incoming NULL (no new information) leaves an existing stored
+    timestamp unchanged rather than overwriting it.
+    """
     cursor = MagicMock()
     cursor.fetchone.return_value = (3,)
     service = _make_service(cursor)
@@ -77,7 +121,10 @@ def test_upsert_resource_conflict_update_includes_last_modified():
     )
 
     sql, _params = cursor.execute.call_args[0]
-    assert "last_modified = EXCLUDED.last_modified" in sql
+    assert (
+        "last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified)"
+        in sql
+    )
 
 
 def test_upsert_resource_without_last_modified_no_error():
@@ -95,8 +142,56 @@ def test_upsert_resource_without_last_modified_no_error():
     assert doc_id == 4
     sql, params = cursor.execute.call_args[0]
     assert "last_modified" in sql
-    # No datetime values in params since no datetime metadata was provided
-    assert not any(isinstance(p, datetime) for p in params)
+    assert _param_for_column(sql, params, "last_modified") is None
+
+
+def test_upsert_resource_without_last_modified_uses_coalesce_and_passes_none():
+    """Re-upsert without last_modified emits COALESCE clause AND passes None as the param.
+
+    Both conditions must hold together: the clause must be the COALESCE form so
+    the database decides (not Python omitting a parameter), and the param must be
+    None (NULL) so an absent timestamp is explicitly represented rather than
+    silently dropped.  This proves preservation is decided in SQL (design D5).
+    """
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (7,)
+    service = _make_service(cursor)
+
+    service.upsert_resource(
+        resource_hash="hash7",
+        path="/data/page.html",
+        metadata={"source_type": "web"},
+    )
+
+    sql, params = cursor.execute.call_args[0]
+    assert (
+        "last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified)"
+        in sql
+    )
+    assert _param_for_column(sql, params, "last_modified") is None
+
+
+def test_upsert_resource_older_last_modified_still_overwrites():
+    """A supplied last_modified replaces the stored one even when it is older.
+
+    COALESCE must not be mistaken for "keep the newest": it only activates when
+    the incoming value is NULL.  A non-NULL incoming timestamp — even an older
+    one — must be passed through and will overwrite the stored value.
+    """
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (8,)
+    service = _make_service(cursor)
+
+    older_ts = "2020-01-01T00:00:00+00:00"
+    service.upsert_resource(
+        resource_hash="hash8",
+        path="/data/page.html",
+        metadata={"source_type": "web", "last_modified": older_ts},
+    )
+
+    sql, params = cursor.execute.call_args[0]
+    expected = datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    assert _param_for_column(sql, params, "last_modified") == expected
 
 
 def test_row_to_metadata_returns_last_modified():
