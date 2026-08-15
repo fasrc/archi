@@ -25,7 +25,7 @@ stop — that is a different PR.
 
 ## 1. Guard the generator contract, then reconcile (red, then green, one commit)
 
-- [ ] 1.1 Write the guard red, then make it green — **in this one task**, because the gate
+- [x] 1.1 Write the guard red, then make it green — **in this one task**, because the gate
       runs before every commit and a task that ends with the suite red can never be
       committed.
 
