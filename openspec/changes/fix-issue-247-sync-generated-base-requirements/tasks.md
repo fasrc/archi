@@ -83,7 +83,7 @@ stop — that is a different PR.
       **Gate and commit** — `bash scripts/gate.sh` bare, then one commit, e.g.
       `chore(requirements): sync generated base-image requirements with their generator`.
 
-- [ ] 1.2 Prove the blast radius mechanically before that commit, because "I was careful" is
+- [x] 1.2 Prove the blast radius mechanically before that commit, because "I was careful" is
       not the check:
       ```bash
       git diff --name-only -- ':(exclude)openspec/**'   # exactly the two base-*/requirements.txt paths
@@ -98,7 +98,7 @@ stop — that is a different PR.
 
 ## 2. Prove the guard bites, and verify the acceptance criteria
 
-- [ ] 2.1 Mutation-check the guard — this is what proves it pins the invariant rather than
+- [x] 2.1 Mutation-check the guard — this is what proves it pins the invariant rather than
       passing incidentally. Restore ONE derived file to its `origin/dev` content
       (`git checkout origin/dev -- src/cli/templates/dockerfiles/base-python-image/requirements.txt`),
       re-run the module, and confirm **exactly one** case fails and names that file while the
@@ -108,7 +108,7 @@ stop — that is a different PR.
       passed it (spec scenario *Whitespace-only drift is still drift*). Restore both files by
       regenerating, and confirm the module is green again.
 
-- [ ] 2.2 Walk the issue's acceptance criteria explicitly and record the output for the PR
+- [x] 2.2 Walk the issue's acceptance criteria explicitly and record the output for the PR
       body:
       - both reproduce commands from task 1.1 now print **no diff output**;
       - `git diff origin/dev...HEAD --name-only -- ':(exclude)openspec/**'` lists **exactly
@@ -127,7 +127,7 @@ stop — that is a different PR.
 
 ## 3. Push and open the PR
 
-- [ ] 3.1 Push with an explicit upstream —
+- [x] 3.1 Push with an explicit upstream —
       `git push -u origin fix/issue-247-sync-generated-base-requirements` — because the branch
       was created from `origin/dev` and therefore tracks the trunk, not itself. Then open the
       PR; the change is not done without it:
@@ -149,4 +149,4 @@ stop — that is a different PR.
       - note the interaction with #246 / PR #251: independent changes over the same two files,
         either order, whichever lands second rebases and re-runs its checks.
 
-- [ ] 3.2 Request review on the PR. Do **NOT** merge — a human merges in daylight.
+- [x] 3.2 Request review on the PR. Do **NOT** merge — a human merges in daylight.
