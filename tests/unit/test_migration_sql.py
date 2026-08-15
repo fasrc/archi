@@ -38,6 +38,81 @@ def test_no_bare_rename_column_in_migrations():
     )
 
 
+_BARE_RENAME_INDEX_RE = re.compile(r"ALTER\s+INDEX\b.*?\bRENAME\s+TO", re.IGNORECASE)
+
+
+def _bare_rename_index_violations(path: Path) -> list[str]:
+    """Return violation messages for ALTER INDEX ... RENAME TO outside a DO block."""
+    content = path.read_text()
+    stripped = _DO_BLOCK_RE.sub("", content)
+    if _BARE_RENAME_INDEX_RE.search(stripped):
+        return [f"{path.name}: bare ALTER INDEX RENAME TO outside guarded DO block"]
+    return []
+
+
+def test_no_bare_rename_index_in_migrations():
+    """A rename needs a guard on BOTH sides, which `IF EXISTS` does not give it.
+
+    `ALTER INDEX IF EXISTS a RENAME TO b` covers only "a is gone". It says nothing
+    about b, so on a half-migrated or hand-repaired schema carrying both names it
+    raises `relation "b" already exists`. Under the sidecar's `ON_ERROR_STOP=1` plus
+    `set -e` that aborts the whole file and fails `db-migrate`, and because
+    `config-seed` and the data manager gate on its successful completion, the stack
+    does not start.
+
+    `test_every_migration_statement_is_idempotent` cannot catch this: it greps for
+    the literal `IF EXISTS`, which the statement contains. Renames therefore get
+    their own check, matching how every RENAME COLUMN here is already guarded.
+    """
+    sql_files = sorted(_MIGRATIONS_DIR.glob("*.sql"))
+    assert sql_files, f"No .sql files found in {_MIGRATIONS_DIR}"
+
+    violations: list[str] = []
+    for path in sql_files:
+        violations.extend(_bare_rename_index_violations(path))
+
+    assert not violations, (
+        "Every ALTER INDEX ... RENAME TO must sit inside a DO $$ ... END $$ block "
+        "that checks the source index exists AND the target does not:\n"
+        + "\n".join(violations)
+    )
+
+
+_UNQUALIFIED_INFO_SCHEMA_RE = re.compile(
+    r"information_schema\.columns\b(?![\s\S]{0,400}?table_schema)", re.IGNORECASE
+)
+
+
+def test_relation_guards_are_not_ambiguous_across_schemas():
+    """A guard must inspect the relation the statement will actually alter.
+
+    `WHERE table_name = 'feedback'` matches that name in EVERY schema the role can
+    see, so a same-named table elsewhere makes the predicate report on the wrong
+    relation -- skipping a rename that is still needed, or attempting one that is
+    not. `ALTER TABLE feedback` meanwhile resolves through `search_path`, so guard
+    and statement can disagree about which table they mean.
+
+    Either fix is accepted: constrain `table_schema`, or resolve the relation
+    directly with `to_regclass` (which is what `_SCHEMA_CHECK_SQL` in
+    `catalog_postgres.py` already does, so this keeps both halves consistent).
+    """
+    sql_files = sorted(_MIGRATIONS_DIR.glob("*.sql"))
+    assert sql_files, f"No .sql files found in {_MIGRATIONS_DIR}"
+
+    violations: list[str] = []
+    for path in sql_files:
+        if _UNQUALIFIED_INFO_SCHEMA_RE.search(_COMMENT_RE.sub("", path.read_text())):
+            violations.append(
+                f"{path.name}: information_schema.columns queried without a "
+                "table_schema constraint"
+            )
+
+    assert not violations, (
+        "Relation guards must not match a bare table_name across every visible "
+        "schema:\n" + "\n".join(violations)
+    )
+
+
 def _non_idempotent_violations(path: Path) -> list[str]:
     """Return violation messages for statements not guarded by IF EXISTS / IF NOT EXISTS."""
     content = path.read_text()

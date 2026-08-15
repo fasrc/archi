@@ -3,31 +3,63 @@
 --
 -- Run this script against existing deployments to update the schema.
 -- New deployments using init.sql already have the correct column names.
+--
+-- Every guard below resolves the relation with to_regclass() rather than matching
+-- a bare table_name in information_schema. Two reasons:
+--
+--   1. information_schema.columns matches that name in EVERY schema the role can
+--      see, so a same-named table in another schema makes the predicate describe
+--      the wrong relation. ALTER TABLE resolves through search_path, so the guard
+--      and the statement it guards could disagree about which table they mean.
+--   2. to_regclass() resolves exactly the way the following ALTER does, and returns
+--      NULL rather than raising when the relation is absent — so a database that
+--      never had the table skips the rename instead of failing the file.
+--
+-- This matches _SCHEMA_CHECK_SQL in catalog_postgres.py, which resolves the
+-- documents table the same way.
 
 -- feedback table: rename 'mid' -> 'message_id'
 DO $$
 BEGIN
   IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'feedback' AND column_name = 'mid'
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('feedback')
+      AND attname = 'mid' AND attnum > 0 AND NOT attisdropped
   ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'feedback' AND column_name = 'message_id'
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('feedback')
+      AND attname = 'message_id' AND attnum > 0 AND NOT attisdropped
   ) THEN
     ALTER TABLE feedback RENAME COLUMN mid TO message_id;
   END IF;
 END $$;
-ALTER INDEX IF EXISTS idx_feedback_mid RENAME TO idx_feedback_message_id;
+
+-- A rename is idempotent only when guarded on BOTH sides. `ALTER INDEX IF EXISTS
+-- idx_feedback_mid RENAME TO idx_feedback_message_id` covers only "the source is
+-- gone"; on a half-migrated or hand-repaired schema carrying both names it raises
+-- `relation "idx_feedback_message_id" already exists`. The sidecar runs psql with
+-- ON_ERROR_STOP=1 under `set -e`, so that one error aborts the rest of this file
+-- and fails db-migrate — and config-seed and the data manager gate on its
+-- successful completion, so the whole stack stops starting.
+DO $$
+BEGIN
+  IF to_regclass('idx_feedback_mid') IS NOT NULL
+     AND to_regclass('idx_feedback_message_id') IS NULL THEN
+    ALTER INDEX idx_feedback_mid RENAME TO idx_feedback_message_id;
+  END IF;
+END $$;
 
 -- timing table: rename 'mid' -> 'message_id'
 DO $$
 BEGIN
   IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'timing' AND column_name = 'mid'
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('timing')
+      AND attname = 'mid' AND attnum > 0 AND NOT attisdropped
   ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'timing' AND column_name = 'message_id'
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('timing')
+      AND attname = 'message_id' AND attnum > 0 AND NOT attisdropped
   ) THEN
     ALTER TABLE timing RENAME COLUMN mid TO message_id;
   END IF;
@@ -37,11 +69,13 @@ END $$;
 DO $$
 BEGIN
   IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'ab_comparisons' AND column_name = 'user_prompt_mid'
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('ab_comparisons')
+      AND attname = 'user_prompt_mid' AND attnum > 0 AND NOT attisdropped
   ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'ab_comparisons' AND column_name = 'user_prompt_message_id'
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('ab_comparisons')
+      AND attname = 'user_prompt_message_id' AND attnum > 0 AND NOT attisdropped
   ) THEN
     ALTER TABLE ab_comparisons RENAME COLUMN user_prompt_mid TO user_prompt_message_id;
   END IF;
@@ -49,11 +83,13 @@ END $$;
 DO $$
 BEGIN
   IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'ab_comparisons' AND column_name = 'response_a_mid'
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('ab_comparisons')
+      AND attname = 'response_a_mid' AND attnum > 0 AND NOT attisdropped
   ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'ab_comparisons' AND column_name = 'response_a_message_id'
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('ab_comparisons')
+      AND attname = 'response_a_message_id' AND attnum > 0 AND NOT attisdropped
   ) THEN
     ALTER TABLE ab_comparisons RENAME COLUMN response_a_mid TO response_a_message_id;
   END IF;
@@ -61,11 +97,13 @@ END $$;
 DO $$
 BEGIN
   IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'ab_comparisons' AND column_name = 'response_b_mid'
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('ab_comparisons')
+      AND attname = 'response_b_mid' AND attnum > 0 AND NOT attisdropped
   ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'ab_comparisons' AND column_name = 'response_b_message_id'
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('ab_comparisons')
+      AND attname = 'response_b_message_id' AND attnum > 0 AND NOT attisdropped
   ) THEN
     ALTER TABLE ab_comparisons RENAME COLUMN response_b_mid TO response_b_message_id;
   END IF;

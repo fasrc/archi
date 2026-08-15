@@ -14,7 +14,8 @@
 ## 3. Make every migration re-runnable
 
 - [x] 3.1 Write a failing test that reads every file in `src/cli/templates/migrations/` and asserts no bare `ALTER TABLE ... RENAME COLUMN` remains — each rename must be guarded (an `information_schema.columns` presence check). Watch it fail on `rename_mid_to_message_id.sql`.
-- [x] 3.2 Wrap all six renames in `rename_mid_to_message_id.sql` (`feedback.mid`, `timing.mid`, and the three `ab_comparisons.*_mid`, plus the already-guarded `ALTER INDEX`) in `DO $$ ... END $$` blocks conditioned on the old column existing AND the new column not existing, per design Decision 3. Make 3.1 pass.
+- [x] 3.2 Wrap all six renames in `rename_mid_to_message_id.sql` (`feedback.mid`, `timing.mid`, and the three `ab_comparisons.*_mid`) in `DO $$ ... END $$` blocks conditioned on the old column existing AND the new column not existing, per design Decision 3. Make 3.1 pass.
+  - **Correction (task 6.1):** this task originally described the `ALTER INDEX` as "already-guarded". It was not. `IF EXISTS` guards only the source name, never the target, so the statement was not idempotent and the plan's assumption is what kept anyone from checking it.
 - [x] 3.3 Add a test that applies every migration file, in lexicographic order, against a schema shaped like the current `init.sql` and asserts each exits successfully with the schema unchanged — so a future non-idempotent migration is caught by the gate rather than by a broken deploy. Prefer an in-process SQL-shape assertion over a live Postgres; if no fixture exists, assert every statement is either idempotent-by-syntax (`IF EXISTS` / `IF NOT EXISTS`) or guarded by a `DO` block.
 
 ## 4. Catalog startup schema precondition
@@ -29,3 +30,9 @@
 - [x] 5.1 Run `bash scripts/gate.sh` from the worktree root and confirm it exits 0 with ≥80% diff coverage. Fix anything red — never bypass.
 - [x] 5.2 Confirm `black --check` still passes on both edited Python files (they were clean at `origin/dev`; a reflow would swamp the diff).
 - [x] 5.3 Push the branch and open a PR into `fasrc/archi:dev` whose body contains `Closes #180`, and note in it that `rename_mid_to_message_id.sql` was made idempotent because the issue's premise that it already was is false — a fresh deploy would otherwise have failed to start.
+
+## 6. Review-round fixes
+
+- [x] 6.1 Write a failing test asserting no `ALTER INDEX ... RENAME TO` sits outside a `DO $$ ... END $$` block, and watch it fail. `test_every_migration_statement_is_idempotent` could never catch this: it greps for the literal `IF EXISTS`, which the statement contains, so a rename guarded on only one side reads as idempotent. Then guard the index rename on both sides (source present AND target absent). Uncaught, this aborts the file under `ON_ERROR_STOP=1` + `set -e` and blocks the whole stack, since `config-seed` and the data manager gate on `db-migrate` completing.
+- [x] 6.2 Write a failing test asserting no guard queries `information_schema.columns` without constraining `table_schema`, and watch it fail. Resolve every guard through `to_regclass()` instead, which resolves the same way the `ALTER` it guards does and returns `NULL` rather than raising on an absent relation. This matches `_SCHEMA_CHECK_SQL` in `catalog_postgres.py`, so both halves of the change now identify a relation the same way.
+- [x] 6.3 Re-run `bash scripts/gate.sh`: 1819 passed, 1 xfailed, 100% patch coverage.
