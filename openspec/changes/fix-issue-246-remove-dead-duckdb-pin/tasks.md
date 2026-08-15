@@ -1,6 +1,6 @@
 ## 1. Guard the pin, then delete it (TDD)
 
-- [ ] 1.1 Write the guard red, then make it green — **in this one task**, because the gate
+- [x] 1.1 Write the guard red, then make it green — **in this one task**, because the gate
       runs before every commit and a task that ends with the suite red can never be
       committed. First create `tests/unit/test_requirements_hygiene.py` with a module-level
       mapping of the three paths, resolved from
@@ -20,7 +20,7 @@
       `sed -i '/^duckdb==0\.8\.1$/d'` over the three paths (design D1) — do **not** run
       `scripts/dev/build_docker_images.sh` and do **not** otherwise regenerate the two
       derived files. Re-run the guard: green.
-- [ ] 1.2 Prove the blast radius mechanically before committing, because "I was careful" is
+- [x] 1.2 Prove the blast radius mechanically before committing, because "I was careful" is
       not the check — regeneration is (design D1):
       `git diff --name-only` lists exactly the three requirements files;
       `test "$(git diff -U0 | grep -c '^-[^-]')" = 3` passes;
@@ -28,7 +28,7 @@
       `git diff -- Containerfile` is empty (design D4).
       Any deleted-line count above three means the derived files were regenerated and #247's
       drift got swept in — revert and redo surgically.
-- [ ] 1.3 Confirm the removal is complete and nothing else referenced the pin:
+- [x] 1.3 Confirm the removal is complete and nothing else referenced the pin:
       `git grep -n duckdb -- requirements/ src/cli/templates/dockerfiles/` prints **nothing**,
       and repo-wide `git grep -ln duckdb` now lists only the container definition.
 

@@ -9,7 +9,6 @@ backoff==2.2.1
 beautifulsoup4==4.12.3 
 clickhouse-connect==0.6.6
 coloredlogs==15.0.1
-duckdb==0.8.1
 fastapi==0.115.13
 flask==3.0.3
 flask-login==0.6.3
