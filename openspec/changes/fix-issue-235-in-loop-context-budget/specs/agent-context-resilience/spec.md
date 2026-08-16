@@ -76,12 +76,22 @@ magnitude, so a call count does not bound tokens.
 - **THEN** the reduction is applied at that later model call
 - **AND** does not depend on the budget having been exceeded before the loop started
 
-### Requirement: Tool results that can be preserved or exempted are bounded by an enforced ceiling
+### Requirement: Every tool result that survives reduction is bounded by an enforced ceiling
 
-Any tool whose results the reduction strategy may preserve or exempt SHALL bound the size of
-what it returns by an enforced ceiling. Both the preserve-count floor and the exemption floor
-are statements about retained results, so neither holds unless a retained result has an
-enforced size.
+Every `ToolMessage` that survives reduction — whether preserved as one of the most recent
+results or exempted by tool — SHALL be bounded by an enforced per-result ceiling, and content
+beyond the ceiling MUST be truncated with a marker indicating the result is partial. Both the
+preserve-count floor and the exemption floor are statements about retained results, so neither
+holds unless a retained result has an enforced size.
+
+This ceiling MUST be applied independently of which tool produced the result. Preservation
+selects by recency across all tool results, so the preserved set can contain tools this
+capability cannot enumerate — including tools loaded at runtime from external servers and
+tools supplied by callers. A ceiling enforced only on individually named tools does not
+satisfy this requirement, because it lapses as soon as another tool is enabled.
+
+Individual tools MAY additionally bound their own output at the source, and the following two
+SHALL do so; but the requirement above MUST hold independently of them.
 
 The document-fetch tool SHALL clamp the size of the text it returns independently of the size
 the model requests. A caller-supplied size larger than the ceiling MUST be reduced to the
@@ -92,6 +102,25 @@ The retrieval tool SHALL clamp its **complete serialized output**, not its per-d
 alone. A per-document text cap does not bound the result, because the rendered output also
 interpolates document metadata — title, URL and identifiers — that no cap governs, so a single
 document with pathological metadata can produce an arbitrarily large result.
+
+#### Scenario: An oversized result from an unenumerated tool is bounded
+
+- **WHEN** one of the preserved most-recent tool results came from a tool this capability does
+  not name — a runtime-loaded or caller-supplied tool — and its output exceeds the per-result
+  ceiling
+- **THEN** that result is truncated to the ceiling and marked as partial
+- **AND** the complete post-reduction request is within budget
+
+#### Scenario: An oversized exempted result is bounded
+
+- **WHEN** an exempted retrieval result exceeds the per-result ceiling
+- **THEN** it is truncated to the ceiling and marked as partial
+- **AND** exemption from clearing does not exempt it from the ceiling
+
+#### Scenario: A result within the ceiling is passed through unmodified
+
+- **WHEN** a surviving tool result is within the per-result ceiling
+- **THEN** its content is unchanged and carries no truncation marker
 
 #### Scenario: An oversized requested document-read size is clamped
 

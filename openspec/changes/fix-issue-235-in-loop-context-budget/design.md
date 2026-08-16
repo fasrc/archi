@@ -263,6 +263,28 @@ Both the preserve-count floor and the exemption floor are statements about *reta
 results, so both are worthless unless a retained result has an enforced size. Today neither
 does.
 
+**The ceiling has to be tool-agnostic, and that is not a detail.** `ClearToolUsesEdit` selects
+what to preserve by **recency across all tool results** (`candidates[:-keep]`), not by tool
+name. So the preserved set can contain any tool the agent has: the catalog search tools, MCP
+tools loaded at runtime, or caller-supplied `extra_tools` — none of which this change can
+enumerate, and MCP tools least of all, since their outputs come from servers outside the
+repository. An invariant expressed as "we capped the two tools we know about" is therefore
+false the moment an operator enables a third.
+
+So the ceiling is applied **in our own middleware wrapper**, to every `ToolMessage` that
+survives reduction — preserved-by-recency and exempted-by-tool alike — truncating anything over
+a configurable per-result ceiling and marking the truncation so the model knows the content is
+partial. Being tool-agnostic, it holds for tools that do not exist yet.
+
+That makes the two floors true by construction and readable at runtime:
+
+    preserve_floor = keep × per_result_ceiling
+    exempt_floor   = tool_budget("search_vectorstore_hybrid") × per_result_ceiling
+
+The per-tool clamps below remain worth having — they stop pointless transfer and work at the
+source, and one of them fixes an outright bug — but **the bound no longer depends on them**,
+which is the point.
+
 **`fetch_catalog_document`.** `max_chars` is a tool argument the model chooses, forwarded
 unclamped all the way to `api_catalog_document`, where `max_chars=0` disables truncation and
 returns the whole document (see Context). Three preserved results are only ~3.2 K tokens if
@@ -283,21 +305,16 @@ exemption that result is *not reducible*. An exemption check computed from
 So the retriever tool gains an enforced ceiling on its **complete serialized output**, applied
 after formatting, covering headers and metadata rather than page content alone.
 
-**This is also what makes the exemption arithmetic knowable at runtime.** The alternative —
-computing the floor from `max_documents` and `max_chars` — cannot work: neither call site
-passes them (`fasrc_docs_agent.py:224-235`, `cms_comp_ops_agent.py`), so they are closure-local
-defaults with no configuration path and nothing for the budget module to read. Codex's round-3
-recommendation was to introduce a shared limits object threaded into both the tool and the
-budget builder. Rejected as more plumbing than the problem needs: with a whole-output ceiling
-the floor is simply
-
-    exempt_floor = tool_budget("search_vectorstore_hybrid") × retrieval_output_ceiling
-
-and **both terms are already first-class runtime values** — the call budget comes from
-`_tool_budgets()`, which is the existing three-layer lookup, and the ceiling is one config key
-read by the tool and the budget module from the same place. No new shared object, and the
-formatter's internal `max_documents`/`max_chars` stop being load-bearing for the bound
-entirely: whatever they are, the serialized result is clamped.
+**Why the exemption arithmetic is knowable at runtime.** Computing the floor from
+`max_documents` and `max_chars` cannot work: neither call site passes them
+(`fasrc_docs_agent.py:224-235`, `cms_comp_ops_agent.py`), so they are closure-local defaults
+with no configuration path and nothing for the budget module to read. Introducing a shared
+limits object threaded into both the tool and the budget builder was considered and rejected as
+more plumbing than the problem needs — with a per-result ceiling the floor is
+`tool_budget("search_vectorstore_hybrid") × per_result_ceiling`, and **both terms are already
+first-class runtime values**: the call budget comes from `_tool_budgets()`, the existing
+three-layer lookup, and the ceiling is one config key read by the wrapper and the budget module
+from the same place. The formatter's internal limits stop being load-bearing entirely.
 
 The server-side gap is broader than this change — `api_catalog_document` will still honour an
 unbounded `max_chars` for any other caller — so the endpoint clamp is filed as a separate

@@ -26,7 +26,7 @@ is unbounded and no floor arithmetic holds.
 - [ ] 3.3 Write failing tests for the three-layer config lookup (class default → `services.chat_app.context_editing` → `pipeline_config.context_editing`), later layers overriding earlier
 - [ ] 3.4 Write failing tests for invalid config values (non-numeric / out-of-range reserve, preserve count, exemption fraction): warn, use the default for that value, still install the bound
 - [ ] 3.5 Write a failing test that `enabled: false` installs no middleware
-- [ ] 3.6 Failing test: the exemption floor is computed as `tool_budget("search_vectorstore_hybrid") × retrieval_output_ceiling`, reading the call budget through the existing `_tool_budgets()` lookup and the ceiling from the same config key the tool reads — **not** from the formatter's `max_documents`/`max_chars`, which no call site passes and no config path reaches
+- [ ] 3.6 Failing test: the exemption floor is computed as `tool_budget("search_vectorstore_hybrid") × per_result_ceiling`, reading the call budget through the existing `_tool_budgets()` lookup and the ceiling from the same config key the wrapper enforces — **not** from the formatter's `max_documents`/`max_chars`, which no call site passes and no config path reaches
 - [ ] 3.7 Failing test: the exemption is dropped with a warning when that floor exceeds the configured fraction of the budget; retained when it does not
 - [ ] 3.8 Failing test: raising `services.chat_app.tool_budgets.search_vectorstore_hybrid` alone is enough to flip the exemption off — the check must track the runtime value, not a constant
 - [ ] 3.9 Watch all of 3.1–3.8 fail for the right reason (module does not exist / returns nothing)
@@ -46,7 +46,10 @@ The wrapper is ours; only `ClearToolUsesEdit` comes from langchain. Do **not** s
 - [ ] 4.5 Failing test: the counter never calls `get_num_tokens_from_messages` — a model stub whose tokenizer raises still counts successfully (no tiktoken dependency)
 - [ ] 4.6 Failing test: after reduction the wrapper re-measures, and when still over budget logs a warning carrying the measured overage. Interpolate the numbers into the message string — `setup_logging` renders `%(message)s` only, so `extra={...}` passes `caplog` and emits nothing in production
 - [ ] 4.7 Failing test: sync and async paths produce identical reductions on identical input (parity — they must delegate to one shared helper, not two copies)
-- [ ] 4.8 Watch 4.1–4.7 fail, then implement the `AgentMiddleware` wrapper delegating to upstream `ClearToolUsesEdit`
+- [ ] 4.8 Failing test (**the universal ceiling**): a preserved most-recent result from a tool named by *no* part of this change — a stand-in for an MCP or caller-supplied tool — is truncated to the per-result ceiling and marked partial, and the complete post-reduction request is within budget. `ClearToolUsesEdit` selects by recency across all tools, so a per-tool ceiling lapses the moment another tool is enabled
+- [ ] 4.9 Failing test: an *exempted* retrieval result over the ceiling is truncated too — exemption from clearing is not exemption from the ceiling
+- [ ] 4.10 Failing test: a surviving result within the ceiling is passed through byte-identical with no truncation marker
+- [ ] 4.11 Watch 4.1–4.10 fail, then implement the `AgentMiddleware` wrapper: complete-request counter, delegation to upstream `ClearToolUsesEdit`, universal per-result ceiling over survivors, and the post-reduction re-measure
 
 ## 5. Middleware construction and its options — RED then GREEN
 

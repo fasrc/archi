@@ -40,12 +40,16 @@ cannot distinguish a real improvement from an arm that serves users worse.
   generation reserve. `ModelInfo.context_window` is a *total* sequence length covering prompt
   and response, so a budget equal to the full window is exceeded by any answer. No hard-coded
   context length.
-- **Enforce a size ceiling on every tool result the strategy may preserve or exempt.**
+- **Enforce a per-result size ceiling on every tool result that survives reduction**, applied in
+  the middleware and therefore independent of which tool produced it. Preservation selects by
+  recency across all tool results, so the surviving set can include MCP tools loaded at runtime
+  and caller-supplied `extra_tools` that this change cannot enumerate — a ceiling enforced only
+  on named tools lapses the moment another is enabled.
+- Additionally clamp at the source, as defense in depth rather than as the bound:
   `fetch_catalog_document`'s `max_chars` is a model-supplied argument forwarded unclamped to the
   catalog endpoint, where `max_chars=0` disables truncation and returns the whole document; and
   the retriever's `max_chars` bounds only `page_content`, leaving the metadata-derived header
-  uncapped. So a "preserved" or "exempted" result is today unbounded, and no floor arithmetic
-  holds without this. The retriever's ceiling applies to its complete serialized output.
+  uncapped, so its clamp applies to the complete serialized output.
 - Exempt the retrieval tool's results from clearing **while that exemption is provably cheap**,
   and drop it with a warning when the retrieval caps in force could let exempted content occupy
   too large a share of the budget — otherwise a raised retrieval budget becomes a second
