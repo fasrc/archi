@@ -179,7 +179,7 @@ data_manager:
       class: OpenAIEmbeddings
       kwargs:
         model: {{ data_manager.embedding_class_map.OpenAIEmbeddings.kwargs.model | default('text-embedding-3-small', true) }}
-      similarity_score_reference: {{ data_manager.embedding_class_map.OpenAIEmbeddings.similarity_score_reference | default(10, true) }}
+      similarity_score_reference: {{ data_manager.embedding_class_map.OpenAIEmbeddings.similarity_score_reference | default(0.0, true) }}
     HuggingFaceEmbeddings:
       class: HuggingFaceEmbeddings
       kwargs:
@@ -188,7 +188,7 @@ data_manager:
           device: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.model_kwargs.device | default('cpu', true) }}
         encode_kwargs:
           normalize_embeddings: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.encode_kwargs.normalize_embeddings | default(true, true) }}
-      similarity_score_reference: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.similarity_score_reference | default(10, true) }}
+      similarity_score_reference: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.similarity_score_reference | default(0.0, true) }}
       query_embedding_instructions: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.query_embedding_instructions | default("null", true) }}
   chunk_size: {{ data_manager.chunk_size | default(1000, true) }}
   chunk_overlap: {{ data_manager.chunk_overlap | default(0, true) }}

@@ -77,3 +77,11 @@ deploy/fasrc-dev/*
 # Defense-in-depth: never track secrets/env even under the allow-listed scripts dir.
 deploy/fasrc-dev/scripts/**/*.env
 deploy/fasrc-dev/scripts/**/*secret*
+
+# Argilla user rosters are operator data: real names, real email addresses, and
+# optionally credentials. One was committed here once, so this is a default-deny
+# rather than a reminder. Only the .example template is tracked; see
+# tests/unit/test_repo_hygiene.py, which enforces both halves of that.
+argilla/*.csv
+argilla/*.txt
+!argilla/*.example

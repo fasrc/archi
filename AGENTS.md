@@ -18,7 +18,7 @@
 - `cd docs && mkdocs serve` previews documentation locally.
 
 ## Coding Style & Naming Conventions
-- Python 3.7+; follow PEP 8 with 4-space indentation.
+- Python 3.11+; follow PEP 8 with 4-space indentation.
 - Use `snake_case` for modules/functions and `PascalCase` for classes; keep filenames descriptive (e.g., `test_interfaces.py`).
 - Import ordering is generally maintained with `isort` when formatting is applied.
 - Shell scripts under `scripts/` and `tests/smoke/` use `bash` with `set -euo pipefail`.

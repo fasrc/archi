@@ -145,6 +145,17 @@ one plumbing fix.
 
 ## 3a. Gotcha: the renderer expects the OPPOSITE score orientation
 
+> **Superseded — this section describes behaviour that no longer exists.** Issue
+> #208 corrected the shared renderer: `get_top_sources` now sorts **descending**
+> (best first) and treats `similarity_score_reference` as a *lower* bound that
+> ships disabled, and every `PostgresVectorStore` producer now returns
+> `1.0 - distance` (higher = better) for all three distance metrics. Option 2's
+> "invert to the distance convention" and "add a similarity-mode branch" are both
+> obsolete — the orientation was reconciled at the producers and in the shared
+> consumer instead, so there is no second code path to add. The diagnosis below
+> is kept as the record of how the bug was found; read it as history, not as a
+> description of the current code.
+
 Now that (a) is chosen, this is the load-bearing detail. The hybrid retriever
 emits a **similarity** (higher = better); the existing UI renderer was built
 for a **distance** (lower = better):

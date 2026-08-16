@@ -393,12 +393,22 @@ class PostgresVectorStore(VectorStore):
                 page_content=row["chunk_text"],
                 metadata=metadata,
             )
-            # Convert distance to similarity score (for cosine: 1 - distance)
-            score = (
-                1.0 - row["distance"]
-                if self._distance_metric == "cosine"
-                else row["distance"]
-            )
+            # Convert distance to a higher-is-better score, for EVERY metric.
+            #
+            # `hybrid_search` already computes `1.0 - (embedding <op> vec)` whatever
+            # `_distance_op` is, so returning a raw distance here made the two
+            # producers in this class disagree about score direction. The citation
+            # layer sorts descending and applies a floor, and HybridRetriever's
+            # semantic-only fallback routes here -- so under `l2`/`inner_product`
+            # a raw distance surfaced the least relevant source first.
+            #
+            # `1.0 - distance` is monotonically decreasing in distance for all
+            # three operators, so it orders correctly in each: `<->` and `<=>`
+            # both grow as similarity falls, and `<#>` returns the NEGATIVE inner
+            # product, so `1.0 - (-ip)` grows with the inner product. Only cosine
+            # yields a value bounded to a 0..1-style range; see the score-scale
+            # caveat on the threshold in `similarity_threshold.py`.
+            score = 1.0 - row["distance"]
             results.append((doc, score))
 
         return results

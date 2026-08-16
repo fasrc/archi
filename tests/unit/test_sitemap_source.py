@@ -998,20 +998,20 @@ class TestWiring:
     def test_expand_called_and_urls_appended(self):
         mgr = self._mgr()
         by_type = (["https://a"], [], [], [], [], ["https://s.xml"])
-        with patch.object(
-            ScraperManager,
-            "_expand_sitemaps",
-            return_value=[("https://b", None), ("https://c", None)],
-        ) as exp, patch.object(ScraperManager, "collect_links") as cl, patch.object(
-            ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
-        ), patch.object(
-            ScraperManager, "collect_sso"
-        ), patch.object(
-            ScraperManager, "collect_git"
-        ), patch.object(
-            ScraperManager, "collect_elog"
-        ), patch.object(
-            ScraperManager, "collect_indico"
+        with (
+            patch.object(
+                ScraperManager,
+                "_expand_sitemaps",
+                return_value=[("https://b", None), ("https://c", None)],
+            ) as exp,
+            patch.object(ScraperManager, "collect_links") as cl,
+            patch.object(
+                ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+            ),
+            patch.object(ScraperManager, "collect_sso"),
+            patch.object(ScraperManager, "collect_git"),
+            patch.object(ScraperManager, "collect_elog"),
+            patch.object(ScraperManager, "collect_indico"),
         ):
             mgr.collect_all_from_config(MagicMock())
         exp.assert_called_once_with(["https://s.xml"])
@@ -1033,23 +1033,23 @@ class TestWiring:
             [],
             ["https://s.xml"],
         )
-        with patch.object(
-            ScraperManager,
-            "_expand_sitemaps",
-            return_value=[
-                (f"https://{HOST}/kb/page", None),
-                (f"https://{HOST}/kb/new", None),
-            ],
-        ), patch.object(ScraperManager, "collect_links") as cl, patch.object(
-            ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
-        ), patch.object(
-            ScraperManager, "collect_sso"
-        ), patch.object(
-            ScraperManager, "collect_git"
-        ), patch.object(
-            ScraperManager, "collect_elog"
-        ), patch.object(
-            ScraperManager, "collect_indico"
+        with (
+            patch.object(
+                ScraperManager,
+                "_expand_sitemaps",
+                return_value=[
+                    (f"https://{HOST}/kb/page", None),
+                    (f"https://{HOST}/kb/new", None),
+                ],
+            ),
+            patch.object(ScraperManager, "collect_links") as cl,
+            patch.object(
+                ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+            ),
+            patch.object(ScraperManager, "collect_sso"),
+            patch.object(ScraperManager, "collect_git"),
+            patch.object(ScraperManager, "collect_elog"),
+            patch.object(ScraperManager, "collect_indico"),
         ):
             mgr.collect_all_from_config(MagicMock())
         _, kwargs = cl.call_args
@@ -1080,23 +1080,23 @@ class TestWiring:
             [],
             ["https://s.xml"],
         )
-        with patch.object(
-            ScraperManager,
-            "_expand_sitemaps",
-            return_value=[
-                (f"https://{HOST}/kb/page", "2026-04-21T19:19:35+00:00"),
-                (f"https://{HOST}/kb/new", "2026-04-22T00:00:00+00:00"),
-            ],
-        ), patch.object(ScraperManager, "collect_links"), patch.object(
-            ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
-        ), patch.object(
-            ScraperManager, "collect_sso"
-        ), patch.object(
-            ScraperManager, "collect_git"
-        ), patch.object(
-            ScraperManager, "collect_elog"
-        ), patch.object(
-            ScraperManager, "collect_indico"
+        with (
+            patch.object(
+                ScraperManager,
+                "_expand_sitemaps",
+                return_value=[
+                    (f"https://{HOST}/kb/page", "2026-04-21T19:19:35+00:00"),
+                    (f"https://{HOST}/kb/new", "2026-04-22T00:00:00+00:00"),
+                ],
+            ),
+            patch.object(ScraperManager, "collect_links"),
+            patch.object(
+                ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+            ),
+            patch.object(ScraperManager, "collect_sso"),
+            patch.object(ScraperManager, "collect_git"),
+            patch.object(ScraperManager, "collect_elog"),
+            patch.object(ScraperManager, "collect_indico"),
         ):
             mgr.collect_all_from_config(MagicMock())
 
@@ -1109,18 +1109,16 @@ class TestWiring:
     def test_no_sitemap_bucket_skips_expand(self):
         mgr = self._mgr()
         by_type = (["https://a"], [], [], [], [], [])
-        with patch.object(ScraperManager, "_expand_sitemaps") as exp, patch.object(
-            ScraperManager, "collect_links"
-        ) as cl, patch.object(
-            ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
-        ), patch.object(
-            ScraperManager, "collect_sso"
-        ), patch.object(
-            ScraperManager, "collect_git"
-        ), patch.object(
-            ScraperManager, "collect_elog"
-        ), patch.object(
-            ScraperManager, "collect_indico"
+        with (
+            patch.object(ScraperManager, "_expand_sitemaps") as exp,
+            patch.object(ScraperManager, "collect_links") as cl,
+            patch.object(
+                ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+            ),
+            patch.object(ScraperManager, "collect_sso"),
+            patch.object(ScraperManager, "collect_git"),
+            patch.object(ScraperManager, "collect_elog"),
+            patch.object(ScraperManager, "collect_indico"),
         ):
             mgr.collect_all_from_config(MagicMock())
         exp.assert_not_called()
@@ -1130,20 +1128,20 @@ class TestWiring:
     def test_expansion_error_propagates_and_fails_ingest(self):
         mgr = self._mgr()
         by_type = ([], [], [], [], [], ["https://s.xml"])
-        with patch.object(
-            ScraperManager,
-            "_expand_sitemaps",
-            side_effect=ss.SitemapExpansionError("boom", reason="below_floor"),
-        ), patch.object(ScraperManager, "collect_links"), patch.object(
-            ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
-        ), patch.object(
-            ScraperManager, "collect_sso"
-        ), patch.object(
-            ScraperManager, "collect_git"
-        ), patch.object(
-            ScraperManager, "collect_elog"
-        ), patch.object(
-            ScraperManager, "collect_indico"
+        with (
+            patch.object(
+                ScraperManager,
+                "_expand_sitemaps",
+                side_effect=ss.SitemapExpansionError("boom", reason="below_floor"),
+            ),
+            patch.object(ScraperManager, "collect_links"),
+            patch.object(
+                ScraperManager, "_collect_urls_from_lists_by_type", return_value=by_type
+            ),
+            patch.object(ScraperManager, "collect_sso"),
+            patch.object(ScraperManager, "collect_git"),
+            patch.object(ScraperManager, "collect_elog"),
+            patch.object(ScraperManager, "collect_indico"),
         ):
             with pytest.raises(ss.SitemapExpansionError):
                 mgr.collect_all_from_config(MagicMock())

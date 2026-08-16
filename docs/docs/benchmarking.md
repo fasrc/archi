@@ -543,6 +543,24 @@ an unchecked path is a file-disclosure channel off the machine. The same check c
 case: a stale path that would silently ground a question in an unrelated file. Absolute paths
 *inside* the data root are still fine, matching what the catalog itself stores.
 
+Containment is not the only way a `file_path` gets refused. The guard asks the kernel to traverse
+the pathname **exactly as the row spelled it**, so a row can name a real, contained, readable file
+and still be rejected because that particular *spelling* is not traversable. The case you will
+actually meet is a trailing separator or a trailing `.` on a regular file — `safe.md/` or
+`safe.md/.` — which the operating system refuses with `ENOTDIR` because only a directory may be
+named that way:
+
+```
+persisted document '/path/to/data/safe.md/' cannot be resolved: Not a directory
+```
+
+Read that as a **malformed row, not a missing file**: `safe.md` itself is fine, and dropping the
+trailing `/` or `/.` from the catalog or `--corpus-json` row fixes it. The guard cannot quietly
+normalize the spelling away, because the same erasure is what lets a genuinely dangerous pathname
+resolve to an innocent neighbour. Spellings that *are* traversable are unaffected — `./safe.md`,
+`web/./a.md` and `web/../web/a.md` all still resolve — and a trailing separator on `--data-path`
+itself is fine, since the root is always a directory.
+
 If every candidate is rejected the run also exits **non-zero** — a propose run that produced
 nothing is a failed run, not a finding, which is the opposite of how gaps and orphans exit.
 
