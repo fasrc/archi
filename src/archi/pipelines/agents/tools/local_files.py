@@ -12,6 +12,10 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
 from src.archi.pipelines.agents.tools.base import require_tool_permission
+from src.archi.pipelines.agents.tools.result_limits import (
+    clamp_result,
+    resolve_requested_chars,
+)
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
 
@@ -474,12 +478,20 @@ def create_metadata_schema_tool(
     return _schema_tool
 
 
+# Enforced ceilings on the complete serialized tool result (issue #235). These are
+# backstops against pathological content, not a tightening of ordinary output:
+# a default fetch is ~4000 chars of text plus a <=800 char metadata preview, and a
+# default retrieval is 4 documents x 800 chars plus headers.
+DEFAULT_FETCH_RESULT_CHARS = 6000
+
+
 def create_document_fetch_tool(
     catalog: RemoteCatalogClient,
     *,
     name: str = "fetch_catalog_document",
     description: Optional[str] = None,
     default_max_chars: int = 4000,
+    max_result_chars: int = DEFAULT_FETCH_RESULT_CHARS,
     required_permission: Optional[str] = None,
     store_tool_input: Optional[Callable[[str, object], None]] = None,
 ) -> Callable[..., str]:
@@ -490,6 +502,11 @@ def create_document_fetch_tool(
         name: The name of the tool.
         description: Human-readable description of the tool.
         default_max_chars: Default maximum characters to return.
+        max_result_chars: Enforced ceiling on the *complete serialized result*
+            (issue #235). ``max_chars`` is a model-supplied argument, so it is
+            resolved against this ceiling rather than trusted; and because the
+            path and metadata preview are appended after the text, the assembled
+            string is clamped again before it is returned.
         required_permission: Optional RBAC permission required to use this tool.
             If None, no permission check is performed (allow all).
     """
@@ -506,6 +523,9 @@ def create_document_fetch_tool(
     def _fetch_document(resource_hash: str, max_chars: int = default_max_chars) -> str:
         if not resource_hash.strip():
             return "Please provide a non-empty resource hash."
+        # The model chooses max_chars, and 0 would disable truncation downstream,
+        # so resolve it against the enforced ceiling before it is used.
+        max_chars = resolve_requested_chars(max_chars, max_result_chars)
         if store_tool_input:
             try:
                 store_tool_input(
@@ -536,7 +556,12 @@ def create_document_fetch_tool(
         text = doc_payload.get("text") or ""
         meta_preview = _render_metadata_preview(metadata)
 
-        return f"Path: {path}\n" f"Metadata:\n{meta_preview}\n\n" f"Content:\n{text}"
+        rendered = (
+            f"Path: {path}\n" f"Metadata:\n{meta_preview}\n\n" f"Content:\n{text}"
+        )
+        # The path and metadata preview are appended after the server-limited
+        # text, so the assembled string can exceed what was requested.
+        return clamp_result(rendered, max_result_chars)
 
     return _fetch_document
 
