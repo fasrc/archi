@@ -116,12 +116,33 @@ LangChain 1.0.3 — already pinned, already the source of `create_agent` — shi
 `clear_tool_uses_20250919`. Its `wrap_model_call` hook fires on **every** model call with the
 accumulated message list in hand: exactly the position mechanism #2 leaves vacant.
 
-Alternative considered: write our own `AgentMiddleware` from scratch. Rejected — it would
-reimplement tool-call/tool-result pairing, placeholder substitution, and re-clear idempotency,
-all of which are the parts most likely to produce a malformed message sequence that the
-provider rejects. Adopting the upstream component means the risky logic is maintained
-elsewhere and our diff carries budget derivation, wiring, and one overridden token counter
-(Decision 3) — not a message rewriter.
+Alternative considered: write our own `AgentMiddleware` including its own message rewriter.
+Rejected — that would reimplement tool-call/tool-result pairing, placeholder substitution, and
+re-clear idempotency, all of which are the parts most likely to produce a malformed message
+sequence that the provider rejects.
+
+**Split the component along its real seam.** `ContextEditingMiddleware` is two things of very
+unequal value: `ClearToolUsesEdit.apply` — the message rewriter, which is the risky, subtle,
+well-tested part — and `wrap_model_call` / `awrap_model_call`, which are ~20 lines of
+boilerplate that pick a token counter and call `edit.apply(request.messages,
+count_tokens=...)`. Only the first is worth depending on.
+
+So: **use upstream's `ClearToolUsesEdit`, supply our own middleware wrapper.** The wrapper is
+where the complete-request counter (Decision 3) and the convergence check (Decision 9) belong,
+and both sync and async paths delegate to one shared helper so they cannot drift. This is
+composition, not subclassing — the `ContextEdit` protocol takes `count_tokens` as a parameter
+precisely so a caller can supply one.
+
+The dependency this creates is narrow and explicit: the `ClearToolUsesEdit(...)` constructor
+options and the `apply(messages, *, count_tokens)` signature. A contract test constructs and
+applies it directly, so a langchain upgrade that changes either fails loudly in the unit suite
+rather than silently disabling the bound.
+
+Alternative considered: subclass `ContextEditingMiddleware` and override the counter. **Not
+possible** — in langchain 1.0.3 the counter is a closure built inside each wrapper body, not a
+method, so "overriding the counter" means copying both wrapper implementations. That is
+strictly worse than owning a wrapper we wrote deliberately: same duplication, but disguised as
+inheritance, and with upstream's sync/async bodies to keep in sync on every upgrade.
 
 Alternative considered: `SummarizationMiddleware`. Rejected — it spends an extra model call
 per compaction and introduces summarization loss into the evidence chain that the citation
@@ -152,10 +173,11 @@ request exceeds the model's window. The argument is withdrawn.
 
 **Take the complete count without the tiktoken risk.** `count_tokens_approximately` accepts a
 `tools=` argument, and `ModelRequest` exposes both `system_prompt` and `tools` inside
-`wrap_model_call`. A thin subclass of `ContextEditingMiddleware` overriding only the counter —
-`count_tokens_approximately([SystemMessage(system_prompt)] + messages, tools=request.tools)` —
-is complete *and* has no tokenizer dependency. All clearing logic stays upstream (Decision 2);
-the subclass swaps one function.
+`wrap_model_call`. Counting
+`count_tokens_approximately([SystemMessage(system_prompt)] + messages, tools=request.tools)`
+is complete *and* has no tokenizer dependency. Because we own the wrapper (Decision 2), this
+counter is simply the function passed to `ClearToolUsesEdit.apply` — no upstream code is
+overridden or copied to obtain it.
 
 **The safety margin then becomes what it actually needs to be: an output-token reserve.**
 `ModelInfo.context_window` (`providers/base.py:40`) is the **total** sequence length, not an
@@ -252,6 +274,34 @@ Alternative considered: remove `max_chars` from the tool signature entirely so t
 influence it. Rejected — a smaller value is a legitimate and useful request, and removing the
 argument changes the tool contract the prompt documents. Clamping preserves the useful
 direction and closes the harmful one.
+
+### Decision 9 — Name the residual that clearing cannot remove, and measure it
+
+`ClearToolUsesEdit` does not *delete* a tool result — it replaces the content with the
+placeholder and keeps the `ToolMessage`, its `tool_call_id`, and the originating `AIMessage`
+with its `tool_calls` intact. That framing is deliberate (it is what keeps the sequence
+well-formed and stops the model re-fetching, Decision 7), but it means clearing has a floor:
+per cleared round, the message framing, the retained tool-call arguments, and the placeholder
+itself all survive.
+
+That floor is **bounded but not zero**. It scales with the number of tool rounds, which
+`recursion_limit` caps at 50 — on the order of a thousand tokens at the default limit, against
+a ~4.9 K generation reserve on a 32 K window. Small, but it is real and it is not clearable,
+so it belongs in the spec's definition of non-reducible content rather than being quietly
+excluded from the bound. The spec now lists it.
+
+Because we own the wrapper (Decision 2), the wrapper **re-measures after applying the edits**.
+If the complete request is still over budget, it logs a warning carrying the measured overage
+and the tool-round count, then proceeds — the reactive handler covers the outcome. This turns
+the residual from an assumption into an observation: if the floor ever does matter in
+production, the logs say so, with numbers, instead of a canned apology appearing with no
+explanation.
+
+Alternative considered: iterate, removing whole paired tool-use rounds (the `AIMessage` and its
+`ToolMessage` together) until the budget is met. Rejected for now — deleting messages from the
+middle of a ReAct trace is exactly the malformed-sequence risk Decision 2 avoids, and the
+measurement above will show whether it is ever needed. Adding it later is cheap; shipping it
+speculatively is not.
 
 ## Risks / Trade-offs
 

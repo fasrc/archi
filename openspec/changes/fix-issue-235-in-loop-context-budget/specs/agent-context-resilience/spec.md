@@ -10,9 +10,16 @@ reaches the provider, and MUST bring the prompt within budget whenever the non-r
 content alone fits.
 
 Non-reducible content is the system prompt, the tool schemas, the conversation messages, the
-preserved most-recent tool results, and any tool results exempted from reduction. Where that
-content alone exceeds the budget the runtime SHALL reduce everything it can and allow the
+preserved most-recent tool results, any tool results exempted from reduction, and the residue
+of results that *have* been reduced — their message framing, their retained originating
+tool-call arguments, and the placeholders themselves, none of which reduction removes. Where
+that content alone exceeds the budget the runtime SHALL reduce everything it can and allow the
 existing reactive overflow handling to cover the remainder; it MUST NOT raise on its own.
+
+Because that residue grows with the number of tool rounds rather than with their size, the
+runtime SHALL re-evaluate the complete request after reducing and, where it remains over
+budget, MUST log a warning carrying the measured overage so the residual is observable rather
+than assumed.
 
 The evaluation SHALL cover the **complete** request the provider will receive — system prompt
 and tool schemas included, not the conversation messages alone — since an evaluation that omits
@@ -46,7 +53,15 @@ magnitude, so a call count does not bound tokens.
 - **WHEN** the non-reducible content alone exceeds the budget
 - **THEN** the runtime reduces every reducible tool result it can
 - **AND** does not raise
+- **AND** logs a warning carrying the measured overage
 - **AND** the existing reactive context-overflow handling covers any resulting provider error
+
+#### Scenario: Many small tool rounds whose residue alone exceeds the budget
+
+- **WHEN** the accumulated messages hold enough reduced tool rounds that their framing,
+  retained tool-call arguments and placeholders alone exceed the budget
+- **THEN** the runtime does not raise
+- **AND** logs the measured overage rather than reporting the request as within budget
 
 #### Scenario: A prompt within budget is left untouched
 

@@ -97,8 +97,11 @@ None. The behaviour belongs to the existing agent context-resilience capability.
   caller. The agent path is closed by the tool-side clamp; the endpoint clamp is separate
   hardening and does not belong in an agent-context PR.
 - **Dependencies**: none added. `langchain` 1.0.3 is already pinned and already provides
-  `create_agent(..., middleware=...)`, `AgentMiddleware.wrap_model_call`,
-  `ContextEditingMiddleware`, and `ClearToolUsesEdit`.
+  `create_agent(..., middleware=...)`, `AgentMiddleware.wrap_model_call`, and
+  `ClearToolUsesEdit`. The dependency is deliberately narrow — the upstream *message rewriter*
+  is reused, its trivial middleware wrapper is not — and a contract test pins the two API
+  surfaces relied on so a langchain upgrade fails loudly instead of silently disabling the
+  bound.
 - **Config**: one new optional block under `services.chat_app`; absent config preserves
   current behaviour with the middleware enabled at derived defaults.
 - **Runtime**: every model call gains an O(messages) token approximation. No extra provider

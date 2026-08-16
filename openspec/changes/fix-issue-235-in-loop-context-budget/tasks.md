@@ -29,13 +29,20 @@ model-controlled and unbounded.
 - [ ] 3.8 Implement `context_budget.py` to the minimum that passes: config read + validation, budget derivation, exemption sizing, middleware construction
 - [ ] 3.9 Assert no hard-coded context length: `git diff origin/dev -- src/ | grep -E '^\+.*\b(32768|16384|8192)\b'` returns nothing
 
-## 4. Complete-request token counting — RED then GREEN
+## 4. Middleware wrapper and complete-request counting — RED then GREEN
 
-- [ ] 4.1 Failing test: the counter includes the system prompt — identical messages with and without a large `request.system_prompt` yield different counts
-- [ ] 4.2 Failing test: the counter includes tool schemas — identical messages with and without `request.tools` yield different counts
-- [ ] 4.3 Failing test: messages alone within budget but complete request over budget triggers reduction (the exact case upstream `"approximate"` misses)
-- [ ] 4.4 Failing test: the counter never calls `get_num_tokens_from_messages` — assert a model stub whose tokenizer raises still counts successfully (no tiktoken dependency)
-- [ ] 4.5 Watch 4.1–4.4 fail, then implement the thin `ContextEditingMiddleware` subclass overriding only the counter, for both `wrap_model_call` and `awrap_model_call`
+The wrapper is ours; only `ClearToolUsesEdit` comes from langchain. Do **not** subclass
+`ContextEditingMiddleware` — in 1.0.3 the counter is a closure inside each wrapper body, so
+"overriding" it means copying both upstream implementations.
+
+- [ ] 4.1 Contract test: `ClearToolUsesEdit` accepts the constructor options used here and `apply(messages, count_tokens=...)` has the expected signature — a langchain upgrade that breaks either must fail in the unit suite, not silently disable the bound
+- [ ] 4.2 Failing test: the counter includes the system prompt — identical messages with and without a large `request.system_prompt` yield different counts
+- [ ] 4.3 Failing test: the counter includes tool schemas — identical messages with and without `request.tools` yield different counts
+- [ ] 4.4 Failing test: messages alone within budget but complete request over budget triggers reduction (the exact case upstream `"approximate"` misses)
+- [ ] 4.5 Failing test: the counter never calls `get_num_tokens_from_messages` — a model stub whose tokenizer raises still counts successfully (no tiktoken dependency)
+- [ ] 4.6 Failing test: after reduction the wrapper re-measures, and when still over budget logs a warning carrying the measured overage. Interpolate the numbers into the message string — `setup_logging` renders `%(message)s` only, so `extra={...}` passes `caplog` and emits nothing in production
+- [ ] 4.7 Failing test: sync and async paths produce identical reductions on identical input (parity — they must delegate to one shared helper, not two copies)
+- [ ] 4.8 Watch 4.1–4.7 fail, then implement the `AgentMiddleware` wrapper delegating to upstream `ClearToolUsesEdit`
 
 ## 5. Middleware construction and its options — RED then GREEN
 
@@ -58,15 +65,16 @@ model-controlled and unbounded.
 
 - [ ] 7.1 Failing test: given an accumulated message list over the budget with more tool results than the preserve count, the oldest tool results are reduced before the model call
 - [ ] 7.2 Failing test (**the bound itself**): after reduction, the *complete* request — system prompt, tool schemas and messages together — is within the budget whenever the non-reducible content fits. Assert on the measured post-reduction size, not merely that clearing occurred
-- [ ] 7.3 Failing test: when non-reducible content alone exceeds the budget, reduction clears everything it can and does not raise; the reactive handler covers the remainder
-- [ ] 7.4 Failing test: a message list within budget is passed through untouched
-- [ ] 7.5 Failing test (the boundary criterion): a run performing many document reads still returns a substantive answer, not the canned apology
-- [ ] 7.6 Failing test: the N most recent tool results retain original content after reduction
-- [ ] 7.7 Failing test: retrieval-tool results retain original content regardless of age under default caps
-- [ ] 7.8 Failing test: with retrieval caps raised past the exemption fraction, retrieval results become clearable and the bound still holds
-- [ ] 7.9 Failing test: tool-call/tool-result pairing survives reduction — no dangling `tool_call_id`
-- [ ] 7.10 Failing test: reduction is applied on a *later* model call when the budget is first exceeded mid-loop, not only before the loop
-- [ ] 7.11 Watch 7.1–7.10 fail, then implement to green
+- [ ] 7.3 Failing test (**the residual**): with many *small* tool rounds, so that cleared-message framing, retained tool-call arguments and placeholders alone cross the threshold, the runtime does not raise and logs the measured overage rather than reporting success. Record the measured per-round residue in the PR — this is the number that says whether removing whole paired rounds is ever needed
+- [ ] 7.4 Failing test: when non-reducible content alone exceeds the budget, reduction clears everything it can and does not raise; the reactive handler covers the remainder
+- [ ] 7.5 Failing test: a message list within budget is passed through untouched
+- [ ] 7.6 Failing test (the boundary criterion): a run performing many document reads still returns a substantive answer, not the canned apology
+- [ ] 7.7 Failing test: the N most recent tool results retain original content after reduction
+- [ ] 7.8 Failing test: retrieval-tool results retain original content regardless of age under default caps
+- [ ] 7.9 Failing test: with retrieval caps raised past the exemption fraction, retrieval results become clearable and the bound still holds
+- [ ] 7.10 Failing test: tool-call/tool-result pairing survives reduction — no dangling `tool_call_id`
+- [ ] 7.11 Failing test: reduction is applied on a *later* model call when the budget is first exceeded mid-loop, not only before the loop
+- [ ] 7.12 Watch 7.1–7.10 fail, then implement to green
 
 ## 8. Regression surface
 
