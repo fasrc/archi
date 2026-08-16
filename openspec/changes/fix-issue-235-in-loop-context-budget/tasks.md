@@ -59,19 +59,20 @@ The wrapper is ours; only `ClearToolUsesEdit` comes from langchain. Do **not** s
 
 ## 5. Middleware construction and its options — RED then GREEN
 
-- [ ] 5.1 Failing test: the constructed edit carries `trigger` equal to the derived budget
-- [ ] 5.2 Failing test: `keep` defaults to 3 and honours a config override
-- [ ] 5.3 Failing test: `exclude_tools` is **not** used — the exemption is selected in our wrapper. Upstream's option exempts every message bearing the name, which cannot compose with the count bound in 3.11; asserting both would be asserting a contradiction
-- [ ] 5.4 Failing test: `clear_tool_inputs` is `False` (the model must retain the record of its own call)
-- [ ] 5.5 Failing test: the placeholder text states the result was cleared for context reasons and instructs the model not to re-request it
-- [ ] 5.6 Watch 5.1–5.5 fail, then implement to green
+- [x] 5.1 Failing test: the constructed edit carries `trigger` equal to the derived budget. Assert on the result of `build_context_middleware(...)`, never on a hand-written `ContextBudget` handed to the constructor — that only tests that a dataclass stores its argument. Assert **both** `edit.trigger` and `budget.trigger`: the edit's own gate reads the first, this wrapper's early return and shed loop read the second
+- [x] 5.2 Failing test: `keep` defaults to 3 and honours a config override. Assert the literal `3`, not `DEFAULT_KEEP` — a constant asserted against itself passes whatever it is changed to. Cover the pipeline layer separately from the service layer: a factory that drops `pipeline_config` passes the service-layer test alone
+- [x] 5.3 Failing test: `exclude_tools` is **not** used — the exemption is selected in our wrapper. Upstream's option exempts every message bearing the name, which cannot compose with the count bound in 3.11; asserting both would be asserting a contradiction. Needs a **non-default** tool name too: the test module's `RETRIEVAL` equals the constructor default, so a test using it cannot tell a forwarded name from an ignored one
+- [x] 5.4 Failing test: `clear_tool_inputs` is `False` (the model must retain the record of its own call). Assert it behaviourally — inspect `tool_calls` after a real reduction, per spec.md:369 — not just as a constructor flag
+- [x] 5.5 Failing test: the placeholder text states the result was cleared **to stay within the context window** and instructs the model not to re-request it (spec.md:318 — the test pins the spec's own words, so reword the spec first). Route it through the factory: the wording is a design decision, and a `placeholder` parameter would let a call site silently reinstate an uninformative marker
+- [x] 5.6 Watch 5.1–5.5 fail, then implement to green. The RED is **two-phase** — adding the factory import fails the whole module's collection, which masks 5.5's wording failure. Watch 5.5 fail on its own first
+- [x] 5.7 Pin the delegation, not two arithmetic results: a factory that inlines the reserve/margin arithmetic reproduces every asserted trigger while skipping `resolve_budget`'s irreducible-floor guard. Only a small window (32768) separates them
 
 ## 6. Wire into the agent — RED then GREEN
 
-- [ ] 6.1 Failing test in `tests/unit/test_react_agent_tool_budget.py`: with a known context window, `_build_static_middleware()` returns a non-empty middleware list (fails on `origin/dev`, which returns `[]`)
+- [ ] 6.1 Failing test in `tests/unit/test_react_agent_tool_budget.py`: with a known context window, `_build_static_middleware()` returns a middleware list whose **trigger value** is correct — not merely non-empty (fails on `origin/dev`, which returns `[]`). The value matters because nothing in the existing suite reaches this method: measured, the whole 1910-test suite calls it **zero** times, every test double overriding it
 - [ ] 6.2 Failing test: with an undeterminable context window, `_build_static_middleware()` returns `[]` (behaviour identical to today)
 - [ ] 6.3 Failing test: the middleware list reaches `create_agent(...)` — assert on what `_create_agent` is called with
-- [ ] 6.4 Watch 6.1–6.3 fail, then make `_build_static_middleware` a thin call site delegating to `context_budget.py`
+- [ ] 6.4 Watch 6.1–6.3 fail, then make `_build_static_middleware` a thin call site delegating to `context_middleware.build_context_middleware`. **Not `context_budget.py`** — it cannot import the middleware class without an import cycle (proved: `cannot import name 'ContextBudget' from partially initialized module`)
 - [ ] 6.5 Verify the `base_react.py` diff is a handful of lines with no black reflow of surrounding code
 - [ ] 6.6 Wiring test against the **real** agent, not helper stubs: construct `FASRCDocsAgent` with an overridden retrieval output ceiling and call budget, then assert the tool it builds emits results within that ceiling *and* the middleware it builds sized its exemption from those same values. A synthetic-input test alone would pass while production wiring used stale defaults
 
@@ -83,6 +84,35 @@ The wrapper is ours; only `ClearToolUsesEdit` comes from langchain. Do **not** s
 - [ ] 7.4 Failing test on the **custom-provider** override path: `_create_provider_llm` builds a non-cached provider from the YAML `ProviderConfig` (`app.py:1640-1649`) while `_get_model_context_window()` re-resolves by name with no config (`base_react.py:1606-1616`) — for a custom model ID that yields no metadata and silently disables the middleware. Assert the view's budget comes from the bound model's resolved window, not a name lookup
 - [ ] 7.5 Watch 7.1–7.4 fail, then carry provider, model **and the resolved window/metadata** onto the view (all available at `app.py:2130-2140`) and reset `_static_middleware = None` beside the existing `_static_tools` reset. Keep `app.py` to assignments — the derivation stays in the tested helper
 - [ ] 7.6 Verify the `app.py` diff adds no logic that diff-cover cannot reach
+- [ ] 7.7 `model` and `context_window` MUST describe the **same** model. Measured on the real `_build_request_local_pipeline`: the naive fix (reset `_static_middleware`, rebuild) pairs the *override's* 64000 output cap with the *source's* 128000 window and derives a 57600 trigger for a model whose real window is 200000. Assert the trigger reflects the override's window, not the source's
+- [ ] 7.8 `rebuild_static_middleware()` alone is a silent no-op: `refresh_agent`'s `requires_refresh` reads `middleware` (`base_react.py:1281`) but compares only the toolset (`:1283-1288`), so a middleware-only change never reaches the compiled agent. Use `refresh_agent(force=True)` — as `app.py:227` already happens to — or extend `requires_refresh` to compare `_active_middleware` by identity
+
+## 7A. The bound must actually install on a real deployment — BLOCKER
+
+**Verified 2026-08-16, and it invalidates "ship it" for the whole change.** On the dev
+deployment's own config, `_get_model_context_window()` returns `None`, so the factory
+correctly returns `[]` and **nothing is installed**. Every group 5-8 test still passes.
+
+```
+local      palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4  -> None    (default_provider)
+anthropic  claude-sonnet-4-6                     -> None    (the standby)
+anthropic  claude-sonnet-4-20250514              -> 200000
+```
+
+Root cause: `base_react.py:1609` calls `get_provider(self.default_provider)` with no config,
+so the window can only come from an **exact** match against a provider's hardcoded `ModelInfo`
+list. `local` has an empty list; the Anthropic list holds four IDs and `claude-sonnet-4-6` is
+not among them. Any self-hosted or newly-released model therefore yields `None`.
+
+- [ ] 7A.1 Decide the remedy with the user — this adds a config field, so it needs a spec delta
+- [ ] 7A.2 Preferred: an operator override `services.chat_app.context_editing.context_window`,
+      validated in `read_settings` and preferred over the derived window by
+      `build_context_middleware`. That is the one place config and window already meet
+- [ ] 7A.3 Do **not** route `_build_provider_config` into `_get_model_context_window`: it
+      returns a dict whose `models` are raw YAML strings and `get_model_info` crashes on them —
+      the deploy config documents that exact crash at `deploy/fasrc-dev/config.yaml:41-45`
+- [ ] 7A.4 Until this lands, #235 must not be called closed: groups 5-7 ship a correct bound
+      that never runs on the deployment the issue was filed against
 
 ## 8. Behavioural tests — the acceptance criteria
 

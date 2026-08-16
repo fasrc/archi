@@ -67,6 +67,9 @@ from langchain_core.messages.utils import count_tokens_approximately
 from src.archi.pipelines.agents.tools.result_limits import clamp_result
 from src.archi.pipelines.agents.utils.context_budget import (
     ContextBudget,
+    read_settings,
+    resolve_budget,
+    resolve_output_cap,
     select_exempt_indices,
 )
 from src.utils.logging import get_logger
@@ -84,10 +87,16 @@ DEFAULT_RETRIEVAL_TOOL = "search_vectorstore_hybrid"
 
 # Substituted for a cleared result. It says *why* the content is gone and tells
 # the model not to spend another call re-fetching it — a bare marker invites
-# exactly the retry loop the budget exists to prevent. Kept terse on purpose:
-# every cleared result pays for this text inside the very budget being
-# defended, so prose here is charged back against the space it reclaims.
-DEFAULT_PLACEHOLDER = "[cleared to fit context; do not re-request]"
+# exactly the retry loop the budget exists to prevent. The wording tracks
+# ``spec.md:318`` ("cleared to stay within the context window", "do not
+# re-request") and the tests assert those words, so reword the spec first.
+#
+# Kept terse on purpose: every cleared result pays for this text inside the very
+# budget being defended (31 tokens per cleared result, against 22 for upstream's
+# bare marker), so prose here is charged back against the space it reclaims.
+DEFAULT_PLACEHOLDER = (
+    "[Tool result cleared to stay within the context window; do not re-request it.]"
+)
 
 
 def count_request_tokens(
@@ -308,3 +317,64 @@ class ContextBudgetMiddleware(AgentMiddleware):
     ) -> Any:
         """Async twin of :meth:`wrap_model_call`, sharing ``_reduce``."""
         return await handler(self._reduce(request))
+
+
+def build_context_middleware(
+    *,
+    model: Any,
+    context_window: Any,
+    config: Optional[Dict[str, Any]] = None,
+    pipeline_config: Optional[Dict[str, Any]] = None,
+    tool_budgets: Optional[Dict[str, int]] = None,
+    retrieval_tool_name: str = DEFAULT_RETRIEVAL_TOOL,
+) -> List[AgentMiddleware]:
+    """Build the in-loop middleware list for an agent, or an empty list.
+
+    This is the whole construction path: config in, middleware out. It lives
+    here rather than in ``base_react.py`` so every branch is unit-testable, and
+    here rather than in ``context_budget.py`` because that module cannot import
+    the middleware class without a cycle.
+
+    **Always returns a list**, never ``None``. An empty list is the fail-open
+    outcome — an undeterminable context window, an operator disabling the bound,
+    or a reserve that consumes the window — and returning it keeps the call site
+    a single expression with no logic of its own.
+
+    ``model`` and ``context_window`` MUST describe the **same** model. They are
+    sourced separately at the call site, and crossing them silently produces a
+    budget neither model justifies: an override's 64000 output cap against the
+    source model's 128000 window yields a 57600-token trigger for a model whose
+    real window is 200000.
+
+    ``declared_cap`` is deliberately not plumbed through to
+    ``resolve_output_cap``. Every provider in this repository that actually
+    enforces an output cap binds it onto the chat model as ``max_tokens``, which
+    the model argument already carries; passing declared metadata as well would
+    only inflate the reserve for providers that never apply it. The signature is
+    keyword-only, so a provider that breaks that assumption can be accommodated
+    without changing any caller.
+
+    ``placeholder`` is likewise not a parameter. Its wording is a design
+    decision tracked against the spec, and exposing it would let a call site
+    silently reinstate an uninformative marker.
+
+    Note that only a real YAML boolean disables the bound: ``enabled: 0`` is an
+    invalid value, and an invalid value is logged and ignored rather than
+    silently removing the protection the other settings configure.
+    """
+    settings = read_settings(config, pipeline_config)
+    budget = resolve_budget(
+        context_window=context_window,
+        output_cap=resolve_output_cap(model, None),
+        settings=settings,
+        # The tool name lives in exactly one place: the caller hands over its
+        # whole budget map and never has to know which entry matters, so raising
+        # the retrieval tool's budget re-sizes the exemption without the call
+        # site changing.
+        retrieval_call_budget=(tool_budgets or {}).get(retrieval_tool_name, 0),
+    )
+    if budget is None:
+        return []
+    return [
+        ContextBudgetMiddleware(budget=budget, retrieval_tool_name=retrieval_tool_name)
+    ]

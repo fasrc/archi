@@ -25,7 +25,10 @@ each of these tests exists because the obvious implementation gets it wrong:
 
 import asyncio
 
-from langchain.agents.middleware.context_editing import ClearToolUsesEdit
+from langchain.agents.middleware.context_editing import (
+    DEFAULT_TOOL_PLACEHOLDER,
+    ClearToolUsesEdit,
+)
 from langchain.agents.middleware.types import ModelRequest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -33,6 +36,7 @@ from src.archi.pipelines.agents.tools.result_limits import TRUNCATION_MARKER
 from src.archi.pipelines.agents.utils.context_budget import ContextBudget
 from src.archi.pipelines.agents.utils.context_middleware import (
     ContextBudgetMiddleware,
+    build_context_middleware,
     count_request_tokens,
 )
 
@@ -58,7 +62,10 @@ def _budget(**over):
 def _round(name, content, call_id):
     """One AI tool call and its result, the shape `apply` requires for pairing."""
     return [
-        AIMessage(content="", tool_calls=[{"name": name, "args": {}, "id": call_id}]),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": name, "args": {"q": "gcc"}, "id": call_id}],
+        ),
         ToolMessage(content=content, tool_call_id=call_id, name=name),
     ]
 
@@ -99,6 +106,18 @@ class _StubModel:
 
     def get_num_tokens_from_messages(self, messages, tools=None):
         raise AssertionError("the counter must not call the model's tokenizer")
+
+
+class _CappedModel(_StubModel):
+    """A model carrying the output cap that actually applies at runtime.
+
+    ``AnthropicProvider`` binds ``max_tokens`` onto the chat model, and that is
+    the value the provider enforces — so it, not the declared metadata, is what
+    the generation reserve has to be sized against. Claude Sonnet 4's 64000
+    against a 200000 window is the case the reserve exists for.
+    """
+
+    max_tokens = 64000
 
 
 def _reduce(middleware, request):
@@ -790,3 +809,242 @@ class TestStateIsolation:
             m.content for m in second.messages
         ], "the second turn must start from the same unreduced state as the first"
         assert not _placeholders(messages), "state must survive both calls intact"
+
+
+class TestClearedPlaceholder:
+    """Task 5.5: what a cleared result actually says to the model.
+
+    The wording is pinned against ``spec.md:318``, which requires the
+    placeholder state the result was cleared **to stay within the context
+    window** and direct the model not to re-request it — not against taste. A
+    legitimate-sounding reword ("to fit context", "do not request it again")
+    fails these assertions on purpose; change the spec first.
+    """
+
+    def test_a_cleared_result_carries_an_instructive_placeholder(self):
+        """Assert on the message that came out of a real reduction.
+
+        Not on the constant: ``DEFAULT_PLACEHOLDER`` binds into the constructor
+        signature at ``def`` time, so monkeypatching it is a no-op and a test
+        that reads it back proves only that a module attribute exists. This
+        runs a reduction and reads what the model would be handed.
+        """
+        middleware = ContextBudgetMiddleware(budget=_budget(trigger=200))
+
+        reduced = _reduce(middleware, _request(_thread([("t", "X" * 4000)] * 6)))
+
+        cleared = _placeholders(reduced.messages)
+        assert cleared, "precondition: the pass must have cleared something"
+        text = cleared[0].content
+        assert isinstance(text, str), "upstream replaces the content wholesale"
+        assert (
+            text != DEFAULT_TOOL_PLACEHOLDER
+        ), "upstream's bare '[cleared]' is exactly what this replaces"
+        lowered = text.lower()
+        assert "clear" in lowered, "the model must learn the content was removed"
+        assert "context window" in lowered, "spec.md:318 — why it was removed"
+        assert "re-request" in lowered, "spec.md:318 — and that retrying will not help"
+
+
+class TestBuiltFromConfig:
+    """Group 5: the construction path, from config to the edit's options.
+
+    Every assertion here is on a middleware the **factory** produced. The
+    constructor-level pins in ``TestUpstreamContract`` cannot reach this: handing
+    ``ContextBudget(trigger=1234)`` to the constructor and reading ``1234`` back
+    tests that a dataclass stores its argument. What has to hold is that the
+    numbers were *derived* — from a context window, an output cap, a config
+    block and the runtime tool budgets — and derivation is only observable from
+    the entry point that does it.
+    """
+
+    def test_the_trigger_is_the_derived_budget_not_the_raw_window(self):
+        """Task 5.1. The raw window handed through is the defect this pins."""
+        built = build_context_middleware(model=_StubModel(), context_window=200_000)
+
+        assert len(built) == 1
+        # 200000 - 15% generation reserve - 5% counting margin.
+        assert built[0].edit.trigger == 160_000
+        # Both fields, because they are read by different code: the edit's own
+        # gate uses ``edit.trigger``, while this wrapper's early return and its
+        # shed loop read ``budget.trigger``. A middleware with a correct edit and
+        # a raw-window budget installs no effective bound.
+        assert built[0].budget.trigger == 160_000
+
+    def test_the_effective_output_cap_reaches_the_trigger(self):
+        """Task 5.1, the half that matters most.
+
+        A factory that never calls ``resolve_output_cap`` still produces a
+        plausible-looking 160000 and passes the test above. Claude Sonnet 4 is
+        the regression case: a 64000 cap against a 200000 window means a 160000
+        prompt budget is rejected before the trigger is ever consulted.
+        """
+        built = build_context_middleware(model=_CappedModel(), context_window=200_000)
+
+        # reserve = max(15% = 30000, the bound cap 64000) = 64000.
+        assert built[0].edit.trigger == 126_000
+
+    def test_keep_defaults_to_three(self):
+        """Task 5.2, the default half."""
+        built = build_context_middleware(model=_StubModel(), context_window=200_000)
+
+        # The literal 3, never ``DEFAULT_KEEP``: asserting a module constant
+        # against the constant that produced it passes whatever it is changed to.
+        assert built[0].edit.keep == 3
+
+    def test_a_configured_keep_reaches_the_edit(self):
+        """Task 5.2, the override half — the whole config-to-edit chain."""
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=200_000,
+            config={"services": {"chat_app": {"context_editing": {"keep": 7}}}},
+        )
+
+        assert built[0].edit.keep == 7
+
+    def test_a_pipeline_keep_overrides_the_service_layer(self):
+        """Task 5.2: the per-pipeline layer must arrive, not just the service one.
+
+        A factory that forgets to forward ``pipeline_config`` passes the test
+        above and fails only here.
+        """
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=200_000,
+            config={"services": {"chat_app": {"context_editing": {"keep": 7}}}},
+            pipeline_config={"context_editing": {"keep": 9}},
+        )
+
+        assert built[0].edit.keep == 9
+
+    def test_the_exemption_is_a_count_here_never_upstreams_name_list(self):
+        """Task 5.3: ``exclude_tools`` stays empty; the count arrives instead.
+
+        Upstream's option exempts *every* message bearing the name, which cannot
+        express the count-bounded exemption the budget sizes its worst case
+        from. Asserting both would be asserting a contradiction.
+        """
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=200_000,
+            tool_budgets={RETRIEVAL: 2},
+        )
+
+        assert tuple(built[0].edit.exclude_tools) == ()
+        assert built[0].budget.exempt_count == 2
+
+    def test_the_exemption_follows_the_configured_tool_name(self):
+        """Task 5.3: the name is a parameter, and it must actually be used.
+
+        ``RETRIEVAL`` equals the constructor's own default, so a test using it
+        cannot tell a forwarded name from an ignored one. This one would fail
+        both for a factory that drops ``retrieval_tool_name`` on the way to the
+        wrapper and for one that looks the budget up under the hardcoded
+        default. The divergence is real: ``create_retriever_tool``'s own default
+        name is ``search_knowledge_base``.
+        """
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=200_000,
+            tool_budgets={"search_knowledge_base": 2},
+            retrieval_tool_name="search_knowledge_base",
+        )
+
+        assert built[0].retrieval_tool_name == "search_knowledge_base"
+        assert built[0].budget.exempt_count == 2
+
+    def test_an_unaffordable_exemption_is_dropped_by_the_shared_guard(self):
+        """Task 5.1/5.3: pins the *delegation*, not two arithmetic results.
+
+        A factory that inlines ``window - max(window*0.15, cap) - window*0.05``
+        reproduces every trigger asserted above exactly, while silently skipping
+        ``resolve_budget``'s irreducible-floor guard — so the exemption is never
+        dropped and becomes the second unbounded floor the design forbids. At
+        this window the guard is the only thing that separates the two.
+        """
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=32_768,
+            tool_budgets={RETRIEVAL: 2},
+        )
+
+        # trigger 26215; the exemption plus the preserved results would hold
+        # (2 + 3) x 2100 = 10500, above the 8738 that is a third of the budget.
+        assert built[0].budget.trigger == 26_215
+        assert built[0].budget.exempt_count == 0
+
+    def test_the_edit_retains_the_record_of_the_models_own_call(self):
+        """Task 5.4, asserted behaviourally rather than as a flag.
+
+        With the arguments cleared too the model has no record of the call, so
+        it re-fetches the same document and spins to the recursion limit —
+        converting an overflow into a timeout. ``spec.md:369`` requires the
+        arguments survive; nothing asserted it before.
+        """
+        built = build_context_middleware(model=_StubModel(), context_window=1_000)
+        assert built[0].edit.clear_tool_inputs is False
+
+        reduced = _reduce(built[0], _request(_thread([("t", "X" * 4000)] * 6)))
+
+        assert _placeholders(reduced.messages), "precondition: something was cleared"
+        calls = [
+            m.tool_calls[0]
+            for m in reduced.messages
+            if isinstance(m, AIMessage) and m.tool_calls
+        ]
+        assert calls, "the assistant messages must still carry their tool calls"
+        assert all(c["args"] == {"q": "gcc"} for c in calls)
+
+    def test_the_placeholder_is_not_a_call_site_decision(self):
+        """Task 5.5 through the production path.
+
+        The wording is a design decision, not a knob: a ``placeholder``
+        parameter on the factory would let a call site silently reinstate an
+        uninformative marker, and the constructor-level test cannot see that
+        because it never runs the factory.
+        """
+        built = build_context_middleware(model=_StubModel(), context_window=1_000)
+
+        reduced = _reduce(built[0], _request(_thread([("t", "X" * 4000)] * 6)))
+
+        cleared = _placeholders(reduced.messages)
+        assert cleared, "precondition: the pass must have cleared something"
+        lowered = cleared[0].content.lower()
+        assert lowered != DEFAULT_TOOL_PLACEHOLDER
+        assert "context window" in lowered
+        assert "re-request" in lowered
+
+    def test_no_middleware_is_built_when_the_window_is_undeterminable(self):
+        """The fail-open contract: a list, always, so the call site has no logic.
+
+        This is not a hypothetical branch. ``_get_model_context_window`` matches
+        the configured model against a provider's hardcoded ``ModelInfo`` list,
+        and returns None for anything absent from it.
+        """
+        assert build_context_middleware(model=_StubModel(), context_window=None) == []
+
+    def test_no_middleware_is_built_when_the_operator_disables_it(self):
+        """The same contract, reached through ``enabled: false``.
+
+        The positive control is what gives this teeth: without it, a factory
+        that bailed on *any* non-empty config would pass. Note that only a real
+        YAML boolean disables the bound — ``enabled: 0`` is an invalid value,
+        and an invalid value never silently removes the protection.
+        """
+        block = {"services": {"chat_app": {"context_editing": {"enabled": False}}}}
+        assert (
+            build_context_middleware(
+                model=_StubModel(), context_window=200_000, config=block
+            )
+            == []
+        )
+
+        block["services"]["chat_app"]["context_editing"]["enabled"] = True
+        assert (
+            len(
+                build_context_middleware(
+                    model=_StubModel(), context_window=200_000, config=block
+                )
+            )
+            == 1
+        )
