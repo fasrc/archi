@@ -32,10 +32,22 @@ cannot distinguish a real improvement from an arm that serves users worse.
 - Bound accumulated tool content by **tokens, not call counts**: once the accumulated prompt
   exceeds the budget, the oldest tool results are replaced with an instructive placeholder
   while the N most recent are preserved at full fidelity.
-- Derive the budget from `self._get_model_context_window()` minus the **existing** 15% safety
-  margin convention already used by the pre-loop budget. No hard-coded context length.
-- Exempt the retrieval tool's results from clearing: they are the citation-bearing grounding
-  evidence and are already hard-capped at ~1.8 K tokens (5.5% of a 32 K window).
+- Evaluate the **complete** request the provider will receive — system prompt and tool schemas
+  included, not the conversation messages alone — so the check cannot sit below its threshold
+  while the real request exceeds the window.
+- Derive the budget from `self._get_model_context_window()` minus the **existing** 15%
+  convention already used by the pre-loop budget, documented for what it actually is: a
+  generation reserve. `ModelInfo.context_window` is a *total* sequence length covering prompt
+  and response, so a budget equal to the full window is exceeded by any answer. No hard-coded
+  context length.
+- **Enforce a ceiling on `fetch_catalog_document`'s result size.** `max_chars` is currently a
+  model-supplied tool argument forwarded unclamped to the catalog endpoint, where `max_chars=0`
+  disables truncation and returns the whole document — so a "preserved" result is today
+  unbounded, and no statement about the residual floor after reduction can hold without this.
+- Exempt the retrieval tool's results from clearing **while that exemption is provably cheap**,
+  and drop it with a warning when the retrieval caps in force could let exempted content occupy
+  too large a share of the budget — otherwise a raised retrieval budget becomes a second
+  unbounded floor outside the clearing strategy.
 - Add a configuration seam (`services.chat_app.context_editing`) following the established
   three-layer lookup idiom, so the behaviour can be tuned or disabled without a code change.
 - **Fail open**: when the context window cannot be determined, emit no middleware and behave
@@ -62,21 +74,28 @@ None. The behaviour belongs to the existing agent context-resilience capability.
 
 ### Modified Capabilities
 
-- `agent-context-resilience`: adds proactive requirements — the agent MUST bound tool-content
+- `agent-context-resilience`: adds proactive requirements — the agent MUST reduce tool-content
   accumulation *within* the reasoning loop against a budget derived from the model's context
-  window, preserving the most recent tool results and the grounding retrieval evidence, so the
-  existing reactive overflow path becomes a last resort rather than a routine outcome. The
-  existing reactive requirements are unchanged.
+  window, evaluated over the complete provider request, preserving the most recent tool results
+  and the grounding retrieval evidence, with every term of the arithmetic an enforced ceiling
+  rather than a default — so the existing reactive overflow path becomes a last resort rather
+  than a routine outcome. The existing reactive requirements are unchanged.
 
 ## Impact
 
 - **Code**: `src/archi/pipelines/agents/base_react.py` (`_build_static_middleware` becomes a
   thin call site); one new tested helper module under
-  `src/archi/pipelines/agents/utils/` holding the budget derivation and middleware
-  construction, so the new logic is unit-testable and reaches the diff-coverage floor.
+  `src/archi/pipelines/agents/utils/` holding the budget derivation, the complete-request token
+  counter, and middleware construction, so the new logic is unit-testable and reaches the
+  diff-coverage floor; `src/archi/pipelines/agents/tools/local_files.py` gains the enforced
+  `max_chars` ceiling.
 - **Tests**: extends `tests/unit/test_react_agent_tool_budget.py`; new unit tests for the
-  helper module. `tests/unit/test_react_agent_context_overflow.py` must continue to pass
-  unchanged.
+  helper module and for the clamped document fetch.
+  `tests/unit/test_react_agent_context_overflow.py` must continue to pass unchanged.
+- **Follow-up filed, not fixed here**: `api_catalog_document`
+  (`src/interfaces/uploader_app/app.py:761-770`) honours an unbounded `max_chars` for any
+  caller. The agent path is closed by the tool-side clamp; the endpoint clamp is separate
+  hardening and does not belong in an agent-context PR.
 - **Dependencies**: none added. `langchain` 1.0.3 is already pinned and already provides
   `create_agent(..., middleware=...)`, `AgentMiddleware.wrap_model_call`,
   `ContextEditingMiddleware`, and `ClearToolUsesEdit`.

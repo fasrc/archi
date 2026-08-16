@@ -22,11 +22,23 @@ artifacts under `bench_out/`.
 | Contributor | Per unit | Cap | Max share of a 32 K window |
 |---|---|---|---|
 | `search_vectorstore_hybrid` result | `max_documents=4` × `max_chars=800` + headers ≈ 3.6 KB ≈ **900 tok** (`retriever.py:71-72`) | **2 calls** (`DEFAULT_TOOL_BUDGETS`) | ~1.8 K — **5.5%** |
-| `fetch_catalog_document` result | `max_chars=4000` + path + metadata preview (≤800) ≈ **1.05 K tok** (`local_files.py:121,477-539`) | **none** — only `recursion_limit=50` | ~24 K — **73%** |
-| system prompt + tool schemas | — | — | ~1–2 K |
+| `fetch_catalog_document` result | `max_chars` **default** 4000 + path + metadata preview (≤800) ≈ **1.05 K tok** (`local_files.py:121,477-539`) | **none** — only `recursion_limit=50` | ~24 K — **73%** |
+| system prompt + tool schemas | measured per request (see Decision 3) | — | varies with config and toolset |
 
-~20–24 `fetch_catalog_document` calls fill a 32 K window; `recursion_limit=50` permits ~24
-tool/model round trips. The two numbers meet, which is the whole failure.
+~20–24 `fetch_catalog_document` calls at the default size fill a 32 K window;
+`recursion_limit=50` permits ~24 tool/model round trips. The two numbers meet, which is the
+whole failure.
+
+**`max_chars=4000` is a default at three layers and a ceiling at none.** `_fetch_document`
+exposes `max_chars` as a *tool argument* (`local_files.py:506`) and forwards the
+model-supplied value to `catalog.get_document`, which passes it as a query parameter to
+`api_catalog_document` (`uploader_app/app.py:761-770`), where it is read with
+`request.args.get("max_chars", default=4000, type=int)` and applied as
+`if max_chars and len(text) > max_chars`. There is no upper clamp anywhere on that path, and
+because `0` is falsy, `max_chars=0` disables truncation entirely and returns the **whole
+document**. So a single tool result is model-controlled and effectively unbounded. Any
+preserve-count safety argument that rests on ~1.05 K per retained result is invalid until that
+ceiling is enforced — see Decision 8.
 
 **The source-count story is falsified.** Across the three runs, `ok` rows reached **67** and
 **65** recorded sources while `question_94` overflowed with 18. The decoupling is structural:
@@ -56,15 +68,25 @@ was retrieved and recorded; the loop then drowned it.
 
 **Goals:**
 
-- Bound accumulated tool content by **tokens** on every in-loop model call.
+- Bound accumulated tool content by **tokens** on every in-loop model call, counting the
+  complete request the provider will receive.
 - Derive the budget from `_get_model_context_window()`; no hard-coded context length.
-- Preserve the answer: recent reads stay at full fidelity, grounding evidence is never dropped.
+- Make every term of that budget an *enforced* ceiling rather than a default, so the arithmetic
+  is a bound and not an expectation.
+- Preserve the answer: recent reads stay at full fidelity, grounding evidence is kept while
+  keeping it is provably cheap.
 - Make the canned apology genuinely abnormal rather than merely rarer.
-- Fail open in every unknown or misconfigured case.
+- Fail open in every unknown or misconfigured case; fail *toward the bound* when a protective
+  exemption would undermine it.
 
 **Non-Goals:**
 
-- Capping `fetch_catalog_document` call counts (see Decision 5).
+- Capping `fetch_catalog_document` call *counts* (see Decision 5). Its result *size* is capped
+  (Decision 8) because the bound depends on it.
+- Clamping `max_chars` server-side in `api_catalog_document` for non-agent callers — filed as
+  a follow-up (Decision 8).
+- Eliminating the residual case where irreducible content alone exceeds the budget; that is
+  bounded and measured, not removed (see Risks).
 - Removing or weakening the reactive `_handle_context_overflow` path — it stays as the
   last-resort net.
 - Reducing agent latency or the number of tool round trips.
@@ -94,11 +116,12 @@ LangChain 1.0.3 — already pinned, already the source of `create_agent` — shi
 `clear_tool_uses_20250919`. Its `wrap_model_call` hook fires on **every** model call with the
 accumulated message list in hand: exactly the position mechanism #2 leaves vacant.
 
-Alternative considered: write our own `AgentMiddleware` subclass. Rejected — it would
+Alternative considered: write our own `AgentMiddleware` from scratch. Rejected — it would
 reimplement tool-call/tool-result pairing, placeholder substitution, and re-clear idempotency,
 all of which are the parts most likely to produce a malformed message sequence that the
 provider rejects. Adopting the upstream component means the risky logic is maintained
-elsewhere and our diff carries only budget derivation and wiring.
+elsewhere and our diff carries budget derivation, wiring, and one overridden token counter
+(Decision 3) — not a message rewriter.
 
 Alternative considered: `SummarizationMiddleware`. Rejected — it spends an extra model call
 per compaction and introduces summarization loss into the evidence chain that the citation
@@ -109,37 +132,66 @@ layer depends on.
 nothing is permanently destroyed. State still grows across the run, but it never reaches the
 provider — which is the property that matters.
 
-### Decision 3 — `token_count_method="approximate"`, with the 15% margin absorbing what it misses
+### Decision 3 — Count the **complete** request approximately, and reserve output tokens explicitly
 
-`ContextEditingMiddleware` offers `"approximate"` (`count_tokens_approximately`, messages only)
-and `"model"` (`request.model.get_num_tokens_from_messages(system + messages, tools)`).
+`ContextEditingMiddleware` offers two counting modes, and **neither is correct here**:
 
-`"model"` is more accurate but places an **unguarded** call on every model turn. The pre-loop
-budget already wraps that same call in `try/except` (`:1509`) because it is exception-prone,
-and the SUT's model name (`palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4`) is unknown to tiktoken. An
-exception there would break every model call in the loop — a worse failure than the one being
-fixed.
+- `"model"` calls `request.model.get_num_tokens_from_messages(system + messages, tools)` —
+  complete, but **unguarded on every model turn**. The pre-loop budget already wraps that same
+  call in `try/except` (`:1509`) because it is exception-prone, and the SUT's model name
+  (`palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4`) is unknown to tiktoken. An exception there breaks
+  every model call in the loop — a worse failure than the one being fixed.
+- `"approximate"` calls `count_tokens_approximately(messages)` — safe, but counts **messages
+  only**: no system prompt, no tool schemas (`use_usage_metadata_scaling` defaults to `False`).
 
-`"approximate"` counts messages only: no system prompt, no tool schemas
-(`use_usage_metadata_scaling` defaults to `False`). It therefore **undercounts** by ~1–2 K.
-The 15% safety margin — 4915 tokens on a 32 K window — is exactly the headroom that absorbs
-this, and reusing it keeps a single budget convention across mechanisms #2 and #3 as the issue
-requires. The margin is configurable if the gap proves larger on another model.
+An earlier revision of this design took `"approximate"` and argued the 15% margin would absorb
+the omission at "~1–2 K". That estimate was unsupported. System prompts are configurable, tool
+schemas grow with the selected toolset and any dynamically loaded MCP tools, and the margin
+shrinks with the window — so the approximate count can sit below the trigger while the real
+request exceeds the model's window. The argument is withdrawn.
 
-### Decision 4 — Exempt `search_vectorstore_hybrid` results from clearing
+**Take the complete count without the tiktoken risk.** `count_tokens_approximately` accepts a
+`tools=` argument, and `ModelRequest` exposes both `system_prompt` and `tools` inside
+`wrap_model_call`. A thin subclass of `ContextEditingMiddleware` overriding only the counter —
+`count_tokens_approximately([SystemMessage(system_prompt)] + messages, tools=request.tools)` —
+is complete *and* has no tokenizer dependency. All clearing logic stays upstream (Decision 2);
+the subclass swaps one function.
 
-Retrieval results are the citation-bearing grounding evidence. They are also *already* bounded
-by construction: 4 documents × 800 chars per call under a 2-call budget ≈ 1.8 K tokens, a 5.5%
+**The safety margin then becomes what it actually needs to be: an output-token reserve.**
+`ModelInfo.context_window` (`providers/base.py:40`) is the **total** sequence length, not an
+input budget — 200000 for Anthropic models, a static 32768 for the local provider
+(`local_provider.py:188`). vLLM enforces prompt + generation against `max_model_len`, which is
+exactly why the error phrasing the detector already matches reads "the model's context length
+is only N, resulting in a maximum input length of M". With prompt overhead now counted
+exactly, the margin no longer has to absorb anything unknown, so it is documented and
+configured as the generation reserve. Default stays 15% to keep one convention with the
+pre-loop budget.
+
+### Decision 4 — Exempt `search_vectorstore_hybrid` results, but only while the exemption is provably small
+
+Retrieval results are the citation-bearing grounding evidence, and under today's defaults they
+are bounded: 4 documents × 800 chars per call under a 2-call budget ≈ 1.8 K tokens, a 5.5%
 floor on a 32 K window. Protecting them costs a small fixed floor and keeps the answer
 grounded; the unbounded accumulator is what gets cleared.
 
-Note that clearing them would not lose citations — `store_docs` records documents into
-`RunMemory`, so `source_documents` and links survive independently of the message stream. The
-exemption is about the *model's* ability to cite accurately, not about the citation plumbing.
-
 Alternative considered: exempt nothing. Rejected — under a deep read loop the forced initial
 retrieval is the oldest tool result and would be the first cleared, leaving the model to answer
-about documents it can no longer see.
+about documents it can no longer see. (Citations themselves would survive either way:
+`store_docs` records documents into `RunMemory`, so `source_documents` and links are
+independent of the message stream. The exemption is about the *model's* ability to cite
+accurately, not the citation plumbing.)
+
+**But the numbers above are configurable defaults, not invariants.** `max_documents`,
+`max_chars`, and the `search_vectorstore_hybrid` call budget are all overridable, and a blanket
+exemption turns a raised retrieval budget into a second unbounded floor sitting outside the
+clearing strategy — reintroducing the very defect this change fixes, at a different tool.
+
+So the exemption is **conditional and self-checking**: at construction the runtime computes the
+exempt floor from the values actually in force (retrieval call budget × per-call ceiling) and
+compares it against the derived budget. Above a configurable fraction (default one third), it
+logs a warning naming the offending values and **drops the exemption**, making retrieval
+results clearable like any other. The design fails toward the bound holding, never toward a
+silent floor.
 
 ### Decision 5 — Do not add a `fetch_catalog_document` call cap in this change
 
@@ -178,17 +230,44 @@ The default placeholder `[cleared]` is uninformative. Replace it with text that 
 result was cleared to stay within the context window and directs the model not to re-request
 it, so the model's next step is to answer rather than retry.
 
+### Decision 8 — Enforce a `max_chars` ceiling on `fetch_catalog_document`
+
+The preserve-count safety argument requires a *bounded* retained result, and today there is no
+bound: `max_chars` is a tool argument the model chooses, forwarded unclamped all the way to
+`api_catalog_document`, where `max_chars=0` disables truncation and returns the whole document
+(see Context). Three preserved results are only ~3.2 K tokens if 4000 is a ceiling; if the
+model asks for 200 000 characters, reduction is defeated and the loop overflows *more* readily
+than today, because the middleware will have cleared the older evidence first.
+
+`create_document_fetch_tool` therefore clamps the effective value to an enforced maximum
+(configurable, defaulting to the current 4000) before it reaches the catalog client, treating
+non-positive and non-integer inputs as "use the ceiling" rather than "no limit". This is
+in-scope because the bound in the spec cannot hold without it.
+
+The server-side gap is broader than this change — `api_catalog_document` will still honour an
+unbounded `max_chars` for any other caller — so the endpoint clamp is filed as a separate
+follow-up rather than smuggled into an agent-context PR.
+
+Alternative considered: remove `max_chars` from the tool signature entirely so the model cannot
+influence it. Rejected — a smaller value is a legitimate and useful request, and removing the
+argument changes the tool contract the prompt documents. Clamping preserves the useful
+direction and closes the harmful one.
+
 ## Risks / Trade-offs
 
-- **The approximate counter undercounts the system prompt and tool schemas** → The 15% margin
-  (4915 tok on 32 K) is far larger than the ~1–2 K gap, and the margin is configurable. If a
-  future model pairs a small window with a large prompt, raise the margin in config rather than
-  switching to the exception-prone `"model"` counter.
+- **The approximate counter is still an approximation** → It now counts the complete request
+  (system prompt, tool schemas, messages) rather than messages alone, so the error is a
+  chars-per-token estimate rather than a missing term. The generation reserve absorbs it, and
+  reduction is idempotent across turns, so an underestimate at one model call is re-evaluated
+  at the next.
 
-- **A single tool result larger than the window is not helped** → `keep` preserves the N most
-  recent regardless of size, so N oversized results still overflow. At `max_chars=4000`
-  (~1.05 K tok) and N=3 that is ~3.2 K, safely inside any supported window. The reactive
-  handler is retained precisely for the residual case, and the spec records it as such.
+- **Irreducible content can still exceed the budget** → `keep` preserves the N most recent
+  results regardless of size, and exempt retrieval results are not clearable, so a floor
+  remains. With Decision 8's enforced ceiling that floor is ~3.2 K at N=3, and Decision 4 drops
+  the exemption when it grows too large — but the residual is real, not zero. The spec states
+  the bound as reducible-content reduction with an explicit residual scenario, and the reactive
+  handler is retained to cover it. A test asserts the *complete* post-reduction request size,
+  so the residual is measured rather than assumed.
 
 - **The model may answer from cleared-away evidence it half-remembers** → Recent reads stay at
   full fidelity and retrieval results are exempt, so the grounding chain is intact. The
