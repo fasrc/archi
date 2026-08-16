@@ -594,10 +594,26 @@ per cleared round, the message framing, the retained tool-call arguments, and th
 itself all survive.
 
 That floor is **bounded but not zero**. It scales with the number of tool rounds, which
-`recursion_limit` caps at 50 — on the order of a thousand tokens at the default limit, against
-a ~4.9 K generation reserve on a 32 K window. Small, but it is real and it is not clearable,
-so it belongs in the spec's definition of non-reducible content rather than being quietly
-excluded from the bound. The spec now lists it.
+`recursion_limit` caps at 50. It is real and not clearable, so it belongs in the spec's
+definition of non-reducible content rather than being quietly excluded from the bound. The
+spec now lists it.
+
+**Measured** (group 8, on the pinned `langchain-core` 1.2.13, by differencing fully-cleared
+threads of 1 / 11 / 51 / 101 rounds):
+
+| quantity | tokens |
+| --- | --- |
+| a full-size tool round, unreduced | 1543 |
+| the same round once cleared | **51.9** |
+| reclaimed by clearing | 96.6% |
+
+At the deployed trigger of 26215 the residue alone would not exhaust the budget until roughly
+**505 rounds** — an order of magnitude beyond the 50 the recursion limit permits. At that
+ceiling the residue is ~2600 tokens, about 10% of the budget. This settles the open question
+below: **removing whole paired rounds is not needed**, and the alternative considered at the
+end of this decision stays unbuilt. `test_the_measured_residue_per_cleared_round` pins the
+figure, so a placeholder or framing change that moves it fails there rather than silently
+eroding the margin.
 
 Because we own the wrapper (Decision 2), the wrapper **re-measures after applying the edits**.
 If the complete request is still over budget, it logs a warning carrying the measured overage
@@ -667,6 +683,11 @@ reduction, which is the part with runtime behaviour worth toggling. Documented h
 plans a rollback around a guarantee this flag does not make.
 
 ## Open Questions
+
+- ~~**Is clearing alone enough, or must whole paired rounds be removed?**~~ **Settled in group
+  8.** A cleared round costs 51.9 tokens against 1543 unreduced, so clearing reclaims 96.6% and
+  the residue would need ~505 rounds to exhaust the deployed budget — ten times the recursion
+  limit. Round removal stays unbuilt (Decision 10).
 
 - **Preserve count default.** N=3 (the upstream default) is the starting point. Whether the
   agent answers better with more recent reads retained is an empirical question for the

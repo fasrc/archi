@@ -1133,3 +1133,258 @@ class TestDeclaredContextWindow:
 
         assert built == []
         assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+
+# --- Group 8: the acceptance criteria ---------------------------------------
+#
+# Everything above tests a mechanism. These state the outcomes the change is
+# *for*, in the terms the spec uses, and they measure rather than infer: the
+# assertion is the post-reduction size of the complete request, not that
+# clearing happened to occur.
+
+
+def _is_cleared(message):
+    return bool(
+        isinstance(message, ToolMessage)
+        and message.response_metadata.get("context_editing", {}).get("cleared")
+    )
+
+
+def _tool_results(messages):
+    return [m for m in messages if isinstance(m, ToolMessage)]
+
+
+def _respond(middleware, request):
+    """Run the wrapper, returning what it hands back to the caller."""
+    return middleware.wrap_model_call(request, lambda req: AIMessage(content="answer"))
+
+
+class TestTheBoundHolds:
+    """8.1-8.5: the request that leaves this layer fits the budget."""
+
+    def test_the_complete_request_is_within_budget_after_reduction(self):
+        """8.2: the bound itself, measured — not 'clearing occurred'.
+
+        The system prompt and tool schemas are counted here because they are
+        sent on every call; a wrapper measuring only the messages declares a
+        request within budget that the provider then rejects.
+        """
+        # Sized so the two counters diverge. Clamping alone brings the messages
+        # under the trigger, so a wrapper counting only them stops there and
+        # sends a request the prefix pushes back over. Counting the whole thing
+        # keeps clearing until the whole thing fits.
+        messages = _thread([("read_doc", "X" * 6000)] * 10)
+        request = _request(
+            messages,
+            system_prompt="S" * 8000,
+            tools=[{"name": "read_doc", "description": "D" * 2000}],
+        )
+        budget = _budget(trigger=6000, keep=3, per_result_tokens=500)
+
+        reduced = _reduce(ContextBudgetMiddleware(budget=budget), request)
+
+        assert count_request_tokens(reduced) <= budget.trigger
+
+    def test_the_oldest_tool_results_are_the_ones_reduced(self):
+        """8.1: age decides. Clearing the newest would discard the results the
+        model is reasoning about while keeping what it has finished with."""
+        messages = _thread([("read_doc", "X" * 6000)] * 6)
+        budget = _budget(trigger=2000, keep=3, per_result_tokens=500)
+
+        reduced = _reduce(ContextBudgetMiddleware(budget=budget), _request(messages))
+
+        flags = [_is_cleared(m) for m in _tool_results(reduced.messages)]
+        assert any(flags), "nothing was reduced, so this asserts nothing"
+        assert flags[-3:] == [False, False, False], "the preserved three were cleared"
+        # Every cleared result precedes every retained one.
+        assert flags == sorted(flags, reverse=True)
+
+    def test_a_request_within_budget_is_passed_through_untouched(self):
+        """8.5: the same message objects, not merely equal ones."""
+        messages = _thread([("read_doc", "small")] * 3)
+        budget = _budget(trigger=100_000)
+
+        reduced = _reduce(ContextBudgetMiddleware(budget=budget), _request(messages))
+
+        assert reduced.messages is messages
+        assert not _placeholders(reduced.messages)
+
+    def test_non_reducible_content_over_budget_does_not_raise(self):
+        """8.4: a system prompt larger than the whole budget.
+
+        Nothing this layer can clear will bring the request under, so it clears
+        what it can and hands the call on. The reactive overflow handler covers
+        the remainder; raising here would turn a degraded answer into no answer.
+        """
+        messages = _thread([("read_doc", "X" * 6000)] * 4)
+        request = _request(messages, system_prompt="S" * 40_000)
+        budget = _budget(trigger=2000, keep=3, per_result_tokens=500)
+
+        response = _respond(ContextBudgetMiddleware(budget=budget), request)
+
+        assert response.content == "answer"
+
+    def test_a_heavy_document_reading_run_still_reaches_the_model(self):
+        """8.6: the boundary criterion — many reads still produce an answer.
+
+        The canned overflow apology is the outcome this change exists to stop
+        being routine; here the call completes and the model answers.
+        """
+        messages = _thread([("read_doc", "X" * 8000)] * 20)
+        budget = _budget(trigger=4000, keep=3, per_result_tokens=500)
+
+        response = _respond(ContextBudgetMiddleware(budget=budget), _request(messages))
+
+        assert response.content == "answer"
+
+
+class TestTheResidual:
+    """8.3: what clearing cannot remove, measured rather than assumed."""
+
+    def test_many_small_rounds_leave_a_residue_that_is_reported_not_raised(
+        self, caplog
+    ):
+        """Clearing replaces content; it does not delete the message.
+
+        Each cleared round still costs the AI message framing, the retained
+        tool-call arguments, and the placeholder text. Enough rounds and that
+        residue alone crosses the budget with nothing left to clear — the case
+        that says whether removing whole paired rounds would ever be needed.
+        """
+        messages = _thread([("read_doc", "small result")] * 200)
+        budget = _budget(trigger=1500, keep=3, per_result_tokens=500)
+
+        with caplog.at_level("WARNING"):
+            reduced = _reduce(
+                ContextBudgetMiddleware(budget=budget), _request(messages)
+            )
+
+        assert count_request_tokens(reduced) > budget.trigger, (
+            "this scenario is meant to remain over budget; if it no longer does, "
+            "the residue shrank and the numbers below need re-measuring"
+        )
+        rendered = " ".join(
+            r.getMessage() for r in caplog.records if r.levelname == "WARNING"
+        )
+        assert "after reduction" in rendered, (
+            "an unreachable budget must be reported, not silently declared met: "
+            f"{rendered!r}"
+        )
+
+    def test_the_measured_residue_per_cleared_round(self):
+        """The number itself, pinned so a placeholder or framing change moves it.
+
+        Measured on the pinned langchain-core: a cleared round costs ~31 tokens
+        for the placeholder plus the AI message carrying the tool call and its
+        arguments. This test records the figure the design's 'is clearing
+        enough?' question turns on.
+        """
+        budget = _budget(trigger=1, keep=0, per_result_tokens=500)
+        one = _thread([("read_doc", "X" * 6000)])
+        many = _thread([("read_doc", "X" * 6000)] * 11)
+
+        reduced_one = _reduce(ContextBudgetMiddleware(budget=budget), _request(one))
+        reduced_many = _reduce(ContextBudgetMiddleware(budget=budget), _request(many))
+
+        per_round = (
+            count_request_tokens(reduced_many) - count_request_tokens(reduced_one)
+        ) / 10
+        assert 25 <= per_round <= 60, f"residue per cleared round moved: {per_round}"
+
+
+class TestPreservationAndExemption:
+    """8.7-8.9: what survives, and that surviving is still bounded."""
+
+    def test_preserved_results_keep_their_content_within_the_ceiling(self):
+        """8.7: preservation exempts from *clearing*, never from the ceiling."""
+        small = "a readable result"
+        messages = _thread(
+            [("read_doc", "X" * 6000)] * 4 + [("read_doc", small)] * 3,
+        )
+        budget = _budget(trigger=2000, keep=3, per_result_tokens=500)
+
+        reduced = _reduce(ContextBudgetMiddleware(budget=budget), _request(messages))
+
+        preserved = _tool_results(reduced.messages)[-3:]
+        assert [m.content for m in preserved] == [small] * 3
+
+    def test_an_oversized_preserved_result_is_truncated_not_cleared(self):
+        """8.7, the other half: over the ceiling it keeps its truncated form,
+        which still carries content — unlike a placeholder, which carries none."""
+        messages = _thread([("read_doc", "X" * 6000)] * 5)
+        budget = _budget(trigger=2000, keep=3, per_result_tokens=500)
+
+        reduced = _reduce(ContextBudgetMiddleware(budget=budget), _request(messages))
+
+        newest = _tool_results(reduced.messages)[-1]
+        assert not _is_cleared(newest)
+        assert newest.content.startswith("X")
+        assert newest.content.endswith(TRUNCATION_MARKER)
+        assert len(newest.content) <= budget.per_result_tokens * 4
+
+    def test_retrieval_evidence_survives_however_old_it_is(self):
+        """8.8: the grounding evidence is the oldest thing in the thread and the
+        thing the answer cites; recency-based preservation protects neither."""
+        messages = _thread(
+            [(RETRIEVAL, "R" * 1200)] * 2 + [("read_doc", "X" * 6000)] * 8,
+        )
+        budget = _budget(trigger=3000, keep=3, per_result_tokens=500, exempt_count=2)
+
+        reduced = _reduce(ContextBudgetMiddleware(budget=budget), _request(messages))
+
+        evidence = [m for m in _tool_results(reduced.messages) if m.name == RETRIEVAL]
+        assert [_is_cleared(m) for m in evidence] == [False, False]
+
+    def test_with_the_exemption_dropped_retrieval_clears_and_the_bound_holds(self):
+        """8.9: raising the caps past what the budget can afford makes retrieval
+        clearable like anything else — the bound wins over the exemption."""
+        messages = _thread([(RETRIEVAL, "R" * 6000)] * 10)
+        # keep=3 at the 500-token ceiling is 1500 tokens the bound cannot touch,
+        # so the trigger must leave room for those plus the cleared rounds' residue.
+        budget = _budget(trigger=3000, keep=3, per_result_tokens=500, exempt_count=0)
+
+        reduced = _reduce(ContextBudgetMiddleware(budget=budget), _request(messages))
+
+        assert any(_is_cleared(m) for m in _tool_results(reduced.messages))
+        assert count_request_tokens(reduced) <= budget.trigger
+
+
+class TestStructuralIntegrity:
+    """8.10-8.11: the reduced request is still a valid one, on every call."""
+
+    def test_no_tool_result_is_left_without_its_originating_call(self):
+        """8.10: a ToolMessage whose tool_call_id names no call is rejected by
+        the provider — a reduction that broke pairing would fail the request it
+        was protecting."""
+        messages = _thread([("read_doc", "X" * 6000)] * 8)
+        budget = _budget(trigger=2000, keep=3, per_result_tokens=500)
+
+        reduced = _reduce(ContextBudgetMiddleware(budget=budget), _request(messages))
+
+        call_ids = {
+            call["id"]
+            for m in reduced.messages
+            if isinstance(m, AIMessage)
+            for call in (m.tool_calls or [])
+        }
+        orphans = [
+            m.tool_call_id
+            for m in _tool_results(reduced.messages)
+            if m.tool_call_id not in call_ids
+        ]
+        assert orphans == []
+
+    def test_reduction_happens_on_the_call_that_first_exceeds_the_budget(self):
+        """8.11: the loop grows the thread between calls, so a bound applied
+        only before the loop protects nothing once the loop is running."""
+        middleware = ContextBudgetMiddleware(
+            budget=_budget(trigger=2000, keep=3, per_result_tokens=500)
+        )
+        early = _thread([("read_doc", "small")] * 2)
+        later = _thread([("read_doc", "X" * 6000)] * 8)
+
+        first = _reduce(middleware, _request(early))
+        second = _reduce(middleware, _request(later))
+
+        assert not _placeholders(first.messages), "reduced a request under budget"
+        assert _placeholders(second.messages), "the same instance must reduce later"

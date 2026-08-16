@@ -130,18 +130,18 @@ not among them. Any self-hosted or newly-released model therefore yields `None`.
 
 ## 8. Behavioural tests — the acceptance criteria
 
-- [ ] 8.1 Failing test: given an accumulated message list over the budget with more tool results than the preserve count, the oldest tool results are reduced before the model call
-- [ ] 8.2 Failing test (**the bound itself**): after reduction, the *complete* request — system prompt, tool schemas and messages together — is within the budget whenever the non-reducible content fits. Assert on the measured post-reduction size, not merely that clearing occurred
-- [ ] 8.3 Failing test (**the residual**): with many *small* tool rounds, so that cleared-message framing, retained tool-call arguments and placeholders alone cross the threshold, the runtime does not raise and logs the measured overage rather than reporting success. Record the measured per-round residue in the PR — this is the number that says whether removing whole paired rounds is ever needed
-- [ ] 8.4 Failing test: when non-reducible content alone exceeds the budget, reduction clears everything it can and does not raise; the reactive handler covers the remainder
-- [ ] 8.5 Failing test: a message list within budget is passed through untouched
-- [ ] 8.6 Failing test (the boundary criterion): a run performing many document reads still returns a substantive answer, not the canned apology
-- [ ] 8.7 Failing test: the N most recent tool results are not cleared — they retain original content when within the per-result ceiling, and the ceiling-truncated partial form when over it. Preservation exempts from *clearing*, never from the ceiling
-- [ ] 8.8 Failing test: retrieval-tool results are not cleared regardless of age under default caps — same ceiling qualification as 7.7
-- [ ] 8.9 Failing test: with retrieval caps raised past the exemption fraction, retrieval results become clearable and the bound still holds
-- [ ] 8.10 Failing test: tool-call/tool-result pairing survives reduction — no dangling `tool_call_id`
-- [ ] 8.11 Failing test: reduction is applied on a *later* model call when the budget is first exceeded mid-loop, not only before the loop
-- [ ] 8.12 Watch 7.1–7.10 fail, then implement to green
+- [x] 8.1 Failing test: given an accumulated message list over the budget with more tool results than the preserve count, the oldest tool results are reduced before the model call
+- [x] 8.2 Failing test (**the bound itself**): after reduction, the *complete* request — system prompt, tool schemas and messages together — is within the budget whenever the non-reducible content fits. Assert on the measured post-reduction size, not merely that clearing occurred
+- [x] 8.3 Failing test (**the residual**): with many *small* tool rounds, so that cleared-message framing, retained tool-call arguments and placeholders alone cross the threshold, the runtime does not raise and logs the measured overage rather than reporting success. **Measured:** a cleared round costs **51.9 tokens** against **1543** unreduced (96.6% reclaimed); the residue would need ~505 rounds to exhaust the deployed 26215 trigger, against a recursion limit of 50. Removing whole paired rounds is **not needed** — recorded in design.md Decision 10 and pinned by `test_the_measured_residue_per_cleared_round`
+- [x] 8.4 Failing test: when non-reducible content alone exceeds the budget, reduction clears everything it can and does not raise; the reactive handler covers the remainder
+- [x] 8.5 Failing test: a message list within budget is passed through untouched
+- [x] 8.6 Failing test (the boundary criterion): a run performing many document reads still returns a substantive answer, not the canned apology
+- [x] 8.7 Failing test: the N most recent tool results are not cleared — they retain original content when within the per-result ceiling, and the ceiling-truncated partial form when over it. Preservation exempts from *clearing*, never from the ceiling
+- [x] 8.8 Failing test: retrieval-tool results are not cleared regardless of age under default caps — same ceiling qualification as 7.7
+- [x] 8.9 Failing test: with retrieval caps raised past the exemption fraction, retrieval results become clearable and the bound still holds
+- [x] 8.10 Failing test: tool-call/tool-result pairing survives reduction — no dangling `tool_call_id`
+- [x] 8.11 Failing test: reduction is applied on a *later* model call when the budget is first exceeded mid-loop, not only before the loop
+- [x] 8.12 Watch 8.1–8.11 fail, then implement to green. **Note:** these are acceptance criteria over behaviour built in groups 4–7, so most were green on arrival; mutation testing is the substitute proof — 8 mutants applied to the reduction path, 7 killed by these tests alone and the 8th (writing through to the caller's list) by `TestStateIsolation`
 
 ## 9. Regression surface
 
