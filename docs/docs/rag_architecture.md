@@ -86,6 +86,83 @@ mutable). See `fasrc_archi.md` for the model-server ops.
 | metadata filter | `hybrid_search(filter=...)` | unused by default |
 | forced retrieval | `services.chat_app.force_initial_retrieval` | on |
 | search budget | `tool_budgets.search_vectorstore_hybrid` | 2/turn |
+| in-loop context bound | `services.chat_app.context_editing` | on (see below) |
+
+## In-loop context budget
+
+The agent reads documents *during* its reasoning loop, and those results
+accumulate in the prompt. Left unbounded they exhaust the model's context window
+and the run ends in a canned apology instead of an answer (issue #235). The
+pre-loop token budget in `_prepare_agent_inputs` cannot help: it runs once,
+before the loop, over conversation history only.
+
+`src/archi/pipelines/agents/utils/context_budget.py` decides the numbers; a
+middleware wrapper applies them on **every** model call inside the loop, clearing
+the oldest tool results once the prompt crosses the budget.
+
+### How the budget is derived
+
+```
+trigger = context_window − generation_reserve − counting_margin
+```
+
+`context_window` is the model's *total* sequence length — prompt **and**
+generation — so both subtractions are load-bearing:
+
+- **generation reserve** — room for the answer, `max(15%, effective output cap)`.
+  The percentage alone is unsafe: a model declaring a 200K window and a 64K
+  output cap would be handed a 170K prompt budget while separately being
+  permitted 64K of generation, and the provider rejects that before the trigger
+  is ever consulted.
+- **counting margin** — room for the token counter being approximate rather than
+  exact. Deliberately *not* a share of the reserve: a reserve fully spent on the
+  answer has nothing left to absorb an undercount, and there is no later model
+  call at which to correct it.
+
+The **effective** output cap is read from the bound model, not from
+`ModelInfo.max_output_tokens` — the declared value is wrong in both directions
+(Anthropic applies it only when the caller sets no `max_tokens`; the local
+provider never passes its own).
+
+No context length is hard-coded. If the window cannot be determined, or the
+reserve and margin would consume it, **no bound is installed** and the agent
+behaves as it did before.
+
+### Settings
+
+Under `services.chat_app.context_editing`, overridable per pipeline via
+`pipeline_config.context_editing` — the same three-layer lookup as `tool_budgets`.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `true` | Install the in-loop bound |
+| `reserve_fraction` | `0.15` | Generation reserve floor, as a share of the window |
+| `margin_fraction` | `0.05` | Counting margin, as a share of the window |
+| `keep` | `3` | Most recent tool results preserved unreduced |
+| `per_result_tokens` | `1500` | Per-result token ceiling used for the floor arithmetic |
+| `exemption_fraction` | `0.33` | Largest share of the budget the retrieval exemption may occupy |
+
+An invalid value is logged and replaced by its own default; it never disables the
+bound.
+
+> **`enabled: false` is not a full rollback.** It disables in-loop editing only.
+> The per-tool result clamps in `tools/result_limits.py` are unconditional — one
+> of them fixes `max_chars=0` returning an entire document, which is a defect
+> rather than a behaviour worth restoring.
+
+### Retrieval evidence
+
+Retrieval results are exempt from clearing, because they carry the grounding
+evidence the answer cites — but only while that exemption is provably cheap. Its
+worst case is `retrieval_call_budget × per_result_tokens`; if that exceeds
+`exemption_fraction` of the budget, the exemption is **dropped with a warning**
+so the bound still holds. Raising `tool_budgets.search_vectorstore_hybrid` far
+enough will therefore switch it off on its own.
+
+Exempt results are the **earliest** ones, not the newest. Once the per-turn
+search budget is spent the retrieval tool returns a synthetic refusal under the
+same tool name, so the newest results are refusals and the earliest are the
+evidence.
 
 ## Extension seams (for new approaches)
 
