@@ -128,6 +128,25 @@ No context length is hard-coded. If the window cannot be determined, or the
 reserve and margin would consume it, **no bound is installed** and the agent
 behaves as it did before.
 
+#### Most deployments must declare the window
+
+The window is found by matching the configured model *name* against a list of
+models compiled into the provider. That match is exact, so a self-hosted model
+is never found, and a hosted one stops being found the moment a vendor ships a
+name newer than the pinned list. Measured against this repository's own dev
+config, both the configured provider and its documented fallback report nothing:
+
+```
+local      palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4  -> None
+anthropic  claude-sonnet-4-6                     -> None
+anthropic  claude-sonnet-4-20250514              -> 200000
+```
+
+Set `context_window` explicitly unless the model is a stock hosted one you have
+confirmed resolves. When nothing is installed the runtime logs a warning naming
+the provider and model, so an unprotected deployment is visible in the logs
+rather than silently indistinguishable from a healthy one.
+
 ### Settings
 
 Under `services.chat_app.context_editing`, overridable per pipeline via
@@ -136,6 +155,7 @@ Under `services.chat_app.context_editing`, overridable per pipeline via
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `enabled` | `true` | Install the in-loop bound |
+| `context_window` | _(derived)_ | Declare the model's context window, overriding the provider's. Required for any model the provider cannot resolve |
 | `reserve_fraction` | `0.15` | Generation reserve floor, as a share of the window |
 | `margin_fraction` | `0.05` | Counting margin, as a share of the window |
 | `keep` | `3` | Most recent tool results preserved unreduced |
@@ -143,7 +163,8 @@ Under `services.chat_app.context_editing`, overridable per pipeline via
 | `exemption_fraction` | `0.33` | Largest share of the budget the unclearable content may occupy |
 
 An invalid value is logged and replaced by its own default; it never disables the
-bound.
+bound. `context_window` is the exception to the "own default" part — it has none,
+so an invalid value falls back to the provider-derived window.
 
 > **`enabled: false` is not a full rollback.** It disables in-loop editing only.
 > The per-tool result clamps in `tools/result_limits.py` are unconditional — one

@@ -67,6 +67,7 @@ from langchain_core.messages.utils import count_tokens_approximately
 from src.archi.pipelines.agents.tools.result_limits import clamp_result
 from src.archi.pipelines.agents.utils.context_budget import (
     ContextBudget,
+    positive_int,
     read_settings,
     resolve_budget,
     resolve_output_cap,
@@ -327,6 +328,7 @@ def build_context_middleware(
     pipeline_config: Optional[Dict[str, Any]] = None,
     tool_budgets: Optional[Dict[str, int]] = None,
     retrieval_tool_name: str = DEFAULT_RETRIEVAL_TOOL,
+    model_label: Optional[str] = None,
 ) -> List[AgentMiddleware]:
     """Build the in-loop middleware list for an agent, or an empty list.
 
@@ -358,13 +360,27 @@ def build_context_middleware(
     decision tracked against the spec, and exposing it would let a call site
     silently reinstate an uninformative marker.
 
+    An operator-declared ``context_window`` in the config takes precedence over
+    the *context_window* argument. That is not a convenience: the derived window
+    comes from matching the configured model name against a list compiled into
+    the provider, and self-hosted models are absent from every such list by
+    construction, so for many deployments the declared value is the only one
+    there is.
+
+    ``model_label`` names the provider and model in the log line emitted when no
+    window can be found. Without it that outcome is invisible, and a deployment
+    protecting nothing looks exactly like a healthy one.
+
     Note that only a real YAML boolean disables the bound: ``enabled: 0`` is an
     invalid value, and an invalid value is logged and ignored rather than
     silently removing the protection the other settings configure.
     """
     settings = read_settings(config, pipeline_config)
+    window = (
+        context_window if settings.context_window is None else settings.context_window
+    )
     budget = resolve_budget(
-        context_window=context_window,
+        context_window=window,
         output_cap=resolve_output_cap(model, None),
         settings=settings,
         # The tool name lives in exactly one place: the caller hands over its
@@ -374,6 +390,22 @@ def build_context_middleware(
         retrieval_call_budget=(tool_budgets or {}).get(retrieval_tool_name, 0),
     )
     if budget is None:
+        # Distinguish the two ways of installing nothing. An operator who turned
+        # it off does not need telling on every agent build, and a warning that
+        # fires when nothing is wrong teaches people to ignore it. An absent
+        # window is the opposite: nobody asked for it, and it is the failure
+        # that hid this whole change being inert until the resolver was run
+        # against a real deployment config.
+        if settings.enabled and positive_int(window) is None:
+            logger.warning(
+                "No in-loop context limit installed for %s: the provider reports "
+                "no context window for this model, and none is configured. The "
+                "window is matched by exact model name against a list compiled "
+                "into the provider, so self-hosted and newly-released models "
+                "will not be found. Set "
+                "services.chat_app.context_editing.context_window to install it.",
+                model_label or "the configured model",
+            )
         return []
     return [
         ContextBudgetMiddleware(budget=budget, retrieval_tool_name=retrieval_tool_name)

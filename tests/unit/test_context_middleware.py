@@ -1048,3 +1048,88 @@ class TestBuiltFromConfig:
             )
             == 1
         )
+
+
+class TestDeclaredContextWindow:
+    """Task 7A: an operator-declared window, and an audible failure without one.
+
+    These are the tests that would have caught the real defect. Everything in
+    ``TestBuiltFromConfig`` supplies a window directly, which is exactly what
+    production cannot do: the provider matches the configured model name against
+    a list compiled into it, and this deployment's models are not on any such
+    list.
+    """
+
+    def test_a_declared_window_installs_a_limit_where_metadata_reports_none(self):
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=None,
+            config={
+                "services": {
+                    "chat_app": {"context_editing": {"context_window": 32_768}}
+                }
+            },
+        )
+
+        assert len(built) == 1
+        assert built[0].budget.trigger == 26_215
+
+    def test_a_declared_window_takes_precedence_over_the_derived_one(self):
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=200_000,
+            config={
+                "services": {
+                    "chat_app": {"context_editing": {"context_window": 32_768}}
+                }
+            },
+        )
+
+        assert built[0].budget.trigger == 26_215, "the declared window must win"
+
+    def test_an_invalid_declared_window_falls_back_to_the_derived_one(self):
+        """A typo must not cost the protection the derived window provides."""
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=200_000,
+            config={
+                "services": {"chat_app": {"context_editing": {"context_window": "big"}}}
+            },
+        )
+
+        assert built[0].budget.trigger == 160_000
+
+    def test_an_uninstallable_limit_names_the_model_responsible(self, caplog):
+        """Failing open is correct; failing open *silently* is the defect.
+
+        With nothing logged, a deployment protecting nothing is indistinguishable
+        from a healthy one — which is how this went unnoticed until the resolver
+        was run against the real config.
+        """
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=None,
+            model_label="local/palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4",
+        )
+
+        assert built == []
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert warnings, "an installed-nothing outcome must be visible in the logs"
+        assert any("Qwen3.6" in r.message for r in warnings)
+        assert any("context_window" in r.message for r in warnings), "name the remedy"
+
+    def test_disabling_the_limit_deliberately_is_not_a_warning(self, caplog):
+        """Only an *unintended* absence is worth warning about.
+
+        An operator who switched it off does not need to be told so on every
+        agent build, and a warning that fires when nothing is wrong trains
+        people to ignore it.
+        """
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=200_000,
+            config={"services": {"chat_app": {"context_editing": {"enabled": False}}}},
+        )
+
+        assert built == []
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]

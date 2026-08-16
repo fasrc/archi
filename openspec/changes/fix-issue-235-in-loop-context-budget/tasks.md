@@ -104,15 +104,22 @@ so the window can only come from an **exact** match against a provider's hardcod
 list. `local` has an empty list; the Anthropic list holds four IDs and `claude-sonnet-4-6` is
 not among them. Any self-hosted or newly-released model therefore yields `None`.
 
-- [ ] 7A.1 Decide the remedy with the user — this adds a config field, so it needs a spec delta
-- [ ] 7A.2 Preferred: an operator override `services.chat_app.context_editing.context_window`,
-      validated in `read_settings` and preferred over the derived window by
-      `build_context_middleware`. That is the one place config and window already meet
-- [ ] 7A.3 Do **not** route `_build_provider_config` into `_get_model_context_window`: it
-      returns a dict whose `models` are raw YAML strings and `get_model_info` crashes on them —
-      the deploy config documents that exact crash at `deploy/fasrc-dev/config.yaml:41-45`
-- [ ] 7A.4 Until this lands, #235 must not be called closed: groups 5-7 ship a correct bound
-      that never runs on the deployment the issue was filed against
+- [x] 7A.1 Decide the remedy with the user — this adds a config field, so it needs a spec delta
+- [x] 7A.2 Operator override `services.chat_app.context_editing.context_window`, validated in
+      `read_settings` and preferred over the derived window by `build_context_middleware`.
+      Rides in on the `config` dict the builder already takes, so the call site is unchanged.
+      Unlike every other setting it has **no default** — absent and invalid both mean "use the
+      provider's" — and `positive_int` rejects `True`, which would otherwise be a 1-token window
+- [x] 7A.3 Rejected alternatives recorded in design.md Decision 11: routing
+      `_build_provider_config` into `_get_model_context_window` (its `models` are raw YAML
+      strings and `get_model_info` crashes on them — `deploy/fasrc-dev/config.yaml:41-45`
+      documents that exact crash), and widening the providers' hardcoded model lists (fixes
+      today's two names, reintroduces the defect at the next release, never covers self-hosted)
+- [x] 7A.4 An uninstallable limit now logs a warning naming the provider and model, so the
+      difference between "protected" and "installed nothing" is visible. A deliberate
+      `enabled: false` stays silent — a warning that fires when nothing is wrong is ignored
+- [ ] 7A.5 Set `context_window` in `deploy/fasrc-dev/config.yaml` before the goldenset run in
+      group 12, or that run measures an agent with no in-loop limit installed
 
 ## 8. Behavioural tests — the acceptance criteria
 

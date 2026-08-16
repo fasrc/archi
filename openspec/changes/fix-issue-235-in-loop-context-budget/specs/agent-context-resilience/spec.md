@@ -206,6 +206,44 @@ percentage and the resulting reserve SHALL be configurable.
 Where the reserve would consume the entire context window, the runtime MUST fail open rather
 than install a bound whose budget is not positive.
 
+The runtime obtains the window by matching the configured model name against its provider's
+model metadata. That match is exact and the metadata is a **static list compiled into the
+provider**, so a self-hosted model, a custom deployment name, or a model released after the
+provider entry was written reports no window at all — and the bound then fails open, installing
+nothing. Failing open is the correct direction, but a runtime that silently installs nothing on
+precisely the deployments most likely to overflow has not satisfied this specification.
+
+An operator MUST therefore be able to declare the context window directly, through the same
+configuration block as the other in-loop settings. A declared window takes precedence over the
+derived one and is validated like every other setting: an invalid declaration is logged and
+ignored in favour of the derived value, never treated as a disabled bound. Where no window can
+be obtained from either source, the runtime MUST record at warning level that no bound was
+installed and name the provider and model responsible, so an inert bound is visible in the logs
+rather than indistinguishable from a healthy one.
+
+#### Scenario: A model absent from the provider metadata installs no bound, audibly
+
+- **WHEN** the configured model has no context window in its provider's metadata
+- **AND** no context window is declared in configuration
+- **THEN** no bound is installed
+- **AND** the runtime logs a warning naming the provider and model
+
+#### Scenario: An operator declares the context window
+
+- **WHEN** the configuration declares a context window for a model whose metadata reports none
+- **THEN** the budget is derived from the declared window
+
+#### Scenario: A declared window takes precedence over the derived one
+
+- **WHEN** the configuration declares a context window and the provider metadata also reports one
+- **THEN** the declared window is used
+
+#### Scenario: An invalid declared window falls back to the derived one
+
+- **WHEN** the configuration declares a non-numeric or non-positive context window
+- **AND** the provider metadata reports a usable window
+- **THEN** the runtime logs a warning and installs the bound using the derived window
+
 #### Scenario: The reserve covers a declared output limit
 
 - **WHEN** the configured model declares an effective output limit larger than the percentage

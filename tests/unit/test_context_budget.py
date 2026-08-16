@@ -333,3 +333,48 @@ class TestExemptSelection:
         assert (
             select_exempt_indices(msgs, "search_vectorstore_hybrid", limit=0) == set()
         )
+
+
+class TestDeclaredContextWindow:
+    """Task 7A: the operator's escape hatch when metadata reports nothing.
+
+    ``_get_model_context_window`` matches the configured model name against a
+    list compiled into the provider. Measured against this repository's own dev
+    config, both the configured provider and the documented fallback report
+    nothing, so without this setting the whole change installs nothing there
+    while every other test still passes.
+    """
+
+    def test_no_window_is_declared_by_default(self):
+        assert read_settings({}, {}).context_window is None
+
+    def test_a_declared_window_is_read(self):
+        s = read_settings(
+            {"services": {"chat_app": {"context_editing": {"context_window": 32768}}}},
+            {},
+        )
+
+        assert s.context_window == 32768
+
+    def test_a_pipeline_window_overrides_the_service_layer(self):
+        s = read_settings(
+            {"services": {"chat_app": {"context_editing": {"context_window": 32768}}}},
+            {"context_editing": {"context_window": 8192}},
+        )
+
+        assert s.context_window == 8192
+
+    @pytest.mark.parametrize("bad", ["big", 0, -5, None, True, 1.5])
+    def test_an_invalid_declared_window_is_ignored(self, bad, caplog):
+        """Falls back to the derived window, never to a disabled limit.
+
+        ``True`` is in this list deliberately: it is an ``int`` in Python, and a
+        1-token context window would clear every message on every call.
+        """
+        s = read_settings(
+            {"services": {"chat_app": {"context_editing": {"context_window": bad}}}},
+            {},
+        )
+
+        assert s.context_window is None
+        assert s.enabled is True, "a bad value must not disable the limit"

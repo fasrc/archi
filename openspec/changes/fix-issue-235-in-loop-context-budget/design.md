@@ -500,6 +500,56 @@ should be per-view silently shared from the source. The docstring's own invarian
 attribute that is per-run state … must be rebuilt on the view, never shared" — already covers
 the middleware cache; it simply predates there being any middleware to cache.
 
+### Decision 11 — An operator-declared context window, because the derived one is usually absent
+
+Everything above derives the budget from `_get_model_context_window()`. Measured against this
+repository's own dev deployment config on 2026-08-16, that function returns `None` for both the
+configured provider and the standby:
+
+```
+local      palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4  -> None    (services.chat_app.default_provider)
+anthropic  claude-sonnet-4-6                     -> None    (the documented fallback)
+anthropic  claude-sonnet-4-20250514              -> 200000
+```
+
+`base_react.py:1609` calls `get_provider(self.default_provider)` with **no config**, so the
+window can only come from an exact match against a `ModelInfo` list compiled into the provider.
+`LocalProvider`'s list is empty (it probes Ollama, which is not what this deployment runs);
+`AnthropicProvider`'s holds four IDs and the configured `claude-sonnet-4-6` is not one of them.
+Self-hosted models never match by construction, and hosted ones stop matching whenever a vendor
+ships a name the pinned list predates.
+
+The consequence is not a wrong budget — `resolve_budget` correctly returns `None` and the
+factory correctly returns `[]`. The consequence is that **the entire change is inert on the
+deployment the issue was filed against**, while every unit test passes, because unit tests
+supply the window the production path cannot produce.
+
+So: `services.chat_app.context_editing.context_window`, validated in `read_settings` beside the
+other knobs and preferred over the derived value inside `build_context_middleware`. It reuses
+the three-layer lookup and rides in on the `config` dict the builder already receives, so the
+setting costs the call site nothing.
+
+The invalid-value convention differs here in one way worth stating. Every other setting falls
+back to *its own default*; this one has no default to fall back to, because "absent" and
+"invalid" both mean the same thing — use whatever the provider reports. A bad value therefore
+costs the operator the override and nothing else, and in particular never disables the limit.
+`positive_int` also rejects `True`, which matters more here than elsewhere: `True` is an `int`
+in Python, and a one-token window would clear every message on every call.
+
+One parameter *is* added: `model_label`, naming the provider and model in the log line below.
+It is not needed for the arithmetic, only so the failure has a subject.
+
+Two alternatives were rejected. **Routing `_build_provider_config` into
+`_get_model_context_window`** so the provider is built with real config: that config's `models`
+are raw YAML strings, and `get_model_info` does `model.id` on them — the deploy config documents
+that exact crash at `deploy/fasrc-dev/config.yaml:41-45`. **Widening the providers' hardcoded
+`ModelInfo` lists**: it fixes today's two names and reintroduces the same defect at the next
+model release, and cannot cover self-hosted deployments at all.
+
+Failing open stays the behaviour when neither source yields a window, but it stops being
+*silent*: an inert bound now logs the provider and model responsible, so the difference between
+"protected" and "installed nothing" is visible in the logs instead of only in a token count.
+
 ### Decision 10 — Name the residual that clearing cannot remove, and measure it
 
 `ClearToolUsesEdit` does not *delete* a tool result — it replaces the content with the

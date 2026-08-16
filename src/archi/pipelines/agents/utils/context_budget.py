@@ -141,6 +141,10 @@ class ContextEditingSettings:
     keep: int
     per_result_tokens: int
     exemption_fraction: float
+    # An operator-declared context window, overriding whatever the provider
+    # reports. ``None`` means "use the provider's". Defaulted so the other
+    # construction sites keep working unchanged.
+    context_window: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -157,7 +161,7 @@ class ContextBudget:
     exempt_count: int
 
 
-def _positive_int(value: Any) -> Optional[int]:
+def positive_int(value: Any) -> Optional[int]:
     """Return *value* as a positive int, or None if it is not one."""
     if isinstance(value, bool) or not isinstance(value, int):
         return None
@@ -254,7 +258,32 @@ def read_settings(
             DEFAULT_EXEMPTION_FRACTION,
             "exemption_fraction",
         ),
+        context_window=_read_declared_window(merged.get("context_window")),
     )
+
+
+def _read_declared_window(value: Any) -> Optional[int]:
+    """Validate an operator-declared context window, or return None.
+
+    Unlike the other settings this has no default to fall back to: None means
+    "use whatever the provider reports", which is the behaviour without the
+    setting at all. A bad value is therefore ignored rather than replaced, so a
+    typo costs the operator the override and nothing else.
+
+    ``positive_int`` rejects ``True`` along with the other non-integers. That
+    matters here more than elsewhere: ``True`` is an ``int`` in Python, and a
+    one-token window would clear every message on every call.
+    """
+    if value is None:
+        return None
+    window = positive_int(value)
+    if window is None:
+        logger.warning(
+            "Invalid context_editing.context_window=%r; using the window the "
+            "provider reports for the configured model",
+            value,
+        )
+    return window
 
 
 def resolve_output_cap(model: Any, declared_cap: Optional[int]) -> Optional[int]:
@@ -264,10 +293,10 @@ def resolve_output_cap(model: Any, declared_cap: Optional[int]) -> Optional[int]
     declared metadata; the metadata is the fallback. Callers pass
     ``declared_cap=None`` for providers that never apply their own declared value.
     """
-    configured = _positive_int(getattr(model, "max_tokens", None))
+    configured = positive_int(getattr(model, "max_tokens", None))
     if configured is not None:
         return configured
-    return _positive_int(declared_cap)
+    return positive_int(declared_cap)
 
 
 def resolve_budget(
@@ -287,7 +316,7 @@ def resolve_budget(
     """
     if not settings.enabled:
         return None
-    window = _positive_int(context_window)
+    window = positive_int(context_window)
     if window is None:
         logger.debug(
             "No in-loop context bound: unusable context window %r", context_window
