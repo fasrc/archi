@@ -78,11 +78,11 @@ magnitude, so a call count does not bound tokens.
 
 ### Requirement: Every tool result that survives reduction is bounded by an enforced ceiling
 
-Every `ToolMessage` that survives reduction — whether preserved as one of the most recent
-results or exempted by tool — SHALL be bounded by an enforced per-result ceiling, and content
-beyond the ceiling MUST be truncated with a marker indicating the result is partial. Both the
-preserve-count floor and the exemption floor are statements about retained results, so neither
-holds unless a retained result has an enforced size.
+Every `ToolMessage` that survives reduction SHALL be bounded by an enforced per-result ceiling,
+whether it survived by being preserved as one of the most recent results or by being exempted
+by tool. Content beyond the ceiling MUST be truncated with a marker indicating the result is
+partial. Both the preserve-count floor and the exemption floor are statements about retained
+results, so neither holds unless a retained result has an enforced size.
 
 This ceiling MUST be applied independently of which tool produced the result. Preservation
 selects by recency across all tool results, so the preserved set can contain tools this
