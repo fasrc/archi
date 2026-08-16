@@ -139,8 +139,8 @@ Under `services.chat_app.context_editing`, overridable per pipeline via
 | `reserve_fraction` | `0.15` | Generation reserve floor, as a share of the window |
 | `margin_fraction` | `0.05` | Counting margin, as a share of the window |
 | `keep` | `3` | Most recent tool results preserved unreduced |
-| `per_result_tokens` | `1500` | Per-result token ceiling used for the floor arithmetic |
-| `exemption_fraction` | `0.33` | Largest share of the budget the retrieval exemption may occupy |
+| `per_result_tokens` | `2100` | Per-result token ceiling on any retained tool result |
+| `exemption_fraction` | `0.33` | Largest share of the budget the unclearable content may occupy |
 
 An invalid value is logged and replaced by its own default; it never disables the
 bound.
@@ -150,19 +150,55 @@ bound.
 > of them fixes `max_chars=0` returning an entire document, which is a defect
 > rather than a behaviour worth restoring.
 
+### The per-result ceiling
+
+Every retained tool result is capped at `per_result_tokens`, whatever tool
+produced it. The cap is deliberately *universal*: results are preserved by
+recency across all tools, so a ceiling enforced per-tool stops bounding anything
+as soon as another tool is enabled — an MCP tool, a caller-supplied one.
+
+Two properties keep it from destroying evidence:
+
+- It is a **backstop above** the tuned clamps the retriever and fetch tools
+  already apply to their own output, never below them. Below, it would silently
+  re-truncate every full-size result and override the tuning.
+- It is **pressure-triggered**. Nothing is truncated while the request is under
+  budget, so reading a large document costs nothing until the budget is actually
+  at risk.
+
+MCP tools return a *list* of content blocks rather than a string; the text
+inside each block is truncated and the block structure is left intact.
+
 ### Retrieval evidence
 
 Retrieval results are exempt from clearing, because they carry the grounding
-evidence the answer cites — but only while that exemption is provably cheap. Its
-worst case is `retrieval_call_budget × per_result_tokens`; if that exceeds
-`exemption_fraction` of the budget, the exemption is **dropped with a warning**
-so the bound still holds. Raising `tool_budgets.search_vectorstore_hybrid` far
-enough will therefore switch it off on its own.
+evidence the answer cites — but the exemption is **best-effort**, never
+absolute, and it holds only while it is provably cheap.
 
-Exempt results are the **earliest** ones, not the newest. Once the per-turn
-search budget is spent the retrieval tool returns a synthetic refusal under the
-same tool name, so the newest results are refusals and the earliest are the
-evidence.
+The static guard sizes what the clearing pass cannot touch — the exempt results
+*and* the `keep` preserved ones — against `exemption_fraction` of the budget. If
+it exceeds that, the exemption is **dropped with a warning**. Raising
+`tool_budgets.search_vectorstore_hybrid` far enough switches it off on its own.
+
+At runtime the exemption also yields under pressure. With the shipped call
+budget of 2 and `keep` of 3, an ordinary five-result turn makes the exempt set
+*identical* to the clearable set, so honouring it unconditionally would reclaim
+nothing at all. Exempt results are given back one at a time until the request
+fits.
+
+Ordering runs both ways and for the same reason. Exempt results are the
+**earliest**, and the ones shed first are the **newest of those**: once the
+per-turn search budget is spent the retrieval tool returns a synthetic refusal
+under the same tool name, so the earliest results are the evidence and the later
+ones trend toward refusals — the cheapest thing to give up.
+
+### When it cannot fit
+
+If the request is still over budget after clearing, the middleware logs the
+measured overage and sends it anyway; the pre-existing reactive overflow handler
+remains the last-resort net. It also **fails open** — any error in the bound
+itself is logged and the request goes through unreduced, because a middleware
+that exists to prevent a failed turn must not become the cause of one.
 
 ## Extension seams (for new approaches)
 
