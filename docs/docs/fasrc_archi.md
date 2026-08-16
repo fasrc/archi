@@ -8,6 +8,17 @@ that backs the chat app.
 Host: `archi.rc.fas.harvard.edu` (DNS alias for `holygpu7c0717.rc.fas.harvard.edu`),
 4× Tesla V100-PCIE-32GB.
 
+**Two vLLM servers run on this host**, one per GPU pair, both under systemd:
+
+| Model | Port | GPUs | systemd unit | archi provider slot |
+|-------|------|------|--------------|---------------------|
+| `palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4` | 8001 | 2,3 | `vllm-qwen36.service` | `local` (default) |
+| `palmfuture/Qwen3.8-27B-GPTQ-Int4` | 8002 | 0,1 | `vllm-qwen38.service` | `openai` (see [Running two models](#running-two-models-in-archi-provider-slots)) |
+
+Qwen 3.8 requires two source patches to the container's vLLM — without them it
+either crashes at load or silently emits garbage. See
+[vLLM patches](#vllm-patches-required).
+
 ---
 
 ## Model server (vLLM / Qwen 3.6)
@@ -236,6 +247,215 @@ reverse order briefly serves empty answers.
 
 ---
 
+## Second model server (vLLM / Qwen 3.8)
+
+| Property | Value |
+|----------|-------|
+| Model | `palmfuture/Qwen3.8-27B-GPTQ-Int4` |
+| Endpoint | `http://localhost:8002/v1` |
+| GPUs | 0,1 (`--tensor-parallel-size 2`) |
+| Container image | `/scratch/a2rchi/sifs/vllm_volta.sif` (same image as 3.6) |
+| Engine flags | Same as 3.6 except `--gpu-memory-utilization 0.80` (GPU 0 is shared with the data-manager embedding worker) |
+| Logs | journald (`sudo journalctl -u vllm-qwen38`); `/scratch/a2rchi/vllm.log` **only** for the manual launcher |
+| Patches | **Required** — two bind-mounts, see below |
+
+Port 8002 rather than 8000: **8000 is already taken** by the RAGAS Dataset
+Manager on this host.
+
+```bash
+bash config/scripts/singularity_vllm_qwen38_volta.sh   # manual (backgrounds)
+sudo systemctl status vllm-qwen38.service              # systemd (installed & active)
+```
+
+Install/operate exactly as for 3.6 — stop any manual instance first so the unit
+can bind :8002, and kill by specific PID, never a broad `pkill -f vllm`.
+
+Qwen 3.8 is a **hybrid** architecture (16 × (3 × Gated DeltaNet → FFN) → 1 ×
+(Gated Attention → FFN)), unlike 3.6 which is a conventional MoE transformer.
+That difference is the source of both patches below.
+
+---
+
+## vLLM patches (required)
+
+`config/scripts/vllm_patches/qwen3_5.py` is bind-mounted **over** the copy inside
+the `.sif` at launch. A file-over-file `--bind` is the mechanism — `PYTHONPATH`
+cannot shadow a module that lives inside the installed `vllm` package. Both fixes
+are in that one file; its `README.md` carries the full write-up.
+
+**Do not try to fix these by upgrading vLLM.** The image reports version `1.1.0`,
+but upstream's newest release is **v0.27.1** — this is a Volta (SM 7.0) fork
+build (hence the companion `flash_attn_v100` wheel and `FLASH_ATTN_V100`
+backend). Its `qwen3_5.py` is 1099 lines against upstream's 732, and the broken
+code **does not exist upstream**, so there is no fix to pull. There is also no
+build recipe on disk: `vllm_volta.def` copies in pre-built wheels,
+`/scratch/src/vllm-volta` is only a conda env, and the build commands have aged
+out of shell history. Rebuilding means re-deriving the Volta port from scratch.
+
+### Fix 1 — load-time crash
+
+```
+qwen3_5.py:571 -> AttributeError: 'RowvLLMParameter' object has no attribute 'output_dim'
+```
+
+The tuple-shard branch of `load_weights` assumes every parameter in the fused GDN
+projection is split along an output dimension. GPTQ's `g_idx` is indexed per
+*input* channel and deliberately has no `output_dim`. Fix: load params lacking
+`output_dim` whole, unsharded. Guarding only the `logger.debug` line is not
+enough — the same unguarded access recurs in the bounds check and `narrow()`.
+
+### Fix 2 — silent garbage output
+
+Symptom: server returns HTTP 200, but every response is token id 0 (`!`) repeated
+to `max_tokens`, and a `logprobs` request 500s because NaN will not serialize.
+The tell-tale is a warning that is easy to miss among the startup noise, logged
+96 times (48 GDN layers × 2 TP workers):
+
+```
+WARNING [qwen3_5.py:676] Parameter layers.N.linear_attn.in_proj_qkvz.weight
+                         not found in params_dict, skip loading
+```
+
+The checkpoint is **mixed precision** inside the linear-attention block:
+`in_proj_qkv`/`in_proj_z` are GPTQ int4 while `in_proj_b`/`in_proj_a` stay bf16.
+The fork handles this via `_uses_split_gdn_input_projections()`, but that function
+was written for **AWQ** and reads only `modules_to_not_convert`/`ignored_layers` —
+both `None` on a GPTQ checkpoint, which records exclusions in `dynamic` under
+`-:`-prefixed regexes. It therefore returned `False`, the model built one fused
+*quantized* projection, and the bf16 b/a weights were dropped with only a warning,
+leaving every DeltaNet gate on uninitialized memory. Fix: also read GPTQ's
+`dynamic` exclusions.
+
+**Verify after any change to this file:**
+
+```bash
+# must print 0 -- anything else means weights are being silently dropped
+sudo journalctl -u vllm-qwen38 | grep -c "not found in params_dict"
+# must answer "Paris" and "391", not "!!!!"
+curl -s http://localhost:8002/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"model":"palmfuture/Qwen3.8-27B-GPTQ-Int4","messages":[{"role":"user",
+       "content":"Capital of France? Then 17*23. Two short lines."}],"max_tokens":80,"temperature":0}'
+```
+
+Ruled out during diagnosis, recorded so nobody re-treads them: the `g_idx` patch
+is **not** a cause of garbage (both checkpoints set `desc_act: false`, so `g_idx`
+is trivially sequential); the `4-bit gptq_gemm kernel is buggy` warning is a **red
+herring** (3.6 logs it too and is fine — it is emitted unconditionally at
+config-parse time); and it is **not** an fp16/bf16 issue (GPTQ in this build
+accepts *only* fp16 — `--dtype float32` is rejected outright).
+
+---
+
+## Running two models in archi (provider slots)
+
+archi's providers are a **closed enum** — `openai`, `anthropic`, `gemini`,
+`openrouter`, `local`, `cern_litellm`, `huit_bedrock`. Provider config is read by
+`providers_cfg.get(provider_type.value)` (`chat_app/app.py:150`), so an invented
+key like `local2:` is **not rejected — it is silently never read**. Each provider
+type gets exactly one `base_url`, so two vLLM endpoints cannot both be `local`.
+
+Because vLLM speaks the OpenAI API and `OpenAIProvider` honors a custom
+`base_url` (`openai_provider.py:147`), the **`openai` slot is repurposed** for the
+second endpoint:
+
+```yaml
+openai:
+  enabled: true
+  base_url: http://localhost:8002/v1
+  default_model: "palmfuture/Qwen3.8-27B-GPTQ-Int4"
+  models: ["palmfuture/Qwen3.8-27B-GPTQ-Int4"]
+  extra_kwargs:
+    api_key: "sk-noauth"          # see below
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false    # 3.8 emits <think> tags
+```
+
+Two non-obvious requirements:
+
+1. **A placeholder `api_key` in `extra_kwargs`.** A bare vLLM needs no auth, but
+   the OpenAI SDK refuses to construct a client with no key at all. There is no
+   `api_key` field in the provider YAML schema; `extra_kwargs` is spread into
+   `ChatOpenAI(**kwargs)`, so the placeholder lands correctly.
+2. **`OPENAI_API_KEY=sk-noauth` in the secrets env too.** Without it
+   `is_configured()` is `False` (`providers/base.py:127` — only `local` is exempt
+   from needing a key), so `/api/providers` reports `enabled: false` and the UI
+   **hides the model** (`static/chat.js:1572`). The endpoint still works via
+   direct API call, which makes this easy to misdiagnose.
+
+> **Never put a real OpenAI key in this env file** while this slot points at a
+> local endpoint: `openai_provider.py:144` lets the env value override the
+> placeholder, so it would be transmitted to `localhost:8002`. This provider slot
+> and genuine OpenAI usage are mutually exclusive on this deployment. Note also
+> that `extra_kwargs` is persisted verbatim into Postgres `static_config`, so a
+> real credential must never live there.
+
+### The override is streaming-only
+
+Per-request model selection (`"provider": "openai", "model": "..."` in the chat
+payload) is implemented in `stream()` (`app.py:1983`, override at `:2102`, which
+logs `Serving request from request-local view with <provider>/<model>`). The
+non-streaming `/api/get_chat_response` parses `provider`/`model` (`app.py:4701`)
+and then **ignores them**, silently serving the default provider and still
+returning **HTTP 200**.
+
+Verify an override against `/api/get_chat_response_stream`, and confirm at the
+destination — the target vLLM's request log — never by HTTP 200 alone:
+
+```bash
+sudo journalctl -u vllm-qwen38 | grep -c "Received request"   # must increment
+```
+
+---
+
+## Embedding device: why it must be `cpu`
+
+`data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.model_kwargs.device`
+is consumed by **both** containers — the data-manager *and* the chatbot, which
+also builds a `VectorStoreManager` for retrieval. Setting `cuda:0` crash-loops the
+chatbot:
+
+```
+manager.py:103 -> HuggingFaceEmbeddings(device="cuda:0")
+AssertionError: Torch not compiled with CUDA enabled
+```
+
+There is **no cuda-availability fallback anywhere in the codebase** — the device
+string is passed through verbatim.
+
+**This is latent and detonates on re-seed.** Because the running config lives in
+Postgres, the value can sit in the config file un-deployed for days; an unrelated
+redeploy is what finally applies it. So a deploy can break the chatbot with a
+change you did not make. After any deploy, check
+`docker inspect chatbot-dev --format '{{.RestartCount}}'` — not just HTTP 200 on
+the UI, which the crash loop can still briefly satisfy.
+
+**There is no per-service GPU setting.** The compose template picks GPU images
+with one global flag applied to every service:
+
+```jinja
+dockerfile: .../Dockerfile-chat{{ '-gpu' if gpu_ids else '' }}
+```
+
+The rendered compose already names `Dockerfile-chat-gpu` for the chatbot, but the
+running chatbot image is a **stale CPU build** — `archi create --force` recreates
+*containers*, not *images*:
+
+| | chatbot | data-manager |
+|---|---|---|
+| torch | `2.6.0+cpu` | `2.6.0+cu124` |
+| `/usr/local/cuda` | absent | present |
+| image size | 4.46 GB | 18.9 GB |
+
+So enabling `cuda:0` here means **forcing a chatbot image rebuild**, not editing
+config. Think before doing so: the chatbot's reservation is `count: all`, so a
+CUDA chatbot claims GPUs 0–3 — including the pair running vLLM, which pre-reserves
+its KV pool at startup, making it a startup-order race. The chatbot only embeds
+short queries, not the bulk ingest that the GPU data-manager work actually sped
+up. Keep `device: cpu` while vLLM owns the GPUs.
+
+---
+
 ## Configuration: where the running config lives
 
 Two layers:
@@ -263,14 +483,31 @@ state).
 
 | Path | Purpose |
 |------|---------|
-| `config/scripts/singularity_vllm_qwen36_volta.sh` | Manual launcher (backgrounds, logs to file) |
-| `config/scripts/vllm_qwen36_volta_serve.sh` | Foreground launcher used by systemd; keep its engine flags identical to the manual launcher |
-| `config/scripts/vllm_patch/sitecustomize.py` | prometheus/fastapi 500 compat shim |
+| `config/scripts/singularity_vllm_qwen36_volta.sh` | Qwen 3.6 manual launcher (backgrounds, logs to file) |
+| `config/scripts/vllm_qwen36_volta_serve.sh` | Qwen 3.6 foreground launcher used by systemd; keep its engine flags identical to the manual launcher |
 | `config/scripts/vllm-qwen36.service` | systemd unit — **installed & active** at `/etc/systemd/system/vllm-qwen36.service` |
+| `config/scripts/singularity_vllm_qwen38_volta.sh` | Qwen 3.8 manual launcher (:8002, GPUs 0,1) |
+| `config/scripts/vllm_qwen38_volta_serve.sh` | Qwen 3.8 foreground launcher used by systemd; keep flags identical to the manual launcher |
+| `config/scripts/vllm-qwen38.service` | systemd unit — **installed & active** at `/etc/systemd/system/vllm-qwen38.service` |
+| `config/scripts/vllm_patch/sitecustomize.py` | prometheus/fastapi 500 compat shim (both servers) |
+| `config/scripts/vllm_patches/qwen3_5.py` | Qwen 3.8 weight-loading patches — **required**, see [vLLM patches](#vllm-patches-required) |
+| `config/scripts/vllm_patches/README.md` | Full write-up of both patches, with the ruled-out hypotheses |
 | `config/environments/dev.yaml` | Chat-app config seeded to Postgres (model, provider, `enable_thinking`) |
 | `g.sh` (repo root) | Active deploy: `archi create` of chatbot + grafana from `dev.yaml` |
 | `config/scripts/g.sh` | Separate `main-gpu-agent` deploy from `config/vllm-config.yaml` (not the chat app here) |
 
-> `config/` is intentionally untracked in this repo (local deployment state), so
-> these scripts live outside version control — keep this doc in sync by hand when
-> they change.
+> **`config/` is untracked and this has already caused an outage-in-waiting.**
+> `.gitignore` ignores all of `/config/`, so every launcher, both systemd units,
+> the compat shim and the vLLM patches live outside version control — even though
+> this table documents them as project files. In August 2026
+> `vllm_patch/sitecustomize.py` and `vllm_qwen36_volta_serve.sh` were found
+> **missing from disk** while `vllm-qwen36.service` was still `enabled` and
+> `active`: the running 3.6 server survived only because it was already up, and
+> `Restart=on-failure` or a reboot would have left production down with no way to
+> start it. Both were reconstructed and restored.
+>
+> Until the ignore rule is narrowed (or `config/scripts/` is backed up outside the
+> repo), treat this document as the **primary durable record** — it is the only
+> part of this setup that is version-controlled. Keep it in sync by hand, and if a
+> script here goes missing, this doc plus `vllm_patches/README.md` contain enough
+> to rebuild it.
