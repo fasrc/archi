@@ -17,7 +17,7 @@ is unbounded and no floor arithmetic holds.
 - [ ] 2.5 Failing test: the retriever tool's **complete serialized output** is clamped — with documents whose `title`/`url`/`resource_hash` metadata is pathologically large, the returned string stays within the ceiling even though `max_chars` bounds only `page_content` (`retriever.py:42-57`)
 - [ ] 2.6 Failing test: a normal retrieval result well under the ceiling is returned unmodified — the clamp must not truncate ordinary output
 - [ ] 2.7 Watch 2.1–2.6 fail, then implement both clamps, each ceiling configurable and defaulting to today's effective behaviour
-- [ ] 2.8 File the follow-up issue for the unclamped `max_chars` in `api_catalog_document` (`src/interfaces/uploader_app/app.py:761-770`), which this change deliberately leaves open for non-agent callers
+- [x] 2.8 File the follow-up issue for the unclamped `max_chars` in `api_catalog_document` (`src/interfaces/uploader_app/app.py:761-770`), which this change deliberately leaves open for non-agent callers — filed as #260
 
 ## 3. Budget derivation helper — RED then GREEN
 
