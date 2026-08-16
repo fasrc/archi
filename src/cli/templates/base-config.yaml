@@ -239,6 +239,8 @@ data_manager:
       num_documents_to_retrieve: {{ data_manager.retrievers.bm25_retriever.num_documents_to_retrieve | default(5, true) }}
     hybrid_retriever:
       num_documents_to_retrieve: {{ data_manager.retrievers.hybrid_retriever.num_documents_to_retrieve | default(5, true) }}
+      # Weights apply to min-max normalized (0..1) components and should sum
+      # to 1.0.  combined_score is relative to each query's candidate set.
       bm25_weight: {{ data_manager.retrievers.hybrid_retriever.bm25_weight | default(0.6, true) }}
       semantic_weight: {{ data_manager.retrievers.hybrid_retriever.semantic_weight | default(0.4, true) }}
     hierarchical_rerank:

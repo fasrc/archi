@@ -324,8 +324,8 @@ class TestHybridSearch:
                 "chunk_text": "Machine learning fundamentals",
                 "metadata": "{}",
                 "semantic_score": 0.85,
-                "bm25_score": 0.9,
-                "combined_score": 0.865,  # 0.85*0.7 + 0.9*0.3
+                "bm25_score": -0.9,
+                "combined_score": 0.865,
                 "resource_hash": "abc",
                 "display_name": "ML Doc",
                 "source_type": "web",
@@ -369,8 +369,8 @@ class TestHybridSearch:
                 "chunk_text": "test content",
                 "metadata": {},
                 "semantic_score": 0.8,
-                "bm25_score": 0.7,
-                "combined_score": 0.74,  # 0.8*0.4 + 0.7*0.6
+                "bm25_score": -0.7,
+                "combined_score": 0.74,
                 "resource_hash": "hash123",
                 "display_name": "Test Doc",
                 "source_type": "web",
@@ -420,8 +420,8 @@ class TestHybridSearch:
                 "chunk_text": "High semantic, low keyword",
                 "metadata": "{}",
                 "semantic_score": 0.95,
-                "bm25_score": 0.2,
-                "combined_score": 0.725,  # 0.95*0.7 + 0.2*0.3
+                "bm25_score": -0.2,
+                "combined_score": 0.725,
                 "resource_hash": None,
                 "display_name": None,
                 "source_type": None,
@@ -432,8 +432,8 @@ class TestHybridSearch:
                 "chunk_text": "Balanced scores",
                 "metadata": "{}",
                 "semantic_score": 0.7,
-                "bm25_score": 0.8,
-                "combined_score": 0.73,  # 0.7*0.7 + 0.8*0.3
+                "bm25_score": -0.8,
+                "combined_score": 0.73,
                 "resource_hash": None,
                 "display_name": None,
                 "source_type": None,
@@ -477,7 +477,7 @@ class TestHybridSearchExcludesParents:
                 "chunk_text": "Child leaf chunk",
                 "metadata": json.dumps({"parent_id": 42}),
                 "semantic_score": 0.8,
-                "bm25_score": 0.7,
+                "bm25_score": -0.7,
                 "combined_score": 0.77,
                 "resource_hash": "abc",
                 "display_name": "Doc",
@@ -518,7 +518,7 @@ class TestHybridSearchExcludesParents:
                 "chunk_text": "A small embedded child sentence.",
                 "metadata": json.dumps({"parent_id": 100, "chunk_id": "c7"}),
                 "semantic_score": 0.9,
-                "bm25_score": 0.5,
+                "bm25_score": -0.5,
                 "combined_score": 0.78,
                 "resource_hash": None,
                 "display_name": None,
@@ -534,6 +534,231 @@ class TestHybridSearchExcludesParents:
         # The row is a child: it references a parent rather than being one.
         assert doc.metadata.get("parent_id") == 100
         assert doc.page_content == "A small embedded child sentence."
+
+
+class TestHybridSearchFallbackWarning:
+    """The silent fallback at lines 513-516 must emit a structured warning."""
+
+    SENSITIVE_QUERY = "CANARY_private_data_do_not_log"
+
+    def _run_hybrid_with_rows(self, vector_store, mock_pg_connection, rows):
+        conn, cursor = mock_pg_connection
+        cursor.fetchone.return_value = {"relname": "idx_bm25"}
+        cursor.fetchall.return_value = rows
+
+        with patch.object(vector_store, "_get_connection", return_value=conn):
+            with patch.object(
+                vector_store, "similarity_search_with_score", return_value=[]
+            ) as fallback:
+                results = vector_store.hybrid_search(self.SENSITIVE_QUERY, k=5)
+                return results, fallback
+
+    def test_fallback_emits_warning_on_zero_rows(
+        self, vector_store, mock_pg_connection, caplog
+    ):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            self._run_hybrid_with_rows(vector_store, mock_pg_connection, [])
+
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warning_records, "no WARNING emitted on zero-row fallback"
+        msg = warning_records[0].getMessage()
+        assert "collection=" in msg
+        assert "k=" in msg
+        assert "reason=" in msg
+
+    def test_fallback_warning_contains_collection_and_k(
+        self, vector_store, mock_pg_connection, caplog
+    ):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            self._run_hybrid_with_rows(vector_store, mock_pg_connection, [])
+
+        msg = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING][
+            0
+        ]
+        assert "collection=test_collection" in msg
+        assert "k=5" in msg
+
+    def test_no_warning_when_rows_returned(
+        self, vector_store, mock_pg_connection, caplog
+    ):
+        import logging
+
+        rows = [
+            {
+                "id": 1,
+                "chunk_text": "content",
+                "metadata": "{}",
+                "semantic_score": 0.8,
+                "bm25_score": -0.5,
+                "combined_score": 0.6,
+                "resource_hash": None,
+                "display_name": None,
+                "source_type": None,
+                "url": None,
+            }
+        ]
+        with caplog.at_level(logging.WARNING):
+            self._run_hybrid_with_rows(vector_store, mock_pg_connection, rows)
+
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert not warning_records, "WARNING emitted when rows were returned"
+
+    def test_query_text_never_in_log_record(
+        self, vector_store, mock_pg_connection, caplog
+    ):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            self._run_hybrid_with_rows(vector_store, mock_pg_connection, [])
+
+        for record in caplog.records:
+            assert self.SENSITIVE_QUERY not in record.getMessage()
+            assert self.SENSITIVE_QUERY not in str(record.__dict__)
+
+    def test_warning_fields_survive_configured_formatter(
+        self, vector_store, mock_pg_connection, caplog
+    ):
+        """Task 1.5: fields must appear in the formatted output, not just
+        the LogRecord attributes — setup_logging uses %(message)s only."""
+        import logging
+
+        fmt = logging.Formatter("(%(asctime)s) [%(name)s] %(levelname)s: %(message)s")
+        with caplog.at_level(logging.WARNING):
+            self._run_hybrid_with_rows(vector_store, mock_pg_connection, [])
+
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warning_records
+        formatted = fmt.format(warning_records[0])
+        assert "collection=test_collection" in formatted
+        assert "k=5" in formatted
+        assert "reason=" in formatted
+
+
+class TestHybridSearchScoringOrientation:
+    """BM25 scores from <@> are negative; the SQL must negate and normalize."""
+
+    def _capture_sql(self, vector_store, mock_pg_connection):
+        conn, cursor = mock_pg_connection
+        cursor.fetchone.return_value = {"relname": "idx_bm25"}
+        cursor.fetchall.return_value = [
+            {
+                "id": 1,
+                "chunk_text": "x",
+                "metadata": "{}",
+                "semantic_score": 0.8,
+                "bm25_score": -0.5,
+                "combined_score": 0.6,
+                "resource_hash": None,
+                "display_name": None,
+                "source_type": None,
+                "url": None,
+            }
+        ]
+        with patch.object(vector_store, "_get_connection", return_value=conn):
+            vector_store.hybrid_search("q", k=3)
+        for call in cursor.execute.call_args_list:
+            args = call[0]
+            if "combined_score" in args[0].lower():
+                return args[0]
+        pytest.fail("scoring SQL not found")
+
+    def test_bm25_term_is_negated(self, vector_store, mock_pg_connection):
+        sql = self._capture_sql(vector_store, mock_pg_connection)
+        assert (
+            "-1.0 *" in sql or "-1 *" in sql
+        ), f"BM25 <@> term not negated in SQL:\n{sql}"
+
+    def test_both_components_normalized(self, vector_store, mock_pg_connection):
+        sql = self._capture_sql(vector_store, mock_pg_connection).lower()
+        assert (
+            "min(" in sql and "max(" in sql
+        ), "min-max normalization window functions missing"
+
+    def test_combined_score_uses_normalized_components(
+        self, vector_store, mock_pg_connection
+    ):
+        sql = self._capture_sql(vector_store, mock_pg_connection).lower()
+        assert "nullif" in sql, "zero-range NULLIF guard missing from normalization"
+
+    def test_normalization_before_limit(self, vector_store, mock_pg_connection):
+        sql = self._capture_sql(vector_store, mock_pg_connection).lower()
+        limit_pos = sql.rfind("limit")
+        min_pos = sql.find("min(")
+        assert min_pos >= 0, "min() window function not found in SQL"
+        assert min_pos < limit_pos, "normalization must happen before the LIMIT"
+
+
+class TestHybridSearchParameterBinding:
+    """The SQL parameter order must match the placeholder order.
+
+    The defect: ``all_params`` listed ``[embedding, collection, *filters,
+    query, ...]`` but the SQL placeholders expected ``[embedding, bm25_query,
+    collection, *filters, ...]``.  ``to_bm25query()`` received the collection
+    name and the WHERE received the user's question — matching zero rows.
+    """
+
+    def _capture_hybrid_sql(self, vector_store, mock_pg_connection, **kwargs):
+        conn, cursor = mock_pg_connection
+        cursor.fetchone.return_value = {"relname": "idx_bm25"}
+        cursor.fetchall.return_value = [
+            {
+                "id": 1,
+                "chunk_text": "x",
+                "metadata": "{}",
+                "semantic_score": 0.8,
+                "bm25_score": -0.5,
+                "combined_score": 0.6,
+                "resource_hash": None,
+                "display_name": None,
+                "source_type": None,
+                "url": None,
+            }
+        ]
+        with patch.object(vector_store, "_get_connection", return_value=conn):
+            vector_store.hybrid_search("user question text", k=3, **kwargs)
+
+        for call in cursor.execute.call_args_list:
+            args = call[0]
+            sql = args[0]
+            if "combined_score" in sql.lower() and len(args) > 1:
+                return sql, args[1]
+        pytest.fail("hybrid scoring query not found in execute calls")
+
+    def test_query_reaches_bm25_placeholder(self, vector_store, mock_pg_connection):
+        """The user's query text must bind to to_bm25query(), not the
+        collection predicate."""
+        sql, params = self._capture_hybrid_sql(vector_store, mock_pg_connection)
+        bm25_idx = sql.index("to_bm25query(%s")
+        collection_idx = sql.index("collection' = %s")
+        bm25_param_pos = sql[:bm25_idx].count("%s")
+        collection_param_pos = sql[:collection_idx].count("%s")
+        assert params[bm25_param_pos] == "user question text"
+        assert params[collection_param_pos] == "test_collection"
+
+    def test_binding_with_metadata_filter(self, vector_store, mock_pg_connection):
+        """Added WHERE placeholders from a metadata filter must not shift
+        the BM25 query into the wrong slot."""
+        sql, params = self._capture_hybrid_sql(
+            vector_store, mock_pg_connection, filter={"topic": "gpu"}
+        )
+        bm25_param_pos = sql[: sql.index("to_bm25query(%s")].count("%s")
+        collection_param_pos = sql[: sql.index("collection' = %s")].count("%s")
+        assert params[bm25_param_pos] == "user question text"
+        assert params[collection_param_pos] == "test_collection"
+        assert "gpu" in params
+
+    def test_guard_reorder_collection_to_bm25(self, vector_store, mock_pg_connection):
+        """If the collection name ever reaches the BM25 expression,
+        this test must fail."""
+        sql, params = self._capture_hybrid_sql(vector_store, mock_pg_connection)
+        bm25_param_pos = sql[: sql.index("to_bm25query(%s")].count("%s")
+        assert (
+            params[bm25_param_pos] != "test_collection"
+        ), "collection name bound to BM25 expression"
 
 
 # =============================================================================

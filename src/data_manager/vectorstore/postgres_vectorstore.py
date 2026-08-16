@@ -422,18 +422,24 @@ class PostgresVectorStore(VectorStore):
         bm25_weight: float = 0.3,
         **kwargs: Any,
     ) -> List[Tuple[Document, float]]:
-        """
-        Hybrid search combining semantic similarity and BM25 full-text search.
+        """Hybrid search combining semantic similarity and BM25 full-text search.
+
+        Both components are oriented higher-is-better and min-max normalized
+        to ``0..1`` over the candidate set before weighting.  The BM25 ``<@>``
+        operator returns negative scores (lower = better match); the SQL
+        negates them so the convention is uniform.  ``combined_score`` is
+        relative to this query's candidates and is **not** comparable across
+        queries.
 
         Args:
             query: Query text
             k: Number of results to return
-            semantic_weight: Weight for semantic similarity (0-1)
-            bm25_weight: Weight for BM25 score (0-1)
-            **kwargs: Additional filters
+            semantic_weight: Weight for the normalized semantic component (0-1)
+            bm25_weight: Weight for the normalized BM25 component (0-1)
+            **kwargs: Additional filters (``filter``, ``include_deleted``)
 
         Returns:
-            List of (Document, combined_score) tuples
+            List of (Document, combined_score) tuples, highest first
         """
         logger.debug("Performing hybrid search: query='%s', k=%d", query, k)
 
@@ -487,13 +493,13 @@ class PostgresVectorStore(VectorStore):
                 )
 
                 query_sql = f"""
-                    WITH scored AS (
-                        SELECT 
+                    WITH raw AS (
+                        SELECT
                             c.id,
                             c.chunk_text,
                             c.metadata,
                             1.0 - (c.embedding {self._distance_op} %s::vector) AS semantic_score,
-                            {bm25_score_expr} AS bm25_score,
+                            -1.0 * COALESCE({bm25_score_expr}, 0) AS bm25_score,
                             d.resource_hash,
                             d.display_name,
                             d.source_type,
@@ -502,18 +508,32 @@ class PostgresVectorStore(VectorStore):
                         FROM document_chunks c
                         LEFT JOIN documents d ON c.document_id = d.id
                         WHERE {where_sql}
+                    ),
+                    normed AS (
+                        SELECT
+                            *,
+                            COALESCE(
+                                (semantic_score - MIN(semantic_score) OVER ())
+                                / NULLIF(MAX(semantic_score) OVER () - MIN(semantic_score) OVER (), 0),
+                                0
+                            ) AS sem_norm,
+                            COALESCE(
+                                (bm25_score - MIN(bm25_score) OVER ())
+                                / NULLIF(MAX(bm25_score) OVER () - MIN(bm25_score) OVER (), 0),
+                                0
+                            ) AS bm25_norm
+                        FROM raw
                     )
-                    SELECT 
+                    SELECT
                         *,
-                        (semantic_score * %s + COALESCE(bm25_score, 0) * %s) AS combined_score
-                    FROM scored
+                        (sem_norm * %s + bm25_norm * %s) AS combined_score
+                    FROM normed
                     ORDER BY combined_score DESC
                     LIMIT %s
                 """
 
-                # Params order: embedding, collection (+ any filters), query, semantic_weight, bm25_weight, k
                 all_params = (
-                    [embedding_str] + params + [query, semantic_weight, bm25_weight, k]
+                    [embedding_str, query] + params + [semantic_weight, bm25_weight, k]
                 )
                 cursor.execute(query_sql, all_params)
                 rows = cursor.fetchall()
@@ -521,8 +541,13 @@ class PostgresVectorStore(VectorStore):
             self._close_connection(conn)
 
         results: List[Tuple[Document, float]] = []
-        # If BM25 returned zero rows, fall back to semantic similarity to avoid empty results
         if not rows:
+            logger.warning(
+                "hybrid_search fallback to semantic-only:"
+                " reason=zero_rows collection=%s k=%d",
+                self._collection_name,
+                k,
+            )
             return self.similarity_search_with_score(query, k=k, **kwargs)
 
         for row in rows:

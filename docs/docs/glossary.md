@@ -109,7 +109,8 @@ so archi doesn't need a separate vector database.
 ### hybrid search
 Blending two ways of ranking results — meaning-based (embeddings) and keyword-based (BM25) —
 into one score, so a passage can win either by being *about* the right thing or by containing
-the right words. archi weights these by default.
+the right words. Both components are min-max normalized to 0–1 before weighting, so neither
+raw scale dominates. archi weights these by default.
 
 ### BM25
 A long-standing keyword-relevance formula: it scores a passage higher when it contains the
@@ -200,6 +201,13 @@ a specific model so scores stay comparable run to run).
 ### SUT
 **S**ystem **U**nder **T**est — the exact archi configuration being benchmarked in a given
 round.
+
+### arm
+One competing variant of the system in a benchmark comparison — the word is borrowed from
+clinical trials, where each treatment group is an "arm". Every arm answers the same question
+bank under otherwise identical conditions (same corpus, same judge), so any score difference
+can be pinned on the one thing that varies — for example, the current code as a *baseline*
+arm against a proposed fix as a *treatment* arm.
 
 ### anchor / anchor questions
 A small set of fixed benchmark questions, never edited and never tuned against, run every round

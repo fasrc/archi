@@ -251,8 +251,8 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `retrievers.hybrid_retriever.num_documents_to_retrieve` | int | `5` | Top-k documents per query |
-| `retrievers.hybrid_retriever.bm25_weight` | float | `0.6` | BM25 keyword score weight |
-| `retrievers.hybrid_retriever.semantic_weight` | float | `0.4` | Semantic similarity weight |
+| `retrievers.hybrid_retriever.bm25_weight` | float | `0.6` | Weight for the normalized BM25 component (should sum to 1.0 with semantic) |
+| `retrievers.hybrid_retriever.semantic_weight` | float | `0.4` | Weight for the normalized semantic component |
 | `stemming.enabled` | bool | `false` | Enable Porter Stemmer for improved matching |
 
 > **Note:** `use_hybrid_search` is a dynamic runtime setting (managed via the configuration API), not a YAML config key.
