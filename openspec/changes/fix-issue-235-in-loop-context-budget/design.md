@@ -203,17 +203,22 @@ about documents it can no longer see. (Citations themselves would survive either
 independent of the message stream. The exemption is about the *model's* ability to cite
 accurately, not the citation plumbing.)
 
-**But the numbers above are configurable defaults, not invariants.** `max_documents`,
-`max_chars`, and the `search_vectorstore_hybrid` call budget are all overridable, and a blanket
-exemption turns a raised retrieval budget into a second unbounded floor sitting outside the
-clearing strategy — reintroducing the very defect this change fixes, at a different tool.
+**But those numbers are defaults, not invariants — and worse, two of them are not even
+bounds.** `max_chars=800` caps `page_content` only, leaving the metadata-derived header
+uncapped (Decision 8), and the `search_vectorstore_hybrid` call budget is operator-overridable.
+A blanket exemption turns either into a second unbounded floor sitting outside the clearing
+strategy — reintroducing the very defect this change fixes, at a different tool.
 
-So the exemption is **conditional and self-checking**: at construction the runtime computes the
-exempt floor from the values actually in force (retrieval call budget × per-call ceiling) and
-compares it against the derived budget. Above a configurable fraction (default one third), it
-logs a warning naming the offending values and **drops the exemption**, making retrieval
-results clearable like any other. The design fails toward the bound holding, never toward a
-silent floor.
+So the exemption rests on the enforced serialized ceiling from Decision 8, and is
+**conditional and self-checking**: at construction the runtime computes
+
+    exempt_floor = tool_budget("search_vectorstore_hybrid") × retrieval_output_ceiling
+
+from the values actually in force — the call budget via the existing `_tool_budgets()` lookup,
+the ceiling from the same config key the tool reads — and compares it against the derived
+budget. Above a configurable fraction (default one third), it logs a warning naming the
+offending values and **drops the exemption**, making retrieval results clearable like any
+other. The design fails toward the bound holding, never toward a silent floor.
 
 ### Decision 5 — Do not add a `fetch_catalog_document` call cap in this change
 
@@ -252,28 +257,56 @@ The default placeholder `[cleared]` is uninformative. Replace it with text that 
 result was cleared to stay within the context window and directs the model not to re-request
 it, so the model's next step is to answer rather than retry.
 
-### Decision 8 — Enforce a `max_chars` ceiling on `fetch_catalog_document`
+### Decision 8 — Enforce a serialized-size ceiling on every result that can be preserved or exempted
 
-The preserve-count safety argument requires a *bounded* retained result, and today there is no
-bound: `max_chars` is a tool argument the model chooses, forwarded unclamped all the way to
-`api_catalog_document`, where `max_chars=0` disables truncation and returns the whole document
-(see Context). Three preserved results are only ~3.2 K tokens if 4000 is a ceiling; if the
-model asks for 200 000 characters, reduction is defeated and the loop overflows *more* readily
-than today, because the middleware will have cleared the older evidence first.
+Both the preserve-count floor and the exemption floor are statements about *retained* tool
+results, so both are worthless unless a retained result has an enforced size. Today neither
+does.
 
-`create_document_fetch_tool` therefore clamps the effective value to an enforced maximum
-(configurable, defaulting to the current 4000) before it reaches the catalog client, treating
-non-positive and non-integer inputs as "use the ceiling" rather than "no limit". This is
-in-scope because the bound in the spec cannot hold without it.
+**`fetch_catalog_document`.** `max_chars` is a tool argument the model chooses, forwarded
+unclamped all the way to `api_catalog_document`, where `max_chars=0` disables truncation and
+returns the whole document (see Context). Three preserved results are only ~3.2 K tokens if
+4000 is a ceiling; if the model asks for 200 000 characters, reduction is defeated and the loop
+overflows *more* readily than today, because the middleware will have cleared the older
+evidence first. `create_document_fetch_tool` therefore clamps the effective value to an
+enforced maximum (configurable, defaulting to the current 4000) before it reaches the catalog
+client, treating non-positive and non-integer inputs as "use the ceiling" rather than "no
+limit".
+
+**`search_vectorstore_hybrid`.** Its `max_chars=800` bounds only `doc.page_content`
+(`retriever.py:51-53`). The rendered header interpolates `title`, `url` and `resource_hash`
+straight from document metadata (`retriever.py:42-57`) with no cap at all, so a single scraped
+page with a pathological title or URL produces an arbitrarily large result — and under the
+exemption that result is *not reducible*. An exemption check computed from
+`max_documents × max_chars` would report such a floor as safe while the request overflows.
+
+So the retriever tool gains an enforced ceiling on its **complete serialized output**, applied
+after formatting, covering headers and metadata rather than page content alone.
+
+**This is also what makes the exemption arithmetic knowable at runtime.** The alternative —
+computing the floor from `max_documents` and `max_chars` — cannot work: neither call site
+passes them (`fasrc_docs_agent.py:224-235`, `cms_comp_ops_agent.py`), so they are closure-local
+defaults with no configuration path and nothing for the budget module to read. Codex's round-3
+recommendation was to introduce a shared limits object threaded into both the tool and the
+budget builder. Rejected as more plumbing than the problem needs: with a whole-output ceiling
+the floor is simply
+
+    exempt_floor = tool_budget("search_vectorstore_hybrid") × retrieval_output_ceiling
+
+and **both terms are already first-class runtime values** — the call budget comes from
+`_tool_budgets()`, which is the existing three-layer lookup, and the ceiling is one config key
+read by the tool and the budget module from the same place. No new shared object, and the
+formatter's internal `max_documents`/`max_chars` stop being load-bearing for the bound
+entirely: whatever they are, the serialized result is clamped.
 
 The server-side gap is broader than this change — `api_catalog_document` will still honour an
 unbounded `max_chars` for any other caller — so the endpoint clamp is filed as a separate
 follow-up rather than smuggled into an agent-context PR.
 
-Alternative considered: remove `max_chars` from the tool signature entirely so the model cannot
-influence it. Rejected — a smaller value is a legitimate and useful request, and removing the
-argument changes the tool contract the prompt documents. Clamping preserves the useful
-direction and closes the harmful one.
+Alternative considered: remove `max_chars` from the fetch tool signature entirely so the model
+cannot influence it. Rejected — a smaller value is a legitimate and useful request, and
+removing the argument changes the tool contract the prompt documents. Clamping preserves the
+useful direction and closes the harmful one.
 
 ### Decision 9 — Name the residual that clearing cannot remove, and measure it
 

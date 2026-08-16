@@ -5,17 +5,19 @@
 - [ ] 1.3 Confirm `_build_static_middleware` still returns `[]` and is passed to `create_agent(..., middleware=...)`
 - [ ] 1.4 Record the black-cleanliness of the intended insertion points in `base_react.py` before editing (a reflow of untouched code sinks patch coverage)
 
-## 2. Enforced document-read ceiling — RED then GREEN
+## 2. Enforced result ceilings — RED then GREEN
 
-Prerequisite for every size claim in section 3 and 5; without it a "preserved" tool result is
-model-controlled and unbounded.
+Prerequisite for every size claim later: without these, a "preserved" or "exempted" tool result
+is unbounded and no floor arithmetic holds.
 
 - [ ] 2.1 Failing test: `fetch_catalog_document` called with `max_chars` above the ceiling requests no more than the ceiling from the catalog client
 - [ ] 2.2 Failing test: `max_chars=0` does **not** disable truncation (today `if max_chars and ...` at `uploader_app/app.py:769` returns the whole document)
 - [ ] 2.3 Failing test: negative and non-integer `max_chars` are treated as a request for the ceiling, not as "no limit"
 - [ ] 2.4 Failing test: a value *below* the ceiling is still honoured — clamping must not flatten legitimate smaller reads
-- [ ] 2.5 Watch 2.1–2.4 fail, then implement the clamp in `create_document_fetch_tool` with the ceiling configurable and defaulting to the current 4000
-- [ ] 2.6 File the follow-up issue for the unclamped `max_chars` in `api_catalog_document` (`src/interfaces/uploader_app/app.py:761-770`), which this change deliberately leaves open for non-agent callers
+- [ ] 2.5 Failing test: the retriever tool's **complete serialized output** is clamped — with documents whose `title`/`url`/`resource_hash` metadata is pathologically large, the returned string stays within the ceiling even though `max_chars` bounds only `page_content` (`retriever.py:42-57`)
+- [ ] 2.6 Failing test: a normal retrieval result well under the ceiling is returned unmodified — the clamp must not truncate ordinary output
+- [ ] 2.7 Watch 2.1–2.6 fail, then implement both clamps, each ceiling configurable and defaulting to today's effective behaviour
+- [ ] 2.8 File the follow-up issue for the unclamped `max_chars` in `api_catalog_document` (`src/interfaces/uploader_app/app.py:761-770`), which this change deliberately leaves open for non-agent callers
 
 ## 3. Budget derivation helper — RED then GREEN
 
@@ -24,10 +26,12 @@ model-controlled and unbounded.
 - [ ] 3.3 Write failing tests for the three-layer config lookup (class default → `services.chat_app.context_editing` → `pipeline_config.context_editing`), later layers overriding earlier
 - [ ] 3.4 Write failing tests for invalid config values (non-numeric / out-of-range reserve, preserve count, exemption fraction): warn, use the default for that value, still install the bound
 - [ ] 3.5 Write a failing test that `enabled: false` installs no middleware
-- [ ] 3.6 Failing test: the exemption is dropped with a warning when retrieval caps in force could exceed the configured fraction of the budget; retained when they cannot
-- [ ] 3.7 Watch all of 3.1–3.6 fail for the right reason (module does not exist / returns nothing)
-- [ ] 3.8 Implement `context_budget.py` to the minimum that passes: config read + validation, budget derivation, exemption sizing, middleware construction
-- [ ] 3.9 Assert no hard-coded context length: `git diff origin/dev -- src/ | grep -E '^\+.*\b(32768|16384|8192)\b'` returns nothing
+- [ ] 3.6 Failing test: the exemption floor is computed as `tool_budget("search_vectorstore_hybrid") × retrieval_output_ceiling`, reading the call budget through the existing `_tool_budgets()` lookup and the ceiling from the same config key the tool reads — **not** from the formatter's `max_documents`/`max_chars`, which no call site passes and no config path reaches
+- [ ] 3.7 Failing test: the exemption is dropped with a warning when that floor exceeds the configured fraction of the budget; retained when it does not
+- [ ] 3.8 Failing test: raising `services.chat_app.tool_budgets.search_vectorstore_hybrid` alone is enough to flip the exemption off — the check must track the runtime value, not a constant
+- [ ] 3.9 Watch all of 3.1–3.6 fail for the right reason (module does not exist / returns nothing)
+- [ ] 3.10 Implement `context_budget.py` to the minimum that passes: config read + validation, budget derivation, exemption sizing, middleware construction
+- [ ] 3.11 Assert no hard-coded context length: `git diff origin/dev -- src/ | grep -E '^\+.*\b(32768|16384|8192)\b'` returns nothing
 
 ## 4. Middleware wrapper and complete-request counting — RED then GREEN
 
@@ -60,6 +64,7 @@ The wrapper is ours; only `ClearToolUsesEdit` comes from langchain. Do **not** s
 - [ ] 6.3 Failing test: the middleware list reaches `create_agent(...)` — assert on what `_create_agent` is called with
 - [ ] 6.4 Watch 6.1–6.3 fail, then make `_build_static_middleware` a thin call site delegating to `context_budget.py`
 - [ ] 6.5 Verify the `base_react.py` diff is a handful of lines with no black reflow of surrounding code
+- [ ] 6.6 Wiring test against the **real** agent, not helper stubs: construct `FASRCDocsAgent` with an overridden retrieval output ceiling and call budget, then assert the tool it builds emits results within that ceiling *and* the middleware it builds sized its exemption from those same values. A synthetic-input test alone would pass while production wiring used stale defaults
 
 ## 7. Behavioural tests — the acceptance criteria
 

@@ -76,17 +76,24 @@ magnitude, so a call count does not bound tokens.
 - **THEN** the reduction is applied at that later model call
 - **AND** does not depend on the budget having been exceeded before the loop started
 
-### Requirement: A single document-read result is bounded by an enforced ceiling
+### Requirement: Tool results that can be preserved or exempted are bounded by an enforced ceiling
 
-The document-fetch tool SHALL clamp the size of the text it returns to an enforced maximum,
-independent of the size the model requests. A caller-supplied size larger than the ceiling MUST
-be reduced to the ceiling, and a non-positive or otherwise invalid size MUST be treated as a
-request for the ceiling rather than as "no limit".
+Any tool whose results the reduction strategy may preserve or exempt SHALL bound the size of
+what it returns by an enforced ceiling. Both the preserve-count floor and the exemption floor
+are statements about retained results, so neither holds unless a retained result has an
+enforced size.
 
-Without this, the preserved most-recent tool results are model-controlled and unbounded, and no
-statement about the residual floor after reduction can hold.
+The document-fetch tool SHALL clamp the size of the text it returns independently of the size
+the model requests. A caller-supplied size larger than the ceiling MUST be reduced to the
+ceiling, and a non-positive or otherwise invalid size MUST be treated as a request for the
+ceiling rather than as "no limit".
 
-#### Scenario: An oversized requested size is clamped
+The retrieval tool SHALL clamp its **complete serialized output**, not its per-document text
+alone. A per-document text cap does not bound the result, because the rendered output also
+interpolates document metadata — title, URL and identifiers — that no cap governs, so a single
+document with pathological metadata can produce an arbitrarily large result.
+
+#### Scenario: An oversized requested document-read size is clamped
 
 - **WHEN** the model requests a document-read size larger than the enforced ceiling
 - **THEN** the returned text is no longer than the ceiling
@@ -101,6 +108,19 @@ statement about the residual floor after reduction can hold.
 
 - **WHEN** the model requests a document-read size below the enforced ceiling
 - **THEN** the returned text respects the smaller requested size
+
+#### Scenario: Retrieval output with oversized metadata is still bounded
+
+- **WHEN** retrieved documents carry titles, URLs or identifiers large enough that the rendered
+  result would exceed the ceiling even though every per-document text cap is respected
+- **THEN** the serialized retrieval result is no longer than the ceiling
+
+#### Scenario: The exemption floor is computed from values readable at runtime
+
+- **WHEN** the runtime sizes the exempted retrieval content
+- **THEN** it uses the retrieval tool's per-turn call budget and the enforced output ceiling
+- **AND** does not depend on formatter-internal document or character limits that no
+  configuration path can reach
 
 ### Requirement: The in-loop token budget is derived from the model's context window
 
