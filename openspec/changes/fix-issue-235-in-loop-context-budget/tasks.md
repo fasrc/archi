@@ -29,7 +29,7 @@ is unbounded and no floor arithmetic holds.
 - [ ] 3.6 Failing test: the exemption floor is computed as `tool_budget("search_vectorstore_hybrid") × retrieval_output_ceiling`, reading the call budget through the existing `_tool_budgets()` lookup and the ceiling from the same config key the tool reads — **not** from the formatter's `max_documents`/`max_chars`, which no call site passes and no config path reaches
 - [ ] 3.7 Failing test: the exemption is dropped with a warning when that floor exceeds the configured fraction of the budget; retained when it does not
 - [ ] 3.8 Failing test: raising `services.chat_app.tool_budgets.search_vectorstore_hybrid` alone is enough to flip the exemption off — the check must track the runtime value, not a constant
-- [ ] 3.9 Watch all of 3.1–3.6 fail for the right reason (module does not exist / returns nothing)
+- [ ] 3.9 Watch all of 3.1–3.8 fail for the right reason (module does not exist / returns nothing)
 - [ ] 3.10 Implement `context_budget.py` to the minimum that passes: config read + validation, budget derivation, exemption sizing, middleware construction
 - [ ] 3.11 Assert no hard-coded context length: `git diff origin/dev -- src/ | grep -E '^\+.*\b(32768|16384|8192)\b'` returns nothing
 
