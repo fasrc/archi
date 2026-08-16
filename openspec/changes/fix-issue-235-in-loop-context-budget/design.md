@@ -196,11 +196,33 @@ generation — 234 K against a 200 K window. The provider rejects the request be
 middleware's trigger is ever reached, so the mitigation would be inert exactly where the window
 is largest.
 
-So the reserve is `max(percentage_floor, effective_output_limit)`, where the output limit is
-`ModelInfo.max_output_tokens` when the provider declares one and the percentage is the floor
-otherwise. On the SUT this changes nothing — the local provider declares no
-`max_output_tokens`, so the reserve stays 15% and the benchmark path behaves as analysed. It
-is the large-window providers that need it.
+So the reserve is `max(percentage_floor, effective_output_limit)`. **But "effective" has to mean
+the cap the model call actually carries, not the number in the metadata** — those differ in both
+directions:
+
+- `AnthropicProvider.get_chat_model` applies `ModelInfo.max_output_tokens` **only if the caller
+  did not already supply `max_tokens`** (`anthropic_provider.py:91-97`), and `extra_kwargs` can
+  supply one. An operator-configured cap larger than the metadata therefore wins at runtime while
+  the metadata is what the budget was sized against — the same overflow, re-opened.
+- `LocalProvider` never passes `max_output_tokens` to either constructor. Both
+  `_get_ollama_model` and `_get_openai_compat_model` build `model_kwargs` from
+  `config.extra_kwargs` and the caller's `kwargs` only (`local_provider.py:94-125`), so the
+  declared 8192 is inert unless an operator sets it.
+
+The reserve is therefore read from the **bound model's configured cap** where one is set, falling
+back to `ModelInfo.max_output_tokens`, and to the percentage only when neither exists.
+
+**Correction to an earlier revision of this document.** It claimed "the local provider declares
+no `max_output_tokens`, so the reserve stays 15% and the benchmark path behaves as analysed."
+That is false: `local_provider.py:184-192` declares `context_window=32768,
+max_output_tokens=8192`. Under `max(percentage, metadata)` the SUT reserve would be
+`max(4915, 8192) = 8192` and the budget 24576, not 27853 — so the benchmark path **does** move,
+which is precisely what that paragraph promised it would not. Reading the effective cap rather
+than the metadata resolves it in the common case (the local provider passes no cap, so the
+percentage applies and the budget is 27853 as analysed), but the honest statement is that the
+SUT budget depends on whether `extra_kwargs` sets `max_tokens` in the deployment being measured.
+Task 3.10 now asserts the effective-cap behaviour on both branches instead of asserting a
+premise that was never true.
 
 If the reserve ever consumes the whole window, the budget is not positive and the runtime fails
 open rather than installing a middleware that would clear everything.
@@ -224,6 +246,21 @@ bounds.** `max_chars=800` caps `page_content` only, leaving the metadata-derived
 uncapped (Decision 8), and the `search_vectorstore_hybrid` call budget is operator-overridable.
 A blanket exemption turns either into a second unbounded floor sitting outside the clearing
 strategy — reintroducing the very defect this change fixes, at a different tool.
+
+**A second count problem: the call budget does not cap the number of retrieval results.** Once
+`_consume_tool_budget` is exhausted it returns a synthetic over-budget *string*
+(`base_react.py:1827-1834`), and the retriever returns that string as its result
+(`retriever.py:114-121`) — a `ToolMessage` carrying the same tool name on every subsequent call.
+A model that ignores the instruction and keeps calling therefore accumulates exempt messages up
+to `recursion_limit`, not up to the call budget, and a floor written as
+`tool_budget × ceiling` undercounts them.
+
+These refusals carry no evidence — they are an instruction, and a stale one after the first —
+so the fix is to make them clearable rather than to inflate the floor. The exemption is bounded
+**by count as well as by name**: at most `tool_budget("search_vectorstore_hybrid")` of the most
+recent retrieval results are exempt, and any beyond that are reducible like anything else. That
+needs no content inspection, holds whatever the model does, and makes the floor formula true by
+construction rather than by assumption.
 
 So the exemption rests on the enforced serialized ceiling from Decision 8, and is
 **conditional and self-checking**: at construction the runtime computes
@@ -363,7 +400,52 @@ cannot influence it. Rejected — a smaller value is a legitimate and useful req
 removing the argument changes the tool contract the prompt documents. Clamping preserves the
 useful direction and closes the harmful one.
 
-### Decision 9 — Name the residual that clearing cannot remove, and measure it
+### Decision 9 — Build the budget against the model bound to the request, not the pipeline default
+
+A chat request may override the provider and model. `_build_request_local_pipeline`
+(`app.py:184-227`) serves that by shallow-copying the shared pipeline and swapping **only**
+`agent_llm`:
+
+```python
+view = copy.copy(pipeline)
+view.agent_llm = override_llm
+view.agent = None
+view._active_tools = []
+view._active_middleware = []
+view._static_tools = None
+...
+view.refresh_agent(force=True)
+```
+
+Two things it does not do, and both defeat the bound:
+
+1. **`default_provider` / `default_model` are inherited from the source.**
+   `_get_model_context_window()` resolves exactly those two (`base_react.py:1597-1616`), so the
+   view derives its window from the *pipeline default*, not from the model it is actually about
+   to call.
+2. **`_static_middleware` is not reset.** `_active_middleware` is cleared, but the *cache* is
+   not, and `refresh_agent` reads `self.middleware`, which returns the cached list whenever
+   `_static_middleware is not None` (`base_react.py:1240-1250`). `force=True` forces
+   `_create_agent`, not a middleware rebuild. So `copy.copy` carries the source's already-built
+   middleware into the view intact.
+
+Net effect: a request overriding a 200 K-window default down to a 32 K model gets a trigger
+sized for 200 K and no in-loop reduction at all — overflowing exactly the way this change exists
+to prevent, on the path where a user deliberately selected a smaller model.
+
+**Fix:** the view is given its own identity and its own middleware. `_build_request_local_pipeline`
+takes the provider and model already in scope at its call site (`app.py:2130-2140` has both),
+assigns them to the view, and resets `_static_middleware = None` alongside the `_static_tools`
+reset it already performs — so `refresh_agent(force=True)` rebuilds the middleware against the
+overridden model. The budget derivation itself stays in the helper module and is unit-tested
+there; `app.py` gains only assignments, per its no-coverage constraint.
+
+This is the same class of defect as issue #86, which that function exists to close: state that
+should be per-view silently shared from the source. The docstring's own invariant — "any
+attribute that is per-run state … must be rebuilt on the view, never shared" — already covers
+the middleware cache; it simply predates there being any middleware to cache.
+
+### Decision 10 — Name the residual that clearing cannot remove, and measure it
 
 `ClearToolUsesEdit` does not *delete* a tool result — it replaces the content with the
 placeholder and keeps the `ToolMessage`, its `tool_call_id`, and the originating `AIMessage`
@@ -430,8 +512,20 @@ so existing deployments gain the bound on redeploy without edits. Because runnin
 seeded into Postgres from `config.yaml` at deploy, any operator override requires
 `redeploy.sh`, not a container restart.
 
-Rollback is a config flag (`services.chat_app.context_editing.enabled: false`), which restores
-exactly today's behaviour without reverting code.
+Rollback is a config flag (`services.chat_app.context_editing.enabled: false`) — but it is
+narrower than "restores today's behaviour", and saying so matters more than the convenience of
+claiming otherwise. **The flag disables in-loop context editing only.** The source-level clamps
+from Decision 8 are unconditional, so with the flag off:
+
+- `fetch_catalog_document` still clamps its serialized return, and `max_chars=0` still returns
+  the ceiling rather than the whole document;
+- `search_vectorstore_hybrid` still clamps its serialized output.
+
+Those are deliberately not gated. The `max_chars=0` behaviour is a defect, not a feature, and a
+rollback switch that restores it would be a switch for reintroducing a bug. An operator who
+needs the pre-change tool semantics reverts the code; the flag exists to disable the in-loop
+reduction, which is the part with runtime behaviour worth toggling. Documented here so nobody
+plans a rollback around a guarantee this flag does not make.
 
 ## Open Questions
 

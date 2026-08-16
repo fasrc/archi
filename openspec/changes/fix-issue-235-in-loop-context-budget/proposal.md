@@ -35,11 +35,16 @@ cannot distinguish a real improvement from an arm that serves users worse.
 - Evaluate the **complete** request the provider will receive — system prompt and tool schemas
   included, not the conversation messages alone — so the check cannot sit below its threshold
   while the real request exceeds the window.
-- Derive the budget from `self._get_model_context_window()` minus the **existing** 15%
-  convention already used by the pre-loop budget, documented for what it actually is: a
-  generation reserve. `ModelInfo.context_window` is a *total* sequence length covering prompt
-  and response, so a budget equal to the full window is exceeded by any answer. No hard-coded
-  context length.
+- Derive the budget from `self._get_model_context_window()` minus a **generation reserve** —
+  `ModelInfo.context_window` is a *total* sequence length covering prompt and response, so a
+  budget equal to the full window is exceeded by any answer. The reserve is the model call's
+  *effective* output cap where one applies, with the existing 15% convention as the floor; the
+  declared metadata is not sufficient on its own, since a configured cap can exceed it and some
+  providers never apply their own declared value. No hard-coded context length.
+- **Derive it from the model bound to each request.** A request-local view currently inherits
+  the source pipeline's `default_provider`/`default_model` and its cached middleware
+  (`app.py:184-227`), so a request overriding down to a smaller model would get a threshold
+  sized for the pipeline default and no in-loop reduction at all.
 - **Enforce a per-result size ceiling on every tool result that survives reduction**, applied in
   the middleware and therefore independent of which tool produced it. Preservation selects by
   recency across all tool results, so the surviving set can include MCP tools loaded at runtime
@@ -109,7 +114,9 @@ None. The behaviour belongs to the existing agent context-resilience capability.
   surfaces relied on so a langchain upgrade fails loudly instead of silently disabling the
   bound.
 - **Config**: one new optional block under `services.chat_app`; absent config preserves
-  current behaviour with the middleware enabled at derived defaults.
+  current behaviour with the middleware enabled at derived defaults. `enabled: false` disables
+  **in-loop editing only** — the source-level clamps stay active, so it is not a full rollback
+  of this change (the `max_chars=0` behaviour it fixes is a defect, not a toggle).
 - **Runtime**: every model call gains an O(messages) token approximation. No extra provider
   calls, no network I/O.
 - **Benchmark**: unblocks the #205 group-6 grading gate, which is stopped pending this fix.

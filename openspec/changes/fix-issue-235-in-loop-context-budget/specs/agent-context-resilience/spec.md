@@ -183,8 +183,12 @@ The reported context window is a **total** sequence length covering both the pro
 model's generation, so the reserve exists to leave room for the response; a budget equal to the
 full window would be exceeded by any answer the model produces.
 
-Where the provider declares an effective output limit for the model, the reserve MUST be at
-least that limit. A percentage alone is not sufficient: a model declaring a large output limit
+Where an effective output limit applies to the model call, the reserve MUST be at least that
+limit. The effective limit is the cap the request actually carries — a cap configured on the
+bound model takes precedence over the provider's declared metadata, and the metadata applies
+only when no configured cap is set. Sizing the reserve from metadata alone is not sufficient in
+either direction: a configured cap larger than the metadata reopens the overflow, and metadata
+a provider never applies overstates the reserve. A percentage alone is not sufficient: a model declaring a large output limit
 against a large window can be asked to permit more generation than a percentage reserve leaves
 free, and the provider then rejects the request before the in-loop budget is ever consulted.
 The percentage SHALL act as the floor when no output limit is declared, and MUST default to the
@@ -201,10 +205,16 @@ than install a bound whose budget is not positive.
 - **THEN** the in-loop budget leaves at least that output limit free
 - **AND** the budget is not merely the window reduced by the percentage
 
-#### Scenario: The percentage applies when no output limit is declared
+#### Scenario: The percentage applies when no output limit is in effect
 
-- **WHEN** the configured model declares no effective output limit
+- **WHEN** no output cap is configured on the bound model and the provider declares none
 - **THEN** the in-loop budget is the window reduced by the percentage
+
+#### Scenario: A configured cap takes precedence over declared metadata
+
+- **WHEN** the bound model carries a configured output cap that differs from the provider's
+  declared metadata
+- **THEN** the reserve is sized from the configured cap
 
 #### Scenario: A reserve consuming the whole window fails open
 
@@ -235,6 +245,32 @@ than install a bound whose budget is not positive.
 - **THEN** no in-loop reduction is installed
 - **AND** the agent runs without raising
 
+### Requirement: The budget is derived from the model bound to the request
+
+The in-loop budget SHALL be derived from the model **actually bound to the request**, not from
+the pipeline's default model, whenever a request is served by a model other than that default.
+A request-local view MUST NOT inherit a budget, or a previously built reduction, sized for a
+different model.
+
+Without this, a request that selects a smaller model inherits a threshold sized for a larger
+one and receives no in-loop reduction at all — overflowing on precisely the path where a user
+chose the smaller model deliberately.
+
+#### Scenario: An override to a smaller model gets the smaller budget
+
+- **WHEN** a request overrides the pipeline default with a model whose context window is smaller
+- **THEN** the in-loop budget for that request is derived from the overriding model's window
+
+#### Scenario: A request-local view does not reuse the source's reduction
+
+- **WHEN** a request-local view is built from a pipeline that has already built its reduction
+- **THEN** the view builds its own rather than inheriting the source's
+
+#### Scenario: The shared pipeline is unaffected by the override
+
+- **WHEN** a request-local view derives its own budget
+- **THEN** the shared pipeline's own budget and cached state are unchanged
+
 ### Requirement: Reduction preserves the most recent tool results and the grounding retrieval evidence
 
 Reduction SHALL remove the **oldest** tool results first and MUST preserve a configurable
@@ -245,6 +281,14 @@ Results produced by the vector retrieval tool SHALL be exempt from reduction whi
 exemption is provably cheap: they carry the grounding evidence the answer cites, and they are
 bounded by the retrieval tool's own document and character caps combined with its per-turn call
 budget.
+
+The exemption SHALL additionally be bounded **by count**: at most the retrieval tool's per-turn
+call budget of the most recent retrieval results are exempt, and any beyond that MUST be
+reducible. The call budget does not limit how many results bearing that tool name appear — once
+the budget is exhausted the tool returns a synthetic refusal under the same name on every
+further call, so a model that ignores the refusal accumulates exempt messages up to the
+recursion limit. Those refusals carry no evidence, so making them clearable is what keeps the
+exemption bounded by the figure it was checked against.
 
 Because those caps are configurable rather than invariant, the runtime SHALL compute the worst
 case size of the exempted content from the values actually in force and compare it against the
@@ -271,6 +315,13 @@ tool call's arguments on the assistant message MUST be retained, so the model ca
 - **THEN** those results are not cleared regardless of age
 - **AND** they retain their original content where within the per-result ceiling, and its truncated
   partial form otherwise
+
+#### Scenario: Retrieval refusals beyond the call budget are reducible
+
+- **WHEN** more results bearing the retrieval tool's name are present than its per-turn call
+  budget, because the tool returned refusals after the budget was exhausted
+- **THEN** only the most recent results up to the call budget are exempt
+- **AND** the remainder are cleared like any other tool result
 
 #### Scenario: An oversized exemption is dropped rather than honoured
 
