@@ -29,6 +29,9 @@ from langgraph.errors import GraphRecursionError
 from langgraph.graph.state import CompiledStateGraph
 
 from src.archi.pipelines.agents.tools import initialize_mcp_client
+from src.archi.pipelines.agents.utils.context_middleware import (
+    build_context_middleware,
+)
 from src.archi.pipelines.agents.utils.history_utils import infer_speaker
 from src.archi.pipelines.agents.utils.mcp_utils import AsyncLoopThread
 from src.archi.pipelines.agents.utils.prompt_utils import get_role_context, read_prompt
@@ -1377,7 +1380,14 @@ class BaseReActAgent:
 
     def _build_static_middleware(self) -> List[Callable]:
         """Build and returns static middleware defined in the config."""
-        return []
+        return build_context_middleware(
+            model=self.agent_llm,
+            context_window=self._get_model_context_window(),
+            config=self.config,
+            pipeline_config=self.pipeline_config,
+            tool_budgets=self._tool_budgets(),
+            model_label=f"{self.default_provider}/{self.default_model}",
+        )
 
     def _store_documents(self, stage: str, docs: Sequence[Document]) -> None:
         """Centralised helper used by tools to record documents into the active memory."""

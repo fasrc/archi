@@ -69,12 +69,12 @@ The wrapper is ours; only `ClearToolUsesEdit` comes from langchain. Do **not** s
 
 ## 6. Wire into the agent — RED then GREEN
 
-- [ ] 6.1 Failing test in `tests/unit/test_react_agent_tool_budget.py`: with a known context window, `_build_static_middleware()` returns a middleware list whose **trigger value** is correct — not merely non-empty (fails on `origin/dev`, which returns `[]`). The value matters because nothing in the existing suite reaches this method: measured, the whole 1910-test suite calls it **zero** times, every test double overriding it
-- [ ] 6.2 Failing test: with an undeterminable context window, `_build_static_middleware()` returns `[]` (behaviour identical to today)
-- [ ] 6.3 Failing test: the middleware list reaches `create_agent(...)` — assert on what `_create_agent` is called with
-- [ ] 6.4 Watch 6.1–6.3 fail, then make `_build_static_middleware` a thin call site delegating to `context_middleware.build_context_middleware`. **Not `context_budget.py`** — it cannot import the middleware class without an import cycle (proved: `cannot import name 'ContextBudget' from partially initialized module`)
-- [ ] 6.5 Verify the `base_react.py` diff is a handful of lines with no black reflow of surrounding code
-- [ ] 6.6 Wiring test against the **real** agent, not helper stubs: construct `FASRCDocsAgent` with an overridden retrieval output ceiling and call budget, then assert the tool it builds emits results within that ceiling *and* the middleware it builds sized its exemption from those same values. A synthetic-input test alone would pass while production wiring used stale defaults
+- [x] 6.1 Failing test in `tests/unit/test_react_agent_tool_budget.py`: with a known context window, `_build_static_middleware()` returns a middleware list whose **trigger value** is correct — not merely non-empty (fails on `origin/dev`, which returns `[]`). The value matters because nothing in the existing suite reaches this method: measured, the whole 1910-test suite calls it **zero** times, every test double overriding it
+- [x] 6.2 Failing test: with an undeterminable context window, `_build_static_middleware()` returns `[]` (behaviour identical to today)
+- [x] 6.3 Failing test: the middleware list reaches `create_agent(...)` — assert on what `_create_agent` is called with
+- [x] 6.4 Watch 6.1–6.3 fail, then make `_build_static_middleware` a thin call site delegating to `context_middleware.build_context_middleware`. **Not `context_budget.py`** — it cannot import the middleware class without an import cycle (proved: `cannot import name 'ContextBudget' from partially initialized module`)
+- [x] 6.5 Verify the `base_react.py` diff is a handful of lines with no black reflow of surrounding code
+- [x] 6.6 Wiring test against the **real** agent, not helper stubs: construct `FASRCDocsAgent` with an overridden retrieval output ceiling and call budget, then assert the tool it builds emits results within that ceiling *and* the middleware it builds sized its exemption from those same values. A synthetic-input test alone would pass while production wiring used stale defaults. **Deviation:** the output ceiling is *not* config-overridable — `_update_vector_retrievers` calls `create_retriever_tool` without `max_result_chars`, so the tool always uses `DEFAULT_RETRIEVER_RESULT_CHARS`. The test overrides the call budget only, and asserts the coupling end-to-end instead: the real tool's actual oversized output is fed through the real `clamp_tool_results` at the resolved `per_result_tokens` and must come back **unmodified**. Mutation-checked — lowering `DEFAULT_PER_RESULT_TOKENS` to 1700 fails it
 
 ## 7. Request-local model overrides — RED then GREEN
 
@@ -118,8 +118,15 @@ not among them. Any self-hosted or newly-released model therefore yields `None`.
 - [x] 7A.4 An uninstallable limit now logs a warning naming the provider and model, so the
       difference between "protected" and "installed nothing" is visible. A deliberate
       `enabled: false` stays silent — a warning that fires when nothing is wrong is ignored
-- [ ] 7A.5 Set `context_window` in `deploy/fasrc-dev/config.yaml` before the goldenset run in
-      group 12, or that run measures an agent with no in-loop limit installed
+- [x] 7A.5 Set `context_window` in `deploy/fasrc-dev/config.yaml` before the goldenset run in
+      group 12, or that run measures an agent with no in-loop limit installed. **Set to
+      32768** — measured from both vLLM servers' `/v1/models` (`max_model_len`), not the model
+      card, which claims 262144 for Qwen3.8-27B; the server's launch flag is what rejects a
+      request. Paired with `keep: 2`, because 32768 sits below the 39375 threshold at which
+      the retrieval exemption survives the irreducible-floor guard at the default `keep: 3`.
+      Verified: `trigger=26215 reserve=4915 keep=2 exempt_count=2`, and 26215 + 4915 + 1638 =
+      32768 exactly. The file is git-excluded, so this is not in the diff — it must be
+      re-applied on any host that redeploys
 
 ## 8. Behavioural tests — the acceptance criteria
 
