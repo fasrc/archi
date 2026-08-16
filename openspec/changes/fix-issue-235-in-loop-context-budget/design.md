@@ -21,7 +21,7 @@ artifacts under `bench_out/`.
 
 | Contributor | Per unit | Cap | Max share of a 32 K window |
 |---|---|---|---|
-| `search_vectorstore_hybrid` result | `max_documents=4` × `max_chars=800` + headers ≈ 3.6 KB ≈ **900 tok** (`retriever.py:71-72`) | **2 calls** (`DEFAULT_TOOL_BUDGETS`) | ~1.8 K — **5.5%** |
+| `search_vectorstore_hybrid` result | `max_documents=4` × `max_chars=800` + headers ≈ 3.6 KB ≈ **900 tok** at ordinary metadata sizes (`retriever.py:71-72`; the header itself is uncapped — see Decision 8) | **2 calls** (`DEFAULT_TOOL_BUDGETS`) | ~1.8 K — **5.5%** |
 | `fetch_catalog_document` result | `max_chars` **default** 4000 + path + metadata preview (≤800) ≈ **1.05 K tok** (`local_files.py:121,477-539`) | **none** — only `recursion_limit=50` | ~24 K — **73%** |
 | system prompt + tool schemas | measured per request (see Decision 3) | — | varies with config and toolset |
 

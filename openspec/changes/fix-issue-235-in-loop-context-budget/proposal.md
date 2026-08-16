@@ -12,8 +12,8 @@ through the one component that knows the real budget. The reactive catch at
 The dominant accumulator is `fetch_catalog_document`: ~1.05 K tokens per call
 (`max_chars=4000` plus a metadata preview) with **no** cap other than `recursion_limit=50`.
 Roughly 20–24 calls fill a 32 K window, and the recursion limit permits ~24 tool/model round
-trips — the two numbers meet. Retrieval cannot be the driver: its result is hard-capped at
-`max_documents=4 × max_chars=800` ≈ 900 tokens per call under a 2-call budget, and
+trips — the two numbers meet. Retrieval cannot be the driver: under a 2-call budget its result
+is ~900 tokens per call at `max_documents=4 × max_chars=800`, and
 `retriever.py:134-138` passes the *full* document list to `store_docs` while formatting only
 the first four for the model, so recorded source counts are decoupled from context cost by
 construction (an `ok` benchmark row carried 67 sources; `question_94` overflowed with 18).
