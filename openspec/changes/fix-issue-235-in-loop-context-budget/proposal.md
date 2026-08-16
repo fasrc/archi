@@ -31,7 +31,7 @@ cannot distinguish a real improvement from an arm that serves users worse.
   context-editing middleware that runs on every model call inside the loop.
 - Bound accumulated tool content by **tokens, not call counts**: once the accumulated prompt
   exceeds the budget, the oldest tool results are replaced with an instructive placeholder
-  while the N most recent are preserved at full fidelity.
+  while the N most recent are preserved unreduced, subject to the per-result ceiling below.
 - Evaluate the **complete** request the provider will receive — system prompt and tool schemas
   included, not the conversation messages alone — so the check cannot sit below its threshold
   while the real request exceeds the window.

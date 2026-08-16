@@ -73,7 +73,7 @@ was retrieved and recorded; the loop then drowned it.
 - Derive the budget from `_get_model_context_window()`; no hard-coded context length.
 - Make every term of that budget an *enforced* ceiling rather than a default, so the arithmetic
   is a bound and not an expectation.
-- Preserve the answer: recent reads stay at full fidelity, grounding evidence is kept while
+- Preserve the answer: recent reads are never cleared, grounding evidence is kept while
   keeping it is provably cheap.
 - Make the canned apology genuinely abnormal rather than merely rarer.
 - Fail open in every unknown or misconfigured case; fail *toward the bound* when a protective
@@ -102,7 +102,7 @@ The issue poses a two-way fork. Both options were rejected in favour of a third.
 |---|---|---|
 | (a) Cumulative budget + graceful stop | refuse new tool content once consumed; tell the model to answer from what it holds | **Rejected.** The model keeps requesting reads it cannot receive, and answers from partial evidence with no signal about which evidence it lost. Wastes the remaining recursion budget on refused calls. |
 | (b) Adaptive per-read shrinking | lower effective `max_chars` as the accumulated total grows | **Rejected.** Degrades *every* read including the decisive one, and the shrink schedule is a second, independent notion of the budget — precisely what the issue warns against. |
-| **(c) Clear oldest tool results** | keep the N most recent at full fidelity; replace older ones with a placeholder | **Chosen.** |
+| **(c) Clear oldest tool results** | keep the N most recent unreduced; replace older ones with a placeholder | **Chosen.** |
 
 (c) drops what the model has already reasoned over and keeps what it is currently reasoning
 about. Recent reads stay complete, so the answer is computed on whole evidence rather than
@@ -370,7 +370,7 @@ speculatively is not.
   so the residual is measured rather than assumed.
 
 - **The model may answer from cleared-away evidence it half-remembers** → Recent reads stay at
-  full fidelity and retrieval results are exempt, so the grounding chain is intact. The
+  uncleared and retrieval results are exempt, so the grounding chain is intact. The
   placeholder explicitly tells the model the content is gone rather than letting it silently
   infer.
 

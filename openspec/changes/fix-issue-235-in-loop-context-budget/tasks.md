@@ -77,8 +77,8 @@ The wrapper is ours; only `ClearToolUsesEdit` comes from langchain. Do **not** s
 - [ ] 7.4 Failing test: when non-reducible content alone exceeds the budget, reduction clears everything it can and does not raise; the reactive handler covers the remainder
 - [ ] 7.5 Failing test: a message list within budget is passed through untouched
 - [ ] 7.6 Failing test (the boundary criterion): a run performing many document reads still returns a substantive answer, not the canned apology
-- [ ] 7.7 Failing test: the N most recent tool results retain original content after reduction
-- [ ] 7.8 Failing test: retrieval-tool results retain original content regardless of age under default caps
+- [ ] 7.7 Failing test: the N most recent tool results are not cleared — they retain original content when within the per-result ceiling, and the ceiling-truncated partial form when over it. Preservation exempts from *clearing*, never from the ceiling
+- [ ] 7.8 Failing test: retrieval-tool results are not cleared regardless of age under default caps — same ceiling qualification as 7.7
 - [ ] 7.9 Failing test: with retrieval caps raised past the exemption fraction, retrieval results become clearable and the bound still holds
 - [ ] 7.10 Failing test: tool-call/tool-result pairing survives reduction — no dangling `tool_call_id`
 - [ ] 7.11 Failing test: reduction is applied on a *later* model call when the budget is first exceeded mid-loop, not only before the loop

@@ -189,7 +189,7 @@ convention governs both.
 ### Requirement: Reduction preserves the most recent tool results and the grounding retrieval evidence
 
 Reduction SHALL remove the **oldest** tool results first and MUST preserve a configurable
-number of the most recent tool results at full fidelity, so the agent can still answer from
+number of the most recent tool results unreduced, so the agent can still answer from
 complete evidence rather than from uniformly degraded fragments.
 
 Results produced by the vector retrieval tool SHALL be exempt from reduction while that
@@ -211,13 +211,17 @@ tool call's arguments on the assistant message MUST be retained, so the model ca
 #### Scenario: The most recent tool results survive reduction
 
 - **WHEN** reduction runs with a preserve count of N and more than N tool results are present
-- **THEN** the N most recent tool results retain their original content
+- **THEN** the N most recent tool results are not cleared
+- **AND** they retain their original content where within the per-result ceiling, and its truncated
+  partial form otherwise
 
 #### Scenario: Retrieval results are exempt while the exemption is cheap
 
 - **WHEN** reduction runs, the accumulated messages include results from the vector retrieval
   tool, and the worst-case exempted size is within the configured fraction of the budget
-- **THEN** those results retain their original content regardless of age
+- **THEN** those results are not cleared regardless of age
+- **AND** they retain their original content where within the per-result ceiling, and its truncated
+  partial form otherwise
 
 #### Scenario: An oversized exemption is dropped rather than honoured
 
