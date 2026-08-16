@@ -107,8 +107,22 @@ DEFAULT_COUNTING_MARGIN_FRACTION = 0.05
 # Most recent tool results preserved unreduced. Upstream's own default.
 DEFAULT_KEEP = 3
 
-# Per-result token ceiling used for the exemption/preserve arithmetic.
-DEFAULT_PER_RESULT_TOKENS = 1500
+# Per-result token ceiling, used both for the floor arithmetic here and as the
+# middleware's universal ceiling on retained results.
+#
+# This is a **backstop for tools that do not clamp themselves** (MCP tools,
+# caller-supplied ones), not an override of the ones that do. It must therefore
+# sit *above* the tuned source clamps in ``tools/``: the retriever's is 8000
+# characters, which measures ~2011 tokens once the counter's per-message
+# overhead is added. A ceiling below that silently re-truncates every full-size
+# retrieval result — 25% of it — on every model call.
+# ``test_ceiling_sits_above_both_source_clamps`` pins the relationship so
+# raising either source clamp fails loudly here.
+DEFAULT_PER_RESULT_TOKENS = 2100
+
+# Below this, the character ceiling is too small to hold the truncation marker
+# and ``clamp_result`` returns silently-unmarked partial text.
+MIN_PER_RESULT_TOKENS = 16
 
 # Largest share of the budget the retrieval exemption may occupy before it is
 # dropped in favour of the bound.
@@ -227,10 +241,13 @@ def read_settings(
         keep=_coerce_positive_int(
             merged.get("keep", DEFAULT_KEEP), DEFAULT_KEEP, "keep"
         ),
-        per_result_tokens=_coerce_positive_int(
-            merged.get("per_result_tokens", DEFAULT_PER_RESULT_TOKENS),
-            DEFAULT_PER_RESULT_TOKENS,
-            "per_result_tokens",
+        per_result_tokens=max(
+            MIN_PER_RESULT_TOKENS,
+            _coerce_positive_int(
+                merged.get("per_result_tokens", DEFAULT_PER_RESULT_TOKENS),
+                DEFAULT_PER_RESULT_TOKENS,
+                "per_result_tokens",
+            ),
         ),
         exemption_fraction=_coerce_fraction(
             merged.get("exemption_fraction", DEFAULT_EXEMPTION_FRACTION),
@@ -293,14 +310,24 @@ def resolve_budget(
 
     exempt_floor = max(0, retrieval_call_budget) * settings.per_result_tokens
     exempt_count = max(0, retrieval_call_budget)
-    if exempt_floor > trigger * settings.exemption_fraction:
+
+    # The exemption is not the only thing the clearing pass cannot touch: the
+    # `keep` most recent results are preserved by upstream regardless of tool.
+    # Sizing the guard against the exemption alone undercounts the irreducible
+    # floor by `keep x per_result_tokens` — 6300 tokens at the defaults — and
+    # the two sets are disjoint in the ordinary case (the exempt results are the
+    # earliest, `keep` holds the latest), so the sum is the right bound. Where
+    # they do overlap it over-estimates, which errs toward dropping the
+    # exemption: the direction this design fails in on purpose.
+    irreducible_floor = exempt_floor + settings.keep * settings.per_result_tokens
+    if irreducible_floor > trigger * settings.exemption_fraction:
         logger.warning(
-            "Dropping the retrieval exemption: its worst case (%d calls x %d "
-            "tokens = %d) exceeds %.0f%% of the %d-token budget. Retrieval "
-            "results will be cleared like any other tool result.",
-            retrieval_call_budget,
-            settings.per_result_tokens,
-            exempt_floor,
+            "Dropping the retrieval exemption: the content it and the %d "
+            "preserved results hold unconditionally (%d tokens) exceeds %.0f%% "
+            "of the %d-token budget. Retrieval results will be cleared like any "
+            "other tool result.",
+            settings.keep,
+            irreducible_floor,
             settings.exemption_fraction * 100,
             trigger,
         )

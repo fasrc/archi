@@ -232,9 +232,29 @@ class TestExemptionSizing:
         assert b.exempt_count == 0
         assert any("exempt" in r.message.lower() for r in caplog.records)
 
+    def test_the_floor_counts_the_preserved_results_too(self):
+        """``keep`` results are as unclearable as exempt ones.
+
+        Sizing the guard against the exemption alone undercounts what the
+        clearing pass cannot touch by ``keep x per_result_tokens``, so an
+        exemption that looks affordable is admitted into a budget that cannot
+        actually carry it.
+        """
+        s = _settings(per_result_tokens=1500, keep=3, exemption_fraction=1 / 3)
+
+        b = resolve_budget(
+            context_window=WINDOW, output_cap=None, settings=s, retrieval_call_budget=4
+        )
+
+        # The exemption alone is 6000, under a third of the 26215 budget; adding
+        # the 4500 held by `keep` puts the irreducible total over it.
+        assert b.exempt_floor_tokens == 6000
+        assert 6000 < b.trigger * (1 / 3) < 6000 + 4500
+        assert b.exempt_count == 0
+
     def test_raising_the_call_budget_alone_flips_the_exemption_off(self):
         """Task 3.8: the check must track the runtime value, not a constant."""
-        s = _settings(per_result_tokens=2000, exemption_fraction=1 / 3)
+        s = _settings(per_result_tokens=1000, exemption_fraction=1 / 3)
 
         low = resolve_budget(
             context_window=WINDOW, output_cap=None, settings=s, retrieval_call_budget=2
