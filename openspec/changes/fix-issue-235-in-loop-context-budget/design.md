@@ -148,8 +148,20 @@ Alternative considered: `SummarizationMiddleware`. Rejected — it spends an ext
 per compaction and introduces summarization loss into the evidence chain that the citation
 layer depends on.
 
-**Behavioural note.** `ClearToolUsesEdit.apply` mutates `request.messages` in place; the graph
-**state** retains full history. Each model call therefore receives a freshly pruned *view* and
+**Behavioural note — and the copy step it depends on.** `ClearToolUsesEdit.apply` performs
+`messages[idx] = tool_message.model_copy(...)`: it replaces **list elements** and never mutates
+the `ToolMessage` objects themselves. Measured on the pinned version — after `apply`, the
+original object still holds its 4000 characters while the list slot holds `[cleared]`.
+
+That distinction is the whole safety argument, and it cuts both ways. Because the objects are
+untouched, a **shallow** `list(...)` copy is sufficient to protect the graph state — verified:
+with a copied list, state keeps 4000 characters and the view gets the placeholder. But without
+that copy, passing the state's own list means the replacement lands in state, permanently
+replacing prior results with placeholders in subsequent turns, streamed events, and persisted
+traces. An earlier revision of this document asserted "the graph state retains full history"
+as though it were a property of the edit; it is a property of a copy step that revision never
+specified. The wrapper copies the list before applying and forwards the copy. No deep copy is
+required, and specifying one would be waste. Each model call therefore receives a freshly pruned *view* and
 nothing is permanently destroyed. State still grows across the run, but it never reaches the
 provider — which is the property that matters.
 
@@ -224,8 +236,25 @@ SUT budget depends on whether `extra_kwargs` sets `max_tokens` in the deployment
 Task 3.10 now asserts the effective-cap behaviour on both branches instead of asserting a
 premise that was never true.
 
-If the reserve ever consumes the whole window, the budget is not positive and the runtime fails
-open rather than installing a middleware that would clear everything.
+**The reserve cannot double as the counting margin.** Once the reserve is fully allocated to the
+effective output cap, nothing is left to absorb approximation error. On a 200 K window with a
+64 K cap the trigger sits at 136 K of *approximately* counted prompt; any underestimate means
+real prompt plus permitted generation exceeds the window. And the self-correcting property
+claimed elsewhere in this document does not save it — the provider rejects *that* call, the
+reactive handler returns the canned degradation, and there is no subsequent model call at which
+re-evaluation could correct the estimate.
+
+So the budget carries an explicit, separately configurable **counting margin** on top of the
+reserve:
+
+    budget = context_window − generation_reserve − counting_margin
+
+The margin exists solely to cover the gap between `count_tokens_approximately` and the
+provider's real tokenizer, and is documented as such so it is not silently re-purposed the way
+the 15% was.
+
+If the reserve and margin together consume the whole window, the budget is not positive and the
+runtime fails open rather than installing a middleware that would clear everything.
 
 ### Decision 4 — Exempt `search_vectorstore_hybrid` results, but only while the exemption is provably small
 
@@ -256,11 +285,27 @@ to `recursion_limit`, not up to the call budget, and a floor written as
 `tool_budget × ceiling` undercounts them.
 
 These refusals carry no evidence — they are an instruction, and a stale one after the first —
-so the fix is to make them clearable rather than to inflate the floor. The exemption is bounded
-**by count as well as by name**: at most `tool_budget("search_vectorstore_hybrid")` of the most
-recent retrieval results are exempt, and any beyond that are reducible like anything else. That
-needs no content inspection, holds whatever the model does, and makes the floor formula true by
-construction rather than by assumption.
+so the fix is to make them clearable rather than to inflate the floor.
+
+**Two corrections to how an earlier revision proposed doing that.**
+
+First, it specified both `exclude_tools=("search_vectorstore_hybrid",)` *and* a count bound.
+Those are mutually exclusive: `exclude_tools` exempts **every** message bearing the name, so the
+count bound could never take effect. Since the wrapper is ours (Decision 2), the exemption is
+selected in the wrapper and `exclude_tools` is not used at all. Upstream's option is global by
+design; ours needs to be conditional, so we do not delegate it.
+
+Second — and this one was backwards — it exempted the **most recent** N retrieval results. The
+refusals are precisely the most recent ones, since they can only be produced *after* the budget
+is spent. With a budget of 2 and five calls, the newest two are refusals: that revision would
+have protected the refusals and made the two genuine retrievals clearable, which is worse than
+having no exemption at all.
+
+The ordering is the fix, and it needs no content inspection or marking: **exempt the first
+(oldest) results up to the call budget.** By construction the budget permits exactly N successes
+before it starts refusing, so the first N retrieval-named results *are* the successful ones and
+everything after them is a refusal. Selecting oldest-N therefore exempts exactly the evidence
+and leaves every refusal reducible.
 
 So the exemption rests on the enforced serialized ceiling from Decision 8, and is
 **conditional and self-checking**: at construction the runtime computes
@@ -433,10 +478,20 @@ Net effect: a request overriding a 200 K-window default down to a 32 K model get
 sized for 200 K and no in-loop reduction at all — overflowing exactly the way this change exists
 to prevent, on the path where a user deliberately selected a smaller model.
 
-**Fix:** the view is given its own identity and its own middleware. `_build_request_local_pipeline`
-takes the provider and model already in scope at its call site (`app.py:2130-2140` has both),
-assigns them to the view, and resets `_static_middleware = None` alongside the `_static_tools`
-reset it already performs — so `refresh_agent(force=True)` rebuilds the middleware against the
+**Passing the provider *name* is not enough.** `_create_provider_llm` builds a non-cached
+provider from the active YAML `ProviderConfig` (`app.py:1640-1649`), whereas
+`_get_model_context_window()` calls `get_provider(self.default_provider)` with no config
+(`base_react.py:1606-1616`). For a custom model ID that lookup returns no metadata — silently
+disabling the middleware, the failure this decision exists to prevent — and for a built-in ID
+with deployment-specific metadata it can size the budget from stale registry defaults. The
+window must come from the model actually bound: the view carries the resolved window (or the
+configured provider metadata that yields it) rather than two strings to be re-resolved later,
+and re-resolution by name is the fallback, not the mechanism.
+
+**Fix:** the view is given its own identity, its own resolved window, and its own middleware.
+`_build_request_local_pipeline` takes the provider, model and resolved metadata already
+available at its call site (`app.py:2130-2140`), assigns them to the view, and resets
+`_static_middleware = None` alongside the `_static_tools` reset it already performs — so `refresh_agent(force=True)` rebuilds the middleware against the
 overridden model. The budget derivation itself stays in the helper module and is unit-tested
 there; `app.py` gains only assignments, per its no-coverage constraint.
 

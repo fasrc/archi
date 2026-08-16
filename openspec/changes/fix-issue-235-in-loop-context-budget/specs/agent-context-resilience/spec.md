@@ -63,11 +63,19 @@ magnitude, so a call count does not bound tokens.
 - **THEN** the runtime does not raise
 - **AND** logs the measured overage rather than reporting the request as within budget
 
-#### Scenario: A prompt within budget is left untouched
+#### Scenario: A prompt within budget and within every ceiling is left untouched
 
-- **WHEN** the complete request assembled for a model call is within the token budget
+- **WHEN** the complete request assembled for a model call is within the token budget **and**
+  every tool result is within the per-result ceiling
 - **THEN** no tool content is reduced
 - **AND** the model receives the messages unchanged
+
+#### Scenario: A within-budget request still honours the per-result ceiling
+
+- **WHEN** the complete request is within the token budget but one tool result exceeds the
+  per-result ceiling
+- **THEN** that result is still truncated to the ceiling
+- **AND** no other result is cleared, because the request was already within budget
 
 #### Scenario: The bound applies on every model call, not once per invocation
 
@@ -237,7 +245,16 @@ than install a bound whose budget is not positive.
 
 - **WHEN** the context window cannot be determined for the configured provider and model
 - **THEN** no in-loop reduction is installed
-- **AND** the agent behaves exactly as it did before this capability existed
+- **AND** the agent runs without raising
+
+Note: this promises only that no in-loop reduction is installed. The per-tool source clamps are
+unconditional, so behaviour is not identical to that of a deployment predating this capability.
+
+#### Scenario: The graph state retains what reduction removed from the request
+
+- **WHEN** reduction clears or truncates results for a model call
+- **THEN** the conversation state retains the original result contents
+- **AND** a subsequent turn is not served from placeholder content
 
 #### Scenario: An invalid or non-positive context window fails open
 
@@ -282,9 +299,11 @@ exemption is provably cheap: they carry the grounding evidence the answer cites,
 bounded by the retrieval tool's own document and character caps combined with its per-turn call
 budget.
 
-The exemption SHALL additionally be bounded **by count**: at most the retrieval tool's per-turn
-call budget of the most recent retrieval results are exempt, and any beyond that MUST be
-reducible. The call budget does not limit how many results bearing that tool name appear — once
+The exemption SHALL additionally be bounded **by count**, selecting the **earliest** retrieval
+results up to the retrieval tool's per-turn call budget; any beyond that MUST be reducible.
+Selecting by recency would exempt exactly the wrong messages: the per-turn budget permits its
+allowance of successful calls before it begins refusing, so the newest results are the refusals
+and the earliest are the evidence. The call budget does not limit how many results bearing that tool name appear — once
 the budget is exhausted the tool returns a synthetic refusal under the same name on every
 further call, so a model that ignores the refusal accumulates exempt messages up to the
 recursion limit. Those refusals carry no evidence, so making them clearable is what keeps the
@@ -320,8 +339,9 @@ tool call's arguments on the assistant message MUST be retained, so the model ca
 
 - **WHEN** more results bearing the retrieval tool's name are present than its per-turn call
   budget, because the tool returned refusals after the budget was exhausted
-- **THEN** only the most recent results up to the call budget are exempt
-- **AND** the remainder are cleared like any other tool result
+- **THEN** only the earliest results up to the call budget are exempt
+- **AND** the refusals that follow them are cleared like any other tool result
+- **AND** the grounding evidence is not cleared in preference to a refusal
 
 #### Scenario: An oversized exemption is dropped rather than honoured
 

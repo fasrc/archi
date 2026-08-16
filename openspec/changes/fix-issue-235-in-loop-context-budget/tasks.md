@@ -21,8 +21,8 @@ is unbounded and no floor arithmetic holds.
 
 ## 3. Budget derivation helper — RED then GREEN
 
-- [ ] 3.1 Write failing unit tests for a new `src/archi/pipelines/agents/utils/context_budget.py`: budget = window − reserve, where reserve = `max(percentage_floor, ModelInfo.max_output_tokens)`
-- [ ] 3.2 Write failing tests for fail-open: `None`, zero, negative, and non-integer windows all produce no middleware; likewise when the reserve would consume the whole window (non-positive budget)
+- [ ] 3.1 Write failing unit tests for a new `src/archi/pipelines/agents/utils/context_budget.py`: budget = window − generation_reserve − counting_margin, with the reserve from the effective output cap (floor: percentage) and the margin a separate configurable term. The reserve cannot double as the margin — fully allocated to a 64 K cap on a 200 K window it leaves nothing to absorb approximation error, and the provider rejects that call before any later re-evaluation can correct it
+- [ ] 3.2 Write failing tests for fail-open: `None`, zero, negative, and non-integer windows all produce no middleware; likewise when reserve + margin would consume the whole window (non-positive budget). Assert only that no reduction is installed — **not** that behaviour matches a pre-change deployment, since the source clamps are unconditional
 - [ ] 3.3 Write failing tests for the three-layer config lookup (class default → `services.chat_app.context_editing` → `pipeline_config.context_editing`), later layers overriding earlier
 - [ ] 3.4 Write failing tests for invalid config values (non-numeric / out-of-range reserve, preserve count, exemption fraction): warn, use the default for that value, still install the bound
 - [ ] 3.5 Write a failing test that `enabled: false` installs no middleware
@@ -31,7 +31,7 @@ is unbounded and no floor arithmetic holds.
 - [ ] 3.8 Failing test: raising `services.chat_app.tool_budgets.search_vectorstore_hybrid` alone is enough to flip the exemption off — the check must track the runtime value, not a constant
 - [ ] 3.9 Failing test: a model whose effective output cap exceeds the percentage reserve gets a budget leaving at least that much free. Regression case from review: Claude Sonnet 4 is `context_window=200000, max_output_tokens=64000` (`anthropic_provider.py:20-29`) and `get_chat_model` applies it as `max_tokens` **when the caller sets none** (`:91-97`), so a flat 15% would permit a 170 K prompt alongside 64 K of requested generation against a 200 K window
 - [ ] 3.10 Failing test: the reserve reads the **effective** cap, not the metadata, on both branches — a configured `max_tokens` larger than `ModelInfo.max_output_tokens` wins, and declared metadata a provider never applies does not inflate the reserve. `LocalProvider` declares `max_output_tokens=8192` (`local_provider.py:184-192`) but passes it to neither constructor (`:94-125`), so the SUT budget is 27853 (percentage) when `extra_kwargs` sets no cap and smaller when it does. **Do not** assert "the local provider declares none" — an earlier revision claimed that and it is false
-- [ ] 3.11 Failing test: the exemption is bounded **by count** — with more retrieval-named results present than the per-turn call budget (the surplus being post-budget synthetic refusals from `base_react.py:1827-1834` returned via `retriever.py:114-121`), only the most recent up to the call budget are exempt and the rest are cleared
+- [ ] 3.11 Failing test: the exemption is bounded **by count and selects the earliest** — with more retrieval-named results present than the per-turn call budget (the surplus being post-budget synthetic refusals from `base_react.py:1827-1834` returned via `retriever.py:114-121`), the *first* N are exempt and the refusals after them are cleared. Assert the evidence survives and a refusal does not: selecting the newest N inverts this and protects refusals while clearing evidence
 - [ ] 3.12 Watch all of 3.1–3.11 fail for the right reason (module does not exist / returns nothing)
 - [ ] 3.13 Implement `context_budget.py` to the minimum that passes: config read + validation, budget derivation, exemption sizing, middleware construction
 - [ ] 3.14 Assert no hard-coded context length: `git diff origin/dev -- src/ | grep -E '^\+.*\b(32768|16384|8192)\b'` returns nothing
@@ -54,13 +54,14 @@ The wrapper is ours; only `ClearToolUsesEdit` comes from langchain. Do **not** s
 - [ ] 4.10 Failing test: a surviving result within the ceiling is passed through byte-identical with no truncation marker
 - [ ] 4.11 Contract test: `ModelRequest` exposes `system_prompt` (a review round asserted the field is named `system_message`; `dataclasses.fields()` on the pinned 1.0.3 says otherwise, and upstream's own `wrap_model_call` reads `system_prompt`). Pin it so a rename fails loudly here rather than at runtime
 - [ ] 4.12 Failing test (**ordering**): the per-result ceiling is applied *before* the clearing decision. With one oversized newest result and several older reducible ones that together fit once it is clamped, assert the older results are **not** cleared
-- [ ] 4.13 Watch 4.1–4.12 fail, then implement the `AgentMiddleware` wrapper: complete-request counter, universal per-result token ceiling over survivors applied first, delegation to upstream `ClearToolUsesEdit`, and the post-reduction re-measure
+- [ ] 4.13 Failing test (**state isolation**): the wrapper copies the message list before applying, so reduction never reaches conversation state. `apply` replaces list elements (`messages[idx] = ...model_copy(...)`) without mutating the `ToolMessage` objects, so a shallow `list(...)` copy suffices — verified on the pinned version: copied list ⇒ state keeps 4000 chars, view gets the placeholder. Assert state retains originals after a reduced call, and that a following turn is not served placeholder content
+- [ ] 4.14 Watch 4.1–4.12 fail, then implement the `AgentMiddleware` wrapper: complete-request counter, universal per-result token ceiling over survivors applied first, delegation to upstream `ClearToolUsesEdit`, and the post-reduction re-measure
 
 ## 5. Middleware construction and its options — RED then GREEN
 
 - [ ] 5.1 Failing test: the constructed edit carries `trigger` equal to the derived budget
 - [ ] 5.2 Failing test: `keep` defaults to 3 and honours a config override
-- [ ] 5.3 Failing test: `search_vectorstore_hybrid` is present in `exclude_tools` under default retrieval caps, and absent when the exemption is oversized
+- [ ] 5.3 Failing test: `exclude_tools` is **not** used — the exemption is selected in our wrapper. Upstream's option exempts every message bearing the name, which cannot compose with the count bound in 3.11; asserting both would be asserting a contradiction
 - [ ] 5.4 Failing test: `clear_tool_inputs` is `False` (the model must retain the record of its own call)
 - [ ] 5.5 Failing test: the placeholder text states the result was cleared for context reasons and instructs the model not to re-request it
 - [ ] 5.6 Watch 5.1–5.5 fail, then implement to green
@@ -79,8 +80,9 @@ The wrapper is ours; only `ClearToolUsesEdit` comes from langchain. Do **not** s
 - [ ] 7.1 Failing test: a request-local view built from a pipeline whose default has a large window, overridden to a model with a smaller one, derives its budget from the **overriding** model. Fails today twice over — `_get_model_context_window()` resolves the retained `default_provider`/`default_model` (`base_react.py:1597-1616`), and `_build_request_local_pipeline` never resets `_static_middleware`, so `refresh_agent` reuses the source's cached list (`base_react.py:1240-1250`)
 - [ ] 7.2 Failing test: the view builds its own middleware rather than inheriting the source's cached `_static_middleware`
 - [ ] 7.3 Failing test: building the view leaves the **shared** pipeline's budget and cached state untouched (the issue #86 invariant this function exists to hold)
-- [ ] 7.4 Watch 7.1–7.3 fail, then pass provider/model into `_build_request_local_pipeline` (both are already in scope at `app.py:2130-2140`), assign them on the view, and reset `_static_middleware = None` beside the existing `_static_tools` reset. Keep `app.py` to assignments — the derivation stays in the tested helper
-- [ ] 7.5 Verify the `app.py` diff adds no logic that diff-cover cannot reach
+- [ ] 7.4 Failing test on the **custom-provider** override path: `_create_provider_llm` builds a non-cached provider from the YAML `ProviderConfig` (`app.py:1640-1649`) while `_get_model_context_window()` re-resolves by name with no config (`base_react.py:1606-1616`) — for a custom model ID that yields no metadata and silently disables the middleware. Assert the view's budget comes from the bound model's resolved window, not a name lookup
+- [ ] 7.5 Watch 7.1–7.4 fail, then carry provider, model **and the resolved window/metadata** onto the view (all available at `app.py:2130-2140`) and reset `_static_middleware = None` beside the existing `_static_tools` reset. Keep `app.py` to assignments — the derivation stays in the tested helper
+- [ ] 7.6 Verify the `app.py` diff adds no logic that diff-cover cannot reach
 
 ## 8. Behavioural tests — the acceptance criteria
 
