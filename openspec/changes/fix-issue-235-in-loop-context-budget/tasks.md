@@ -145,9 +145,9 @@ not among them. Any self-hosted or newly-released model therefore yields `None`.
 
 ## 9. Regression surface
 
-- [ ] 9.1 `tests/unit/test_react_agent_context_overflow.py` passes unchanged — the reactive handler is retained as the last-resort net
-- [ ] 9.2 Existing tool-budget tests (`test_react_agent_tool_budget.py`, `test_retriever_tool_budget.py`, `test_subclass_agent_memory_binding.py`, `test_active_memory_contextvar.py`) pass unchanged
-- [ ] 9.3 The pre-loop budget in `_prepare_agent_inputs` is unmodified
+- [x] 9.1 `tests/unit/test_react_agent_context_overflow.py` passes unchanged — the reactive handler is retained as the last-resort net. **Verified:** zero diff vs `origin/dev`, all tests green
+- [x] 9.2 Existing tool-budget tests (`test_react_agent_tool_budget.py`, `test_retriever_tool_budget.py`, `test_subclass_agent_memory_binding.py`, `test_active_memory_contextvar.py`) pass unchanged. **Verified:** three files have zero diff; `test_react_agent_tool_budget.py` is `+262 -1` where the single deletion is a module-docstring bullet that was extended, not a test. No existing test function was removed, renamed, or altered — checked by diffing the `def test` lists. 50 tests green
+- [x] 9.3 The pre-loop budget in `_prepare_agent_inputs` is unmodified. **Verified:** no added or removed line in `base_react.py` matches `max_prompt_tokens`/`safety_margin`/`_prepare_agent_inputs`/`_compress_history`; the four hunks are the import, the two class attributes, `_build_static_middleware`, and the `_get_model_context_window` split
 
 ## 10. Gate and pre-PR review loop
 
