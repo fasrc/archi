@@ -179,15 +179,31 @@ is complete *and* has no tokenizer dependency. Because we own the wrapper (Decis
 counter is simply the function passed to `ClearToolUsesEdit.apply` — no upstream code is
 overridden or copied to obtain it.
 
-**The safety margin then becomes what it actually needs to be: an output-token reserve.**
-`ModelInfo.context_window` (`providers/base.py:40`) is the **total** sequence length, not an
-input budget — 200000 for Anthropic models, a static 32768 for the local provider
-(`local_provider.py:188`). vLLM enforces prompt + generation against `max_model_len`, which is
-exactly why the error phrasing the detector already matches reads "the model's context length
-is only N, resulting in a maximum input length of M". With prompt overhead now counted
-exactly, the margin no longer has to absorb anything unknown, so it is documented and
-configured as the generation reserve. Default stays 15% to keep one convention with the
-pre-loop budget.
+**The safety margin then becomes what it actually needs to be: an output-token reserve —
+and a percentage is not a safe way to size it.** `ModelInfo.context_window`
+(`providers/base.py:40`) is the **total** sequence length, not an input budget: 200000 for
+Anthropic models, a static 32768 for the local provider (`local_provider.py:188`). vLLM
+enforces prompt + generation against `max_model_len`, which is exactly why the error phrasing
+the detector already matches reads "the model's context length is only N, resulting in a
+maximum input length of M".
+
+A flat 15% is demonstrably insufficient for models that declare a large output limit. Claude
+Sonnet 4 is configured `context_window=200000, max_output_tokens=64000`
+(`anthropic_provider.py:20-29`), and `get_chat_model` passes that straight through as
+`max_tokens` when the caller does not set one (`anthropic_provider.py:91-97`). A 15% reserve
+would permit a **170 K** prompt while the provider is simultaneously asked to allow **64 K** of
+generation — 234 K against a 200 K window. The provider rejects the request before this
+middleware's trigger is ever reached, so the mitigation would be inert exactly where the window
+is largest.
+
+So the reserve is `max(percentage_floor, effective_output_limit)`, where the output limit is
+`ModelInfo.max_output_tokens` when the provider declares one and the percentage is the floor
+otherwise. On the SUT this changes nothing — the local provider declares no
+`max_output_tokens`, so the reserve stays 15% and the benchmark path behaves as analysed. It
+is the large-window providers that need it.
+
+If the reserve ever consumes the whole window, the budget is not positive and the runtime fails
+open rather than installing a middleware that would clear everything.
 
 ### Decision 4 — Exempt `search_vectorstore_hybrid` results, but only while the exemption is provably small
 
@@ -276,10 +292,28 @@ survives reduction — preserved-by-recency and exempted-by-tool alike — trunc
 a configurable per-result ceiling and marking the truncation so the model knows the content is
 partial. Being tool-agnostic, it holds for tools that do not exist yet.
 
+**The middleware ceiling is denominated in tokens, not characters.** An earlier revision wrote
+the floors as `count × per_result_ceiling` with a ceiling inherited from the 4000-*character*
+fetch limit, then compared the product against a *token* budget. That is a unit error, and it
+fails in the unsafe direction: externally sourced Unicode and structured tool output can encode
+to well over one token per character, so `2 × 4000` could be classified as comfortably under a
+one-third threshold while the two exempted results actually consume far more. Since exempt
+results cannot subsequently be cleared, the "provably cheap" exemption would then be neither.
+The wrapper already computes tokens, so it measures each surviving result with the **same
+counter** used for the request. The per-tool source clamps stay in characters, because that is
+the unit those APIs take — but no floor arithmetic is ever done in characters.
+
 That makes the two floors true by construction and readable at runtime:
 
-    preserve_floor = keep × per_result_ceiling
-    exempt_floor   = tool_budget("search_vectorstore_hybrid") × per_result_ceiling
+    preserve_floor = keep × per_result_token_ceiling
+    exempt_floor   = tool_budget("search_vectorstore_hybrid") × per_result_token_ceiling
+
+**Order matters: clamp first, then clear.** The ceiling is applied to the message view *before*
+delegating to `ClearToolUsesEdit`, not after. Applied after, an oversized newest result would
+still be present while the edit measured the total, so the edit could clear every older
+non-exempt result — evidence the model was relying on — and still not fix the overage, because
+the oversized result is the one it must preserve. Clamping first means the edit sees an already
+bounded total and clears only what genuinely has to go, which is frequently nothing.
 
 The per-tool clamps below remain worth having — they stop pointless transfer and work at the
 source, and one of them fixes an outright bug — but **the bound no longer depends on them**,
@@ -293,7 +327,11 @@ overflows *more* readily than today, because the middleware will have cleared th
 evidence first. `create_document_fetch_tool` therefore clamps the effective value to an
 enforced maximum (configurable, defaulting to the current 4000) before it reaches the catalog
 client, treating non-positive and non-integer inputs as "use the ceiling" rather than "no
-limit".
+limit". Clamping the *requested* value is not by itself enough: `_fetch_document` returns
+`f"Path: {path}\nMetadata:\n{meta_preview}\n\nContent:\n{text}"` (`local_files.py:530-539`),
+appending a path and up to 800 characters of metadata preview *after* the server-limited text,
+so a 4000-character request still returns ~4800+. Like the retriever, it clamps its **complete
+serialized return value**, not just the size it asks the catalog for.
 
 **`search_vectorstore_hybrid`.** Its `max_chars=800` bounds only `doc.page_content`
 (`retriever.py:51-53`). The rendered header interpolates `title`, `url` and `resource_hash`

@@ -84,6 +84,18 @@ by tool. Content beyond the ceiling MUST be truncated with a marker indicating t
 partial. Both the preserve-count floor and the exemption floor are statements about retained
 results, so neither holds unless a retained result has an enforced size.
 
+The ceiling used for that arithmetic MUST be denominated in the **same unit as the budget** and
+measured with the same counter. Sizing a floor by multiplying a character limit and comparing
+the product against a token budget is not sufficient, and errs unsafely: content can encode to
+well over one token per character, so an exemption can be classified as cheap while consuming
+several times the share it was checked against — and exempt content cannot afterwards be
+cleared.
+
+The ceiling MUST be applied **before** deciding which results to clear, not after. Applied
+afterwards, an oversized surviving result inflates the measured total while the reduction
+decision is made, so older evidence can be cleared to compensate for an overage that clamping
+would have removed.
+
 This ceiling MUST be applied independently of which tool produced the result. Preservation
 selects by recency across all tool results, so the preserved set can contain tools this
 capability cannot enumerate — including tools loaded at runtime from external servers and
@@ -93,10 +105,12 @@ satisfy this requirement, because it lapses as soon as another tool is enabled.
 Individual tools MAY additionally bound their own output at the source, and the following two
 SHALL do so; but the requirement above MUST hold independently of them.
 
-The document-fetch tool SHALL clamp the size of the text it returns independently of the size
-the model requests. A caller-supplied size larger than the ceiling MUST be reduced to the
-ceiling, and a non-positive or otherwise invalid size MUST be treated as a request for the
-ceiling rather than as "no limit".
+The document-fetch tool SHALL clamp its **complete serialized return value** independently of
+the size the model requests. A caller-supplied size larger than the ceiling MUST be reduced to
+the ceiling, and a non-positive or otherwise invalid size MUST be treated as a request for the
+ceiling rather than as "no limit". Clamping only the size requested from the catalog is not
+sufficient, because the tool appends a path and a metadata preview after the returned text, so
+the serialized result exceeds the requested size.
 
 The retrieval tool SHALL clamp its **complete serialized output**, not its per-document text
 alone. A per-document text cap does not bound the result, because the rendered output also
@@ -125,7 +139,15 @@ document with pathological metadata can produce an arbitrarily large result.
 #### Scenario: An oversized requested document-read size is clamped
 
 - **WHEN** the model requests a document-read size larger than the enforced ceiling
-- **THEN** the returned text is no longer than the ceiling
+- **THEN** the complete serialized result — text plus path plus metadata preview — is no longer
+  than the ceiling
+
+#### Scenario: The ceiling is applied before the clearing decision
+
+- **WHEN** a surviving result exceeds the per-result ceiling and older reducible results are
+  present
+- **THEN** the result is clamped before the runtime decides what to clear
+- **AND** older results are not cleared to compensate for an overage that clamping removes
 
 #### Scenario: A non-positive requested size does not disable the limit
 
@@ -159,9 +181,36 @@ length.
 
 The reported context window is a **total** sequence length covering both the prompt and the
 model's generation, so the reserve exists to leave room for the response; a budget equal to the
-full window would be exceeded by any answer the model produces. The reserve SHALL be
-configurable and MUST default to the same 15% used by the pre-loop prompt budget, so a single
-convention governs both.
+full window would be exceeded by any answer the model produces.
+
+Where the provider declares an effective output limit for the model, the reserve MUST be at
+least that limit. A percentage alone is not sufficient: a model declaring a large output limit
+against a large window can be asked to permit more generation than a percentage reserve leaves
+free, and the provider then rejects the request before the in-loop budget is ever consulted.
+The percentage SHALL act as the floor when no output limit is declared, and MUST default to the
+same 15% used by the pre-loop prompt budget so a single convention governs both. Both the
+percentage and the resulting reserve SHALL be configurable.
+
+Where the reserve would consume the entire context window, the runtime MUST fail open rather
+than install a bound whose budget is not positive.
+
+#### Scenario: The reserve covers a declared output limit
+
+- **WHEN** the configured model declares an effective output limit larger than the percentage
+  reserve of its context window
+- **THEN** the in-loop budget leaves at least that output limit free
+- **AND** the budget is not merely the window reduced by the percentage
+
+#### Scenario: The percentage applies when no output limit is declared
+
+- **WHEN** the configured model declares no effective output limit
+- **THEN** the in-loop budget is the window reduced by the percentage
+
+#### Scenario: A reserve consuming the whole window fails open
+
+- **WHEN** the reserve is greater than or equal to the context window
+- **THEN** no in-loop reduction is installed
+- **AND** the agent runs without raising
 
 #### Scenario: Budget tracks the reported context window
 

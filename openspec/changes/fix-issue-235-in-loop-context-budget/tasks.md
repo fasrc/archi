@@ -10,7 +10,7 @@
 Prerequisite for every size claim later: without these, a "preserved" or "exempted" tool result
 is unbounded and no floor arithmetic holds.
 
-- [ ] 2.1 Failing test: `fetch_catalog_document` called with `max_chars` above the ceiling requests no more than the ceiling from the catalog client
+- [ ] 2.1 Failing test: `fetch_catalog_document`'s **complete serialized return** is within the ceiling when `max_chars` exceeds it. Clamping the requested value alone is not enough — `_fetch_document` appends a path and up to 800 chars of metadata preview after the text (`local_files.py:530-539`), so a 4000-char request returns ~4800+
 - [ ] 2.2 Failing test: `max_chars=0` does **not** disable truncation (today `if max_chars and ...` at `uploader_app/app.py:769` returns the whole document)
 - [ ] 2.3 Failing test: negative and non-integer `max_chars` are treated as a request for the ceiling, not as "no limit"
 - [ ] 2.4 Failing test: a value *below* the ceiling is still honoured — clamping must not flatten legitimate smaller reads
@@ -21,17 +21,19 @@ is unbounded and no floor arithmetic holds.
 
 ## 3. Budget derivation helper — RED then GREEN
 
-- [ ] 3.1 Write failing unit tests for a new `src/archi/pipelines/agents/utils/context_budget.py`: budget = window − 15% generation reserve
-- [ ] 3.2 Write failing tests for fail-open: `None`, zero, negative, and non-integer windows all produce no middleware
+- [ ] 3.1 Write failing unit tests for a new `src/archi/pipelines/agents/utils/context_budget.py`: budget = window − reserve, where reserve = `max(percentage_floor, ModelInfo.max_output_tokens)`
+- [ ] 3.2 Write failing tests for fail-open: `None`, zero, negative, and non-integer windows all produce no middleware; likewise when the reserve would consume the whole window (non-positive budget)
 - [ ] 3.3 Write failing tests for the three-layer config lookup (class default → `services.chat_app.context_editing` → `pipeline_config.context_editing`), later layers overriding earlier
 - [ ] 3.4 Write failing tests for invalid config values (non-numeric / out-of-range reserve, preserve count, exemption fraction): warn, use the default for that value, still install the bound
 - [ ] 3.5 Write a failing test that `enabled: false` installs no middleware
-- [ ] 3.6 Failing test: the exemption floor is computed as `tool_budget("search_vectorstore_hybrid") × per_result_ceiling`, reading the call budget through the existing `_tool_budgets()` lookup and the ceiling from the same config key the wrapper enforces — **not** from the formatter's `max_documents`/`max_chars`, which no call site passes and no config path reaches
+- [ ] 3.6 Failing test: the exemption floor is computed as `tool_budget("search_vectorstore_hybrid") × per_result_**token**_ceiling` — both terms in the budget's own unit, measured with the same counter — reading the call budget through the existing `_tool_budgets()` lookup, **not** from the formatter's `max_documents`/`max_chars`, which no call site passes and no config path reaches
 - [ ] 3.7 Failing test: the exemption is dropped with a warning when that floor exceeds the configured fraction of the budget; retained when it does not
 - [ ] 3.8 Failing test: raising `services.chat_app.tool_budgets.search_vectorstore_hybrid` alone is enough to flip the exemption off — the check must track the runtime value, not a constant
-- [ ] 3.9 Watch all of 3.1–3.8 fail for the right reason (module does not exist / returns nothing)
-- [ ] 3.10 Implement `context_budget.py` to the minimum that passes: config read + validation, budget derivation, exemption sizing, middleware construction
-- [ ] 3.11 Assert no hard-coded context length: `git diff origin/dev -- src/ | grep -E '^\+.*\b(32768|16384|8192)\b'` returns nothing
+- [ ] 3.9 Failing test: a model declaring `max_output_tokens` larger than the percentage reserve gets a budget leaving at least that much free. Regression case from review: Claude Sonnet 4 is `context_window=200000, max_output_tokens=64000` (`anthropic_provider.py:20-29`) and `get_chat_model` passes it as `max_tokens` (`:91-97`), so a flat 15% would permit a 170 K prompt alongside 64 K of requested generation against a 200 K window
+- [ ] 3.10 Failing test: a model declaring no `max_output_tokens` (the local provider, i.e. the SUT) still gets the percentage reserve — this change must not alter the benchmark path
+- [ ] 3.11 Watch all of 3.1–3.10 fail for the right reason (module does not exist / returns nothing)
+- [ ] 3.12 Implement `context_budget.py` to the minimum that passes: config read + validation, budget derivation, exemption sizing, middleware construction
+- [ ] 3.13 Assert no hard-coded context length: `git diff origin/dev -- src/ | grep -E '^\+.*\b(32768|16384|8192)\b'` returns nothing
 
 ## 4. Middleware wrapper and complete-request counting — RED then GREEN
 
@@ -49,7 +51,9 @@ The wrapper is ours; only `ClearToolUsesEdit` comes from langchain. Do **not** s
 - [ ] 4.8 Failing test (**the universal ceiling**): a preserved most-recent result from a tool named by *no* part of this change — a stand-in for an MCP or caller-supplied tool — is truncated to the per-result ceiling and marked partial, and the complete post-reduction request is within budget. `ClearToolUsesEdit` selects by recency across all tools, so a per-tool ceiling lapses the moment another tool is enabled
 - [ ] 4.9 Failing test: an *exempted* retrieval result over the ceiling is truncated too — exemption from clearing is not exemption from the ceiling
 - [ ] 4.10 Failing test: a surviving result within the ceiling is passed through byte-identical with no truncation marker
-- [ ] 4.11 Watch 4.1–4.10 fail, then implement the `AgentMiddleware` wrapper: complete-request counter, delegation to upstream `ClearToolUsesEdit`, universal per-result ceiling over survivors, and the post-reduction re-measure
+- [ ] 4.11 Contract test: `ModelRequest` exposes `system_prompt` (a review round asserted the field is named `system_message`; `dataclasses.fields()` on the pinned 1.0.3 says otherwise, and upstream's own `wrap_model_call` reads `system_prompt`). Pin it so a rename fails loudly here rather than at runtime
+- [ ] 4.12 Failing test (**ordering**): the per-result ceiling is applied *before* the clearing decision. With one oversized newest result and several older reducible ones that together fit once it is clamped, assert the older results are **not** cleared
+- [ ] 4.13 Watch 4.1–4.12 fail, then implement the `AgentMiddleware` wrapper: complete-request counter, universal per-result token ceiling over survivors applied first, delegation to upstream `ClearToolUsesEdit`, and the post-reduction re-measure
 
 ## 5. Middleware construction and its options — RED then GREEN
 
