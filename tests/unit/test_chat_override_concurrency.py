@@ -53,11 +53,21 @@ class _FakePipeline:
         self._active_middleware = []
         self._active_memory = None
         self._static_tools = None
+        self._static_middleware = None
+        self.default_provider = "default"
+        self.default_model = "default"
         self.refresh_agent(force=True)
 
     def refresh_agent(self, force=False, **_kwargs):
         # Rebuild the compiled agent from whatever LLM is currently bound.
         self.agent = ("agent", self.agent_llm)
+
+    def adopt_request_local_model(self, provider, model, context_window):
+        # The view answers for the model it is about to call, and its cached
+        # in-loop bound is cleared for refresh_agent to rebuild.
+        self.default_provider = provider
+        self.default_model = model
+        self._static_middleware = None
 
 
 class _FakeArchi:
@@ -139,9 +149,12 @@ def _make_wrapper(
         )
 
     wrapper._prepare_chat_context = _prepare
-    wrapper._create_provider_llm = lambda provider, model, api_key=None: llm_by_key[
-        (provider, model)
-    ]
+    # Returns (chat_model, context_window); None means the provider reports no
+    # window for this model, which is the common case for self-hosted IDs.
+    wrapper._create_provider_llm = lambda provider, model, api_key=None: (
+        llm_by_key[(provider, model)],
+        None,
+    )
     return wrapper
 
 

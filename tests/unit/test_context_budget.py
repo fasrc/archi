@@ -21,6 +21,8 @@ no messages; it produces numbers, and every one of them has a way to be wrong:
   its share.
 """
 
+from types import SimpleNamespace
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -32,6 +34,7 @@ from src.archi.pipelines.agents.utils.context_budget import (
     ContextEditingSettings,
     read_settings,
     resolve_budget,
+    resolve_model_window,
     resolve_output_cap,
     select_exempt_indices,
 )
@@ -378,3 +381,37 @@ class TestDeclaredContextWindow:
 
         assert s.context_window is None
         assert s.enabled is True, "a bad value must not disable the limit"
+
+
+class TestProviderReportedWindow:
+    """`resolve_model_window` reads the window off an already-built provider."""
+
+    class _Provider:
+        def __init__(self, info):
+            self._info = info
+
+        def get_model_info(self, model):
+            if isinstance(self._info, Exception):
+                raise self._info
+            return self._info
+
+    def test_reports_the_providers_window(self):
+        provider = self._Provider(SimpleNamespace(context_window=32768))
+        assert resolve_model_window(provider, "m") == 32768
+
+    def test_absent_metadata_yields_none(self):
+        assert resolve_model_window(self._Provider(None), "m") is None
+
+    def test_a_raising_provider_yields_none_rather_than_failing(self):
+        """This runs while building a chat request; it must never be the thing
+        that fails it. The Anthropic provider is known to raise here when a
+        deployment lists raw YAML model strings."""
+        provider = self._Provider(AttributeError("'str' object has no attribute 'id'"))
+        assert resolve_model_window(provider, "m") is None
+
+    @pytest.mark.parametrize("bad", [0, -1, None, True, "32768", 1.5])
+    def test_unusable_window_values_are_rejected(self, bad):
+        """`True` matters most: it is an `int` in Python, and a one-token window
+        would clear every message on every call."""
+        provider = self._Provider(SimpleNamespace(context_window=bad))
+        assert resolve_model_window(provider, "m") is None

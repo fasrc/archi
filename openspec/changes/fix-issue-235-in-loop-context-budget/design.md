@@ -550,6 +550,40 @@ Failing open stays the behaviour when neither source yields a window, but it sto
 *silent*: an inert bound now logs the provider and model responsible, so the difference between
 "protected" and "installed nothing" is visible in the logs instead of only in a token count.
 
+### Decision 12 — The declared window describes the deployment's model, and does not follow an override
+
+Decisions 9 and 11 interact, and the combination was measured only once both were built. The
+declared `context_editing.context_window` takes precedence over the derived one (Decision 11),
+and a request-local view shares the `config` dict with its source by reference — so the declared
+value followed the view onto whatever model a request selected. That reintroduces Decision 9's
+own failure through a second route: the window describes one model while `agent_llm` is another.
+
+Measured on the real `_build_request_local_pipeline`, with a declared 32768 and a request
+overriding to a 200000-window model carrying a 64000 output cap: the reserve (64000) exceeds the
+declared window, `resolve_budget` returns `None`, and **no bound is installed at all** for that
+request. A conservative-looking setting became the reason the protection disappeared.
+
+`build_context_middleware` therefore takes `declared_window_applies`, which a view passes as
+`False`. The declared value is an operator's statement about the model **this deployment
+serves**; it is not evidence about a model the operator never named. Three alternatives were
+rejected:
+
+* **`min(declared, resolved)`** — provably safe, and wrong in a way that is invisible: a
+  deployment declaring 32768 for its self-hosted default would cap an override to Claude at
+  32768, silently discarding six-sevenths of that model's window with nothing in the logs.
+* **Apply the declared value whenever the override shares the default's provider.** A plausible
+  heuristic — one vLLM server, one `--max-model-len` — but it encodes a deployment topology the
+  config does not state, and it fails the moment a provider fronts two servers.
+* **Keep the declared value as a last resort when the override resolves nothing.** This is the
+  case that now installs no bound, so the cost is real. It was still rejected: an unresolvable
+  override is exactly where a borrowed number is least likely to be right, and a budget derived
+  from the wrong model overflows rather than merely under-using the window.
+
+The consequence is explicit: on a deployment whose models resolve no metadata, a request that
+overrides the model gets no in-loop bound. The source clamps in `tools/result_limits.py` still
+apply — they are unconditional — so this is a weaker guarantee, not an absent one, and the
+warning from Decision 11 names the model responsible.
+
 ### Decision 10 — Name the residual that clearing cannot remove, and measure it
 
 `ClearToolUsesEdit` does not *delete* a tool result — it replaces the content with the

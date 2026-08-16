@@ -326,6 +326,29 @@ chose the smaller model deliberately.
 - **WHEN** a request-local view derives its own budget
 - **THEN** the shared pipeline's own budget and cached state are unchanged
 
+The window and the model MUST describe the same thing. The window SHALL be resolved where the
+request's provider is built from the deployment's own configuration, because the by-name lookup
+available later consults a model list compiled into the package, in which a self-hosted or
+custom model identifier never appears. An operator-declared context window describes the model
+the deployment serves and SHALL NOT be applied to an overriding model. Where no window can be
+established for the bound model, the system SHALL install no bound rather than derive one from
+a window belonging to a different model.
+
+#### Scenario: The window is resolved from the provider serving the request
+
+- **WHEN** a request overrides the model with an identifier the packaged model list does not contain
+- **THEN** the budget is derived from the window that deployment's own provider reports for it
+
+#### Scenario: A declared window does not follow a model override
+
+- **WHEN** an operator has declared a context window and a request overrides the model
+- **THEN** the budget is derived from the overriding model's own window, not the declared one
+
+#### Scenario: An override with no establishable window installs no bound
+
+- **WHEN** neither the provider serving the request nor the by-name lookup yields a window for an overriding model
+- **THEN** no in-loop bound is installed for that request, and no window belonging to another model is substituted
+
 ### Requirement: Reduction preserves the most recent tool results and the grounding retrieval evidence
 
 Reduction SHALL remove the **oldest** tool results first and MUST preserve a configurable

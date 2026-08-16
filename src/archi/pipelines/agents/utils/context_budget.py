@@ -286,6 +286,32 @@ def _read_declared_window(value: Any) -> Optional[int]:
     return window
 
 
+def resolve_model_window(provider: Any, model: Any) -> Optional[int]:
+    """The context window *this already-built provider* reports for *model*.
+
+    Called where a provider has been constructed from the deployment's own YAML
+    — the only place a self-hosted or custom model ID has metadata at all. The
+    by-name lookup an agent performs later builds its provider with no config
+    and consults a ``ModelInfo`` list compiled into the package, where such an
+    ID never appears; resolving here and carrying the number is what keeps a
+    request-local override from silently having no bound.
+
+    Never raises: a provider that cannot answer leaves the caller exactly where
+    it would have been without this, rather than failing the request.
+    """
+    try:
+        info = provider.get_model_info(model)
+    except Exception:
+        logger.debug(
+            "Provider reported no metadata for %r; the window will be "
+            "re-resolved by name if possible",
+            model,
+            exc_info=True,
+        )
+        return None
+    return positive_int(getattr(info, "context_window", None))
+
+
 def resolve_output_cap(model: Any, declared_cap: Optional[int]) -> Optional[int]:
     """Return the output cap that will actually apply to calls on *model*.
 

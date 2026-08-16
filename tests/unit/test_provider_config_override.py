@@ -8,8 +8,11 @@ overridden LLM, so Qwen runs in thinking mode and chain-of-thought bleeds into
 answers.
 """
 
+from types import SimpleNamespace
+
 from src.archi.providers.base import ProviderType
 from src.interfaces.chat_app.app import (
+    ChatWrapper,
     _build_provider_config_from_payload,
     _is_provider_enabled_in_config,
 )
@@ -98,3 +101,88 @@ def test_non_dict_config_payload_is_enabled():
     ok, reason = _is_provider_enabled_in_config(None, ProviderType.LOCAL)
     assert ok is True
     assert reason is None
+
+
+# --- The override's context window comes from the provider built here --------
+
+
+class _StubProvider:
+    """A provider built from this deployment's YAML, as the override path does."""
+
+    def __init__(self, window=None, raises=False):
+        self._window = window
+        self._raises = raises
+        self.api_key = None
+
+    def set_api_key(self, key):
+        self.api_key = key
+
+    def get_chat_model(self, model):
+        return f"chat-model:{model}"
+
+    def get_model_info(self, model):
+        if self._raises:
+            raise RuntimeError("provider has no metadata for this model")
+        if self._window is None:
+            return None
+        return SimpleNamespace(context_window=self._window)
+
+
+def _wrapper(config):
+    """A ChatWrapper with only the attribute _create_provider_llm reads."""
+    wrapper = object.__new__(ChatWrapper)
+    wrapper.config = config
+    return wrapper
+
+
+def _enabled_cfg():
+    config = _cfg({})
+    config["services"]["chat_app"]["providers"]["local"]["enabled"] = True
+    return config
+
+
+def test_create_provider_llm_returns_the_window_the_provider_reports(monkeypatch):
+    """The window must be resolved where the YAML-configured provider exists.
+
+    The agent's fallback builds a provider with no config and matches the model
+    name against a list compiled into the package; a self-hosted ID is absent
+    from every such list, so resolving later yields None and installs no bound.
+    """
+    provider = _StubProvider(window=32768)
+    monkeypatch.setattr(
+        "src.archi.providers.get_provider", lambda *a, **kw: provider, raising=False
+    )
+
+    llm, window = _wrapper(_enabled_cfg())._create_provider_llm("local", "m", "key-1")
+
+    assert llm == "chat-model:m"
+    assert window == 32768
+    assert provider.api_key == "key-1"
+
+
+def test_create_provider_llm_reports_no_window_when_metadata_is_absent(monkeypatch):
+    """No metadata is not an error: the model still builds, the window is None."""
+    monkeypatch.setattr(
+        "src.archi.providers.get_provider",
+        lambda *a, **kw: _StubProvider(window=None),
+        raising=False,
+    )
+
+    llm, window = _wrapper(_enabled_cfg())._create_provider_llm("local", "m")
+
+    assert llm == "chat-model:m"
+    assert window is None
+
+
+def test_create_provider_llm_survives_a_provider_that_raises(monkeypatch):
+    """A provider that throws on get_model_info must not fail the request."""
+    monkeypatch.setattr(
+        "src.archi.providers.get_provider",
+        lambda *a, **kw: _StubProvider(raises=True),
+        raising=False,
+    )
+
+    llm, window = _wrapper(_enabled_cfg())._create_provider_llm("local", "m")
+
+    assert llm == "chat-model:m"
+    assert window is None

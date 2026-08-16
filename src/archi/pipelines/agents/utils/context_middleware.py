@@ -329,6 +329,7 @@ def build_context_middleware(
     tool_budgets: Optional[Dict[str, int]] = None,
     retrieval_tool_name: str = DEFAULT_RETRIEVAL_TOOL,
     model_label: Optional[str] = None,
+    declared_window_applies: bool = True,
 ) -> List[AgentMiddleware]:
     """Build the in-loop middleware list for an agent, or an empty list.
 
@@ -367,6 +368,16 @@ def build_context_middleware(
     construction, so for many deployments the declared value is the only one
     there is.
 
+    ``declared_window_applies=False`` withdraws that precedence, and a
+    request-local view bound to an overriding model passes it. The declared
+    value describes the model **this deployment serves**; letting it follow a
+    view onto a different model is the same defect as inheriting the source's
+    window, arriving by another route. Measured: a declared 32768 paired with an
+    override's 64000 output cap makes the reserve exceed the window and disables
+    the bound outright. The override's own window is used instead, and when that
+    cannot be resolved nothing is installed — borrowing a number that describes
+    a different model is what this parameter exists to prevent.
+
     ``model_label`` names the provider and model in the log line emitted when no
     window can be found. Without it that outcome is invisible, and a deployment
     protecting nothing looks exactly like a healthy one.
@@ -376,9 +387,8 @@ def build_context_middleware(
     silently removing the protection the other settings configure.
     """
     settings = read_settings(config, pipeline_config)
-    window = (
-        context_window if settings.context_window is None else settings.context_window
-    )
+    declared = settings.context_window if declared_window_applies else None
+    window = context_window if declared is None else declared
     budget = resolve_budget(
         context_window=window,
         output_cap=resolve_output_cap(model, None),
