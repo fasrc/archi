@@ -145,7 +145,10 @@ QUERY='query($owner:String!,$name:String!,$cursor:String){
 #   blocking_checks  — count of non-excluded contexts that are not passing
 #   rollup_total     — totalCount from the rollup connection (0 when null)
 #   rollup_fetched   — count of contexts actually in the nodes array
-# A null statusCheckRollup produces 0/0/0 (treat as "no checks, no block").
+# A null statusCheckRollup produces 0/0/0 ("no checks on record"). That is not
+# read as "no block" unconditionally — the predicate cross-checks it against
+# mergeStateStatus, because an empty rollup also describes a PR whose checks have
+# not registered yet.
 # CheckRun conclusions considered passing: SUCCESS, NEUTRAL, SKIPPED.
 # StatusContext states considered passing: SUCCESS.
 # A CheckRun whose name equals $excl is excluded from the blocking count.
@@ -367,6 +370,23 @@ while IFS=$'\t' read -r _tag number isdraft mergeable state live \
   # setting is off, a retargeted PR still reads CLEAN with stale green checks, and
   # no signal in the API distinguishes it. That residue is a branch-protection
   # setting, not something this script can close (issue #231).
+  #
+  # An EMPTY rollup is trusted only when the merge state agrees nothing is pending.
+  # "No contexts on record" has two meanings the rollup alone cannot separate: a PR
+  # that genuinely runs no checks, and a PR in the registration-lag window between
+  # `opened`/`synchronize` and its first check run appearing. This reconciler fires
+  # on those very events, so without a guard it grants the chip before CI has
+  # produced a result. BLOCKED is what separates them: the base expects a required
+  # check GitHub has not seen. Only BLOCKED — not UNSTABLE, which is derived from
+  # non-passing contexts and so cannot describe a rollup that has none.
+  #
+  # This is deliberately NOT a general gate on BLOCKED — that would re-block the
+  # reconciler on its own in-progress required check, which is issue #174, the
+  # regression this change exists to remove. The clause is safe against that by
+  # construction: when the reconciler's own job is running, its CheckRun sits on the
+  # head commit, so rollup_total is at least 1 and this clause cannot fire. The
+  # remaining BLOCKED slice — green checks plus a missing required approval — is a
+  # non-empty rollup, still falls through, and is tracked in #231.
   want_ready=false
   why="blocking check"
   if [ "$isdraft" = "true" ]; then
@@ -375,6 +395,8 @@ while IFS=$'\t' read -r _tag number isdraft mergeable state live \
     why="conflicting"
   elif [ "$state" = "BEHIND" ]; then
     why="behind the base — checks on record did not test the current base"
+  elif [ "$rollup_total" -eq 0 ] && [ "$state" = "BLOCKED" ]; then
+    why="no checks on record while GitHub reports BLOCKED — cannot verify"
   elif [ "$rollup_total" -gt "$rollup_fetched" ]; then
     why="rollup truncated ($rollup_total checks seen, $rollup_fetched fetched) — cannot verify"
   elif [ "$blocking_checks" -gt 0 ]; then

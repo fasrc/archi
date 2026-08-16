@@ -832,5 +832,82 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
+# ---- 37: null rollup while GitHub reports BLOCKED withholds readiness --------
+# Cases 27-28 establish that a null rollup does NOT withhold: a PR that genuinely
+# runs no checks is ready once everything else is clear. That reading is only safe
+# while "no contexts on record" means "no checks expected". During check
+# registration lag — the window between `opened`/`synchronize` and the first check
+# run appearing — the rollup is equally empty, and this reconciler fires on those
+# very events. The predicate would then read 0 blocking checks and grant the chip
+# before CI has produced a single result.
+#
+# mergeStateStatus is what separates the two: GitHub reports BLOCKED when the base
+# expects a required check it has not seen, and CLEAN when nothing is outstanding.
+# So an empty rollup is only trustworthy when the merge state agrees nothing is
+# pending. Withhold on the disagreement, and revoke a chip already held.
+#
+# Case 27 keeps UNSTABLE granting on an empty rollup, so the guard stays on BLOCKED
+# alone; see case 38 for why that boundary is where it is.
+#
+# This deliberately does NOT gate on BLOCKED in general — that would re-block the
+# reconciler on its own in-progress required check, which is issue #174, the very
+# regression this change exists to remove. The clause is safe against that by
+# construction: if the reconciler's own job is running, its CheckRun is on the head
+# commit, so the rollup is not empty and this clause cannot fire.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 480 false BLOCKED "ready-to-merge" "" "" "" MERGEABLE)" \
+  "$(mk_node 481 false BLOCKED "" "" "" "" MERGEABLE)" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '480 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "null rollup + BLOCKED withholds ready-to-merge: held chip revoked, unlabelled PR not granted"
+else
+  notok "null rollup + BLOCKED withholds ready-to-merge: held chip revoked, unlabelled PR not granted"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 38: the same guard through the non-null empty-contexts shape ------------
+# Case 37 covers a null rollup; the API also expresses "no contexts" as a present
+# rollup with totalCount 0 and an empty nodes array (case 28's shape). Both must
+# reach the guard, so neither shape can carry a false green through.
+#
+# UNSTABLE is deliberately NOT gated alongside BLOCKED. Case 27 pins UNSTABLE with
+# no contexts as still granting, to prove the predicate reads individual check
+# counts rather than mergeStateStatus, and UNSTABLE is derived from non-passing
+# contexts, so it cannot honestly describe a rollup that has none. Widening the
+# guard to it would overwrite a recorded design decision to buy a state GitHub
+# does not produce.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 490 false BLOCKED "ready-to-merge" "" "" "" MERGEABLE "[]")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '490 .*--remove-label ready-to-merge' "$sb/calls"; then
+  ok "empty (non-null, zero-context) rollup + BLOCKED withholds ready-to-merge"
+else
+  notok "empty (non-null, zero-context) rollup + BLOCKED withholds ready-to-merge"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 39: an empty rollup on a CLEAN PR still grants — the boundary holds ------
+# The guard above must not swallow cases 27-28. A PR with no checks and nothing
+# outstanding is still ready; only the empty-rollup/non-clean-state disagreement
+# withholds. Also asserts the reconciler's own in-progress check keeps granting:
+# rollup non-empty (the excluded `reconcile` run) means clause 37 cannot fire,
+# which is the #174 behaviour this change exists to protect.
+sb="$(new_sandbox)"
+_self_39="$(mk_checks "C:reconcile:IN_PROGRESS:null")"
+mk_page false "" \
+  "$(mk_node 500 false CLEAN "" "")" \
+  "$(mk_node 501 false BLOCKED "" "" "" "" MERGEABLE "$_self_39")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '500 .*--add-label ready-to-merge' "$sb/calls" \
+   && grep -q '501 .*--add-label ready-to-merge' "$sb/calls"; then
+  ok "empty rollup + CLEAN still grants, and the reconciler's own in-progress check does not trip the new clause"
+else
+  notok "empty rollup + CLEAN still grants, and the reconciler's own in-progress check does not trip the new clause"
+  cat "$sb/calls" 2>/dev/null
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

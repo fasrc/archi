@@ -58,6 +58,28 @@ truncated review-thread connection and the authoritative re-read used for a trun
 - **WHEN** the rollup's `totalCount` equals the number of contexts returned
 - **THEN** the checks are evaluated on their conclusions with no truncation penalty
 
+### Requirement: An empty rollup is trusted only when the merge state agrees
+
+The readiness predicate SHALL withhold `ready-to-merge` when no checks are on record and `mergeStateStatus` is `BLOCKED`.
+An empty rollup has two meanings the rollup alone cannot separate: a PR that genuinely runs no checks, and a PR
+in the window between `opened`/`synchronize` and its first check run registering. The reconciler fires on those
+very events, so treating "no contexts" as "no block" unconditionally advertises readiness before CI has produced
+a result. `BLOCKED` is the signal that the base is still expecting a required check it has not seen. The guard is
+confined to an empty rollup, so it cannot re-block a PR on the reconciler's own in-progress check: that check run
+sits on the head commit, making the rollup non-empty.
+
+#### Scenario: No checks on record while the base still expects one
+- **WHEN** a PR reports `mergeStateStatus == BLOCKED` and its head commit carries no status-check contexts
+- **THEN** `ready-to-merge` is not granted, and a held chip is revoked
+
+#### Scenario: No checks on record and nothing outstanding
+- **WHEN** a PR reports `mergeStateStatus == CLEAN` and its head commit carries no status-check contexts
+- **THEN** `ready-to-merge` is granted, because no check is expected
+
+#### Scenario: The reconciler's own in-progress check does not trip the guard
+- **WHEN** a PR reports `mergeStateStatus == BLOCKED` and the only context on its head commit is the reconciler's own in-progress check
+- **THEN** `ready-to-merge` is granted, because the rollup is not empty and the reconciler's own check is excluded
+
 ### Requirement: A PR behind its base is not ready
 
 The readiness predicate SHALL withhold `ready-to-merge` when `mergeStateStatus` is `BEHIND`.
