@@ -206,6 +206,16 @@ class TestClampHelper:
             out = clamp_result("Z" * 10_000, limit)
             assert len(out) <= limit, f"limit={limit} produced {len(out)}"
 
+    def test_ceiling_smaller_than_the_marker_still_bounds(self):
+        """A ceiling too small to hold the marker must still be honoured.
+
+        The bound wins over the annotation: emitting the marker anyway would
+        overshoot the very limit it exists to describe.
+        """
+        for limit in (1, 10, len(TRUNCATION_MARKER)):
+            out = clamp_result("Z" * 10_000, limit)
+            assert len(out) <= limit, f"limit={limit} produced {len(out)}"
+
     @pytest.mark.parametrize("requested", [0, -5, "nope", None])
     def test_invalid_requested_size_resolves_to_the_ceiling(self, requested):
         assert resolve_requested_chars(requested, 4000) == 4000
