@@ -44,6 +44,8 @@ def _record(name, corpus_fingerprint, corpus_unchanged_at_endpoints=True):
 def _reset(monkeypatch):
     monkeypatch.setattr(ResultHandler, "results", [])
     monkeypatch.setattr(ResultHandler, "leaderboard", {})
+    monkeypatch.setattr(ResultHandler, "ab_comparison", {})
+    monkeypatch.setattr(ResultHandler, "ab_comparisons", [])
     monkeypatch.setattr(ResultHandler, "_corpus_snapshot_id", "pinned")
 
 
@@ -158,6 +160,98 @@ def test_the_leaderboard_is_still_produced_so_the_operator_can_judge():
 
     assert len(leaderboard["rows"]) == 2
     assert leaderboard["shared_context"]["warnings"]
+
+
+class TestPairwiseComparison:
+    """The A/B artifact is the leaderboard's sibling and needs the same guard.
+
+    Guarding only the leaderboard left dump_ab_comparison declaring per-metric
+    winners and win counts for arms the same provenance had just marked
+    incomparable -- a downstream reader could make exactly the comparison the
+    leaderboard now refuses to make.
+    """
+
+    @staticmethod
+    def _paired():
+        from src.bin.service_benchmark import ABResult
+
+        return [
+            ABResult(
+                question="q1",
+                reference_answer="ref",
+                answer_a="a",
+                answer_b="b",
+                time_a=1.0,
+                time_b=1.0,
+                ragas_a={"faithfulness": 0.9},
+                ragas_b={"faithfulness": 0.1},
+                winner_by_metric={"faithfulness": "a"},
+            )
+        ]
+
+    def test_declares_winners_when_the_arms_are_comparable(self):
+        ResultHandler.results = [
+            _record("a", "sha256:same"),
+            _record("b", "sha256:same"),
+        ]
+
+        ResultHandler.dump_ab_comparison(self._paired())
+        comparison = ResultHandler.ab_comparison
+
+        assert comparison["comparable"] is True
+        assert comparison["aggregate"]["wins_a"] == 1
+        assert comparison["per_question"][0]["winner_by_metric"] == {
+            "faithfulness": "a"
+        }
+
+    def test_withholds_winners_when_the_arms_saw_different_corpora(self):
+        ResultHandler.results = [
+            _record("a", "sha256:aaa"),
+            _record("b", "sha256:bbb"),
+        ]
+
+        ResultHandler.dump_ab_comparison(self._paired())
+        comparison = ResultHandler.ab_comparison
+
+        assert comparison["comparable"] is False
+        assert comparison["aggregate"]["wins_a"] is None
+        assert comparison["aggregate"]["wins_b"] is None
+        assert comparison["aggregate"]["ties"] is None
+        assert comparison["per_question"][0]["winner_by_metric"] == {}
+
+    def test_withholds_winners_when_an_arm_was_unstable(self):
+        ResultHandler.results = [
+            _record("a", "sha256:same", corpus_unchanged_at_endpoints=False),
+            _record("b", "sha256:same"),
+        ]
+
+        ResultHandler.dump_ab_comparison(self._paired())
+
+        assert ResultHandler.ab_comparison["comparable"] is False
+
+    def test_keeps_the_raw_per_question_scores_either_way(self):
+        """Withhold the verdict, not the measurements."""
+        ResultHandler.results = [
+            _record("a", "sha256:aaa"),
+            _record("b", "sha256:bbb"),
+        ]
+
+        ResultHandler.dump_ab_comparison(self._paired())
+        row = ResultHandler.ab_comparison["per_question"][0]
+
+        assert row["ragas_a"] == {"faithfulness": 0.9}
+        assert row["ragas_b"] == {"faithfulness": 0.1}
+
+    def test_records_predating_provenance_still_compare(self):
+        legacy_a, legacy_b = _record("a", "sha256:x"), _record("b", "sha256:y")
+        for rec in (legacy_a, legacy_b):
+            del rec["corpus_unchanged_at_endpoints"]
+            del rec["corpus_fingerprint"]
+        ResultHandler.results = [legacy_a, legacy_b]
+
+        ResultHandler.dump_ab_comparison(self._paired())
+
+        assert ResultHandler.ab_comparison["comparable"] is True
 
 
 def test_records_predating_provenance_stay_comparable():

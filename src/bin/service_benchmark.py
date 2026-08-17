@@ -149,6 +149,28 @@ class ResultHandler:
         )
 
     @staticmethod
+    def corpus_comparable(records: List[Dict[str, Any]]) -> bool:
+        """Can these arms' scores be set against each other?
+
+        Only when every arm's corpus provenance is established and they all
+        observed the same corpus. Used by BOTH comparison artifacts -- the
+        leaderboard and the pairwise A/B dump -- because a guard on one of them
+        still lets a reader draw the unsupported conclusion from the other.
+
+        Records with no corpus keys at all predate provenance and are left
+        comparable: historical sweeps are not retroactively invalidated.
+        """
+        fingerprints = set()
+        for record in records:
+            stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
+            if stability is not _NOT_RECORDED and stability is not True:
+                return False
+            fingerprint = record.get("corpus_fingerprint")
+            if fingerprint is not None:
+                fingerprints.add(fingerprint)
+        return len(fingerprints) <= 1
+
+    @staticmethod
     def get_corpus_fingerprint() -> str:
         """Digest of the live corpus, or a marker explaining why it is missing.
 
@@ -456,7 +478,17 @@ class ResultHandler:
 
         per_question = [asdict(r) for r in paired]
 
-        wins_a, wins_b, ties = 0, 0, 0
+        # Same guard as the leaderboard's: a per-metric winner is a claim that
+        # the two arms were measured under the same conditions. Guarding only
+        # the leaderboard would still let a reader draw the unsupported
+        # conclusion from this artifact.
+        comparable = ResultHandler.corpus_comparable(
+            [ResultHandler.results[idx_a], ResultHandler.results[idx_b]]
+        )
+
+        wins_a: Optional[int] = 0
+        wins_b: Optional[int] = 0
+        ties: Optional[int] = 0
         all_metrics = set()
         for r in paired:
             for m, w in r.winner_by_metric.items():
@@ -467,6 +499,20 @@ class ResultHandler:
                     wins_b += 1
                 else:
                     ties += 1
+
+        if not comparable:
+            # Withhold the verdict, keep the measurements: per-question ragas_a
+            # and ragas_b stay so an operator can still inspect the run.
+            for row in per_question:
+                row["winner_by_metric"] = {}
+            wins_a = wins_b = ties = None
+            logger.warning(
+                "A/B winners withheld for '%s' vs '%s': corpus provenance does "
+                "not establish that both arms were scored against the same "
+                "documents",
+                config_a_meta["name"],
+                config_b_meta["name"],
+            )
 
         mean_scores_a: Dict[str, float] = {}
         mean_scores_b: Dict[str, float] = {}
@@ -489,6 +535,7 @@ class ResultHandler:
         comparison = {
             "config_a": config_a_meta,
             "config_b": config_b_meta,
+            "comparable": comparable,
             "per_question": per_question,
             "aggregate": {
                 "wins_a": wins_a,
@@ -680,8 +727,7 @@ class ResultHandler:
         # withhold the ranking rather than manufacture an ordering a consumer
         # would read from rows[*].rank without ever seeing the warnings. The
         # metrics stay, so an operator can still inspect the run.
-        observed_corpora = {v for v in ctx_fields["corpus_fingerprint"] if v is not None}
-        comparable = not corpus_warnings and len(observed_corpora) <= 1
+        comparable = ResultHandler.corpus_comparable(ResultHandler.results)
 
         # Dense ranking: equal primary scores share a rank.
         rank = 0
