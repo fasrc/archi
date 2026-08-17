@@ -635,6 +635,23 @@ class TemplateManager:
         )
         migrations_dest = context.base_dir / MIGRATIONS_TEMPLATE_DIR
         shutil.copytree(migrations_src, migrations_dest, dirs_exist_ok=True)
+
+        # copytree overwrites and adds; it never removes. The sidecar globs every
+        # staged *.sql on every startup, so a migration deleted or renamed upstream
+        # would keep executing forever against a schema its replacement has already
+        # moved past — and under ON_ERROR_STOP=1 any disagreement between the two
+        # fails db-migrate, which config-seed and the data manager gate on. So the
+        # destination is synchronized to the packaged set rather than merged into.
+        #
+        # Scoped to *.sql deliberately: that is exactly what the sidecar executes.
+        # Anything else an operator left in this directory is not on the migration
+        # path, and removing it is not this function's mandate.
+        packaged_sql = {path.name for path in migrations_src.glob("*.sql")}
+        for staged in migrations_dest.glob("*.sql"):
+            if staged.name not in packaged_sql:
+                staged.unlink()
+                logger.debug(f"Removed migration no longer packaged: {staged.name}")
+
         logger.debug(f"Copied migrations to {migrations_dest}")
 
     def _render_compose_file(self, context: TemplateContext) -> None:
