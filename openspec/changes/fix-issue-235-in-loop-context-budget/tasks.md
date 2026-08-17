@@ -161,12 +161,12 @@ not among them. Any self-hosted or newly-released model therefore yields `None`.
 
 ## 11. PR
 
-- [ ] 11.1 Open the PR with `gh pr create --repo fasrc/archi --base dev`; no `Co-Authored-By` or session trailers
-- [ ] 11.2 PR body records the Phase 1 token accounting table, names option (c) as chosen, and states that (a) and (b) were rejected and why
-- [ ] 11.3 PR body records the two corrections to the issue: the `DEFAULT_TOOL_BUDGETS` entry would be inert (no `enforce_budget` seam on `create_document_fetch_tool`), and source count is decoupled from context cost by construction
-- [ ] 11.4 PR body states explicitly that the `fetch_catalog_document` call cap is deliberately out of scope, and why
-- [ ] 11.5 PR body states which acceptance criteria could not be verified locally (goldenset runs need the deployment + VPN) and carries the pre-PR review summary
-- [ ] 11.6 Request `@codex review` as a PR comment (never in the PR body)
+- [x] 11.1 Open the PR with `gh pr create --repo fasrc/archi --base dev`; no `Co-Authored-By` or session trailers — **https://github.com/fasrc/archi/pull/265**
+- [x] 11.2 PR body records the Phase 1 token accounting table, names option (c) as chosen, and states that (a) and (b) were rejected and why
+- [x] 11.3 PR body records the two corrections to the issue: the `DEFAULT_TOOL_BUDGETS` entry would be inert (no `enforce_budget` seam on `create_document_fetch_tool` — re-verified at PR time: zero occurrences of `enforce_budget` in `local_files.py`), and source count is decoupled from context cost by construction
+- [x] 11.4 PR body states explicitly that the `fetch_catalog_document` call cap is deliberately out of scope, and why
+- [x] 11.5 PR body states which acceptance criteria could not be verified locally (goldenset runs need the deployment + VPN) and carries the pre-PR review summary, including the terminal condition (hit the 4-round bound, not a clean round)
+- [x] 11.6 Request `@codex review` as a PR comment (never in the PR body)
 - [ ] 11.7 Post-PR review loop: triage → fix (TDD) → reply in-thread per finding → push → re-request, until a clean round or only-nits-deferred; post a round log comment each round
 
 ## 12. Goldenset verification (needs deployment + FASRC VPN)
