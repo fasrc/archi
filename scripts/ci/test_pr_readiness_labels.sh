@@ -909,5 +909,27 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
+# ---- 40: --help enumerates every knob the reconciler actually reads ----------
+# Derived from the script rather than hardcoded, so the next knob added without a
+# help entry fails here instead of being discovered by an operator whose override
+# silently did nothing. The failure mode this guards is quiet: an unlisted
+# PR_LABELS_RECONCILER_JOB leaves the operator excluding the wrong check name.
+help_out="$(bash "$RECONCILER" --help)"
+missing=""
+for var in $(grep -o '\${PR_LABELS_[A-Z_]*' "$RECONCILER" | sed 's/\${//' | sort -u || true); do
+  case "$help_out" in
+    *"$var"*) ;;
+    *) missing="$missing $var" ;;
+  esac
+done
+if [ -n "$missing" ]; then
+  notok "--help omits knobs the reconciler reads:$missing"
+elif [ -z "$(grep -o '\${PR_LABELS_[A-Z_]*' "$RECONCILER" || true)" ]; then
+  # An empty knob list would make the loop above vacuously pass.
+  notok "found no PR_LABELS_* reads at all — this case can no longer fail"
+else
+  ok "--help enumerates every PR_LABELS_* knob the reconciler reads"
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

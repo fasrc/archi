@@ -81,7 +81,9 @@ Usage: pr_readiness_labels.sh [--dry-run] [--repo owner/name]
   --repo      target repository (default: $PR_LABELS_REPO, else fasrc/archi)
 
 Environment: PR_LABELS_REPO, PR_LABELS_READY, PR_LABELS_CONFLICT,
-             PR_LABELS_RETRY_MAX, PR_LABELS_RETRY_DELAY
+             PR_LABELS_RETRY_MAX, PR_LABELS_RETRY_DELAY,
+             PR_LABELS_RECONCILER_JOB (the workflow job excluded from the
+             blocking-check count; default: reconcile)
 EOF
 }
 
