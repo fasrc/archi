@@ -325,8 +325,9 @@ to the trigger list does not silently no-op — it makes the workflow file inval
 GitHub then records a startup failure on every push. Check the Actions events
 reference, not the webhooks reference; they are different sets.
 
-All the logic lives in `scripts/ci/pr_readiness_labels.sh` (22-case suite wired into
-`scripts/gate.sh`); the workflow is only the trigger surface. Run it yourself with:
+All the logic lives in `scripts/ci/pr_readiness_labels.sh`, with a self-test suite
+(`scripts/ci/test_pr_readiness_labels.sh`) wired into `scripts/gate.sh`; the workflow is
+only the trigger surface. Run it yourself with:
 
 ```bash
 bash scripts/ci/pr_readiness_labels.sh --dry-run     # decide and print, change nothing
@@ -369,7 +370,11 @@ Seven design notes worth knowing before changing it:
   reconciler's own job (name `reconcile`, matching `jobs.reconcile` in
   `pr-readiness-labels.yml`) is excluded from the blocking count so the script does not
   block on its own in-progress check when triggered by pull-request events. A null rollup
-  (no checks on record) is treated as zero blocking and does not withhold the chip. A
+  (no checks on record) counts as zero blocking checks — but that is a statement about
+  the *count*, not about readiness: when `mergeStateStatus` is `BLOCKED` at the same
+  time, the empty-rollup guard above still withholds the chip, because GitHub is
+  reporting something blocking that no check on record explains. A null rollup on an
+  otherwise clean PR does grant. A
   truncated rollup (`totalCount` greater than the fetched count) is fail-closed: the chip
   is withheld rather than guessed at, since a blocking check could be sitting in the
   unfetched tail.
