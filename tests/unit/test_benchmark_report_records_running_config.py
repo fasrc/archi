@@ -19,8 +19,6 @@ answers. The file is still recorded -- it is what the operator selected, and
 what a sweep varies -- but it is no longer the only account of the run.
 """
 
-import inspect
-
 import pytest
 import yaml
 
@@ -57,18 +55,35 @@ def test_records_the_configuration_the_chain_held(tmp_path):
     assert record["running_configuration"] == CHAIN_CONFIG
 
 
-def test_does_not_re_query_the_config_at_report_time():
+def test_records_the_very_object_the_chain_held(tmp_path):
+    """Identity, not equality: nothing re-derives or re-reads the config."""
+    ResultHandler.handle_results(
+        _write(tmp_path, FILE_CONFIG), {}, {}, running_config=CHAIN_CONFIG
+    )
+
+    assert ResultHandler.results[0]["running_configuration"] is CHAIN_CONFIG
+
+
+def test_does_not_read_the_config_at_report_time(tmp_path, monkeypatch):
     """A config change during the arm must not rewrite the run's own history.
 
     Reading the config here would report it as it stands after the questions
     ran, not as the chain held it -- and would silently clear the divergence
-    list at the same time. The run's configuration only ever arrives as an
-    argument.
+    list at the same time. Any read through the module's config accessors fails
+    this test, not just the one that used to be here.
     """
-    source = inspect.getsource(ResultHandler.handle_results)
 
-    assert "get_full_config" not in source
+    def _forbidden(*args, **kwargs):
+        raise AssertionError("handle_results must not read config at report time")
+
+    monkeypatch.setattr(sb, "get_static_config", _forbidden)
     assert not hasattr(sb, "get_full_config")
+
+    ResultHandler.handle_results(
+        _write(tmp_path, FILE_CONFIG), {}, {}, running_config=CHAIN_CONFIG
+    )
+
+    assert ResultHandler.results[0]["running_configuration"] is CHAIN_CONFIG
 
 
 def test_names_the_setting_the_report_would_have_misattributed(tmp_path):
@@ -121,17 +136,69 @@ def test_an_unavailable_running_config_does_not_discard_the_results(tmp_path):
     ]
 
 
+def _pin_corpus(monkeypatch, value):
+    monkeypatch.setattr(
+        ResultHandler, "get_corpus_fingerprint", staticmethod(lambda: value)
+    )
+
+
 def test_records_the_corpus_each_arm_was_scored_against(tmp_path, monkeypatch):
     """Per arm, not once per sweep -- a corpus change between arms must show."""
-    monkeypatch.setattr(
-        ResultHandler, "get_corpus_fingerprint", staticmethod(lambda: "sha256:deadbeef")
-    )
+    _pin_corpus(monkeypatch, "sha256:deadbeef")
 
     ResultHandler.handle_results(
-        _write(tmp_path, FILE_CONFIG), {}, {}, running_config=FILE_CONFIG
+        _write(tmp_path, FILE_CONFIG),
+        {},
+        {},
+        running_config=FILE_CONFIG,
+        corpus_before="sha256:deadbeef",
     )
 
-    assert ResultHandler.results[0]["corpus_fingerprint"] == "sha256:deadbeef"
+    record = ResultHandler.results[0]
+    assert record["corpus_fingerprint"] == "sha256:deadbeef"
+    assert record["corpus_fingerprint_before"] == "sha256:deadbeef"
+    assert record["corpus_stable"] is True
+
+
+def test_detects_a_corpus_that_changed_while_the_arm_was_running(
+    tmp_path, monkeypatch, caplog
+):
+    """Sampling only after the questions would report the final state as if it
+    had covered the whole arm. Ingestion runs continuously in this deployment,
+    so an arm can straddle a re-ingest and score different questions against
+    different corpora.
+    """
+    _pin_corpus(monkeypatch, "sha256:after")
+
+    with caplog.at_level("WARNING"):
+        ResultHandler.handle_results(
+            _write(tmp_path, FILE_CONFIG),
+            {},
+            {},
+            running_config=FILE_CONFIG,
+            corpus_before="sha256:before",
+        )
+
+    record = ResultHandler.results[0]
+    assert record["corpus_stable"] is False
+    assert record["corpus_fingerprint_before"] == "sha256:before"
+    assert record["corpus_fingerprint"] == "sha256:after"
+    assert "corpus" in caplog.text.lower()
+
+
+def test_an_unsampled_corpus_is_unknown_rather_than_stable(tmp_path, monkeypatch):
+    """Absent a before-reading, stability is undetermined -- never assumed true."""
+    _pin_corpus(monkeypatch, "sha256:after")
+
+    ResultHandler.handle_results(
+        _write(tmp_path, FILE_CONFIG),
+        {},
+        {},
+        running_config=FILE_CONFIG,
+        corpus_before=None,
+    )
+
+    assert ResultHandler.results[0]["corpus_stable"] is None
 
 
 def test_prompts_are_mapped_in_the_file_config_as_before(tmp_path):

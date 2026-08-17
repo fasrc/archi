@@ -190,6 +190,7 @@ class ResultHandler:
         total_results: Dict,
         *,
         running_config: Optional[Dict[str, Any]],
+        corpus_before: Optional[str] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -222,6 +223,18 @@ class ResultHandler:
                 ", ".join(divergence),
             )
 
+        corpus_after = ResultHandler.get_corpus_fingerprint()
+        # None, not False, when there is no before-reading: stability is then
+        # undetermined, and must never be reported as established.
+        corpus_stable = None if corpus_before is None else corpus_before == corpus_after
+        if corpus_stable is False:
+            logger.warning(
+                "The corpus changed while this arm was running (%s -> %s); its "
+                "questions were not all scored against the same documents",
+                corpus_before,
+                corpus_after,
+            )
+
         current_results = {
             "single_question_results": results,
             "total_results": total_results,
@@ -229,9 +242,14 @@ class ResultHandler:
             "configuration": config,
             "running_configuration": running_config,
             "configuration_divergence": divergence,
-            # Per arm, not once per sweep: the corpus can be re-ingested between
-            # arms, and a single end-of-run fingerprint could not show it.
-            "corpus_fingerprint": ResultHandler.get_corpus_fingerprint(),
+            # Sampled around the arm, not once per sweep. Ingestion runs
+            # continuously in this deployment, so an arm can straddle a
+            # re-ingest and score different questions against different
+            # corpora; a single reading taken afterwards would report the final
+            # state as though it had covered the whole arm.
+            "corpus_fingerprint_before": corpus_before,
+            "corpus_fingerprint": corpus_after,
+            "corpus_stable": corpus_stable,
         }
 
         ResultHandler.results.append(current_results)
@@ -1462,11 +1480,15 @@ class Benchmarker:
         logger.info("")
 
         while self.all_config_files:
+            # Read the corpus BEFORE the arm's questions, so the report can show
+            # whether they were all scored against the same documents.
+            corpus_before = ResultHandler.get_corpus_fingerprint()
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
                 Path(self.current_config),
                 question_wise_results,
                 total_results,
+                corpus_before=corpus_before,
                 # The chain's own snapshot, taken by archi.__init__ before these
                 # questions ran -- not a fresh query, which would report the
                 # config as it stands now rather than as the arm used it.
