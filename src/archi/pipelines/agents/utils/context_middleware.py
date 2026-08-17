@@ -252,6 +252,8 @@ class ContextBudgetMiddleware(AgentMiddleware):
             # budget, not a permanent tax on every result the agent reads.
             return request
 
+        before = counter(request.messages)
+
         # A new list, always — this copy is what keeps reduction out of state.
         working = clamp_tool_results(request.messages, self.budget.per_result_tokens)
 
@@ -290,6 +292,24 @@ class ContextBudgetMiddleware(AgentMiddleware):
                 working[idx] = cleared[idx]
                 shed += 1
                 measured = counter(working)
+
+        if measured <= trigger:
+            # The success path. Silent, this feature is indistinguishable from
+            # disabled: an operator asking "is the bound doing anything" has only
+            # the failure warnings to go on, and their absence means either "it
+            # worked" or "it never ran". Three goldenset runs completed with the
+            # bound installed and could not answer that question.
+            logger.debug(
+                "In-loop context bound reduced the request from %d to %d tokens "
+                "(%d reclaimed against a %d-token budget; %d exempt retrieval "
+                "results shed, %d preserved as most-recent)",
+                before,
+                measured,
+                before - measured,
+                trigger,
+                shed,
+                self.budget.keep,
+            )
 
         if measured > trigger:
             logger.warning(

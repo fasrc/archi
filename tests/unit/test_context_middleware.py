@@ -1417,3 +1417,46 @@ class TestTheExemptionIsScopedToOneTurn:
 
         assert ToolMessage not in produced
         assert produced <= {HumanMessage, AIMessage}
+
+
+class TestSuccessfulReductionIsObservable:
+    """A reduction that works must leave a trace.
+
+    The wrapper warns when a request is *still* over budget after reducing, and
+    the budget resolver warns when it installs nothing — but a reduction that
+    succeeds was completely silent. That is the common case, so in production the
+    feature was indistinguishable from disabled: three goldenset runs completed
+    with the bound installed and produced no evidence either way about whether it
+    had ever cleared a result. Debug level, because it fires on every reduced
+    call and its audience is whoever is asking "did this do anything".
+    """
+
+    def test_a_reduction_records_what_it_reclaimed(self, caplog):
+        messages = _thread([("read_doc", "X" * 6000)] * 8)
+        budget = _budget(trigger=4000, keep=3, per_result_tokens=500)
+
+        with caplog.at_level("DEBUG"):
+            _reduce(ContextBudgetMiddleware(budget=budget), _request(messages))
+
+        rendered = " ".join(
+            r.getMessage() for r in caplog.records if r.levelname == "DEBUG"
+        )
+        assert "reduc" in rendered.lower(), f"no record of the reduction: {rendered!r}"
+        assert any(
+            ch.isdigit() for ch in rendered
+        ), "the sizes must be interpolated into the message, not passed via extra="
+
+    def test_an_untouched_request_stays_quiet(self, caplog):
+        """Nothing happened, so nothing is logged — otherwise every model call in
+        a short conversation emits a line that means 'no action taken'."""
+        messages = _thread([("read_doc", "small")] * 2)
+
+        with caplog.at_level("DEBUG"):
+            _reduce(
+                ContextBudgetMiddleware(budget=_budget(trigger=100_000)),
+                _request(messages),
+            )
+
+        assert not [
+            r for r in caplog.records if "reduc" in r.getMessage().lower()
+        ], "an under-budget request must not report a reduction"
