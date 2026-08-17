@@ -86,6 +86,161 @@ mutable). See `fasrc_archi.md` for the model-server ops.
 | metadata filter | `hybrid_search(filter=...)` | unused by default |
 | forced retrieval | `services.chat_app.force_initial_retrieval` | on |
 | search budget | `tool_budgets.search_vectorstore_hybrid` | 2/turn |
+| in-loop context bound | `services.chat_app.context_editing` | on (see below) |
+
+## In-loop context budget
+
+The agent reads documents *during* its reasoning loop, and those results
+accumulate in the prompt. Left unbounded they exhaust the model's context window
+and the run ends in a canned apology instead of an answer (issue #235). The
+pre-loop token budget in `_prepare_agent_inputs` cannot help: it runs once,
+before the loop, over conversation history only.
+
+`src/archi/pipelines/agents/utils/context_budget.py` decides the numbers; a
+middleware wrapper applies them on **every** model call inside the loop, clearing
+the oldest tool results once the prompt crosses the budget.
+
+### How the budget is derived
+
+```
+trigger = context_window − generation_reserve − counting_margin
+```
+
+`context_window` is the model's *total* sequence length — prompt **and**
+generation — so both subtractions are load-bearing:
+
+- **generation reserve** — room for the answer, `max(15%, effective output cap)`.
+  The percentage alone is unsafe: a model declaring a 200K window and a 64K
+  output cap would be handed a 170K prompt budget while separately being
+  permitted 64K of generation, and the provider rejects that before the trigger
+  is ever consulted.
+- **counting margin** — room for the token counter being approximate rather than
+  exact. Deliberately *not* a share of the reserve: a reserve fully spent on the
+  answer has nothing left to absorb an undercount, and there is no later model
+  call at which to correct it.
+
+The **effective** output cap is read from the bound model, not from
+`ModelInfo.max_output_tokens` — the declared value is wrong in both directions
+(Anthropic applies it only when the caller sets no `max_tokens`; the local
+provider never passes its own).
+
+No context length is hard-coded. If the window cannot be determined, or the
+reserve and margin would consume it, **no bound is installed** and the agent
+behaves as it did before.
+
+#### Most deployments must declare the window
+
+The window is found by matching the configured model *name* against a list of
+models compiled into the provider. That match is exact, so a self-hosted model
+is never found, and a hosted one stops being found the moment a vendor ships a
+name newer than the pinned list. Measured against this repository's own dev
+config, both the configured provider and its documented fallback report nothing:
+
+```
+local      palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4  -> None
+anthropic  claude-sonnet-4-6                     -> None
+anthropic  claude-sonnet-4-20250514              -> 200000
+```
+
+Set `context_window` explicitly unless the model is a stock hosted one you have
+confirmed resolves. When nothing is installed the runtime logs a warning naming
+the provider and model, so an unprotected deployment is visible in the logs
+rather than silently indistinguishable from a healthy one.
+
+#### A request that picks a different model
+
+The chat UI lets a request override the provider and model. That request is
+served by a *view* of the pipeline bound to the overriding model, and the view
+derives its own budget from that model — never the pipeline default's. A request
+that switches to a smaller model gets the smaller budget.
+
+Two consequences are worth knowing before you set `context_window`:
+
+- **A declared window does not follow an override.** It describes the model
+  *this deployment serves*, so it is not applied to a model the operator never
+  named. Otherwise a deployment declaring a small window would hand that number
+  to a large model — and, paired with that model's output cap, can make the
+  reserve exceed the declared window and disable the bound entirely.
+- **An override the provider cannot resolve gets no bound.** The window is
+  resolved from the provider built out of your own config, which is the only
+  place a self-hosted or custom model ID has metadata at all. Where neither that
+  nor the name lookup yields a window, no bound is installed for that request
+  rather than one derived from a different model's window. The per-tool result
+  clamps still apply, so this is a weaker guarantee, not an absent one.
+
+### Settings
+
+Under `services.chat_app.context_editing`, overridable per pipeline via
+`pipeline_config.context_editing` — the same three-layer lookup as `tool_budgets`.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `true` | Install the in-loop bound |
+| `context_window` | _(derived)_ | Declare the model's context window, overriding the provider's. Required for any model the provider cannot resolve |
+| `reserve_fraction` | `0.15` | Generation reserve floor, as a share of the window |
+| `margin_fraction` | `0.25` | Counting margin, as a share of the window — see [why 25%](#why-the-counting-margin-is-25) |
+| `keep` | `3` | Most recent tool results preserved unreduced |
+| `per_result_tokens` | `2100` | Per-result token ceiling on any retained tool result |
+| `exemption_fraction` | `0.33` | Largest share of the budget the unclearable content may occupy |
+
+An invalid value is logged and replaced by its own default; it never disables the
+bound. `context_window` is the exception to the "own default" part — it has none,
+so an invalid value falls back to the provider-derived window.
+
+> **`enabled: false` is not a full rollback.** It disables in-loop editing only.
+> The per-tool result clamps in `tools/result_limits.py` are unconditional — one
+> of them fixes `max_chars=0` returning an entire document, which is a defect
+> rather than a behaviour worth restoring.
+
+### The per-result ceiling
+
+Every retained tool result is capped at `per_result_tokens`, whatever tool
+produced it. The cap is deliberately *universal*: results are preserved by
+recency across all tools, so a ceiling enforced per-tool stops bounding anything
+as soon as another tool is enabled — an MCP tool, a caller-supplied one.
+
+Two properties keep it from destroying evidence:
+
+- It is a **backstop above** the tuned clamps the retriever and fetch tools
+  already apply to their own output, never below them. Below, it would silently
+  re-truncate every full-size result and override the tuning.
+- It is **pressure-triggered**. Nothing is truncated while the request is under
+  budget, so reading a large document costs nothing until the budget is actually
+  at risk.
+
+MCP tools return a *list* of content blocks rather than a string; the text
+inside each block is truncated and the block structure is left intact.
+
+### Retrieval evidence
+
+Retrieval results are exempt from clearing, because they carry the grounding
+evidence the answer cites — but the exemption is **best-effort**, never
+absolute, and it holds only while it is provably cheap.
+
+The static guard sizes what the clearing pass cannot touch — the exempt results
+*and* the `keep` preserved ones — against `exemption_fraction` of the budget. If
+it exceeds that, the exemption is **dropped with a warning**. Raising
+`tool_budgets.search_vectorstore_hybrid` far enough switches it off on its own.
+
+At runtime the exemption also yields under pressure. With the shipped call
+budget of 2 and `keep` of 3, an ordinary five-result turn makes the exempt set
+*identical* to the clearable set, so honouring it unconditionally would reclaim
+nothing at all. Exempt results are given back one at a time until the request
+fits.
+
+Ordering runs both ways and for the same reason. Exempt results are the
+**earliest**, and the ones shed first are the **newest of those**: once the
+per-turn search budget is spent the retrieval tool returns a synthetic refusal
+under the same tool name, so the earliest results are the evidence and the later
+ones trend toward refusals — the cheapest thing to give up.
+
+### When it cannot fit
+
+If the request is still over budget after clearing, the middleware logs the
+measured overage and sends it anyway; the pre-existing reactive overflow handler
+remains the last-resort net. It also **fails open** — any error in the bound
+itself is logged and the request goes through unreduced, because a middleware
+that exists to prevent a failed turn must not become the cause of one.
 
 ## Extension seams (for new approaches)
 
@@ -147,3 +302,69 @@ choosing what to prototype.
 | Agent specs | `config/agents/*.md` |
 | Config template | `src/cli/templates/base-config.yaml` |
 | Benchmarking | `docs/docs/benchmarking.md` |
+
+### What clearing cannot reclaim
+
+Clearing replaces a tool result's content with a placeholder; it does not delete
+the message. The framing, the tool-call id, and the model's own call arguments
+all survive, which is what keeps the sequence well-formed and stops the model
+re-fetching what was cleared. So there is a floor:
+
+| | tokens |
+|---|---|
+| a full-size tool round, unreduced | 1543 |
+| the same round once cleared | 51.9 |
+| reclaimed by clearing | 96.6% |
+
+At a 32768-token window (trigger 19661) that residue would need roughly **379
+tool rounds** to exhaust the budget on its own, against a `recursion_limit` of
+50 — about a tenth of the budget at that ceiling. Clearing is therefore
+sufficient, and whole tool rounds are never removed from the middle of a trace.
+
+If the residue ever does matter, the runtime says so: the wrapper re-measures
+after reducing and logs the overage in the message text, rather than declaring a
+budget met that is not.
+
+### Why the counting margin is 25%
+
+The counter is an approximation — 4 characters per token — chosen so that
+bounding a request costs no provider round trip and no tokenizer dependency on
+the hot path of every model call. The counting margin is what absorbs its error,
+and 20% is a measured figure rather than a guess:
+
+Measured over 557 real 800-character chunks of this repository's own
+documentation, each behind a retrieval header, as real tokens ÷ counted tokens:
+
+| percentile | real vs. counted |
+|---|---|
+| p50 | 1.14x |
+| p90 | 1.26x |
+| p95 | 1.29x |
+| p99 | 1.35x |
+| max | 1.72x |
+
+Plain prose runs 0.9–1.1x, so the counter over-counts it and errs safe.
+
+Retrieval results are the dense case because every snippet header carries a URL,
+a 32-hex resource hash, a file path and a float score. At the original 5% the
+gap was not covered: a 32768-token window resolved a 26215-token trigger, and a
+prompt filled to it with corpus-average retrieval content really cost 31046
+tokens — 3193 past the window once the answer reserve is added, so the provider
+rejected the request the budget had declared safe.
+
+25% covers drift up to 1.42x — above the p99 of individual chunks, and well
+above what a *prompt* reaches, since a filled prompt averages a dozen or more
+chunks and so concentrates near the p50–p75 mean rather than at any one chunk's
+maximum. A single dense chunk cannot carry the whole prompt past the bound.
+
+Not covered, by choice: text with no prose at all. A passage of pure command
+lines and paths measures 1.80x, and covering that would take a 38% margin —
+spending half the window to insure against something a real 800-character
+documentation chunk does not reach. Those rely on the reactive overflow handler.
+Replacing the character ratio with a real tokenizer is tracked as issue #263.
+
+> **Raising the margin lowers the trigger**, which can push the retrieval
+> exemption past the irreducible-floor guard. At a 32768 window the trigger
+> moved 26215 → 19661, and `keep` has to drop from 3 to 1 for the exemption to
+> survive. Re-derive `keep` whenever `margin_fraction` changes;
+> `TestTheTrackedExampleConfigInstallsABound` fails if the shipped example drifts.

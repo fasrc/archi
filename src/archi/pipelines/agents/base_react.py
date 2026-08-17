@@ -29,6 +29,10 @@ from langgraph.errors import GraphRecursionError
 from langgraph.graph.state import CompiledStateGraph
 
 from src.archi.pipelines.agents.tools import initialize_mcp_client
+from src.archi.pipelines.agents.utils.context_budget import positive_int
+from src.archi.pipelines.agents.utils.context_middleware import (
+    build_context_middleware,
+)
 from src.archi.pipelines.agents.utils.history_utils import infer_speaker
 from src.archi.pipelines.agents.utils.mcp_utils import AsyncLoopThread
 from src.archi.pipelines.agents.utils.prompt_utils import get_role_context, read_prompt
@@ -79,6 +83,20 @@ class BaseReActAgent:
 
     DEFAULT_RECURSION_LIMIT = 50
     DEFAULT_TOOL_BUDGETS: Dict[str, int] = {"search_vectorstore_hybrid": 2}
+
+    # Set by ``adopt_request_local_model`` on a request-local view only. Class
+    # attributes rather than ``__init__`` assignments because views are built by
+    # ``copy.copy`` and subclasses/test doubles routinely bypass ``__init__``;
+    # a default here is inherited by every instance however it was constructed.
+    _request_local_window: Optional[int] = None
+    _is_request_local: bool = False
+
+    # Normally set in ``__init__`` from config. Defaulted here for the same
+    # reason: ``adopt_request_local_model`` compares against them to tell a real
+    # model change from the UI re-sending the configured one, and it must not
+    # raise on a view whose class never ran ``__init__``.
+    default_provider: Optional[str] = None
+    default_model: Optional[str] = None
 
     def __init__(
         self,
@@ -1377,7 +1395,15 @@ class BaseReActAgent:
 
     def _build_static_middleware(self) -> List[Callable]:
         """Build and returns static middleware defined in the config."""
-        return []
+        return build_context_middleware(
+            model=self.agent_llm,
+            context_window=self._get_model_context_window(),
+            config=self.config,
+            pipeline_config=self.pipeline_config,
+            tool_budgets=self._tool_budgets(),
+            model_label=f"{self.default_provider}/{self.default_model}",
+            declared_window_applies=not self._is_request_local,
+        )
 
     def _store_documents(self, stage: str, docs: Sequence[Document]) -> None:
         """Centralised helper used by tools to record documents into the active memory."""
@@ -1594,7 +1620,46 @@ class BaseReActAgent:
             content = f"{content[:397]}..."
         return f"{role}: {content}"
 
+    def adopt_request_local_model(
+        self,
+        provider: Optional[str],
+        model: Optional[str],
+        context_window: Optional[int],
+    ) -> None:
+        """Bind this *view* to the model serving one request (issue #86).
+
+        The view must answer questions about the model it is about to call, not
+        the pipeline default it was copied from. That means its identity, its
+        window, and — because `_static_middleware` is a cache the shallow copy
+        carries over intact — a cleared bound for `refresh_agent` to rebuild.
+
+        *context_window* is the window resolved where the request's provider was
+        built from the deployment's YAML. `None` means it could not be resolved
+        there and the by-name lookup is the fallback, never the mechanism.
+
+        A request naming the **same** provider and model the pipeline was
+        configured with is not a model change, and is not treated as one: the
+        operator's declared window still describes the model being called. That
+        distinction is not a nicety. The chat UI posts provider and model with
+        every message, not only when the user switches, so this path is the
+        ordinary one — and on a self-hosted deployment, where nothing resolves a
+        window by name, discarding the declaration here would install no bound
+        at all on precisely the deployment the declaration exists for.
+        """
+        same_model = (provider, model) == (self.default_provider, self.default_model)
+        self.default_provider = provider
+        self.default_model = model
+        self._request_local_window = positive_int(context_window)
+        self._is_request_local = not same_model
+        self._static_middleware = None
+
     def _get_model_context_window(self) -> Optional[int]:
+        """The context window of the model this instance will call."""
+        if self._request_local_window is not None:
+            return self._request_local_window
+        return self._resolve_provider_context_window()
+
+    def _resolve_provider_context_window(self) -> Optional[int]:
         """
         Retrieve context_window from the configured provider + model
         using the provider abstraction layer.

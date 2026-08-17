@@ -70,12 +70,18 @@ magnitude, so a call count does not bound tokens.
 - **THEN** no tool content is reduced
 - **AND** the model receives the messages unchanged
 
-#### Scenario: A within-budget request still honours the per-result ceiling
+#### Scenario: A within-budget request is not truncated to enforce the ceiling
 
 - **WHEN** the complete request is within the token budget but one tool result exceeds the
   per-result ceiling
-- **THEN** that result is still truncated to the ceiling
-- **AND** no other result is cleared, because the request was already within budget
+- **THEN** no content is truncated, because nothing is being reduced
+- **AND** the ceiling applies on the first model call at which the budget is crossed
+
+The ceiling is a term in the reduction, not a standing tax on every result the agent reads.
+A request already within budget is by definition one the provider will accept, oversized
+result included, so truncating it would discard content at no benefit — and the requirement
+above is scoped to results that *survive reduction*, of which there are none when no reduction
+runs.
 
 #### Scenario: The bound applies on every model call, not once per invocation
 
@@ -206,6 +212,48 @@ percentage and the resulting reserve SHALL be configurable.
 Where the reserve would consume the entire context window, the runtime MUST fail open rather
 than install a bound whose budget is not positive.
 
+The runtime obtains the window by matching the configured model name against its provider's
+model metadata. That match is exact and the metadata is a **static list compiled into the
+provider**, so a self-hosted model, a custom deployment name, or a model released after the
+provider entry was written reports no window at all — and the bound then fails open, installing
+nothing. Failing open is the correct direction, but a runtime that silently installs nothing on
+precisely the deployments most likely to overflow has not satisfied this specification.
+
+An operator MUST therefore be able to declare the context window directly, through the same
+configuration block as the other in-loop settings. A declared window describes **the model the
+deployment is configured to serve**, and for that model it takes precedence over the derived
+one. It is validated like every other setting: an invalid declaration is logged and ignored in
+favour of the derived value, never treated as a disabled bound. Its scope is stated in full
+under "The budget is derived from the model bound to the request" below — a request that
+selects a different model is not covered by it. Where no window can
+be obtained from either source, the runtime MUST record at warning level that no bound was
+installed and name the provider and model responsible, so an inert bound is visible in the logs
+rather than indistinguishable from a healthy one.
+
+#### Scenario: A model absent from the provider metadata installs no bound, audibly
+
+- **WHEN** the configured model has no context window in its provider's metadata
+- **AND** no context window is declared in configuration
+- **THEN** no bound is installed
+- **AND** the runtime logs a warning naming the provider and model
+
+#### Scenario: An operator declares the context window
+
+- **WHEN** the configuration declares a context window for a model whose metadata reports none
+- **THEN** the budget is derived from the declared window
+
+#### Scenario: A declared window takes precedence over the derived one
+
+- **WHEN** the configuration declares a context window and the provider metadata also reports one
+- **AND** the request is served by the model the deployment is configured to serve
+- **THEN** the declared window is used
+
+#### Scenario: An invalid declared window falls back to the derived one
+
+- **WHEN** the configuration declares a non-numeric or non-positive context window
+- **AND** the provider metadata reports a usable window
+- **THEN** the runtime logs a warning and installs the bound using the derived window
+
 #### Scenario: The reserve covers a declared output limit
 
 - **WHEN** the configured model declares an effective output limit larger than the percentage
@@ -287,6 +335,40 @@ chose the smaller model deliberately.
 
 - **WHEN** a request-local view derives its own budget
 - **THEN** the shared pipeline's own budget and cached state are unchanged
+
+A request that names the provider and model the deployment is configured with is NOT a model
+change and MUST NOT be treated as one; a declared window still describes that model. This
+distinction is required rather than cosmetic, because the chat interface transmits the provider
+and model on every message, so the request-local path is the ordinary path.
+
+The window and the model MUST describe the same thing. The window SHALL be resolved where the
+request's provider is built from the deployment's own configuration, because the by-name lookup
+available later consults a model list compiled into the package, in which a self-hosted or
+custom model identifier never appears. An operator-declared context window describes the model
+the deployment serves and SHALL NOT be applied to an overriding model. Where no window can be
+established for the bound model, the system SHALL install no bound rather than derive one from
+a window belonging to a different model.
+
+#### Scenario: The window is resolved from the provider serving the request
+
+- **WHEN** a request overrides the model with an identifier the packaged model list does not contain
+- **THEN** the budget is derived from the window that deployment's own provider reports for it
+
+#### Scenario: A declared window does not follow a model override
+
+- **WHEN** an operator has declared a context window and a request overrides the model
+- **THEN** the budget is derived from the overriding model's own window, not the declared one
+
+#### Scenario: Selecting the deployment's own model keeps its declared window
+
+- **WHEN** a request names the provider and model the deployment is configured with
+- **AND** the configuration declares a context window
+- **THEN** the budget is derived from the declared window, exactly as for a request that names no model at all
+
+#### Scenario: An override with no establishable window installs no bound
+
+- **WHEN** neither the provider serving the request nor the by-name lookup yields a window for an overriding model
+- **THEN** no in-loop bound is installed for that request, and no window belonging to another model is substituted
 
 ### Requirement: Reduction preserves the most recent tool results and the grounding retrieval evidence
 

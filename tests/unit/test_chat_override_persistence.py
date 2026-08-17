@@ -56,10 +56,22 @@ class _FakePipeline:
         self._active_middleware = []
         self._active_memory = None
         self._static_tools = None
+        self._static_middleware = None
+        self.default_provider = "default"
+        self.default_model = "default"
+        self.adopted = None
         self.refresh_agent(force=True)
 
     def refresh_agent(self, force=False, **_kwargs):
         self.agent = ("agent", self.agent_llm)
+
+    def adopt_request_local_model(self, provider, model, context_window):
+        # The view answers for the model it is about to call, and its cached
+        # in-loop bound is cleared for refresh_agent to rebuild.
+        self.default_provider = provider
+        self.default_model = model
+        self._static_middleware = None
+        self.adopted = (provider, model, context_window)
 
 
 class _FakeOutput:
@@ -104,7 +116,11 @@ def test_overridden_turn_persists_override_model_without_touching_shared():
     wrapper.create_agent_trace = lambda **kwargs: None
     wrapper.update_agent_trace = lambda **kwargs: None
     wrapper.insert_timing = lambda *a, **k: None
-    wrapper._create_provider_llm = lambda provider, model, api_key=None: override_llm
+    # (chat_model, context_window) — see ChatWrapper._create_provider_llm.
+    wrapper._create_provider_llm = lambda provider, model, api_key=None: (
+        override_llm,
+        None,
+    )
 
     def _prepare(message, conversation_id, *a, **k):
         return (
@@ -152,6 +168,66 @@ def test_overridden_turn_persists_override_model_without_touching_shared():
 
     # After the turn the shared attribute is still the configured default.
     assert wrapper.current_model_used == default_model
+
+
+def test_overridden_turn_carries_the_resolved_window_onto_the_view():
+    """Task 7.5: the production call site hands the view the override's identity
+    AND the window resolved from the provider it just built.
+
+    Asserting on `_build_request_local_pipeline` alone would pass while
+    `stream()` called it without those arguments, leaving every overridden
+    request sized against the pipeline default.
+    """
+    pipeline = _FakePipeline(_LLM("default"))
+    seen = {}
+
+    class _CapturingArchi(_FakeArchi):
+        def stream(self, history=None, conversation_id=None, pipeline=None):
+            seen["view"] = pipeline
+            yield _FakeOutput("partial")
+
+    wrapper = object.__new__(ChatWrapper)
+    wrapper.archi = _CapturingArchi(pipeline)
+    wrapper.current_model_used = "default/default"
+    wrapper.number_of_queries = 0
+    wrapper.cursor = None
+    wrapper.conn = None
+    wrapper._init_timestamps = lambda: {}
+    wrapper._resolve_config_name = lambda name: name or "default"
+    wrapper.update_config = lambda config_name=None: None
+    wrapper.create_agent_trace = lambda **kwargs: None
+    wrapper.update_agent_trace = lambda **kwargs: None
+    wrapper.insert_timing = lambda *a, **k: None
+    wrapper._prepare_chat_context = lambda message, conversation_id, *a, **k: (
+        SimpleNamespace(conversation_id=conversation_id, history=[]),
+        None,
+    )
+    wrapper._finalize_result = lambda *a, model_used=None, **k: ("out", [1])
+    wrapper._create_provider_llm = lambda provider, model, api_key=None: (
+        _LLM("X"),
+        32768,
+    )
+
+    list(
+        wrapper.stream(
+            message=["hi"],
+            conversation_id=101,
+            client_id="c",
+            is_refresh=False,
+            server_received_msg_ts=None,
+            client_sent_msg_ts=0.0,
+            client_timeout=0,
+            config_name="default",
+            provider="provX",
+            model="modX",
+        )
+    )
+
+    view = seen.get("view")
+    assert view is not None and view is not pipeline
+    assert view.adopted == ("provX", "modX", 32768)
+    # The shared pipeline never adopts anything (issue #86).
+    assert pipeline.adopted is None
 
 
 def test_config_switch_without_override_reports_new_config_model():

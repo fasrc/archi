@@ -500,6 +500,107 @@ should be per-view silently shared from the source. The docstring's own invarian
 attribute that is per-run state … must be rebuilt on the view, never shared" — already covers
 the middleware cache; it simply predates there being any middleware to cache.
 
+### Decision 11 — An operator-declared context window, because the derived one is usually absent
+
+Everything above derives the budget from `_get_model_context_window()`. Measured against this
+repository's own dev deployment config on 2026-08-16, that function returns `None` for both the
+configured provider and the standby:
+
+```
+local      palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4  -> None    (services.chat_app.default_provider)
+anthropic  claude-sonnet-4-6                     -> None    (the documented fallback)
+anthropic  claude-sonnet-4-20250514              -> 200000
+```
+
+`base_react.py:1609` calls `get_provider(self.default_provider)` with **no config**, so the
+window can only come from an exact match against a `ModelInfo` list compiled into the provider.
+`LocalProvider`'s list is empty (it probes Ollama, which is not what this deployment runs);
+`AnthropicProvider`'s holds four IDs and the configured `claude-sonnet-4-6` is not one of them.
+Self-hosted models never match by construction, and hosted ones stop matching whenever a vendor
+ships a name the pinned list predates.
+
+The consequence is not a wrong budget — `resolve_budget` correctly returns `None` and the
+factory correctly returns `[]`. The consequence is that **the entire change is inert on the
+deployment the issue was filed against**, while every unit test passes, because unit tests
+supply the window the production path cannot produce.
+
+So: `services.chat_app.context_editing.context_window`, validated in `read_settings` beside the
+other knobs and preferred over the derived value inside `build_context_middleware`. It reuses
+the three-layer lookup and rides in on the `config` dict the builder already receives, so the
+setting costs the call site nothing.
+
+The invalid-value convention differs here in one way worth stating. Every other setting falls
+back to *its own default*; this one has no default to fall back to, because "absent" and
+"invalid" both mean the same thing — use whatever the provider reports. A bad value therefore
+costs the operator the override and nothing else, and in particular never disables the limit.
+`positive_int` also rejects `True`, which matters more here than elsewhere: `True` is an `int`
+in Python, and a one-token window would clear every message on every call.
+
+One parameter *is* added: `model_label`, naming the provider and model in the log line below.
+It is not needed for the arithmetic, only so the failure has a subject.
+
+Two alternatives were rejected. **Routing `_build_provider_config` into
+`_get_model_context_window`** so the provider is built with real config: that config's `models`
+are raw YAML strings, and `get_model_info` does `model.id` on them — the deploy config documents
+that exact crash at `deploy/fasrc-dev/config.yaml:41-45`. **Widening the providers' hardcoded
+`ModelInfo` lists**: it fixes today's two names and reintroduces the same defect at the next
+model release, and cannot cover self-hosted deployments at all.
+
+Failing open stays the behaviour when neither source yields a window, but it stops being
+*silent*: an inert bound now logs the provider and model responsible, so the difference between
+"protected" and "installed nothing" is visible in the logs instead of only in a token count.
+
+### Decision 12 — The declared window describes the deployment's model, and does not follow an override
+
+Decisions 9 and 11 interact, and the combination was measured only once both were built. The
+declared `context_editing.context_window` takes precedence over the derived one (Decision 11),
+and a request-local view shares the `config` dict with its source by reference — so the declared
+value followed the view onto whatever model a request selected. That reintroduces Decision 9's
+own failure through a second route: the window describes one model while `agent_llm` is another.
+
+Measured on the real `_build_request_local_pipeline`, with a declared 32768 and a request
+overriding to a 200000-window model carrying a 64000 output cap: the reserve (64000) exceeds the
+declared window, `resolve_budget` returns `None`, and **no bound is installed at all** for that
+request. A conservative-looking setting became the reason the protection disappeared.
+
+`build_context_middleware` therefore takes `declared_window_applies`, which a view passes as
+`False` **when it is bound to a different model**. The declared value is an operator's
+statement about the model this deployment serves; it is not evidence about a model the
+operator never named.
+
+The qualifier is load-bearing, and an earlier revision of this decision omitted it. The chat UI
+posts `provider` and `model` with *every* message — `chat.js` reads `state.selectedProvider`
+and includes it on each send, not only when the user changes the dropdown — so the
+request-local path is the **ordinary** path, not an exceptional one. Suppressing the
+declaration on every request-local view therefore suppressed it on every request, and on a
+self-hosted deployment, where nothing resolves a window by name, that installed no bound at
+all. The change would have shipped inert on the deployment it was written for, by the same
+route as the group 7A blocker and for the same underlying reason: a value that exists only in
+config never reaching the model it describes.
+
+`adopt_request_local_model` therefore compares the incoming `(provider, model)` against the
+ones the pipeline was configured with, and treats a match as *not* a model change. Exact
+identity is the right test — narrower than the provider-match heuristic rejected below, and it
+keeps the invariant literal: the window and the model describe the same thing because they are
+the same model. Three alternatives were
+rejected:
+
+* **`min(declared, resolved)`** — provably safe, and wrong in a way that is invisible: a
+  deployment declaring 32768 for its self-hosted default would cap an override to Claude at
+  32768, silently discarding six-sevenths of that model's window with nothing in the logs.
+* **Apply the declared value whenever the override shares the default's provider.** A plausible
+  heuristic — one vLLM server, one `--max-model-len` — but it encodes a deployment topology the
+  config does not state, and it fails the moment a provider fronts two servers.
+* **Keep the declared value as a last resort when the override resolves nothing.** This is the
+  case that now installs no bound, so the cost is real. It was still rejected: an unresolvable
+  override is exactly where a borrowed number is least likely to be right, and a budget derived
+  from the wrong model overflows rather than merely under-using the window.
+
+The consequence is explicit: on a deployment whose models resolve no metadata, a request that
+overrides the model gets no in-loop bound. The source clamps in `tools/result_limits.py` still
+apply — they are unconditional — so this is a weaker guarantee, not an absent one, and the
+warning from Decision 11 names the model responsible.
+
 ### Decision 10 — Name the residual that clearing cannot remove, and measure it
 
 `ClearToolUsesEdit` does not *delete* a tool result — it replaces the content with the
@@ -510,10 +611,26 @@ per cleared round, the message framing, the retained tool-call arguments, and th
 itself all survive.
 
 That floor is **bounded but not zero**. It scales with the number of tool rounds, which
-`recursion_limit` caps at 50 — on the order of a thousand tokens at the default limit, against
-a ~4.9 K generation reserve on a 32 K window. Small, but it is real and it is not clearable,
-so it belongs in the spec's definition of non-reducible content rather than being quietly
-excluded from the bound. The spec now lists it.
+`recursion_limit` caps at 50. It is real and not clearable, so it belongs in the spec's
+definition of non-reducible content rather than being quietly excluded from the bound. The
+spec now lists it.
+
+**Measured** (group 8, on the pinned `langchain-core` 1.2.13, by differencing fully-cleared
+threads of 1 / 11 / 51 / 101 rounds):
+
+| quantity | tokens |
+| --- | --- |
+| a full-size tool round, unreduced | 1543 |
+| the same round once cleared | **51.9** |
+| reclaimed by clearing | 96.6% |
+
+At the deployed trigger of 19661 the residue alone would not exhaust the budget until roughly
+**379 rounds** — an order of magnitude beyond the 50 the recursion limit permits. At that
+ceiling the residue is ~2600 tokens, about 13% of the budget. This settles the open question
+below: **removing whole paired rounds is not needed**, and the alternative considered at the
+end of this decision stays unbuilt. `test_the_measured_residue_per_cleared_round` pins the
+figure, so a placeholder or framing change that moves it fails there rather than silently
+eroding the margin.
 
 Because we own the wrapper (Decision 2), the wrapper **re-measures after applying the edits**.
 If the complete request is still over budget, it logs a warning carrying the measured overage
@@ -583,6 +700,11 @@ reduction, which is the part with runtime behaviour worth toggling. Documented h
 plans a rollback around a guarantee this flag does not make.
 
 ## Open Questions
+
+- ~~**Is clearing alone enough, or must whole paired rounds be removed?**~~ **Settled in group
+  8.** A cleared round costs 51.9 tokens against 1543 unreduced, so clearing reclaims 96.6% and
+  the residue would need ~505 rounds to exhaust the deployed budget — ten times the recursion
+  limit. Round removal stays unbuilt (Decision 10).
 
 - **Preserve count default.** N=3 (the upstream default) is the starting point. Whether the
   agent answers better with more recent reads retained is an empirical question for the
