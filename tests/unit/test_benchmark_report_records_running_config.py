@@ -37,6 +37,17 @@ def _write(tmp_path, config):
     return path
 
 
+def _pin_corpus(monkeypatch, value):
+    """Fix the corpus reading so a test can be about the configuration alone.
+
+    Without this the real reader runs, finds no initialized factory, and warns --
+    which is correct behaviour, but it is not what the caller is asserting on.
+    """
+    monkeypatch.setattr(
+        ResultHandler, "get_corpus_fingerprint", staticmethod(lambda: value)
+    )
+
+
 FILE_CONFIG = {
     "services": {"chat_app": {"context_editing": {"context_window": 32768, "keep": 1}}}
 }
@@ -113,7 +124,9 @@ def test_warns_when_the_run_did_not_use_the_selected_configuration(tmp_path, cap
     assert "context_window" in caplog.text
 
 
-def test_no_warning_when_the_configurations_agree(tmp_path, caplog):
+def test_no_warning_when_the_configurations_agree(tmp_path, monkeypatch, caplog):
+    _pin_corpus(monkeypatch, "sha256:corpus")
+
     with caplog.at_level("WARNING"):
         ResultHandler.handle_results(
             _write(tmp_path, FILE_CONFIG), {}, {}, running_config=FILE_CONFIG
@@ -134,12 +147,6 @@ def test_an_unavailable_running_config_does_not_discard_the_results(tmp_path):
     assert record["configuration_divergence"] == [
         "<unavailable: the run reported no configuration>"
     ]
-
-
-def _pin_corpus(monkeypatch, value):
-    monkeypatch.setattr(
-        ResultHandler, "get_corpus_fingerprint", staticmethod(lambda: value)
-    )
 
 
 def test_records_the_corpus_each_arm_was_scored_against(tmp_path, monkeypatch):

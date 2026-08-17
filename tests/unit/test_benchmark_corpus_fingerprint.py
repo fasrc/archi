@@ -8,6 +8,11 @@ compared were scored against the same documents.
 ``corpus_fingerprint`` is derived from the corpus content instead, so equal
 digests mean equal corpora. It is recorded alongside the nonce rather than
 replacing it -- the Argilla analysis notebook consumes the nonce.
+
+The pool these tests install is the one ``_init_runtime`` installs: a
+``PostgresServiceFactory`` singleton. ``ConnectionPool``'s own singleton is
+deliberately left alone, because nothing in production ever initializes it -- see
+``TestReadsThroughTheInitializedPool`` and issue #273.
 """
 
 import pytest
@@ -16,6 +21,8 @@ import yaml
 import src.bin.service_benchmark as sb
 from src.bin.service_benchmark import ResultHandler
 from src.utils.benchmark_provenance import corpus_fingerprint
+from src.utils.connection_pool import ConnectionPool
+from src.utils.postgres_service_factory import PostgresServiceFactory
 
 LIVE_ROWS = [("aaa", 10), ("bbb", 20)]
 
@@ -40,12 +47,17 @@ def _reset(tmp_path, monkeypatch):
     git_info.write_text(yaml.safe_dump({"last_commit": "abc123\n", "git_diff": ""}))
     monkeypatch.setattr(sb, "EXTRA_METADATA_PATH", str(git_info))
     monkeypatch.delenv("ARCHI_CORPUS_SNAPSHOT_ID", raising=False)
+    # Leave no factory behind for the next test, and start from none.
+    monkeypatch.setattr(PostgresServiceFactory, "_instance", None)
 
 
 def _install_pool(monkeypatch, pool):
-    monkeypatch.setattr(
-        sb.ConnectionPool, "get_instance", classmethod(lambda cls: pool)
-    )
+    """Install *pool* the way ``_init_runtime`` does: behind the factory.
+
+    Goes through the real ``PostgresServiceFactory.connection_pool`` property so
+    the wiring under test is the production wiring, not a stub of it.
+    """
+    PostgresServiceFactory.set_instance(PostgresServiceFactory(connection_pool=pool))
     return pool
 
 
@@ -128,3 +140,92 @@ def test_git_info_is_labelled_as_deploy_time(monkeypatch):
     ResultHandler.add_metadata()
 
     assert "deploy" in ResultHandler.metadata["git_info_captured_at"]
+
+
+class TestReadsThroughTheInitializedPool:
+    """Regression tests for #273: the fingerprint was inert on every real run.
+
+    The query used to go to ``ConnectionPool.get_instance()``, a singleton that
+    no production path ever initializes -- ``_init_runtime`` builds a
+    ``PostgresServiceFactory`` and calls ``set_instance`` on *that*, while the
+    factory constructs its pools directly. So the call raised ``ValueError`` and
+    the surrounding ``except`` filed the result as unavailable, silently, on
+    every benchmark run. The old tests missed it by monkeypatching
+    ``ConnectionPool.get_instance`` itself.
+
+    These tests never touch ``ConnectionPool``'s singleton, so they only pass if
+    the query reads through the pool the run actually opened.
+    """
+
+    def test_the_fingerprint_is_a_real_digest_on_a_normal_run(self, monkeypatch):
+        """The whole defect in one assertion: a digest, not a marker."""
+        _install_pool(monkeypatch, _FakePool())
+
+        fingerprint = ResultHandler.get_corpus_fingerprint()
+
+        assert fingerprint == corpus_fingerprint(LIVE_ROWS)
+        assert not ResultHandler.corpus_reading_failed(fingerprint)
+
+    def test_the_bare_connection_pool_singleton_is_not_consulted(self, monkeypatch):
+        """Fails if the bare singleton is reintroduced, even were it to work."""
+        calls = []
+
+        def _record(cls, *args, **kwargs):
+            calls.append(kwargs or args)
+            raise AssertionError("get_corpus_fingerprint used the bare singleton")
+
+        monkeypatch.setattr(ConnectionPool, "get_instance", classmethod(_record))
+        _install_pool(monkeypatch, _FakePool())
+
+        assert ResultHandler.get_corpus_fingerprint() == corpus_fingerprint(LIVE_ROWS)
+        assert calls == []
+
+    def test_an_uninitialized_factory_is_marked_and_says_so(self, monkeypatch):
+        """No factory is a real possibility -- it must not crash the run."""
+        monkeypatch.setattr(PostgresServiceFactory, "_instance", None)
+
+        fingerprint = ResultHandler.get_corpus_fingerprint()
+
+        assert ResultHandler.corpus_reading_failed(fingerprint)
+        assert "PostgresServiceFactory" in fingerprint
+
+    def test_a_failure_is_logged_not_only_filed_in_the_artifact(
+        self, monkeypatch, caplog
+    ):
+        """The silence is why this shipped: the key was written either way.
+
+        A reader of the artifact sees an unavailable-marker only if they look for
+        it, and nothing in the run's own logs said the collection had failed.
+        """
+
+        class _Broken:
+            def execute(self, *a, **k):
+                raise RuntimeError("connection refused")
+
+        _install_pool(monkeypatch, _Broken())
+
+        with caplog.at_level("WARNING", logger="src.bin.service_benchmark"):
+            ResultHandler.get_corpus_fingerprint()
+
+        assert any(
+            "connection refused" in record.getMessage()
+            for record in caplog.records
+            if record.levelname == "WARNING"
+        )
+
+    def test_the_run_still_keeps_its_scores_when_the_corpus_is_unreadable(
+        self, monkeypatch
+    ):
+        """Provenance is never fatal -- a finished benchmark keeps its results."""
+
+        class _Broken:
+            def execute(self, *a, **k):
+                raise RuntimeError("connection refused")
+
+        _install_pool(monkeypatch, _Broken())
+        ResultHandler.results = [{"scores": {"relevancy": 0.68}}]
+
+        ResultHandler.add_metadata()
+
+        assert ResultHandler.metadata["corpus_fingerprint"].startswith("<unavailable:")
+        assert ResultHandler.results[0]["scores"]["relevancy"] == 0.68

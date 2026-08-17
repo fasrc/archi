@@ -44,7 +44,6 @@ from src.utils.benchmark_schema import (
     score_metrics_per_eligibility,
 )
 from src.utils.config_access import get_static_config
-from src.utils.connection_pool import ConnectionPool
 from src.utils.env import read_secret
 from src.utils.generate_benchmark_report import (
     format_html_output,
@@ -212,11 +211,28 @@ class ResultHandler:
         different model is NOT covered here; that appears as a divergence on
         ``data_manager.embedding_name`` in the recorded configuration.
 
+        Reads through the pool the run actually opened -- the one `_init_runtime`
+        installed on PostgresServiceFactory -- and NOT `ConnectionPool.get_instance`.
+        The two are unrelated singletons: the factory builds its pools directly
+        (`from_config`, and the lazy `connection_pool` property), so nothing ever
+        populates `ConnectionPool._instance`, and asking it for the pool raised
+        `ValueError` on every real run. Because provenance failure is swallowed
+        below, that filed an unavailable-marker instead of crashing, so the field
+        was inert wherever it was consumed while the unit tests stayed green --
+        they monkeypatched the very call that could not work (#273).
+
         Never raises: a finished benchmark must not lose its scores because
-        provenance could not be collected.
+        provenance could not be collected. It does now warn, because an artifact
+        key nobody thinks to check is how the inert version survived review.
         """
         try:
-            rows = ConnectionPool.get_instance().execute(
+            factory = PostgresServiceFactory.get_instance()
+            if factory is None:
+                raise RuntimeError(
+                    "PostgresServiceFactory is not initialized; _init_runtime() "
+                    "installs it when this module is run as a script"
+                )
+            rows = factory.connection_pool.execute(
                 "SELECT 'doc:' || resource_hash, size_bytes::text "
                 "FROM documents WHERE is_deleted = FALSE "
                 "UNION ALL "
@@ -225,6 +241,12 @@ class ResultHandler:
             )
             return corpus_fingerprint(rows)
         except Exception as exc:  # noqa: BLE001 - provenance is never fatal
+            logger.warning(
+                "Corpus provenance unavailable: %s. This run cannot be shown to "
+                "have scored against the same corpus as any other, so comparisons "
+                "involving it will be withheld.",
+                exc,
+            )
             return f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
 
     @staticmethod
