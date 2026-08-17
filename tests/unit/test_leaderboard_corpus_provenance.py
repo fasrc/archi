@@ -204,6 +204,38 @@ class TestPairwiseComparison:
             "faithfulness": "a"
         }
 
+    def test_counts_wins_ties_and_losses_across_metrics(self):
+        from src.bin.service_benchmark import ABResult
+
+        ResultHandler.results = [
+            _record("a", "sha256:same"),
+            _record("b", "sha256:same"),
+        ]
+        paired = [
+            ABResult(
+                question="q1",
+                reference_answer="ref",
+                answer_a="a",
+                answer_b="b",
+                time_a=1.0,
+                time_b=1.0,
+                ragas_a={"faithfulness": 0.9, "context_recall": 0.2, "x": 0.5},
+                ragas_b={"faithfulness": 0.1, "context_recall": 0.8, "x": 0.5},
+                winner_by_metric={
+                    "faithfulness": "a",
+                    "context_recall": "b",
+                    "x": "tie",
+                },
+            )
+        ]
+
+        ResultHandler.dump_ab_comparison(paired)
+        aggregate = ResultHandler.ab_comparison["aggregate"]
+
+        assert aggregate["wins_a"] == 1
+        assert aggregate["wins_b"] == 1
+        assert aggregate["ties"] == 1
+
     def test_withholds_winners_when_the_arms_saw_different_corpora(self):
         ResultHandler.results = [
             _record("a", "sha256:aaa"),
@@ -252,6 +284,57 @@ class TestPairwiseComparison:
         ResultHandler.dump_ab_comparison(self._paired())
 
         assert ResultHandler.ab_comparison["comparable"] is True
+
+
+class TestConfigurationDivergenceBlocksComparison:
+    """An arm that did not run the intended settings is not a valid data point.
+
+    Arm *identity* (name, model, provider, agent_md_file) is correctly taken
+    from the selected file: the harness reads those from
+    ``services.benchmarking`` and passes them to ``archi()`` as explicit
+    keyword arguments, so they are what ran. But the agent reads
+    ``services.chat_app`` from Postgres, and when that diverged the arm did not
+    test the condition it was selected to test -- so ranking it against the
+    others asserts a controlled comparison that did not happen.
+    """
+
+    def test_a_diverged_arm_is_not_comparable(self):
+        diverged = _record("a", "sha256:same")
+        diverged["configuration_divergence"] = [
+            "services.chat_app.context_editing.context_window"
+        ]
+        ResultHandler.results = [diverged, _record("b", "sha256:same")]
+
+        leaderboard = ResultHandler.build_leaderboard()
+
+        assert leaderboard["comparable"] is False
+        assert all(row["rank"] is None for row in leaderboard["rows"])
+
+    def test_the_diverged_setting_is_named_in_the_warnings(self):
+        diverged = _record("a", "sha256:same")
+        diverged["configuration_divergence"] = [
+            "services.chat_app.context_editing.context_window"
+        ]
+        ResultHandler.results = [diverged, _record("b", "sha256:same")]
+
+        assert any("context_window" in w for w in _warnings())
+
+    def test_an_arm_that_matched_its_selected_config_stays_comparable(self):
+        ResultHandler.results = [
+            _record("a", "sha256:same"),
+            _record("b", "sha256:same"),
+        ]
+
+        assert ResultHandler.build_leaderboard()["comparable"] is True
+
+    def test_divergence_also_withholds_the_pairwise_winners(self):
+        diverged = _record("a", "sha256:same")
+        diverged["configuration_divergence"] = ["services.chat_app.recursion_limit"]
+        ResultHandler.results = [diverged, _record("b", "sha256:same")]
+
+        ResultHandler.dump_ab_comparison(TestPairwiseComparison._paired())
+
+        assert ResultHandler.ab_comparison["comparable"] is False
 
 
 def test_records_predating_provenance_stay_comparable():

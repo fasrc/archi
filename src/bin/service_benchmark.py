@@ -149,21 +149,35 @@ class ResultHandler:
         )
 
     @staticmethod
-    def corpus_comparable(records: List[Dict[str, Any]]) -> bool:
+    def arms_comparable(records: List[Dict[str, Any]]) -> bool:
         """Can these arms' scores be set against each other?
 
-        Only when every arm's corpus provenance is established and they all
-        observed the same corpus. Used by BOTH comparison artifacts -- the
-        leaderboard and the pairwise A/B dump -- because a guard on one of them
-        still lets a reader draw the unsupported conclusion from the other.
+        Only when, for every arm, the corpus provenance is established, they all
+        observed the same corpus, and the arm actually ran the settings it was
+        selected to run. A diverged arm did not test its intended condition, so
+        ranking it against the others asserts a controlled comparison that did
+        not happen.
 
-        Records with no corpus keys at all predate provenance and are left
+        Note what is NOT checked: arm identity (name, model, provider,
+        agent_md_file). The harness reads those from the selected file's
+        ``services.benchmarking`` and passes them to ``archi()`` as explicit
+        keyword arguments, so the file is authoritative for them and the labels
+        are accurate. Only ``services.chat_app`` and the rest of what the agent
+        reads from Postgres can diverge.
+
+        Used by BOTH comparison artifacts -- the leaderboard and the pairwise
+        A/B dump -- because a guard on one of them still lets a reader draw the
+        unsupported conclusion from the other.
+
+        Records with no provenance keys at all predate provenance and are left
         comparable: historical sweeps are not retroactively invalidated.
         """
         fingerprints = set()
         for record in records:
             stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is not _NOT_RECORDED and stability is not True:
+                return False
+            if record.get("configuration_divergence"):
                 return False
             fingerprint = record.get("corpus_fingerprint")
             if fingerprint is not None:
@@ -482,7 +496,7 @@ class ResultHandler:
         # the two arms were measured under the same conditions. Guarding only
         # the leaderboard would still let a reader draw the unsupported
         # conclusion from this artifact.
-        comparable = ResultHandler.corpus_comparable(
+        comparable = ResultHandler.arms_comparable(
             [ResultHandler.results[idx_a], ResultHandler.results[idx_b]]
         )
 
@@ -713,6 +727,12 @@ class ResultHandler:
                     f"corpus stability is unknown for variant '{name}'; it was "
                     "not observed before and after the run"
                 )
+            divergence = record.get("configuration_divergence") or []
+            if divergence:
+                corpus_warnings.append(
+                    f"variant '{name}' did not run the settings it was selected "
+                    f"to run; these differ: {', '.join(divergence)}"
+                )
 
         # Complete rows first, then by descending primary score; incomplete last.
         rows.sort(
@@ -727,7 +747,7 @@ class ResultHandler:
         # withhold the ranking rather than manufacture an ordering a consumer
         # would read from rows[*].rank without ever seeing the warnings. The
         # metrics stay, so an operator can still inspect the run.
-        comparable = ResultHandler.corpus_comparable(ResultHandler.results)
+        comparable = ResultHandler.arms_comparable(ResultHandler.results)
 
         # Dense ranking: equal primary scores share a rank.
         rank = 0
