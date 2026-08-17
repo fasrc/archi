@@ -564,8 +564,25 @@ declared window, `resolve_budget` returns `None`, and **no bound is installed at
 request. A conservative-looking setting became the reason the protection disappeared.
 
 `build_context_middleware` therefore takes `declared_window_applies`, which a view passes as
-`False`. The declared value is an operator's statement about the model **this deployment
-serves**; it is not evidence about a model the operator never named. Three alternatives were
+`False` **when it is bound to a different model**. The declared value is an operator's
+statement about the model this deployment serves; it is not evidence about a model the
+operator never named.
+
+The qualifier is load-bearing, and an earlier revision of this decision omitted it. The chat UI
+posts `provider` and `model` with *every* message — `chat.js` reads `state.selectedProvider`
+and includes it on each send, not only when the user changes the dropdown — so the
+request-local path is the **ordinary** path, not an exceptional one. Suppressing the
+declaration on every request-local view therefore suppressed it on every request, and on a
+self-hosted deployment, where nothing resolves a window by name, that installed no bound at
+all. The change would have shipped inert on the deployment it was written for, by the same
+route as the group 7A blocker and for the same underlying reason: a value that exists only in
+config never reaching the model it describes.
+
+`adopt_request_local_model` therefore compares the incoming `(provider, model)` against the
+ones the pipeline was configured with, and treats a match as *not* a model change. Exact
+identity is the right test — narrower than the provider-match heuristic rejected below, and it
+keeps the invariant literal: the window and the model describe the same thing because they are
+the same model. Three alternatives were
 rejected:
 
 * **`min(declared, resolved)`** — provably safe, and wrong in a way that is invisible: a

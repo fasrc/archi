@@ -336,6 +336,11 @@ chose the smaller model deliberately.
 - **WHEN** a request-local view derives its own budget
 - **THEN** the shared pipeline's own budget and cached state are unchanged
 
+A request that names the provider and model the deployment is configured with is NOT a model
+change and MUST NOT be treated as one; a declared window still describes that model. This
+distinction is required rather than cosmetic, because the chat interface transmits the provider
+and model on every message, so the request-local path is the ordinary path.
+
 The window and the model MUST describe the same thing. The window SHALL be resolved where the
 request's provider is built from the deployment's own configuration, because the by-name lookup
 available later consults a model list compiled into the package, in which a self-hosted or
@@ -353,6 +358,12 @@ a window belonging to a different model.
 
 - **WHEN** an operator has declared a context window and a request overrides the model
 - **THEN** the budget is derived from the overriding model's own window, not the declared one
+
+#### Scenario: Selecting the deployment's own model keeps its declared window
+
+- **WHEN** a request names the provider and model the deployment is configured with
+- **AND** the configuration declares a context window
+- **THEN** the budget is derived from the declared window, exactly as for a request that names no model at all
 
 #### Scenario: An override with no establishable window installs no bound
 

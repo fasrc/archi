@@ -91,6 +91,13 @@ class BaseReActAgent:
     _request_local_window: Optional[int] = None
     _is_request_local: bool = False
 
+    # Normally set in ``__init__`` from config. Defaulted here for the same
+    # reason: ``adopt_request_local_model`` compares against them to tell a real
+    # model change from the UI re-sending the configured one, and it must not
+    # raise on a view whose class never ran ``__init__``.
+    default_provider: Optional[str] = None
+    default_model: Optional[str] = None
+
     def __init__(
         self,
         config: Dict[str, Any],
@@ -1629,11 +1636,21 @@ class BaseReActAgent:
         *context_window* is the window resolved where the request's provider was
         built from the deployment's YAML. `None` means it could not be resolved
         there and the by-name lookup is the fallback, never the mechanism.
+
+        A request naming the **same** provider and model the pipeline was
+        configured with is not a model change, and is not treated as one: the
+        operator's declared window still describes the model being called. That
+        distinction is not a nicety. The chat UI posts provider and model with
+        every message, not only when the user switches, so this path is the
+        ordinary one — and on a self-hosted deployment, where nothing resolves a
+        window by name, discarding the declaration here would install no bound
+        at all on precisely the deployment the declaration exists for.
         """
+        same_model = (provider, model) == (self.default_provider, self.default_model)
         self.default_provider = provider
         self.default_model = model
         self._request_local_window = positive_int(context_window)
-        self._is_request_local = True
+        self._is_request_local = not same_model
         self._static_middleware = None
 
     def _get_model_context_window(self) -> Optional[int]:

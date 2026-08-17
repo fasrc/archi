@@ -349,11 +349,12 @@ def test_declared_window_does_not_follow_a_model_override():
     source = _primed_source(config=config)
     assert _compiled_budget(source).context_window == 32768
 
+    # A genuinely different model from the source's configured "big-model".
     view = _build_request_local_pipeline(
         source,
         _llm(max_tokens=8192),
-        provider="prov",
-        model="big-model",
+        provider="other",
+        model="some-other-model",
         context_window=200000,
     )
 
@@ -378,4 +379,37 @@ def test_an_unusable_carried_window_falls_back_to_name_resolution(bad):
     )
 
     # Resolved by name for the view's OWN model, never the source's.
+    assert _compiled_budget(view).context_window == 32768
+
+
+def test_selecting_the_deployments_own_model_keeps_its_declared_window():
+    """The chat UI sends provider+model on **every** message, not only when the
+    user switches models — `chat.js` reads `state.selectedProvider` and posts it
+    with each send. So the request-local path is the normal path, and treating
+    it as a model *change* discards the operator's declared window.
+
+    On a self-hosted deployment that is fatal rather than merely conservative:
+    nothing resolves the window by name, so the bound is not installed at all
+    and the whole feature ships inert on the deployment it was written for.
+
+    The declared window describes a model the operator named. When the request
+    names that same model, it still describes it.
+    """
+    config = {"services": {"chat_app": {"context_editing": {"context_window": 32768}}}}
+    source = _BudgetPipeline(
+        _llm(), provider="local", model="a-self-hosted-model", config=config
+    )
+    source.refresh_agent(force=True)
+    assert _compiled_budget(source).context_window == 32768
+    # The provider cannot resolve this name — the case the declaration exists for.
+    assert source._resolve_provider_context_window() is None
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(),
+        provider="local",
+        model="a-self-hosted-model",
+        context_window=None,
+    )
+
     assert _compiled_budget(view).context_window == 32768
