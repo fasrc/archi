@@ -127,9 +127,34 @@ ALTER TABLE conversation_metadata
     ADD COLUMN IF NOT EXISTS external_chat_id VARCHAR(200);
 
 -- Bearer-token lookup is by hash, so a hash must map to at most one user.
--- UNIQUE (partial, NULL-tolerant) matches init.sql. Drop any pre-existing
--- non-unique index of the same name first so the upgrade is deterministic.
-DROP INDEX IF EXISTS idx_users_api_token;
+-- UNIQUE (partial, NULL-tolerant) matches init.sql. Any pre-existing index of the
+-- same name that is NOT that is dropped first, so the upgrade is deterministic.
+--
+-- The drop is guarded on the existing index's DEFINITION, not merely on its
+-- existence. `DROP INDEX IF EXISTS` is re-runnable but it is not a no-op, and this
+-- file is replayed on every startup: an unconditional drop-then-create rebuilds
+-- the index on every boot — a scan and sort of `users` on the critical path, before
+-- any application service is allowed to start. And because psql commits each
+-- statement separately, the drop lands in its own transaction, leaving a window
+-- with no uniqueness constraint at all; a duplicate hash arriving in it makes the
+-- CREATE fail, which under ON_ERROR_STOP=1 keeps the whole stack down.
+--
+-- indisunique AND indpred IS NOT NULL is the definition init.sql produces: unique
+-- and partial. An index matching both is left alone; anything else of that name
+-- (the legacy non-unique one) is replaced once and then matches.
+DO $$
+BEGIN
+  IF to_regclass('idx_users_api_token') IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_index
+       WHERE indexrelid = to_regclass('idx_users_api_token')
+         AND indisunique
+         AND indpred IS NOT NULL
+     ) THEN
+    DROP INDEX idx_users_api_token;
+  END IF;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_token
     ON users(api_token_hash) WHERE api_token_hash IS NOT NULL;
 

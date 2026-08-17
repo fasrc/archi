@@ -128,6 +128,47 @@ def _non_idempotent_violations(path: Path) -> list[str]:
     return violations
 
 
+_DROP_INDEX_RE = re.compile(r"DROP\s+INDEX\b", re.IGNORECASE)
+
+
+def _unguarded_drop_index_violations(path: Path) -> list[str]:
+    """Return violations for a DROP INDEX outside a guarded DO block."""
+    content = _COMMENT_RE.sub("", _DO_BLOCK_RE.sub("", path.read_text()))
+    if _DROP_INDEX_RE.search(content):
+        return [f"{path.name}: DROP INDEX outside a guarded DO block"]
+    return []
+
+
+def test_no_unguarded_drop_index_in_migrations():
+    """`DROP INDEX IF EXISTS` is re-runnable but it is not a no-op.
+
+    The sidecar replays every file on every startup, so an unconditional drop
+    followed by a create rebuilds the index on each boot: a full scan and sort of
+    the table on the critical path, before any application service is allowed to
+    start. Worse than the cost, psql runs each statement in its own transaction, so
+    the drop commits and there is a window in which the uniqueness constraint does
+    not exist — and if a duplicate lands in it, the CREATE fails, and under
+    `ON_ERROR_STOP=1` plus `set -e` that keeps the whole stack down.
+
+    `IF EXISTS` satisfies the keyword check in
+    ``test_every_migration_statement_is_idempotent``, which is why this needs its
+    own assertion: the requirement is that a re-run *changes nothing*, so the drop
+    has to be guarded on the existing index's definition.
+    """
+    sql_files = sorted(_MIGRATIONS_DIR.glob("*.sql"))
+    assert sql_files, f"No .sql files found in {_MIGRATIONS_DIR}"
+
+    violations: list[str] = []
+    for path in sql_files:
+        violations.extend(_unguarded_drop_index_violations(path))
+
+    assert not violations, (
+        "A DROP INDEX must sit inside a DO $$ ... END $$ block that first checks "
+        "the existing index's definition, so re-running the migration against an "
+        "already-current schema does not rebuild the index:\n" + "\n".join(violations)
+    )
+
+
 def test_every_migration_statement_is_idempotent():
     sql_files = sorted(_MIGRATIONS_DIR.glob("*.sql"))
     assert sql_files, f"No .sql files found in {_MIGRATIONS_DIR}"
