@@ -38,7 +38,7 @@ from src.utils.benchmark_schema import (
     required_fields_for_modes,
     score_metrics_per_eligibility,
 )
-from src.utils.config_access import get_full_config, get_static_config
+from src.utils.config_access import get_static_config
 from src.utils.connection_pool import ConnectionPool
 from src.utils.env import read_secret
 from src.utils.generate_benchmark_report import (
@@ -140,13 +140,26 @@ class ResultHandler:
 
         Unlike the per-invocation nonce above, equal digests mean equal corpora,
         so "these arms were scored against the same documents" becomes a
-        checkable claim. Never raises: a finished benchmark must not lose its
-        scores because provenance could not be collected.
+        checkable claim.
+
+        Covers the retrievable state, not just the document list. ``resource_hash``
+        is ``md5(url)`` -- an identity hash deliberately stable across content
+        updates -- so documents alone would miss an edit that preserved the byte
+        count. Retrieval reads ``document_chunks``, so the chunk index is hashed
+        too, which also catches re-chunking. Re-embedding the same text with a
+        different model is NOT covered here; that appears as a divergence on
+        ``data_manager.embedding_name`` in the recorded configuration.
+
+        Never raises: a finished benchmark must not lose its scores because
+        provenance could not be collected.
         """
         try:
             rows = ConnectionPool.get_instance().execute(
-                "SELECT resource_hash, size_bytes FROM documents "
-                "WHERE is_deleted = FALSE"
+                "SELECT 'doc:' || resource_hash, size_bytes::text "
+                "FROM documents WHERE is_deleted = FALSE "
+                "UNION ALL "
+                "SELECT 'chunk:' || document_id::text || ':' || chunk_index::text, "
+                "md5(chunk_text) FROM document_chunks"
             )
             return corpus_fingerprint(rows)
         except Exception as exc:  # noqa: BLE001 - provenance is never fatal
@@ -171,7 +184,13 @@ class ResultHandler:
                 section[prompt_name] = prompt_str
 
     @staticmethod
-    def handle_results(config_path: Path, results: Dict, total_results: Dict):
+    def handle_results(
+        config_path: Path,
+        results: Dict,
+        total_results: Dict,
+        *,
+        running_config: Optional[Dict[str, Any]],
+    ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
 
@@ -181,13 +200,17 @@ class ResultHandler:
         # configuration from Postgres, and load_new_configuration writes the
         # selected file to CONFIG_PATH -- which archi() never reads. Recording
         # only the file therefore labels the run with settings it may never have
-        # used. Record both, and name the settings where they disagree.
-        try:
-            running_config = get_full_config()
+        # used.
+        #
+        # `running_config` is the snapshot archi.__init__ took when it built the
+        # chain (src/archi/archi.py). It is passed in rather than re-queried
+        # here: the query would run AFTER the arm's questions, so a config change
+        # during the arm would certify settings the chain never held -- and would
+        # clear the divergence list while doing it.
+        if running_config is None:
+            divergence = ["<unavailable: the run reported no configuration>"]
+        else:
             divergence = config_divergence(config, running_config)
-        except Exception as exc:  # noqa: BLE001 - never lose a finished run's scores
-            running_config = None
-            divergence = [f"<unavailable: could not read the running config: {exc}>"]
 
         if divergence:
             logger.warning(
@@ -206,6 +229,9 @@ class ResultHandler:
             "configuration": config,
             "running_configuration": running_config,
             "configuration_divergence": divergence,
+            # Per arm, not once per sweep: the corpus can be re-ingested between
+            # arms, and a single end-of-run fingerprint could not show it.
+            "corpus_fingerprint": ResultHandler.get_corpus_fingerprint(),
         }
 
         ResultHandler.results.append(current_results)
@@ -1438,7 +1464,13 @@ class Benchmarker:
         while self.all_config_files:
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
-                Path(self.current_config), question_wise_results, total_results
+                Path(self.current_config),
+                question_wise_results,
+                total_results,
+                # The chain's own snapshot, taken by archi.__init__ before these
+                # questions ran -- not a fresh query, which would report the
+                # config as it stands now rather than as the arm used it.
+                running_config=getattr(self.chain, "config", None),
             )
             self.load_new_configuration()
 

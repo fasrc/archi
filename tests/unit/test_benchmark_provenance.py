@@ -75,6 +75,12 @@ class TestConfigDivergence:
         assert config_divergence({"tools": None}, {"tools": []}) == []
         assert config_divergence({"a": {"b": None}}, {"a": {"b": {}}}) == []
 
+    def test_an_empty_mapping_is_not_an_empty_sequence(self):
+        """``None`` means "not configured" and matches either empty container,
+        but ``{}`` and ``[]`` are different settings and must not be collapsed.
+        """
+        assert config_divergence({"tools": {}}, {"tools": []}) == ["tools"]
+
     def test_a_populated_container_still_differs_from_an_empty_one(self):
         assert config_divergence({"mcp_servers": None}, {"mcp_servers": {"x": 1}}) == [
             "mcp_servers.x"
@@ -145,3 +151,28 @@ class TestCorpusFingerprint:
     def test_rejects_a_row_that_is_not_a_pair(self):
         with pytest.raises(ValueError):
             corpus_fingerprint([("aaa",)])
+
+    def test_accepts_opaque_string_values(self):
+        """Values are not numbers.
+
+        ``resource_hash`` is ``md5(url)`` -- an identity hash deliberately stable
+        across content edits -- so document size alone cannot detect a changed
+        document. The caller also feeds in per-chunk digests, which are hex
+        strings, so the value side must stay opaque.
+        """
+        digest = corpus_fingerprint([("chunk:1:0", "d41d8cd98f00b204e9800998ecf8427e")])
+        assert digest.startswith("sha256:")
+
+    def test_a_rechunked_corpus_differs_from_the_original(self):
+        before = corpus_fingerprint([("chunk:1:0", "aaa"), ("chunk:1:1", "bbb")])
+        after = corpus_fingerprint(
+            [("chunk:1:0", "aaa"), ("chunk:1:1", "bbb"), ("chunk:1:2", "ccc")]
+        )
+        assert before != after
+
+    def test_an_edit_that_preserves_document_size_still_changes_the_digest(self):
+        """The failure mode that document size alone cannot see."""
+        same_size_doc = ("doc:abc", "1024")
+        before = corpus_fingerprint([same_size_doc, ("chunk:1:0", "old-content-hash")])
+        after = corpus_fingerprint([same_size_doc, ("chunk:1:0", "new-content-hash")])
+        assert before != after

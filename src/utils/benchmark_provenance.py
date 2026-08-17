@@ -39,10 +39,15 @@ def _is_empty_container(value: Any) -> bool:
 
 
 def _as_mapping(value: Any) -> Optional[Dict[str, Any]]:
-    """Return *value* as a mapping to recurse into, or ``None`` if it is a leaf."""
+    """Return *value* as a mapping to recurse into, or ``None`` if it is a leaf.
+
+    Only ``None`` and an empty *mapping* become ``{}``. An empty sequence stays a
+    leaf so that ``{}`` and ``[]`` can be told apart -- they are different
+    settings, and collapsing them would be a false clearance.
+    """
     if isinstance(value, dict):
         return value
-    if _is_empty_container(value):
+    if value is None:
         return {}
     return None
 
@@ -50,10 +55,15 @@ def _as_mapping(value: Any) -> Optional[Dict[str, Any]]:
 def _leaves_equal(left: Any, right: Any) -> bool:
     """Compare two leaves.
 
-    Reached only when at least one side is a non-empty non-mapping, because
-    ``_as_mapping`` turns every absent-or-empty container into ``{}`` and those
-    are recursed into instead. So there is no "both empty" case to handle here.
+    ``None`` means "not configured" and matches an empty container of either
+    kind, because every config consumer in this codebase reads with
+    ``.get(key)`` and cannot distinguish the two. Two *present* empty containers
+    are compared by kind, so an empty mapping never matches an empty sequence.
     """
+    if _is_empty_container(left) and _is_empty_container(right):
+        if left is None or right is None:
+            return True
+        return isinstance(left, dict) == isinstance(right, dict)
     # ``0 == False`` in Python; a numeric setting is not a boolean one.
     if isinstance(left, bool) != isinstance(right, bool):
         return False
@@ -93,28 +103,33 @@ def _escape(value: Any) -> str:
 
 
 def corpus_fingerprint(rows: Iterable[Sequence[Any]]) -> str:
-    """Digest of the corpus, equal exactly when its content is equal.
+    """Digest of the corpus, equal exactly when the supplied state is equal.
 
-    *rows* are ``(resource_hash, size_bytes)`` pairs, one per document. Order is
-    irrelevant -- the rows are sorted before hashing -- so the digest does not
-    depend on how the query happened to return them. A ``None`` size is kept
-    distinct from ``0``: a document with no recorded size is not a zero-byte
-    document.
+    *rows* are opaque ``(key, value)`` pairs. Order is irrelevant -- the rows are
+    sorted before hashing -- so the digest does not depend on how the query
+    happened to return them. A ``None`` value stays distinct from ``0`` and from
+    the empty string: "no value recorded" is not "the value is zero".
 
-    Unlike ``corpus_snapshot_id``, which is a per-invocation nonce, two runs
-    over an unchanged corpus produce the same value here. That is what makes
-    "these arms saw the same corpus" a checkable claim rather than an
-    assumption.
+    Values must stay opaque strings rather than numbers, because document size
+    alone cannot detect a changed document. ``resource_hash`` is ``md5(url)``, an
+    identity hash deliberately stable across content updates, so the caller also
+    feeds in per-chunk content digests -- hex, not numeric.
+
+    Unlike ``corpus_snapshot_id``, which is a per-invocation nonce, two runs over
+    an unchanged corpus produce the same value here. That is what makes "these
+    arms saw the same corpus" a checkable claim rather than an assumption.
+
+    What it does NOT cover: re-embedding the same text with a different model
+    leaves every key and value here unchanged. That shows up instead as a
+    divergence on ``data_manager.embedding_name`` in the recorded configuration.
     """
     records: List[str] = []
     for row in rows:
         pair: Tuple[Any, ...] = tuple(row)
         if len(pair) != 2:
-            raise ValueError(
-                f"corpus row must be a (resource_hash, size_bytes) pair, got {pair!r}"
-            )
-        resource_hash, size_bytes = pair
-        size = "" if size_bytes is None else str(int(size_bytes))
-        records.append(f"{_escape(resource_hash)}:{size}")
+            raise ValueError(f"corpus row must be a (key, value) pair, got {pair!r}")
+        key, value = pair
+        rendered = "\x00none" if value is None else _escape(value)
+        records.append(f"{_escape(key)}:{rendered}")
     digest = hashlib.sha256("\n".join(sorted(records)).encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
