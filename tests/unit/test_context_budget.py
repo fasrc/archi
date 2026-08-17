@@ -25,6 +25,7 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages.utils import count_tokens_approximately
 
 from src.archi.pipelines.agents.utils.context_budget import (
     DEFAULT_COUNTING_MARGIN_FRACTION,
@@ -249,7 +250,7 @@ class TestExemptionSizing:
             context_window=WINDOW, output_cap=None, settings=s, retrieval_call_budget=4
         )
 
-        # The exemption alone is 6000, under a third of the 26215 budget; adding
+        # The exemption alone is 6000, under a third of the 21300 budget; adding
         # the 4500 held by `keep` puts the irreducible total over it.
         assert b.exempt_floor_tokens == 6000
         assert 6000 < b.trigger * (1 / 3) < 6000 + 4500
@@ -415,3 +416,96 @@ class TestProviderReportedWindow:
         would clear every message on every call."""
         provider = self._Provider(SimpleNamespace(context_window=bad))
         assert resolve_model_window(provider, "m") is None
+
+
+class TestTheMarginCoversTheApproximation:
+    """The counting margin exists for one job: absorb the counter being wrong.
+
+    ``count_tokens_approximately`` assumes 4 characters per token. Measured
+    against this repository's own content that holds for prose — markdown docs,
+    agent specs and Python all land between 3.7 and 5.0 chars/token, so the
+    counter over-estimates them and errs safe. It does **not** hold for a
+    retrieval result: every snippet header carries a URL, a 32-hex resource
+    hash, a path and a float score, and those tokenize densely. A real result
+    (4 documents at the tool's 800-char cap, plus headers) measures 1.14x more
+    tokens than the counter reports.
+
+    A margin that does not cover that gap makes the entire budget a number the
+    provider disagrees with — the trigger is met, the request goes out, and it
+    is rejected for length anyway.
+
+    Content denser still (base64 blobs, CJK) reaches 1.6-3.5x and is *not*
+    covered here; that is what the reactive overflow handler remains for. This
+    test pins the ordinary case, which must never rely on it.
+    """
+
+    # Corpus-representative body text: prose interleaved with commands, flags
+    # and paths, which is the texture of the FASRC documentation this agent
+    # retrieves — and disproportionately the texture of the passages that answer
+    # "how do I run X". Clean prose alone measures 0.98x and would make this
+    # test pass against any margin; command-dense text reaches 1.45x. This lands
+    # at 1.15x, the measured corpus average.
+    PROSE = (
+        "Slurm allocates compute resources through partitions, each with its own "
+        "wall-clock ceiling, memory limit and preemption policy. Interactive work "
+        "belongs on the test partition, where a shell is granted on a compute "
+        "node without queueing behind production batch traffic. Long-running "
+        "pipelines should be submitted as batch jobs so they survive a dropped "
+        "connection. Memory is requested per node or per core, and exceeding the "
+        "request terminates the job rather than swapping. "
+        "Run `salloc -p test -t 0-01:00 --mem 4000 -c 4` for a shell, or "
+        "`sbatch --array=1-100%10 --output=/n/holyscratch01/lab/%A_%a.out job.sh` "
+        "for batch. Load toolchains with "
+        "`module load gcc/12.2.0-fasrc01 cuda/12.2.0-fasrc01`. "
+    ) * 6
+
+    @classmethod
+    def _retrieval_result(cls, seed: int) -> str:
+        """One tool result in the retriever's real serialized shape.
+
+        Four documents at the tool's 800-character cap, each behind a header
+        carrying the path, title, URL, resource hash and score — which is where
+        the token density that defeats a 4-chars-per-token estimate lives.
+        """
+        docs = []
+        for i in range(4):  # the retriever's max_documents
+            offset = ((seed * 4 + i) * 137) % len(cls.PROSE)
+            rotated = cls.PROSE[offset:] + cls.PROSE[:offset]  # vary per document
+            docs.append(
+                f"Source: fasrc-docs/page_{seed}_{i}.md | Title: Running Jobs "
+                f"| URL: https://docs.rc.fas.harvard.edu/kb/running-jobs-{seed}{i}/ "
+                f"| Hash: 9f2b7c1e4a8d3f6b0c5e2a9d7b4f1c{i:02x}\nScore: 0.8123\n"
+                + rotated[:800]  # the retriever's max_chars per document
+            )
+        return "\n\n".join(docs)
+
+    def test_a_prompt_filled_to_the_trigger_still_fits_the_real_window(self):
+        """Fill to the budget's own trigger, then ask a real tokenizer."""
+        enc = pytest.importorskip("tiktoken").get_encoding("cl100k_base")
+        window = 32768
+        budget = resolve_budget(
+            context_window=window,
+            output_cap=None,
+            settings=read_settings(None, None),
+        )
+        assert budget is not None
+
+        messages, body = [], ""
+        while count_tokens_approximately(messages) < budget.trigger:
+            chunk = self._retrieval_result(len(messages))
+            body += chunk
+            messages.append(
+                ToolMessage(
+                    content=chunk,
+                    tool_call_id=f"c{len(messages)}",
+                    name="search_vectorstore_hybrid",
+                )
+            )
+
+        real = len(enc.encode(body)) + 3 * len(messages)
+        assert real + budget.generation_reserve <= window, (
+            f"a prompt the counter measures at the {budget.trigger}-token trigger "
+            f"really costs {real} tokens; with the {budget.generation_reserve}-token "
+            f"reserve that is {real + budget.generation_reserve - window} over the "
+            f"{window}-token window. The counting margin must cover the gap."
+        )

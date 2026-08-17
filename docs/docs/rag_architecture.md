@@ -178,7 +178,7 @@ Under `services.chat_app.context_editing`, overridable per pipeline via
 | `enabled` | `true` | Install the in-loop bound |
 | `context_window` | _(derived)_ | Declare the model's context window, overriding the provider's. Required for any model the provider cannot resolve |
 | `reserve_fraction` | `0.15` | Generation reserve floor, as a share of the window |
-| `margin_fraction` | `0.05` | Counting margin, as a share of the window |
+| `margin_fraction` | `0.20` | Counting margin, as a share of the window — see [why 20%](#why-the-counting-margin-is-20) |
 | `keep` | `3` | Most recent tool results preserved unreduced |
 | `per_result_tokens` | `2100` | Per-result token ceiling on any retained tool result |
 | `exemption_fraction` | `0.33` | Largest share of the budget the unclearable content may occupy |
@@ -324,3 +324,31 @@ sufficient, and whole tool rounds are never removed from the middle of a trace.
 If the residue ever does matter, the runtime says so: the wrapper re-measures
 after reducing and logs the overage in the message text, rather than declaring a
 budget met that is not.
+
+### Why the counting margin is 20%
+
+The counter is an approximation — 4 characters per token — chosen so that
+bounding a request costs no provider round trip and no tokenizer dependency on
+the hot path of every model call. The counting margin is what absorbs its error,
+and 20% is a measured figure rather than a guess:
+
+| content | real vs. counted |
+|---|---|
+| markdown docs, agent specs, Python | 0.9–1.1x (counter over-counts — safe) |
+| corpus-average retrieval results | **1.15x** (counter under-counts) |
+| command-, flag- and path-dense results | 1.45x |
+
+Retrieval results are the dense case because every snippet header carries a URL,
+a 32-hex resource hash, a file path and a float score. At the original 5% the
+gap was not covered: a 32768-token window resolved a 26215-token trigger, and a
+prompt filled to it with corpus-average retrieval content really cost 31046
+tokens — 3193 past the window once the answer reserve is added, so the provider
+rejected the request the budget had declared safe.
+
+20% covers drift up to 1.31x. Denser content than that still relies on the
+reactive overflow handler, which is a stated limit rather than an oversight.
+
+> **Raising the margin lowers the trigger**, which can push the retrieval
+> exemption past the irreducible-floor guard. At a 32768 window the trigger
+> moved 26215 → 21300, and `keep` has to drop from 3 to 1 for the exemption to
+> survive. Re-derive `keep` whenever `margin_fraction` changes.

@@ -70,12 +70,18 @@ magnitude, so a call count does not bound tokens.
 - **THEN** no tool content is reduced
 - **AND** the model receives the messages unchanged
 
-#### Scenario: A within-budget request still honours the per-result ceiling
+#### Scenario: A within-budget request is not truncated to enforce the ceiling
 
 - **WHEN** the complete request is within the token budget but one tool result exceeds the
   per-result ceiling
-- **THEN** that result is still truncated to the ceiling
-- **AND** no other result is cleared, because the request was already within budget
+- **THEN** no content is truncated, because nothing is being reduced
+- **AND** the ceiling applies on the first model call at which the budget is crossed
+
+The ceiling is a term in the reduction, not a standing tax on every result the agent reads.
+A request already within budget is by definition one the provider will accept, oversized
+result included, so truncating it would discard content at no benefit — and the requirement
+above is scoped to results that *survive reduction*, of which there are none when no reduction
+runs.
 
 #### Scenario: The bound applies on every model call, not once per invocation
 
@@ -214,9 +220,12 @@ nothing. Failing open is the correct direction, but a runtime that silently inst
 precisely the deployments most likely to overflow has not satisfied this specification.
 
 An operator MUST therefore be able to declare the context window directly, through the same
-configuration block as the other in-loop settings. A declared window takes precedence over the
-derived one and is validated like every other setting: an invalid declaration is logged and
-ignored in favour of the derived value, never treated as a disabled bound. Where no window can
+configuration block as the other in-loop settings. A declared window describes **the model the
+deployment is configured to serve**, and for that model it takes precedence over the derived
+one. It is validated like every other setting: an invalid declaration is logged and ignored in
+favour of the derived value, never treated as a disabled bound. Its scope is stated in full
+under "The budget is derived from the model bound to the request" below — a request that
+selects a different model is not covered by it. Where no window can
 be obtained from either source, the runtime MUST record at warning level that no bound was
 installed and name the provider and model responsible, so an inert bound is visible in the logs
 rather than indistinguishable from a healthy one.
@@ -236,6 +245,7 @@ rather than indistinguishable from a healthy one.
 #### Scenario: A declared window takes precedence over the derived one
 
 - **WHEN** the configuration declares a context window and the provider metadata also reports one
+- **AND** the request is served by the model the deployment is configured to serve
 - **THEN** the declared window is used
 
 #### Scenario: An invalid declared window falls back to the derived one

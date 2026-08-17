@@ -102,7 +102,28 @@ DEFAULT_GENERATION_RESERVE_FRACTION = 0.15
 
 # Share held back to cover approximate-vs-real tokenizer drift. Separate from the
 # reserve on purpose — see the module docstring.
-DEFAULT_COUNTING_MARGIN_FRACTION = 0.05
+#
+# **Measured, not guessed.** ``count_tokens_approximately`` assumes 4 characters
+# per token. Against this repository's own prose that is safe — markdown docs,
+# agent specs and Python measure 3.7-5.0 chars/token, so the counter over-counts
+# them. It is *not* safe for what fills the agent's loop. Every retrieval snippet
+# header carries a URL, a 32-hex resource hash, a path and a float score, and
+# those tokenize densely:
+#
+#     clean prose bodies                      0.98x  (counter over-counts)
+#     corpus-average retrieval results        1.15x  (counter UNDER-counts)
+#     command/flag/path-dense results         1.45x
+#
+# At the former 5% this was not a margin at all: a 32768-token window resolved a
+# 26215 trigger, and a prompt filled to it with corpus-average retrieval content
+# really cost 31046 tokens — 3193 past the window once the reserve is added, so
+# the provider rejected the very request the budget declared safe.
+#
+# 20% covers drift up to 1.31x, which spans the corpus average with headroom and
+# most of the command-dense range. Denser content still relies on the reactive
+# overflow handler; that is a documented limit, not an oversight.
+# ``test_a_prompt_filled_to_the_trigger_still_fits_the_real_window`` pins it.
+DEFAULT_COUNTING_MARGIN_FRACTION = 0.20
 
 # Most recent tool results preserved unreduced. Upstream's own default.
 DEFAULT_KEEP = 3
