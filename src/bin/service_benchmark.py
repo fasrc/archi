@@ -22,6 +22,7 @@ from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
+from src.utils.benchmark_provenance import config_divergence, corpus_fingerprint
 from src.utils.benchmark_resilience import (
     OK,
     build_failure_entry,
@@ -37,7 +38,8 @@ from src.utils.benchmark_schema import (
     required_fields_for_modes,
     score_metrics_per_eligibility,
 )
-from src.utils.config_access import get_static_config
+from src.utils.config_access import get_full_config, get_static_config
+from src.utils.connection_pool import ConnectionPool
 from src.utils.env import read_secret
 from src.utils.generate_benchmark_report import (
     format_html_output,
@@ -133,6 +135,24 @@ class ResultHandler:
         return ResultHandler._corpus_snapshot_id
 
     @staticmethod
+    def get_corpus_fingerprint() -> str:
+        """Digest of the live corpus, or a marker explaining why it is missing.
+
+        Unlike the per-invocation nonce above, equal digests mean equal corpora,
+        so "these arms were scored against the same documents" becomes a
+        checkable claim. Never raises: a finished benchmark must not lose its
+        scores because provenance could not be collected.
+        """
+        try:
+            rows = ConnectionPool.get_instance().execute(
+                "SELECT resource_hash, size_bytes FROM documents "
+                "WHERE is_deleted = FALSE"
+            )
+            return corpus_fingerprint(rows)
+        except Exception as exc:  # noqa: BLE001 - provenance is never fatal
+            return f"<unavailable: {exc}>"
+
+    @staticmethod
     def map_prompts(config: Dict[str, Any]):
         prompts = config.get("services", {}).get("benchmarking", {}).get("prompts")
         if not isinstance(prompts, dict):
@@ -157,11 +177,35 @@ class ResultHandler:
 
         ResultHandler.map_prompts(config)
 
+        # The file above is what the operator SELECTED. The agent reads its
+        # configuration from Postgres, and load_new_configuration writes the
+        # selected file to CONFIG_PATH -- which archi() never reads. Recording
+        # only the file therefore labels the run with settings it may never have
+        # used. Record both, and name the settings where they disagree.
+        try:
+            running_config = get_full_config()
+            divergence = config_divergence(config, running_config)
+        except Exception as exc:  # noqa: BLE001 - never lose a finished run's scores
+            running_config = None
+            divergence = [f"<unavailable: could not read the running config: {exc}>"]
+
+        if divergence:
+            logger.warning(
+                "This report may not describe the run: the selected configuration "
+                "(%s) and the configuration the agent read disagree at %d "
+                "setting(s): %s",
+                config_path,
+                len(divergence),
+                ", ".join(divergence),
+            )
+
         current_results = {
             "single_question_results": results,
             "total_results": total_results,
             "configuration_file": str(config_path),
             "configuration": config,
+            "running_configuration": running_config,
+            "configuration_divergence": divergence,
         }
 
         ResultHandler.results.append(current_results)
@@ -174,7 +218,14 @@ class ResultHandler:
         meta_data = {
             "time": str(datetime.now(timezone.utc)),
             "git_info": additional_info,
+            # git_info.yaml is written by `archi create` and then frozen. Re-running
+            # the benchmark container against an existing deployment reports the
+            # commit that was checked out at DEPLOY time, not the code in the image
+            # -- every arm of a campaign reports the same commit even when the arms
+            # ran different code. Say so in the artifact rather than in a comment.
+            "git_info_captured_at": "deploy (`archi create`), not the running image",
             "corpus_snapshot_id": ResultHandler.get_corpus_snapshot_id(),
+            "corpus_fingerprint": ResultHandler.get_corpus_fingerprint(),
         }
 
         ResultHandler.metadata.update(meta_data)
