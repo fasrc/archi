@@ -96,7 +96,153 @@ def format_total_duration(raw_duration):
     return friendly, assumed_unit
 
 
-def format_html_output(config_data, config_name, timestamp, questions, total_results):
+_NOT_RECORDED = (
+    '<em style="color:#a33">not recorded &mdash; this run predates '
+    "version stamping</em>"
+)
+
+
+def _row(label, value):
+    return f'<p style="margin:4px 0"><strong>{label}:</strong> {value}</p>'
+
+
+def provenance_html(metadata, config_version=None):
+    """A panel naming the code and the configuration that produced the run.
+
+    The reports in ``bench_out/`` showed none of this: ``parse_benchmark_results``
+    took ``metadata`` and kept only ``time``, so no page carried a commit, a
+    corpus id, or even ``context_window``. A reader had nothing to distinguish
+    the 8192 arm from the 32768 one.
+
+    *config_version* is the block from the result record this page renders. It is
+    per arm rather than per file because one invocation runs every config in a
+    sweep, and a page describing arm 1 must not be captioned with arm 3's
+    settings.
+
+    Metadata written before version stamping is labelled ``not recorded`` rather
+    than filled in with a plausible guess -- an artifact that predates the stamp
+    genuinely cannot say which code it ran.
+    """
+    metadata = metadata or {}
+    code = metadata.get("code_version") or {}
+    config = config_version or {}
+    legacy_git = metadata.get("git_info") or {}
+
+    parts = [
+        '<div class="metrics">',
+        "<h2>🔒 Run Provenance</h2>",
+    ]
+
+    divergence = config.get("divergence_from_selected_file")
+    if divergence:
+        listed = ", ".join(html.escape(str(p)) for p in divergence)
+        parts.append(
+            '<p style="background:#fdecea;border-left:4px solid #d93025;'
+            'padding:10px;margin:10px 0"><strong>⚠ Warning:</strong> this report '
+            "may not describe the run. The selected configuration file and the "
+            f"configuration the agent actually read disagree at: {listed}.</p>"
+        )
+
+    parts.append("<h3>Code version</h3>")
+    if code.get("digest"):
+        parts.append(_row("Digest", html.escape(str(code["digest"]))))
+        parts.append(_row("Source", html.escape(str(code.get("source", "")))))
+        parts.append(
+            _row("Modules covered", html.escape(str(code.get("module_count"))))
+        )
+    else:
+        parts.append(_row("Digest", _NOT_RECORDED))
+
+    deploy_commit = code.get("deploy_git_commit") or (
+        (legacy_git.get("last_commit") or "").strip() or None
+    )
+    if deploy_commit:
+        dirty = code.get("deploy_git_dirty")
+        if dirty is None:
+            dirty = bool((legacy_git.get("git_diff") or "").strip())
+        parts.append(
+            _row(
+                "Deploy-time commit",
+                f'{html.escape(str(deploy_commit))} {"(dirty tree)" if dirty else ""} '
+                '<span style="color:#666">&mdash; frozen by <code>archi create</code>; '
+                "identifies the deploy, not the image this run used</span>",
+            )
+        )
+
+    parts.append("<h3>Config version</h3>")
+    if config.get("digest"):
+        parts.append(_row("Digest", html.escape(str(config["digest"]))))
+        parts.append(_row("Source", html.escape(str(config.get("source", "")))))
+        if config.get("selected_file"):
+            parts.append(
+                _row("Selected file", html.escape(str(config["selected_file"])))
+            )
+        if config.get("selected_file_digest"):
+            parts.append(
+                _row(
+                    "Selected file digest",
+                    html.escape(str(config["selected_file_digest"])),
+                )
+            )
+    else:
+        parts.append(_row("Digest", _NOT_RECORDED))
+
+    key_settings = config.get("key_settings") or {}
+    if key_settings:
+        parts.append("<h3>Arm settings</h3>")
+        parts.append(
+            '<table style="border-collapse:collapse;width:100%">'
+            '<tr><th style="text-align:left;padding:4px;border-bottom:1px solid #ddd">'
+            'Setting</th><th style="text-align:left;padding:4px;'
+            'border-bottom:1px solid #ddd">Value</th></tr>'
+        )
+        for path in sorted(key_settings):
+            value = key_settings[path]
+            shown = (
+                json.dumps(value, sort_keys=True, default=repr)
+                if isinstance(value, (dict, list))
+                else str(value)
+            )
+            parts.append(
+                f'<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0">'
+                f"<code>{html.escape(path)}</code></td>"
+                f'<td style="padding:4px;border-bottom:1px solid #f0f0f0">'
+                f"<code>{html.escape(shown)}</code></td></tr>"
+            )
+        parts.append("</table>")
+
+    parts.append("<h3>Corpus</h3>")
+    fingerprint = metadata.get("corpus_fingerprint")
+    parts.append(
+        _row(
+            "Fingerprint",
+            html.escape(str(fingerprint)) if fingerprint else _NOT_RECORDED,
+        )
+    )
+    if metadata.get("corpus_snapshot_id"):
+        parts.append(
+            _row(
+                "Snapshot id",
+                f'{html.escape(str(metadata["corpus_snapshot_id"]))} '
+                '<span style="color:#666">&mdash; a per-invocation nonce; it '
+                "separates runs but cannot show two runs saw the same corpus"
+                "</span>",
+            )
+        )
+
+    parts.append("</div>")
+    return "\n".join(parts)
+
+
+def format_html_output(
+    config_data,
+    config_name,
+    timestamp,
+    questions,
+    total_results,
+    metadata=None,
+    config_version=None,
+):
     """Format results as HTML for easier reading"""
 
     html_parts = [
@@ -206,6 +352,10 @@ def format_html_output(config_data, config_name, timestamp, questions, total_res
     </div>
 """
     )
+
+    # Provenance sits directly under the header: which code and which settings
+    # produced the scores below is a precondition for reading them at all.
+    html_parts.append(provenance_html(metadata, config_version=config_version))
 
     # sources (retrieval accuracy) metrics
     if "SOURCES" in config_data.get("services", {}).get("benchmarking", {}).get(
@@ -615,11 +765,17 @@ Examples:
 
     # Generates HTML output
     html_content = format_html_output(
-        config_data, config_name, timestamp, questions, total_results
+        config_data,
+        config_name,
+        timestamp,
+        questions,
+        total_results,
+        metadata=metadata,
+        config_version=(results[0] or {}).get("config_version") if results else None,
     )
     with open(html_path, "w") as f:
         f.write(html_content)
-    print(f"✅ HTML report generated: {args.html}")
+    print(f"✅ HTML report generated: {html_path}")
 
 
 if __name__ == "__main__":

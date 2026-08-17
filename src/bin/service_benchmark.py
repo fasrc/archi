@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,6 +23,12 @@ from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
+from src.utils.benchmark_provenance import (
+    collect_code_version,
+    config_divergence,
+    config_version,
+    corpus_fingerprint,
+)
 from src.utils.benchmark_resilience import (
     OK,
     build_failure_entry,
@@ -37,7 +44,8 @@ from src.utils.benchmark_schema import (
     required_fields_for_modes,
     score_metrics_per_eligibility,
 )
-from src.utils.config_access import get_static_config
+from src.utils.config_access import get_full_config, get_static_config
+from src.utils.connection_pool import ConnectionPool
 from src.utils.env import read_secret
 from src.utils.generate_benchmark_report import (
     format_html_output,
@@ -133,6 +141,24 @@ class ResultHandler:
         return ResultHandler._corpus_snapshot_id
 
     @staticmethod
+    def get_corpus_fingerprint() -> str:
+        """Digest of the live corpus, or a marker explaining why it is missing.
+
+        Unlike the per-invocation nonce above, equal digests mean equal corpora,
+        so "these arms were scored against the same documents" becomes a
+        checkable claim. Never raises: a finished benchmark must not lose its
+        scores because provenance could not be collected.
+        """
+        try:
+            rows = ConnectionPool.get_instance().execute(
+                "SELECT resource_hash, size_bytes FROM documents "
+                "WHERE is_deleted = FALSE"
+            )
+            return corpus_fingerprint(rows)
+        except Exception as exc:  # noqa: BLE001 - provenance is never fatal
+            return f"<unavailable: {exc}>"
+
+    @staticmethod
     def map_prompts(config: Dict[str, Any]):
         prompts = config.get("services", {}).get("benchmarking", {}).get("prompts")
         if not isinstance(prompts, dict):
@@ -157,24 +183,78 @@ class ResultHandler:
 
         ResultHandler.map_prompts(config)
 
+        # The file above is what the operator SELECTED. The agent reads its
+        # configuration from Postgres, and load_new_configuration writes the
+        # selected file to CONFIG_PATH -- which archi() never reads. Recording
+        # only the file therefore labels the run with settings it may never have
+        # used. Record both, and name the settings where they disagree.
+        try:
+            running_config = get_full_config()
+            divergence = config_divergence(config, running_config)
+        except Exception as exc:  # noqa: BLE001 - never lose a finished run's scores
+            running_config = None
+            divergence = [f"<unavailable: could not read the running config: {exc}>"]
+
+        if divergence:
+            logger.warning(
+                "This report may not describe the run: the selected configuration "
+                "(%s) and the configuration the agent read disagree at %d "
+                "setting(s): %s",
+                config_path,
+                len(divergence),
+                ", ".join(divergence),
+            )
+
         current_results = {
             "single_question_results": results,
             "total_results": total_results,
             "configuration_file": str(config_path),
             "configuration": config,
+            "running_configuration": running_config,
+            "configuration_divergence": divergence,
+            # Per-arm, not per-file: one invocation runs every config in the
+            # sweep directory (see the `while self.all_config_files` loop), so a
+            # single version on the metadata block would label every arm with
+            # whichever ran last. bench-sweep-20260610 holds three arms.
+            "config_version": config_version(
+                running=running_config,
+                selected=config,
+                selected_file=str(config_path),
+            ),
         }
 
         ResultHandler.results.append(current_results)
 
     @staticmethod
     def add_metadata():
-        with open(EXTRA_METADATA_PATH, "r") as f:
-            additional_info = yaml.safe_load(f)
+        try:
+            with open(EXTRA_METADATA_PATH, "r") as f:
+                additional_info = yaml.safe_load(f)
+        except OSError as exc:  # noqa: BLE001 - provenance is never fatal
+            logger.warning("Could not read %s: %s", EXTRA_METADATA_PATH, exc)
+            additional_info = None
 
+        # The report must be able to answer "which code and which settings
+        # produced these scores?" from the artifact alone. git_info.yaml cannot:
+        # `archi create` writes it once and freezes it, so every arm of a
+        # campaign reports the same commit with an empty diff. And nothing
+        # recorded the configuration's identity at all, which is how the 8192
+        # arm came to attest context_window: 32768.
+        #
+        # code_version is per invocation (one image runs every arm), so it lives
+        # here. The config version is per arm and lives on each result record;
+        # this block only summarises their digests, in the order they ran.
         meta_data = {
             "time": str(datetime.now(timezone.utc)),
             "git_info": additional_info,
+            "git_info_captured_at": "deploy (`archi create`), not the running image",
+            "code_version": collect_code_version(sys.modules, additional_info),
+            "config_versions": [
+                (record.get("config_version") or {}).get("digest")
+                for record in ResultHandler.results
+            ],
             "corpus_snapshot_id": ResultHandler.get_corpus_snapshot_id(),
+            "corpus_fingerprint": ResultHandler.get_corpus_fingerprint(),
         }
 
         ResultHandler.metadata.update(meta_data)
@@ -189,7 +269,17 @@ class ResultHandler:
         logger.info(config_data)
 
         html_content = format_html_output(
-            config_data, config_name, timestamp, questions, total_results
+            config_data,
+            config_name,
+            timestamp,
+            questions,
+            total_results,
+            metadata=ResultHandler.metadata,
+            config_version=(
+                (ResultHandler.results[0] or {}).get("config_version")
+                if ResultHandler.results
+                else None
+            ),
         )
 
         filename = f"{benchmark_name}-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_report.html"
