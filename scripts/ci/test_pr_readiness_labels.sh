@@ -909,27 +909,74 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
-# ---- 40: --help enumerates every knob the reconciler actually reads ----------
+# ---- 40-42: --help enumerates every knob the reconciler actually reads -------
 # Derived from the script rather than hardcoded, so the next knob added without a
 # help entry fails here instead of being discovered by an operator whose override
 # silently did nothing. The failure mode this guards is quiet: an unlisted
 # PR_LABELS_RECONCILER_JOB leaves the operator excluding the wrong check name.
-help_out="$(bash "$RECONCILER" --help)"
-missing=""
-for var in $(grep -o '\${PR_LABELS_[A-Z_]*' "$RECONCILER" | sed 's/\${//' | sort -u || true); do
-  case "$help_out" in
-    *"$var"*) ;;
-    *) missing="$missing $var" ;;
-  esac
-done
-if [ -n "$missing" ]; then
-  notok "--help omits knobs the reconciler reads:$missing"
-elif [ -z "$(grep -o '\${PR_LABELS_[A-Z_]*' "$RECONCILER" || true)" ]; then
-  # An empty knob list would make the loop above vacuously pass.
+#
+# Two precision requirements, each pinned by its own mutation case below, because a
+# check like this is worthless if it cannot fail:
+#
+#   1. Only the Environment BLOCK counts, not the whole help text. PR_LABELS_REPO is
+#      also named in the --repo description, so a whole-text match would pass with
+#      the Environment block emptied of it.
+#   2. Discovery reads the script with COMMENTS STRIPPED and is indifferent to
+#      braces. `$PR_LABELS_FOO` is as much a read as `${PR_LABELS_FOO:-x}`, while a
+#      knob named only in a comment is not a read at all and must not be demanded.
+
+# Names the script actually reads: comments removed first, braced or not.
+knob_reads() { sed 's/#.*//' "$1" | grep -o 'PR_LABELS_[A-Z_]*' | sort -u || true; }
+
+# The Environment: line plus its indented continuations, and nothing else.
+help_env_block() {
+  bash "$1" --help | awk '
+    /^Environment:/ { inblock = 1; print; next }
+    inblock && /^[[:space:]]/ { print; next }
+    inblock { exit }
+  '
+}
+
+# Knobs read by $1 but absent from its own Environment block.
+help_knob_gaps() {
+  local script="$1" block var
+  block="$(help_env_block "$script")"
+  for var in $(knob_reads "$script"); do
+    case "$block" in
+      *"$var"*) ;;
+      *) printf '%s ' "$var" ;;
+    esac
+  done
+}
+
+gaps="$(help_knob_gaps "$RECONCILER")"
+if [ -n "$gaps" ]; then
+  notok "--help omits knobs the reconciler reads: $gaps"
+elif [ -z "$(knob_reads "$RECONCILER")" ]; then
   notok "found no PR_LABELS_* reads at all — this case can no longer fail"
 else
   ok "--help enumerates every PR_LABELS_* knob the reconciler reads"
 fi
+
+# ---- 41: the check is scoped to the Environment block, so it can fail ---------
+# Removing PR_LABELS_REPO from the block alone must be caught, even though the
+# --repo description still mentions it.
+_mut41="$TESTROOT/mutant_no_repo_in_env.sh"
+sed 's/^Environment: PR_LABELS_REPO, /Environment: /' "$RECONCILER" > "$_mut41"
+case "$(help_knob_gaps "$_mut41")" in
+  *PR_LABELS_REPO*) ok "a knob dropped from the Environment block is caught, despite appearing elsewhere in --help" ;;
+  *) notok "a knob dropped from the Environment block went unnoticed — the check is matching the whole help text" ;;
+esac
+
+# ---- 42: an unbraced read is still a read ------------------------------------
+_mut42="$TESTROOT/mutant_unbraced_knob.sh"
+sed 's/^RETRY_DELAY=.*/RETRY_DELAY=$PR_LABELS_UNDOCUMENTED/' "$RECONCILER" > "$_mut42"
+# Bound in the environment only so the mutant's own --help does not die on `set -u`
+# and print to stderr; discovery reads the source, so it is unaffected either way.
+case "$(PR_LABELS_UNDOCUMENTED=x help_knob_gaps "$_mut42")" in
+  *PR_LABELS_UNDOCUMENTED*) ok "an unbraced knob read with no help entry is caught" ;;
+  *) notok "an unbraced knob read evaded discovery" ;;
+esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
