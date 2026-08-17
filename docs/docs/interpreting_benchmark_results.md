@@ -222,6 +222,29 @@ of the corpus contents (`src/bin/service_benchmark.py:126`). Therefore:
 You can pin the id across invocations with the `ARCHI_CORPUS_SNAPSHOT_ID`
 environment variable, when you know for certain no re-ingest occurred.
 
+Newer runs also record **`corpus_fingerprint`**, per arm, which *is* derived from
+the corpus contents — a digest over every live document and every chunk of text
+retrieval can reach. Two arms with the **same** fingerprint were scored against
+the same documents, whether or not they ran in the same invocation. That is the
+claim `corpus_snapshot_id` could never support, so prefer the fingerprint when
+you have it.
+
+Read it with three cautions:
+
+- A value beginning `<unavailable:` is **not** an observation. It means the
+  corpus could not be read, and the text after it says why. Two runs both
+  reporting the same `<unavailable:` marker are not two runs over one corpus —
+  they are two runs where nothing was checked.
+- Runs before 2026-08-17 have no fingerprint at all. Absence is not agreement.
+- Re-embedding the same text with a different model leaves the fingerprint
+  unchanged, because the documents and chunk text did not change. That shows up
+  instead as a divergence on `data_manager.embedding_name` — see
+  [Procedure E](#procedure-e-confirm-two-runs-are-comparable).
+
+An arm whose corpus reading failed, or whose corpus differs from the others', is
+withheld from the leaderboard and the A/B winner rather than ranked, because
+ranking it would assert a controlled comparison that did not happen.
+
 ### 3.4 Denominator drift — the quiet one
 
 The harness protects a run from a single bad question: if a question crashes or
