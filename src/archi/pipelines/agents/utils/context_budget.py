@@ -268,9 +268,9 @@ def read_settings(
         if isinstance(block, dict):
             merged.update(block)
 
-    enabled = merged.get("enabled", True)
+    enabled = _read_enabled(merged.get("enabled", True))
     return ContextEditingSettings(
-        enabled=bool(enabled) if isinstance(enabled, bool) else True,
+        enabled=enabled,
         reserve_fraction=_coerce_fraction(
             merged.get("reserve_fraction", DEFAULT_GENERATION_RESERVE_FRACTION),
             DEFAULT_GENERATION_RESERVE_FRACTION,
@@ -299,6 +299,27 @@ def read_settings(
         ),
         context_window=_read_declared_window(merged.get("context_window")),
     )
+
+
+def _read_enabled(value: Any) -> bool:
+    """Only a real YAML boolean disables the bound; anything else is reported.
+
+    Keeping the protection on for a malformed value is deliberate — a typo in one
+    knob must not silently remove what the other knobs configure. But `enabled`
+    is the operator's rollback switch, so ignoring it silently is its own failure:
+    `enabled: "false"` is a string, `enabled: 0` is an int, and an operator who
+    writes either sees a bound they explicitly tried to turn off with nothing in
+    the logs to explain why. Name the value and say what happened instead.
+    """
+    if isinstance(value, bool):
+        return value
+    logger.warning(
+        "Ignoring context_editing.enabled=%r: only a YAML boolean (true/false) "
+        "disables the in-loop context bound, so it remains ENABLED. Use "
+        "`enabled: false` unquoted to disable it.",
+        value,
+    )
+    return True
 
 
 def _read_declared_window(value: Any) -> Optional[int]:

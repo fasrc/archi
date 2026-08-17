@@ -642,3 +642,42 @@ class TestConfiguredModelsCarryNoWindow:
             resolve_configured_model_window(self._Provider(), "some-model", None)
             == 128000
         )
+
+
+class TestInvalidEnabledIsReported:
+    """`enabled` is the operator's rollback switch; ignoring it must be audible.
+
+    Only a real YAML boolean disables the bound — `enabled: "false"` is a string
+    and `enabled: 0` is an int, and both are treated as "keep the protection on"
+    so a typo in one knob cannot silently remove it. That decision is right, but
+    the module contract says an invalid value is *logged* before falling back,
+    and this branch was silent: an operator who quoted the value saw a bound they
+    had explicitly tried to turn off, with nothing in the logs to explain it.
+    """
+
+    @pytest.mark.parametrize("bad", ["false", "no", 0, 1, None, []])
+    def test_a_non_boolean_enabled_is_logged_and_ignored(self, bad, caplog):
+        with caplog.at_level("WARNING"):
+            settings = read_settings(
+                {"services": {"chat_app": {"context_editing": {"enabled": bad}}}}, None
+            )
+
+        assert settings.enabled is True
+        rendered = " ".join(
+            r.getMessage() for r in caplog.records if r.levelname == "WARNING"
+        )
+        assert (
+            "enabled" in rendered
+        ), f"an ignored rollback attempt must say so: {rendered!r}"
+
+    def test_a_real_boolean_false_disables_without_warning(self, caplog):
+        """The supported spelling stays silent — a warning when nothing is wrong
+        is a warning operators learn to ignore."""
+        with caplog.at_level("WARNING"):
+            settings = read_settings(
+                {"services": {"chat_app": {"context_editing": {"enabled": False}}}},
+                None,
+            )
+
+        assert settings.enabled is False
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]

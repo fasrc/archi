@@ -225,3 +225,42 @@ class TestClampHelper:
 
     def test_smaller_requested_size_is_preserved(self):
         assert resolve_requested_chars(250, 4000) == 250
+
+
+class TestBooleanSizesAreRejected:
+    """`True` is an `int` in Python, and `int(True) == 1`.
+
+    A model or caller supplying `max_chars: true` would otherwise be handed a
+    one-character budget — the tool returns a single character of the document
+    and the agent answers with no evidence. The documented contract is that a
+    malformed size means "use the ceiling", which is what a non-positive or
+    non-integer value already gets.
+    """
+
+    @pytest.mark.parametrize("bad", [True, False])
+    def test_booleans_request_the_ceiling(self, bad):
+        assert resolve_requested_chars(bad, 8000) == 8000
+
+    @pytest.mark.parametrize("tiny", [1, 2, 10, len(TRUNCATION_MARKER) - 1])
+    def test_a_size_too_small_to_mark_requests_the_ceiling(self, tiny):
+        """Below the marker length the result would be unmarked partial text.
+
+        This is also where a coerced boolean lands: the tool annotates
+        `max_chars: int`, so `@tool` validation turns `true` into `1` before the
+        function body runs, and the boolean check above never sees it.
+        """
+        assert resolve_requested_chars(tiny, 8000) == 8000
+
+    def test_a_legitimate_small_size_is_still_honoured(self):
+        """The clamp must not flatten real requests — only unsatisfiable ones."""
+        assert resolve_requested_chars(500, 8000) == 500
+
+    def test_a_boolean_does_not_starve_the_fetch_tool(self):
+        """End to end: the tool must still return a usable result."""
+        catalog = _FakeCatalog("X" * 50_000)
+        tool = create_document_fetch_tool(catalog, max_result_chars=8000)
+
+        out = tool.invoke({"resource_hash": "abc", "max_chars": True})
+
+        assert len(out) > 1000, f"a boolean size starved the result: {len(out)} chars"
+        assert len(out) <= 8000

@@ -69,6 +69,19 @@ services:
       # Tool-capable (ChatAnthropic), so FASRCDocsAgent works. Reachable over the
       # internet (no VPN needed). Needs ANTHROPIC_API_KEY in the secrets env.
       # Fall back to it by setting default_provider back to: anthropic.
+      #
+      # WHEN YOU DO, also remove or update context_editing.context_window above.
+      # It declares 32768 for the self-hosted model, and a declared window applies
+      # to whatever model this deployment serves — so the standby gets budgeted as
+      # a 32K model. Worse than conservative: ChatAnthropic binds a 64000 output
+      # cap, and a 64000 reserve plus the counting margin exceeds a 32768 window,
+      # so resolve_budget installs NO BOUND AT ALL. Verified, not theorised. The
+      # runtime does say so at WARNING ("reserve ... consume the ... window"), but
+      # an operator flipping one line will not be reading the logs.
+      #
+      # Claude models resolve their own window from provider metadata, so for the
+      # standby the correct action is to delete the context_window line. Declaring
+      # windows per model is tracked as #262.
       anthropic:
         enabled: true
         default_model: "claude-sonnet-4-6"
