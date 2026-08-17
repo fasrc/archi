@@ -147,6 +147,27 @@ confirmed resolves. When nothing is installed the runtime logs a warning naming
 the provider and model, so an unprotected deployment is visible in the logs
 rather than silently indistinguishable from a healthy one.
 
+#### A request that picks a different model
+
+The chat UI lets a request override the provider and model. That request is
+served by a *view* of the pipeline bound to the overriding model, and the view
+derives its own budget from that model — never the pipeline default's. A request
+that switches to a smaller model gets the smaller budget.
+
+Two consequences are worth knowing before you set `context_window`:
+
+- **A declared window does not follow an override.** It describes the model
+  *this deployment serves*, so it is not applied to a model the operator never
+  named. Otherwise a deployment declaring a small window would hand that number
+  to a large model — and, paired with that model's output cap, can make the
+  reserve exceed the declared window and disable the bound entirely.
+- **An override the provider cannot resolve gets no bound.** The window is
+  resolved from the provider built out of your own config, which is the only
+  place a self-hosted or custom model ID has metadata at all. Where neither that
+  nor the name lookup yields a window, no bound is installed for that request
+  rather than one derived from a different model's window. The per-tool result
+  clamps still apply, so this is a weaker guarantee, not an absent one.
+
 ### Settings
 
 Under `services.chat_app.context_editing`, overridable per pipeline via
@@ -281,3 +302,25 @@ choosing what to prototype.
 | Agent specs | `config/agents/*.md` |
 | Config template | `src/cli/templates/base-config.yaml` |
 | Benchmarking | `docs/docs/benchmarking.md` |
+
+### What clearing cannot reclaim
+
+Clearing replaces a tool result's content with a placeholder; it does not delete
+the message. The framing, the tool-call id, and the model's own call arguments
+all survive, which is what keeps the sequence well-formed and stops the model
+re-fetching what was cleared. So there is a floor:
+
+| | tokens |
+|---|---|
+| a full-size tool round, unreduced | 1543 |
+| the same round once cleared | 51.9 |
+| reclaimed by clearing | 96.6% |
+
+At a 32768-token window (trigger 26215) that residue would need roughly **505
+tool rounds** to exhaust the budget on its own, against a `recursion_limit` of
+50 — about a tenth of the budget at that ceiling. Clearing is therefore
+sufficient, and whole tool rounds are never removed from the middle of a trace.
+
+If the residue ever does matter, the runtime says so: the wrapper re-measures
+after reducing and logs the overage in the message text, rather than declaring a
+budget met that is not.
