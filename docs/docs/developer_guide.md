@@ -325,25 +325,59 @@ to the trigger list does not silently no-op — it makes the workflow file inval
 GitHub then records a startup failure on every push. Check the Actions events
 reference, not the webhooks reference; they are different sets.
 
-All the logic lives in `scripts/ci/pr_readiness_labels.sh` (22-case suite wired into
-`scripts/gate.sh`); the workflow is only the trigger surface. Run it yourself with:
+All the logic lives in `scripts/ci/pr_readiness_labels.sh`, with a self-test suite
+(`scripts/ci/test_pr_readiness_labels.sh`) wired into `scripts/gate.sh`; the workflow is
+only the trigger surface. Run it yourself with:
 
 ```bash
 bash scripts/ci/pr_readiness_labels.sh --dry-run     # decide and print, change nothing
 ```
 
-`ready-to-merge` requires all three of: not a draft, `mergeStateStatus == CLEAN`
-(mergeable **and** checks green), and zero *live* review findings — a review thread
-that is unresolved (`isResolved == false`).
+`ready-to-merge` requires all four of: not a draft, no merge conflicts (`mergeable !=
+CONFLICTING`), zero blocking checks, and zero *live* review findings — a review thread
+that is unresolved (`isResolved == false`). Check state is evaluated from the individual
+contexts in the commit's status-check rollup, not from `mergeStateStatus`.
 
-Five design notes worth knowing before changing it:
+Three further guards withhold the chip even when those four are satisfied, each because
+the evidence on record does not describe the PR as it stands. All three are fail-closed:
 
-- **`mergeable` and `mergeStateStatus` answer different questions**, and the chips use
-  different ones. `mergeStateStatus` is a *priority* field: on a draft it reports
-  `DRAFT`, masking `DIRTY`. So `conflicts` is derived from `mergeable ==
-  CONFLICTING` — otherwise a conflicted draft gets no chip, which is where it is
-  arguably most useful. Readiness needs `mergeStateStatus == CLEAN`, because that
-  single value folds in draft, conflict *and* check state.
+- **`mergeStateStatus == BEHIND`** — the checks on record did not test the current base,
+  so a green rollup says nothing about what merging would produce.
+- **`mergeStateStatus == BLOCKED` with an *empty* rollup** — GitHub reports something
+  blocking while no checks exist to explain it, so readiness cannot be verified. The
+  reconciler's own in-progress run cannot trip this: its CheckRun sits on the head commit,
+  so the rollup is non-empty whenever it is the trigger. `UNSTABLE` is deliberately not
+  gated alongside it — see the check-state note below.
+- **A truncated rollup** (`totalCount` greater than the fetched count) — a blocking check
+  could be sitting in the unfetched tail.
+
+Seven design notes worth knowing before changing it:
+
+- **`mergeable` and `mergeStateStatus` answer different questions.** `mergeStateStatus`
+  is a *priority* field: on a draft it reports `DRAFT`, masking `DIRTY`. So `conflicts`
+  is derived from `mergeable == CONFLICTING` — otherwise a conflicted draft gets no chip,
+  which is where it is arguably most useful. `mergeStateStatus` is retained in the query
+  for the `UNKNOWN` retry/revoke path and for the two state guards above, but it is no
+  longer the field *check state* is read from; that comes from individual rollup contexts
+  instead. The distinction matters: `BEHIND` and `BLOCKED` are consulted as statements
+  about whether the recorded evidence is current, never as a substitute for counting
+  checks.
+
+- **Check state comes from individual rollup contexts, not from `mergeStateStatus`.**
+  A `CheckRun` is passing when its `conclusion` is `SUCCESS`, `NEUTRAL`, or `SKIPPED`;
+  anything else — including a null conclusion (still in progress) — is blocking. A
+  `StatusContext` (legacy commit status) is passing when its `state` is `SUCCESS`. The
+  reconciler's own job (name `reconcile`, matching `jobs.reconcile` in
+  `pr-readiness-labels.yml`) is excluded from the blocking count so the script does not
+  block on its own in-progress check when triggered by pull-request events. A null rollup
+  (no checks on record) counts as zero blocking checks — but that is a statement about
+  the *count*, not about readiness: when `mergeStateStatus` is `BLOCKED` at the same
+  time, the empty-rollup guard above still withholds the chip, because GitHub is
+  reporting something blocking that no check on record explains. A null rollup on an
+  otherwise clean PR does grant. A
+  truncated rollup (`totalCount` greater than the fetched count) is fail-closed: the chip
+  is withheld rather than guessed at, since a blocking check could be sitting in the
+  unfetched tail.
 
 - **An incomplete snapshot is never guessed at**, and the two cases are not
   symmetric. Connections are fetched one page (100) deep and each `totalCount` is
