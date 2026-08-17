@@ -184,7 +184,7 @@ Common causes:
 |---|---|---|
 | `fe_sendauth: no password supplied` or `password authentication failed` | `PG_PASSWORD` is missing or empty in the deployment's `.env` | Set `PG_PASSWORD` in `.env` and redeploy. The container passes it to psql as `PGPASSWORD`. |
 | `could not connect to server` | Postgres was not healthy in time | Check the `postgres` container's logs and healthcheck. |
-| A psql `ERROR:` naming a table or column | A genuine problem in a migration file, applied against your schema | Read the named `.sql` file under your deployment's `migrations/` directory. Fix it, then redeploy. |
+| A psql `ERROR:` naming a table or column | A genuine problem in a migration file, applied against your schema | Read the named `.sql` file under your deployment's `migrations/` directory to see what ran. Fix it in `src/cli/templates/migrations/` — **not** in the deployment directory, which is rendered output: each redeploy overwrites the packaged files there and removes any `.sql` no longer packaged. |
 
 The container does not restart on failure (`restart: "no"`), so its logs stay available
 until the next deployment.
