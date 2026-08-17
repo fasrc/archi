@@ -21,6 +21,7 @@ no messages; it produces numbers, and every one of them has a way to be wrong:
   its share.
 """
 
+import pathlib
 from types import SimpleNamespace
 
 import pytest
@@ -250,7 +251,7 @@ class TestExemptionSizing:
             context_window=WINDOW, output_cap=None, settings=s, retrieval_call_budget=4
         )
 
-        # The exemption alone is 6000, under a third of the 21300 budget; adding
+        # The exemption alone is 6000, under a third of the 19661 budget; adding
         # the 4500 held by `keep` puts the irreducible total over it.
         assert b.exempt_floor_tokens == 6000
         assert 6000 < b.trigger * (1 / 3) < 6000 + 4500
@@ -439,24 +440,22 @@ class TestTheMarginCoversTheApproximation:
     test pins the ordinary case, which must never rely on it.
     """
 
-    # Corpus-representative body text: prose interleaved with commands, flags
-    # and paths, which is the texture of the FASRC documentation this agent
-    # retrieves — and disproportionately the texture of the passages that answer
-    # "how do I run X". Clean prose alone measures 0.98x and would make this
-    # test pass against any margin; command-dense text reaches 1.45x. This lands
-    # at 1.15x, the measured corpus average.
+    # Body text at the **99th percentile** of measured density, not the mean.
+    # Across 557 real 800-character chunks of this repository's documentation
+    # behind a retrieval header, real-tokens/counted-tokens runs p50 1.14x,
+    # p95 1.29x, p99 1.35x. This mixture measures 1.335x, so the test is sized
+    # against the demanding realistic case rather than the average one — clean
+    # prose alone measures 0.98x and would pass against any margin at all.
     PROSE = (
         "Slurm allocates compute resources through partitions, each with its own "
-        "wall-clock ceiling, memory limit and preemption policy. Interactive work "
-        "belongs on the test partition, where a shell is granted on a compute "
-        "node without queueing behind production batch traffic. Long-running "
-        "pipelines should be submitted as batch jobs so they survive a dropped "
-        "connection. Memory is requested per node or per core, and exceeding the "
-        "request terminates the job rather than swapping. "
-        "Run `salloc -p test -t 0-01:00 --mem 4000 -c 4` for a shell, or "
-        "`sbatch --array=1-100%10 --output=/n/holyscratch01/lab/%A_%a.out job.sh` "
-        "for batch. Load toolchains with "
-        "`module load gcc/12.2.0-fasrc01 cuda/12.2.0-fasrc01`. "
+        "wall-clock ceiling and memory limit. Interactive work belongs on the "
+        "test partition. Long-running pipelines should be submitted as batch "
+        "jobs so they survive a dropped connection. "
+        "Run `salloc -p test -t 0-01:00 --mem 4000 -c 4`, then "
+        "`sbatch --array=1-100%10 --output=/n/holyscratch01/lab/%A_%a.out job.sh`. "
+        "Load with `module load gcc/12.2.0-fasrc01 cuda/12.2.0-fasrc01`. "
+        "Inspect via "
+        "`sacct -j $JOBID --format=JobID,JobName%30,Elapsed,MaxRSS,State`. "
     ) * 6
 
     @classmethod
@@ -508,4 +507,50 @@ class TestTheMarginCoversTheApproximation:
             f"really costs {real} tokens; with the {budget.generation_reserve}-token "
             f"reserve that is {real + budget.generation_reserve - window} over the "
             f"{window}-token window. The counting margin must cover the gap."
+        )
+
+
+class TestTheTrackedExampleConfigInstallsABound:
+    """The shipped example must produce a working bound, not just a valid file.
+
+    ``deploy/fasrc-dev/config.yaml`` is git-excluded, so the example is the only
+    version of these settings a fresh checkout or a new host ever sees. If the
+    example omits them — or carries a ``keep`` the window can no longer afford —
+    the deployment silently returns to an unbounded loop after a single warning,
+    which is the failure issue #235 exists to close.
+    """
+
+    EXAMPLE = pathlib.Path("deploy/fasrc-dev/config.example.yaml")
+
+    def _settings(self):
+        yaml = pytest.importorskip("yaml")
+        payload = yaml.safe_load(self.EXAMPLE.read_text())
+        return read_settings(payload, None)
+
+    def test_the_example_declares_a_context_window(self):
+        """Without it, nothing installs on a self-hosted model."""
+        assert self._settings().context_window == 32768
+
+    def test_the_example_installs_a_bound_that_keeps_the_retrieval_exemption(self):
+        """The `keep` in the example must be one the declared window affords.
+
+        This is the assertion that catches a silent regression: raising `keep`
+        back to the stock 3, or raising `margin_fraction`, pushes the
+        irreducible floor past the guard and drops the exemption without the
+        config file changing at all.
+        """
+        settings = self._settings()
+        budget = resolve_budget(
+            context_window=settings.context_window,
+            output_cap=None,
+            settings=settings,
+            retrieval_call_budget=2,  # the shipped DEFAULT_TOOL_BUDGETS value
+        )
+
+        assert budget is not None, "the example config installs no bound"
+        assert budget.exempt_count == 2, (
+            "the retrieval exemption was dropped: the example's keep="
+            f"{settings.keep} costs {(2 + settings.keep) * settings.per_result_tokens} "
+            f"tokens against an allowance of "
+            f"{int(budget.trigger * settings.exemption_fraction)}"
         )

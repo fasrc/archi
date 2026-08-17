@@ -104,26 +104,37 @@ DEFAULT_GENERATION_RESERVE_FRACTION = 0.15
 # reserve on purpose — see the module docstring.
 #
 # **Measured, not guessed.** ``count_tokens_approximately`` assumes 4 characters
-# per token. Against this repository's own prose that is safe — markdown docs,
-# agent specs and Python measure 3.7-5.0 chars/token, so the counter over-counts
-# them. It is *not* safe for what fills the agent's loop. Every retrieval snippet
-# header carries a URL, a 32-hex resource hash, a path and a float score, and
-# those tokenize densely:
+# per token. Against plain prose that is safe — markdown, agent specs and Python
+# measure 3.7-5.0 chars/token, so the counter over-counts them and errs toward
+# the bound holding. It is *not* safe for what fills the agent's loop: every
+# retrieval snippet header carries a URL, a 32-hex resource hash, a path and a
+# float score, and those tokenize densely.
 #
-#     clean prose bodies                      0.98x  (counter over-counts)
-#     corpus-average retrieval results        1.15x  (counter UNDER-counts)
-#     command/flag/path-dense results         1.45x
+# Measured over 557 real 800-character chunks of this repository's own
+# documentation, each behind a retrieval header, as real-tokens ÷ counted-tokens:
+#
+#     p50  1.14x     p90  1.26x     p95  1.29x     p99  1.35x     max  1.72x
 #
 # At the former 5% this was not a margin at all: a 32768-token window resolved a
-# 26215 trigger, and a prompt filled to it with corpus-average retrieval content
-# really cost 31046 tokens — 3193 past the window once the reserve is added, so
-# the provider rejected the very request the budget declared safe.
+# 26215 trigger, and a prompt filled to it with corpus-average content really
+# cost 31046 tokens — 3193 past the window once the reserve is added, so the
+# provider rejected the very request the budget declared safe.
 #
-# 20% covers drift up to 1.31x, which spans the corpus average with headroom and
-# most of the command-dense range. Denser content still relies on the reactive
-# overflow handler; that is a documented limit, not an oversight.
-# ``test_a_prompt_filled_to_the_trigger_still_fits_the_real_window`` pins it.
-DEFAULT_COUNTING_MARGIN_FRACTION = 0.20
+# 25% covers drift up to 1.42x. That sits above the 99th percentile of individual
+# chunks, and well above what a *prompt* can reach: a filled prompt is a mixture
+# of a dozen or more chunks, so its density concentrates near the p50-p75 mean
+# rather than at any one chunk's maximum. A single pathological chunk cannot
+# carry the whole prompt past the bound.
+#
+# What this does NOT cover, by choice: text with no prose at all — a passage that
+# is purely command lines and paths measures 1.80x, and covering that would take
+# a 38% margin, spending half the window to insure against a case a real
+# 800-character documentation chunk does not reach. Those rely on the reactive
+# overflow handler, which is what it is for.
+#
+# The real fix is a tokenizer rather than a character ratio; see issue #263.
+# ``test_a_prompt_filled_to_the_trigger_still_fits_the_real_window`` pins this.
+DEFAULT_COUNTING_MARGIN_FRACTION = 0.25
 
 # Most recent tool results preserved unreduced. Upstream's own default.
 DEFAULT_KEEP = 3

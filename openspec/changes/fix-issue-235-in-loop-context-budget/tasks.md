@@ -122,17 +122,19 @@ not among them. Any self-hosted or newly-released model therefore yields `None`.
       group 12, or that run measures an agent with no in-loop limit installed. **Set to
       32768** — measured from both vLLM servers' `/v1/models` (`max_model_len`), not the model
       card, which claims 262144 for Qwen3.8-27B; the server's launch flag is what rejects a
-      request. Paired with `keep: 2`, because 32768 sits below the 39375 threshold at which
-      the retrieval exemption survives the irreducible-floor guard at the default `keep: 3`.
-      Verified: `trigger=26215 reserve=4915 keep=2 exempt_count=2`, and 26215 + 4915 + 1638 =
-      32768 exactly. The file is git-excluded, so this is not in the diff — it must be
+      request. Paired with `keep: 1`, because at this window the retrieval exemption does
+      not survive the irreducible-floor guard at the stock `keep: 3`. Verified:
+      `trigger=19661 reserve=4915 keep=1 exempt_count=2`. (`keep` was 2 until the counting
+      margin was raised 5% -> 25% from measurement, which lowered the trigger and with it the
+      exemption allowance; the same values are now in the **tracked** example config, pinned by
+      `TestTheTrackedExampleConfigInstallsABound`.) The file is git-excluded, so this is not in the diff — it must be
       re-applied on any host that redeploys
 
 ## 8. Behavioural tests — the acceptance criteria
 
 - [x] 8.1 Failing test: given an accumulated message list over the budget with more tool results than the preserve count, the oldest tool results are reduced before the model call
 - [x] 8.2 Failing test (**the bound itself**): after reduction, the *complete* request — system prompt, tool schemas and messages together — is within the budget whenever the non-reducible content fits. Assert on the measured post-reduction size, not merely that clearing occurred
-- [x] 8.3 Failing test (**the residual**): with many *small* tool rounds, so that cleared-message framing, retained tool-call arguments and placeholders alone cross the threshold, the runtime does not raise and logs the measured overage rather than reporting success. **Measured:** a cleared round costs **51.9 tokens** against **1543** unreduced (96.6% reclaimed); the residue would need ~505 rounds to exhaust the deployed 26215 trigger, against a recursion limit of 50. Removing whole paired rounds is **not needed** — recorded in design.md Decision 10 and pinned by `test_the_measured_residue_per_cleared_round`
+- [x] 8.3 Failing test (**the residual**): with many *small* tool rounds, so that cleared-message framing, retained tool-call arguments and placeholders alone cross the threshold, the runtime does not raise and logs the measured overage rather than reporting success. **Measured:** a cleared round costs **51.9 tokens** against **1543** unreduced (96.6% reclaimed); the residue would need ~379 rounds to exhaust the deployed 19661 trigger, against a recursion limit of 50. Removing whole paired rounds is **not needed** — recorded in design.md Decision 10 and pinned by `test_the_measured_residue_per_cleared_round`
 - [x] 8.4 Failing test: when non-reducible content alone exceeds the budget, reduction clears everything it can and does not raise; the reactive handler covers the remainder
 - [x] 8.5 Failing test: a message list within budget is passed through untouched
 - [x] 8.6 Failing test (the boundary criterion): a run performing many document reads still returns a substantive answer, not the canned apology

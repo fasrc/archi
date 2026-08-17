@@ -471,7 +471,7 @@ class TestCeilingIsABackstopNotAnOverride:
         )
 
         body = "R" * DEFAULT_RETRIEVER_RESULT_CHARS
-        budget = _budget(trigger=96_000, per_result_tokens=DEFAULT_PER_RESULT_TOKENS)
+        budget = _budget(trigger=86_000, per_result_tokens=DEFAULT_PER_RESULT_TOKENS)
 
         reduced = _reduce(
             ContextBudgetMiddleware(budget=budget),
@@ -864,25 +864,25 @@ class TestBuiltFromConfig:
 
         assert len(built) == 1
         # 200000 - 15% generation reserve - 5% counting margin.
-        assert built[0].edit.trigger == 130_000
+        assert built[0].edit.trigger == 120_000
         # Both fields, because they are read by different code: the edit's own
         # gate uses ``edit.trigger``, while this wrapper's early return and its
         # shed loop read ``budget.trigger``. A middleware with a correct edit and
         # a raw-window budget installs no effective bound.
-        assert built[0].budget.trigger == 130_000
+        assert built[0].budget.trigger == 120_000
 
     def test_the_effective_output_cap_reaches_the_trigger(self):
         """Task 5.1, the half that matters most.
 
         A factory that never calls ``resolve_output_cap`` still produces a
-        plausible-looking 130000 and passes the test above. Claude Sonnet 4 is
-        the regression case: a 64000 cap against a 200000 window means a 130000
+        plausible-looking 120000 and passes the test above. Claude Sonnet 4 is
+        the regression case: a 64000 cap against a 200000 window means a 120000
         prompt budget is rejected before the trigger is ever consulted.
         """
         built = build_context_middleware(model=_CappedModel(), context_window=200_000)
 
         # reserve = max(15% = 30000, the bound cap 64000) = 64000.
-        assert built[0].edit.trigger == 96_000
+        assert built[0].edit.trigger == 86_000
 
     def test_keep_defaults_to_three(self):
         """Task 5.2, the default half."""
@@ -968,9 +968,9 @@ class TestBuiltFromConfig:
             tool_budgets={RETRIEVAL: 2},
         )
 
-        # trigger 21300; the exemption plus the preserved results would hold
+        # trigger 19661; the exemption plus the preserved results would hold
         # (2 + 3) x 2100 = 10500, above the 8738 that is a third of the budget.
-        assert built[0].budget.trigger == 21_300
+        assert built[0].budget.trigger == 19_661
         assert built[0].budget.exempt_count == 0
 
     def test_the_edit_retains_the_record_of_the_models_own_call(self):
@@ -1072,7 +1072,7 @@ class TestDeclaredContextWindow:
         )
 
         assert len(built) == 1
-        assert built[0].budget.trigger == 21_300
+        assert built[0].budget.trigger == 19_661
 
     def test_a_declared_window_takes_precedence_over_the_derived_one(self):
         built = build_context_middleware(
@@ -1085,7 +1085,7 @@ class TestDeclaredContextWindow:
             },
         )
 
-        assert built[0].budget.trigger == 21_300, "the declared window must win"
+        assert built[0].budget.trigger == 19_661, "the declared window must win"
 
     def test_an_invalid_declared_window_falls_back_to_the_derived_one(self):
         """A typo must not cost the protection the derived window provides."""
@@ -1097,7 +1097,7 @@ class TestDeclaredContextWindow:
             },
         )
 
-        assert built[0].budget.trigger == 130_000
+        assert built[0].budget.trigger == 120_000
 
     def test_an_uninstallable_limit_names_the_model_responsible(self, caplog):
         """Failing open is correct; failing open *silently* is the defect.

@@ -607,9 +607,9 @@ threads of 1 / 11 / 51 / 101 rounds):
 | the same round once cleared | **51.9** |
 | reclaimed by clearing | 96.6% |
 
-At the deployed trigger of 26215 the residue alone would not exhaust the budget until roughly
-**505 rounds** — an order of magnitude beyond the 50 the recursion limit permits. At that
-ceiling the residue is ~2600 tokens, about 10% of the budget. This settles the open question
+At the deployed trigger of 19661 the residue alone would not exhaust the budget until roughly
+**379 rounds** — an order of magnitude beyond the 50 the recursion limit permits. At that
+ceiling the residue is ~2600 tokens, about 13% of the budget. This settles the open question
 below: **removing whole paired rounds is not needed**, and the alternative considered at the
 end of this decision stays unbuilt. `test_the_measured_residue_per_cleared_round` pins the
 figure, so a placeholder or framing change that moves it fails there rather than silently

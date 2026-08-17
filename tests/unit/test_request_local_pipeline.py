@@ -244,12 +244,12 @@ def _primed_source(config=None):
 def test_view_budget_derives_from_the_overriding_model():
     """7.1 / 7.7: window AND output cap both describe the override.
 
-    32768 - max(15%, 8192) - 20% = 18023. Deriving the cap from the override
-    while leaving the window at the source's 200000 yields 96000 instead —
+    32768 - max(15%, 8192) - 20% = 16384. Deriving the cap from the override
+    while leaving the window at the source's 200000 yields 86000 instead —
     a budget six times the window the request will actually be sent to.
     """
     source = _primed_source()
-    assert _compiled_budget(source).trigger == 130000
+    assert _compiled_budget(source).trigger == 120000
 
     view = _build_request_local_pipeline(
         source,
@@ -262,7 +262,7 @@ def test_view_budget_derives_from_the_overriding_model():
     budget = _compiled_budget(view)
     assert budget.context_window == 32768
     assert budget.generation_reserve == 8192
-    assert budget.trigger == 18023
+    assert budget.trigger == 16384
 
 
 def test_view_builds_its_own_bound_rather_than_inheriting_the_cache():

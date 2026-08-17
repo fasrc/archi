@@ -178,7 +178,7 @@ Under `services.chat_app.context_editing`, overridable per pipeline via
 | `enabled` | `true` | Install the in-loop bound |
 | `context_window` | _(derived)_ | Declare the model's context window, overriding the provider's. Required for any model the provider cannot resolve |
 | `reserve_fraction` | `0.15` | Generation reserve floor, as a share of the window |
-| `margin_fraction` | `0.20` | Counting margin, as a share of the window — see [why 20%](#why-the-counting-margin-is-20) |
+| `margin_fraction` | `0.25` | Counting margin, as a share of the window — see [why 25%](#why-the-counting-margin-is-25) |
 | `keep` | `3` | Most recent tool results preserved unreduced |
 | `per_result_tokens` | `2100` | Per-result token ceiling on any retained tool result |
 | `exemption_fraction` | `0.33` | Largest share of the budget the unclearable content may occupy |
@@ -316,7 +316,7 @@ re-fetching what was cleared. So there is a floor:
 | the same round once cleared | 51.9 |
 | reclaimed by clearing | 96.6% |
 
-At a 32768-token window (trigger 26215) that residue would need roughly **505
+At a 32768-token window (trigger 19661) that residue would need roughly **379
 tool rounds** to exhaust the budget on its own, against a `recursion_limit` of
 50 — about a tenth of the budget at that ceiling. Clearing is therefore
 sufficient, and whole tool rounds are never removed from the middle of a trace.
@@ -325,18 +325,25 @@ If the residue ever does matter, the runtime says so: the wrapper re-measures
 after reducing and logs the overage in the message text, rather than declaring a
 budget met that is not.
 
-### Why the counting margin is 20%
+### Why the counting margin is 25%
 
 The counter is an approximation — 4 characters per token — chosen so that
 bounding a request costs no provider round trip and no tokenizer dependency on
 the hot path of every model call. The counting margin is what absorbs its error,
 and 20% is a measured figure rather than a guess:
 
-| content | real vs. counted |
+Measured over 557 real 800-character chunks of this repository's own
+documentation, each behind a retrieval header, as real tokens ÷ counted tokens:
+
+| percentile | real vs. counted |
 |---|---|
-| markdown docs, agent specs, Python | 0.9–1.1x (counter over-counts — safe) |
-| corpus-average retrieval results | **1.15x** (counter under-counts) |
-| command-, flag- and path-dense results | 1.45x |
+| p50 | 1.14x |
+| p90 | 1.26x |
+| p95 | 1.29x |
+| p99 | 1.35x |
+| max | 1.72x |
+
+Plain prose runs 0.9–1.1x, so the counter over-counts it and errs safe.
 
 Retrieval results are the dense case because every snippet header carries a URL,
 a 32-hex resource hash, a file path and a float score. At the original 5% the
@@ -345,10 +352,19 @@ prompt filled to it with corpus-average retrieval content really cost 31046
 tokens — 3193 past the window once the answer reserve is added, so the provider
 rejected the request the budget had declared safe.
 
-20% covers drift up to 1.31x. Denser content than that still relies on the
-reactive overflow handler, which is a stated limit rather than an oversight.
+25% covers drift up to 1.42x — above the p99 of individual chunks, and well
+above what a *prompt* reaches, since a filled prompt averages a dozen or more
+chunks and so concentrates near the p50–p75 mean rather than at any one chunk's
+maximum. A single dense chunk cannot carry the whole prompt past the bound.
+
+Not covered, by choice: text with no prose at all. A passage of pure command
+lines and paths measures 1.80x, and covering that would take a 38% margin —
+spending half the window to insure against something a real 800-character
+documentation chunk does not reach. Those rely on the reactive overflow handler.
+Replacing the character ratio with a real tokenizer is tracked as issue #263.
 
 > **Raising the margin lowers the trigger**, which can push the retrieval
 > exemption past the irreducible-floor guard. At a 32768 window the trigger
-> moved 26215 → 21300, and `keep` has to drop from 3 to 1 for the exemption to
-> survive. Re-derive `keep` whenever `margin_fraction` changes.
+> moved 26215 → 19661, and `keep` has to drop from 3 to 1 for the exemption to
+> survive. Re-derive `keep` whenever `margin_fraction` changes;
+> `TestTheTrackedExampleConfigInstallsABound` fails if the shipped example drifts.

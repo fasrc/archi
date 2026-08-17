@@ -275,7 +275,7 @@ def _installed_budget(agent: BaseReActAgent) -> ContextBudget:
 def test_static_middleware_trigger_derives_from_the_provider_window():
     """6.1: a known window installs one bound whose trigger is the resolved budget.
 
-    200000 - max(15% reserve, output cap) - 20% counting margin = 130000. The
+    200000 - max(15% reserve, output cap) - 20% counting margin = 120000. The
     MagicMock LLM exposes no usable `max_tokens`, so the percentage reserve wins.
     """
     agent = _agent_with_window(200000)
@@ -287,9 +287,9 @@ def test_static_middleware_trigger_derives_from_the_provider_window():
     assert isinstance(bound, ContextBudgetMiddleware)
     budget = bound.budget
     assert budget.context_window == 200000
-    assert budget.trigger == 130000
+    assert budget.trigger == 120000
     assert budget.generation_reserve == 30000
-    assert budget.counting_margin == 40000
+    assert budget.counting_margin == 50000
 
 
 def test_static_middleware_exemption_sized_from_the_configured_call_budget():
@@ -321,7 +321,7 @@ def test_reserve_sized_from_the_bound_model_not_the_percentage():
     budget = _installed_budget(agent)
 
     assert budget.generation_reserve == 64000
-    assert budget.trigger == 96000
+    assert budget.trigger == 86000
 
 
 def test_static_middleware_empty_when_context_window_undeterminable():
@@ -336,7 +336,7 @@ def test_static_middleware_empty_when_context_window_undeterminable():
 def test_declared_window_overrides_the_provider_window():
     """6.1: `services.chat_app.context_editing` reaches the factory from the agent.
 
-    32768 - int(32768*0.15) - int(32768*0.20) = 21300. Without the config being
+    32768 - int(32768*0.15) - int(32768*0.20) = 19661. Without the config being
     forwarded this would resolve against the provider's 200000 instead.
     """
     agent = _agent_with_window(
@@ -349,7 +349,7 @@ def test_declared_window_overrides_the_provider_window():
     budget = _installed_budget(agent)
 
     assert budget.context_window == 32768
-    assert budget.trigger == 21300
+    assert budget.trigger == 19661
 
 
 def test_disabled_in_config_installs_nothing():
@@ -376,7 +376,7 @@ def test_middleware_reaches_create_agent():
     assert agent._create_agent.call_count == 1
     middleware = agent._create_agent.call_args[0][1]
     assert [type(m) for m in middleware] == [ContextBudgetMiddleware]
-    assert middleware[0].budget.trigger == 130000
+    assert middleware[0].budget.trigger == 120000
 
 
 # --- 6.6: the deployed agent's tool and bound agree on the same numbers ------
