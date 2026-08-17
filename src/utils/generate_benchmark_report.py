@@ -66,7 +66,7 @@ def parse_benchmark_results(results, metadata):
         "configuration_divergence": result.get("configuration_divergence") or [],
         "corpus_fingerprint_before": result.get("corpus_fingerprint_before"),
         "corpus_fingerprint": result.get("corpus_fingerprint"),
-        "corpus_stable": result.get("corpus_stable"),
+        "corpus_unchanged_at_endpoints": result.get("corpus_unchanged_at_endpoints"),
     }
 
     return config_data, config_name, timestamp, questions, total_results, provenance
@@ -99,13 +99,17 @@ def format_provenance_html(provenance):
             "<strong>matches</strong> the selected file.</p>"
         )
 
-    stable = provenance.get("corpus_stable")
+    stable = provenance.get("corpus_unchanged_at_endpoints")
     before = provenance.get("corpus_fingerprint_before")
     after = provenance.get("corpus_fingerprint")
     if stable is True:
+        # Deliberately weaker than "unchanged for the whole run". Two samples
+        # prove only that the endpoints matched: a corpus that changed and
+        # changed back while the questions ran would produce this same result.
         corpus_line = (
-            "<p class='provenance-ok'>The corpus was unchanged for the whole "
-            f"run (<code>{after}</code>).</p>"
+            "<p class='provenance-ok'>The corpus was the same at the start and "
+            f"the end of the run (<code>{after}</code>). This does not rule out "
+            "a change that was reverted in between.</p>"
         )
     elif stable is False:
         corpus_line = (

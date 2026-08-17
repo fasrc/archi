@@ -45,7 +45,7 @@ def _results(**overrides):
         ],
         "corpus_fingerprint_before": "sha256:aaa",
         "corpus_fingerprint": "sha256:aaa",
-        "corpus_stable": True,
+        "corpus_unchanged_at_endpoints": True,
     }
     record.update(overrides)
     return [record], {"time": "2026-08-17"}
@@ -68,7 +68,7 @@ def test_parse_returns_the_provenance_recorded_for_the_run():
     assert provenance["configuration_divergence"] == [
         "services.chat_app.context_editing.context_window"
     ]
-    assert provenance["corpus_stable"] is True
+    assert provenance["corpus_unchanged_at_endpoints"] is True
 
 
 def test_harness_settings_still_come_from_the_selected_file():
@@ -95,7 +95,7 @@ def test_html_says_so_when_the_run_matched_the_selected_configuration():
 
 def test_html_flags_a_corpus_that_changed_during_the_run():
     html = _html(
-        corpus_stable=False,
+        corpus_unchanged_at_endpoints=False,
         corpus_fingerprint_before="sha256:aaa",
         corpus_fingerprint="sha256:bbb",
     )
@@ -104,8 +104,23 @@ def test_html_flags_a_corpus_that_changed_during_the_run():
     assert "changed" in html.lower()
 
 
+def test_html_does_not_claim_stability_it_cannot_prove():
+    """Two samples prove the endpoints matched, not that nothing changed between.
+
+    Continuous ingestion could change the corpus and change it back while the
+    questions ran, producing identical endpoint readings. Claiming the corpus
+    was "unchanged for the whole run" from that evidence is the same overclaim
+    this whole change exists to remove.
+    """
+    html = _html()
+
+    assert "whole run" not in html.lower()
+    assert "start and the end" in html.lower()
+    assert "reverted" in html.lower()
+
+
 def test_html_distinguishes_unknown_corpus_stability_from_stable():
-    html = _html(corpus_stable=None)
+    html = _html(corpus_unchanged_at_endpoints=None)
 
     assert "unknown" in html.lower()
 

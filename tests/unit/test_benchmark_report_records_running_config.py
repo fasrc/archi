@@ -157,7 +157,7 @@ def test_records_the_corpus_each_arm_was_scored_against(tmp_path, monkeypatch):
     record = ResultHandler.results[0]
     assert record["corpus_fingerprint"] == "sha256:deadbeef"
     assert record["corpus_fingerprint_before"] == "sha256:deadbeef"
-    assert record["corpus_stable"] is True
+    assert record["corpus_unchanged_at_endpoints"] is True
 
 
 def test_detects_a_corpus_that_changed_while_the_arm_was_running(
@@ -180,7 +180,7 @@ def test_detects_a_corpus_that_changed_while_the_arm_was_running(
         )
 
     record = ResultHandler.results[0]
-    assert record["corpus_stable"] is False
+    assert record["corpus_unchanged_at_endpoints"] is False
     assert record["corpus_fingerprint_before"] == "sha256:before"
     assert record["corpus_fingerprint"] == "sha256:after"
     assert "corpus" in caplog.text.lower()
@@ -203,7 +203,7 @@ def test_two_failed_corpus_readings_are_not_a_stable_corpus(tmp_path, monkeypatc
         corpus_before="<unavailable: connection refused>",
     )
 
-    assert ResultHandler.results[0]["corpus_stable"] is None
+    assert ResultHandler.results[0]["corpus_unchanged_at_endpoints"] is None
 
 
 def test_a_failed_reading_on_either_side_leaves_stability_unknown(
@@ -219,7 +219,7 @@ def test_a_failed_reading_on_either_side_leaves_stability_unknown(
         corpus_before="sha256:aaa",
     )
 
-    assert ResultHandler.results[0]["corpus_stable"] is None
+    assert ResultHandler.results[0]["corpus_unchanged_at_endpoints"] is None
 
 
 def test_an_unsampled_corpus_is_unknown_rather_than_stable(tmp_path, monkeypatch):
@@ -234,7 +234,7 @@ def test_an_unsampled_corpus_is_unknown_rather_than_stable(tmp_path, monkeypatch
         corpus_before=None,
     )
 
-    assert ResultHandler.results[0]["corpus_stable"] is None
+    assert ResultHandler.results[0]["corpus_unchanged_at_endpoints"] is None
 
 
 def test_prompts_are_mapped_in_the_file_config_as_before(tmp_path):

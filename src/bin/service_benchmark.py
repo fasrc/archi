@@ -246,10 +246,10 @@ class ResultHandler:
         if ResultHandler.corpus_reading_failed(
             corpus_before
         ) or ResultHandler.corpus_reading_failed(corpus_after):
-            corpus_stable = None
+            corpus_unchanged_at_endpoints = None
         else:
-            corpus_stable = corpus_before == corpus_after
-        if corpus_stable is False:
+            corpus_unchanged_at_endpoints = corpus_before == corpus_after
+        if corpus_unchanged_at_endpoints is False:
             logger.warning(
                 "The corpus changed while this arm was running (%s -> %s); its "
                 "questions were not all scored against the same documents",
@@ -271,7 +271,7 @@ class ResultHandler:
             # state as though it had covered the whole arm.
             "corpus_fingerprint_before": corpus_before,
             "corpus_fingerprint": corpus_after,
-            "corpus_stable": corpus_stable,
+            "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
         }
 
         ResultHandler.results.append(current_results)
@@ -655,7 +655,7 @@ class ResultHandler:
             # An ABSENT key means the record predates corpus provenance and has
             # nothing to say; a key present and None means provenance ran and
             # came back undetermined. Only the latter is a finding.
-            stability = record.get("corpus_stable", _NOT_RECORDED)
+            stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is False:
                 corpus_warnings.append(
                     f"the corpus changed while variant '{name}' was running; its "
@@ -675,6 +675,14 @@ class ResultHandler:
             )
         )
 
+        # A rank is a machine-readable claim that these variants were measured
+        # under the same conditions. When corpus provenance says they were not,
+        # withhold the ranking rather than manufacture an ordering a consumer
+        # would read from rows[*].rank without ever seeing the warnings. The
+        # metrics stay, so an operator can still inspect the run.
+        observed_corpora = {v for v in ctx_fields["corpus_fingerprint"] if v is not None}
+        comparable = not corpus_warnings and len(observed_corpora) <= 1
+
         # Dense ranking: equal primary scores share a rank.
         rank = 0
         prev_score: Any = object()
@@ -683,7 +691,7 @@ class ResultHandler:
             if score != prev_score:
                 rank += 1
                 prev_score = score
-            row["rank"] = rank
+            row["rank"] = rank if comparable else None
 
         warnings: List[str] = []
         shared_context: Dict[str, Any] = {
@@ -707,6 +715,7 @@ class ResultHandler:
         ResultHandler.leaderboard = {
             "shared_context": shared_context,
             "primary_metric": primary_metric,
+            "comparable": comparable,
             "rows": rows,
         }
         return ResultHandler.leaderboard
