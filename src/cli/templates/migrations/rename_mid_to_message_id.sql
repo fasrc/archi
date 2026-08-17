@@ -139,17 +139,37 @@ ALTER TABLE conversation_metadata
 -- with no uniqueness constraint at all; a duplicate hash arriving in it makes the
 -- CREATE fail, which under ON_ERROR_STOP=1 keeps the whole stack down.
 --
--- indisunique AND indpred IS NOT NULL is the definition init.sql produces: unique
--- and partial. An index matching both is left alone; anything else of that name
--- (the legacy non-unique one) is replaced once and then matches.
+-- What counts as "already correct" is checked against the relation, not just the
+-- name: the index must belong to THIS `users` (so a same-named index resolved from
+-- another schema on the search_path cannot vouch for it), be unique and partial,
+-- cover exactly the one column `api_token_hash`, and be both valid and ready — a
+-- failed CREATE INDEX CONCURRENTLY leaves an index that exists, reports unique, and
+-- enforces nothing, and skipping the drop for it would leave the uniqueness
+-- invariant silently unenforced.
+--
+-- The predicate's TEXT is deliberately not compared. `pg_get_expr` output is
+-- normalized by the server and its formatting is not contractual across versions,
+-- so a cosmetic difference would drop and rebuild the index on every startup —
+-- reinstating the exact defect this guard exists to remove. A unique partial index
+-- on that single column is treated as the required one; the name is owned by
+-- `init.sql`, so a hand-built index of that name with a different predicate is the
+-- residual case this does not repair.
 DO $$
 BEGIN
   IF to_regclass('idx_users_api_token') IS NOT NULL
      AND NOT EXISTS (
-       SELECT 1 FROM pg_index
-       WHERE indexrelid = to_regclass('idx_users_api_token')
-         AND indisunique
-         AND indpred IS NOT NULL
+       SELECT 1 FROM pg_index i
+       WHERE i.indexrelid = to_regclass('idx_users_api_token')
+         AND i.indrelid = to_regclass('users')
+         AND i.indisunique
+         AND i.indisvalid
+         AND i.indisready
+         AND i.indpred IS NOT NULL
+         AND i.indnatts = 1
+         AND (
+           SELECT a.attname FROM pg_attribute a
+           WHERE a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
+         ) = 'api_token_hash'
      ) THEN
     DROP INDEX idx_users_api_token;
   END IF;
