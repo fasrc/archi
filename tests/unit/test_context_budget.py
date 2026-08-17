@@ -132,6 +132,46 @@ class TestEffectiveOutputCap:
         model = type("M", (), {"max_tokens": "many"})()
         assert resolve_output_cap(model, declared_cap=64000) == 64000
 
+    def test_the_ollama_generation_limit_counts_as_a_configured_cap(self):
+        """``ChatOllama`` carries the operator's limit as ``num_predict``.
+
+        ``LocalProvider._get_ollama_model`` splats ``extra_kwargs`` into the
+        constructor, so an operator's ``num_predict`` is enforced at runtime while
+        carrying no ``max_tokens`` at all. Reading only ``max_tokens`` sizes the
+        reserve as if generation were uncapped.
+        """
+        model = type("M", (), {"num_predict": 20000})()
+        assert resolve_output_cap(model, declared_cap=None) == 20000
+
+    def test_the_gemini_generation_limit_counts_as_a_configured_cap(self):
+        """``ChatGoogleGenerativeAI`` spells the same thing ``max_output_tokens``."""
+        model = type("M", (), {"max_output_tokens": 8192})()
+        assert resolve_output_cap(model, declared_cap=None) == 8192
+
+    def test_the_openai_completion_limit_counts_as_a_configured_cap(self):
+        """``ChatOpenAI``'s modern field, which supersedes ``max_tokens``."""
+        model = type("M", (), {"max_completion_tokens": 16384})()
+        assert resolve_output_cap(model, declared_cap=None) == 16384
+
+    def test_the_largest_configured_cap_wins_when_several_are_present(self):
+        """Which field the provider enforces is not knowable from here.
+
+        The reserve must cover the largest generation any of them permits: sizing
+        against a smaller one leaves the difference able to overflow the window,
+        which is the failure this budget exists to prevent.
+        """
+        model = type("M", (), {"max_tokens": 4096, "num_predict": 20000})()
+        assert resolve_output_cap(model, declared_cap=None) == 20000
+
+    def test_a_provider_specific_cap_still_beats_declared_metadata(self):
+        model = type("M", (), {"max_output_tokens": 8192})()
+        assert resolve_output_cap(model, declared_cap=64000) == 8192
+
+    def test_non_numeric_provider_specific_caps_are_ignored(self):
+        """A Mock model answers every attribute; none of them is a cap."""
+        model = type("M", (), {"num_predict": "many", "max_output_tokens": object()})()
+        assert resolve_output_cap(model, declared_cap=64000) == 64000
+
 
 class TestFailOpen:
     """Task 3.2: anything unknown or impossible installs nothing."""

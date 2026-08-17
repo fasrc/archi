@@ -55,6 +55,13 @@ either direction:
 falls back to the declared value, and callers pass ``declared_cap=None`` for
 providers that do not apply their own metadata.
 
+The configured cap is also not always spelled ``max_tokens``. Every provider here
+splats ``config.extra_kwargs`` into its client constructor, so an operator's cap
+arrives under whichever name that client accepts — ``num_predict`` on
+``ChatOllama``, ``max_output_tokens`` on ``ChatGoogleGenerativeAI`` — and is
+enforced at runtime either way. ``_OUTPUT_CAP_FIELDS`` enumerates them and the
+largest present value wins.
+
 Retrieval exemption
 -------------------
 Retrieval results carry the grounding evidence the answer cites, so they are
@@ -378,16 +385,43 @@ def resolve_configured_model_window(
     return resolve_model_window(provider, model)
 
 
+# The field names under which a chat model actually carries an enforced output
+# cap. ``max_tokens`` is not the only one: every provider in this repository
+# splats ``config.extra_kwargs`` into its client constructor, so an operator's
+# configured cap arrives under whatever name that client accepts —
+# ``num_predict`` for ``ChatOllama``, ``max_output_tokens`` for
+# ``ChatGoogleGenerativeAI``, ``max_completion_tokens`` for current ``ChatOpenAI``.
+# Reading only ``max_tokens`` sizes the reserve as if generation were uncapped on
+# exactly those paths.
+_OUTPUT_CAP_FIELDS = (
+    "max_tokens",
+    "max_completion_tokens",
+    "num_predict",
+    "max_output_tokens",
+)
+
+
 def resolve_output_cap(model: Any, declared_cap: Optional[int]) -> Optional[int]:
     """Return the output cap that will actually apply to calls on *model*.
 
     A cap configured on the bound model takes precedence over the provider's
     declared metadata; the metadata is the fallback. Callers pass
     ``declared_cap=None`` for providers that never apply their own declared value.
+
+    When the model carries several of ``_OUTPUT_CAP_FIELDS`` the **largest** wins.
+    Which one the client enforces is not knowable from here, and the reserve has
+    to cover the largest generation any of them permits — sizing against a
+    smaller one leaves the difference free to overflow the window.
     """
-    configured = positive_int(getattr(model, "max_tokens", None))
-    if configured is not None:
-        return configured
+    configured = [
+        cap
+        for cap in (
+            positive_int(getattr(model, name, None)) for name in _OUTPUT_CAP_FIELDS
+        )
+        if cap is not None
+    ]
+    if configured:
+        return max(configured)
     return positive_int(declared_cap)
 
 
