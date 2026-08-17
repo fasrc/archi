@@ -332,10 +332,23 @@ All the logic lives in `scripts/ci/pr_readiness_labels.sh` (22-case suite wired 
 bash scripts/ci/pr_readiness_labels.sh --dry-run     # decide and print, change nothing
 ```
 
-`ready-to-merge` requires all four: not a draft, no merge conflicts (`mergeable !=
+`ready-to-merge` requires all four of: not a draft, no merge conflicts (`mergeable !=
 CONFLICTING`), zero blocking checks, and zero *live* review findings — a review thread
 that is unresolved (`isResolved == false`). Check state is evaluated from the individual
 contexts in the commit's status-check rollup, not from `mergeStateStatus`.
+
+Three further guards withhold the chip even when those four are satisfied, each because
+the evidence on record does not describe the PR as it stands. All three are fail-closed:
+
+- **`mergeStateStatus == BEHIND`** — the checks on record did not test the current base,
+  so a green rollup says nothing about what merging would produce.
+- **`mergeStateStatus == BLOCKED` with an *empty* rollup** — GitHub reports something
+  blocking while no checks exist to explain it, so readiness cannot be verified. The
+  reconciler's own in-progress run cannot trip this: its CheckRun sits on the head commit,
+  so the rollup is non-empty whenever it is the trigger. `UNSTABLE` is deliberately not
+  gated alongside it — see the check-state note below.
+- **A truncated rollup** (`totalCount` greater than the fetched count) — a blocking check
+  could be sitting in the unfetched tail.
 
 Seven design notes worth knowing before changing it:
 
@@ -343,8 +356,11 @@ Seven design notes worth knowing before changing it:
   is a *priority* field: on a draft it reports `DRAFT`, masking `DIRTY`. So `conflicts`
   is derived from `mergeable == CONFLICTING` — otherwise a conflicted draft gets no chip,
   which is where it is arguably most useful. `mergeStateStatus` is retained in the query
-  for the `UNKNOWN` retry/revoke path but is no longer the readiness gating field; check
-  state comes from individual rollup contexts instead.
+  for the `UNKNOWN` retry/revoke path and for the two state guards above, but it is no
+  longer the field *check state* is read from; that comes from individual rollup contexts
+  instead. The distinction matters: `BEHIND` and `BLOCKED` are consulted as statements
+  about whether the recorded evidence is current, never as a substitute for counting
+  checks.
 
 - **Check state comes from individual rollup contexts, not from `mergeStateStatus`.**
   A `CheckRun` is passing when its `conclusion` is `SUCCESS`, `NEUTRAL`, or `SKIPPED`;
