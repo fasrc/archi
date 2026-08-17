@@ -60,6 +60,10 @@ OUTPUT_PATH = "/root/archi/benchmarks"
 EXTRA_METADATA_PATH = "/root/archi/git_info.yaml"
 OUTPUT_DIR = Path(OUTPUT_PATH)
 
+#: Distinguishes a provenance field that was never recorded (a result file
+#: written before provenance existed) from one recorded as undetermined.
+_NOT_RECORDED = object()
+
 setup_logging()
 logger = get_logger(__name__)
 
@@ -134,6 +138,16 @@ class ResultHandler:
             ResultHandler._corpus_snapshot_id = override or str(uuid.uuid4())
         return ResultHandler._corpus_snapshot_id
 
+    #: Prefix of a fingerprint that records why the corpus could not be read.
+    CORPUS_UNAVAILABLE = "<unavailable:"
+
+    @staticmethod
+    def corpus_reading_failed(fingerprint: Optional[str]) -> bool:
+        """Is *fingerprint* a non-observation rather than a corpus state?"""
+        return fingerprint is None or str(fingerprint).startswith(
+            ResultHandler.CORPUS_UNAVAILABLE
+        )
+
     @staticmethod
     def get_corpus_fingerprint() -> str:
         """Digest of the live corpus, or a marker explaining why it is missing.
@@ -163,7 +177,7 @@ class ResultHandler:
             )
             return corpus_fingerprint(rows)
         except Exception as exc:  # noqa: BLE001 - provenance is never fatal
-            return f"<unavailable: {exc}>"
+            return f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
 
     @staticmethod
     def map_prompts(config: Dict[str, Any]):
@@ -224,9 +238,17 @@ class ResultHandler:
             )
 
         corpus_after = ResultHandler.get_corpus_fingerprint()
-        # None, not False, when there is no before-reading: stability is then
-        # undetermined, and must never be reported as established.
-        corpus_stable = None if corpus_before is None else corpus_before == corpus_after
+        # None, not False, when either reading is missing or failed. A failure is
+        # not an observation: get_corpus_fingerprint reports one as
+        # "<unavailable: ...>", and two identical failures compare equal, so
+        # plain equality would certify the corpus as stable at exactly the moment
+        # nothing about it was actually observed.
+        if ResultHandler.corpus_reading_failed(
+            corpus_before
+        ) or ResultHandler.corpus_reading_failed(corpus_after):
+            corpus_stable = None
+        else:
+            corpus_stable = corpus_before == corpus_after
         if corpus_stable is False:
             logger.warning(
                 "The corpus changed while this arm was running (%s -> %s); its "
@@ -277,14 +299,14 @@ class ResultHandler:
     @staticmethod
     def dump_html(benchmark_name: Path):
 
-        config_data, config_name, timestamp, questions, total_results = (
+        config_data, config_name, timestamp, questions, total_results, provenance = (
             parse_benchmark_results(ResultHandler.results, ResultHandler.metadata)
         )
 
         logger.info(config_data)
 
         html_content = format_html_output(
-            config_data, config_name, timestamp, questions, total_results
+            config_data, config_name, timestamp, questions, total_results, provenance
         )
 
         filename = f"{benchmark_name}-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_report.html"
@@ -541,7 +563,9 @@ class ResultHandler:
             "provider": set(),
             "evaluator_model": set(),
             "queries_path": set(),
+            "corpus_fingerprint": set(),
         }
+        corpus_warnings: List[str] = []
 
         for record in ResultHandler.results:
             bench = _benchmarking(record)
@@ -624,6 +648,24 @@ class ResultHandler:
             ctx_fields["provider"].add(bench.get("provider"))
             ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
             ctx_fields["queries_path"].add(bench.get("queries_path"))
+            # The corpus is a swept-context field like any other: ranking arms
+            # scored against different documents asserts controlled conditions
+            # the run cannot support.
+            ctx_fields["corpus_fingerprint"].add(record.get("corpus_fingerprint"))
+            # An ABSENT key means the record predates corpus provenance and has
+            # nothing to say; a key present and None means provenance ran and
+            # came back undetermined. Only the latter is a finding.
+            stability = record.get("corpus_stable", _NOT_RECORDED)
+            if stability is False:
+                corpus_warnings.append(
+                    f"the corpus changed while variant '{name}' was running; its "
+                    "questions were not all scored against the same documents"
+                )
+            elif stability is None:
+                corpus_warnings.append(
+                    f"corpus stability is unknown for variant '{name}'; it was "
+                    "not observed before and after the run"
+                )
 
         # Complete rows first, then by descending primary score; incomplete last.
         rows.sort(
@@ -656,6 +698,7 @@ class ResultHandler:
                 warnings.append(
                     f"{field_name} differs across swept configs: {sorted(str(v) for v in present)}"
                 )
+        warnings.extend(corpus_warnings)
         if warnings:
             for w in warnings:
                 logger.warning("Leaderboard shared-context drift: %s", w)

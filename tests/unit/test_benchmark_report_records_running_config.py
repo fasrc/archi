@@ -186,6 +186,42 @@ def test_detects_a_corpus_that_changed_while_the_arm_was_running(
     assert "corpus" in caplog.text.lower()
 
 
+def test_two_failed_corpus_readings_are_not_a_stable_corpus(tmp_path, monkeypatch):
+    """A failure is not an observation.
+
+    get_corpus_fingerprint reports failures as "<unavailable: ...>". Two
+    identical failures compare equal, so plain equality would certify the corpus
+    as stable at exactly the moment nothing about it was actually observed.
+    """
+    _pin_corpus(monkeypatch, "<unavailable: connection refused>")
+
+    ResultHandler.handle_results(
+        _write(tmp_path, FILE_CONFIG),
+        {},
+        {},
+        running_config=FILE_CONFIG,
+        corpus_before="<unavailable: connection refused>",
+    )
+
+    assert ResultHandler.results[0]["corpus_stable"] is None
+
+
+def test_a_failed_reading_on_either_side_leaves_stability_unknown(
+    tmp_path, monkeypatch
+):
+    _pin_corpus(monkeypatch, "<unavailable: connection refused>")
+
+    ResultHandler.handle_results(
+        _write(tmp_path, FILE_CONFIG),
+        {},
+        {},
+        running_config=FILE_CONFIG,
+        corpus_before="sha256:aaa",
+    )
+
+    assert ResultHandler.results[0]["corpus_stable"] is None
+
+
 def test_an_unsampled_corpus_is_unknown_rather_than_stable(tmp_path, monkeypatch):
     """Absent a before-reading, stability is undetermined -- never assumed true."""
     _pin_corpus(monkeypatch, "sha256:after")
