@@ -27538,6 +27538,79 @@
                         }
                     }
                 }
+            },
+            "config_version": {
+                "digest": "sha256:4a4d3c23dde1d1bbb7fe304981fbc8b707034b9406b5a696906cfa2fe2c80616",
+                "source": "reconstructed from the configuration file recorded in this artifact; the running configuration was never captured, so this may not describe the run",
+                "selected_file": "configs/config.yaml",
+                "selected_file_digest": "sha256:4a4d3c23dde1d1bbb7fe304981fbc8b707034b9406b5a696906cfa2fe2c80616",
+                "divergence_from_selected_file": null,
+                "key_settings": {
+                    "services.chat_app.agent_class": "CMSCompOpsAgent",
+                    "services.chat_app.default_model": "llama3.2",
+                    "services.chat_app.default_provider": "local",
+                    "services.chat_app.recursion_limit": 50,
+                    "services.benchmarking.agent_class": "FASRCDocsAgent",
+                    "services.benchmarking.agent_md_file": "/root/archi/agents/fasrc-inline-v1.md",
+                    "services.benchmarking.model": "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4",
+                    "services.benchmarking.modes": [
+                        "RAGAS",
+                        "SOURCES"
+                    ],
+                    "services.benchmarking.mode_settings": {
+                        "sources_settings": {
+                            "default_match_field": "url"
+                        },
+                        "ragas_settings": {
+                            "enabled_metrics": [
+                                "answer_relevancy",
+                                "faithfulness",
+                                "context_precision",
+                                "context_recall"
+                            ],
+                            "embedding_model": "HuggingFace",
+                            "timeout": 300,
+                            "batch_size": false,
+                            "evaluator_provider": "huit_bedrock",
+                            "evaluator_model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                            "evaluator_ollama_url": null
+                        }
+                    },
+                    "services.benchmarking.provider": "openai",
+                    "services.vectorstore.backend": "postgres",
+                    "services.vectorstore.distance_metric": "cosine",
+                    "data_manager.chunk_overlap": 0,
+                    "data_manager.chunk_size": 1000,
+                    "data_manager.chunking": {
+                        "strategy": "sentence"
+                    },
+                    "data_manager.distance_metric": "cosine",
+                    "data_manager.embedding_name": "HuggingFaceEmbeddings",
+                    "data_manager.retrievers": {
+                        "semantic_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "bm25_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "hybrid_retriever": {
+                            "num_documents_to_retrieve": 5,
+                            "bm25_weight": 0.6,
+                            "semantic_weight": 0.4
+                        },
+                        "hierarchical_rerank": {
+                            "enabled": true,
+                            "candidate_pool_size": 20,
+                            "num_documents_to_retrieve": 5,
+                            "reranker": {
+                                "model": "ms-marco-MiniLM-L-12-v2"
+                            }
+                        }
+                    },
+                    "data_manager.stemming": {
+                        "enabled": false
+                    }
+                }
             }
         }
     ],
@@ -27547,6 +27620,17 @@
             "git_diff": "",
             "last_commit": "0a157cdce02de6a3e3455c82a91bfbddfa00a0d9\n"
         },
-        "corpus_snapshot_id": "fa9d2a81-c051-476a-9bfa-1b08d1422f34"
+        "corpus_snapshot_id": "fa9d2a81-c051-476a-9bfa-1b08d1422f34",
+        "code_version": {
+            "digest": null,
+            "source": "<not recorded: this artifact predates code-version stamping, and the code it ran cannot be recovered from it>",
+            "module_count": null,
+            "deploy_git_commit": "0a157cdce02de6a3e3455c82a91bfbddfa00a0d9",
+            "deploy_git_dirty": false,
+            "deploy_git_note": "Written once by `archi create` and then frozen: this identifies the deploy, not the image the benchmark ran. Two arms of one campaign share it. Compare `digest` instead."
+        },
+        "config_versions": [
+            "sha256:4a4d3c23dde1d1bbb7fe304981fbc8b707034b9406b5a696906cfa2fe2c80616"
+        ]
     }
 }

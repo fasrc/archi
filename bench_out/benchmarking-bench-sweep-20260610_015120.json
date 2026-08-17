@@ -3246,6 +3246,68 @@
                         }
                     }
                 }
+            },
+            "config_version": {
+                "digest": "sha256:a4ab8bdc78bdd99d0bbcb0032a6c52fd799937a985f9b65e2a73daf80c04c580",
+                "source": "reconstructed from the configuration file recorded in this artifact; the running configuration was never captured, so this may not describe the run",
+                "selected_file": "configs/fasrc-cannon-v1-strict.yaml",
+                "selected_file_digest": "sha256:a4ab8bdc78bdd99d0bbcb0032a6c52fd799937a985f9b65e2a73daf80c04c580",
+                "divergence_from_selected_file": null,
+                "key_settings": {
+                    "services.chat_app.agent_class": "CMSCompOpsAgent",
+                    "services.chat_app.default_model": "llama3.2",
+                    "services.chat_app.default_provider": "local",
+                    "services.chat_app.recursion_limit": 50,
+                    "services.benchmarking.agent_class": "CMSCompOpsAgent",
+                    "services.benchmarking.agent_md_file": "/root/archi/agents/fasrc-cannon-v1-strict.md",
+                    "services.benchmarking.model": "Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
+                    "services.benchmarking.modes": [
+                        "RAGAS",
+                        "SOURCES"
+                    ],
+                    "services.benchmarking.mode_settings": {
+                        "sources_settings": {
+                            "default_match_field": "url"
+                        },
+                        "ragas_settings": {
+                            "enabled_metrics": [
+                                "answer_relevancy",
+                                "faithfulness",
+                                "context_precision",
+                                "context_recall"
+                            ],
+                            "embedding_model": "HuggingFace",
+                            "timeout": 180,
+                            "batch_size": false,
+                            "evaluator_provider": "huit_bedrock",
+                            "evaluator_model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                            "evaluator_ollama_url": null
+                        }
+                    },
+                    "services.benchmarking.provider": "openai",
+                    "services.vectorstore.backend": "postgres",
+                    "services.vectorstore.distance_metric": "cosine",
+                    "data_manager.chunk_overlap": 0,
+                    "data_manager.chunk_size": 1000,
+                    "data_manager.distance_metric": "cosine",
+                    "data_manager.embedding_name": "HuggingFaceEmbeddings",
+                    "data_manager.retrievers": {
+                        "semantic_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "bm25_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "hybrid_retriever": {
+                            "num_documents_to_retrieve": 5,
+                            "bm25_weight": 0.6,
+                            "semantic_weight": 0.4
+                        }
+                    },
+                    "data_manager.stemming": {
+                        "enabled": false
+                    }
+                }
             }
         },
         {
@@ -5277,6 +5339,68 @@
                             "email_pattern": "[\\w\\.-]+@[\\w\\.-]+\\.\\w+",
                             "username_pattern": "\\[~[^\\]]+\\]"
                         }
+                    }
+                }
+            },
+            "config_version": {
+                "digest": "sha256:a52f8d5ddee6a8407f9d9a1c8953331cfecf31d32f3248b6d8853fdeeb08bc4d",
+                "source": "reconstructed from the configuration file recorded in this artifact; the running configuration was never captured, so this may not describe the run",
+                "selected_file": "configs/fasrc-cannon-v2-lean.yaml",
+                "selected_file_digest": "sha256:a52f8d5ddee6a8407f9d9a1c8953331cfecf31d32f3248b6d8853fdeeb08bc4d",
+                "divergence_from_selected_file": null,
+                "key_settings": {
+                    "services.chat_app.agent_class": "CMSCompOpsAgent",
+                    "services.chat_app.default_model": "llama3.2",
+                    "services.chat_app.default_provider": "local",
+                    "services.chat_app.recursion_limit": 50,
+                    "services.benchmarking.agent_class": "CMSCompOpsAgent",
+                    "services.benchmarking.agent_md_file": "/root/archi/agents/fasrc-cannon-v2-lean.md",
+                    "services.benchmarking.model": "Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
+                    "services.benchmarking.modes": [
+                        "RAGAS",
+                        "SOURCES"
+                    ],
+                    "services.benchmarking.mode_settings": {
+                        "sources_settings": {
+                            "default_match_field": "url"
+                        },
+                        "ragas_settings": {
+                            "enabled_metrics": [
+                                "answer_relevancy",
+                                "faithfulness",
+                                "context_precision",
+                                "context_recall"
+                            ],
+                            "embedding_model": "HuggingFace",
+                            "timeout": 180,
+                            "batch_size": false,
+                            "evaluator_provider": "huit_bedrock",
+                            "evaluator_model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                            "evaluator_ollama_url": null
+                        }
+                    },
+                    "services.benchmarking.provider": "openai",
+                    "services.vectorstore.backend": "postgres",
+                    "services.vectorstore.distance_metric": "cosine",
+                    "data_manager.chunk_overlap": 0,
+                    "data_manager.chunk_size": 1000,
+                    "data_manager.distance_metric": "cosine",
+                    "data_manager.embedding_name": "HuggingFaceEmbeddings",
+                    "data_manager.retrievers": {
+                        "semantic_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "bm25_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "hybrid_retriever": {
+                            "num_documents_to_retrieve": 5,
+                            "bm25_weight": 0.6,
+                            "semantic_weight": 0.4
+                        }
+                    },
+                    "data_manager.stemming": {
+                        "enabled": false
                     }
                 }
             }
@@ -7943,6 +8067,68 @@
                         }
                     }
                 }
+            },
+            "config_version": {
+                "digest": "sha256:0136c09e5e29d432e20a6a2be4ea5cb2541bef6aefbf574592d5fe53c67840b7",
+                "source": "reconstructed from the configuration file recorded in this artifact; the running configuration was never captured, so this may not describe the run",
+                "selected_file": "configs/fasrc-cannon-v3-cited.yaml",
+                "selected_file_digest": "sha256:0136c09e5e29d432e20a6a2be4ea5cb2541bef6aefbf574592d5fe53c67840b7",
+                "divergence_from_selected_file": null,
+                "key_settings": {
+                    "services.chat_app.agent_class": "CMSCompOpsAgent",
+                    "services.chat_app.default_model": "llama3.2",
+                    "services.chat_app.default_provider": "local",
+                    "services.chat_app.recursion_limit": 50,
+                    "services.benchmarking.agent_class": "CMSCompOpsAgent",
+                    "services.benchmarking.agent_md_file": "/root/archi/agents/fasrc-cannon-v3-cited.md",
+                    "services.benchmarking.model": "Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
+                    "services.benchmarking.modes": [
+                        "RAGAS",
+                        "SOURCES"
+                    ],
+                    "services.benchmarking.mode_settings": {
+                        "sources_settings": {
+                            "default_match_field": "url"
+                        },
+                        "ragas_settings": {
+                            "enabled_metrics": [
+                                "answer_relevancy",
+                                "faithfulness",
+                                "context_precision",
+                                "context_recall"
+                            ],
+                            "embedding_model": "HuggingFace",
+                            "timeout": 180,
+                            "batch_size": false,
+                            "evaluator_provider": "huit_bedrock",
+                            "evaluator_model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                            "evaluator_ollama_url": null
+                        }
+                    },
+                    "services.benchmarking.provider": "openai",
+                    "services.vectorstore.backend": "postgres",
+                    "services.vectorstore.distance_metric": "cosine",
+                    "data_manager.chunk_overlap": 0,
+                    "data_manager.chunk_size": 1000,
+                    "data_manager.distance_metric": "cosine",
+                    "data_manager.embedding_name": "HuggingFaceEmbeddings",
+                    "data_manager.retrievers": {
+                        "semantic_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "bm25_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "hybrid_retriever": {
+                            "num_documents_to_retrieve": 5,
+                            "bm25_weight": 0.6,
+                            "semantic_weight": 0.4
+                        }
+                    },
+                    "data_manager.stemming": {
+                        "enabled": false
+                    }
+                }
             }
         }
     ],
@@ -7952,7 +8138,20 @@
             "git_diff": "diff --git a/docs/docs/benchmarking.md b/docs/docs/benchmarking.md\nindex b9f9cb71..60ceccbe 100644\n--- a/docs/docs/benchmarking.md\n+++ b/docs/docs/benchmarking.md\n@@ -130,6 +130,81 @@ To analyze results, see `scripts/benchmarking/` which contains:\n \n ---\n \n+## Prompt sweep\n+\n+A *prompt sweep* runs N agent prompts through the RAGAS harness with everything\n+but the prompt held fixed \u2014 model, queries, retriever, and the RAGAS judge all\n+come from one base config \u2014 and ranks the prompts on a **leaderboard** by mean\n+RAGAS metric. It generalizes a 2-way A/B to the whole prompt field, which is how\n+we settle \"which support prompt do we ship?\" with data rather than by eyeballing\n+one pair at a time (the open question Q5 / Decision 3 in\n+`docs/docs/notes_response_tuning.md`).\n+\n+Only `services.benchmarking.agent_md_file` varies across variants. The model and\n+RAGAS judge are deliberately held fixed; the leaderboard's `shared_context`\n+cross-checks this and flags any drift.\n+\n+### 1. Write a manifest\n+\n+A manifest names one base config and the prompts to sweep. See\n+`config/benchmarking/prompt_sweep.yaml` for a worked example:\n+\n+```yaml\n+base_config: config/benchmarking/ragas.yaml   # supplies model/queries/judge/retriever\n+out_dir: bench_out/sweep_configs              # optional (this is the default)\n+primary_metric: faithfulness                  # leaderboard sort key (optional)\n+prompts:\n+  - config/agents/fasrc-cannon-v1-strict.md\n+  - config/agents/fasrc-cannon-v2-lean.md\n+  - config/agents/fasrc-cannon-v3-cited.md\n+  - config/agents/fasrc-cannon-v4-linked.md\n+```\n+\n+`primary_metric` is one of `answer_relevancy`, `faithfulness`,\n+`context_precision`, `context_recall` (default `faithfulness` \u2014 grounding is the\n+load-bearing property for a \"never guess\" support bot). All four metrics are\n+reported per variant regardless; this only sets the ranking key.\n+\n+### 2. Generate the per-prompt configs\n+\n+```bash\n+python scripts/benchmarking/generate_prompt_sweep.py -m config/benchmarking/prompt_sweep.yaml\n+```\n+\n+This writes one config per prompt into the sweep directory, each identical to\n+the base except `services.benchmarking.agent_md_file` (the prompt) and `.name`\n+(the prompt's filename stem). It refuses to write anything if a prompt path is\n+missing, so a bad manifest never leaves a partial set behind.\n+\n+### 3. Run the sweep\n+\n+```bash\n+archi evaluate --config-dir bench_out/sweep_configs --hostmode\n+```\n+\n+The harness runs each config in turn (the existing `--config-dir` path) and,\n+because 2+ configs ran, emits a `leaderboard` block in the dump JSON.\n+\n+### Reading the leaderboard\n+\n+The dump JSON gains a `leaderboard` key:\n+\n+- `rows` \u2014 one per variant: `name`, `agent_md_file`, the four mean RAGAS\n+  `metrics`, `primary_score`, `rank`, `query_count`, and `incomplete`. Rows are\n+  ranked best-first by `primary_metric`; ties share a rank. A variant that\n+  failed to produce a metric (missing/NaN) has `None` for it, is marked\n+  `incomplete: true`, and sorts after all complete variants \u2014 it is never\n+  treated as a zero.\n+- `shared_context` \u2014 the model, provider, judge `evaluator_model`,\n+  `queries_path`, and `corpus_snapshot_id` shared by all variants. If any of\n+  these differ across the swept configs, the discrepancy is recorded in\n+  `shared_context.warnings` (the sweep is no longer apples-to-apples).\n+\n+The pairwise `ab_comparisons` are still produced alongside the leaderboard; the\n+leaderboard is computed independently from each config's aggregates.\n+\n+---\n+\n ## Human grading via Argilla\n \n `archi evaluate --argilla` pushes benchmark results to a self-hosted [Argilla](https://argilla.io/) instance for independent human grading. This is the platform we use to answer the question \"is config A better than config B for FASRC users?\" with data we trust \u2014 RAGAS scores alone can't decide prompt or model choices because the judge LLM has its own biases.\ndiff --git a/src/archi/pipelines/agents/base_react.py b/src/archi/pipelines/agents/base_react.py\nindex 76ae3470..34553d6f 100644\n--- a/src/archi/pipelines/agents/base_react.py\n+++ b/src/archi/pipelines/agents/base_react.py\n@@ -1176,7 +1176,7 @@ class BaseReActAgent:\n                     \"Invalid context window (%s), skipping trimming.\",\n                     context_window,\n                     )\n-                    return {\"messages\": history_messages}\n+                    return {\"messages\": self._inject_forced_retrieval(history_messages)}\n \n                 safety_margin = int(context_window * 0.15)\n                 max_prompt_tokens = context_window - safety_margin\n@@ -1220,7 +1220,16 @@ class BaseReActAgent:\n         except Exception as e:\n             logger.debug(\"Token trimming skipped: %s\", e)\n \n-        return {\"messages\": history_messages}\n+        return {\"messages\": self._inject_forced_retrieval(history_messages)}\n+\n+    def _inject_forced_retrieval(self, messages: List[BaseMessage]) -> List[BaseMessage]:\n+        \"\"\"Hook for subclasses to force a retrieval before the model's first turn.\n+\n+        Base implementation is a no-op; agents with a vector retriever override\n+        this to prefill a completed ``search_vectorstore_hybrid`` tool round so\n+        retrieval happens regardless of whether the model chooses to call it.\n+        \"\"\"\n+        return messages\n \n     def _metadata_from_agent_output(self, answer_output: Dict[str, Any]) -> Dict[str, Any]:\n         \"\"\"Hook for subclasses to enrich metadata returned to callers.\"\"\"\ndiff --git a/src/archi/pipelines/agents/cms_comp_ops_agent.py b/src/archi/pipelines/agents/cms_comp_ops_agent.py\nindex 48f4385a..a9b9fef6 100644\n--- a/src/archi/pipelines/agents/cms_comp_ops_agent.py\n+++ b/src/archi/pipelines/agents/cms_comp_ops_agent.py\n@@ -1,8 +1,11 @@\n from __future__ import annotations\n \n import json\n+import uuid\n from typing import Any, Callable, Dict, List\n \n+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage\n+\n from src.utils.logging import get_logger\n from src.utils.env import read_secret\n from src.archi.pipelines.agents.base_react import BaseReActAgent\n@@ -313,3 +316,64 @@ class CMSCompOpsAgent(BaseReActAgent):\n                 store_tool_input=getattr(self, \"_store_tool_input\", None),\n             )\n         )\n+\n+    def _inject_forced_retrieval(self, messages: List[BaseMessage]) -> List[BaseMessage]:\n+        \"\"\"Force one ``search_vectorstore_hybrid`` call before the model answers.\n+\n+        The model can ignore an \"always search first\" prompt and answer from its\n+        own weights, leaving ``source_documents`` empty (chat UI shows \"Link\n+        unavailable\"). To enforce retrieval, prefill a completed tool round \u2014\n+        an ``AIMessage`` carrying the tool call plus the matching ``ToolMessage``\n+        result \u2014 so the ReAct loop starts with real chunks already in context.\n+        Invoking the existing retriever tool also runs its ``store_docs``\n+        callback, so retrieved documents flow into ``source_documents``/links\n+        exactly as a model-initiated search would. The model may still search\n+        again. Gated by ``services.chat_app.force_initial_retrieval`` (default\n+        on) so prompt-vs-enforcement variants can be A/B'd in the sweep.\n+        \"\"\"\n+        if not getattr(self, \"enable_vector_tools\", False):\n+            logger.debug(\"Forced retrieval skipped: vector tools disabled\")\n+            return messages\n+        if not self._chat_app_config.get(\"force_initial_retrieval\", True):\n+            logger.debug(\"Forced retrieval skipped: force_initial_retrieval=false\")\n+            return messages\n+        tools = getattr(self, \"_vector_tools\", None)\n+        if not tools:\n+            logger.debug(\"Forced retrieval skipped: no vector tools built\")\n+            return messages\n+        # Only force on a fresh user turn (the latest message is the question).\n+        if not messages or not isinstance(messages[-1], HumanMessage):\n+            last_type = type(messages[-1]).__name__ if messages else \"none\"\n+            logger.debug(\"Forced retrieval skipped: last message is %s\", last_type)\n+            return messages\n+        query = (self._message_content(messages[-1]) or \"\").strip()\n+        if not query:\n+            logger.debug(\"Forced retrieval skipped: empty query\")\n+            return messages\n+\n+        try:\n+            result = tools[0].invoke({\"query\": query})\n+        except Exception:\n+            # Fail open: a retrieval error must not break the chat turn.\n+            logger.warning(\"Forced initial retrieval failed\", exc_info=True)\n+            return messages\n+\n+        logger.info(\"Forced initial retrieval ran: query=%r -> %d chars\", query, len(str(result)))\n+\n+        call_id = f\"forced_search_{uuid.uuid4().hex}\"\n+        ai = AIMessage(\n+            content=\"\",\n+            tool_calls=[\n+                {\n+                    \"name\": \"search_vectorstore_hybrid\",\n+                    \"args\": {\"query\": query},\n+                    \"id\": call_id,\n+                }\n+            ],\n+        )\n+        tool_msg = ToolMessage(\n+            content=result if isinstance(result, str) else str(result),\n+            tool_call_id=call_id,\n+            name=\"search_vectorstore_hybrid\",\n+        )\n+        return list(messages) + [ai, tool_msg]\ndiff --git a/src/bin/service_benchmark.py b/src/bin/service_benchmark.py\nindex 8ed40c39..1588cb4d 100644\n--- a/src/bin/service_benchmark.py\n+++ b/src/bin/service_benchmark.py\n@@ -75,6 +75,7 @@ class ResultHandler:\n     metadata = {}  # store the metadata about the benchmark run\n     ab_comparison: Dict[str, Any] = {}  # single-pair compat (populated only in ab_mode with 2 configs)\n     ab_comparisons: List[Dict[str, Any]] = []  # multi-pair: list of pair comparison dicts\n+    leaderboard: Dict[str, Any] = {}  # prompt-sweep leaderboard (populated only when 2+ configs run)\n     # Per-invocation identifier shared by every config in this archi-evaluate run.\n     # Stamped onto Argilla records as metadata so the analysis notebook can refuse\n     # to compute primary-outcome statistics across configs that were NOT run\n@@ -177,6 +178,8 @@ class ResultHandler:\n             output[\"ab_comparison\"] = ResultHandler.ab_comparison\n         if ResultHandler.ab_comparisons:\n             output[\"ab_comparisons\"] = ResultHandler.ab_comparisons\n+        if ResultHandler.leaderboard:\n+            output[\"leaderboard\"] = ResultHandler.leaderboard\n         with open(file_path, \"w\") as f:\n             json.dump(output, f, indent=4)\n \n@@ -312,6 +315,135 @@ class ResultHandler:\n         \"\"\"Generate all pairwise index combinations for N configs.\"\"\"\n         return list(combinations(range(n_configs), 2))\n \n+    # Leaderboard metric name -> the aggregate key the run loop writes onto\n+    # total_results (service_benchmark.py RAGAS block). Order is display order.\n+    LEADERBOARD_METRICS: List[Tuple[str, str]] = [\n+        (\"answer_relevancy\", \"aggregate_answer_relevancy\"),\n+        (\"faithfulness\", \"aggregate_faithfulness\"),\n+        (\"context_precision\", \"aggregate_context_precision\"),\n+        (\"context_recall\", \"aggregate_context_recall\"),\n+    ]\n+\n+    @staticmethod\n+    def build_leaderboard(primary_metric: str = \"faithfulness\") -> Dict[str, Any]:\n+        \"\"\"Rank swept prompt variants by mean RAGAS metric.\n+\n+        Reads each config's per-run aggregates from ResultHandler.results\n+        (the means the RAGAS block already wrote onto total_results) and\n+        builds a ranked leaderboard. Independent of the pairwise A/B plumbing:\n+        it never touches pair_ab_results/ab_comparisons.\n+\n+        Each row: {name, agent_md_file, metrics{...}, primary_score, rank,\n+        incomplete, query_count}. A metric is None (and the row `incomplete`)\n+        when its aggregate key is absent or NaN \u2014 never silently zeroed.\n+        Incomplete rows always sort after complete ones. Ties share a rank.\n+\n+        shared_context records the run context common to all variants and\n+        flags any drift (a hand-edited config that breaks apples-to-apples).\n+        \"\"\"\n+        metric_names = [name for name, _ in ResultHandler.LEADERBOARD_METRICS]\n+        if primary_metric not in metric_names:\n+            logger.warning(\n+                \"Leaderboard primary_metric '%s' is not a known RAGAS metric %s; \"\n+                \"falling back to 'faithfulness'.\",\n+                primary_metric, metric_names,\n+            )\n+            primary_metric = \"faithfulness\"\n+\n+        def _benchmarking(record: Dict[str, Any]) -> Dict[str, Any]:\n+            return (\n+                record.get(\"configuration\", {})\n+                .get(\"services\", {})\n+                .get(\"benchmarking\", {})\n+            )\n+\n+        rows: List[Dict[str, Any]] = []\n+        # Accumulate shared-context candidates to detect drift across configs.\n+        ctx_fields: Dict[str, set] = {\n+            \"model\": set(), \"provider\": set(),\n+            \"evaluator_model\": set(), \"queries_path\": set(),\n+        }\n+\n+        for record in ResultHandler.results:\n+            bench = _benchmarking(record)\n+            total = record.get(\"total_results\", {}) or {}\n+\n+            agent_md_file = bench.get(\"agent_md_file\", \"\") or \"\"\n+            name = bench.get(\"name\") or (Path(agent_md_file).stem if agent_md_file else \"\")\n+\n+            metrics: Dict[str, Optional[float]] = {}\n+            incomplete = False\n+            for metric_name, agg_key in ResultHandler.LEADERBOARD_METRICS:\n+                value = total.get(agg_key)\n+                if value is None or (isinstance(value, float) and math.isnan(value)):\n+                    metrics[metric_name] = None\n+                    incomplete = True\n+                else:\n+                    metrics[metric_name] = float(value)\n+\n+            if incomplete:\n+                logger.warning(\n+                    \"Leaderboard: variant '%s' (%s) is incomplete \u2014 missing/NaN metrics: %s\",\n+                    name, agent_md_file,\n+                    [m for m in metric_names if metrics[m] is None],\n+                )\n+\n+            rows.append({\n+                \"name\": name,\n+                \"agent_md_file\": agent_md_file,\n+                \"metrics\": metrics,\n+                \"primary_score\": metrics[primary_metric],\n+                \"incomplete\": incomplete,\n+                \"query_count\": len(record.get(\"single_question_results\") or {}),\n+            })\n+\n+            ragas_settings = (bench.get(\"mode_settings\", {}) or {}).get(\"ragas_settings\", {}) or {}\n+            ctx_fields[\"model\"].add(bench.get(\"model\"))\n+            ctx_fields[\"provider\"].add(bench.get(\"provider\"))\n+            ctx_fields[\"evaluator_model\"].add(ragas_settings.get(\"evaluator_model\"))\n+            ctx_fields[\"queries_path\"].add(bench.get(\"queries_path\"))\n+\n+        # Complete rows first, then by descending primary score; incomplete last.\n+        rows.sort(key=lambda r: (\n+            1 if r[\"incomplete\"] else 0,\n+            -(r[\"primary_score\"] if r[\"primary_score\"] is not None else 0.0),\n+        ))\n+\n+        # Dense ranking: equal primary scores share a rank.\n+        rank = 0\n+        prev_score: Any = object()\n+        for row in rows:\n+            score = row[\"primary_score\"]\n+            if score != prev_score:\n+                rank += 1\n+                prev_score = score\n+            row[\"rank\"] = rank\n+\n+        warnings: List[str] = []\n+        shared_context: Dict[str, Any] = {\n+            \"corpus_snapshot_id\": ResultHandler.get_corpus_snapshot_id(),\n+        }\n+        for field_name, values in ctx_fields.items():\n+            present = {v for v in values if v is not None}\n+            if len(present) <= 1:\n+                shared_context[field_name] = next(iter(present), None)\n+            else:\n+                shared_context[field_name] = sorted(str(v) for v in present)\n+                warnings.append(\n+                    f\"{field_name} differs across swept configs: {sorted(str(v) for v in present)}\"\n+                )\n+        if warnings:\n+            for w in warnings:\n+                logger.warning(\"Leaderboard shared-context drift: %s\", w)\n+        shared_context[\"warnings\"] = warnings\n+\n+        ResultHandler.leaderboard = {\n+            \"shared_context\": shared_context,\n+            \"primary_metric\": primary_metric,\n+            \"rows\": rows,\n+        }\n+        return ResultHandler.leaderboard\n+\n \n class Benchmarker:\n \n@@ -885,6 +1017,32 @@ class Benchmarker:\n                     comp[\"aggregate\"][\"ties\"],\n                 )\n \n+        # Prompt-sweep leaderboard: rank every config by mean RAGAS metric.\n+        # Independent of the pairwise block above (reads per-config aggregates\n+        # directly). Only meaningful with 2+ variants.\n+        if len(ResultHandler.results) >= 2:\n+            primary_metric = str(\n+                self.config.get(\"services\", {}).get(\"benchmarking\", {}).get(\"primary_metric\", \"faithfulness\")\n+            )\n+            leaderboard = ResultHandler.build_leaderboard(primary_metric)\n+            logger.info(\"Prompt-sweep leaderboard (ranked by %s):\", leaderboard[\"primary_metric\"])\n+            logger.info(\n+                \"  %-4s %-28s %-10s %-10s %-10s %-10s %-10s %s\",\n+                \"rank\", \"name\", \"ans_rel\", \"faith\", \"ctx_prec\", \"ctx_rec\", \"n_q\", \"prompt\",\n+            )\n+            for row in leaderboard[\"rows\"]:\n+                m = row[\"metrics\"]\n+                def _fmt(v: Optional[float]) -> str:\n+                    return f\"{v:.4f}\" if isinstance(v, float) else \"  n/a\"\n+                flag = \"  (incomplete)\" if row[\"incomplete\"] else \"\"\n+                logger.info(\n+                    \"  %-4d %-28s %-10s %-10s %-10s %-10s %-10d %s%s\",\n+                    row[\"rank\"], row[\"name\"][:28],\n+                    _fmt(m[\"answer_relevancy\"]), _fmt(m[\"faithfulness\"]),\n+                    _fmt(m[\"context_precision\"]), _fmt(m[\"context_recall\"]),\n+                    row[\"query_count\"], row[\"agent_md_file\"], flag,\n+                )\n+\n         # Push to Argilla when ARCHI_ARGILLA=1 in the benchmarks container env.\n         # The CLI flag --argilla on `archi evaluate` sets this (see Task 2.5).\n         argilla_enabled = os.environ.get(\"ARCHI_ARGILLA\", \"\").strip().lower() in (\"1\", \"true\", \"yes\")\ndiff --git a/src/cli/managers/config_manager.py b/src/cli/managers/config_manager.py\nindex 7ed9f940..15619b6a 100644\n--- a/src/cli/managers/config_manager.py\n+++ b/src/cli/managers/config_manager.py\n@@ -13,6 +13,21 @@ logger = get_logger(__name__)\n \n STATIC_FIELDS = ['global', 'services']\n \n+\n+def _comparable_static_field(static_field: str, value: Any) -> Any:\n+    \"\"\"Return the value used for cross-config consistency comparison.\n+\n+    `services.benchmarking` is the sweep axis for an ``archi evaluate\n+    --config-dir`` run (the prompt under test and its name vary per config),\n+    so it is exempted from the equality check. ``global`` and every other\n+    ``services.*`` subsection are still compared as-is. ``archi create`` does\n+    not consume ``services.benchmarking``, so this exemption cannot affect a\n+    created deployment.\n+    \"\"\"\n+    if static_field == 'services' and isinstance(value, dict):\n+        return {k: v for k, v in value.items() if k != 'benchmarking'}\n+    return value\n+\n class ConfigurationManager:\n     \"\"\"Manages archi configuration loading and validation\"\"\"\n     \n@@ -64,7 +79,7 @@ class ConfigurationManager:\n                     if not static_field in config.keys():\n                         raise ValueError(f\"The field {static_field} must be present in all configurations.\")\n \n-                    if previous_config[static_field] != config[static_field]:\n+                    if _comparable_static_field(static_field, previous_config[static_field]) != _comparable_static_field(static_field, config[static_field]):\n                         raise ValueError(f\"The field {static_field} must be consistent across all configurations.\")\n \n             self.configs.append(config)\ndiff --git a/src/cli/managers/templates_manager.py b/src/cli/managers/templates_manager.py\nindex cf40c429..e3aa0583 100644\n--- a/src/cli/managers/templates_manager.py\n+++ b/src/cli/managers/templates_manager.py\n@@ -17,6 +17,32 @@ from src.utils.logging import get_logger\n logger = get_logger(__name__)\n \n \n+def _render_config_target_name(\n+    single_mode: bool,\n+    top_level_name: str,\n+    benchmarking_name: Optional[str],\n+    index: int,\n+    used_names: set,\n+) -> str:\n+    \"\"\"Pick the rendered-config filename for one config.\n+\n+    A single-config deployment renders to ``config.yaml`` (the path config-seed\n+    and the chatbot expect). A multi-config run (e.g. a benchmarking sweep)\n+    renders one distinct file per config so the benchmarker iterates every\n+    variant instead of overwriting a single file. The per-variant\n+    ``services.benchmarking.name`` is preferred for readability, falling back to\n+    the top-level ``name``; collisions are disambiguated with the config index.\n+    \"\"\"\n+    if single_mode:\n+        return \"config.yaml\"\n+    stem = str(benchmarking_name or top_level_name)\n+    candidate = f\"{stem}.yaml\"\n+    if candidate in used_names:\n+        candidate = f\"{stem}_{index}.yaml\"\n+    used_names.add(candidate)\n+    return candidate\n+\n+\n # Template file constants\n BASE_CONFIG_TEMPLATE = \"base-config.yaml\"\n BASE_COMPOSE_TEMPLATE = \"base-compose.yaml\"\n@@ -161,22 +187,26 @@ class TemplateManager:\n         services_cfg = config.get(\"services\", {}) or {}\n \n         if context.benchmarking:\n-            benchmark_cfg = services_cfg.get(\"benchmarking\", {}) or {}\n-            agent_md_file = benchmark_cfg.get(\"agent_md_file\")\n-            if not agent_md_file:\n-                raise ValueError(\"Missing required services.benchmarking.agent_md_file in config.\")\n-            source_path = Path(str(agent_md_file)).expanduser()\n-            config_path = Path(str(config.get(\"_config_path\", \"\"))).expanduser()\n-            if not source_path.is_absolute() and config_path:\n-                candidate = (config_path.parent / source_path).resolve()\n-                if candidate.exists():\n-                    source_path = candidate\n-            if not source_path.exists() or not source_path.is_file():\n-                raise ValueError(f\"Benchmark agent file not found: {source_path}\")\n-            if source_path.suffix.lower() != \".md\":\n-                raise ValueError(f\"Benchmark agent file must be a .md file: {source_path}\")\n+            # A multi-config sweep names a distinct agent_md_file per config; stage\n+            # every one so the benchmarker can load each variant (not just the first).\n             dst_dir.mkdir(parents=True, exist_ok=True)\n-            shutil.copyfile(source_path, dst_dir / source_path.name)\n+            for bench_config in context.config_manager.get_configs():\n+                bench_services = bench_config.get(\"services\", {}) or {}\n+                benchmark_cfg = bench_services.get(\"benchmarking\", {}) or {}\n+                agent_md_file = benchmark_cfg.get(\"agent_md_file\")\n+                if not agent_md_file:\n+                    raise ValueError(\"Missing required services.benchmarking.agent_md_file in config.\")\n+                source_path = Path(str(agent_md_file)).expanduser()\n+                config_path = Path(str(bench_config.get(\"_config_path\", \"\"))).expanduser()\n+                if not source_path.is_absolute() and config_path:\n+                    candidate = (config_path.parent / source_path).resolve()\n+                    if candidate.exists():\n+                        source_path = candidate\n+                if not source_path.exists() or not source_path.is_file():\n+                    raise ValueError(f\"Benchmark agent file not found: {source_path}\")\n+                if source_path.suffix.lower() != \".md\":\n+                    raise ValueError(f\"Benchmark agent file must be a .md file: {source_path}\")\n+                shutil.copyfile(source_path, dst_dir / source_path.name)\n             return\n \n         agents_dir = (services_cfg.get(\"chat_app\") or {}).get(\"agents_dir\")\n@@ -329,7 +359,8 @@ class TemplateManager:\n \n         archi_configs = context.config_manager.get_configs()\n         single_mode = len(archi_configs) == 1\n-        for archi_config in archi_configs:\n+        used_names: set = set()\n+        for index, archi_config in enumerate(archi_configs):\n             name = archi_config[\"name\"]\n             updated_config = copy.deepcopy(archi_config)\n \n@@ -354,7 +385,14 @@ class TemplateManager:\n             config_template = self.env.get_template(BASE_CONFIG_TEMPLATE)\n             config_rendered = config_template.render(verbosity=context.plan.verbosity, **updated_config)\n \n-            target_name = \"config.yaml\" if single_mode else f\"{name}.yaml\"\n+            benchmarking_name = None\n+            if context.benchmarking:\n+                benchmark_cfg = services_cfg.get(\"benchmarking\")\n+                if isinstance(benchmark_cfg, dict):\n+                    benchmarking_name = benchmark_cfg.get(\"name\")\n+            target_name = _render_config_target_name(\n+                single_mode, name, benchmarking_name, index, used_names\n+            )\n             with open(configs_path / target_name, \"w\") as f:\n                 f.write(config_rendered)\n             logger.info(f\"Rendered configuration file {configs_path / target_name}\")\ndiff --git a/src/cli/tools/config_seed.py b/src/cli/tools/config_seed.py\nindex 81b2e29a..8dc60e28 100644\n--- a/src/cli/tools/config_seed.py\n+++ b/src/cli/tools/config_seed.py\n@@ -12,6 +12,7 @@ Actions:\n Exits 0 on success, non-zero on failure.\n \"\"\"\n \n+import glob\n import os\n import sys\n import yaml\n@@ -25,6 +26,27 @@ def load_config(path: str):\n         return yaml.safe_load(f)\n \n \n+def resolve_config_path(config_path: str) -> str:\n+    \"\"\"Resolve the config file to seed Postgres from.\n+\n+    A single-config deployment renders ``config.yaml`` and this returns it\n+    unchanged. A multi-config benchmarking deployment renders per-variant files\n+    (e.g. ``fasrc-cannon-v1-strict.yaml``) instead, so the hardcoded\n+    ``config.yaml`` is absent \u2014 fall back to the first ``*.yaml`` in the\n+    rendered-config directory rather than aborting the whole deployment.\n+    Seeding from any one config is harmless: the benchmarker reads the YAML\n+    files directly and never consumes the seeded static_config. If nothing is\n+    found, return the original path so ``load_config`` raises a clear error.\n+    \"\"\"\n+    if os.path.isfile(config_path):\n+        return config_path\n+    directory = config_path if os.path.isdir(config_path) else (os.path.dirname(config_path) or \".\")\n+    candidates = sorted(glob.glob(os.path.join(directory, \"*.yaml\")))\n+    if candidates:\n+        return candidates[0]\n+    return config_path\n+\n+\n def seed(config: dict, cs: ConfigService):\n     print(\"[config-seed] Starting seed with config keys:\", list(config.keys()))\n     dm = config.get(\"data_manager\", {})\n@@ -91,6 +113,7 @@ def main():\n \n \n def seed_entry(config_path: str, env: dict):\n+    config_path = resolve_config_path(config_path)\n     print(f\"[config-seed] Loading config from {config_path}\")\n     config = load_config(config_path)\n     factory = PostgresServiceFactory.from_env(password_override=env.get(\"PGPASSWORD\") or env.get(\"PG_PASSWORD\"))\ndiff --git a/src/interfaces/chat_app/static/script.js b/src/interfaces/chat_app/static/script.js\nindex cfaa8833..69b218f3 100644\n--- a/src/interfaces/chat_app/static/script.js\n+++ b/src/interfaces/chat_app/static/script.js\n@@ -289,7 +289,7 @@ async function fetchWithTimeout(resource, options = {}) {\n }\n \n async function populateDropdown() {\n-    const API_URL = \"/api/get_configs\";\n+    const API_URL = \"/api/get_configs\"\n \n     try {\n         const response = await fetch(API_URL);\n@@ -590,7 +590,7 @@ function startNewConversation(options = {}) {\n     localStorage.removeItem(\"all-chats\");\n     const defaultText = `<div class=\"default-text\">\n                             <h1>archi</h1>\n-                            <p>Start a conversation and explore the power of archi, specially trained on Local development test agent.<br> \n+                            <p>Start a conversation and explore the power of archi, specially trained on FASRC DOCS.<br> \n                             Your chat history will be displayed here. <br> <br>\n                             Remember, the more context you provide in your question, the better archi will be able to answer your question! <br> <br>\n                             By using this website, you agree to the <a href=\"/terms\">terms and conditions</a>.</p>\n@@ -612,7 +612,7 @@ const loadDataFromLocalstorage = () => {\n \n     const defaultText = `<div class=\"default-text\">\n                             <h1>archi</h1>\n-                            <p>Start a conversation and explore the power of archi, specially trained on Local development test agent.<br> \n+                            <p>Start a conversation and explore the power of archi, specially trained on FASRC DOCS.<br> \n                             Your chat history will be displayed here. <br> <br>\n                             Remember, the more context you provide in your question, the better archi will be able to answer your question! <br> <br>\n                             By using this website, you agree to the <a href=\"/terms\">terms and conditions</a>.</p>\n@@ -784,7 +784,7 @@ const getChatResponse = async (incomingChatDiv, isRefresh=false) => {\n             client_id: clientId\n         }),\n         timeout: DEFAULT_TIMEOUT_SECS * 1000\n-    };\n+    }\n \n     // send POST request to Flask API, get response and set the response as paragraph element text, console logging nice for debugging\n     let responseData = null;\n@@ -1220,7 +1220,7 @@ const showFeedbackRequest = () => {\n const handleOutgoingChat = () => {\n     userText = chatInput.value.trim(); // Get chatInput value and remove extra spaces\n     if(!userText) return; // If chatInput is empty return from here\n-    conversation.push([\"User\", userText]);\n+    conversation.push([\"User\", userText])\n \n     // Clear the input field and reset its height\n     chatInput.value = \"\";\n",
             "last_commit": "be8bc3a24310a68258d79f432342f74b6b512861\n"
         },
-        "corpus_snapshot_id": "1791f5c0-e59c-48eb-bad7-ff27984cf764"
+        "corpus_snapshot_id": "1791f5c0-e59c-48eb-bad7-ff27984cf764",
+        "code_version": {
+            "digest": null,
+            "source": "<not recorded: this artifact predates code-version stamping, and the code it ran cannot be recovered from it>",
+            "module_count": null,
+            "deploy_git_commit": "be8bc3a24310a68258d79f432342f74b6b512861",
+            "deploy_git_dirty": true,
+            "deploy_git_note": "Written once by `archi create` and then frozen: this identifies the deploy, not the image the benchmark ran. Two arms of one campaign share it. Compare `digest` instead."
+        },
+        "config_versions": [
+            "sha256:a4ab8bdc78bdd99d0bbcb0032a6c52fd799937a985f9b65e2a73daf80c04c580",
+            "sha256:a52f8d5ddee6a8407f9d9a1c8953331cfecf31d32f3248b6d8853fdeeb08bc4d",
+            "sha256:0136c09e5e29d432e20a6a2be4ea5cb2541bef6aefbf574592d5fe53c67840b7"
+        ]
     },
     "ab_comparison": {
         "config_a": {

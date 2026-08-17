@@ -100,6 +100,42 @@
     </div>
 
 <div class="metrics">
+<h2>🔒 Run Provenance</h2>
+<h3>Code version</h3>
+<p style="margin:4px 0"><strong>Digest:</strong> <em style="color:#a33">not recorded &mdash; this run predates version stamping</em></p>
+<p style="margin:4px 0"><strong>Deploy-time commit:</strong> 0a157cdce02de6a3e3455c82a91bfbddfa00a0d9  <span style="color:#666">&mdash; frozen by <code>archi create</code>; identifies the deploy, not the image this run used</span></p>
+<h3>Config version</h3>
+<p style="margin:4px 0"><strong>Digest:</strong> sha256:4a4d3c23dde1d1bbb7fe304981fbc8b707034b9406b5a696906cfa2fe2c80616</p>
+<p style="margin:4px 0"><strong>Source:</strong> reconstructed from the configuration file recorded in this artifact; the running configuration was never captured, so this may not describe the run</p>
+<p style="margin:4px 0"><strong>Selected file:</strong> configs/config.yaml</p>
+<p style="margin:4px 0"><strong>Selected file digest:</strong> sha256:4a4d3c23dde1d1bbb7fe304981fbc8b707034b9406b5a696906cfa2fe2c80616</p>
+<h3>Arm settings</h3>
+<table style="border-collapse:collapse;width:100%"><tr><th style="text-align:left;padding:4px;border-bottom:1px solid #ddd">Setting</th><th style="text-align:left;padding:4px;border-bottom:1px solid #ddd">Value</th></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>data_manager.chunk_overlap</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>0</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>data_manager.chunk_size</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>1000</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>data_manager.chunking</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>{&quot;strategy&quot;: &quot;sentence&quot;}</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>data_manager.distance_metric</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>cosine</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>data_manager.embedding_name</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>HuggingFaceEmbeddings</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>data_manager.retrievers</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>{&quot;bm25_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}, &quot;hierarchical_rerank&quot;: {&quot;candidate_pool_size&quot;: 20, &quot;enabled&quot;: true, &quot;num_documents_to_retrieve&quot;: 5, &quot;reranker&quot;: {&quot;model&quot;: &quot;ms-marco-MiniLM-L-12-v2&quot;}}, &quot;hybrid_retriever&quot;: {&quot;bm25_weight&quot;: 0.6, &quot;num_documents_to_retrieve&quot;: 5, &quot;semantic_weight&quot;: 0.4}, &quot;semantic_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}}</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>data_manager.stemming</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>{&quot;enabled&quot;: false}</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>services.benchmarking.agent_class</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>FASRCDocsAgent</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>services.benchmarking.agent_md_file</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>/root/archi/agents/fasrc-inline-v1.md</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>services.benchmarking.mode_settings</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>{&quot;ragas_settings&quot;: {&quot;batch_size&quot;: false, &quot;embedding_model&quot;: &quot;HuggingFace&quot;, &quot;enabled_metrics&quot;: [&quot;answer_relevancy&quot;, &quot;faithfulness&quot;, &quot;context_precision&quot;, &quot;context_recall&quot;], &quot;evaluator_model&quot;: &quot;us.anthropic.claude-sonnet-4-5-20250929-v1:0&quot;, &quot;evaluator_ollama_url&quot;: null, &quot;evaluator_provider&quot;: &quot;huit_bedrock&quot;, &quot;timeout&quot;: 300}, &quot;sources_settings&quot;: {&quot;default_match_field&quot;: &quot;url&quot;}}</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>services.benchmarking.model</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>services.benchmarking.modes</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>[&quot;RAGAS&quot;, &quot;SOURCES&quot;]</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>services.benchmarking.provider</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>openai</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>services.chat_app.agent_class</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>CMSCompOpsAgent</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>services.chat_app.default_model</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>llama3.2</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>services.chat_app.default_provider</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>local</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>services.chat_app.recursion_limit</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>50</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>services.vectorstore.backend</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>postgres</code></td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>services.vectorstore.distance_metric</code></td><td style="padding:4px;border-bottom:1px solid #f0f0f0"><code>cosine</code></td></tr>
+</table>
+<h3>Corpus</h3>
+<p style="margin:4px 0"><strong>Fingerprint:</strong> <em style="color:#a33">not recorded &mdash; this run predates version stamping</em></p>
+<p style="margin:4px 0"><strong>Snapshot id:</strong> d6541cbf-fd5a-4904-8017-c59cd44977e1 <span style="color:#666">&mdash; a per-invocation nonce; it separates runs but cannot show two runs saw the same corpus</span></p>
+</div>
+<div class="metrics">
 <h2>🎯 Retrieval Accuracy</h2>
 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; max-width: 900px; margin: 0 auto;">
 
