@@ -37,6 +37,8 @@ services:
         condition: service_healthy
       config-seed:
         condition: service_completed_successfully
+      db-migrate:
+        condition: service_completed_successfully
     {% endif -%}
     environment:
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
@@ -110,7 +112,14 @@ services:
     network_mode: host
     {% endif %}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U archi -d archi-db -p {{ postgres_port }}"]
+      # -h is load-bearing: without it pg_isready probes the UNIX SOCKET, and the
+      # upstream entrypoint runs a socket-only server (listen_addresses='') while it
+      # processes init files. On a fresh volume whose init.sql outlives the first
+      # interval, the socket answers before TCP is listening, so "healthy" fires
+      # early. Every dependent connects over TCP via PGHOST — db-migrate with no
+      # retry — so an early release means connection refused and, because dependents
+      # gate on its successful completion, a stack that never starts.
+      test: ["CMD-SHELL", "pg_isready -h localhost -U archi -d archi-db -p {{ postgres_port }}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -127,6 +136,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
     environment:
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
@@ -140,6 +151,43 @@ services:
     volumes:
       - ./configs:/rendered-config:ro
     command: ["bash", "-lc", "python -m src.cli.tools.config_seed"]
+    restart: "no"
+    {%- if host_mode %}
+    network_mode: host
+    {%- endif %}
+
+  db-migrate:
+    build:
+      context: .
+      dockerfile: archi_code/cli/templates/dockerfiles/Dockerfile-postgres
+    container_name: {{ name }}-db-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
+      PGPORT: {{ postgres_port }}
+      PGDATABASE: archi-db
+      PGUSER: archi
+      PG_PASSWORD: ${PG_PASSWORD}
+      # psql authenticates through libpq, which recognises PGPASSWORD and ignores
+      # PG_PASSWORD. Every other service here is a Python process that reads
+      # PG_PASSWORD itself and hands it to psycopg, so this is the one service that
+      # needs both spellings. This sidecar connects over TCP and has no .pgpass, so
+      # without PGPASSWORD it cannot authenticate at all — and because dependents
+      # gate on service_completed_successfully, that blocks the entire stack.
+      PGPASSWORD: ${PG_PASSWORD}
+    env_file:
+      - .env
+    volumes:
+      - ./migrations:/migrations:ro
+    # `set -e` is load-bearing: ON_ERROR_STOP ends only the psql that hit the error,
+    # so without it the loop runs on and `bash -c` exits with the LAST migration's
+    # status — Compose would mark a half-migrated schema successful and start the
+    # dependents against it. nullglob plus a direct glob avoids parsing `ls` output
+    # and the `$(` ambiguity with Compose's own interpolation; `$$f` is the escape
+    # that passes a literal `$f` through to the shell.
+    command: ["bash", "-c", "set -euo pipefail; shopt -s nullglob; for f in /migrations/*.sql; do echo \"db-migrate: applying $$f\"; psql -v ON_ERROR_STOP=1 -f \"$$f\"; done"]
     restart: "no"
     {%- if host_mode %}
     network_mode: host

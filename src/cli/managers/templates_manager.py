@@ -1,4 +1,5 @@
 import copy
+import json
 import os
 import shutil
 import socket
@@ -58,6 +59,12 @@ def _render_config_target_name(
 BASE_CONFIG_TEMPLATE = "base-config.yaml"
 BASE_COMPOSE_TEMPLATE = "base-compose.yaml"
 BASE_INIT_SQL_TEMPLATE = "init.sql"  # PostgreSQL + pgvector schema
+MIGRATIONS_TEMPLATE_DIR = "migrations"  # catch-up SQL files shipped with the package
+# Record of the migration filenames this renderer staged, written into the
+# deployment's migrations/ directory. It is what makes pruning safe: only Archi's
+# own past output is ever removed, never a file an operator put there. Not a
+# *.sql name, so the sidecar's glob never executes it.
+MIGRATIONS_MANIFEST = ".archi-staged-migrations.json"
 BASE_GRAFANA_DATASOURCES_TEMPLATE = "grafana/datasources.yaml"
 BASE_GRAFANA_DASHBOARDS_TEMPLATE = "grafana/dashboards.yaml"
 BASE_GRAFANA_ARCHI_DEFAULT_DASHBOARDS_TEMPLATE = "grafana/archi-default-dashboard.json"
@@ -628,6 +635,62 @@ class TemplateManager:
         with open(dest, "w") as f:
             f.write(init_sql)
         logger.debug(f"Wrote PostgreSQL init script to {dest}")
+
+        migrations_src = (
+            Path(__file__).parent.parent / "templates" / MIGRATIONS_TEMPLATE_DIR
+        )
+        migrations_dest = context.base_dir / MIGRATIONS_TEMPLATE_DIR
+        shutil.copytree(migrations_src, migrations_dest, dirs_exist_ok=True)
+
+        # copytree overwrites and adds; it never removes. The sidecar globs every
+        # staged *.sql on every startup, so a migration deleted or renamed upstream
+        # would keep executing forever against a schema its replacement has already
+        # moved past — and under ON_ERROR_STOP=1 any disagreement between the two
+        # fails db-migrate, which config-seed and the data manager gate on. So the
+        # destination is synchronized rather than merged into.
+        #
+        # Synchronized to what Archi OWNS, established by provenance rather than by
+        # basename. A file absent from the package is not thereby obsolete: an
+        # operator's hotfix or recovery migration is absent by definition, and
+        # deleting it on the next routine redeploy — before the sidecar ever ran it —
+        # would destroy operational work with nothing to recover it from. The
+        # manifest records what this function staged, so only its own past output is
+        # ever removed.
+        #
+        # No manifest means no record, so nothing is removed: a deployment predating
+        # the manifest carries an obsolete migration for one more run, which is the
+        # price of never deleting an operator's file. A manifest that cannot be read
+        # is treated the same way.
+        packaged_sql = {path.name for path in migrations_src.glob("*.sql")}
+        manifest_path = migrations_dest / MIGRATIONS_MANIFEST
+        previously_staged = self._read_migrations_manifest(manifest_path)
+
+        # Scoped to *.sql: that is exactly what the sidecar executes, so it is the
+        # set that can misbehave.
+        for staged in migrations_dest.glob("*.sql"):
+            if staged.name in packaged_sql or staged.name not in previously_staged:
+                continue
+            staged.unlink()
+            logger.debug(f"Removed migration no longer packaged: {staged.name}")
+
+        manifest_path.write_text(json.dumps(sorted(packaged_sql), indent=2) + "\n")
+        logger.debug(f"Copied migrations to {migrations_dest}")
+
+    @staticmethod
+    def _read_migrations_manifest(manifest_path: Path) -> set:
+        """Names this function staged on a previous render, or an empty set.
+
+        Every failure path yields the empty set — the conservative answer, since the
+        only thing this licenses is deletion.
+        """
+        try:
+            recorded = json.loads(manifest_path.read_text())
+        except (OSError, ValueError):
+            return set()
+        if not isinstance(recorded, list):
+            logger.debug(f"Ignoring malformed migration manifest at {manifest_path}")
+            return set()
+        return {name for name in recorded if isinstance(name, str)}
 
     def _render_compose_file(self, context: TemplateContext) -> None:
         template_vars = context.plan.to_template_vars()
