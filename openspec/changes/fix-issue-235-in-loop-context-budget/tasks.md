@@ -153,11 +153,11 @@ not among them. Any self-hosted or newly-released model therefore yields `None`.
 
 ## 10. Gate and pre-PR review loop
 
-- [ ] 10.1 `bash scripts/gate.sh` exits 0 with patch coverage ≥ 80% against `origin/dev` (run bare, never piped; never `--no-verify`)
-- [ ] 10.2 Run `/codex:adversarial-review --wait` on the branch; verify each finding against the code, fix what holds (TDD), push back with reasons on what does not
-- [ ] 10.3 Re-run the adversarial review; repeat until a round returns zero findings or only nits (bound ~3–4 rounds)
-- [ ] 10.4 File remaining nits as tracked issues rather than blocking the PR
-- [ ] 10.5 Document the config seam in `docs/` alongside the existing `tool_budgets` documentation
+- [x] 10.1 `bash scripts/gate.sh` exits 0 with patch coverage ≥ 80% against `origin/dev` (run bare, never piped; never `--no-verify`). **Verified:** exit 0, 1978 tests, 99% patch coverage
+- [x] 10.2 Run `/codex:adversarial-review --wait` on the branch; verify each finding against the code, fix what holds (TDD), push back with reasons on what does not
+- [x] 10.3 Re-run the adversarial review; repeat until a round returns zero findings or only nits (bound ~3–4 rounds). **Terminal condition: hit the 4-round bound with substantive findings still arriving.** R1 the counting margin was 5% against a measured 1.15x undercount; R2 that margin still missed the dense tail and the tracked example config carried none of the settings; R3 the UI sends provider+model on every message, so treating request-local as an override made the change inert on the deployment; R4 a fabricated `ModelInfo` 128000 default was being trusted as a measured window. Each was reproduced before fixing. One R4 finding refuted with evidence (`infer_speaker` yields only Human/AI, so no prior-turn tool results exist) and the assumption pinned by a test; one deferred (#264)
+- [x] 10.4 File remaining nits as tracked issues rather than blocking the PR — #262 (per-model window declarations, so an override on a metadata-less provider is not unprotected), #263 (replace the 4-chars-per-token estimate with a real tokenizer), #264 (non-text MCP content blocks bypass the per-result ceiling)
+- [x] 10.5 Document the config seam in `docs/` alongside the existing `tool_budgets` documentation — settings table, the declare-the-window requirement, request-local override behaviour, the measured density distribution behind the 25% margin, and what clearing cannot reclaim
 
 ## 11. PR
 
