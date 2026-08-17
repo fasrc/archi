@@ -3249,7 +3249,7 @@
             },
             "config_version": {
                 "digest": "sha256:a4ab8bdc78bdd99d0bbcb0032a6c52fd799937a985f9b65e2a73daf80c04c580",
-                "source": "reconstructed from the configuration file recorded in this artifact; the running configuration was never captured, so this may not describe the run",
+                "source": "reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run",
                 "selected_file": "configs/fasrc-cannon-v1-strict.yaml",
                 "selected_file_digest": "sha256:a4ab8bdc78bdd99d0bbcb0032a6c52fd799937a985f9b65e2a73daf80c04c580",
                 "divergence_from_selected_file": null,
@@ -5344,7 +5344,7 @@
             },
             "config_version": {
                 "digest": "sha256:a52f8d5ddee6a8407f9d9a1c8953331cfecf31d32f3248b6d8853fdeeb08bc4d",
-                "source": "reconstructed from the configuration file recorded in this artifact; the running configuration was never captured, so this may not describe the run",
+                "source": "reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run",
                 "selected_file": "configs/fasrc-cannon-v2-lean.yaml",
                 "selected_file_digest": "sha256:a52f8d5ddee6a8407f9d9a1c8953331cfecf31d32f3248b6d8853fdeeb08bc4d",
                 "divergence_from_selected_file": null,
@@ -8070,7 +8070,7 @@
             },
             "config_version": {
                 "digest": "sha256:0136c09e5e29d432e20a6a2be4ea5cb2541bef6aefbf574592d5fe53c67840b7",
-                "source": "reconstructed from the configuration file recorded in this artifact; the running configuration was never captured, so this may not describe the run",
+                "source": "reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run",
                 "selected_file": "configs/fasrc-cannon-v3-cited.yaml",
                 "selected_file_digest": "sha256:0136c09e5e29d432e20a6a2be4ea5cb2541bef6aefbf574592d5fe53c67840b7",
                 "divergence_from_selected_file": null,
@@ -8142,7 +8142,7 @@
         "code_version": {
             "digest": null,
             "source": "<not recorded: this artifact predates code-version stamping, and the code it ran cannot be recovered from it>",
-            "module_count": null,
+            "file_count": null,
             "deploy_git_commit": "be8bc3a24310a68258d79f432342f74b6b512861",
             "deploy_git_dirty": true,
             "deploy_git_note": "Written once by `archi create` and then frozen: this identifies the deploy, not the image the benchmark ran. Two arms of one campaign share it. Compare `digest` instead."

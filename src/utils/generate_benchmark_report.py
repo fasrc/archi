@@ -56,7 +56,175 @@ def parse_benchmark_results(results, metadata):
     config_data = result.get("configuration", {})
     timestamp = metadata.get("time", "Unknown time")
 
-    return config_data, config_name, timestamp, questions, total_results
+    # `config_data` stays the SELECTED file: the benchmark harness reads its own
+    # settings from there (services.benchmarking.modes decides which sections
+    # render below), so presenting the running configuration in its place would
+    # trade one wrong label for another. Only the agent reads Postgres, so the
+    # provenance of what the agent actually ran is reported alongside instead.
+    provenance = {
+        "running_configuration": result.get("running_configuration"),
+        "configuration_divergence": result.get("configuration_divergence") or [],
+        "corpus_fingerprint_before": result.get("corpus_fingerprint_before"),
+        "corpus_fingerprint": result.get("corpus_fingerprint"),
+        "corpus_unchanged_at_endpoints": result.get("corpus_unchanged_at_endpoints"),
+        # Identity, alongside the divergence findings above. Divergence says
+        # whether this report can be trusted; the digests say whether this run is
+        # the same code and settings as another one, which is the question a
+        # campaign actually asks. `config_version` is per arm and comes off the
+        # record; `code_version` is per invocation and comes off the metadata.
+        "config_version": result.get("config_version"),
+        "code_version": metadata.get("code_version"),
+    }
+
+    return config_data, config_name, timestamp, questions, total_results, provenance
+
+
+def format_provenance_html(provenance):
+    """Render whether the report can be trusted to describe the run.
+
+    The selected configuration and the one the agent actually used can differ:
+    the agent reads Postgres while the harness writes and reads a YAML file. A
+    report that showed only the file reported a run executed at
+    ``context_window: 8192`` as ``32768``. This block is what makes that visible
+    to the person reading the report rather than only to a container log.
+    """
+    if not provenance:
+        return ""
+
+    divergence = provenance.get("configuration_divergence") or []
+    if divergence:
+        config_line = (
+            "<p class='provenance-alert'>The run did <strong>not</strong> use the "
+            "selected configuration. Settings that differ between the selected "
+            "file and what the agent read:</p><ul>"
+            + "".join(f"<li><code>{item}</code></li>" for item in divergence)
+            + "</ul>"
+        )
+    else:
+        config_line = (
+            "<p class='provenance-ok'>The configuration the agent read "
+            "<strong>matches</strong> the selected file.</p>"
+        )
+
+    stable = provenance.get("corpus_unchanged_at_endpoints")
+    before = provenance.get("corpus_fingerprint_before")
+    after = provenance.get("corpus_fingerprint")
+    if stable is True:
+        # Deliberately weaker than "unchanged for the whole run". Two samples
+        # prove only that the endpoints matched: a corpus that changed and
+        # changed back while the questions ran would produce this same result.
+        corpus_line = (
+            "<p class='provenance-ok'>The corpus was the same at the start and "
+            f"the end of the run (<code>{after}</code>). This does not rule out "
+            "a change that was reverted in between.</p>"
+        )
+    elif stable is False:
+        corpus_line = (
+            "<p class='provenance-alert'>The corpus <strong>changed</strong> "
+            "while the run was in progress, so its questions were not all "
+            f"scored against the same documents (<code>{before}</code> &rarr; "
+            f"<code>{after}</code>).</p>"
+        )
+    else:
+        corpus_line = (
+            "<p class='provenance-alert'>Corpus stability is "
+            "<strong>unknown</strong>: it was not observed both before and "
+            f"after the run (<code>{before}</code> &rarr; <code>{after}</code>)."
+            "</p>"
+        )
+
+    return (
+        "<div class='provenance'><h2>Run provenance</h2>"
+        + config_line
+        + corpus_line
+        + format_version_html(provenance)
+        + "</div>"
+    )
+
+
+_NOT_RECORDED = "<em>not recorded &mdash; this artifact predates version stamping</em>"
+
+
+def format_version_html(provenance):
+    """Render the code and configuration identity of the run.
+
+    Divergence and corpus stability, above, say whether this report describes its
+    own run. These digests answer the question a campaign asks across runs: was
+    this the same code, and the same settings, as that other arm? Equal digests
+    mean equal inputs.
+
+    Neither is derivable from ``git_info.last_commit``: ``archi create`` writes it
+    once and freezes it, so every run between 2026-08-11 and 2026-08-17 reports
+    ``0a157cdce0`` with an empty diff. The commit is shown, labelled, so a reader
+    does not mistake it for the code this run executed.
+
+    An artifact written before stamping says so rather than being filled in with
+    a plausible guess.
+    """
+    if not provenance:
+        return ""
+
+    code = provenance.get("code_version") or {}
+    config = provenance.get("config_version") or {}
+    if not code and not config:
+        return ""
+
+    rows = []
+
+    code_digest = code.get("digest")
+    rows.append(
+        "<li>Code version: "
+        + (
+            f"<code>{html.escape(str(code_digest))}</code>"
+            if code_digest
+            else _NOT_RECORDED
+        )
+        + "</li>"
+    )
+    commit = code.get("deploy_git_commit")
+    if commit:
+        dirty = " (dirty tree)" if code.get("deploy_git_dirty") else ""
+        rows.append(
+            f"<li>Deploy-time commit: <code>{html.escape(str(commit))}</code>{dirty} "
+            "&mdash; frozen by <code>archi create</code>; it identifies the "
+            "deploy, not the image this run used</li>"
+        )
+
+    config_digest = config.get("digest")
+    rows.append(
+        "<li>Config version: "
+        + (
+            f"<code>{html.escape(str(config_digest))}</code>"
+            if config_digest
+            else _NOT_RECORDED
+        )
+        + "</li>"
+    )
+    if config.get("source"):
+        rows.append(f"<li>Config basis: {html.escape(str(config['source']))}</li>")
+
+    key_settings = config.get("key_settings") or {}
+    if key_settings:
+        settings_rows = "".join(
+            "<tr><td><code>{}</code></td><td><code>{}</code></td></tr>".format(
+                html.escape(path),
+                html.escape(
+                    json.dumps(key_settings[path], sort_keys=True, default=repr)
+                    if isinstance(key_settings[path], (dict, list))
+                    else str(key_settings[path])
+                ),
+            )
+            for path in sorted(key_settings)
+        )
+        settings_table = (
+            "<p>Settings that define this arm:</p>"
+            "<table class='provenance-settings'>"
+            "<tr><th>Setting</th><th>Value</th></tr>" + settings_rows + "</table>"
+        )
+    else:
+        settings_table = ""
+
+    return "<ul>" + "".join(rows) + "</ul>" + settings_table
 
 
 def format_total_duration(raw_duration):
@@ -96,154 +264,14 @@ def format_total_duration(raw_duration):
     return friendly, assumed_unit
 
 
-_NOT_RECORDED = (
-    '<em style="color:#a33">not recorded &mdash; this run predates '
-    "version stamping</em>"
-)
-
-
-def _row(label, value):
-    return f'<p style="margin:4px 0"><strong>{label}:</strong> {value}</p>'
-
-
-def provenance_html(metadata, config_version=None):
-    """A panel naming the code and the configuration that produced the run.
-
-    The reports in ``bench_out/`` showed none of this: ``parse_benchmark_results``
-    took ``metadata`` and kept only ``time``, so no page carried a commit, a
-    corpus id, or even ``context_window``. A reader had nothing to distinguish
-    the 8192 arm from the 32768 one.
-
-    *config_version* is the block from the result record this page renders. It is
-    per arm rather than per file because one invocation runs every config in a
-    sweep, and a page describing arm 1 must not be captioned with arm 3's
-    settings.
-
-    Metadata written before version stamping is labelled ``not recorded`` rather
-    than filled in with a plausible guess -- an artifact that predates the stamp
-    genuinely cannot say which code it ran.
-    """
-    metadata = metadata or {}
-    code = metadata.get("code_version") or {}
-    config = config_version or {}
-    legacy_git = metadata.get("git_info") or {}
-
-    parts = [
-        '<div class="metrics">',
-        "<h2>🔒 Run Provenance</h2>",
-    ]
-
-    divergence = config.get("divergence_from_selected_file")
-    if divergence:
-        listed = ", ".join(html.escape(str(p)) for p in divergence)
-        parts.append(
-            '<p style="background:#fdecea;border-left:4px solid #d93025;'
-            'padding:10px;margin:10px 0"><strong>⚠ Warning:</strong> this report '
-            "may not describe the run. The selected configuration file and the "
-            f"configuration the agent actually read disagree at: {listed}.</p>"
-        )
-
-    parts.append("<h3>Code version</h3>")
-    if code.get("digest"):
-        parts.append(_row("Digest", html.escape(str(code["digest"]))))
-        parts.append(_row("Source", html.escape(str(code.get("source", "")))))
-        parts.append(
-            _row("Modules covered", html.escape(str(code.get("module_count"))))
-        )
-    else:
-        parts.append(_row("Digest", _NOT_RECORDED))
-
-    deploy_commit = code.get("deploy_git_commit") or (
-        (legacy_git.get("last_commit") or "").strip() or None
-    )
-    if deploy_commit:
-        dirty = code.get("deploy_git_dirty")
-        if dirty is None:
-            dirty = bool((legacy_git.get("git_diff") or "").strip())
-        parts.append(
-            _row(
-                "Deploy-time commit",
-                f'{html.escape(str(deploy_commit))} {"(dirty tree)" if dirty else ""} '
-                '<span style="color:#666">&mdash; frozen by <code>archi create</code>; '
-                "identifies the deploy, not the image this run used</span>",
-            )
-        )
-
-    parts.append("<h3>Config version</h3>")
-    if config.get("digest"):
-        parts.append(_row("Digest", html.escape(str(config["digest"]))))
-        parts.append(_row("Source", html.escape(str(config.get("source", "")))))
-        if config.get("selected_file"):
-            parts.append(
-                _row("Selected file", html.escape(str(config["selected_file"])))
-            )
-        if config.get("selected_file_digest"):
-            parts.append(
-                _row(
-                    "Selected file digest",
-                    html.escape(str(config["selected_file_digest"])),
-                )
-            )
-    else:
-        parts.append(_row("Digest", _NOT_RECORDED))
-
-    key_settings = config.get("key_settings") or {}
-    if key_settings:
-        parts.append("<h3>Arm settings</h3>")
-        parts.append(
-            '<table style="border-collapse:collapse;width:100%">'
-            '<tr><th style="text-align:left;padding:4px;border-bottom:1px solid #ddd">'
-            'Setting</th><th style="text-align:left;padding:4px;'
-            'border-bottom:1px solid #ddd">Value</th></tr>'
-        )
-        for path in sorted(key_settings):
-            value = key_settings[path]
-            shown = (
-                json.dumps(value, sort_keys=True, default=repr)
-                if isinstance(value, (dict, list))
-                else str(value)
-            )
-            parts.append(
-                f'<tr><td style="padding:4px;border-bottom:1px solid #f0f0f0">'
-                f"<code>{html.escape(path)}</code></td>"
-                f'<td style="padding:4px;border-bottom:1px solid #f0f0f0">'
-                f"<code>{html.escape(shown)}</code></td></tr>"
-            )
-        parts.append("</table>")
-
-    parts.append("<h3>Corpus</h3>")
-    fingerprint = metadata.get("corpus_fingerprint")
-    parts.append(
-        _row(
-            "Fingerprint",
-            html.escape(str(fingerprint)) if fingerprint else _NOT_RECORDED,
-        )
-    )
-    if metadata.get("corpus_snapshot_id"):
-        parts.append(
-            _row(
-                "Snapshot id",
-                f'{html.escape(str(metadata["corpus_snapshot_id"]))} '
-                '<span style="color:#666">&mdash; a per-invocation nonce; it '
-                "separates runs but cannot show two runs saw the same corpus"
-                "</span>",
-            )
-        )
-
-    parts.append("</div>")
-    return "\n".join(parts)
-
-
 def format_html_output(
-    config_data,
-    config_name,
-    timestamp,
-    questions,
-    total_results,
-    metadata=None,
-    config_version=None,
+    config_data, config_name, timestamp, questions, total_results, provenance=None
 ):
-    """Format results as HTML for easier reading"""
+    """Format results as HTML for easier reading.
+
+    ``provenance`` defaults to None so result files written before provenance was
+    recorded still render.
+    """
 
     html_parts = [
         """
@@ -350,12 +378,9 @@ def format_html_output(
         <p><strong>Timestamp:</strong> {timestamp}</p>
         <p><strong>Questions Processed:</strong> {len(questions)}</p>
     </div>
+    {format_provenance_html(provenance)}
 """
     )
-
-    # Provenance sits directly under the header: which code and which settings
-    # produced the scores below is a precondition for reading them at all.
-    html_parts.append(provenance_html(metadata, config_version=config_version))
 
     # sources (retrieval accuracy) metrics
     if "SOURCES" in config_data.get("services", {}).get("benchmarking", {}).get(
@@ -756,7 +781,7 @@ Examples:
     # Load results
     try:
         results, metadata = load_benchmark_results(args.results_file)
-        config_data, config_name, timestamp, questions, total_results = (
+        config_data, config_name, timestamp, questions, total_results, provenance = (
             parse_benchmark_results(results, metadata)
         )
     except Exception as e:
@@ -765,13 +790,7 @@ Examples:
 
     # Generates HTML output
     html_content = format_html_output(
-        config_data,
-        config_name,
-        timestamp,
-        questions,
-        total_results,
-        metadata=metadata,
-        config_version=(results[0] or {}).get("config_version") if results else None,
+        config_data, config_name, timestamp, questions, total_results, provenance
     )
     with open(html_path, "w") as f:
         f.write(html_content)

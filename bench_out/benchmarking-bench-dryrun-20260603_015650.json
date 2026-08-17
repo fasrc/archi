@@ -852,7 +852,7 @@
             },
             "config_version": {
                 "digest": "sha256:a4ab8bdc78bdd99d0bbcb0032a6c52fd799937a985f9b65e2a73daf80c04c580",
-                "source": "reconstructed from the configuration file recorded in this artifact; the running configuration was never captured, so this may not describe the run",
+                "source": "reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run",
                 "selected_file": "configs/config.yaml",
                 "selected_file_digest": "sha256:a4ab8bdc78bdd99d0bbcb0032a6c52fd799937a985f9b65e2a73daf80c04c580",
                 "divergence_from_selected_file": null,
@@ -925,7 +925,7 @@
         "code_version": {
             "digest": null,
             "source": "<not recorded: this artifact predates code-version stamping, and the code it ran cannot be recovered from it>",
-            "module_count": null,
+            "file_count": null,
             "deploy_git_commit": "8b21aeb49bc58fc04f036ae8873e61d98b12e32f",
             "deploy_git_dirty": false,
             "deploy_git_note": "Written once by `archi create` and then frozen: this identifies the deploy, not the image the benchmark ran. Two arms of one campaign share it. Compare `digest` instead."

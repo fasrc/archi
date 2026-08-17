@@ -1,9 +1,9 @@
 """A benchmark artifact must identify the code and the config that produced it.
 
-Divergence detection (``config_divergence``) only works at write time, when both
-the selected file and the running config are in hand. It cannot answer the
-question a reader of a finished artifact actually asks: *was this the same code
-and the same settings as that other run?*
+``config_divergence`` works only at write time, while the selected file and the
+config the chain held are both in hand. It cannot answer the question a reader of
+a finished artifact asks: *was this the same code and the same settings as that
+other run?*
 
 Two symptoms motivated these helpers, both observed in ``bench_out/``:
 
@@ -28,7 +28,8 @@ from src.utils.benchmark_provenance import (
     collect_code_version,
     config_fingerprint,
     config_version,
-    loaded_module_files,
+    effective_config,
+    package_module_files,
     read_module_sources,
     settings_at_paths,
 )
@@ -69,117 +70,182 @@ class TestConfigFingerprint:
 
     def test_a_value_json_cannot_encode_still_yields_a_fingerprint(self):
         """Provenance must never be the reason a finished run loses its scores."""
-        digest = config_fingerprint({"path": object()})
+        assert config_fingerprint({"path": object()}).startswith("sha256:")
 
-        assert digest.startswith("sha256:")
+
+class TestEffectiveConfig:
+    """What actually determined the run, not just what Postgres held.
+
+    ``load_new_configuration`` passes ``agent_class``, ``provider``, ``model`` and
+    ``agent_md_file`` from the selected file straight to ``archi()``, so they
+    never reach Postgres. A digest built from the running config alone cannot
+    tell two sweep arms apart when that is all that differs -- which is the
+    common case.
+    """
+
+    RUNNING = {
+        "services": {
+            "chat_app": {"context_editing": {"context_window": 8192}},
+            "benchmarking": {"agent_md_file": "/stale/from-postgres.md"},
+        }
+    }
+
+    def test_the_running_config_supplies_the_base(self):
+        selected = {"services": {"benchmarking": {}}}
+
+        merged = effective_config(self.RUNNING, selected)
+
+        assert merged["services"]["chat_app"]["context_editing"] == {
+            "context_window": 8192
+        }
+
+    def test_the_selected_benchmarking_subtree_wins(self):
+        selected = {"services": {"benchmarking": {"agent_md_file": "/arm/v2-lean.md"}}}
+
+        merged = effective_config(self.RUNNING, selected)
+
+        assert merged["services"]["benchmarking"]["agent_md_file"] == "/arm/v2-lean.md"
+
+    def test_two_sweep_arms_differing_only_in_the_overlay_are_distinguishable(self):
+        """The fasrc-cannon arms differ only in agent_md_file and name."""
+        arm_a = {"services": {"benchmarking": {"agent_md_file": "/v1-strict.md"}}}
+        arm_b = {"services": {"benchmarking": {"agent_md_file": "/v3-cited.md"}}}
+
+        digest_a = config_fingerprint(effective_config(self.RUNNING, arm_a))
+        digest_b = config_fingerprint(effective_config(self.RUNNING, arm_b))
+
+        assert digest_a != digest_b
+
+    def test_the_running_config_is_not_mutated(self):
+        """The chain still holds this object; overlaying must not rewrite it."""
+        selected = {"services": {"benchmarking": {"agent_md_file": "/arm.md"}}}
+
+        effective_config(self.RUNNING, selected)
+
+        assert (
+            self.RUNNING["services"]["benchmarking"]["agent_md_file"]
+            == "/stale/from-postgres.md"
+        )
+
+    def test_an_absent_overlay_path_leaves_the_base_alone(self):
+        merged = effective_config(self.RUNNING, {"services": {}})
+
+        assert (
+            merged["services"]["benchmarking"]["agent_md_file"]
+            == "/stale/from-postgres.md"
+        )
+
+    def test_falls_back_to_the_selected_file_when_running_is_unavailable(self):
+        selected = {"services": {"benchmarking": {"agent_md_file": "/arm.md"}}}
+
+        assert effective_config(None, selected) == selected
 
 
 class TestCodeFingerprint:
-    """Identity of the code that was actually loaded, not the deploy's commit."""
+    """Identity of the code under test, not the deploy's commit."""
 
     def test_the_same_sources_fingerprint_the_same(self):
-        sources = [("src.archi.archi", b"print(1)"), ("src.utils.x", b"print(2)")]
+        sources = [("archi/archi.py", b"print(1)"), ("utils/x.py", b"print(2)")]
 
         assert code_fingerprint(sources) == code_fingerprint(list(sources))
 
     def test_order_does_not_change_the_fingerprint(self):
-        """``sys.modules`` iteration order is an implementation detail."""
-        a = [("src.a", b"one"), ("src.b", b"two")]
-        b = [("src.b", b"two"), ("src.a", b"one")]
+        a = [("a.py", b"one"), ("b.py", b"two")]
+        b = [("b.py", b"two"), ("a.py", b"one")]
 
         assert code_fingerprint(a) == code_fingerprint(b)
 
     def test_changed_source_changes_the_fingerprint(self):
-        before = [("src.archi.archi", b"context_window = 32768")]
-        after = [("src.archi.archi", b"context_window = 8192")]
+        before = [("archi/archi.py", b"context_window = 32768")]
+        after = [("archi/archi.py", b"context_window = 8192")]
 
         assert code_fingerprint(before) != code_fingerprint(after)
 
-    def test_a_renamed_module_changes_the_fingerprint(self):
-        """The module set is part of the code's identity, not just the bytes."""
-        before = [("src.old_name", b"same body")]
-        after = [("src.new_name", b"same body")]
+    def test_a_renamed_file_changes_the_fingerprint(self):
+        """The file set is part of the code's identity, not just the bytes."""
+        assert code_fingerprint([("old.py", b"same")]) != code_fingerprint(
+            [("new.py", b"same")]
+        )
 
-        assert code_fingerprint(before) != code_fingerprint(after)
-
-    def test_which_module_holds_which_body_is_part_of_the_identity(self):
+    def test_which_file_holds_which_body_is_part_of_the_identity(self):
         """Hashing the bodies as an unordered bag would miss a swap."""
-        before = [("src.a", b"one"), ("src.b", b"two")]
-        after = [("src.a", b"two"), ("src.b", b"one")]
+        before = [("a.py", b"one"), ("b.py", b"two")]
+        after = [("a.py", b"two"), ("b.py", b"one")]
 
         assert code_fingerprint(before) != code_fingerprint(after)
 
-    def test_a_module_name_cannot_forge_two_records(self):
-        forged = [("src.a\nsrc.b", b"")]
-        genuine = [("src.a", b""), ("src.b", b"")]
+    def test_a_path_cannot_forge_two_records(self):
+        forged = [("a.py\nb.py", b"")]
+        genuine = [("a.py", b""), ("b.py", b"")]
 
         assert code_fingerprint(forged) != code_fingerprint(genuine)
 
-    def test_no_loaded_modules_is_reported_rather_than_hashed(self):
+    def test_no_sources_is_reported_rather_than_hashed(self):
         """An empty digest would silently claim two unknown images matched."""
         with pytest.raises(ValueError):
             code_fingerprint([])
 
 
-class _FakeModule:
-    def __init__(self, file):
-        self.__file__ = file
+class TestPackageModuleFiles:
+    """The manifest is the files on disk, not the modules that happened to load."""
 
+    def test_finds_python_files_recursively(self, tmp_path):
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "a.py").write_text("a")
+        (tmp_path / "pkg" / "b.py").write_text("b")
 
-class TestLoadedModuleFiles:
-    """Which loaded modules make up the code under test."""
+        found = [rel for rel, _ in package_module_files(str(tmp_path))]
 
-    def test_selects_only_modules_under_the_package(self):
-        modules = {
-            "src.archi.archi": _FakeModule("/app/src/archi/archi.py"),
-            "yaml": _FakeModule("/site-packages/yaml/__init__.py"),
-            "srcfoo.bar": _FakeModule("/app/srcfoo/bar.py"),
-        }
+        assert found == ["a.py", "pkg/b.py"]
 
-        assert loaded_module_files(modules, package="src") == [
-            ("src.archi.archi", "/app/src/archi/archi.py")
-        ]
+    def test_ignores_non_python_files(self, tmp_path):
+        (tmp_path / "a.py").write_text("a")
+        (tmp_path / "notes.md").write_text("m")
+        (tmp_path / "data.json").write_text("{}")
 
-    def test_includes_the_package_root_itself(self):
-        modules = {"src": _FakeModule("/app/src/__init__.py")}
+        assert [rel for rel, _ in package_module_files(str(tmp_path))] == ["a.py"]
 
-        assert loaded_module_files(modules, package="src") == [
-            ("src", "/app/src/__init__.py")
-        ]
+    def test_ignores_pycache(self, tmp_path):
+        """Compiled artifacts vary without the source having changed."""
+        (tmp_path / "__pycache__").mkdir()
+        (tmp_path / "__pycache__" / "a.cpython-311.py").write_text("x")
+        (tmp_path / "a.py").write_text("a")
 
-    def test_result_is_sorted_by_module_name(self):
-        modules = {
-            "src.b": _FakeModule("/app/src/b.py"),
-            "src.a": _FakeModule("/app/src/a.py"),
-        }
+        assert [rel for rel, _ in package_module_files(str(tmp_path))] == ["a.py"]
 
-        assert [name for name, _ in loaded_module_files(modules, package="src")] == [
-            "src.a",
-            "src.b",
-        ]
+    def test_the_manifest_does_not_depend_on_what_was_imported(self, tmp_path):
+        """The defect this replaces: a lazily-imported module changed the digest.
 
-    def test_skips_modules_with_no_file(self):
-        """Namespace packages and C extensions have no source to hash."""
-        modules = {
-            "src.real": _FakeModule("/app/src/real.py"),
-            "src.namespace": _FakeModule(None),
-            "src.builtin": object(),
-        }
+        ``src.utils.rbac.registry`` loads only when a decorated agent tool runs,
+        so a sys.modules-based digest differed between two runs of one image.
+        """
+        (tmp_path / "eager.py").write_text("e")
+        (tmp_path / "lazy.py").write_text("l")
 
-        assert loaded_module_files(modules, package="src") == [
-            ("src.real", "/app/src/real.py")
-        ]
+        first = read_module_sources(package_module_files(str(tmp_path)))
+        second = read_module_sources(package_module_files(str(tmp_path)))
+
+        assert code_fingerprint(first) == code_fingerprint(second)
+        assert len(first) == 2
+
+    def test_relative_paths_are_reported_not_absolute_ones(self, tmp_path):
+        """An absolute path would change the digest when the image layout moves."""
+        (tmp_path / "a.py").write_text("a")
+
+        rel, absolute = package_module_files(str(tmp_path))[0]
+
+        assert rel == "a.py"
+        assert absolute.endswith("a.py")
+        assert absolute.startswith(str(tmp_path))
 
 
 class TestReadModuleSources:
-    """Turning module paths into the bytes that get digested."""
-
-    def test_reads_each_module_body(self, tmp_path):
+    def test_reads_each_body(self, tmp_path):
         module = tmp_path / "a.py"
         module.write_bytes(b"context_window = 8192")
 
-        assert read_module_sources([("src.a", str(module))]) == [
-            ("src.a", b"context_window = 8192")
+        assert read_module_sources([("a.py", str(module))]) == [
+            ("a.py", b"context_window = 8192")
         ]
 
     def test_an_unreadable_file_is_skipped_not_fatal(self, tmp_path):
@@ -188,29 +254,10 @@ class TestReadModuleSources:
         present.write_bytes(b"body")
 
         sources = read_module_sources(
-            [
-                ("src.gone", str(tmp_path / "absent.py")),
-                ("src.present", str(present)),
-            ]
+            [("gone.py", str(tmp_path / "absent.py")), ("present.py", str(present))]
         )
 
-        assert sources == [("src.present", b"body")]
-
-    def test_collect_uses_the_live_module_map(self, tmp_path):
-        module = tmp_path / "live.py"
-        module.write_bytes(b"body")
-        modules = {"src.live": _FakeModule(str(module))}
-
-        stamp = collect_code_version(modules, {"last_commit": "abc\n"})
-
-        assert stamp["digest"] == code_fingerprint([("src.live", b"body")])
-        assert stamp["module_count"] == 1
-
-    def test_collect_reports_unavailable_when_nothing_is_loaded(self):
-        stamp = collect_code_version({}, {})
-
-        assert stamp["digest"] is None
-        assert "unavailable" in stamp["source"]
+        assert sources == [("present.py", b"body")]
 
 
 class TestSettingsAtPaths:
@@ -225,18 +272,21 @@ class TestSettingsAtPaths:
 
     def test_absent_paths_are_omitted_rather_than_recorded_as_null(self):
         """A missing key and a key set to null are different facts."""
-        cfg = {"services": {"chat_app": {}}}
-
-        assert settings_at_paths(cfg, ["services.chat_app.context_editing"]) == {}
+        assert (
+            settings_at_paths({"services": {"chat_app": {}}}, ["services.chat_app.x"])
+            == {}
+        )
 
     def test_a_path_through_a_non_mapping_is_omitted(self):
-        cfg = {"services": "not-a-mapping"}
-
-        assert settings_at_paths(cfg, ["services.chat_app.agent_class"]) == {}
+        assert settings_at_paths({"services": "nope"}, ["services.chat_app"]) == {}
 
     def test_the_default_paths_cover_the_context_window_arm(self):
         """The setting the bench-8192 artifact misattributed."""
         assert "services.chat_app.context_editing" in KEY_SETTING_PATHS
+
+    def test_the_default_paths_cover_the_sweep_arm(self):
+        """What the fasrc-cannon arms actually varied."""
+        assert "services.benchmarking.agent_md_file" in KEY_SETTING_PATHS
 
     def test_a_non_mapping_config_yields_no_settings(self):
         assert settings_at_paths(None, ["services.chat_app"]) == {}
@@ -245,24 +295,24 @@ class TestSettingsAtPaths:
 class TestCodeVersion:
     """The ``code_version`` block written into a report's metadata."""
 
-    def test_records_the_digest_of_the_loaded_code(self):
+    def test_records_the_digest_of_the_package(self):
         stamp = code_version(
-            sources=[("src.a", b"body")], deploy_git_info={"last_commit": "abc123\n"}
+            sources=[("a.py", b"body")], deploy_git_info={"last_commit": "abc123\n"}
         )
 
-        assert stamp["digest"] == code_fingerprint([("src.a", b"body")])
+        assert stamp["digest"] == code_fingerprint([("a.py", b"body")])
 
-    def test_records_how_many_modules_the_digest_covers(self):
+    def test_records_how_many_files_the_digest_covers(self):
         stamp = code_version(
-            sources=[("src.a", b"x"), ("src.b", b"y")], deploy_git_info={}
+            sources=[("a.py", b"x"), ("b.py", b"y")], deploy_git_info={}
         )
 
-        assert stamp["module_count"] == 2
+        assert stamp["file_count"] == 2
 
     def test_carries_the_deploy_commit_but_marks_it_as_deploy_scoped(self):
         """Every Aug 11-17 run shares 0a157cdce0; the field must say why."""
         stamp = code_version(
-            sources=[("src.a", b"x")],
+            sources=[("a.py", b"x")],
             deploy_git_info={"last_commit": "0a157cdce0\n", "git_diff": ""},
         )
 
@@ -272,16 +322,19 @@ class TestCodeVersion:
 
     def test_a_deploy_diff_marks_the_deploy_tree_dirty(self):
         stamp = code_version(
-            sources=[("src.a", b"x")],
-            deploy_git_info={"last_commit": "abc\n", "git_diff": "--- a/x\n+++ b/x\n"},
+            sources=[("a.py", b"x")],
+            deploy_git_info={"last_commit": "abc\n", "git_diff": "--- a/x\n"},
         )
 
         assert stamp["deploy_git_dirty"] is True
 
     def test_a_missing_deploy_commit_is_recorded_as_unknown(self):
-        stamp = code_version(sources=[("src.a", b"x")], deploy_git_info=None)
-
-        assert stamp["deploy_git_commit"] is None
+        assert (
+            code_version(sources=[("a.py", b"x")], deploy_git_info=None)[
+                "deploy_git_commit"
+            ]
+            is None
+        )
 
     def test_unavailable_sources_do_not_raise(self):
         """A finished benchmark must not lose its scores over provenance."""
@@ -291,60 +344,102 @@ class TestCodeVersion:
         assert "unavailable" in stamp["source"]
 
 
-class TestConfigVersion:
-    """The ``config_version`` block written into a report's metadata."""
+class TestCollectCodeVersion:
+    def test_digests_the_package_on_disk(self, tmp_path):
+        (tmp_path / "a.py").write_text("body")
 
-    RUNNING = {"services": {"chat_app": {"context_editing": {"context_window": 8192}}}}
+        stamp = collect_code_version(str(tmp_path), {"last_commit": "abc\n"})
+
+        assert stamp["digest"] == code_fingerprint([("a.py", b"body")])
+        assert stamp["file_count"] == 1
+
+    def test_an_empty_package_reports_unavailable(self, tmp_path):
+        stamp = collect_code_version(str(tmp_path), {})
+
+        assert stamp["digest"] is None
+        assert "unavailable" in stamp["source"]
+
+    def test_a_missing_directory_reports_unavailable_and_keeps_the_commit(self):
+        stamp = collect_code_version("/nonexistent/pkg", {"last_commit": "abc\n"})
+
+        assert stamp["digest"] is None
+        assert stamp["deploy_git_commit"] == "abc"
+
+
+class TestConfigVersion:
+    """The ``config_version`` block written onto each arm."""
+
+    RUNNING = {
+        "services": {
+            "chat_app": {"context_editing": {"context_window": 8192}},
+            "benchmarking": {"agent_md_file": "/postgres.md"},
+        }
+    }
     SELECTED = {
-        "services": {"chat_app": {"context_editing": {"context_window": 32768}}}
+        "services": {
+            "chat_app": {"context_editing": {"context_window": 32768}},
+            "benchmarking": {"agent_md_file": "/arm-v1.md"},
+        }
     }
 
-    def test_the_digest_identifies_the_config_the_agent_read(self):
-        stamp = config_version(
-            running=self.RUNNING, selected=self.SELECTED, selected_file="/c.yaml"
+    _DEFAULT = object()
+
+    def _stamp(self, running=_DEFAULT, selected=_DEFAULT):
+        """``running=None`` must mean "unavailable", not "use the default"."""
+        return config_version(
+            running=self.RUNNING if running is self._DEFAULT else running,
+            selected=self.SELECTED if selected is self._DEFAULT else selected,
+            selected_file="/c.yaml",
         )
 
-        assert stamp["digest"] == config_fingerprint(self.RUNNING)
+    def test_the_digest_covers_the_effective_configuration(self):
+        stamp = self._stamp()
+
+        assert stamp["digest"] == config_fingerprint(
+            effective_config(self.RUNNING, self.SELECTED)
+        )
+
+    def test_the_digest_is_not_the_running_config_alone(self):
+        """The finding this fixes: a sweep's arms would collapse to one digest."""
+        assert self._stamp()["digest"] != config_fingerprint(self.RUNNING)
+
+    def test_arms_differing_only_in_the_harness_subtree_get_distinct_digests(self):
+        arm_a = {"services": {"benchmarking": {"agent_md_file": "/v1.md"}}}
+        arm_b = {"services": {"benchmarking": {"agent_md_file": "/v3.md"}}}
+
+        assert (
+            self._stamp(selected=arm_a)["digest"]
+            != self._stamp(selected=arm_b)["digest"]
+        )
 
     def test_the_selected_file_is_fingerprinted_separately(self):
-        stamp = config_version(
-            running=self.RUNNING, selected=self.SELECTED, selected_file="/c.yaml"
-        )
+        stamp = self._stamp()
 
         assert stamp["selected_file"] == "/c.yaml"
         assert stamp["selected_file_digest"] == config_fingerprint(self.SELECTED)
 
     def test_names_the_setting_the_artifact_would_have_misattributed(self):
-        stamp = config_version(
-            running=self.RUNNING, selected=self.SELECTED, selected_file="/c.yaml"
-        )
-
-        assert stamp["divergence_from_selected_file"] == [
+        assert (
             "services.chat_app.context_editing.context_window"
-        ]
+            in self._stamp()["divergence_from_selected_file"]
+        )
 
-    def test_surfaces_the_arm_defining_settings_from_the_running_config(self):
+    def test_surfaces_the_arm_defining_settings(self):
         """A reader must see the arm without parsing a 500-key blob."""
-        stamp = config_version(
-            running=self.RUNNING, selected=self.SELECTED, selected_file="/c.yaml"
-        )
+        key = self._stamp()["key_settings"]
 
-        assert stamp["key_settings"] == {
-            "services.chat_app.context_editing": {"context_window": 8192}
-        }
+        assert key["services.chat_app.context_editing"] == {"context_window": 8192}
+        assert key["services.benchmarking.agent_md_file"] == "/arm-v1.md"
 
-    def test_falls_back_to_the_selected_file_when_postgres_is_unreadable(self):
-        """Degraded, and labelled as such -- not silently mislabelled."""
-        stamp = config_version(
-            running=None, selected=self.SELECTED, selected_file="/c.yaml"
-        )
+    def test_falls_back_to_the_selected_file_when_the_chain_config_is_unavailable(self):
+        stamp = self._stamp(running=None)
 
         assert stamp["digest"] == config_fingerprint(self.SELECTED)
-        assert "selected file" in stamp["source"]
+        assert "unavailable" in stamp["source"]
 
-    def test_the_running_config_is_the_named_source_when_available(self):
-        stamp = config_version(
-            running=self.RUNNING, selected=self.SELECTED, selected_file="/c.yaml"
-        )
+    def test_divergence_is_unknown_when_the_chain_config_is_unavailable(self):
+        """Not [] -- an empty list would assert the two agreed."""
+        assert self._stamp(running=None)["divergence_from_selected_file"] is None
 
-        assert "running" in stamp["source"]
+    def test_the_effective_configuration_is_the_named_source(self):
+        assert "effective" in self._stamp()["source"]

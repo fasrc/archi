@@ -17,13 +17,23 @@ previously did not:
 a wrong label, and ``corpus_fingerprint`` gives the second a content-derived
 answer. Both are pure so the report writer stays a thin call site (the
 diff-coverage gate cannot reach ``service_benchmark``'s runtime paths).
+
+Divergence and identity answer different questions, and the report needs both.
+Divergence is computable only at write time, while the selected file and the
+config the chain held are both in hand -- it catches a mislabel as it happens. A
+*digest* is computable forever, from the finished artifact alone, so a reader
+weeks later can ask "was this the same code and the same settings as that other
+run?" without either source still existing. ``code_version`` and
+``config_version`` supply that half.
 """
 
 import hashlib
 import json
+import os
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 __all__ = [
+    "ARM_OVERRIDE_PATHS",
     "KEY_SETTING_PATHS",
     "code_fingerprint",
     "code_version",
@@ -32,11 +42,24 @@ __all__ = [
     "config_fingerprint",
     "config_version",
     "corpus_fingerprint",
-    "loaded_module_files",
+    "effective_config",
+    "package_module_files",
     "read_module_sources",
     "reconstruct_version_stamp",
     "settings_at_paths",
 ]
+
+#: Config subtrees the benchmark harness reads from the SELECTED file and passes
+#: straight to ``archi()``, bypassing Postgres entirely.
+#:
+#: ``BenchmarkHandler.load_new_configuration`` takes ``agent_class``,
+#: ``provider``, ``model`` and ``agent_md_file`` out of the selected file's
+#: ``services.benchmarking`` and hands them to ``archi()`` as constructor
+#: arguments. They never appear in the config the agent reads, so a digest taken
+#: from the running config alone cannot tell two arms apart when what varies
+#: between them lives here -- and that is the common case: the fasrc-cannon
+#: sweep arms differ only in ``agent_md_file`` and ``name``.
+ARM_OVERRIDE_PATHS: Tuple[str, ...] = ("services.benchmarking",)
 
 #: Settings a campaign is known to vary, surfaced compactly so a reader can see
 #: which arm an artifact describes without parsing a 500-key configuration blob.
@@ -44,9 +67,7 @@ __all__ = [
 #: This list is a convenience, never the guarantee. It is necessarily incomplete
 #: -- ``services.chat_app.context_editing`` did not exist when the 2026-08-11
 #: runs were recorded, and the next campaign will vary something not listed here.
-#: ``config_version``'s ``digest`` is the guarantee: it covers every setting,
-#: so two runs with equal digests had equal configurations whether or not the
-#: settings they varied ever appeared below.
+#: ``config_version``'s ``digest`` is the guarantee: it covers every setting.
 KEY_SETTING_PATHS: Tuple[str, ...] = (
     "services.chat_app.agent_class",
     "services.chat_app.context_editing",
@@ -70,7 +91,6 @@ KEY_SETTING_PATHS: Tuple[str, ...] = (
     "data_manager.stemming",
 )
 
-
 #: Distinguishes "this path is absent" from "this path is set to None".
 _MISSING = object()
 
@@ -89,10 +109,15 @@ def _is_empty_container(value: Any) -> bool:
 
 
 def _as_mapping(value: Any) -> Optional[Dict[str, Any]]:
-    """Return *value* as a mapping to recurse into, or ``None`` if it is a leaf."""
+    """Return *value* as a mapping to recurse into, or ``None`` if it is a leaf.
+
+    Only ``None`` and an empty *mapping* become ``{}``. An empty sequence stays a
+    leaf so that ``{}`` and ``[]`` can be told apart -- they are different
+    settings, and collapsing them would be a false clearance.
+    """
     if isinstance(value, dict):
         return value
-    if _is_empty_container(value):
+    if value is None:
         return {}
     return None
 
@@ -100,10 +125,15 @@ def _as_mapping(value: Any) -> Optional[Dict[str, Any]]:
 def _leaves_equal(left: Any, right: Any) -> bool:
     """Compare two leaves.
 
-    Reached only when at least one side is a non-empty non-mapping, because
-    ``_as_mapping`` turns every absent-or-empty container into ``{}`` and those
-    are recursed into instead. So there is no "both empty" case to handle here.
+    ``None`` means "not configured" and matches an empty container of either
+    kind, because every config consumer in this codebase reads with
+    ``.get(key)`` and cannot distinguish the two. Two *present* empty containers
+    are compared by kind, so an empty mapping never matches an empty sequence.
     """
+    if _is_empty_container(left) and _is_empty_container(right):
+        if left is None or right is None:
+            return True
+        return isinstance(left, dict) == isinstance(right, dict)
     # ``0 == False`` in Python; a numeric setting is not a boolean one.
     if isinstance(left, bool) != isinstance(right, bool):
         return False
@@ -143,29 +173,34 @@ def _escape(value: Any) -> str:
 
 
 def corpus_fingerprint(rows: Iterable[Sequence[Any]]) -> str:
-    """Digest of the corpus, equal exactly when its content is equal.
+    """Digest of the corpus, equal exactly when the supplied state is equal.
 
-    *rows* are ``(resource_hash, size_bytes)`` pairs, one per document. Order is
-    irrelevant -- the rows are sorted before hashing -- so the digest does not
-    depend on how the query happened to return them. A ``None`` size is kept
-    distinct from ``0``: a document with no recorded size is not a zero-byte
-    document.
+    *rows* are opaque ``(key, value)`` pairs. Order is irrelevant -- the rows are
+    sorted before hashing -- so the digest does not depend on how the query
+    happened to return them. A ``None`` value stays distinct from ``0`` and from
+    the empty string: "no value recorded" is not "the value is zero".
 
-    Unlike ``corpus_snapshot_id``, which is a per-invocation nonce, two runs
-    over an unchanged corpus produce the same value here. That is what makes
-    "these arms saw the same corpus" a checkable claim rather than an
-    assumption.
+    Values must stay opaque strings rather than numbers, because document size
+    alone cannot detect a changed document. ``resource_hash`` is ``md5(url)``, an
+    identity hash deliberately stable across content updates, so the caller also
+    feeds in per-chunk content digests -- hex, not numeric.
+
+    Unlike ``corpus_snapshot_id``, which is a per-invocation nonce, two runs over
+    an unchanged corpus produce the same value here. That is what makes "these
+    arms saw the same corpus" a checkable claim rather than an assumption.
+
+    What it does NOT cover: re-embedding the same text with a different model
+    leaves every key and value here unchanged. That shows up instead as a
+    divergence on ``data_manager.embedding_name`` in the recorded configuration.
     """
     records: List[str] = []
     for row in rows:
         pair: Tuple[Any, ...] = tuple(row)
         if len(pair) != 2:
-            raise ValueError(
-                f"corpus row must be a (resource_hash, size_bytes) pair, got {pair!r}"
-            )
-        resource_hash, size_bytes = pair
-        size = "" if size_bytes is None else str(int(size_bytes))
-        records.append(f"{_escape(resource_hash)}:{size}")
+            raise ValueError(f"corpus row must be a (key, value) pair, got {pair!r}")
+        key, value = pair
+        rendered = "\x00none" if value is None else _escape(value)
+        records.append(f"{_escape(key)}:{rendered}")
     digest = hashlib.sha256("\n".join(sorted(records)).encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
 
@@ -173,14 +208,9 @@ def corpus_fingerprint(rows: Iterable[Sequence[Any]]) -> str:
 def config_fingerprint(config: Any) -> str:
     """Digest of a configuration, equal exactly when its content is equal.
 
-    ``config_divergence`` can only run while both the selected file and the
-    running configuration are in hand, so it cannot answer the question a reader
-    of a finished artifact asks: *was this the same configuration as that other
-    run?* A content digest survives in the artifact and answers it forever.
-
     Keys are sorted, so a mapping round-tripped through YAML or JSONB
-    fingerprints the same as the one that went in. JSON keeps ``0`` and
-    ``False`` distinct, which matters -- they are different settings.
+    fingerprints the same as the one that went in. JSON keeps ``0`` and ``False``
+    distinct, which matters -- they are different settings.
 
     Never raises: provenance must not be the reason a finished run loses its
     scores, so a value JSON cannot encode falls back to its ``repr``.
@@ -191,11 +221,53 @@ def config_fingerprint(config: Any) -> str:
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
-def code_fingerprint(sources: Iterable[Tuple[str, bytes]]) -> str:
-    """Digest of the code that was actually loaded, equal when that code is equal.
+def _overlay(base: Any, overlay: Any, path: str) -> Any:
+    """Return *base* with *overlay*'s value at dotted *path* substituted in."""
+    if not path:
+        return overlay
+    head, _, rest = path.partition(".")
+    base_map = base if isinstance(base, dict) else {}
+    overlay_map = overlay if isinstance(overlay, dict) else {}
+    if head not in overlay_map:
+        return base
+    merged = dict(base_map)
+    merged[head] = _overlay(base_map.get(head), overlay_map.get(head), rest)
+    return merged
 
-    *sources* are ``(module_name, source_bytes)`` pairs. The module name is part
-    of the identity, not just the bytes: a renamed or newly imported module is
+
+def effective_config(
+    running: Any, selected: Any, override_paths: Iterable[str] = ARM_OVERRIDE_PATHS
+) -> Any:
+    """The configuration that actually determined the run.
+
+    The agent reads Postgres, so *running* is the right basis. But it is not the
+    whole story: ``load_new_configuration`` pulls ``agent_class``, ``provider``,
+    ``model`` and ``agent_md_file`` out of the *selected* file's
+    ``services.benchmarking`` and passes them to ``archi()`` directly, so those
+    settings shape the run without ever appearing in Postgres.
+
+    Digesting *running* alone therefore gives every arm of a prompt sweep the
+    same fingerprint -- the fasrc-cannon arms differ only in ``agent_md_file``
+    and ``name``, both under ``services.benchmarking`` -- which defeats the whole
+    point of a per-arm stamp. Overlaying those subtrees from the selected file
+    restores the distinction.
+
+    Returns *selected* when *running* is unavailable: a degraded basis beats no
+    basis, and the caller labels it.
+    """
+    if running is None:
+        return selected
+    merged = running
+    for path in override_paths:
+        merged = _overlay(merged, selected, path)
+    return merged
+
+
+def code_fingerprint(sources: Iterable[Tuple[str, bytes]]) -> str:
+    """Digest of the code under test, equal exactly when that code is equal.
+
+    *sources* are ``(relative_path, source_bytes)`` pairs. The path is part of
+    the identity, not just the bytes: a renamed or newly added module is
     different code even when every body is unchanged.
 
     This exists because ``git_info.last_commit`` cannot do the job.
@@ -204,47 +276,63 @@ def code_fingerprint(sources: Iterable[Tuple[str, bytes]]) -> str:
     empty diff -- the commit identifies the *deploy*, not the image, and cannot
     distinguish two arms that ran different code against one deployment.
 
-    Raises ``ValueError`` on an empty *sources*: an empty digest would silently
+    Raises ``ValueError`` on empty *sources*: an empty digest would silently
     claim that two images whose code was never inspected had matched.
     """
     records: List[str] = []
-    for module_name, body in sources:
+    for relative_path, body in sources:
         body_digest = hashlib.sha256(body).hexdigest()
-        records.append(f"{_escape(module_name)}:{body_digest}")
+        records.append(f"{_escape(relative_path)}:{body_digest}")
     if not records:
         raise ValueError("cannot fingerprint code: no module sources were supplied")
     digest = hashlib.sha256("\n".join(sorted(records)).encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
 
 
-def loaded_module_files(
-    modules: Mapping[str, Any], package: str = "src"
-) -> List[Tuple[str, str]]:
-    """``(module_name, file_path)`` for every loaded module under *package*.
+def package_module_files(package_dir: str) -> List[Tuple[str, str]]:
+    """Every ``.py`` under *package_dir*, as ``(relative_path, absolute_path)``.
 
-    Pass ``sys.modules``. The benchmark imports and calls ``archi()`` in-process,
-    so the modules loaded here *are* the code under test -- and they are the
-    baked site-packages copy, not the ``src/`` bind mount, which is precisely
-    the code a commit hash fails to identify.
+    Deliberately a directory walk rather than a scan of ``sys.modules``. The
+    loaded-module set depends on which code paths the run happened to take --
+    ``src.utils.rbac.registry`` is imported only when a decorated agent tool
+    executes, so two runs of one image would report different code versions
+    depending on whether the model chose that tool. That breaks the property the
+    digest exists to provide. A manifest of the files on disk is the same for
+    every run of the same image.
 
-    Modules with no source file (namespace packages, C extensions) are skipped:
-    there is nothing to hash. The prefix check is on the dotted path, so
-    ``srcfoo`` is not mistaken for a submodule of ``src``.
+    ``__pycache__`` is skipped: compiled artifacts vary with interpreter and
+    invocation without the source having changed.
     """
-    prefix = f"{package}."
     found: List[Tuple[str, str]] = []
-    for name, module in modules.items():
-        if name != package and not name.startswith(prefix):
-            continue
-        path = getattr(module, "__file__", None)
-        if not path:
-            continue
-        found.append((name, path))
+    for root, dirs, files in os.walk(package_dir):
+        dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+        for name in files:
+            if not name.endswith(".py"):
+                continue
+            absolute = os.path.join(root, name)
+            found.append((os.path.relpath(absolute, package_dir), absolute))
     return sorted(found)
 
 
+def read_module_sources(files: Iterable[Tuple[str, str]]) -> List[Tuple[str, bytes]]:
+    """Read each ``(relative_path, file_path)`` into ``(relative_path, bytes)``.
+
+    A file that cannot be read is skipped rather than fatal: a partial digest
+    still distinguishes two images, and a benchmark that has already scored its
+    questions must not lose them because one source file was unreadable.
+    """
+    sources: List[Tuple[str, bytes]] = []
+    for relative_path, path in files:
+        try:
+            with open(path, "rb") as handle:
+                sources.append((relative_path, handle.read()))
+        except OSError:
+            continue
+    return sources
+
+
 def settings_at_paths(config: Any, paths: Iterable[str]) -> Dict[str, Any]:
-    """The values of *paths* that are present in *config*, keyed by dotted path.
+    """The values of *paths* present in *config*, keyed by dotted path.
 
     Absent paths are omitted rather than recorded as ``null`` -- "this setting
     did not exist" and "this setting was set to null" are different facts, and
@@ -276,16 +364,16 @@ def code_version(
 ) -> Dict[str, Any]:
     """The ``code_version`` block for a report's metadata.
 
-    Records a content digest of the loaded code as the identity, and keeps the
-    deploy-time commit alongside it -- labelled, so a reader does not mistake a
-    frozen value for the code under test.
+    Records a content digest of the package on disk as the identity, and keeps
+    the deploy-time commit alongside it -- labelled, so a reader does not mistake
+    a frozen value for the code under test.
     """
     info = deploy_git_info or {}
     commit = (info.get("last_commit") or "").strip() or None
 
     try:
         digest: Optional[str] = code_fingerprint(sources)
-        source = "content digest of the `src` modules loaded in the benchmark image"
+        source = "content digest of the `src` package files in the benchmark image"
     except ValueError as exc:
         digest = None
         source = f"<unavailable: {exc}>"
@@ -293,10 +381,75 @@ def code_version(
     return {
         "digest": digest,
         "source": source,
-        "module_count": len(sources),
+        "file_count": len(sources),
         "deploy_git_commit": commit,
         "deploy_git_dirty": bool((info.get("git_diff") or "").strip()),
         "deploy_git_note": _DEPLOY_GIT_NOTE,
+    }
+
+
+def collect_code_version(
+    package_dir: str, deploy_git_info: Optional[Mapping[str, Any]]
+) -> Dict[str, Any]:
+    """Build the ``code_version`` block from the package on disk.
+
+    The single call site a report writer needs. Never raises: an unreadable
+    package directory yields an ``<unavailable: ...>`` source rather than costing
+    a finished benchmark its scores.
+    """
+    try:
+        sources = read_module_sources(package_module_files(package_dir))
+    except OSError as exc:
+        return {
+            "digest": None,
+            "source": f"<unavailable: could not read {package_dir}: {exc}>",
+            "file_count": 0,
+            "deploy_git_commit": (
+                ((deploy_git_info or {}).get("last_commit") or "").strip() or None
+            ),
+            "deploy_git_dirty": bool(
+                ((deploy_git_info or {}).get("git_diff") or "").strip()
+            ),
+            "deploy_git_note": _DEPLOY_GIT_NOTE,
+        }
+    return code_version(sources=sources, deploy_git_info=deploy_git_info)
+
+
+def config_version(
+    running: Any, selected: Any, selected_file: Optional[str]
+) -> Dict[str, Any]:
+    """The ``config_version`` block for one arm of a run.
+
+    The digest covers the *effective* configuration -- what the agent read from
+    Postgres, overlaid with the subtrees the harness passes to ``archi()`` from
+    the selected file. Digesting the running config alone would give every arm of
+    a sweep the same fingerprint (see ``effective_config``).
+
+    *selected* is fingerprinted separately and the settings where the two
+    disagree are named, so a mislabel lands as a visible finding rather than a
+    wrong number.
+    """
+    have_running = running is not None
+    basis = effective_config(running, selected)
+
+    return {
+        "digest": config_fingerprint(basis),
+        "source": (
+            "effective configuration: what the agent read from Postgres, overlaid "
+            "with the `services.benchmarking` settings the harness passes to "
+            "archi() from the selected file"
+            if have_running
+            else "selected file on disk -- the configuration the chain held was "
+            "unavailable, so this may not describe the run"
+        ),
+        "selected_file": selected_file,
+        "selected_file_digest": (
+            None if selected is None else config_fingerprint(selected)
+        ),
+        "divergence_from_selected_file": (
+            config_divergence(selected, running) if have_running else None
+        ),
+        "key_settings": settings_at_paths(basis, KEY_SETTING_PATHS),
     }
 
 
@@ -334,7 +487,7 @@ def reconstruct_version_stamp(
                 "<not recorded: this artifact predates code-version stamping, and "
                 "the code it ran cannot be recovered from it>"
             ),
-            "module_count": None,
+            "file_count": None,
             "deploy_git_commit": commit,
             "deploy_git_dirty": bool((info.get("git_diff") or "").strip()),
             "deploy_git_note": _DEPLOY_GIT_NOTE,
@@ -343,8 +496,8 @@ def reconstruct_version_stamp(
             "digest": config_fingerprint(recorded_config) if have_config else None,
             "source": (
                 "reconstructed from the configuration file recorded in this "
-                "artifact; the running configuration was never captured, so this "
-                "may not describe the run"
+                "artifact; the configuration the agent read was never captured, "
+                "so this may not describe the run"
                 if have_config
                 else "<not recorded: no configuration was captured in this artifact>"
             ),
@@ -355,71 +508,4 @@ def reconstruct_version_stamp(
             "divergence_from_selected_file": None,
             "key_settings": settings_at_paths(recorded_config, KEY_SETTING_PATHS),
         },
-    }
-
-
-def read_module_sources(files: Iterable[Tuple[str, str]]) -> List[Tuple[str, bytes]]:
-    """Read each ``(module_name, file_path)`` into ``(module_name, source_bytes)``.
-
-    A file that cannot be read is skipped rather than fatal: a partial digest
-    still distinguishes two images, and a benchmark that has already scored its
-    questions must not lose them because one source file was unreadable.
-    """
-    sources: List[Tuple[str, bytes]] = []
-    for module_name, path in files:
-        try:
-            with open(path, "rb") as handle:
-                sources.append((module_name, handle.read()))
-        except OSError:
-            continue
-    return sources
-
-
-def collect_code_version(
-    modules: Mapping[str, Any],
-    deploy_git_info: Optional[Mapping[str, Any]],
-    package: str = "src",
-) -> Dict[str, Any]:
-    """Build the ``code_version`` block from a live ``sys.modules``.
-
-    The single call site a report writer needs: it selects the loaded modules of
-    *package*, reads their sources, and digests them.
-    """
-    sources = read_module_sources(loaded_module_files(modules, package=package))
-    return code_version(sources=sources, deploy_git_info=deploy_git_info)
-
-
-def config_version(
-    running: Any, selected: Any, selected_file: Optional[str]
-) -> Dict[str, Any]:
-    """The ``config_version`` block for a report's metadata.
-
-    The digest is taken from *running* -- the configuration the agent actually
-    read from Postgres -- because that is what produced the scores. *selected*
-    (the YAML file the operator chose) is fingerprinted separately and the
-    settings where the two disagree are named, so the artifact carries the
-    mislabel as a visible finding rather than as a wrong number.
-
-    If *running* is unavailable the digest falls back to *selected* and says so.
-    A degraded, labelled answer beats a confident wrong one.
-    """
-    have_running = running is not None
-    basis = running if have_running else selected
-
-    return {
-        "digest": config_fingerprint(basis),
-        "source": (
-            "running configuration read from Postgres (what the agent used)"
-            if have_running
-            else "selected file on disk -- the running configuration was unavailable, "
-            "so this may not describe the run"
-        ),
-        "selected_file": selected_file,
-        "selected_file_digest": (
-            None if selected is None else config_fingerprint(selected)
-        ),
-        "divergence_from_selected_file": (
-            config_divergence(selected, running) if have_running else None
-        ),
-        "key_settings": settings_at_paths(basis, KEY_SETTING_PATHS),
     }

@@ -138,7 +138,10 @@ def regenerate_html(json_path, dry_run=False):
 
     metadata = document["metadata"]
     results = document["benchmarking_results"]
-    config_data, config_name, timestamp, questions, total_results = (
+    # parse_benchmark_results renders record 0 and builds the provenance block
+    # from that record plus the metadata, so the panel is captioned with record
+    # 0's arm rather than a sweep's last one.
+    config_data, config_name, timestamp, questions, total_results, provenance = (
         parse_benchmark_results(results, metadata)
     )
     html = format_html_output(
@@ -147,10 +150,7 @@ def regenerate_html(json_path, dry_run=False):
         timestamp,
         questions,
         total_results,
-        metadata=metadata,
-        # parse_benchmark_results renders record 0, so the panel must caption
-        # record 0's arm -- not a sweep's last one.
-        config_version=(results[0] or {}).get("config_version") if results else None,
+        provenance=provenance,
     )
     with open(html_path, "w") as handle:
         handle.write(html)
