@@ -1388,3 +1388,32 @@ class TestStructuralIntegrity:
 
         assert not _placeholders(first.messages), "reduced a request under budget"
         assert _placeholders(second.messages), "the same instance must reduce later"
+
+
+class TestTheExemptionIsScopedToOneTurn:
+    """The retrieval exemption is sized by a **per-turn** call budget.
+
+    Selecting the earliest matching results would consume that allowance on
+    stale evidence if a previous turn's tool results were still present, leaving
+    the current turn's grounding evidence clearable. They are not present, and
+    this pins the reason: reconstructed history carries conversation messages
+    only.
+    """
+
+    def test_reconstructed_history_contains_no_tool_results(self):
+        """`infer_speaker` maps every stored speaker to Human or AI.
+
+        A stored transcript has no representation for a tool result, so a new
+        turn's message list starts with none and every `ToolMessage` the
+        middleware sees was produced by the turn now running. If tool results
+        ever begin to be persisted and replayed, this fails — and the exemption
+        selection in `select_exempt_indices` needs a turn boundary before that
+        lands.
+        """
+        from src.archi.pipelines.agents.utils.history_utils import infer_speaker
+
+        speakers = ["user", "human", "agent", "ai", "assistant", "archi", "tool"]
+        produced = {infer_speaker(s) for s in speakers}
+
+        assert ToolMessage not in produced
+        assert produced <= {HumanMessage, AIMessage}

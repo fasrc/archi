@@ -141,23 +141,42 @@ def _enabled_cfg():
     return config
 
 
-def test_create_provider_llm_returns_the_window_the_provider_reports(monkeypatch):
-    """The window must be resolved where the YAML-configured provider exists.
+def test_a_model_named_in_the_config_reports_no_window(monkeypatch):
+    """A configured model's "window" is ModelInfo's 128000 default, not a fact.
 
-    The agent's fallback builds a provider with no config and matches the model
-    name against a list compiled into the package; a self-hosted ID is absent
-    from every such list, so resolving later yields None and installs no bound.
+    `_build_provider_config_from_payload` builds each `models:` entry as
+    `ModelInfo(id=m, name=m, display_name=m)`, so `get_model_info` answers with
+    the dataclass default however the server was actually launched. Passing that
+    on would size the budget from a number nothing measured — on this repo's own
+    dev config, 128000 against a 32768-token server.
     """
-    provider = _StubProvider(window=32768)
+    provider = _StubProvider(window=128000)
     monkeypatch.setattr(
         "src.archi.providers.get_provider", lambda *a, **kw: provider, raising=False
     )
 
+    # "m" is the model named in _cfg()'s `models:` list.
     llm, window = _wrapper(_enabled_cfg())._create_provider_llm("local", "m", "key-1")
 
     assert llm == "chat-model:m"
-    assert window == 32768
+    assert window is None, "a fabricated window must not reach the budget"
     assert provider.api_key == "key-1"
+
+
+def test_a_model_the_config_does_not_name_keeps_the_providers_window(monkeypatch):
+    """The provider's own compiled metadata is real and must still be used."""
+    monkeypatch.setattr(
+        "src.archi.providers.get_provider",
+        lambda *a, **kw: _StubProvider(window=200000),
+        raising=False,
+    )
+
+    llm, window = _wrapper(_enabled_cfg())._create_provider_llm(
+        "local", "a-model-not-in-the-config"
+    )
+
+    assert llm == "chat-model:a-model-not-in-the-config"
+    assert window == 200000
 
 
 def test_create_provider_llm_reports_no_window_when_metadata_is_absent(monkeypatch):

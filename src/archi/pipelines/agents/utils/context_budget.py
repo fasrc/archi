@@ -344,6 +344,40 @@ def resolve_model_window(provider: Any, model: Any) -> Optional[int]:
     return positive_int(getattr(info, "context_window", None))
 
 
+def resolve_configured_model_window(
+    provider: Any, model: Any, declared_models: Optional[Sequence[Any]]
+) -> Optional[int]:
+    """``resolve_model_window``, minus the windows nobody actually declared.
+
+    A provider built from a deployment's YAML turns each entry of its ``models``
+    list into ``ModelInfo(id=m, name=m, display_name=m)``, and
+    ``ModelInfo.context_window`` **defaults to 128000**. Nothing about the
+    deployment produced that number, but ``get_model_info`` returns it exactly
+    as it would a measured one.
+
+    Trusting it is worse than having no answer. Measured against this
+    repository's own dev config, the configured self-hosted model reports 128000
+    from a server launched with ``--max-model-len 32768`` — a budget four times
+    the real window, which would overflow every request it was installed to
+    protect. ``None`` routes to the documented fail-open instead, and issue #262
+    tracks letting an operator declare these per model.
+
+    Entries the config does **not** name are unaffected: those come from the
+    provider's own compiled ``ModelInfo`` list, which is where a hosted model's
+    genuine window lives.
+    """
+    for entry in declared_models or ():
+        if getattr(entry, "id", None) == model:
+            logger.debug(
+                "Ignoring the window reported for %r: it is named in the "
+                "deployment config, so the value is ModelInfo's default rather "
+                "than a property of the server",
+                model,
+            )
+            return None
+    return resolve_model_window(provider, model)
+
+
 def resolve_output_cap(model: Any, declared_cap: Optional[int]) -> Optional[int]:
     """Return the output cap that will actually apply to calls on *model*.
 

@@ -60,7 +60,9 @@ from src.archi.pipelines.agents.agent_spec import (
     select_agent_spec,
     slugify_agent_name,
 )
-from src.archi.pipelines.agents.utils.context_budget import resolve_model_window
+from src.archi.pipelines.agents.utils.context_budget import (
+    resolve_configured_model_window,
+)
 from src.archi.providers.base import ModelInfo, ProviderConfig, ProviderType
 from src.archi.utils.output_dataclass import PipelineOutput
 
@@ -1673,7 +1675,9 @@ class ChatWrapper:
             # the package, where a self-hosted or custom ID never appears.
             return (
                 provider_instance.get_chat_model(model),
-                resolve_model_window(provider_instance, model),
+                resolve_configured_model_window(
+                    provider_instance, model, cfg.models if cfg else None
+                ),
             )
         except Exception as e:
             logger.warning(f"Failed to create provider LLM {provider}/{model}: {e}")

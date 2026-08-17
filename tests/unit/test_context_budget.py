@@ -36,6 +36,7 @@ from src.archi.pipelines.agents.utils.context_budget import (
     ContextEditingSettings,
     read_settings,
     resolve_budget,
+    resolve_configured_model_window,
     resolve_model_window,
     resolve_output_cap,
     select_exempt_indices,
@@ -553,4 +554,51 @@ class TestTheTrackedExampleConfigInstallsABound:
             f"{settings.keep} costs {(2 + settings.keep) * settings.per_result_tokens} "
             f"tokens against an allowance of "
             f"{int(budget.trigger * settings.exemption_fraction)}"
+        )
+
+
+class TestConfiguredModelsCarryNoWindow:
+    """A model named in YAML has no window metadata — only a dataclass default.
+
+    `_build_provider_config_from_payload` turns each entry of a provider's
+    `models:` list into `ModelInfo(id=m, name=m, display_name=m)`, and
+    `ModelInfo.context_window` defaults to **128000**. Nothing about the
+    deployment produced that number. Reporting it as the provider's answer is
+    worse than reporting nothing: measured against this repository's own dev
+    config, the configured self-hosted model resolves 128000 against a server
+    launched with `--max-model-len 32768`, which would size a budget four times
+    the window and overflow every request it protected.
+    """
+
+    class _Provider:
+        def get_model_info(self, model):
+            return SimpleNamespace(context_window=128000)
+
+    def test_a_model_named_in_the_config_reports_no_window(self):
+        declared = [SimpleNamespace(id="palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4")]
+
+        assert (
+            resolve_configured_model_window(
+                self._Provider(), "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4", declared
+            )
+            is None
+        )
+
+    def test_a_model_the_config_does_not_name_keeps_the_provider_answer(self):
+        """The provider's own built-in metadata is real and must survive.
+
+        A deployment that lists no `models:` falls back to the provider's
+        compiled list — that is where a hosted model's genuine window lives.
+        """
+        assert (
+            resolve_configured_model_window(
+                self._Provider(), "claude-sonnet-4-20250514", []
+            )
+            == 128000
+        )
+
+    def test_no_declared_list_at_all_keeps_the_provider_answer(self):
+        assert (
+            resolve_configured_model_window(self._Provider(), "some-model", None)
+            == 128000
         )
