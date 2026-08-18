@@ -112,13 +112,13 @@
 
                 <div class="metric-item">
                     <div class="metric-value score-medium">6</div>
-                    <div class="metric-label">Partially Correct (some sources found)</div>
+                    <div class="metric-label">Partially Correct (some expected sources retrieved)</div>
                 </div>
             
 
                 <div class="metric-item">
                     <div class="metric-value score-low">2</div>
-                    <div class="metric-label">Incorrect (no sources found)</div>
+                    <div class="metric-label">Incorrect (no expected sources retrieved)</div>
                 </div>
             
 </div></div>
@@ -166,7 +166,7 @@
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Here's how to check your disk usage on Cannon:
+<div class="answer-box">Here&#x27;s how to check your disk usage on Cannon:
 
 ### Check home directory usage
 
@@ -178,11 +178,11 @@ This shows the filesystem, size, used space, available space, and percentage use
 
 ### Check quota
 
-Your home directory has a **100 GB hard limit** and a **95 GB soft quota** that triggers notifications when exceeded. If you receive an email saying you're over quota, you'll need to remove files to get back under quota.
+Your home directory has a **100 GB hard limit** and a **95 GB soft quota** that triggers notifications when exceeded. If you receive an email saying you&#x27;re over quota, you&#x27;ll need to remove files to get back under quota.
 
 ### Additional tips
 
-- If you're over quota and can't delete files (getting "No space left on device" errors), you can truncate large files to zero bytes first to free up enough space to then use `rm`:
+- If you&#x27;re over quota and can&#x27;t delete files (getting &quot;No space left on device&quot; errors), you can truncate large files to zero bytes first to free up enough space to then use `rm`:
   ```bash
   truncate -s 0 FILENAME
   ```
@@ -313,7 +313,7 @@ For more details, see [Home directory full](https://docs.rc.fas.harvard.edu/kb/h
 <div class="section-title">🤖 archi's Answer</div>
 <div class="answer-box">For a short, 30-minute interactive test job on Cannon, use the **`test`** partition.
 
-The `test` partition is designed specifically for interactive work, code development, and workflow testing. It provides immediate access (no queueing delay) and is exempt from normal fairshare accounting, so you won't exhaust your allocation while testing [Running Jobs – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/running-jobs/).
+The `test` partition is designed specifically for interactive work, code development, and workflow testing. It provides immediate access (no queueing delay) and is exempt from normal fairshare accounting, so you won&#x27;t exhaust your allocation while testing [Running Jobs – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/running-jobs/).
 
 You can start an interactive session with:
 
@@ -532,7 +532,7 @@ For more details on Python modules and package installation, see the [Python Pac
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">Use the Lmod module system: `module load python/<version>` (e.g., `module load python/3.10.13-fasrc01`). Use `module spider python` to list available Python builds.</div>
+<div class="answer-box expected-box">Use the Lmod module system: `module load python/&lt;version&gt;` (e.g., `module load python/3.10.13-fasrc01`). Use `module spider python` to list available Python builds.</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -659,7 +659,7 @@ For more details on Python modules and package installation, see the [Python Pac
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Here's how to submit a Slurm job array of 50 tasks, each with 4 GB of memory and per-task output files:
+<div class="answer-box">Here&#x27;s how to submit a Slurm job array of 50 tasks, each with 4 GB of memory and per-task output files:
 
 ## Batch Script
 
@@ -673,7 +673,7 @@ For more details on Python modules and package installation, see the [Python Pac
 #SBATCH -t 0-01:00           # adjust runtime as needed
 #SBATCH -o output_%A_%a.out  # per-task output file
 
-echo "Running array task index $SLURM_ARRAY_TASK_ID"
+echo &quot;Running array task index $SLURM_ARRAY_TASK_ID&quot;
 # Your command here, e.g.:
 # my_program --input file_${SLURM_ARRAY_TASK_ID}.txt
 ```
@@ -682,11 +682,11 @@ echo "Running array task index $SLURM_ARRAY_TASK_ID"
 
 - **`--array 0-49`** creates 50 array elements (indices 0 through 49). You can also use `--array 1-50` if you prefer 1-based indexing.
 - **`--mem=4G`** allocates 4 GB per array task. If you need memory *per CPU* instead, use `--mem-per-cpu=4G`.
-- **`-o output_%A_%a.out`** uses Slurm's built-in job-array output formatting:
+- **`-o output_%A_%a.out`** uses Slurm&#x27;s built-in job-array output formatting:
   - `%A` = the main job ID
   - `%a` = the array task index
   - This produces files like `output_12345_0.out`, `output_12345_1.out`, etc., one per task.
-- **`SLURM_ARRAY_TASK_ID`** is an environment variable set by Slurm that holds the current task's index (0–49). Use it in your command to select per-task inputs or parameters.
+- **`SLURM_ARRAY_TASK_ID`** is an environment variable set by Slurm that holds the current task&#x27;s index (0–49). Use it in your command to select per-task inputs or parameters.
 
 ## Submit
 
@@ -830,11 +830,11 @@ Would you like help tailoring the command inside the script to your specific pro
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Here's the key difference:
+<div class="answer-box">Here&#x27;s the key difference:
 
 **Home directories** (`/n/homeNN/yourlogin`) are for everyday files—scripts, configs, small datasets. They have a 100 GB hard limit, are backed up daily, and have moderate performance. **They are not appropriate for I/O-intensive work or large numbers of jobs** [Home and Lab directories](https://docs.rc.fas.harvard.edu/kb/cluster-storage/).
 
-**Scratch** (`/n/netscratch` or local `/scratch`) is high-performance temporary storage. It's not backed up, has a strict 90-day retention policy (files get purged), and is designed for large, I/O-heavy jobs [Scratch – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/policy-scratch/).
+**Scratch** (`/n/netscratch` or local `/scratch`) is high-performance temporary storage. It&#x27;s not backed up, has a strict 90-day retention policy (files get purged), and is designed for large, I/O-heavy jobs [Scratch – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/policy-scratch/).
 
 **For intermediate job output, use scratch** — specifically:
 - **`/n/netscratch`** for shared, high-performance scratch across all nodes (your lab gets 50TB)
@@ -1044,9 +1044,9 @@ For more details on GPU usage and partitions, see [GPU Computing on the FASRC cl
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Here's what you should check and how to fix it:
+<div class="answer-box">Here&#x27;s what you should check and how to fix it:
 
-## What's happening
+## What&#x27;s happening
 
 Slurm imposes a default memory limit of **100 MB per node**. If your job exceeds that, it gets killed with `OUT_OF_MEMORY` status. Since your job is climbing past 250 GB, you clearly need to request much more memory.
 
@@ -1066,7 +1066,7 @@ Replace `300G` with a value slightly above your actual peak usage. You can use `
    ```bash
    jobstats YOUR_JOB_ID
    ```
-   > Note: If the job exited with `OUT_OF_MEMORY`, the recorded memory is inaccurate. You need a successful run to get the true peak.
+   &gt; Note: If the job exited with `OUT_OF_MEMORY`, the recorded memory is inaccurate. You need a successful run to get the true peak.
 
 2. **Set `--mem` slightly higher** than what `jobstats` reports, since `--mem` is a hard upper limit.
 
@@ -1074,7 +1074,7 @@ Replace `300G` with a value slightly above your actual peak usage. You can use `
 
 ## Multi-node caveat
 
-For multi-node jobs, `--mem` is the maximum memory on **any single node**. If you're not using `--ntasks-per-node` to control task placement, memory usage can vary between runs.
+For multi-node jobs, `--mem` is the maximum memory on **any single node**. If you&#x27;re not using `--ntasks-per-node` to control task placement, memory usage can vary between runs.
 
 ## Quick checklist
 
@@ -1087,7 +1087,7 @@ For more details, see [Slurm memory limits](https://docs.rc.fas.harvard.edu/kb/s
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">First confirm the kill with `sacct -j <jobid> --format=JobID,State,ExitCode,MaxRSS,ReqMem` — `MaxRSS` shows the peak used and `State=OUT_OF_MEMORY` confirms the OOM. To raise the limit, increase `--mem` on the sbatch directive (the bigmem partition supports requests up to its documented per-node ceiling — check the partition page for the exact value). Also check whether your code is leaking, using mmap incorrectly, or could shard the workload across an array.</div>
+<div class="answer-box expected-box">First confirm the kill with `sacct -j &lt;jobid&gt; --format=JobID,State,ExitCode,MaxRSS,ReqMem` — `MaxRSS` shows the peak used and `State=OUT_OF_MEMORY` confirms the OOM. To raise the limit, increase `--mem` on the sbatch directive (the bigmem partition supports requests up to its documented per-node ceiling — check the partition page for the exact value). Also check whether your code is leaking, using mmap incorrectly, or could shard the workload across an array.</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -1206,18 +1206,18 @@ For more details, see [Slurm memory limits](https://docs.rc.fas.harvard.edu/kb/s
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Based on the documentation I've reviewed, I can provide some general guidance, but I should note that **the indexed FASRC documentation does not appear to contain specific guidance for transferring data from Cannon scratch to an external Globus endpoint**.
+<div class="answer-box">Based on the documentation I&#x27;ve reviewed, I can provide some general guidance, but I should note that **the indexed FASRC documentation does not appear to contain specific guidance for transferring data from Cannon scratch to an external Globus endpoint**.
 
-Here's what I can tell you from the available sources:
+Here&#x27;s what I can tell you from the available sources:
 
 ## General Globus Transfer Guidance
 
-Globus is FASRC's recommended service for transferring very large datasets to external collaborators or endpoints [Globus File Transfer – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/).
+Globus is FASRC&#x27;s recommended service for transferring very large datasets to external collaborators or endpoints [Globus File Transfer – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/).
 
 ### Key Points:
 
 1. **FASRC Globus Collections**: Cannon data would be accessible through one of the Harvard FAS RC Globus collections:
-   - "Harvard FAS RC Boston" or "Harvard FAS RC Boston Secure" (depending on your data security level)
+   - &quot;Harvard FAS RC Boston&quot; or &quot;Harvard FAS RC Boston Secure&quot; (depending on your data security level)
 
 2. **For large transfers (2 TB)**: Globus is specifically recommended as an alternative to SSH/SCP for very large datasets [Globus File Transfer – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/).
 
@@ -1227,7 +1227,7 @@ Globus is FASRC's recommended service for transferring very large datasets to ex
 
 ### Recommended Next Steps:
 
-Since the documentation doesn't specifically cover Cannon scratch transfers, I'd recommend:
+Since the documentation doesn&#x27;t specifically cover Cannon scratch transfers, I&#x27;d recommend:
 
 1. **Check if your Cannon scratch is accessible via Globus** - Log into the Globus web interface and look for your Cannon collections
 2. **Contact RCHelp** for Cannon-specific guidance: [RCHelp contact](https://portal.rc.fas.harvard.edu/)
@@ -1409,11 +1409,11 @@ Would you like me to help you with any other aspects of data transfer on FASRC s
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Based on the FASRC documentation and Slurm MPI guidance, here's how to structure your Slurm submission to avoid mpi4py hangs:
+<div class="answer-box">Based on the FASRC documentation and Slurm MPI guidance, here&#x27;s how to structure your Slurm submission to avoid mpi4py hangs:
 
 ## The Problem
 
-When one MPI rank finishes early and exits while others are still running, the remaining ranks may hang waiting for communication (e.g., a collective operation or implicit barrier). Slurm's default behavior can compound this by not properly cleaning up the job step.
+When one MPI rank finishes early and exits while others are still running, the remaining ranks may hang waiting for communication (e.g., a collective operation or implicit barrier). Slurm&#x27;s default behavior can compound this by not properly cleaning up the job step.
 
 ## Recommended Structure
 
@@ -1477,7 +1477,7 @@ If your code uses collective operations (e.g., `comm.Allreduce`, `comm.Bcast`), 
 - Avoid collective calls from ranks that might exit early.
 - Consider `--kill-on-bad-exit` for robust cleanup.
 
-If you're still experiencing hangs, check whether any rank is stuck on a non-blocking operation or a blocking collective. Adding `MPI.Barrier()` calls before `Finalize()` can help diagnose which rank is stuck.</div>
+If you&#x27;re still experiencing hangs, check whether any rank is stuck on a non-blocking operation or a blocking collective. Adding `MPI.Barrier()` calls before `Finalize()` can help diagnose which rank is stuck.</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
