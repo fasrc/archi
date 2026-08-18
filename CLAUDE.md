@@ -17,8 +17,12 @@
 - **Release mechanics:** CalVer tag `v2026.MM.N` — all milestone items closed
   (issues **and** gating PRs merged) → `bash scripts/gate.sh` green on the current
   `dev` tip → PR `dev`→`main` → dispatch `test-and-build-tag.yml` with the tag →
-  **create the GitHub Release from the tag** (the workflow only tags and builds
-  images; it does not create the Release), notes from the milestone's closed items.
+  **create the GitHub Release from the tag** (the workflow does **not** create the
+  Release; besides building images and tagging, it can push commits directly to the
+  dispatched ref — Dockerfile base-image updates after the smoke test, and a
+  `pyproject.toml`/`docs/mkdocs.yml` version bump if the release PR missed it — so
+  the tag may sit ahead of the release-PR merge commit, and `main`'s branch
+  protection must permit those bot pushes), notes from the milestone's closed items.
   Bump `pyproject.toml` to the PEP 440 form (e.g. `2026.8.0`) in the release PR.
   Upstream's unmerged commits: cherry-pick only, no sync release.
 

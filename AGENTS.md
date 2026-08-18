@@ -1,6 +1,19 @@
 
 # Repository Guidelines
 
+## Release Plan (pinned)
+All work is evaluated against `docs/docs/proposals/release-plan-2026.md` (adopted
+2026-08-18, PR #281). The canonical policy text is `CLAUDE.md` § "Release plan
+(pinned)"; the load-bearing rules for any agent are:
+- **Check the issue's milestone first.** The CalVer milestones
+  (`v2026.08.0`–`v2026.11.0`) hold the only gating issues; milestone order is the
+  work order.
+- **`parked` label = deliberately unscheduled.** Never schedule, re-triage, or
+  re-prioritize a parked issue; only a human moves an issue out of parked.
+- **New work enters a milestone only if that release's feature is
+  broken/wrong/dishonest without it**, evidenced by a file:line, a measured number,
+  or a repro. Anything end-user-visible in chat outranks track membership.
+
 ## Project Structure & Module Organization
 - `src/` holds core (`src/archi`), CLI (`src/cli`), ingestion (`src/data_manager`), interfaces (`src/interfaces`), and utilities (`src/utils`).
 - `tests/` includes `smoke/` and `pr_preview_config/`.
