@@ -205,14 +205,22 @@ class ConfigurationManager:
                     f"Missing required field: '{path}' in the configuration"
                 )
 
+        # A missing agents_dir used to pass here and fail later in
+        # TemplateManager._stage_agents(), which runs after the deployment
+        # directory has been created — and so, under --force, after the existing
+        # deployment was torn down. Refuse it during validation instead, where
+        # nothing has been destroyed yet (fasrc/archi#287). Both this check and
+        # _stage_agents() resolve the path the same way in the same process, so
+        # this cannot reject a directory staging would have accepted.
         agents_dir = Path(str(chat_cfg.get("agents_dir"))).expanduser()
-        if agents_dir.exists():
-            if not agents_dir.is_dir():
-                raise ValueError(f"agents_dir must be a directory: '{agents_dir}'")
-            if not list(agents_dir.glob("*.md")):
-                raise ValueError(
-                    f"agents_dir must contain at least one .md file: '{agents_dir}'"
-                )
+        if not agents_dir.exists():
+            raise ValueError(f"agents_dir not found: '{agents_dir}'")
+        if not agents_dir.is_dir():
+            raise ValueError(f"agents_dir must be a directory: '{agents_dir}'")
+        if not list(agents_dir.glob("*.md")):
+            raise ValueError(
+                f"agents_dir must contain at least one .md file: '{agents_dir}'"
+            )
 
         # Guard against self-contradictory provider config:
         # default_provider cannot be explicitly disabled in providers.<name>.enabled.

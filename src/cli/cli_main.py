@@ -37,6 +37,13 @@ env = Environment(
 )
 ARCHI_DIR = os.environ.get("ARCHI_DIR", os.path.join(os.path.expanduser("~"), ".archi"))
 
+# Both places that can fail for want of secrets point at the flag, rather than at
+# archi's packaged placeholder file, which is not something an operator chose.
+_ENV_FILE_HINT = (
+    "No --env-file was given, so archi fell back to its packaged placeholder "
+    "secrets. Re-run with --env-file <path> supplying the secrets it needs."
+)
+
 
 @click.group()
 def cli():
@@ -172,7 +179,17 @@ def create(
 
         # Initialize managers
         config_manager = ConfigurationManager(config_files, env)
-        secrets_manager = SecretsManager(env_file, config_manager)
+        try:
+            secrets_manager = SecretsManager(env_file, config_manager)
+        except FileNotFoundError as env_error:
+            if not env_file:
+                # The fallback is the relative path
+                # src/cli/managers/secrets_dummy.env, which is not shipped as
+                # package data, so an installed archi run from anywhere but the
+                # repo root cannot find it and fails here — before the
+                # validate_secrets() handler below ever sees it.
+                raise click.ClickException(f"{env_error}\n{_ENV_FILE_HINT}")
+            raise
 
         # Resolve enabled sources from config (no CLI source overrides).
         # Keep links enabled by default.
@@ -208,12 +225,7 @@ def create(
                 # Without --env-file the manager fell back to the packaged
                 # placeholder file, so its "add these to your .env file" advice
                 # points inside archi's own package. Name the flag instead.
-                raise click.ClickException(
-                    f"{secrets_error}\n"
-                    "No --env-file was given, so only the packaged placeholder "
-                    "secrets were available. Re-run with --env-file <path> "
-                    "supplying the secrets listed above."
-                )
+                raise click.ClickException(f"{secrets_error}\n{_ENV_FILE_HINT}")
             raise
         logger.info(
             f"Required secrets validated: {', '.join(sorted(required_secrets))}"

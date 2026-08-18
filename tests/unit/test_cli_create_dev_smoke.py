@@ -924,3 +924,162 @@ def test_force_create_with_missing_secret_fails_under_verbose_logging(
         f"--verbosity 4 was passed. exit_code={result.exit_code}\n"
         f"output:\n{result.output}\n"
     )
+
+
+def _config_with_agents_dir(tmp_path, agents_dir):
+    """Copy the example config with services.chat_app.agents_dir overridden."""
+    import yaml
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    data["services"]["chat_app"]["agents_dir"] = str(agents_dir)
+    out = tmp_path / "config-agents-dir.yaml"
+    out.write_text(yaml.safe_dump(data))
+    return out
+
+
+@pytest.mark.usefixtures("fake_repo_root")
+def test_force_create_with_missing_agents_dir_keeps_existing_deployment(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """A nonexistent agents_dir is knowable up front, so it must refuse before teardown.
+
+    _validate_chat_app_config() only checks agents_dir contents inside
+    `if agents_dir.exists()`, so a path that does not exist passes validation
+    entirely and TemplateManager._stage_agents() raises much later -- after
+    base_dir.mkdir(), and so after the forced teardown. That is the same
+    ordering defect this change exists to close, reached by a different route.
+    """
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    config = _config_with_agents_dir(tmp_path, tmp_path / "no-such-agents-dir")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(config),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before the agents_dir was checked, "
+        f"so a knowable input error still cost the operator their deployment. "
+        f"output:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed for a missing agents_dir. "
+        f"output:\n{result.output}\n"
+    )
+    assert result.exit_code != 0, (
+        f"a nonexistent agents_dir should fail. exit_code={result.exit_code}\n"
+        f"output:\n{result.output}\n"
+    )
+    assert (
+        "agents_dir" in result.output
+    ), f"the error should name agents_dir. output:\n{result.output}\n"
+
+
+def test_create_without_env_file_names_the_flag_when_the_fallback_is_missing(
+    archi_home, monkeypatch
+):
+    """The --env-file hint must survive the constructor, not only validate_secrets.
+
+    SecretsManager resolves its fallback as the RELATIVE path
+    src/cli/managers/secrets_dummy.env, and that file is not shipped as package
+    data, so an installed archi run outside the repo raises FileNotFoundError in
+    the constructor -- before validate_secrets() is ever reached. Running from a
+    directory where the relative path does not resolve reproduces exactly that.
+    """
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            cli_main.create,
+            [
+                "-n",
+                "smoke",
+                "-c",
+                str(EXAMPLE_CONFIG),
+                "--services",
+                "chatbot",
+                "--hostmode",
+            ],
+        )
+
+    assert result.exit_code != 0, (
+        f"create without a resolvable env file should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert "--env-file" in result.output, (
+        f"the error should name --env-file rather than only reporting a missing "
+        f"file path the operator never chose. output:\n{result.output}\n"
+    )
+
+
+def test_explicit_missing_env_file_is_reported_verbatim(
+    archi_home, monkeypatch, tmp_path
+):
+    """An --env-file the operator chose must not be masked by the fallback hint.
+
+    The hint exists for the case where archi silently fell back to its packaged
+    placeholder. When the operator named a path themselves, the original error
+    is what they need to see, so that branch re-raises unchanged.
+    """
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    missing_env = tmp_path / "not-here.env"
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "-n",
+            "smoke",
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "-e",
+            str(missing_env),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"a nonexistent --env-file should fail. exit_code={result.exit_code}\n"
+        f"output:\n{result.output}\n"
+    )
+    assert "not-here.env" in result.output, (
+        f"the error should name the path the operator gave. "
+        f"output:\n{result.output}\n"
+    )
+    assert "No --env-file was given" not in result.output, (
+        f"the fallback hint must not appear when --env-file was supplied. "
+        f"output:\n{result.output}\n"
+    )
