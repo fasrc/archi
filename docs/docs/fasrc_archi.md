@@ -472,8 +472,9 @@ Two settings look mandatory here; only the first actually is.
 > withdraws the deployment-wide `context_editing.context_window` precedence, and
 > when no window resolves **nothing is installed**
 > (`context_middleware.py:391-399`). So a long overridden conversation can submit
-> an oversized prompt that vLLM then rejects. Tracked as #262; until that lands,
-> keep 3.8 conversations short or drive the endpoint directly.
+> an oversized prompt that vLLM then rejects. Tracked as
+> [#262](https://github.com/fasrc/archi/issues/262); until that lands, keep 3.8
+> conversations short or drive the endpoint directly.
 
 > **Never put a real OpenAI key in this env file** while this slot points at a
 > local endpoint: whatever `OPENAI_API_KEY` holds is exactly what
@@ -595,12 +596,15 @@ Two layers:
 > `PG_PASSWORD=donuts`. The `grafana` service requires `GRAFANA_PG_PASSWORD`
 > (`src/cli/service_registry.py:114`), so validation fails — *after* the running
 > stack has already been stopped and removed. `OPENAI_API_KEY` would not have
-> reached the deployment either. Note that archi's `restart` path already refuses
-> this combination explicitly (`cli_main.py:528-532`); `create` does not. That
-> asymmetry — and the teardown-before-validation ordering above — is tracked as
-> **#287**; once it lands, `--env-file` is still required here (grafana needs
-> `GRAFANA_PG_PASSWORD` regardless), but a missing one will no longer cost you the
-> running deployment.
+> reached the deployment either. Note that archi's `restart` path refuses this
+> combination only when it re-renders config: the guard at `cli_main.py:528-532`
+> sits inside the `if config_files or config_dir:` block that opens at
+> `cli_main.py:473`, so `archi restart --config` / `--config-dir` raises, while a
+> plain `archi restart` skips that block entirely and `create` has no such guard
+> at all. That asymmetry — and the teardown-before-validation ordering above — is
+> tracked as **[#287](https://github.com/fasrc/archi/issues/287)**; once it lands,
+> `--env-file` is still required here (grafana needs `GRAFANA_PG_PASSWORD`
+> regardless), but a missing one will no longer cost you the running deployment.
 - **Authoritative running config (what archi reads):** Postgres
   `static_config.services_config` (db `archi-db`, container
   `postgres-archi-openai-compat`), seeded from `dev.yaml` at `archi create`.
@@ -664,7 +668,7 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 > would not have restored them, because they had never been committed.
 >
 > **Closing this takes two steps, and committing the files is only the first**
-> (both are tracked as **#286**):
+> (both are tracked as **[#286](https://github.com/fasrc/archi/issues/286)**):
 >
 > 1. Add the launchers, both units, the compat shim and `vllm_patches/` to
 >    `fasrc/archi-config`.
@@ -683,5 +687,5 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 >    never move an existing one, as `git fetch --tags` refuses to clobber a moved
 >    tag.)
 >
-> Until #286 lands, this page plus `vllm_patches/README.md` are the interim record
-> and must be kept in sync by hand.
+> Until [#286](https://github.com/fasrc/archi/issues/286) lands, this page plus
+> `vllm_patches/README.md` are the interim record and must be kept in sync by hand.
