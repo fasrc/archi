@@ -588,6 +588,21 @@ identifies the image. Their config digest is reconstructed from the recorded
 configuration *file*, which is real but, per the bench-8192 case above, is not
 necessarily what ran; the field says so.
 
+!!! warning "A backfilled digest is not a comparability verdict"
+    This is checkable in the repository rather than abstract. All four artifacts
+    from 2026-08-17 — `bench-8192-20260817_170850.json` and the three `ragas-205`
+    runs from that morning — carry the **same** `config_version.digest`
+    (`sha256:8fb13f7f14ae…`), because all four recorded the same configuration
+    file. Comparing digests alone would conclude they were one arm. They were not:
+    the first was the 8192 arm, as its own filename says and its recorded
+    configuration denies.
+
+    So when `divergence_from_selected_file` is `null`, an equal digest means *these
+    artifacts recorded the same file* — never *these runs used the same settings*.
+    Only a run stamped by the current code, where that field is a real list, can
+    support the stronger claim. Backfilled artifacts are evidence of what was
+    written down, not of what happened.
+
 ---
 
 ## 6. Known gaps — NOT YET IMPLEMENTED
