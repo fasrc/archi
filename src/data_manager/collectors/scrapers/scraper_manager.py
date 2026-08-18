@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from src.data_manager.collectors.persistence import PersistenceService
 from src.data_manager.collectors.scrapers.scrape_pool import (
@@ -13,6 +13,10 @@ from src.data_manager.collectors.scrapers.scrape_pool import (
 )
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 from src.data_manager.collectors.scrapers.scraper import LinkScraper
+from src.data_manager.collectors.scrapers.sitemap_source import (
+    SitemapExpansionError,
+    normalize_page_url,
+)
 from src.utils.config_access import get_global_config
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
@@ -48,6 +52,14 @@ def _parse_worker_knob(value: Any, name: str, default: int) -> int:
             )
             resolved = default
     return max(1, resolved)
+
+
+def _dedup_key(u: str) -> str:
+    """Normalize a URL for deduplication; fall back to the raw string on ValueError."""
+    try:
+        return normalize_page_url(u)
+    except ValueError:
+        return u
 
 
 if TYPE_CHECKING:
@@ -187,16 +199,6 @@ class ScraperManager:
         # propagates out and fails the ingest rather than shipping a bad corpus.
         self._sitemap_lastmod_map: Dict[str, str] = {}
         if sitemap_urls:
-            from src.data_manager.collectors.scrapers.sitemap_source import (
-                normalize_page_url,
-            )
-
-            def _dedup_key(u: str) -> str:
-                try:
-                    return normalize_page_url(u)
-                except ValueError:
-                    return u
-
             # Dedup expanded pages against the NORMALIZED hand-list keys, not the
             # raw strings, so a hand-listed `/x/` and a sitemap-derived `/x` are the
             # same page. LinkScraper does not dedup across seeds, so without this a
@@ -204,20 +206,9 @@ class ScraperManager:
             # hand-list -> sitemap migration window. Expanded URLs are already
             # normalized, so they compare directly against these keys.
             existing_keys = {_dedup_key(u) for u in link_urls}
-            sitemap_pairs = self._expand_sitemaps(sitemap_urls)
-            # Populated INSIDE the dedup loop, for the URLs actually appended —
-            # not from every expanded pair. A page that is both hand-listed and
-            # in a sitemap belongs to the hand-list: its URL is deliberately not
-            # appended, and the spec says a hand-listed source's `last_modified`
-            # is NULL. Building the map first would still hand that page a
-            # timestamp, because `_handle_standard_url` looks the map up by the
-            # resource's NORMALIZED url — which is exactly what collided.
-            for url, lastmod in sitemap_pairs:
-                if url not in existing_keys:
-                    existing_keys.add(url)
-                    link_urls.append(url)
-                    if lastmod is not None:
-                        self._sitemap_lastmod_map[url] = lastmod
+            link_urls.extend(
+                self._refresh_sitemap_lastmod_map(sitemap_urls, existing_keys)
+            )
 
         self.collect_links(persistence, link_urls=link_urls)
         self.collect_sso(persistence, sso_urls=sso_urls)
@@ -310,6 +301,53 @@ class ScraperManager:
         logger.info(
             "Scheduled links collection found %d URL(s) in catalog", len(catalog_urls)
         )
+        link_urls, _, _, _, _, sitemap_urls = self._collect_urls_from_lists_by_type(
+            self.input_lists
+        )
+        if sitemap_urls:
+            existing_keys = {_dedup_key(u) for u in link_urls}
+            try:
+                self._refresh_sitemap_lastmod_map(sitemap_urls, existing_keys)
+            except SitemapExpansionError as exc:
+                # Degrading past this error is only safe with a map already in hand.
+                # service_data_manager keeps running after its asynchronous initial
+                # ingest reports an error, so this pass can arrive with no map at all
+                # while the catalog still holds rows from an earlier process. Crawling
+                # then stamps nothing, and the upsert's unconditional
+                # `last_modified = EXCLUDED.last_modified` writes NULL over every one
+                # of those rows. Skipping one scheduled refresh is recoverable; losing
+                # the timestamps is not.
+                #
+                # Keyed on whether a refresh ever SUCCEEDED, not on whether the map
+                # has entries. A sitemap whose pages all omit the optional <lastmod>
+                # publishes {} from a completely successful expansion, and treating
+                # that as "no map yet" would skip the whole crawl over nothing.
+                if not getattr(self, "_sitemap_map_valid", False):
+                    logger.error(
+                        "sitemap expansion failed with no previous lastmod map (%s); "
+                        "skipping this scheduled crawl rather than overwriting stored "
+                        "last_modified values with NULL",
+                        exc,
+                    )
+                    return
+                logger.warning(str(exc))
+        elif getattr(self, "_input_lists_complete", True):
+            # Every sitemap source has been removed or reclassified. Wholesale
+            # replacement is the semantics used when an individual page disappears,
+            # so a source disappearing must clear the map too — otherwise the crawl
+            # keeps stamping pages from a sitemap that is no longer configured.
+            #
+            # Guarded on a COMPLETE read: a configured list that was missing this
+            # cycle also yields zero sitemap sources, and clearing on that would turn
+            # a transient IO failure into NULL for every stored last_modified.
+            self._sitemap_lastmod_map = {}
+            self._sitemap_map_valid = True
+        else:
+            logger.warning(
+                "no sitemap sources found, but at least one configured input list "
+                "could not be read; retaining the previous lastmod map rather than "
+                "treating an unreadable list as an intentional removal"
+            )
         self.collect_links(persistence, link_urls=catalog_urls)
 
     def schedule_collect_git(
@@ -518,15 +556,24 @@ class ScraperManager:
             }
 
     def _collect_urls_from_lists(self, input_lists) -> List[str]:
-        """Collect URLs from the configured weblists."""
+        """Collect URLs from the configured weblists.
+
+        Also records whether EVERY configured list was actually readable, in
+        ``_input_lists_complete``. Callers need that to tell "the configuration no
+        longer lists any sitemap source" from "the file that listed them was missing
+        this cycle" — the two are otherwise identical (an empty result), and acting
+        on the second as if it were the first discards live state.
+        """
         # Handle case where input_lists might be None
         urls: List[str] = []
+        self._input_lists_complete = True
         if not input_lists:
             return urls
         for list_name in input_lists:
             list_path = Path("weblists") / Path(list_name).name
             if not list_path.exists():
                 logger.warning(f"Input list {list_path} not found.")
+                self._input_lists_complete = False
                 continue
 
             urls.extend(self._extract_urls_from_file(list_path))
@@ -608,7 +655,87 @@ class ScraperManager:
             sitemap_source.fetch_sitemap_text,
             verify=self.config.get("verify_urls", False),
         )
-        return list(sitemap_source.expand_sitemaps(sitemap_urls, fetch, policy))
+        # Record per-document failures so the caller can tell a COMPLETE expansion
+        # from one that merely did not raise. Expansion fails open per document, so
+        # without this a failed child of a <sitemapindex> is indistinguishable from
+        # a sitemap that genuinely lists fewer pages — and republishing the map from
+        # that truncated result silently drops the failed child's timestamps.
+        failures: List[Tuple[str, Exception]] = []
+        pairs = list(
+            sitemap_source.expand_sitemaps(
+                sitemap_urls,
+                fetch,
+                policy,
+                lambda url, exc: failures.append((url, exc)),
+            )
+        )
+        self._sitemap_expansion_failures = failures
+        self._sitemap_expansion_incomplete = bool(failures)
+        return pairs
+
+    def _refresh_sitemap_lastmod_map(
+        self, sitemap_urls: List[str], existing_keys: Set[str]
+    ) -> List[str]:
+        """Expand sitemaps, rebuild ``_sitemap_lastmod_map``, return new page URLs.
+
+        Walks the expanded pairs in order, skipping URLs already in
+        ``existing_keys`` (mutating that set as it goes so the caller's dedup
+        state stays correct).  Builds the map into a local dict and publishes it
+        only when the expansion was COMPLETE.
+
+        Completeness is not the same as "did not raise". ``SitemapExpansionError``
+        covers only source-level bounds (over cap, below floor); a per-document
+        fetch/parse failure fails open, contributing zero pairs with a WARNING
+        (``sitemap_source._fetch_and_parse``). So a ``<sitemapindex>`` whose child
+        fails while its siblings still clear ``min_pages`` yields a TRUNCATED list
+        and no exception. Publishing that would discard every timestamp belonging
+        to the failed child, and the catalog crawl would then conflict-upsert NULL
+        over those rows. When the expansion was incomplete and a usable map already
+        exists, the previous map is retained instead (design D3, now actually
+        enforced rather than merely asserted).
+
+        Replacement stays wholesale whenever the expansion WAS complete, so a page
+        genuinely removed from the sitemap still drops out.
+
+        ``SitemapExpansionError`` always propagates; the caller decides whether
+        to catch it (design D1).
+        """
+        sitemap_pairs = self._expand_sitemaps(sitemap_urls)
+        new_map: Dict[str, str] = {}
+        new_urls: List[str] = []
+        for url, lastmod in sitemap_pairs:
+            if url not in existing_keys:
+                existing_keys.add(url)
+                new_urls.append(url)
+                if lastmod is not None:
+                    new_map[url] = lastmod
+        incomplete = getattr(self, "_sitemap_expansion_incomplete", False)
+        # Keyed on PROVENANCE (did a complete refresh ever publish?), never on the
+        # map's contents. A fully successful expansion publishes {} when every page
+        # omits the optional <lastmod>, so `if previous:` would read a valid empty
+        # map as "nothing to retain" — the same conflation the degrade path above
+        # already had to unlearn.
+        if incomplete and getattr(self, "_sitemap_map_valid", False):
+            previous = getattr(self, "_sitemap_lastmod_map", {})
+            logger.warning(
+                "sitemap expansion was incomplete (%d document(s) failed to fetch or "
+                "parse); retaining the previous lastmod map of %d entry(ies) rather "
+                "than publishing a truncated one of %d",
+                len(getattr(self, "_sitemap_expansion_failures", ()) or ()),
+                len(previous),
+                len(new_map),
+            )
+            return new_urls
+        self._sitemap_lastmod_map = new_map
+        if not incomplete:
+            # Latched only on a COMPLETE publish, empty map included: a page
+            # legitimately lacking <lastmod> is a success, but a child sitemap that
+            # failed to fetch is not. Latching on a truncated expansion would tell
+            # the scheduled degrade path it has a usable map when it does not, and
+            # the catalog crawl would then conflict-upsert NULL over every row the
+            # failed child owned — precisely the loss that guard exists to prevent.
+            self._sitemap_map_valid = True
+        return new_urls
 
     @staticmethod
     def _is_elog_url(url: str) -> bool:
@@ -685,10 +812,6 @@ class ScraperManager:
         # Parallel seed crawls pass their own per-worker scraper; the sequential
         # and selenium/SSO callers fall back to the shared ``self.web_scraper``.
         scraper = scraper if scraper is not None else self.web_scraper
-
-        from src.data_manager.collectors.scrapers.sitemap_source import (
-            normalize_page_url,
-        )
 
         lastmod_map: Dict[str, str] = getattr(self, "_sitemap_lastmod_map", {})
         count = 0
