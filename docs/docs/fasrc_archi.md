@@ -363,9 +363,16 @@ leaving every DeltaNet gate on uninitialized memory. Fix: also read GPTQ's
 **Verify after any change to this file:**
 
 ```bash
-# Scope to the CURRENT invocation. A bare `journalctl -u vllm-qwen38` replays
-# retained history, so the 96 warnings from the bad launch keep matching after
-# the patch is fixed -- the check would then report failure permanently.
+# RESTART FIRST. qwen3_5.py is bind-mounted and imported once at process start,
+# so a still-running server is executing the OLD file -- capturing its invocation
+# id would validate the edit without ever exercising it.
+sudo systemctl restart vllm-qwen38
+# Wait for readiness; a 27B load takes minutes, and an empty log is not a pass.
+until curl -sf http://localhost:8002/v1/models >/dev/null; do sleep 5; done
+
+# Only now does this name the invocation that loaded the edited file. Scoping
+# matters because a bare `journalctl -u vllm-qwen38` replays retained history,
+# so the 96 warnings from the bad launch would keep matching forever.
 INV=$(systemctl show -p InvocationID --value vllm-qwen38)
 
 # must print 0 -- anything else means weights are being silently dropped
@@ -405,30 +412,38 @@ openai:
   default_model: "palmfuture/Qwen3.8-27B-GPTQ-Int4"
   models: ["palmfuture/Qwen3.8-27B-GPTQ-Int4"]
   extra_kwargs:
-    api_key: "sk-noauth"          # see below
     extra_body:
       chat_template_kwargs:
         enable_thinking: false    # 3.8 emits <think> tags
 ```
 
-Two non-obvious requirements:
+Two settings look mandatory here; only the first actually is.
 
-1. **A placeholder `api_key` in `extra_kwargs`.** A bare vLLM needs no auth, but
-   the OpenAI SDK refuses to construct a client with no key at all. There is no
-   `api_key` field in the provider YAML schema; `extra_kwargs` is spread into
-   `ChatOpenAI(**kwargs)`, so the placeholder lands correctly.
-2. **`OPENAI_API_KEY=sk-noauth` in the secrets env too.** Without it
-   `is_configured()` is `False` (`providers/base.py:127` — only `local` is exempt
-   from needing a key), so `/api/providers` reports `enabled: false` and the UI
-   **hides the model** (`static/chat.js:1572`). The endpoint still works via
-   direct API call, which makes this easy to misdiagnose.
+1. **`OPENAI_API_KEY=sk-noauth` in the secrets env — required.** Without it
+   `is_configured()` is `False` (`providers/base.py:122-127` — only `local` is
+   exempt from needing a key), so `/api/providers` reports `enabled: false` and
+   the UI **hides the model** (`static/chat.js:1572`). The endpoint still works
+   via direct API call, which makes this easy to misdiagnose. The same value is
+   what reaches the client: passing a custom provider config does not disable
+   environment lookup — `_ensure_provider_config_api_key_env()` backfills
+   `api_key_env` to `OPENAI_API_KEY` (`providers/__init__.py:48-61`),
+   `BaseProvider._load_api_key()` reads it (`providers/base.py:92-97`), and
+   `OpenAIProvider.get_chat_model()` passes it to `ChatOpenAI`
+   (`openai_provider.py:144-145`).
+2. **A placeholder `api_key` in `extra_kwargs` — redundant; prefer to omit it.**
+   A bare vLLM needs no auth and the OpenAI SDK refuses to construct a client
+   with no key at all, but the env value above already satisfies that. Setting it
+   here as well buys nothing and persists an authentication-shaped value verbatim
+   into Postgres `static_config`.
 
 > **Never put a real OpenAI key in this env file** while this slot points at a
-> local endpoint: `openai_provider.py:144` lets the env value override the
-> placeholder, so it would be transmitted to `localhost:8002`. This provider slot
-> and genuine OpenAI usage are mutually exclusive on this deployment. Note also
-> that `extra_kwargs` is persisted verbatim into Postgres `static_config`, so a
-> real credential must never live there.
+> local endpoint: whatever `OPENAI_API_KEY` holds is exactly what
+> `OpenAIProvider.get_chat_model()` hands to `ChatOpenAI`
+> (`openai_provider.py:144-145`), so a real key would be transmitted to
+> `localhost:8002`. This provider slot and genuine OpenAI usage are mutually
+> exclusive on this deployment. And because `extra_kwargs` is persisted verbatim
+> into Postgres `static_config`, a real credential must never be placed there
+> either — which is the second reason to leave `api_key` out of it.
 
 ### The override is streaming-only
 
@@ -612,9 +627,15 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 > 2. Give *this* deployment a provisioning step that pins them. Bumping
 >    `CONFIG_REF`/`CONFIG_SHA` in `deploy/fasrc-dev/scripts/lib.sh` governs the
 >    `dev` deployment only and does nothing here. Either wrap `g.sh` so it sources
->    `ensure_config` before `archi create`, or record an explicit
->    `git -C config/ fetch --tags && git -C config/ checkout <tag>` step in this
->    deployment's procedure. (When creating the tag: make a *new* annotated tag —
+>    `ensure_config` before `archi create`, or record an explicit checkout step in
+>    this deployment's procedure that **verifies the commit, not just the tag
+>    name**: `git -C config/ fetch --tags`, then
+>    `resolved=$(git -C config/ rev-parse "<tag>^{commit}")`, compare `$resolved`
+>    against the recorded SHA and abort on mismatch, and only then
+>    `git -C config/ checkout "$resolved"`. A bare `checkout <tag>` accepts
+>    whatever commit the remote tag currently names — that is not the SHA-verified
+>    pin `ensure_config` implements (`lib.sh:121-139`), which rejects a re-pointed
+>    remote tag outright. (When creating the tag: make a *new* annotated tag —
 >    never move an existing one, as `git fetch --tags` refuses to clobber a moved
 >    tag.)
 >
