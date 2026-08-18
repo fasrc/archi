@@ -14,9 +14,12 @@
   release's feature is broken/wrong/dishonest without it, evidenced by a file:line,
   measured number, or repro. Anything end-user-visible in chat outranks track
   membership and rides the earliest feasible release.
-- **Release mechanics:** CalVer tag `v2026.MM.N` — milestone issues closed → PR
-  `dev`→`main` → dispatch `test-and-build-tag.yml` with the tag; bump
-  `pyproject.toml` to the PEP 440 form (e.g. `2026.8.0`) in the release PR.
+- **Release mechanics:** CalVer tag `v2026.MM.N` — all milestone items closed
+  (issues **and** gating PRs merged) → `bash scripts/gate.sh` green on the current
+  `dev` tip → PR `dev`→`main` → dispatch `test-and-build-tag.yml` with the tag →
+  **create the GitHub Release from the tag** (the workflow only tags and builds
+  images; it does not create the Release), notes from the milestone's closed items.
+  Bump `pyproject.toml` to the PEP 440 form (e.g. `2026.8.0`) in the release PR.
   Upstream's unmerged commits: cherry-pick only, no sync release.
 
 ## Development Workflow
