@@ -81,7 +81,9 @@ def _validate(agents_dir: Path):
         }
     }
     mgr = object.__new__(ConfigurationManager)
-    mgr._validate_chat_app_config(cfg, ["chatbot"])
+    # agents_dir validation lives in _validate_agent_specs_config, which keys on
+    # "does any enabled service consume agent specs" rather than on chatbot.
+    mgr._validate_agent_specs_config(cfg, ["chatbot"])
 
 
 def test_validation_rejects_a_directory_named_like_a_markdown_file(tmp_path):
@@ -227,3 +229,64 @@ def test_input_list_directory_is_skipped_rather_than_crashing(tmp_path):
         f"the directory should be skipped and the real list still staged, "
         f"got {staged}"
     )
+
+
+def _validate_agents_for(services, agents_dir=None, extra=None):
+    """Run the agent-input validation for a given set of enabled services."""
+    chat_cfg = dict(extra or {})
+    if agents_dir is not None:
+        chat_cfg["agents_dir"] = str(agents_dir)
+    cfg = {"services": {"chat_app": chat_cfg}}
+    mgr = object.__new__(ConfigurationManager)
+    mgr._validate_agent_specs_config(cfg, services)
+
+
+def test_agent_inputs_are_validated_for_integrations_without_a_chatbot(tmp_path):
+    """Validation must follow the same predicate as staging, or they disagree.
+
+    Round 3 widened *staging* to any agent-spec consumer but left *validation*
+    keyed on chatbot, so a redmine-mailer deployment with a bad agents_dir
+    passed validation and then failed in staging -- after the teardown. That is
+    the same two-predicates-that-must-agree defect this change keeps hitting.
+    """
+    missing = tmp_path / "no-such-dir"
+
+    with pytest.raises(ValueError, match="agents_dir"):
+        _validate_agents_for(["redmine-mailer"], agents_dir=missing)
+
+    with pytest.raises(ValueError, match="agents_dir"):
+        _validate_agents_for(["piazza"], agents_dir=missing)
+
+
+def test_agent_inputs_are_not_validated_when_nothing_consumes_them(tmp_path):
+    """A grader-only deployment must not be refused for chat-app config."""
+    _validate_agents_for(["grader"], agents_dir=tmp_path / "no-such-dir")
+    _validate_agents_for(["grader"])
+
+
+def test_agent_inputs_require_agents_dir_to_be_present_for_a_consumer():
+    """A consumer with no agents_dir at all is refused up front, not in staging."""
+    with pytest.raises(ValueError, match="agents_dir"):
+        _validate_agents_for(["redmine-mailer"])
+
+
+def test_chat_app_only_fields_are_not_required_for_an_integration(tmp_path):
+    """redmine-mailer needs agent files, not a default_provider or agent_class.
+
+    Widening the agents_dir requirement must not drag the rest of the chat-app
+    schema along with it.
+    """
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "triage.md").write_text("# triage\n")
+
+    _validate_agents_for(["redmine-mailer"], agents_dir=agents)
+
+
+def test_agent_dir_typo_still_gets_its_hint_for_a_consumer():
+    """The 'did you mean agents_dir?' hint moved with the rest of the check."""
+    cfg = {"services": {"chat_app": {"agent_dir": "/somewhere"}}}
+    mgr = object.__new__(ConfigurationManager)
+
+    with pytest.raises(ValueError, match="did you mean 'agent_dir'"):
+        mgr._validate_agent_specs_config(cfg, ["redmine-mailer"])
