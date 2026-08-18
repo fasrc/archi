@@ -275,10 +275,16 @@ embedding pass. That assumption does not hold under the configuration this page
 prescribes: embeddings are pinned to `cpu` (see
 [Embedding device](#embedding-device-why-it-must-be-cpu)) and the chatbot runs a
 CPU image, so nothing else in the archi stack holds memory on GPU 0. Treat 0.80
-as unexplained margin rather than a validated requirement — before relying on it,
-confirm what actually occupies GPU 0 (`nvidia-smi`). If nothing does, the 0.88
-reasoning from the 3.6 section applies here too and the extra headroom is
-recoverable.
+as unexplained margin rather than a validated requirement — but **do not raise it
+on that basis alone.** `nvidia-smi` can establish that no other process holds
+GPU 0; it cannot establish that 3.8 shares 3.6's transient-memory profile, and
+there is no reason to assume it does — 3.6 is a 35B MoE, 3.8 a 27B dense model on
+a patched mixed-precision projection path. The 0.88 figure is a measurement of a
+different checkpoint. Going 0.80 → 0.88 hands vLLM roughly another 2.5 GiB of a
+31.73 GiB card and removes exactly that much from the transient headroom whose
+exhaustion the 3.6 section documents as `CUDA out of memory` → dead `EngineCore`
+→ whole server exits. Keep 0.80 until a long-prefill end-to-end test against 3.8
+itself passes at the higher cap.
 
 ```bash
 bash config/scripts/singularity_vllm_qwen38_volta.sh   # manual (backgrounds)
@@ -367,13 +373,27 @@ leaving every DeltaNet gate on uninitialized memory. Fix: also read GPTQ's
 # so a still-running server is executing the OLD file -- capturing its invocation
 # id would validate the edit without ever exercising it.
 sudo systemctl restart vllm-qwen38
-# Wait for readiness; a 27B load takes minutes, and an empty log is not a pass.
-until curl -sf http://localhost:8002/v1/models >/dev/null; do sleep 5; done
+
+# Wait for readiness -- BOUNDED, and watching for the failure this procedure
+# exists to catch. A bad patch means the unit never becomes ready, so an
+# unbounded wait hangs instead of showing you why. A 27B load takes minutes.
+for _ in $(seq 1 120); do                      # 120 x 5s = 10 min ceiling
+  curl -sf http://localhost:8002/v1/models >/dev/null && break
+  systemctl is-failed --quiet vllm-qwen38 && break
+  sleep 5
+done
 
 # Only now does this name the invocation that loaded the edited file. Scoping
 # matters because a bare `journalctl -u vllm-qwen38` replays retained history,
 # so the 96 warnings from the bad launch would keep matching forever.
 INV=$(systemctl show -p InvocationID --value vllm-qwen38)
+
+# Never came up? This invocation's log IS the diagnosis -- a load-time crash
+# appears here as the Fix 1 AttributeError. Print it and stop.
+if ! curl -sf http://localhost:8002/v1/models >/dev/null; then
+  sudo journalctl _SYSTEMD_INVOCATION_ID="$INV" --no-pager | tail -50
+  echo "vllm-qwen38 did not become ready -- see the log above" >&2
+fi
 
 # must print 0 -- anything else means weights are being silently dropped
 sudo journalctl _SYSTEMD_INVOCATION_ID="$INV" | grep -c "not found in params_dict"
@@ -422,8 +442,14 @@ Two settings look mandatory here; only the first actually is.
 1. **`OPENAI_API_KEY=sk-noauth` in the secrets env — required.** Without it
    `is_configured()` is `False` (`providers/base.py:122-127` — only `local` is
    exempt from needing a key), so `/api/providers` reports `enabled: false` and
-   the UI **hides the model** (`static/chat.js:1572`). The endpoint still works
-   via direct API call, which makes this easy to misdiagnose. The same value is
+   the UI **hides the model** (`static/chat.js:1572`). What still works is a
+   **direct call to vLLM on `:8002`** — which is exactly what makes this easy to
+   misdiagnose, because an archi request does *not*. The streaming route takes an
+   override key only from the session (`app.py:4934-4937`), so with no session key
+   `_create_provider_llm()` builds `ChatOpenAI` without one, the SDK refuses, and
+   the request quietly falls back to the default model. Probing through archi will
+   not reveal the misconfiguration; probing `:8002` directly will not reveal it
+   either, for the opposite reason. The same value is
    what reaches the client: passing a custom provider config does not disable
    environment lookup — `_ensure_provider_config_api_key_env()` backfills
    `api_key_env` to `OPENAI_API_KEY` (`providers/__init__.py:48-61`),
@@ -435,6 +461,19 @@ Two settings look mandatory here; only the first actually is.
    with no key at all, but the env value above already satisfies that. Setting it
    here as well buys nothing and persists an authentication-shaped value verbatim
    into Postgres `static_config`.
+
+> **The 3.8 slot runs without a context bound.** vLLM is launched
+> `--max-model-len 32768`, but a request-local override installs no matching
+> protection. A model named in the deployment's `models:` list becomes a
+> `ModelInfo` whose `context_window` defaults to a fabricated **128000**, so
+> `resolve_configured_model_window()` deliberately returns `None` rather than
+> trust it — its docstring cites this exact case, a 32768-launched server
+> reporting 128000 (`context_budget.py:375-406`). A request-local view separately
+> withdraws the deployment-wide `context_editing.context_window` precedence, and
+> when no window resolves **nothing is installed**
+> (`context_middleware.py:391-399`). So a long overridden conversation can submit
+> an oversized prompt that vLLM then rejects. Tracked as #262; until that lands,
+> keep 3.8 conversations short or drive the endpoint directly.
 
 > **Never put a real OpenAI key in this env file** while this slot points at a
 > local endpoint: whatever `OPENAI_API_KEY` holds is exactly what
