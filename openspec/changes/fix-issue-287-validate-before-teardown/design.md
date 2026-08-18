@@ -2,9 +2,10 @@
 
 `create()` in `src/cli/cli_main.py` runs, in order: a Docker preflight (`:145-155`), the
 existing-deployment handling (`:164`), manager construction (`:169-170`), source resolution
-(`:172-187`), config validation (`:193`), secret validation (`:196-199`), compose-config
-construction (`:213-220`), the `--dry` early return (`:223-239`), and finally the first
-write to disk — `base_dir.mkdir(parents=True, exist_ok=True)` at `:243`.
+(`:172-187`), config validation (`:193`), secret validation (`:196-199`),
+`set_sources_enabled` (`:210`), compose-plan construction (`:213-220`), the `--dry` early
+return (`:223-239`), and finally the first write to disk — `base_dir.mkdir(parents=True,
+exist_ok=True)` at `:243`.
 
 `handle_existing_deployment()` (`src/cli/utils/helpers.py:299-325`) does two unrelated
 things behind one name:
@@ -20,169 +21,201 @@ if base_dir.exists():
         raise click.ClickException(...already exists... use --force...)   # non-destructive
 ```
 
-The destructive branch is the defect: it executes at `:164`, roughly thirty lines before
+The destructive branch is the defect: it executes at `:164`, roughly fifty lines before
 anything checks whether the replacement can be built.
 
-Two facts were verified rather than assumed, because the whole fix rests on them:
+### Facts established by reading the code
 
-1. **Nothing between the teardown and the first disk write depends on the teardown having
-   happened.** `ConfigurationManager` and `SecretsManager` read the supplied config files
-   and env file, not the deployment directory. `ServiceBuilder.build_compose_config()`
-   receives `base_dir` and only stores it (`src/cli/utils/service_builder.py:55, 68, 181,
-   204`) — it never reads existing deployment files, so it cannot pick up stale state from
-   a not-yet-removed directory.
-2. **`base_dir.mkdir()` at `:243` is the first write.** Everything above it is inspection.
-   So the teardown can move anywhere in that span without changing what a successful run
-   produces.
+These were verified rather than assumed. Two of them corrected an earlier draft of this
+design, and both corrections came from an adversarial review of that draft:
+
+1. **`create()` is not the only caller.** `evaluate()` calls
+   `handle_existing_deployment(base_dir, name, force, False, podman)` at
+   `src/cli/cli_main.py:748-750` and then raises "Benchmarking runtime '{name}' already
+   exists" at `:752-755` if the directory still exists. It therefore *depends on the
+   destructive branch* running at that call site. An earlier draft of this design asserted
+   that `create()` was the only caller; that assertion was wrong, and implementing it would
+   have broken every `archi evaluate --force`.
+
+2. **Compose-plan construction can refuse the deployment.**
+   `ServiceBuilder.build_compose_config()` calls `_discover_repo_path()` when `--dev` is set,
+   which raises `ClickException` if no ancestor directory contains `pyproject.toml`
+   (`src/cli/utils/service_builder.py:10-18, 198-200`). An earlier draft placed the teardown
+   above `build_compose_config` on the grounds that the builder never *reads* `base_dir`
+   (`:55, 68, 181, 204`) and so could not pick up stale state. That is true but irrelevant:
+   the property that matters is not whether a step reads the old deployment, it is whether
+   the step can **fail**. A step that cannot touch the old deployment can still refuse the
+   new one, and refusing after the teardown is precisely the defect being fixed.
+
+3. **`base_dir.mkdir()` at `:243` is the first write.** Everything above it is inspection or
+   in-memory mutation. `set_sources_enabled()` (`src/cli/managers/config_manager.py:398-415`)
+   mutates the in-memory `self.configs` dicts only and writes nothing to disk.
 
 Constraint from `fix-issue-112-dry-run-docker-check`: the Docker preflight is already
 positioned above the teardown on purpose, with a comment saying so (`:140-145`). That
-placement stays. This change is the same reasoning applied to the checks the earlier fix
-did not cover.
+placement stays. This change is the same reasoning applied to the checks the earlier fix did
+not cover.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- No destructive step runs before any validation that could refuse the deployment.
+- No step that can refuse the deployment runs after a destructive step.
 - Fix the ordering class, so a future required secret or a new validation is protected
   without anyone remembering this issue existed.
-- Preserve the `--dry` contract exactly, including the "would remove" notice.
+- Preserve the `--dry` contract, including when the "would remove" notice does and does not
+  appear.
 - Preserve today's error precedence for `create` without `--force`.
+- Leave `evaluate()` behaviourally identical.
 
 **Non-Goals:**
 
-- Making `create` transactional. If teardown succeeds and the subsequent deployment fails,
-  the operator is still left without a running deployment. That is a genuinely harder
-  problem — it needs the old deployment preserved and restorable, not merely a reordering —
-  and it is out of scope. This change narrows the window to failures that occur after
-  validation passes; it does not close it.
+- Making `create` transactional. If teardown succeeds and the subsequent deployment fails —
+  an image pull fails, a port is taken, compose errors — the operator is still left without
+  a running deployment. That needs the old deployment preserved and restorable, not a
+  reordering, and is out of scope. This change narrows the window to failures that occur
+  after everything knowable has been checked; it does not close it. The PR must not describe
+  the result as making `--force` safe.
+- Fixing the same defect in `evaluate()`. It has its own instance: its teardown at `:748`
+  precedes `SecretsManager` construction at `:757`, so a forced evaluate with missing
+  secrets destroys the benchmarking runtime and then fails. That is a real bug, but it is
+  the benchmarking path with its own test surface, and #287 is scoped to `create`. To be
+  filed as a follow-up issue with this evidence rather than folded in silently.
 - Changing what counts as a required secret, or adding validations.
-- Touching `restart()`, `delete()`, or any other subcommand.
+- Reformatting `src/cli/managers/secrets_manager.py` (see Decision 4).
 
 ## Decisions
 
-### Decision 1: Split the function rather than move the call
+### Decision 1: Split the helper, and update both callers explicitly
 
-**Chosen:** separate `handle_existing_deployment()`'s two responsibilities into two
-functions — a non-destructive precondition check that stays at `:164`, and a destructive
-teardown that moves below validation.
+**Chosen:** separate the two responsibilities into two module-level functions in
+`src/cli/utils/helpers.py`:
 
-**Alternative considered — move the whole call below validation.** This is what issue #287
-suggests as approach (a), and it is simpler. It was rejected because it silently changes
-error precedence for a case unrelated to the bug: `archi create` (no `--force`) against an
-existing deployment with a bad config currently reports "deployment already exists", and
-after a wholesale move would report the config error instead. The operator's actual problem
-is that they did not pass `--force`; telling them about a config file they may not have
-intended to deploy is a worse message. Splitting keeps that path byte-identical and confines
-the change to the destructive branch, which is the only branch with the defect.
+- `handle_existing_deployment(base_dir, name, force, dry, use_podman)` — keeps its name and
+  its non-destructive precondition: when `base_dir` exists and `force` is falsy, raise the
+  existing `ClickException` verbatim; otherwise return.
+- `remove_existing_deployment(base_dir, name, force, dry, use_podman)` — the destructive
+  branch verbatim, including the dry-run notice and the `try/except` that downgrades a
+  failed cleanup to a warning. It takes `force` and no-ops when it is falsy, so callers do
+  not have to guard it.
 
-**Cost:** one more function in `helpers.py`, and a name decision. The existing name
-`handle_existing_deployment` is retained by the precondition half, so its call site at
-`:164` keeps its name and no other caller is affected; the new function carries the
-destructive half under an explicit name.
+`create()` calls the first early and the second late. **`evaluate()` calls both back to
+back at its existing call site**, which reproduces today's combined behaviour exactly and
+leaves the benchmarking path untouched.
 
-### Decision 2: Place the teardown after secret validation and before compose-config construction
+**Alternative considered — move the whole call below validation.** This is issue #287's
+approach (a), and is simpler. Rejected on two counts. It silently changes error precedence:
+`archi create` without `--force` against an existing deployment with a bad config currently
+reports "deployment already exists", and after a wholesale move would report the config
+error instead — a worse message, since the operator's actual problem is that they did not
+pass `--force`. And it does nothing about `evaluate()`, which would keep its own ordering
+defect.
 
-The teardown moves to immediately after `secrets_manager.validate_secrets(...)` /
-`config_manager.set_sources_enabled(...)` (`:199-210`), above
-`ServiceBuilder.build_compose_config(...)` at `:213`.
+**Alternative considered — leave `handle_existing_deployment` fused and add a separate
+precondition function used only by `create()`.** This avoids touching `evaluate()` at all,
+which is tempting. Rejected because it leaves a fused function whose destructive half is
+reachable from one caller and dead from the other, which is exactly the shape that made this
+bug easy to introduce. Updating `evaluate()` to call two explicitly named functions makes
+its dependence on the teardown visible at its call site instead of hidden inside a helper.
 
-**Why not later, immediately before `base_dir.mkdir()` at `:243`?** Because the `--dry`
-early return sits at `:239`, so a teardown below it would never execute on a dry run and the
-"[DRY RUN] Would remove existing deployment" notice would vanish. That notice is the dry
-run reporting its single most consequential effect; dropping it would be a real regression
-and is specified against.
+### Decision 2: Place the teardown below compose-plan construction, immediately above `if dry:`
 
-**Why not earlier, between validation calls?** Keeping it below *all* validation is the
-entire point. Placing it above `build_compose_config` (rather than below) also preserves
-today's ordering relationship between teardown and compose construction, so if
-`build_compose_config` ever does start reading the deployment directory, this change will
-not have been the thing that broke it.
+The teardown call goes after `ServiceBuilder.build_compose_config(...)` (ends `:220`) and
+before the `if dry:` branch (`:223`).
+
+**Why not above `build_compose_config`?** Because the builder can refuse the deployment —
+see Context fact 2. Teardown above it would leave `archi create --dev --force` outside a
+checkout destroying the deployment and then failing on a condition knowable beforehand:
+the same defect, moved rather than fixed.
+
+**Why not lower still, immediately before `base_dir.mkdir()` at `:243`?** Because the
+`--dry` early return sits at `:239`, so a teardown below it would never execute on a dry run
+and the "[DRY RUN] Would remove existing deployment" notice would vanish entirely. That
+notice is the dry run reporting its single most consequential effect.
+
+The chosen point is the unique position that is below everything which can refuse and above
+the dry-run return. That is why it is chosen — not by preference but by elimination.
 
 ### Decision 3: Reject the narrow grafana guard
 
 Issue #287 offers approach (b): mirror `restart()`'s explicit grafana-without-`--env-file`
-check in `create()` before the teardown. Rejected. It closes one instance of the class while
-leaving every other required secret — `HUIT_API_KEY`, `OPENAI_API_KEY`, anything a future
-service declares — destroying first and failing after. It also duplicates a validation that
-`validate_secrets` already performs correctly, creating a second place to keep in sync with
-`service_registry`. The ordering fix subsumes it: once validation precedes teardown, the
-grafana case is handled by the existing `validate_secrets` call with no special-casing.
-
-The error-message requirement from the issue (name the missing secret, mention `--env-file`)
-is satisfied by whatever `validate_secrets` already emits; if that message does not name the
-missing secret, improving it is in scope, but adding a parallel guard is not.
-
-## Risks / Trade-offs
-
-- **The window is narrowed, not closed.** → A failure between the teardown and a running
-  deployment (image pull fails, a port is taken, compose errors) still leaves the operator
-  without a deployment. Stated as a Non-Goal above and called out in the PR body so this
-  change is not mistaken for making `--force` safe in general.
-
-- **`build_compose_config` now runs while the old deployment directory still exists.** →
-  Verified inert: `service_builder` only stores `base_dir` and never reads from it
-  (`:55, 68, 181, 204`). The teardown is nevertheless placed above `build_compose_config`
-  rather than below, so the existing ordering between those two is unchanged and this
-  reasoning is defence-in-depth rather than load-bearing.
-
-- **Log ordering changes on a forced re-create.** → "Removing existing deployment at ..."
-  now appears after the validation log lines instead of before them. No test asserts log
-  order, and the new order is more truthful about what actually happened. Worth noting in
-  the PR because an operator reading logs side by side with an older run will see it.
-
-- **A split function is a wider diff than a moved line, and `helpers.py` is shared.** →
-  Both halves stay module-level in the same file, the existing name and call site are
-  retained by the non-destructive half, and `grep` for `handle_existing_deployment` confirms
-  the blast radius before committing.
-
-## Migration Plan
-
-None required. No schema, config, image, or API surface changes; no deployment step. The
-change is behavioural within a single CLI command, and only on its failure path. Rollback is
-reverting the commit.
-
-Landing order note: `docs/docs/fasrc_archi.md` currently documents the broken ordering and
-names #287 as the tracker. That paragraph becomes false when this lands, so its correction
-belongs in this PR rather than in a follow-up — the alternative is a window where the docs
-describe behaviour the code no longer has.
+check (`src/cli/cli_main.py:528-532`) in `create()` before the teardown. Rejected. It closes
+one instance while leaving every other required secret — and the compose-plan failure in
+Context fact 2, which is not a secret problem at all — destroying first and failing after.
+It also duplicates a validation `validate_secrets` already performs, creating a second place
+to keep in sync with `service_registry`. The ordering fix subsumes it: once the teardown is
+last, the grafana case is handled by the existing `validate_secrets` call with no
+special-casing.
 
 ### Decision 4: Add the `--env-file` hint in `cli_main.py`, not in `SecretsManager`
 
 Issue #287's acceptance criterion 3 requires the error to name the missing secret and
-mention `--env-file`. Checking what exists: `validate_secrets`
-(`src/cli/managers/secrets_manager.py:123-141`) already names the missing secrets and the
-env-file path it searched, so half the criterion is met. It does not mention `--env-file`,
-and when the dummy fallback is in play the message reads
+mention `--env-file`. `validate_secrets` (`src/cli/managers/secrets_manager.py:123-141`)
+already names the missing secrets and the env-file path it searched, so half is met. It does
+not mention `--env-file`, and under the dummy fallback the message reads
 
 > Missing required secrets in src/cli/managers/secrets_dummy.env: GRAFANA_PG_PASSWORD
 > Please add these to your .env file …
 
-which directs the operator to edit a stub file inside archi's own package instead of telling
-them to pass `--env-file`. That is the actually-misleading part.
+which directs the operator to edit a stub inside archi's own package instead of telling them
+to pass `--env-file`. That is the actively misleading part.
 
-**Chosen:** add the hint in `create()` in `src/cli/cli_main.py`, conditional on no
-`--env-file` having been supplied.
+**Chosen:** add the hint in `create()`, conditional on no `--env-file` having been supplied.
 
-**Why not in `SecretsManager`, where the message is built?** Two reasons, and the second is
-the one that decides it if the first is unpersuasive:
+**Why not in `SecretsManager`?** Two reasons, the second decisive:
 
-1. `SecretsManager` is not CLI-aware. It takes an `env_file_path`, not a flag, and is
-   constructed in contexts that have no notion of `--env-file`. Naming a click option inside
-   it inverts the layering; the flag is the command's vocabulary, so the command should be
-   the thing that mentions it.
-2. `src/cli/managers/secrets_manager.py` is **not black-clean** — `black --check` reports
-   roughly 81 changed lines across the file. Editing it makes the gate's format step reflow
-   the whole file, and `diff-cover --fail-under=80` then measures patch coverage across
-   every reflowed line, which fails the gate for reasons unrelated to this change. The three
-   files this change does touch — `src/cli/cli_main.py`, `src/cli/utils/helpers.py`, and
+1. `SecretsManager` is not CLI-aware — it takes a path, not a flag, and naming a click
+   option inside it inverts the layering.
+2. `src/cli/managers/secrets_manager.py` is **not black-clean**: `black --check` reports
+   roughly 81 changed lines. Editing it makes the gate's format step reflow the whole file,
+   and `diff-cover --fail-under=80` then measures patch coverage across every reflowed line,
+   failing the gate for reasons unrelated to this change. The three files this change does
+   touch — `src/cli/cli_main.py`, `src/cli/utils/helpers.py`,
    `tests/unit/test_cli_create_dev_smoke.py` — are all black-clean, verified.
 
-Reformatting `secrets_manager.py` is worth doing, but it is mechanical churn and belongs in
-its own PR per the project's split-churn-from-behaviour rule. It is not a prerequisite here.
+Reformatting `secrets_manager.py` is worth doing but is mechanical churn and belongs in its
+own PR per the project's split-churn-from-behaviour rule.
+
+## Risks / Trade-offs
+
+- **The window is narrowed, not closed.** → Failures after the teardown (image pull, port
+  conflict, compose error) still leave the operator without a deployment. Stated as a
+  Non-Goal and called out in the PR body.
+
+- **`evaluate()` is touched, and it is the benchmarking path.** → Its two calls reproduce
+  today's combined behaviour exactly, and a regression test covers `evaluate --force` against
+  an existing runtime directory. The risk is real enough that the test is required, not
+  optional.
+
+- **Dry-run output changes on a failing dry run.** → `archi create --dry --force` with
+  missing secrets currently prints "[DRY RUN] Would remove existing deployment" and then
+  fails; afterwards it fails without printing it. This is intentional and specified: a real
+  run with those inputs would not have reached the teardown, so reporting that it would have
+  removed the deployment was misinformation. Called out because it is a visible change and a
+  reviewer will notice it.
+
+- **Log ordering changes on a successful forced re-create.** → "Removing existing deployment
+  at ..." now appears after the validation lines instead of before them. No test asserts log
+  order, and the new order matches what actually happened.
+
+- **A split function is a wider diff than a moved line, and `helpers.py` is shared.** → Both
+  halves stay module-level in the same file, the existing name and both call sites are
+  explicit, and the caller inventory is now derived from `grep -rn` rather than assumed —
+  which is what caught the `evaluate()` dependency in the first place.
+
+## Migration Plan
+
+None required. No schema, config, image, or API surface changes; no deployment step. The
+change is behavioural within two CLI commands, and for `create` only on its failure path.
+Rollback is reverting the commit.
+
+Landing order note: `docs/docs/fasrc_archi.md` documents the broken ordering and names #287
+as the tracker. That paragraph becomes false when this lands, so its correction belongs in
+this PR rather than a follow-up — the alternative is a window in which the docs describe
+behaviour the code no longer has.
 
 ## Open Questions
 
-None. The one open question — whether `validate_secrets` names the missing secret — was
-resolved by reading `secrets_manager.py:123-141`; see Decision 4.
+None. The two that existed were resolved by reading the code: whether `validate_secrets`
+names the missing secret (it does — Decision 4), and whether `create()` is the only caller
+of the helper (it is not — Context fact 1).

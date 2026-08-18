@@ -38,10 +38,16 @@ The codebase already encodes the judgement this change generalises, in two place
     against an existing deployment still fails fast with the same "already exists" message
     and the same error precedence it has today;
   - the **destructive teardown** — `force=True`, therefore `delete_deployment(...,
-    remove_files=True)` — moves below config and secret validation.
+    remove_files=True)` — moves below *everything that can refuse the deployment*, which
+    includes compose-plan construction and not only secret validation.
 - Nothing destructive runs until the deployment is known to be satisfiable. This closes the
-  whole class, not the grafana instance: a missing `HUIT_API_KEY`, an invalid config, or any
-  future validation currently destroys first and fails after.
+  whole class, not the grafana instance: a missing `HUIT_API_KEY`, an invalid config, or a
+  compose plan that cannot be built currently destroys first and fails after.
+- Update `evaluate()` to call both halves back to back at its existing call site, so the
+  benchmarking path is behaviourally identical. `evaluate()` calls the helper at
+  `src/cli/cli_main.py:748-750` and then raises "Benchmarking runtime already exists" at
+  `:752-755` if the directory survives — it *depends* on the destructive branch, so a split
+  that ignored it would break every `archi evaluate --force`.
 - No new guard is added to `create()`. Mirroring `restart()`'s explicit grafana check was
   the narrower alternative (issue #287's approach (b)); it is rejected because it closes one
   instance and leaves every other required secret exposed. See `design.md`.
@@ -73,14 +79,19 @@ The codebase already encodes the judgement this change generalises, in two place
 ## Impact
 
 - `src/cli/cli_main.py` — the `create` command: one call split into two, the destructive
-  half relocated within the function. No signature changes.
+  half relocated within the function. The `evaluate` command: one call becomes two adjacent
+  calls, preserving its behaviour exactly. No signature changes.
 - `src/cli/utils/helpers.py` — `handle_existing_deployment()` split into a precondition
-  helper and a teardown helper. Both are module-level functions in the same file; the
-  existing name is retained by whichever half keeps the current call site, so no caller
-  outside `create()` changes.
-- `tests/unit/test_cli_create_dev_smoke.py` — two regression tests added, modelled on
+  helper (keeping the existing name and message) and a new teardown helper.
+- `tests/unit/test_cli_create_dev_smoke.py` — six regression tests added, modelled on
   `test_force_create_without_docker_keeps_existing_deployment` (`:216-272`), which is the
-  same assertion shape for the Docker instance of this class.
+  same assertion shape for the Docker instance of this class. One of them covers
+  `evaluate --force`, without which the helper split would break the benchmarking path
+  silently.
+- Deliberately **not** in scope, each to be filed as its own issue: `evaluate()`'s own
+  instance of this defect (its teardown at `:748` precedes `SecretsManager` at `:757`), and
+  reformatting `src/cli/managers/secrets_manager.py`, which is not black-clean and therefore
+  currently blocks any behavioural edit to that file via the diff-coverage gate.
 - No dependency, API, config, schema, or deployment changes. No container rebuild required.
 - `docs/docs/fasrc_archi.md` carries a blockquote describing the current (broken) ordering
   and naming #287 as the tracker. It becomes stale the moment this lands, and issue #288
