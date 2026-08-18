@@ -710,8 +710,13 @@ class ScraperManager:
                 if lastmod is not None:
                     new_map[url] = lastmod
         incomplete = getattr(self, "_sitemap_expansion_incomplete", False)
-        previous = getattr(self, "_sitemap_lastmod_map", None)
-        if incomplete and previous:
+        # Keyed on PROVENANCE (did a complete refresh ever publish?), never on the
+        # map's contents. A fully successful expansion publishes {} when every page
+        # omits the optional <lastmod>, so `if previous:` would read a valid empty
+        # map as "nothing to retain" — the same conflation the degrade path above
+        # already had to unlearn.
+        if incomplete and getattr(self, "_sitemap_map_valid", False):
+            previous = getattr(self, "_sitemap_lastmod_map", {})
             logger.warning(
                 "sitemap expansion was incomplete (%d document(s) failed to fetch or "
                 "parse); retaining the previous lastmod map of %d entry(ies) rather "
@@ -722,9 +727,14 @@ class ScraperManager:
             )
             return new_urls
         self._sitemap_lastmod_map = new_map
-        # Latched on a successful PUBLISH, including publishing an empty map: every
-        # page legitimately lacking <lastmod> is a success, not an absence.
-        self._sitemap_map_valid = True
+        if not incomplete:
+            # Latched only on a COMPLETE publish, empty map included: a page
+            # legitimately lacking <lastmod> is a success, but a child sitemap that
+            # failed to fetch is not. Latching on a truncated expansion would tell
+            # the scheduled degrade path it has a usable map when it does not, and
+            # the catalog crawl would then conflict-upsert NULL over every row the
+            # failed child owned — precisely the loss that guard exists to prevent.
+            self._sitemap_map_valid = True
         return new_urls
 
     @staticmethod

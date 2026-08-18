@@ -1037,3 +1037,101 @@ class TestMissingInputListDoesNotClearTheMap:
         monkeypatch.chdir(tmp_path)
         manager._collect_urls_from_lists(["a.list"])
         assert manager._input_lists_complete is True
+
+
+class TestIncompleteExpansionIsNotAValidMap:
+    """Retention and the validity latch must key on PROVENANCE, not on contents.
+
+    Round 2 established that ``_sitemap_lastmod_map`` truthiness is the wrong
+    question — a fully successful expansion publishes ``{}`` when every page omits
+    the optional ``<lastmod>`` — and fixed the *skip-crawl* decision to consult
+    ``_sitemap_map_valid`` instead. The *retention* decision still tests contents
+    (``if incomplete and previous:``), so the same conflation survives one branch
+    over, and it additionally latches ``_sitemap_map_valid`` on an expansion the
+    code already knows was truncated.
+
+    That latch is the damaging half. ``TestNoDegradeWithoutAPriorMap`` exists to
+    stop a scheduled expansion error from crawling with no usable map; a truncated
+    initial expansion that sets the latch anyway defeats exactly that guard, and
+    the catalog crawl then conflict-upserts NULL over every row belonging to the
+    child sitemap that failed.
+    """
+
+    def test_truncated_initial_expansion_does_not_authorize_a_later_degrade(
+        self, refresh_harness, monkeypatch
+    ):
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        # Initial ingest: /b's child sitemap fails to fetch, /a survives and still
+        # clears min_pages — so expansion returns TRUNCATED and raises nothing.
+        def _truncated(_sitemap_urls):
+            manager._sitemap_expansion_incomplete = True
+            return [("https://x.example.edu/a", "2024-01-01")]
+
+        monkeypatch.setattr(manager, "_expand_sitemaps", _truncated)
+        manager.collect_all_from_config(persistence)
+
+        # A later scheduled pass loses the sitemap outright.
+        def _boom(_sitemap_urls):
+            raise SitemapExpansionError("sitemap unreachable", reason="below_floor")
+
+        monkeypatch.setattr(manager, "_expand_sitemaps", _boom)
+        crawled = []
+        monkeypatch.setattr(
+            manager,
+            "collect_links",
+            lambda *a, **k: crawled.append(k.get("link_urls")),
+        )
+
+        manager.schedule_collect_links(persistence)
+
+        assert crawled == [], (
+            "no COMPLETE expansion ever succeeded, so there is no usable map to "
+            "degrade with; the crawl must be skipped rather than stamping the "
+            f"failed child's pages NULL; collect_links got {crawled!r}"
+        )
+
+    def test_truncated_expansion_does_not_set_the_validity_latch(
+        self, refresh_harness, monkeypatch
+    ):
+        """The state directly, so the guard above cannot pass for a second reason."""
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        def _truncated(_sitemap_urls):
+            manager._sitemap_expansion_incomplete = True
+            return [("https://x.example.edu/a", "2024-01-01")]
+
+        monkeypatch.setattr(manager, "_expand_sitemaps", _truncated)
+        manager.collect_all_from_config(persistence)
+
+        assert (
+            getattr(manager, "_sitemap_map_valid", False) is False
+        ), "an expansion known to be incomplete is not a successful refresh"
+
+    def test_incomplete_expansion_does_not_replace_a_valid_empty_map(
+        self, refresh_harness, monkeypatch
+    ):
+        """A valid empty map is a map, so design D3 retention applies to it too."""
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        # Complete initial ingest in which no page carries a lastmod → {} is valid.
+        refresh_harness["set_expand_pairs"](
+            [("https://x.example.edu/a", None), ("https://x.example.edu/b", None)]
+        )
+        manager.collect_all_from_config(persistence)
+        assert manager._sitemap_lastmod_map == {}, "precondition: valid but empty map"
+
+        # Scheduled pass returns a TRUNCATED result that does carry a timestamp.
+        refresh_harness["set_expand_pairs"]([("https://x.example.edu/a", "2024-01-01")])
+        manager._sitemap_expansion_incomplete = True
+
+        manager.schedule_collect_links(persistence)
+
+        assert manager._sitemap_lastmod_map == {}, (
+            "retention is keyed on whether a complete refresh ever published, not "
+            "on whether the published map happened to have entries; got "
+            f"{manager._sitemap_lastmod_map!r}"
+        )
