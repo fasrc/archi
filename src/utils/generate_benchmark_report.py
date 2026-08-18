@@ -56,7 +56,94 @@ def parse_benchmark_results(results, metadata):
     config_data = result.get("configuration", {})
     timestamp = metadata.get("time", "Unknown time")
 
-    return config_data, config_name, timestamp, questions, total_results
+    # `config_data` stays the SELECTED file: the benchmark harness reads its own
+    # settings from there (services.benchmarking.modes decides which sections
+    # render below), so presenting the running configuration in its place would
+    # trade one wrong label for another. Only the agent reads Postgres, so the
+    # provenance of what the agent actually ran is reported alongside instead.
+    provenance = {
+        "running_configuration": result.get("running_configuration"),
+        # None, not []. An artifact written before configuration provenance has no
+        # such key, and [] would be read below as "compared, and they agreed" --
+        # a positive claim about a comparison that never ran, on exactly the
+        # historical runs whose mislabelling prompted this work.
+        "configuration_divergence": result.get("configuration_divergence"),
+        "corpus_fingerprint_before": result.get("corpus_fingerprint_before"),
+        "corpus_fingerprint": result.get("corpus_fingerprint"),
+        "corpus_unchanged_at_endpoints": result.get("corpus_unchanged_at_endpoints"),
+    }
+
+    return config_data, config_name, timestamp, questions, total_results, provenance
+
+
+def format_provenance_html(provenance):
+    """Render whether the report can be trusted to describe the run.
+
+    The selected configuration and the one the agent actually used can differ:
+    the agent reads Postgres while the harness writes and reads a YAML file. A
+    report that showed only the file reported a run executed at
+    ``context_window: 8192`` as ``32768``. This block is what makes that visible
+    to the person reading the report rather than only to a container log.
+    """
+    if not provenance:
+        return ""
+
+    divergence = provenance.get("configuration_divergence")
+    if divergence:
+        config_line = (
+            "<p class='provenance-alert'>The run did <strong>not</strong> use the "
+            "selected configuration. Settings that differ between the selected "
+            "file and what the agent read:</p><ul>"
+            + "".join(f"<li><code>{item}</code></li>" for item in divergence)
+            + "</ul>"
+        )
+    elif divergence is None:
+        # Absence is not agreement. An empty list means the two were compared and
+        # agreed; a missing key means no comparison was made at all.
+        config_line = (
+            "<p class='provenance-alert'>Whether the run used the selected "
+            "configuration was <strong>not recorded</strong>: this artifact "
+            "predates configuration provenance, so no comparison was made.</p>"
+        )
+    else:
+        config_line = (
+            "<p class='provenance-ok'>The configuration the agent read "
+            "<strong>matches</strong> the selected file.</p>"
+        )
+
+    stable = provenance.get("corpus_unchanged_at_endpoints")
+    before = provenance.get("corpus_fingerprint_before")
+    after = provenance.get("corpus_fingerprint")
+    if stable is True:
+        # Deliberately weaker than "unchanged for the whole run". Two samples
+        # prove only that the endpoints matched: a corpus that changed and
+        # changed back while the questions ran would produce this same result.
+        corpus_line = (
+            "<p class='provenance-ok'>The corpus was the same at the start and "
+            f"the end of the run (<code>{after}</code>). This does not rule out "
+            "a change that was reverted in between.</p>"
+        )
+    elif stable is False:
+        corpus_line = (
+            "<p class='provenance-alert'>The corpus <strong>changed</strong> "
+            "while the run was in progress, so its questions were not all "
+            f"scored against the same documents (<code>{before}</code> &rarr; "
+            f"<code>{after}</code>).</p>"
+        )
+    else:
+        corpus_line = (
+            "<p class='provenance-alert'>Corpus stability is "
+            "<strong>unknown</strong>: it was not observed both before and "
+            f"after the run (<code>{before}</code> &rarr; <code>{after}</code>)."
+            "</p>"
+        )
+
+    return (
+        "<div class='provenance'><h2>Run provenance</h2>"
+        + config_line
+        + corpus_line
+        + "</div>"
+    )
 
 
 def format_total_duration(raw_duration):
@@ -96,8 +183,14 @@ def format_total_duration(raw_duration):
     return friendly, assumed_unit
 
 
-def format_html_output(config_data, config_name, timestamp, questions, total_results):
-    """Format results as HTML for easier reading"""
+def format_html_output(
+    config_data, config_name, timestamp, questions, total_results, provenance=None
+):
+    """Format results as HTML for easier reading.
+
+    ``provenance`` defaults to None so result files written before provenance was
+    recorded still render.
+    """
 
     html_parts = [
         """
@@ -204,6 +297,7 @@ def format_html_output(config_data, config_name, timestamp, questions, total_res
         <p><strong>Timestamp:</strong> {timestamp}</p>
         <p><strong>Questions Processed:</strong> {len(questions)}</p>
     </div>
+    {format_provenance_html(provenance)}
 """
     )
 
@@ -606,7 +700,7 @@ Examples:
     # Load results
     try:
         results, metadata = load_benchmark_results(args.results_file)
-        config_data, config_name, timestamp, questions, total_results = (
+        config_data, config_name, timestamp, questions, total_results, provenance = (
             parse_benchmark_results(results, metadata)
         )
     except Exception as e:
@@ -615,7 +709,7 @@ Examples:
 
     # Generates HTML output
     html_content = format_html_output(
-        config_data, config_name, timestamp, questions, total_results
+        config_data, config_name, timestamp, questions, total_results, provenance
     )
     with open(html_path, "w") as f:
         f.write(html_content)
