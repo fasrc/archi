@@ -51,8 +51,14 @@ RECONCILER="$SCRIPT_DIR/pr_readiness_labels.sh"
 # Hermetic against the developer's own environment: every knob the reconciler
 # honours is cleared once, so an ambient PR_LABELS_REPO cannot point this suite
 # at a real repository and an ambient delay cannot make it sleep.
+#
+# This list MUST name every PR_LABELS_* variable the reconciler reads. Adding a
+# knob without adding it here leaves an ambient value in control of the suite:
+# `PR_LABELS_RECONCILER_JOB=not-reconcile` changes which check the exclusion case
+# expects to be skipped and turns a green run into 35 passed / 1 failed, which
+# reads as a real regression rather than a leaked environment.
 unset PR_LABELS_REPO PR_LABELS_RETRY_MAX PR_LABELS_RETRY_DELAY \
-  PR_LABELS_READY PR_LABELS_CONFLICT
+  PR_LABELS_READY PR_LABELS_CONFLICT PR_LABELS_RECONCILER_JOB
 
 PASS=0; FAIL=0
 ok()    { printf 'ok - %s\n' "$1"; PASS=$((PASS + 1)); }
@@ -98,8 +104,39 @@ mk_labels() {
   printf '[%s]' "${out%,}"
 }
 
+# mk_checks [spec,spec,...]
+# Each spec is one of:
+#   C:<name>:<status>:<conclusion>   CheckRun  (conclusion: null or SUCCESS/FAILURE/etc.)
+#   S:<context>:<state>              StatusContext
+# Returns a JSON array suitable for the checks-json parameter of mk_node().
+mk_checks() {
+  local spec="${1:-}" out="" entry rest name status conclusion context state
+  [ -z "$spec" ] && { printf '[]'; return; }
+  local IFS=','
+  for entry in $spec; do
+    rest="${entry#*:}"
+    case "$entry" in
+      C:*)
+        name="${rest%%:*}"; rest="${rest#*:}"
+        status="${rest%%:*}"; conclusion="${rest##*:}"
+        if [ "$conclusion" = "null" ]; then
+          out+="{\"__typename\":\"CheckRun\",\"name\":\"$name\",\"status\":\"$status\",\"conclusion\":null},"
+        else
+          out+="{\"__typename\":\"CheckRun\",\"name\":\"$name\",\"status\":\"$status\",\"conclusion\":\"$conclusion\"},"
+        fi
+        ;;
+      S:*)
+        context="${rest%%:*}"; state="${rest##*:}"
+        out+="{\"__typename\":\"StatusContext\",\"context\":\"$context\",\"state\":\"$state\"},"
+        ;;
+    esac
+  done
+  printf '[%s]' "${out%,}"
+}
+
 # mk_node <number> <isDraft> <mergeStateStatus> <labels> <threads-csv> \
-#         [threads-totalCount] [labels-totalCount] [mergeable]
+#         [threads-totalCount] [labels-totalCount] [mergeable] \
+#         [checks-json] [checks-totalCount]
 #
 # `mergeable` defaults to a value consistent with the merge state, but is
 # OVERRIDABLE, because the two fields are independent in the real API and the
@@ -111,9 +148,17 @@ mk_labels() {
 # Each connection's totalCount is counted from the nodes actually supplied; the
 # overrides exist to simulate a TRUNCATED connection where totalCount exceeds
 # what was fetched.
+#
+# checks-json: a JSON array of context objects built by mk_checks(). Omit or
+#              pass "" for the default null rollup (PR has no checks on record).
+#              The FILTER treats a null statusCheckRollup as 0/0/0.
+# checks-totalCount: override to simulate a truncated rollup where totalCount
+#              exceeds the fetched contexts; defaults to the array's actual length.
 mk_node() {
   local n="$1" draft="$2" state="$3" labels="${4:-}" threads="${5:-}"
-  local tt="${6:-}" lt="${7:-}" mergeable="${8:-}" tcount lcount ljson tjson
+  local tt="${6:-}" lt="${7:-}" mergeable="${8:-}"
+  local checks="${9:-}" ct="${10:-}"
+  local tcount lcount ljson tjson cjson ccount rollup_json
   if [ -z "$mergeable" ]; then
     case "$state" in
       UNKNOWN) mergeable=UNKNOWN ;;
@@ -128,8 +173,19 @@ mk_node() {
   tcount="$(printf '%s' "$tjson" | jq 'length')"
   if [ -n "$tt" ]; then tcount="$tt"; fi
   if [ -n "$lt" ]; then lcount="$lt"; fi
-  printf '{"number":%s,"isDraft":%s,"mergeable":"%s","mergeStateStatus":"%s","labels":{"totalCount":%s,"nodes":%s},"reviewThreads":{"totalCount":%s,"nodes":%s}}' \
-    "$n" "$draft" "$mergeable" "$state" "$lcount" "$ljson" "$tcount" "$tjson"
+  # Build the statusCheckRollup. Null when no checks are requested (default),
+  # so all pre-existing cases keep working unchanged. Non-null when a checks
+  # array or a totalCount override is given, so truncation can be simulated.
+  if [ -n "$checks" ] || [ -n "$ct" ]; then
+    cjson="${checks:-[]}"
+    ccount="$(printf '%s' "$cjson" | jq 'length')"
+    if [ -n "$ct" ]; then ccount="$ct"; fi
+    rollup_json="{\"contexts\":{\"totalCount\":$ccount,\"nodes\":$cjson}}"
+  else
+    rollup_json='null'
+  fi
+  printf '{"number":%s,"isDraft":%s,"mergeable":"%s","mergeStateStatus":"%s","labels":{"totalCount":%s,"nodes":%s},"reviewThreads":{"totalCount":%s,"nodes":%s},"commits":{"nodes":[{"commit":{"statusCheckRollup":%s}}]}}' \
+    "$n" "$draft" "$mergeable" "$state" "$lcount" "$ljson" "$tcount" "$tjson" "$rollup_json"
 }
 
 # mk_page <hasNextPage> <endCursor> <node-json>...
@@ -344,10 +400,14 @@ fi
 # ---- 12: UNSTABLE (mergeable, red check) earns neither chip -------------
 # A check going red on a PR that already holds the chip must revoke it; and
 # UNSTABLE must not attract `conflicts` either, since the PR is not conflicted.
+# Provides an actual failing CheckRun so the individual-check predicate can see
+# the blocking conclusion — required now that the predicate reads check contexts
+# rather than consulting mergeStateStatus directly.
 sb="$(new_sandbox)"
+_fail_check="$(mk_checks "C:some-check:COMPLETED:FAILURE")"
 mk_page false "" \
-  "$(mk_node 162 false UNSTABLE "ready-to-merge" "")" \
-  "$(mk_node 262 false UNSTABLE "" "")" > "$sb/resp_1.json"
+  "$(mk_node 162 false UNSTABLE "ready-to-merge" "" "" "" "" "$_fail_check")" \
+  "$(mk_node 262 false UNSTABLE "" "" "" "" "" "$_fail_check")" > "$sb/resp_1.json"
 run_reconciler "$sb" >/dev/null 2>&1
 if grep -q '162 .*--remove-label ready-to-merge' "$sb/calls" \
    && ! grep -q -- '--add-label' "$sb/calls"; then
@@ -517,6 +577,406 @@ else
   notok "a label whose name merely contains the chip name does not count as holding it"
   cat "$sb/calls" 2>/dev/null
 fi
+
+# ---- 23: reconcile in-progress is excluded; PR with no other blocking check → ready ---
+# A non-draft MERGEABLE PR whose only non-successful check is the reconciler's own
+# job (name: "reconcile", IN_PROGRESS, null conclusion) should get ready-to-merge.
+# The old predicate sees UNSTABLE (not CLEAN) and withholds it — this case is the
+# red step that drove the new individual-check predicate.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 300 false UNSTABLE "" "" "" "" MERGEABLE \
+     "$(mk_checks "C:reconcile:IN_PROGRESS:null")")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "reconcile in-progress is excluded from blocking checks; PR with no other blocking check gets ready-to-merge"
+else
+  notok "reconcile in-progress is excluded from blocking checks; PR with no other blocking check gets ready-to-merge"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 24: non-reconcile FAILURE revokes a held ready-to-merge ----------
+# The exclusion is specific to the reconciler's own job: every other non-passing
+# check still blocks. A PR already holding the chip with a different job concluding
+# FAILURE must have the chip removed, proving the exclusion is narrow.
+sb="$(new_sandbox)"
+_fail_check24="$(mk_checks "C:build:COMPLETED:FAILURE")"
+mk_page false "" \
+  "$(mk_node 320 false UNSTABLE "ready-to-merge" "" "" "" "" "$_fail_check24")" \
+  "$(mk_node 420 false UNSTABLE "" "" "" "" "" "$_fail_check24")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '320 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "non-reconcile FAILURE revokes a held ready-to-merge and withholds on an unlabelled PR"
+else
+  notok "non-reconcile FAILURE revokes a held ready-to-merge and withholds on an unlabelled PR"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 25: non-reconcile in-progress blocks; chip not granted ----------
+# A CheckRun whose conclusion is null (status IN_PROGRESS) is blocking when its
+# name does not match the excluded reconciler job. The PR must NOT receive the
+# chip while the check runs.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 340 false UNSTABLE "" "" "" "" MERGEABLE \
+     "$(mk_checks "C:build:IN_PROGRESS:null")")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "non-reconcile in-progress (null conclusion) blocks; ready-to-merge not granted"
+else
+  notok "non-reconcile in-progress (null conclusion) blocks; ready-to-merge not granted"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 26: all non-reconcile checks SUCCESS/NEUTRAL/SKIPPED → granted --------
+# The three permitted passing conclusions must all be treated as passing by the
+# individual-check predicate. A mix of SUCCESS, NEUTRAL, and SKIPPED with no
+# other blocking check must grant ready-to-merge, proving each conclusion type
+# is individually accepted.
+sb="$(new_sandbox)"
+_pass_checks="$(mk_checks "C:unit-tests:COMPLETED:SUCCESS,C:lint:COMPLETED:NEUTRAL,C:format:COMPLETED:SKIPPED")"
+mk_page false "" \
+  "$(mk_node 360 false CLEAN "" "" "" "" MERGEABLE "$_pass_checks")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "all non-reconcile checks SUCCESS/NEUTRAL/SKIPPED are treated as passing; PR is granted ready-to-merge"
+else
+  notok "all non-reconcile checks SUCCESS/NEUTRAL/SKIPPED are treated as passing; PR is granted ready-to-merge"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 27: null rollup (no checks on record) does not withhold ready-to-merge --
+# A PR with no statusCheckRollup at all (never had a check run) is treated as
+# having 0 blocking checks — it should not be withheld on the check-state clause.
+# Uses mergeStateStatus=UNSTABLE to show that the predicate consults individual
+# check counts, not the mergeStateStatus field.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 370 false UNSTABLE "" "" "" "" MERGEABLE)" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "null statusCheckRollup (no checks on record) does not withhold ready-to-merge"
+else
+  notok "null statusCheckRollup (no checks on record) does not withhold ready-to-merge"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 28: empty (non-null, zero-context) rollup does not withhold -----------
+# A statusCheckRollup that exists but has no contexts (totalCount=0, nodes=[])
+# must also not trigger the fail-closed truncation rule or count any blocking
+# checks — it is indistinguishable from "all checks passed" and must grant.
+sb="$(new_sandbox)"
+_empty_checks="$(mk_checks "")"
+mk_page false "" \
+  "$(mk_node 380 false CLEAN "" "" "" "" "" "$_empty_checks")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "empty statusCheckRollup (non-null, zero contexts) does not withhold ready-to-merge"
+else
+  notok "empty statusCheckRollup (non-null, zero contexts) does not withhold ready-to-merge"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 29: truncated rollup → fail closed; chip not granted, held chip revoked --
+# The rollup is present but totalCount (5) exceeds the fetched count (1), so the
+# reconciler cannot rule out a blocking check in the unfetched tail. A PR already
+# holding the chip must have it revoked, and an unlabelled PR must not receive it.
+sb="$(new_sandbox)"
+_trunc_checks="$(mk_checks "C:unit-tests:COMPLETED:SUCCESS")"
+mk_page false "" \
+  "$(mk_node 390 false CLEAN "ready-to-merge" "" "" "" "" "$_trunc_checks" 5)" \
+  "$(mk_node 490 false CLEAN "" "" "" "" "" "$_trunc_checks" 5)" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '390 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "truncated rollup (totalCount > fetched) fails closed: held chip revoked, unlabelled PR not granted"
+else
+  notok "truncated rollup (totalCount > fetched) fails closed: held chip revoked, unlabelled PR not granted"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 30: mergeable == CONFLICTING → conflicts applied, ready-to-merge withheld ---
+# The conflict derivation comes from mergeable, not mergeStateStatus. All-green
+# checks prove the check-state clause cannot override the conflict gate — even a PR
+# with every check passing must never receive ready-to-merge when it is conflicted.
+# The PR already holding ready-to-merge must have it revoked; the unlabelled PR
+# must not receive it.
+sb="$(new_sandbox)"
+_green_30="$(mk_checks "C:unit-tests:COMPLETED:SUCCESS")"
+mk_page false "" \
+  "$(mk_node 400 false DIRTY "ready-to-merge" "" "" "" "" "$_green_30")" \
+  "$(mk_node 410 false DIRTY "" "" "" "" "" "$_green_30")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '400 .*--remove-label ready-to-merge' "$sb/calls" \
+   && grep -q '400 .*--add-label conflicts' "$sb/calls" \
+   && grep -q '410 .*--add-label conflicts' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "mergeable==CONFLICTING: conflicts applied and ready-to-merge withheld even with green checks"
+else
+  notok "mergeable==CONFLICTING: conflicts applied and ready-to-merge withheld even with green checks"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 31: conflicted draft still gets the conflicts chip ----------------------
+# mergeStateStatus is a priority field that reports DRAFT on a draft PR, masking
+# DIRTY. A conflicted draft would appear unconflicted through mergeStateStatus
+# alone — which is why conflicts is derived from mergeable == CONFLICTING, not
+# from mergeStateStatus == DIRTY. The draft is explicitly given mergeable=CONFLICTING
+# while mergeStateStatus=DRAFT so the fixture mirrors the real API's behaviour.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 420 true DRAFT "" "" "" "" CONFLICTING)" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '420 .*--add-label conflicts' "$sb/calls"; then
+  ok "conflicted draft (mergeable=CONFLICTING, mergeStateStatus=DRAFT) still gets the conflicts chip"
+else
+  notok "conflicted draft (mergeable=CONFLICTING, mergeStateStatus=DRAFT) still gets the conflicts chip"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 32: draft with all-green checks → still not ready ----------------------
+# A draft PR with every check concluding SUCCESS must not receive ready-to-merge.
+# The draft gate is independent of the check-state clause: no combination of green
+# checks can override it.  An existing held chip must be revoked, and an unlabelled
+# draft must not receive one.
+sb="$(new_sandbox)"
+_green_32="$(mk_checks "C:unit-tests:COMPLETED:SUCCESS,C:lint:COMPLETED:SUCCESS")"
+mk_page false "" \
+  "$(mk_node 430 true CLEAN "ready-to-merge" "" "" "" "" "$_green_32")" \
+  "$(mk_node 431 true CLEAN "" "" "" "" "" "$_green_32")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '430 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "draft with all-green checks: held ready-to-merge revoked and not granted to unlabelled draft"
+else
+  notok "draft with all-green checks: held ready-to-merge revoked and not granted to unlabelled draft"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 33: one unresolved thread + all-green checks → still not ready ---------
+# An open review thread (isResolved=false) must block ready-to-merge even when
+# every check concludes SUCCESS.  The thread-count gate is independent of the
+# check-state clause.  An existing chip must be revoked; an unlabelled PR must not
+# receive one.
+sb="$(new_sandbox)"
+_green_33="$(mk_checks "C:unit-tests:COMPLETED:SUCCESS")"
+mk_page false "" \
+  "$(mk_node 440 false CLEAN "ready-to-merge" "false:false" "" "" "" "$_green_33")" \
+  "$(mk_node 441 false CLEAN "" "false:false" "" "" "" "$_green_33")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '440 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "unresolved review thread + all-green checks: held ready-to-merge revoked and not granted to unlabelled PR"
+else
+  notok "unresolved review thread + all-green checks: held ready-to-merge revoked and not granted to unlabelled PR"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 34: failing StatusContext (legacy commit status) blocks ready-to-merge --
+# A StatusContext whose state is not SUCCESS must count as a blocking check.
+# This proves the non-CheckRun union member of the rollup is handled: a PR
+# carrying only a FAILURE StatusContext must not receive ready-to-merge, and
+# an already-labelled PR must have the chip revoked.
+sb="$(new_sandbox)"
+_fail_sc="$(mk_checks "S:ci/jenkins/branch:FAILURE")"
+mk_page false "" \
+  "$(mk_node 450 false CLEAN "ready-to-merge" "" "" "" "" "$_fail_sc")" \
+  "$(mk_node 451 false CLEAN "" "" "" "" "" "$_fail_sc")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '450 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "failing StatusContext blocks ready-to-merge: held chip revoked, unlabelled PR not granted"
+else
+  notok "failing StatusContext blocks ready-to-merge: held chip revoked, unlabelled PR not granted"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 35: BEHIND withholds readiness — checks never ran against the current base --
+# The rollup hangs off the PR's HEAD COMMIT, so it is base-agnostic by construction:
+# it records that the checks passed, never which base they were merged against.
+# Retargeting a PR arrives as `edited`, which this reconciler observes but neither
+# check producer does (ci.yml uses the default pull_request activity types;
+# pr-preview.yml selects opened/synchronize/reopened), so the head commit keeps its
+# green rollup from the OLD base and blocking_checks reads 0.
+#
+# BEHIND is the one base-relative signal GitHub gives us: the head ref is out of date
+# with the base, so the checks on record cannot have tested the merge result. Treat it
+# like a blocking check — withhold, and revoke a chip already held.
+sb="$(new_sandbox)"
+_green_35="$(mk_checks "C:gate:COMPLETED:SUCCESS")"
+mk_page false "" \
+  "$(mk_node 460 false BEHIND "ready-to-merge" "" "" "" MERGEABLE "$_green_35")" \
+  "$(mk_node 461 false BEHIND "" "" "" "" MERGEABLE "$_green_35")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '460 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "BEHIND withholds ready-to-merge even with green checks: held chip revoked, unlabelled PR not granted"
+else
+  notok "BEHIND withholds ready-to-merge even with green checks: held chip revoked, unlabelled PR not granted"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 36: BEHIND does NOT attract the conflicts chip --------------------------
+# A PR that is merely out of date is not conflicted. Withholding readiness must not
+# tip over into asserting a conflict that `mergeable` does not report — the same
+# both-directions discipline the UNKNOWN path already follows.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 470 false BEHIND "" "" "" "" MERGEABLE "$_green_35")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if ! grep -q -- '--add-label conflicts' "$sb/calls"; then
+  ok "BEHIND does not attract the conflicts chip"
+else
+  notok "BEHIND does not attract the conflicts chip"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 37: null rollup while GitHub reports BLOCKED withholds readiness --------
+# Cases 27-28 establish that a null rollup does NOT withhold: a PR that genuinely
+# runs no checks is ready once everything else is clear. That reading is only safe
+# while "no contexts on record" means "no checks expected". During check
+# registration lag — the window between `opened`/`synchronize` and the first check
+# run appearing — the rollup is equally empty, and this reconciler fires on those
+# very events. The predicate would then read 0 blocking checks and grant the chip
+# before CI has produced a single result.
+#
+# mergeStateStatus is what separates the two: GitHub reports BLOCKED when the base
+# expects a required check it has not seen, and CLEAN when nothing is outstanding.
+# So an empty rollup is only trustworthy when the merge state agrees nothing is
+# pending. Withhold on the disagreement, and revoke a chip already held.
+#
+# Case 27 keeps UNSTABLE granting on an empty rollup, so the guard stays on BLOCKED
+# alone; see case 38 for why that boundary is where it is.
+#
+# This deliberately does NOT gate on BLOCKED in general — that would re-block the
+# reconciler on its own in-progress required check, which is issue #174, the very
+# regression this change exists to remove. The clause is safe against that by
+# construction: if the reconciler's own job is running, its CheckRun is on the head
+# commit, so the rollup is not empty and this clause cannot fire.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 480 false BLOCKED "ready-to-merge" "" "" "" MERGEABLE)" \
+  "$(mk_node 481 false BLOCKED "" "" "" "" MERGEABLE)" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '480 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "null rollup + BLOCKED withholds ready-to-merge: held chip revoked, unlabelled PR not granted"
+else
+  notok "null rollup + BLOCKED withholds ready-to-merge: held chip revoked, unlabelled PR not granted"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 38: the same guard through the non-null empty-contexts shape ------------
+# Case 37 covers a null rollup; the API also expresses "no contexts" as a present
+# rollup with totalCount 0 and an empty nodes array (case 28's shape). Both must
+# reach the guard, so neither shape can carry a false green through.
+#
+# UNSTABLE is deliberately NOT gated alongside BLOCKED. Case 27 pins UNSTABLE with
+# no contexts as still granting, to prove the predicate reads individual check
+# counts rather than mergeStateStatus, and UNSTABLE is derived from non-passing
+# contexts, so it cannot honestly describe a rollup that has none. Widening the
+# guard to it would overwrite a recorded design decision to buy a state GitHub
+# does not produce.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 490 false BLOCKED "ready-to-merge" "" "" "" MERGEABLE "[]")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '490 .*--remove-label ready-to-merge' "$sb/calls"; then
+  ok "empty (non-null, zero-context) rollup + BLOCKED withholds ready-to-merge"
+else
+  notok "empty (non-null, zero-context) rollup + BLOCKED withholds ready-to-merge"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 39: an empty rollup on a CLEAN PR still grants — the boundary holds ------
+# The guard above must not swallow cases 27-28. A PR with no checks and nothing
+# outstanding is still ready; only the empty-rollup/non-clean-state disagreement
+# withholds. Also asserts the reconciler's own in-progress check keeps granting:
+# rollup non-empty (the excluded `reconcile` run) means clause 37 cannot fire,
+# which is the #174 behaviour this change exists to protect.
+sb="$(new_sandbox)"
+_self_39="$(mk_checks "C:reconcile:IN_PROGRESS:null")"
+mk_page false "" \
+  "$(mk_node 500 false CLEAN "" "")" \
+  "$(mk_node 501 false BLOCKED "" "" "" "" MERGEABLE "$_self_39")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '500 .*--add-label ready-to-merge' "$sb/calls" \
+   && grep -q '501 .*--add-label ready-to-merge' "$sb/calls"; then
+  ok "empty rollup + CLEAN still grants, and the reconciler's own in-progress check does not trip the new clause"
+else
+  notok "empty rollup + CLEAN still grants, and the reconciler's own in-progress check does not trip the new clause"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 40-42: --help enumerates every knob the reconciler actually reads -------
+# Derived from the script rather than hardcoded, so the next knob added without a
+# help entry fails here instead of being discovered by an operator whose override
+# silently did nothing. The failure mode this guards is quiet: an unlisted
+# PR_LABELS_RECONCILER_JOB leaves the operator excluding the wrong check name.
+#
+# Two precision requirements, each pinned by its own mutation case below, because a
+# check like this is worthless if it cannot fail:
+#
+#   1. Only the Environment BLOCK counts, not the whole help text. PR_LABELS_REPO is
+#      also named in the --repo description, so a whole-text match would pass with
+#      the Environment block emptied of it.
+#   2. Discovery reads the script with COMMENTS STRIPPED and is indifferent to
+#      braces. `$PR_LABELS_FOO` is as much a read as `${PR_LABELS_FOO:-x}`, while a
+#      knob named only in a comment is not a read at all and must not be demanded.
+
+# Names the script actually reads: comments removed first, braced or not.
+knob_reads() { sed 's/#.*//' "$1" | grep -o 'PR_LABELS_[A-Z_]*' | sort -u || true; }
+
+# The Environment: line plus its indented continuations, and nothing else.
+help_env_block() {
+  bash "$1" --help | awk '
+    /^Environment:/ { inblock = 1; print; next }
+    inblock && /^[[:space:]]/ { print; next }
+    inblock { exit }
+  '
+}
+
+# Knobs read by $1 but absent from its own Environment block.
+help_knob_gaps() {
+  local script="$1" block var
+  block="$(help_env_block "$script")"
+  for var in $(knob_reads "$script"); do
+    case "$block" in
+      *"$var"*) ;;
+      *) printf '%s ' "$var" ;;
+    esac
+  done
+}
+
+gaps="$(help_knob_gaps "$RECONCILER")"
+if [ -n "$gaps" ]; then
+  notok "--help omits knobs the reconciler reads: $gaps"
+elif [ -z "$(knob_reads "$RECONCILER")" ]; then
+  notok "found no PR_LABELS_* reads at all — this case can no longer fail"
+else
+  ok "--help enumerates every PR_LABELS_* knob the reconciler reads"
+fi
+
+# ---- 41: the check is scoped to the Environment block, so it can fail ---------
+# Removing PR_LABELS_REPO from the block alone must be caught, even though the
+# --repo description still mentions it.
+_mut41="$TESTROOT/mutant_no_repo_in_env.sh"
+sed 's/^Environment: PR_LABELS_REPO, /Environment: /' "$RECONCILER" > "$_mut41"
+case "$(help_knob_gaps "$_mut41")" in
+  *PR_LABELS_REPO*) ok "a knob dropped from the Environment block is caught, despite appearing elsewhere in --help" ;;
+  *) notok "a knob dropped from the Environment block went unnoticed — the check is matching the whole help text" ;;
+esac
+
+# ---- 42: an unbraced read is still a read ------------------------------------
+_mut42="$TESTROOT/mutant_unbraced_knob.sh"
+sed 's/^RETRY_DELAY=.*/RETRY_DELAY=$PR_LABELS_UNDOCUMENTED/' "$RECONCILER" > "$_mut42"
+# Bound in the environment only so the mutant's own --help does not die on `set -u`
+# and print to stderr; discovery reads the source, so it is unaffected either way.
+case "$(PR_LABELS_UNDOCUMENTED=x help_knob_gaps "$_mut42")" in
+  *PR_LABELS_UNDOCUMENTED*) ok "an unbraced knob read with no help entry is caught" ;;
+  *) notok "an unbraced knob read evaded discovery" ;;
+esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

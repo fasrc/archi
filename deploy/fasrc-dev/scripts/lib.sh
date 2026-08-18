@@ -18,7 +18,16 @@ CONFIG="deploy/fasrc-dev/config.yaml"         # repo-relative (git-excluded; cop
 # defaults to ~/.secrets/archi-secrets.env so the scripts aren't tied to one user.
 ENV_FILE="${ARCHI_ENV_FILE:-$HOME/.secrets/archi-secrets.env}"
 SERVICES="chatbot"                            # auto-pulls postgres + data-manager
-GPU_IDS="${GPU_IDS-0}"                        # GPU(s) for the data-manager embedding pass; GPU_IDS="" disables
+# GPU(s) to reserve for the data-manager embedding pass. Default OFF: this
+# deployment runs no models locally (they are served by a remote vLLM endpoint),
+# the embedding pass is configured `device: cpu`, and the host has neither the
+# nvidia container runtime nor nvidia-smi. A non-empty value renders
+# `driver: nvidia, count: all` into the compose file, and the deploy then fails
+# with "could not select device driver nvidia" *after* recreating chatbot —
+# taking the deployment down instead of failing before it touches anything.
+# Set GPU_IDS=0 (or a list) only on a host that actually has GPUs and the
+# nvidia runtime installed. Contract pinned by test_gpu_flag.sh.
+GPU_IDS="${GPU_IDS-}"
 
 # --- config repo pin (fasrc/archi-config) ------------------------------------
 # The config/ checkout (source lists, environments, agent prompts) is provisioned
