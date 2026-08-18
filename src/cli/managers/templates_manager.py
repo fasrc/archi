@@ -141,6 +141,15 @@ class TemplateContext:
         return bool(self.options.get("benchmarking"))
 
     @property
+    def chatbot(self) -> bool:
+        """Whether this deployment serves a chat app.
+
+        Agent staging is meaningless without one, and must not refuse a
+        deployment for lacking chat-app config it was never going to use.
+        """
+        return "chatbot" in self.plan.get_enabled_services()
+
+    @property
     def build(self) -> bool:
         # Whether this run will (re)build the image. Source is only copied — and the
         # SOURCE_COMMIT provenance file only refreshed — when a build actually happens,
@@ -259,6 +268,18 @@ class TemplateManager:
                     )
                 staged_by_basename[source_path.name] = source_path
                 shutil.copyfile(source_path, dst_dir / source_path.name)
+            return
+
+        # Agents exist to be served by the chat app. A deployment without one --
+        # the grader-only flow, examples/deployments/grading/config.yaml, whose
+        # services are grader_app only -- has no services.chat_app section at
+        # all, and config validation skips the chat-app checks for exactly that
+        # reason. Demanding agents_dir here anyway raised after the deployment
+        # directory had been created, and so under --force after the existing
+        # deployment was torn down (fasrc/archi#287). Nothing this stage can
+        # reject may reach that point.
+        if not getattr(context, "chatbot", True):
+            logger.debug("chatbot not enabled; skipping agent staging")
             return
 
         agents_dir = (services_cfg.get("chat_app") or {}).get("agents_dir")

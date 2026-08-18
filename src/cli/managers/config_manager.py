@@ -217,7 +217,15 @@ class ConfigurationManager:
             raise ValueError(f"agents_dir not found: '{agents_dir}'")
         if not agents_dir.is_dir():
             raise ValueError(f"agents_dir must be a directory: '{agents_dir}'")
-        if not list(agents_dir.glob("*.md")):
+        # Use the same predicate TemplateManager._stage_agents() uses when it
+        # copies these files, or inputs exist that pass one and fail the other --
+        # and the staging failure lands after the forced teardown. glob("*.md")
+        # differs in both directions: it matches a *directory* named "notes.md",
+        # and it misses a file named "AGENT.MD" that staging would happily copy.
+        if not any(
+            entry.is_file() and entry.suffix.lower() == ".md"
+            for entry in agents_dir.iterdir()
+        ):
             raise ValueError(
                 f"agents_dir must contain at least one .md file: '{agents_dir}'"
             )

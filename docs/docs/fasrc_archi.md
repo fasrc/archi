@@ -596,11 +596,13 @@ Two layers:
 > Until [#287](https://github.com/fasrc/archi/issues/287) landed, `--force` tore
 > the running deployment down *before* any secret was validated, so this exact
 > command left the deployment both down and not replaced. It no longer does:
-> `handle_existing_deployment()` at `src/cli/cli_main.py:171` now only *refuses*
-> an existing deployment when `--force` was not given, and the destructive
-> teardown moved to `remove_existing_deployment()`
-> (`src/cli/utils/helpers.py:316-350`), called at `src/cli/cli_main.py:249` —
+> `handle_existing_deployment()` in `src/cli/cli_main.py` now only *refuses* an
+> existing deployment when `--force` was not given, and the destructive teardown
+> moved to `remove_existing_deployment()` in `src/cli/utils/helpers.py`, called
 > below config validation, secret validation, and compose-plan construction.
+>
+> (Symbols, not line numbers: these anchors moved three times inside the pull
+> request that changed them. Grep the name.)
 >
 > **This does not make `--force` safe in general.** It guarantees only that a
 > deployment archi could have known was unsatisfiable is refused before anything
@@ -610,10 +612,10 @@ Two layers:
 > production deployment is still a decision, not a default.
 >
 > For contrast, `archi restart` refuses the grafana-without-`--env-file`
-> combination only when it re-renders config: the guard at
-> `cli_main.py:566-569` sits inside the `if config_files or config_dir:` block
-> that opens at `cli_main.py:511`, so `archi restart --config` / `--config-dir`
-> raises, while a plain `archi restart` skips that block entirely. `create` has
+> combination only when it re-renders config: its `elif "grafana" in
+> enabled_services:` guard sits inside the `if config_files or config_dir:`
+> block in `restart()`, so `archi restart --config` / `--config-dir` raises,
+> while a plain `archi restart` skips that block entirely. `create` has
 > no such special-case guard — it does not need one, because its ordering makes
 > every required secret fail safely, not just grafana's.
 - **Authoritative running config (what archi reads):** Postgres
