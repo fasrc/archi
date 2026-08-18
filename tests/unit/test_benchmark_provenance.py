@@ -16,7 +16,11 @@ These helpers are pure so the report writer stays a thin call site.
 
 import pytest
 
-from src.utils.benchmark_provenance import config_divergence, corpus_fingerprint
+from src.utils.benchmark_provenance import (
+    asserted_config_divergence,
+    config_divergence,
+    corpus_fingerprint,
+)
 
 
 class TestConfigDivergence:
@@ -176,3 +180,240 @@ class TestCorpusFingerprint:
         before = corpus_fingerprint([same_size_doc, ("chunk:1:0", "old-content-hash")])
         after = corpus_fingerprint([same_size_doc, ("chunk:1:0", "new-content-hash")])
         assert before != after
+
+
+class TestAssertedConfigDivergence:
+    """Only what the selected file ASSERTS can be a mislabel.
+
+    ``config_divergence`` compares two configurations symmetrically, which is the
+    right primitive but the wrong question here. The selected file is sparse
+    operator intent; ``get_full_config()`` returns the configuration *after*
+    seeding, defaulting and reshaping. They differ by design at roughly two
+    hundred paths, so comparing them whole reported every run as mislabelled and
+    ``arms_comparable()`` was False on every arm of every run -- stripping every
+    leaderboard rank and A/B winner, unconditionally.
+
+    Measured on the file that actually seeded archi-dev against what archi-dev
+    then served -- the same source by construction -- the whole-dict comparison
+    reported 192 paths and this one reports 1, while still catching the
+    8192-vs-32768 mislabel that motivated the check.
+    """
+
+    def test_a_key_only_the_running_config_has_is_not_a_divergence(self):
+        """get_full_config synthesizes config_version and available_* itself.
+
+        No YAML file has them, so reporting them means reporting them forever.
+        """
+        selected = {"services": {"chat_app": {"recursion_limit": 50}}}
+        running = {
+            "config_version": "2.0.0",
+            "available_models": ["a", "b"],
+            "available_pipelines": ["p"],
+            "available_providers": ["q"],
+            "services": {"chat_app": {"recursion_limit": 50}},
+        }
+
+        assert asserted_config_divergence(selected, running) == []
+
+    def test_a_section_the_file_omits_entirely_is_not_a_divergence(self):
+        """The seeder fills defaults for sections the operator never wrote.
+
+        archi-dev's seed file has no `global` and no `mcp_servers`; the running
+        config has both.
+        """
+        selected = {"services": {"chat_app": {"recursion_limit": 50}}}
+        running = {
+            "global": {"log_level": "INFO"},
+            "mcp_servers": {"x": {"url": "http://y"}},
+            "services": {"chat_app": {"recursion_limit": 50}},
+        }
+
+        assert asserted_config_divergence(selected, running) == []
+
+    def test_a_reshaped_duplicate_of_a_section_is_not_a_divergence(self):
+        """The file writes data_manager.sources; the running config also exposes
+        a top-level `sources` copy. That reshaping was 48 spurious paths."""
+        selected = {"data_manager": {"sources": {"docs": {"enabled": True}}}}
+        running = {
+            "data_manager": {"sources": {"docs": {"enabled": True}}},
+            "sources": {"docs": {"enabled": True, "schedule": "daily"}},
+        }
+
+        assert asserted_config_divergence(selected, running) == []
+
+    def test_a_setting_the_file_asserts_and_the_agent_contradicts_is_reported(self):
+        selected = {"services": {"chat_app": {"recursion_limit": 50}}}
+        running = {"services": {"chat_app": {"recursion_limit": 10}}}
+
+        assert asserted_config_divergence(selected, running) == [
+            "services.chat_app.recursion_limit"
+        ]
+
+    def test_a_setting_the_file_asserts_and_the_agent_lacks_is_reported(self):
+        """Asking for something the agent never received is still a mislabel."""
+        selected = {"services": {"chat_app": {"recursion_limit": 50}}}
+        running = {"services": {"chat_app": {}}}
+
+        assert asserted_config_divergence(selected, running) == [
+            "services.chat_app.recursion_limit"
+        ]
+
+    def test_a_whole_section_missing_from_the_running_config_is_reported(self):
+        selected = {"services": {"chat_app": {"recursion_limit": 50}}}
+        running = {"services": {}}
+
+        assert asserted_config_divergence(selected, running) == [
+            "services.chat_app.recursion_limit"
+        ]
+
+    def test_the_incident_this_check_exists_for_is_still_reported(self):
+        """The whole point: narrowing the comparison must not blind it."""
+        selected = {
+            "services": {
+                "chat_app": {"context_editing": {"context_window": 32768, "keep": 1}}
+            }
+        }
+        running = {
+            "config_version": "2.0.0",
+            "available_models": ["a"],
+            "global": {"log_level": "INFO"},
+            "services": {
+                "chat_app": {"context_editing": {"context_window": 8192, "keep": 1}}
+            },
+        }
+
+        assert asserted_config_divergence(selected, running) == [
+            "services.chat_app.context_editing.context_window"
+        ]
+
+    def test_services_benchmarking_is_ignored_because_it_bypasses_postgres(self):
+        """The harness reads these from the file and passes them to archi().
+
+        They never reach Postgres, so the seeded values persist across every arm
+        of a sweep -- 11 spurious paths per arm on the real fasrc-cannon sweep.
+        """
+        selected = {
+            "services": {
+                "benchmarking": {"agent_md_file": "/agents/v2.md", "model": "qwen"}
+            }
+        }
+        running = {
+            "services": {
+                "benchmarking": {"agent_md_file": "/agents/v1.md", "model": "other"}
+            }
+        }
+
+        assert asserted_config_divergence(selected, running) == []
+
+    def test_name_is_ignored_because_the_two_sides_mean_different_things(self):
+        """Running `name` is the deployment name; the file's is the config's."""
+        selected = {"name": "fasrc-cannon-v1-strict"}
+        running = {"name": "archi_dev"}
+
+        assert asserted_config_divergence(selected, running) == []
+
+    def test_paths_the_deploy_rewrites_into_the_container_are_ignored(self):
+        """`archi create` replaces host paths with fixed container paths.
+
+        Without this, `services.chat_app.agents_dir` diverged on every deployment
+        forever -- on archi-dev the file says
+        /home/austin/Projects/archi/deploy/fasrc-dev/agents and the running
+        configuration says /root/archi/agents -- which left the guard failing even
+        after the comparison was scoped.
+        """
+        selected = {
+            "services": {
+                "chat_app": {
+                    "agents_dir": "/home/austin/deploy/fasrc-dev/agents",
+                    "skills_dir": "/home/austin/deploy/fasrc-dev/skills",
+                }
+            }
+        }
+        running = {
+            "services": {
+                "chat_app": {
+                    "agents_dir": "/root/archi/agents",
+                    "skills_dir": "/root/archi/skills",
+                }
+            }
+        }
+
+        assert asserted_config_divergence(selected, running) == []
+
+    def test_the_rewrite_exemption_covers_every_service_that_gets_one(self):
+        """templates_manager rewrites chat_app, redmine_mailbox and piazza."""
+        for service in ("chat_app", "redmine_mailbox", "piazza"):
+            selected = {"services": {service: {"agents_dir": "/host/agents"}}}
+            running = {"services": {service: {"agents_dir": "/root/archi/agents"}}}
+
+            assert asserted_config_divergence(selected, running) == [], service
+
+    def test_a_rewritten_path_exemption_does_not_excuse_its_siblings(self):
+        selected = {
+            "services": {
+                "chat_app": {"agents_dir": "/host/agents", "recursion_limit": 50}
+            }
+        }
+        running = {
+            "services": {
+                "chat_app": {"agents_dir": "/root/archi/agents", "recursion_limit": 10}
+            }
+        }
+
+        assert asserted_config_divergence(selected, running) == [
+            "services.chat_app.recursion_limit"
+        ]
+
+    def test_an_ignored_subtree_does_not_hide_its_siblings(self):
+        selected = {
+            "services": {
+                "benchmarking": {"model": "a"},
+                "chat_app": {"recursion_limit": 50},
+            }
+        }
+        running = {
+            "services": {
+                "benchmarking": {"model": "b"},
+                "chat_app": {"recursion_limit": 10},
+            }
+        }
+
+        assert asserted_config_divergence(selected, running) == [
+            "services.chat_app.recursion_limit"
+        ]
+
+    def test_the_ignored_paths_are_overridable(self):
+        selected = {"name": "one"}
+        running = {"name": "two"}
+
+        assert asserted_config_divergence(selected, running, ignore_paths=()) == [
+            "name"
+        ]
+
+    def test_identical_configs_have_no_divergence(self):
+        cfg = {"services": {"chat_app": {"context_editing": {"context_window": 8192}}}}
+
+        assert asserted_config_divergence(cfg, dict(cfg)) == []
+
+    def test_a_file_that_asserts_nothing_reports_nothing(self):
+        assert asserted_config_divergence({}, {"anything": 1}) == []
+        assert asserted_config_divergence(None, {"anything": 1}) == []
+
+    def test_every_differing_asserted_path_is_reported_sorted(self):
+        selected = {"a": 1, "b": {"y": 2, "x": 3}}
+        running = {"a": 9, "b": {"y": 8, "x": 3}}
+
+        assert asserted_config_divergence(selected, running) == ["a", "b.y"]
+
+    def test_the_none_and_empty_container_equivalence_is_preserved(self):
+        """Same leaf semantics as config_divergence -- YAML writes {} as None."""
+        assert (
+            asserted_config_divergence({"mcp_servers": None}, {"mcp_servers": {}}) == []
+        )
+        assert asserted_config_divergence({"tools": None}, {"tools": []}) == []
+
+    def test_zero_and_false_are_still_settings_not_absences(self):
+        assert asserted_config_divergence({"keep": 0}, {"keep": None}) == ["keep"]
+        assert asserted_config_divergence({"enabled": False}, {"enabled": None}) == [
+            "enabled"
+        ]

@@ -23,8 +23,8 @@ from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spe
 from src.archi.providers import get_model
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
 from src.utils.benchmark_provenance import (
+    asserted_config_divergence,
     collect_code_version,
-    config_divergence,
     config_version,
     corpus_fingerprint,
 )
@@ -360,10 +360,16 @@ class ResultHandler:
         # here: the query would run AFTER the arm's questions, so a config change
         # during the arm would certify settings the chain never held -- and would
         # clear the divergence list while doing it.
+        #
+        # Scoped to what the file ASSERTS, not the two dicts whole. get_full_config
+        # returns the configuration after seeding, defaulting and reshaping, so a
+        # whole-dict comparison reported ~192 differences on a deployment seeded
+        # from the very file being compared -- making arms_comparable() False on
+        # every arm of every run. See asserted_config_divergence.
         if running_config is None:
             divergence = ["<unavailable: the run reported no configuration>"]
         else:
-            divergence = config_divergence(config, running_config)
+            divergence = asserted_config_divergence(config, running_config)
 
         if divergence:
             logger.warning(

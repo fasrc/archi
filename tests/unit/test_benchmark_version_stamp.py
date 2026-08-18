@@ -441,5 +441,38 @@ class TestConfigVersion:
         """Not [] -- an empty list would assert the two agreed."""
         assert self._stamp(running=None)["divergence_from_selected_file"] is None
 
+    def test_the_divergence_list_is_scoped_the_way_the_report_scopes_it(self):
+        """Same scoping as the report's own check, for the same reason.
+
+        get_full_config synthesizes keys no YAML file has and defaults sections
+        the operator omitted, so comparing the two whole stamped roughly 192
+        meaningless paths into every arm of every artifact.
+        """
+        running = {
+            "config_version": "2.0.0",
+            "available_models": ["a"],
+            "global": {"log_level": "INFO"},
+            "services": {
+                "chat_app": {
+                    "context_editing": {"context_window": 8192, "keep": 1},
+                    "agents_dir": "/root/archi/agents",
+                }
+            },
+        }
+        selected = {
+            "services": {
+                "chat_app": {
+                    "context_editing": {"context_window": 32768, "keep": 1},
+                    "agents_dir": "/host/deploy/agents",
+                }
+            }
+        }
+
+        divergence = config_version(
+            running=running, selected=selected, selected_file="/c.yaml"
+        )["divergence_from_selected_file"]
+
+        assert divergence == ["services.chat_app.context_editing.context_window"]
+
     def test_the_effective_configuration_is_the_named_source(self):
         assert "effective" in self._stamp()["source"]
