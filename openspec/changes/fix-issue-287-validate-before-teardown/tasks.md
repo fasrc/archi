@@ -76,8 +76,8 @@ false in verbose mode — the deployment survives, but the caller is told it suc
 
 ## 8. File what was deliberately left out
 
-- [ ] 8.1 Follow-up issue for `evaluate()`'s own instance of this defect: its teardown precedes `SecretsManager` construction, so a forced evaluate with missing secrets destroys the benchmarking runtime and then fails
-- [ ] 8.2 Follow-up issue to reformat `src/cli/managers/secrets_manager.py` to black, noting it currently blocks any behavioural edit to that file via the diff-coverage gate
+- [x] 8.1 Filed [#290](https://github.com/fasrc/archi/issues/290) — `evaluate()`'s own instance of this defect: its teardown precedes `SecretsManager` construction, so a forced evaluate with missing secrets destroys the benchmarking runtime and then fails. Deliberately preserved byte-for-byte by this change so the benchmarking path's behaviour was not altered in a PR about `create`
+- [x] 8.2 Filed [#291](https://github.com/fasrc/archi/issues/291) — reformat `src/cli/managers/secrets_manager.py` to black; ~81 lines would reflow, so diff-cover fails on any behavioural edit to that file
 
 ## 9. Review loops
 
