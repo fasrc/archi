@@ -61,5 +61,5 @@
 
 ## 6. Skill (personal tool — no repo PR)
 
-- [ ] 6.1 Author `~/.claude/skills/archi-ragas-goldenset/SKILL.md` (personal tool, NOT in this repo PR): conversational `coverage` mode (present newly-uncovered pages grouped by source, draft only the operator's greenlit picks in plain-language reply, record skips to the decision ledger), plus `drift-confirm` / `report` modes; every mutation gated on human confirmation (add draft, lock reference, prune orphan as explicit apply steps).
-- [ ] 6.2 `openspec validate maintain-ragas-goldenset --strict` passes; each PR gate-green with ≥80% diff coverage; no `--no-verify`. (Per-surface docs land with their own group — 1.6 / 2.7 / 3.5 / 4.5 / 5.3 — not deferred here.)
+- [x] 6.1 Author `~/.claude/skills/archi-ragas-goldenset/SKILL.md` (personal tool, NOT in this repo PR): conversational `coverage` mode (present newly-uncovered pages grouped by source, draft only the operator's greenlit picks in plain-language reply, record skips to the decision ledger), plus `drift-confirm` / `report` modes; every mutation gated on human confirmation (add draft, lock reference, prune orphan as explicit apply steps).
+- [x] 6.2 `openspec validate maintain-ragas-goldenset --strict` passes; each PR gate-green with ≥80% diff coverage; no `--no-verify`. (Per-surface docs land with their own group — 1.6 / 2.7 / 3.5 / 4.5 / 5.3 — not deferred here.)
