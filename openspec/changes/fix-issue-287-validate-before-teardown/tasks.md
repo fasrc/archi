@@ -79,6 +79,12 @@ false in verbose mode — the deployment survives, but the caller is told it suc
 - [x] 8.1 Filed [#290](https://github.com/fasrc/archi/issues/290) — `evaluate()`'s own instance of this defect: its teardown precedes `SecretsManager` construction, so a forced evaluate with missing secrets destroys the benchmarking runtime and then fails. Deliberately preserved byte-for-byte by this change so the benchmarking path's behaviour was not altered in a PR about `create`
 - [x] 8.2 Filed [#291](https://github.com/fasrc/archi/issues/291) — reformat `src/cli/managers/secrets_manager.py` to black; ~81 lines would reflow, so diff-cover fails on any behavioural edit to that file
 
+## 10. Routes found by review and deliberately deferred
+
+- [x] 10.1 Filed [#293](https://github.com/fasrc/archi/issues/293) — port configuration is validated after the teardown. Deferred because the pure checks must **share** `_extract_port_config`'s derivation with `_check_ports_available` rather than reimplement it, and because the availability probe genuinely cannot move (the old deployment still holds its ports). That refactor is too large to add here
+- [x] 10.2 Filed [#294](https://github.com/fasrc/archi/issues/294) — render the replacement before destroying the existing deployment. This is the structural answer: three review rounds found four separate routes to the same outcome, so enumerating them does not converge, and each new early check adds another pair of predicates that can drift apart (which happened twice on this PR)
+- [x] 10.3 Narrowed this change's own claims in `specs/cli-create-preflight/spec.md` and `docs/docs/fasrc_archi.md` so neither overstates what is closed
+
 ## 9. Review loops
 
 - [x] 9.1 Pre-PR adversarial review, 4 rounds. Round 1 (design): two wrong assumptions — `evaluate()` also calls the helper, and `build_compose_config` can refuse — plus a self-contradictory dry-run scenario. Round 2 (design): approve. Round 3 (implementation): the verbosity-4 exit-status defect. Round 4: stale docs anchors, then this artifact reconciliation

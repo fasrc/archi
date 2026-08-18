@@ -19,6 +19,13 @@ class ServiceDefinition:
     depends_on: List[str] = field(default_factory=list)
     requires_services: List[str] = field(default_factory=list)
 
+    # Whether this service reads agent specs from the staged data/agents
+    # directory. Several services bind-mount that directory without reading
+    # specs from it, so the mount is NOT the predicate — deployment-time agent
+    # staging keys on this flag (fasrc/archi#287). Derived from the actual
+    # select_agent_spec() call sites; set it when you add another.
+    consumes_agent_specs: bool = False
+
     # Secrets and config
     required_secrets: List[str] = field(default_factory=list)
     required_config_fields: List[str] = field(default_factory=list)
@@ -93,6 +100,7 @@ class ServiceRegistry:
         self.register(
             ServiceDefinition(
                 name="chatbot",
+                consumes_agent_specs=True,
                 description="Interactive chat interface for users to communicate with the AI agent",
                 category="application",
                 requires_volume=True,
@@ -137,6 +145,7 @@ class ServiceRegistry:
         self.register(
             ServiceDefinition(
                 name="piazza",
+                consumes_agent_specs=True,
                 description="Integration service for Piazza posts and Slack notifications",
                 category="integration",
                 requires_volume=True,
@@ -162,6 +171,7 @@ class ServiceRegistry:
         self.register(
             ServiceDefinition(
                 name="redmine-mailer",
+                consumes_agent_specs=True,
                 description="Email processing and Cleo/Redmine ticket management",
                 category="integration",
                 required_secrets=[

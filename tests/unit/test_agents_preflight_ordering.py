@@ -25,7 +25,7 @@ from src.cli.managers.config_manager import ConfigurationManager
 from src.cli.managers.templates_manager import TemplateManager
 
 
-def _context(base_dir: Path, config: dict, chatbot: bool):
+def _context(base_dir: Path, config: dict, needs_agent_specs: bool):
     class _CM:
         pass
 
@@ -35,7 +35,7 @@ def _context(base_dir: Path, config: dict, chatbot: bool):
         config_manager=cm,
         base_dir=base_dir,
         benchmarking=False,
-        chatbot=chatbot,
+        needs_agent_specs=needs_agent_specs,
     )
 
 
@@ -51,7 +51,7 @@ def test_stage_agents_skips_a_deployment_without_a_chatbot(tmp_path):
     config = {"services": {"grader_app": {"port": 8080}}}
 
     mgr = object.__new__(TemplateManager)
-    mgr._stage_agents(_context(base_dir, config, chatbot=False))
+    mgr._stage_agents(_context(base_dir, config, needs_agent_specs=False))
 
     assert not (
         base_dir / "data" / "agents"
@@ -66,7 +66,7 @@ def test_stage_agents_still_requires_agents_dir_when_chatbot_is_enabled(tmp_path
 
     mgr = object.__new__(TemplateManager)
     with pytest.raises(ValueError, match="agents_dir"):
-        mgr._stage_agents(_context(base_dir, config, chatbot=True))
+        mgr._stage_agents(_context(base_dir, config, needs_agent_specs=True))
 
 
 def _validate(agents_dir: Path):
@@ -119,27 +119,6 @@ def test_validation_accepts_a_normal_markdown_file(tmp_path):
     _validate(agents_dir)
 
 
-def test_context_chatbot_property_reads_the_deployment_plan(tmp_path):
-    """The stub context above short-circuits the property; exercise the real one."""
-    from src.cli.managers.templates_manager import TemplateContext
-
-    def _plan(services):
-        return SimpleNamespace(
-            base_dir=tmp_path, get_enabled_services=lambda: list(services)
-        )
-
-    def _ctx(services):
-        return TemplateContext(
-            plan=_plan(services),
-            config_manager=SimpleNamespace(config={}),
-            secrets_manager=SimpleNamespace(),
-            options={},
-        )
-
-    assert _ctx(["chatbot", "postgres"]).chatbot is True
-    assert _ctx(["grader_app", "postgres"]).chatbot is False
-
-
 def test_validation_rejects_an_agents_dir_that_is_a_file(tmp_path):
     """agents_dir must be a directory; a regular file is refused up front."""
     not_a_dir = tmp_path / "agents.md"
@@ -147,3 +126,104 @@ def test_validation_rejects_an_agents_dir_that_is_a_file(tmp_path):
 
     with pytest.raises(ValueError, match="must be a directory"):
         _validate(not_a_dir)
+
+
+def test_agent_consuming_services_are_declared_in_the_registry():
+    """The set is derived from actual select_agent_spec() call sites.
+
+    chat_app/app.py, piazza.py and redmine_mailer_integration/redmine.py call
+    select_agent_spec(); grader_app and mattermost.py do not. Several services
+    bind-mount data/agents without reading specs from it, so the mount is not
+    the predicate — consuming the specs is.
+    """
+    from src.cli.service_registry import service_registry
+
+    consuming = {
+        name
+        for name, svc in service_registry.get_all_services().items()
+        if getattr(svc, "consumes_agent_specs", False)
+    }
+    assert consuming == {
+        "chatbot",
+        "piazza",
+        "redmine-mailer",
+    }, f"unexpected agent-spec consumers: {sorted(consuming)}"
+
+
+def test_context_needs_agent_specs_covers_more_than_the_chatbot(tmp_path):
+    """Keying this on chatbot alone strands every other agent-backed service.
+
+    redmine-mailer reads the staged directory via select_agent_spec() and raises
+    when it holds no specs, so an integration-only deployment must still stage.
+    """
+    from src.cli.managers.templates_manager import TemplateContext
+
+    def _ctx(services):
+        return TemplateContext(
+            plan=SimpleNamespace(
+                base_dir=tmp_path, get_enabled_services=lambda: list(services)
+            ),
+            config_manager=SimpleNamespace(config={}),
+            secrets_manager=SimpleNamespace(),
+            options={},
+        )
+
+    assert _ctx(["chatbot", "postgres"]).needs_agent_specs is True
+    assert _ctx(["redmine-mailer", "postgres"]).needs_agent_specs is True
+    assert _ctx(["piazza", "postgres"]).needs_agent_specs is True
+    assert _ctx(["grader", "postgres"]).needs_agent_specs is False
+
+
+def test_stage_agents_still_stages_for_an_integration_without_a_chatbot(tmp_path):
+    """The regression guard: redmine-mailer without chatbot must still get agents."""
+    base_dir = tmp_path / "deploy"
+    base_dir.mkdir()
+    agents_src = tmp_path / "agents"
+    agents_src.mkdir()
+    (agents_src / "triage.md").write_text("# triage\n")
+
+    config = {"services": {"chat_app": {"agents_dir": str(agents_src)}}}
+
+    mgr = object.__new__(TemplateManager)
+    mgr._stage_agents(_context(base_dir, config, needs_agent_specs=True))
+
+    staged = sorted(p.name for p in (base_dir / "data" / "agents").iterdir())
+    assert staged == ["triage.md"], (
+        "an agent-backed integration without a chatbot was left with an empty "
+        "bind mount"
+    )
+
+
+def test_input_list_directory_is_skipped_rather_than_crashing(tmp_path):
+    """A directory in input_lists must not crash staging after the teardown.
+
+    os.path.exists() is true for a directory, so staging reached
+    shutil.copyfile() and raised IsADirectoryError -- inside
+    prepare_deployment_files(), i.e. after a --force teardown. Staging already
+    tolerates a missing input list by warning and skipping; a path that is not a
+    regular file is no more usable, so it is treated the same way.
+    """
+    base_dir = tmp_path / "deploy"
+    base_dir.mkdir()
+
+    a_directory = tmp_path / "lists-dir"
+    a_directory.mkdir()
+    a_real_list = tmp_path / "urls.txt"
+    a_real_list.write_text("https://example.org\n")
+
+    class _CM:
+        config = {}
+
+        def get_input_lists(self):
+            return [str(a_directory), str(a_real_list)]
+
+    context = SimpleNamespace(config_manager=_CM(), base_dir=base_dir)
+
+    mgr = object.__new__(TemplateManager)
+    mgr._copy_web_input_lists(context)
+
+    staged = sorted(p.name for p in (base_dir / "weblists").iterdir())
+    assert staged == ["urls.txt"], (
+        f"the directory should be skipped and the real list still staged, "
+        f"got {staged}"
+    )

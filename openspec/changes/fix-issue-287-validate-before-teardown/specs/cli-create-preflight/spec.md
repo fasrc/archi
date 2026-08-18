@@ -18,6 +18,15 @@ raises when no ancestor directory contains `pyproject.toml`
 The operator-visible contract is that a `create` which was always going to fail leaves the
 existing deployment exactly as it found it.
 
+**Scope, stated honestly.** This requirement is satisfied for the checks enumerated above.
+It is not yet universally true: port configuration is still validated after the teardown
+(`fasrc/archi#293`), and the general problem — that every stage of
+`prepare_deployment_files()` runs after the teardown and any of them can raise on
+deterministic config input — is tracked as `fasrc/archi#294`, which proposes rendering the
+replacement before destroying the existing deployment rather than enumerating routes one at
+a time. Three review rounds on this change found four separate routes, which is the evidence
+that enumeration does not converge.
+
 #### Scenario: Forced re-create with grafana enabled and no env file
 
 - **WHEN** `archi create --force --services chatbot,grafana` is invoked against an existing

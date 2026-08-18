@@ -604,10 +604,15 @@ Two layers:
 > (Symbols, not line numbers: these anchors moved three times inside the pull
 > request that changed them. Grep the name.)
 >
-> **This does not make `--force` safe in general.** It guarantees only that a
-> deployment archi could have known was unsatisfiable is refused before anything
-> is torn down. A failure *after* that point — an image that will not pull, a
-> port already taken, a compose error — still leaves you without a running
+> **This does not make `--force` safe in general.** Config, secrets, the compose
+> plan and the agent files are checked before anything is destroyed. Other
+> deterministic input errors are not yet: a bad or duplicated port is still
+> caught after the teardown ([#293](https://github.com/fasrc/archi/issues/293)),
+> and closing that class properly means rendering the replacement before
+> destroying the old deployment rather than adding checks one at a time
+> ([#294](https://github.com/fasrc/archi/issues/294)). Beyond that, a failure
+> while *starting* the deployment — an image that will not pull, a port already
+> taken by something else, a compose error — still leaves you without a running
 > deployment, because nothing preserves the old one for rollback. `--force` on a
 > production deployment is still a decision, not a default.
 >
