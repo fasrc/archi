@@ -127,16 +127,18 @@ its dependence on the teardown visible at its call site instead of hidden inside
 
 ### Decision 2: Place the teardown below compose-plan construction, immediately above `if dry:`
 
-The teardown call goes after `ServiceBuilder.build_compose_config(...)` (ends `:220`) and
-before the `if dry:` branch (`:223`).
+The teardown call goes after the `ServiceBuilder.build_compose_config(...)` assignment and
+before the `if dry:` branch. Cited by symbol rather than line: these anchors moved three
+separate times while this change was being implemented, once per commit that added lines
+above them.
 
 **Why not above `build_compose_config`?** Because the builder can refuse the deployment —
 see Context fact 2. Teardown above it would leave `archi create --dev --force` outside a
 checkout destroying the deployment and then failing on a condition knowable beforehand:
 the same defect, moved rather than fixed.
 
-**Why not lower still, immediately before `base_dir.mkdir()` at `:243`?** Because the
-`--dry` early return sits at `:239`, so a teardown below it would never execute on a dry run
+**Why not lower still, immediately before `base_dir.mkdir()`?** Because the `--dry` early
+return sits above that first write, so a teardown below it would never execute on a dry run
 and the "[DRY RUN] Would remove existing deployment" notice would vanish entirely. That
 notice is the dry run reporting its single most consequential effect.
 
@@ -185,7 +187,7 @@ own PR per the project's split-churn-from-behaviour rule.
 
 ### Decision 5: Verbosity selects diagnostics, never exit status
 
-Added after implementation, from round 2 of the pre-PR adversarial review.
+Added after implementation, from round 3 of the pre-PR adversarial review.
 
 `create()`'s outer handler printed a traceback at `--verbosity 4` and then fell through
 without re-raising, so any failure inside the `try` — including the validation failures this

@@ -596,10 +596,10 @@ Two layers:
 > Until [#287](https://github.com/fasrc/archi/issues/287) landed, `--force` tore
 > the running deployment down *before* any secret was validated, so this exact
 > command left the deployment both down and not replaced. It no longer does:
-> `handle_existing_deployment()` at `src/cli/cli_main.py:168` now only *refuses*
+> `handle_existing_deployment()` at `src/cli/cli_main.py:171` now only *refuses*
 > an existing deployment when `--force` was not given, and the destructive
 > teardown moved to `remove_existing_deployment()`
-> (`src/cli/utils/helpers.py:316-350`), called at `src/cli/cli_main.py:246` —
+> (`src/cli/utils/helpers.py:316-350`), called at `src/cli/cli_main.py:249` —
 > below config validation, secret validation, and compose-plan construction.
 >
 > **This does not make `--force` safe in general.** It guarantees only that a
@@ -611,8 +611,8 @@ Two layers:
 >
 > For contrast, `archi restart` refuses the grafana-without-`--env-file`
 > combination only when it re-renders config: the guard at
-> `cli_main.py:563-566` sits inside the `if config_files or config_dir:` block
-> that opens at `cli_main.py:508`, so `archi restart --config` / `--config-dir`
+> `cli_main.py:566-569` sits inside the `if config_files or config_dir:` block
+> that opens at `cli_main.py:511`, so `archi restart --config` / `--config-dir`
 > raises, while a plain `archi restart` skips that block entirely. `create` has
 > no such special-case guard — it does not need one, because its ordering makes
 > every required secret fail safely, not just grafana's.

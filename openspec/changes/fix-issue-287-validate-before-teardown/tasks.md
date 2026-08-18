@@ -22,13 +22,13 @@ touch `src/` until every test in this group has been watched failing for the rig
 
 - [x] 2.1 `handle_existing_deployment(base_dir, name, force)` in `src/cli/utils/helpers.py:299` keeps the non-destructive precondition and raises the existing `ClickException` verbatim. **Signature reduced to three parameters** — `dry` and `use_podman` were only ever used by the destructive branch, so keeping them would have left two dead arguments at every call site. Both callers are updated in this change, so there is no external signature to preserve
 - [x] 2.2 `remove_existing_deployment(base_dir, name, force, dry, use_podman)` at `helpers.py:316-350` carries the destructive branch verbatim — the dry-run notice, and the `try/except` downgrading a failed cleanup to a warning. It takes `force` and no-ops when falsy, so callers need no guard
-- [x] 2.3 `evaluate()` calls both back to back at `cli_main.py:787-790`, reproducing today's combined behaviour. It depends on the teardown having happened by its own "already exists" check just below
+- [x] 2.3 `evaluate()` calls both back to back at `cli_main.py:790-791`, reproducing today's combined behaviour. It depends on the teardown having happened by its own "already exists" check just below
 - [x] 2.4 Caller inventory re-derived with `grep -rn`, not recalled — which is what caught the `evaluate()` dependency the first draft of this plan got wrong
 
 ## 3. Reorder `create()`
 
-- [x] 3.1 `handle_existing_deployment(...)` stays at `cli_main.py:168` so the no-`--force` refusal keeps today's precedence
-- [x] 3.2 `remove_existing_deployment(...)` inserted at `cli_main.py:246` — after `build_compose_config` and before the `if dry:` branch. The unique position below everything that can refuse and above the dry-run early return
+- [x] 3.1 `handle_existing_deployment(...)` stays at `cli_main.py:171` so the no-`--force` refusal keeps today's precedence
+- [x] 3.2 `remove_existing_deployment(...)` inserted at `cli_main.py:249` — after `build_compose_config` and before the `if dry:` branch. The unique position below everything that can refuse and above the dry-run early return
 - [x] 3.3 Stale `# Handle existing deployment` comment replaced with one stating the invariant and why, including that `build_compose_config` can raise
 - [x] 3.4 Docker preflight left where it is, deliberately above the teardown per `fix-issue-112-dry-run-docker-check`
 - [x] 3.5 New tests pass
@@ -41,13 +41,13 @@ touch `src/` until every test in this group has been watched failing for the rig
 
 ## 5. Verbosity must not change exit status
 
-Added mid-flight: round 2 of the pre-PR adversarial review found that `create()`'s outer
+Added mid-flight: round 3 of the pre-PR adversarial review found that `create()`'s outer
 handler printed the traceback at `--verbosity 4` and fell through without re-raising, so a
 create that refused to proceed still exited 0. That makes this change's central promise
 false in verbose mode — the deployment survives, but the caller is told it succeeded.
 
 - [x] 5.1 Red test `test_force_create_with_missing_secret_fails_under_verbose_logging`, watched failing with `assert 0 != 0`
-- [x] 5.2 Handler at `cli_main.py:304-315` now always raises; an existing `ClickException` is re-raised unchanged so its message and exit code survive, rather than being re-wrapped
+- [x] 5.2 Handler at `cli_main.py:307` now always raises; an existing `ClickException` is re-raised unchanged so its message and exit code survive, rather than being re-wrapped
 - [x] 5.3 Whole suite re-run to confirm nothing depended on the fallthrough: 2330 passed, 1 xfailed
 
 ## 6. Verify nothing else moved
@@ -56,6 +56,17 @@ false in verbose mode — the deployment survives, but the caller is told it suc
 - [x] 6.2 Benchmarking/evaluate unit tests run, since `evaluate()` was touched — green in the full suite
 - [x] 6.3 `bash scripts/gate.sh` → 2330 passed, 1 xfailed, 3 warnings; diff coverage 93% (`helpers.py` 100%, `cli_main.py` 86.7%; the two uncovered lines are pre-existing `evaluate` bank-preflight paths caught as hunk context, not new code)
 - [x] 6.4 No `Co-Authored-By` or session trailer on any commit
+- [x] 6.5 **End-to-end check against the real CLI** (AGENTS.md:58), in a sandboxed `ARCHI_DIR` so no real deployment was touched. Identical command on both trees — `create --force -n e2e287 --services chatbot,grafana` with no `--env-file`:
+
+  | tree | verbosity | exit | deployment survived |
+  |---|---|---|---|
+  | `origin/dev` | default | 1 | **no — directory removed** |
+  | this branch | default | 1 | yes |
+  | `origin/dev` | `-v 4` | **0 (reports success)** | **no — directory removed** |
+  | this branch | `-v 4` | 1 | yes |
+
+  The `-v 4` row on `origin/dev` is the sharpest form of the defect: it destroys the deployment *and* tells the caller it succeeded. Host containers verified unchanged (26 before, 26 after, identical list).
+- [ ] 6.6 **Not run:** a valid forced create through to a live replacement. That requires pulling images and starting real containers on this host, and the project forbids running a non-dry `archi create` against a real deployment. The teardown code itself is unchanged — only relocated — and `test_force_create_still_tears_down_once_validation_passes` covers the success path up to the first host mutation. Recorded as a gap rather than claimed as done
 
 ## 7. Keep the documentation truthful in the same PR
 

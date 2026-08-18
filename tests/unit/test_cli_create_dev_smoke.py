@@ -675,9 +675,10 @@ def test_force_evaluate_still_removes_existing_runtime(
 ):
     """Splitting the helper must not break archi evaluate --force.
 
-    evaluate() calls handle_existing_deployment() and then refuses if the
-    directory still exists, so it depends on the destructive branch running at
-    that call site.
+    evaluate() calls handle_existing_deployment() followed by
+    remove_existing_deployment(), then refuses if the directory still exists. It
+    depends on the destructive half running at that call site, which is why the
+    split had to update it rather than leave only the precondition behind.
     """
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
@@ -877,12 +878,13 @@ def test_force_create_with_missing_secret_fails_under_verbose_logging(
 ):
     """Verbosity must change diagnostics, never exit status.
 
-    create()'s outer handler prints a traceback at verbosity >= 4 and does not
-    re-raise, so a failed create exits 0 and any script chaining on it treats an
-    unapplied replacement as a success. The Docker preflight was moved outside
-    that handler to dodge this; validation failures are still inside it, which
-    would make this fix's central promise -- refuse instead of destroy -- report
-    success while refusing.
+    create()'s outer handler used to print a traceback at verbosity >= 4 and
+    fall through without re-raising, so a failed create exited 0 and any script
+    chaining on it treated an unapplied replacement as a success. Measured on
+    origin/dev: this exact invocation exits 0 *and* removes the deployment. The
+    Docker preflight was moved outside that handler to dodge the problem;
+    validation failures sit inside it, which would have made this fix's central
+    promise -- refuse instead of destroy -- report success while refusing.
     """
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")

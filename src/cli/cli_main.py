@@ -137,11 +137,14 @@ def create(
 
     warn_if_template_mismatch()
 
-    # Check if Docker is available when --podman is not specified. This has to
-    # run before handle_existing_deployment() (a --force cleanup tears the old
-    # deployment down and would leave nothing behind if the runtime is missing)
-    # and outside the try below (whose verbosity>=4 branch swallows exceptions
-    # and would report success). --dry inspects only, so it needs no runtime.
+    # Check if Docker is available when --podman is not specified. Kept here,
+    # ahead of everything else, because a deployment that cannot be brought back
+    # up should be refused before any work is done. The two hazards this once
+    # dodged are now fixed at their source rather than routed around: the --force
+    # teardown moved below every step that can refuse the deployment
+    # (remove_existing_deployment, further down), and the try below no longer
+    # swallows exceptions at verbosity>=4. --dry inspects only, so it needs no
+    # runtime.
     if (
         not dry
         and not other_flags.get("podman", False)
