@@ -270,9 +270,25 @@ sudo systemctl status vllm-qwen38.service              # systemd (installed & ac
 Install/operate exactly as for 3.6 — stop any manual instance first so the unit
 can bind :8002, and kill by specific PID, never a broad `pkill -f vllm`.
 
-Qwen 3.8 is a **hybrid** architecture (16 × (3 × Gated DeltaNet → FFN) → 1 ×
-(Gated Attention → FFN)), unlike 3.6 which is a conventional MoE transformer.
-That difference is the source of both patches below.
+**Both models are hybrid linear-attention architectures**, with the same 3:1
+layer pattern (`full_attention_interval: 4`) — 3.8 is 64 layers (48
+`linear_attention` + 16 `full_attention`), 3.6 is 40 (30 + 10). The patches are
+**not** explained by an architecture difference: 3.6 runs the same Gated DeltaNet
+path, which is why the GPU-memory section above attributes its prefill spikes to
+the FLA kernel.
+
+What actually differs is the **GPTQ quantization layout**. Both checkpoints
+record their exclusions in `quantization_config.dynamic`, but at very different
+granularity:
+
+| | 3.6 (`Qwen3_5MoeForConditionalGeneration`) | 3.8 (`Qwen3_5ForConditionalGeneration`) |
+|---|---|---|
+| linear-attn exclusions | `-:.*attn.*` — one regex, excludes the **entire** attention stack | seven per-parameter regexes (`in_proj_a`, `in_proj_b`, `in_proj_ba`, `A_log`, `conv1d`, `dt_bias`, `norm`) |
+| `in_proj_qkv` / `in_proj_z` | **not** quantized — swept up by the broad regex | **int4** |
+| net effect | nothing mixed-precision inside the GDN block | int4 and bf16 weights **side by side** in one block |
+
+So 3.6 never exercises the fork's fused-vs-split projection logic and loads
+cleanly unpatched; 3.8 does, and that is the source of both patches below.
 
 ---
 
@@ -329,8 +345,13 @@ leaving every DeltaNet gate on uninitialized memory. Fix: also read GPTQ's
 **Verify after any change to this file:**
 
 ```bash
+# Scope to the CURRENT invocation. A bare `journalctl -u vllm-qwen38` replays
+# retained history, so the 96 warnings from the bad launch keep matching after
+# the patch is fixed -- the check would then report failure permanently.
+INV=$(systemctl show -p InvocationID --value vllm-qwen38)
+
 # must print 0 -- anything else means weights are being silently dropped
-sudo journalctl -u vllm-qwen38 | grep -c "not found in params_dict"
+sudo journalctl _SYSTEMD_INVOCATION_ID="$INV" | grep -c "not found in params_dict"
 # must answer "Paris" and "391", not "!!!!"
 curl -s http://localhost:8002/v1/chat/completions -H 'Content-Type: application/json' \
   -d '{"model":"palmfuture/Qwen3.8-27B-GPTQ-Int4","messages":[{"role":"user",
@@ -350,7 +371,8 @@ accepts *only* fp16 — `--dtype float32` is rejected outright).
 
 archi's providers are a **closed enum** — `openai`, `anthropic`, `gemini`,
 `openrouter`, `local`, `cern_litellm`, `huit_bedrock`. Provider config is read by
-`providers_cfg.get(provider_type.value)` (`chat_app/app.py:150`), so an invented
+`_build_provider_config_from_payload()` (`chat_app/app.py:155`, the enum lookup
+at `:162`), so an invented
 key like `local2:` is **not rejected — it is silently never read**. Each provider
 type gets exactly one `base_url`, so two vLLM endpoints cannot both be `local`.
 
@@ -393,17 +415,22 @@ Two non-obvious requirements:
 ### The override is streaming-only
 
 Per-request model selection (`"provider": "openai", "model": "..."` in the chat
-payload) is implemented in `stream()` (`app.py:1983`, override at `:2102`, which
-logs `Serving request from request-local view with <provider>/<model>`). The
-non-streaming `/api/get_chat_response` parses `provider`/`model` (`app.py:4701`)
-and then **ignores them**, silently serving the default provider and still
-returning **HTTP 200**.
+payload) is implemented in `stream()` (`app.py:1984`); the override block begins
+at `:2111` (`_create_provider_llm`) and logs `Serving request from request-local
+view with <provider>/<model>` at `:2139`. The non-streaming
+`/api/get_chat_response` does parse `provider`/`model` — in
+`_parse_chat_request()` (`app.py:4742`, the two keys at `:4768-4769`) — and then
+**ignores them**, silently serving the default provider and still returning
+**HTTP 200**.
 
 Verify an override against `/api/get_chat_response_stream`, and confirm at the
 destination — the target vLLM's request log — never by HTTP 200 alone:
 
 ```bash
-sudo journalctl -u vllm-qwen38 | grep -c "Received request"   # must increment
+# same invocation scoping as above -- retained history would inflate the count
+INV=$(systemctl show -p InvocationID --value vllm-qwen38)
+sudo journalctl _SYSTEMD_INVOCATION_ID="$INV" | grep -c "Received request"
+# must increase across the request under test
 ```
 
 ---
@@ -427,8 +454,8 @@ string is passed through verbatim.
 Postgres, the value can sit in the config file un-deployed for days; an unrelated
 redeploy is what finally applies it. So a deploy can break the chatbot with a
 change you did not make. After any deploy, check
-`docker inspect chatbot-dev --format '{{.RestartCount}}'` — not just HTTP 200 on
-the UI, which the crash loop can still briefly satisfy.
+`docker inspect chatbot-archi-openai-compat --format '{{.RestartCount}}'` — not
+just HTTP 200 on the UI, which the crash loop can still briefly satisfy.
 
 **There is no per-service GPU setting.** The compose template picks GPU images
 with one global flag applied to every service:
@@ -438,8 +465,7 @@ dockerfile: .../Dockerfile-chat{{ '-gpu' if gpu_ids else '' }}
 ```
 
 The rendered compose already names `Dockerfile-chat-gpu` for the chatbot, but the
-running chatbot image is a **stale CPU build** — `archi create --force` recreates
-*containers*, not *images*:
+running chatbot image is a **stale CPU build**:
 
 | | chatbot | data-manager |
 |---|---|---|
@@ -447,8 +473,23 @@ running chatbot image is a **stale CPU build** — `archi create --force` recrea
 | `/usr/local/cuda` | absent | present |
 | image size | 4.46 GB | 18.9 GB |
 
-So enabling `cuda:0` here means **forcing a chatbot image rebuild**, not editing
-config. Think before doing so: the chatbot's reservation is `count: all`, so a
+**`--force` is not the reason.** `archi create --force` only overwrites an
+existing deployment directory; the compose step that follows defaults to
+`--build --force-recreate --always-recreate-deps`
+(`DeploymentManager.start_deployment()`,
+`src/cli/managers/deployment_manager.py:48-51`), so an ordinary deploy *does*
+rebuild images. A stale image therefore means either no deploy has run since
+`gpu_ids` was set, or the ambient `ARCHI_COMPOSE_UP_FLAGS` was overridden and
+dropped `--build` — CI does exactly that
+(`.github/workflows/test-and-build-tag.yml:161`). Verify the image, never infer
+it from the flag:
+
+```bash
+docker inspect chatbot-archi-openai-compat --format '{{.Image}}'
+```
+
+So enabling `cuda:0` here still means **an actual chatbot image rebuild**, not
+just editing config. Think before doing so: the chatbot's reservation is `count: all`, so a
 CUDA chatbot claims GPUs 0–3 — including the pair running vLLM, which pre-reserves
 its KV pool at startup, making it a startup-order race. The chatbot only embeds
 short queries, not the bulk ingest that the GPU data-manager work actually sped
@@ -474,8 +515,16 @@ Two layers:
 
 Consequence: **editing `dev.yaml` + restarting is a no-op** — re-run `g.sh` to
 reseed Postgres. A `docker restart chatbot-archi-openai-compat` only picks up
-values already seeded into Postgres. `config/` is untracked (local deployment
-state).
+values already seeded into Postgres. `config/` is a checkout of the separate
+`fasrc/archi-config` repo — see the note at the end of
+[File reference](#file-reference).
+
+> **This is not the `deploy/fasrc-dev/` deployment.** That one is
+> `DEPLOYMENT="dev"` (`deploy/fasrc-dev/scripts/lib.sh:14-16`) → containers
+> `chatbot-dev` / `postgres-dev`, and it runs on a host with **no GPUs**, pointing
+> at a remote vLLM endpoint (`lib.sh:21-29`). Everything on this page is the
+> `archi-openai-compat` deployment on `archi.rc.fas.harvard.edu`. The container
+> names are not interchangeable between the two.
 
 ---
 
@@ -496,18 +545,32 @@ state).
 | `g.sh` (repo root) | Active deploy: `archi create` of chatbot + grafana from `dev.yaml` |
 | `config/scripts/g.sh` | Separate `main-gpu-agent` deploy from `config/vllm-config.yaml` (not the chat app here) |
 
-> **`config/` is untracked and this has already caused an outage-in-waiting.**
-> `.gitignore` ignores all of `/config/`, so every launcher, both systemd units,
-> the compat shim and the vLLM patches live outside version control — even though
-> this table documents them as project files. In August 2026
-> `vllm_patch/sitecustomize.py` and `vllm_qwen36_volta_serve.sh` were found
-> **missing from disk** while `vllm-qwen36.service` was still `enabled` and
-> `active`: the running 3.6 server survived only because it was already up, and
-> `Restart=on-failure` or a reboot would have left production down with no way to
-> start it. Both were reconstructed and restored.
+> **`config/` is a separate repository — but none of these vLLM files are in it.**
+> `config/` is a checkout of **`fasrc/archi-config`** (private), provisioned on
+> every deploy at a pinned, SHA-verified ref by `ensure_config` (`.gitignore:40-44`,
+> `deploy/fasrc-dev/scripts/lib.sh:4-6,32-45`). It is git-ignored *in this repo*
+> only because committing it would break as a gitlink or leak
+> `config/benchmarking/secrets.env` — not because it is unversioned. Recovery
+> edits belong in that repo and its pin, not in an ignored local checkout.
 >
-> Until the ignore rule is narrowed (or `config/scripts/` is backed up outside the
-> repo), treat this document as the **primary durable record** — it is the only
-> part of this setup that is version-controlled. Keep it in sync by hand, and if a
-> script here goes missing, this doc plus `vllm_patches/README.md` contain enough
-> to rebuild it.
+> The gap is narrower than "untracked", and worse for being invisible: as of the
+> `deploy-pin-2026-08a` pin, `git ls-files` inside `config/` returns
+> `scripts/prune-build-cache.sh` and `scripts/systemd/**` only — **no launcher, no
+> systemd unit, no `vllm_patch/` or `vllm_patches/`**. Of the table above, only
+> `config/environments/dev.yaml` is actually tracked. So `config/` being a git
+> checkout buys these files nothing. In August 2026 `vllm_patch/sitecustomize.py`
+> and `vllm_qwen36_volta_serve.sh` were found **missing from disk** while
+> `vllm-qwen36.service` was still `enabled` and `active`: the running 3.6 server
+> survived only because it was already up, and `Restart=on-failure` or a reboot
+> would have left production down with no way to start it. Both had to be
+> reconstructed by hand — a `git checkout` in `config/` would not have restored
+> them.
+>
+> **The fix is to commit them to `fasrc/archi-config`, not to maintain this page
+> as the record.** Add the launchers, both units, the compat shim and
+> `vllm_patches/` there, then bump the pin: create a *new* annotated tag in
+> `fasrc/archi-config` (never move an existing one — `git fetch --tags` refuses to
+> clobber a moved tag) and update `CONFIG_REF` + `CONFIG_SHA` in
+> `deploy/fasrc-dev/scripts/lib.sh` in the same PR (`lib.sh:32-45`). Until that
+> lands, this page plus `vllm_patches/README.md` are the interim record and must be
+> kept in sync by hand.
