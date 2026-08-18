@@ -584,27 +584,38 @@ Two layers:
   deploys an unrelated `main-gpu-agent` from `config/vllm-config.yaml` — not the
   chat app described here.
 
-> **`--env-file` is not optional here, and omitting it takes production down
-> before it fails.** `--force` tears the running deployment down *before* any
-> secret is validated: `handle_existing_deployment()` is called at
-> `src/cli/cli_main.py:164` and runs `delete_deployment(..., remove_files=True)`
-> (`src/cli/utils/helpers.py:299-319`), while `SecretsManager` is not constructed
-> until `:170` and `validate_secrets()` does not run until `:199`.
->
-> Without `--env-file`, `SecretsManager(None)` falls back to
-> `src/cli/managers/secrets_dummy.env`, whose entire contents are
+> **`--env-file` is still required here — but omitting it no longer costs you
+> the running deployment.** Without `--env-file`, `SecretsManager(None)` falls
+> back to `src/cli/managers/secrets_dummy.env`, whose entire contents are
 > `PG_PASSWORD=donuts`. The `grafana` service requires `GRAFANA_PG_PASSWORD`
-> (`src/cli/service_registry.py:114`), so validation fails — *after* the running
-> stack has already been stopped and removed. `OPENAI_API_KEY` would not have
-> reached the deployment either. Note that archi's `restart` path refuses this
-> combination only when it re-renders config: the guard at `cli_main.py:528-532`
-> sits inside the `if config_files or config_dir:` block that opens at
-> `cli_main.py:473`, so `archi restart --config` / `--config-dir` raises, while a
-> plain `archi restart` skips that block entirely and `create` has no such guard
-> at all. That asymmetry — and the teardown-before-validation ordering above — is
-> tracked as **[#287](https://github.com/fasrc/archi/issues/287)**; once it lands,
-> `--env-file` is still required here (grafana needs `GRAFANA_PG_PASSWORD`
-> regardless), but a missing one will no longer cost you the running deployment.
+> (`src/cli/service_registry.py:114`), so the run still fails — it just fails
+> before anything is destroyed, and now names `--env-file` instead of pointing
+> you at the packaged placeholder file. `OPENAI_API_KEY` would not have reached
+> the deployment either.
+>
+> Until [#287](https://github.com/fasrc/archi/issues/287) landed, `--force` tore
+> the running deployment down *before* any secret was validated, so this exact
+> command left the deployment both down and not replaced. It no longer does:
+> `handle_existing_deployment()` at `src/cli/cli_main.py:168` now only *refuses*
+> an existing deployment when `--force` was not given, and the destructive
+> teardown moved to `remove_existing_deployment()`
+> (`src/cli/utils/helpers.py:316-350`), called at `src/cli/cli_main.py:246` —
+> below config validation, secret validation, and compose-plan construction.
+>
+> **This does not make `--force` safe in general.** It guarantees only that a
+> deployment archi could have known was unsatisfiable is refused before anything
+> is torn down. A failure *after* that point — an image that will not pull, a
+> port already taken, a compose error — still leaves you without a running
+> deployment, because nothing preserves the old one for rollback. `--force` on a
+> production deployment is still a decision, not a default.
+>
+> For contrast, `archi restart` refuses the grafana-without-`--env-file`
+> combination only when it re-renders config: the guard at
+> `cli_main.py:556-560` sits inside the `if config_files or config_dir:` block
+> that opens at `cli_main.py:501`, so `archi restart --config` / `--config-dir`
+> raises, while a plain `archi restart` skips that block entirely. `create` has
+> no such special-case guard — it does not need one, because its ordering makes
+> every required secret fail safely, not just grafana's.
 - **Authoritative running config (what archi reads):** Postgres
   `static_config.services_config` (db `archi-db`, container
   `postgres-archi-openai-compat`), seeded from `dev.yaml` at `archi create`.
