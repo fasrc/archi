@@ -75,7 +75,7 @@ which ride per the UX-first rule.
 | PR [#251](https://github.com/fasrc/archi/pull/251) merge | done, open — closes #246 (dead duckdb pin + guard) | — |
 | PR [#230](https://github.com/fasrc/archi/pull/230) merge | done, open — closes #181 (sitemap lastmod refresh) | — |
 | PR [#261](https://github.com/fasrc/archi/pull/261) merge | done, open — docs for the second model server | — |
-| [#266](https://github.com/fasrc/archi/issues/266) clean-host image build | Base image is Python 3.10, `pyproject.toml` requires ≥3.11 — the release workflow itself builds images, so the release fails without this | M |
+| [#266](https://github.com/fasrc/archi/issues/266) clean-host image build | All 15 service Dockerfiles pull `docker.io/a2rchi/a2rchi-python-base:latest` — upstream's published image, Python 3.10.20 — and `archi create` never builds the fork's own 3.11 base, so on a clean host `pip install .` fails `requires-python >=3.11` (reproduced in the issue). The in-repo base Dockerfiles are already 3.11; the defect is the pulled tag. Release builds must not depend on CI's pre-build side step | M |
 | [#122](https://github.com/fasrc/archi/issues/122) think-leak (UX) | Chain-of-thought still streams to users before an orphan `</think>` arrives — live at `base_react.py:600/:911`, visible in the native UI and `/v1` | M |
 | [#245](https://github.com/fasrc/archi/issues/245) `/v1` double source list (UX) | `openai_compat.py:420` appends a second, contradictory source list; the native-UI half was already fixed by PR #240, shrinking this to S | S |
 | [#262](https://github.com/fasrc/archi/issues/262) model switch drops context bound (UX) | On fasrc-dev, a dropdown model switch installs no in-loop bound at all — the overflow apology #235 just fixed comes back | S |
