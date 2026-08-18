@@ -71,6 +71,13 @@ def parse_benchmark_results(results, metadata):
         "corpus_fingerprint_before": result.get("corpus_fingerprint_before"),
         "corpus_fingerprint": result.get("corpus_fingerprint"),
         "corpus_unchanged_at_endpoints": result.get("corpus_unchanged_at_endpoints"),
+        # Identity, alongside the divergence findings above. Divergence says
+        # whether this report can be trusted; the digests say whether this run is
+        # the same code and settings as another one, which is the question a
+        # campaign actually asks. `config_version` is per arm and comes off the
+        # record; `code_version` is per invocation and comes off the metadata.
+        "config_version": result.get("config_version"),
+        "code_version": metadata.get("code_version"),
     }
 
     return config_data, config_name, timestamp, questions, total_results, provenance
@@ -142,8 +149,94 @@ def format_provenance_html(provenance):
         "<div class='provenance'><h2>Run provenance</h2>"
         + config_line
         + corpus_line
+        + format_version_html(provenance)
         + "</div>"
     )
+
+
+_NOT_RECORDED = "<em>not recorded &mdash; this artifact predates version stamping</em>"
+
+
+def format_version_html(provenance):
+    """Render the code and configuration identity of the run.
+
+    Divergence and corpus stability, above, say whether this report describes its
+    own run. These digests answer the question a campaign asks across runs: was
+    this the same code, and the same settings, as that other arm? Equal digests
+    mean equal inputs.
+
+    Neither is derivable from ``git_info.last_commit``: ``archi create`` writes it
+    once and freezes it, so every run between 2026-08-11 and 2026-08-17 reports
+    ``0a157cdce0`` with an empty diff. The commit is shown, labelled, so a reader
+    does not mistake it for the code this run executed.
+
+    An artifact written before stamping says so rather than being filled in with
+    a plausible guess.
+    """
+    if not provenance:
+        return ""
+
+    code = provenance.get("code_version") or {}
+    config = provenance.get("config_version") or {}
+    if not code and not config:
+        return ""
+
+    rows = []
+
+    code_digest = code.get("digest")
+    rows.append(
+        "<li>Code version: "
+        + (
+            f"<code>{html.escape(str(code_digest))}</code>"
+            if code_digest
+            else _NOT_RECORDED
+        )
+        + "</li>"
+    )
+    commit = code.get("deploy_git_commit")
+    if commit:
+        dirty = " (dirty tree)" if code.get("deploy_git_dirty") else ""
+        rows.append(
+            f"<li>Deploy-time commit: <code>{html.escape(str(commit))}</code>{dirty} "
+            "&mdash; frozen by <code>archi create</code>; it identifies the "
+            "deploy, not the image this run used</li>"
+        )
+
+    config_digest = config.get("digest")
+    rows.append(
+        "<li>Config version: "
+        + (
+            f"<code>{html.escape(str(config_digest))}</code>"
+            if config_digest
+            else _NOT_RECORDED
+        )
+        + "</li>"
+    )
+    if config.get("source"):
+        rows.append(f"<li>Config basis: {html.escape(str(config['source']))}</li>")
+
+    key_settings = config.get("key_settings") or {}
+    if key_settings:
+        settings_rows = "".join(
+            "<tr><td><code>{}</code></td><td><code>{}</code></td></tr>".format(
+                html.escape(path),
+                html.escape(
+                    json.dumps(key_settings[path], sort_keys=True, default=repr)
+                    if isinstance(key_settings[path], (dict, list))
+                    else str(key_settings[path])
+                ),
+            )
+            for path in sorted(key_settings)
+        )
+        settings_table = (
+            "<p>Settings that define this arm:</p>"
+            "<table class='provenance-settings'>"
+            "<tr><th>Setting</th><th>Value</th></tr>" + settings_rows + "</table>"
+        )
+    else:
+        settings_table = ""
+
+    return "<ul>" + "".join(rows) + "</ul>" + settings_table
 
 
 def format_total_duration(raw_duration):
@@ -713,7 +806,7 @@ Examples:
     )
     with open(html_path, "w") as f:
         f.write(html_content)
-    print(f"✅ HTML report generated: {args.html}")
+    print(f"✅ HTML report generated: {html_path}")
 
 
 if __name__ == "__main__":

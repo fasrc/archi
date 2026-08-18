@@ -24,6 +24,8 @@ from src.archi.providers import get_model
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
 from src.utils.benchmark_provenance import (
     asserted_config_divergence,
+    collect_code_version,
+    config_version,
     corpus_fingerprint,
 )
 from src.utils.benchmark_resilience import (
@@ -60,6 +62,13 @@ from src.utils.postgres_service_factory import PostgresServiceFactory
 CONFIG_PATH = "/root/archi/config.yaml"
 OUTPUT_PATH = "/root/archi/benchmarks"
 EXTRA_METADATA_PATH = "/root/archi/git_info.yaml"
+
+# The `src` package as installed in this image. The benchmark builds the agent
+# in-process, so these files ARE the code under test -- and they are the baked
+# site-packages copy, not a bind mount, which is exactly the code a deploy-time
+# commit fails to identify. Derived from this module's own location so it follows
+# the package wherever the image puts it.
+PACKAGE_DIR = str(Path(__file__).resolve().parent.parent)
 OUTPUT_DIR = Path(OUTPUT_PATH)
 
 # The corpus's retrievable state, as opaque (key, value) pairs for
@@ -407,14 +416,32 @@ class ResultHandler:
             "corpus_fingerprint_before": corpus_before,
             "corpus_fingerprint": corpus_after,
             "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
+            # Per arm, not per file. One invocation runs every config in the
+            # sweep directory (the `while self.all_config_files` loop), so a
+            # single version on the metadata block would label every arm with
+            # whichever ran last; bench-sweep-20260610 holds three arms.
+            #
+            # Divergence above catches a mislabel while both sources are in
+            # hand. This digest answers the other question -- "was this the same
+            # configuration as that other run?" -- from the finished artifact
+            # alone, long after Postgres has moved on.
+            "config_version": config_version(
+                running=running_config,
+                selected=config,
+                selected_file=str(config_path),
+            ),
         }
 
         ResultHandler.results.append(current_results)
 
     @staticmethod
     def add_metadata():
-        with open(EXTRA_METADATA_PATH, "r") as f:
-            additional_info = yaml.safe_load(f)
+        try:
+            with open(EXTRA_METADATA_PATH, "r") as f:
+                additional_info = yaml.safe_load(f)
+        except OSError as exc:  # noqa: BLE001 - provenance is never fatal
+            logger.warning("Could not read %s: %s", EXTRA_METADATA_PATH, exc)
+            additional_info = None
 
         meta_data = {
             "time": str(datetime.now(timezone.utc)),
@@ -425,6 +452,17 @@ class ResultHandler:
             # -- every arm of a campaign reports the same commit even when the arms
             # ran different code. Say so in the artifact rather than in a comment.
             "git_info_captured_at": "deploy (`archi create`), not the running image",
+            # What the frozen commit above cannot provide: an identity for the
+            # code this run actually executed. Digested from the `src` package
+            # files in the image, so it is per invocation (one image runs every
+            # arm) and independent of which code paths the run happened to take.
+            "code_version": collect_code_version(PACKAGE_DIR, additional_info),
+            # The config version is per arm and lives on each result record; this
+            # only summarises their digests, in the order the arms ran.
+            "config_versions": [
+                (record.get("config_version") or {}).get("digest")
+                for record in ResultHandler.results
+            ],
             "corpus_snapshot_id": ResultHandler.get_corpus_snapshot_id(),
             "corpus_fingerprint": ResultHandler.get_corpus_fingerprint(),
         }

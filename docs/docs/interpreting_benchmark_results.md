@@ -222,6 +222,29 @@ of the corpus contents (`src/bin/service_benchmark.py:126`). Therefore:
 You can pin the id across invocations with the `ARCHI_CORPUS_SNAPSHOT_ID`
 environment variable, when you know for certain no re-ingest occurred.
 
+Newer runs also record **`corpus_fingerprint`**, per arm, which *is* derived from
+the corpus contents — a digest over every live document and every chunk of text
+retrieval can reach. Two arms with the **same** fingerprint were scored against
+the same documents, whether or not they ran in the same invocation. That is the
+claim `corpus_snapshot_id` could never support, so prefer the fingerprint when
+you have it.
+
+Read it with three cautions:
+
+- A value beginning `<unavailable:` is **not** an observation. It means the
+  corpus could not be read, and the text after it says why. Two runs both
+  reporting the same `<unavailable:` marker are not two runs over one corpus —
+  they are two runs where nothing was checked.
+- Runs before 2026-08-17 have no fingerprint at all. Absence is not agreement.
+- Re-embedding the same text with a different model leaves the fingerprint
+  unchanged, because the documents and chunk text did not change. That shows up
+  instead as a divergence on `data_manager.embedding_name` — see
+  [Procedure E](#procedure-e-confirm-two-runs-are-comparable).
+
+An arm whose corpus reading failed, or whose corpus differs from the others', is
+withheld from the leaderboard and the A/B winner rather than ranked, because
+ranking it would assert a controlled comparison that did not happen.
+
 ### 3.4 Denominator drift — the quiet one
 
 The harness protects a run from a single bad question: if a question crashes or
@@ -483,9 +506,12 @@ required, and they fail in different ways.
 bench_out/benchmarking-<name>-<timestamp>.json
 ├── metadata
 │   ├── corpus_snapshot_id     # shared => ran together (see §3.3)
-│   └── git_info.last_commit   # which code produced this
+│   ├── git_info.last_commit   # the DEPLOY's commit, NOT this run's code (§5.E)
+│   ├── code_version           # which code produced this (§5.E)
+│   └── config_versions[]      # one config digest per arm, in run order
 └── benchmarking_results[]     # one entry per config in a -cd sweep
     ├── configuration_file
+    ├── config_version         # this arm's config identity (§5.E)
     ├── total_results
     │   ├── aggregate_<metric>
     │   ├── <metric>_scored    # "71 of 73" — CHECK THIS (§3.4)
@@ -505,6 +531,62 @@ Report the bank sliced by `difficulty`, not as one number. A single mean over 40
 easy, 27 medium and 6 hard questions hides everything interesting. Treat the
 `hard` slice as directional only — at n=6, one question swinging moves that mean
 by 0.17.
+
+### Procedure E: confirm two runs are comparable
+
+Before comparing any two numbers, confirm the runs differed only in the thing you
+changed. The report answers this in the **Run provenance** block, and in these
+fields.
+
+**Do not use `git_info.last_commit` for this.** `archi create` writes
+`git_info.yaml` once at deploy and then freezes it. Every run between 2026-08-11
+and 2026-08-17 reports the same commit (`0a157cdce0`) with an empty diff, because
+they shared one deployment — even though they ran different code. The field names
+the deploy, not the image. It is kept, and labelled, for exactly that reason.
+
+Use the digests instead. Each is a content hash: **equal digest means equal
+input**, and the property is readable from the finished file forever, with no need
+for Postgres or the config file to still exist.
+
+| Field | Scope | Answers |
+|---|---|---|
+| `metadata.code_version.digest` | per invocation | Did these runs execute the same code? |
+| `<arm>.config_version.digest` | per arm | Did these arms use the same settings? |
+| `<arm>.config_version.key_settings` | per arm | Which settings define this arm? |
+| `<arm>.config_version.divergence_from_selected_file` | per arm | Did the run use the config you selected? |
+| `<arm>.corpus_fingerprint` | per arm | Did they see the same documents? (§3.3) |
+
+Read them like this:
+
+- **Same `code_version.digest`** → same code. Different → different code, and any
+  metric delta may be that rather than your change.
+- **`config_version.digest` differs across arms of one sweep** → good, that is the
+  arm distinction. Identical across arms you meant to differ → the sweep did not
+  vary what you thought.
+- **`divergence_from_selected_file` non-empty** → **stop.** The run did not use
+  the settings you selected, and the report says so at the top. This is not
+  hypothetical: `bench-8192-20260817_170850.json` was the 8192 arm and its
+  recorded configuration says `context_window: 32768`, because the agent reads
+  Postgres while the harness wrote a YAML file. Its scores (relevancy 0.681,
+  faithfulness 0.562) cannot be attributed to either setting.
+
+Two caveats worth knowing:
+
+- `config_version` covers the **effective** configuration — what the agent read
+  from Postgres, overlaid with the `services.benchmarking` settings the harness
+  passes to `archi()` directly. Those never reach Postgres, and they are what a
+  prompt sweep varies, so a digest without them would give every arm the same
+  value.
+- `key_settings` is a convenience for reading, **not** the guarantee. It is a
+  fixed list and will always lag; `context_editing` did not exist when the
+  2026-08-11 runs were recorded. The digest covers every setting, so trust the
+  digest and use `key_settings` to see at a glance what you are looking at.
+
+Artifacts written before this existed say `not recorded` rather than showing a
+guess. Their code version is genuinely unrecoverable — nothing in the file
+identifies the image. Their config digest is reconstructed from the recorded
+configuration *file*, which is real but, per the bench-8192 case above, is not
+necessarily what ran; the field says so.
 
 ---
 
@@ -604,6 +686,18 @@ human grades by difficulty needs a new `TermsMetadataProperty`.
 Of the 73 questions, 8 draw on `modules-intro` and 6 on `slurm-intro`. Over-sampling
 a few pages means a retrieval change touching those pages swings the whole score
 disproportionately. Spread the sources when the bank is next revised.
+
+### Gap 8: `code_version` cannot name a commit
+
+`metadata.code_version.digest` tells you whether two runs executed the *same* code.
+It cannot tell you *which* code, because nothing stamps a commit into the image at
+build time — `git_info.yaml` is written on the host at deploy and then frozen
+(§5.E). So you can say "these two arms ran identical code" or "these two arms ran
+different code", but not "this arm ran commit abc123".
+
+Closing this needs a build-time change: bake the commit (or a `git describe`) into
+the image and have the benchmark read it from there rather than from the deploy's
+frozen file.
 
 ---
 
