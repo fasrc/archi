@@ -595,8 +595,12 @@ Two layers:
 > `PG_PASSWORD=donuts`. The `grafana` service requires `GRAFANA_PG_PASSWORD`
 > (`src/cli/service_registry.py:114`), so validation fails — *after* the running
 > stack has already been stopped and removed. `OPENAI_API_KEY` would not have
-> reached the deployment either. Note that archi's `update` path already refuses
-> this combination explicitly (`cli_main.py:530`); `create` does not.
+> reached the deployment either. Note that archi's `restart` path already refuses
+> this combination explicitly (`cli_main.py:528-532`); `create` does not. That
+> asymmetry — and the teardown-before-validation ordering above — is tracked as
+> **#287**; once it lands, `--env-file` is still required here (grafana needs
+> `GRAFANA_PG_PASSWORD` regardless), but a missing one will no longer cost you the
+> running deployment.
 - **Authoritative running config (what archi reads):** Postgres
   `static_config.services_config` (db `archi-db`, container
   `postgres-archi-openai-compat`), seeded from `dev.yaml` at `archi create`.
@@ -659,7 +663,8 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 > start it. Both had to be reconstructed by hand — a `git checkout` in `config/`
 > would not have restored them, because they had never been committed.
 >
-> **Closing this takes two steps, and committing the files is only the first:**
+> **Closing this takes two steps, and committing the files is only the first**
+> (both are tracked as **#286**):
 >
 > 1. Add the launchers, both units, the compat shim and `vllm_patches/` to
 >    `fasrc/archi-config`.
@@ -678,5 +683,5 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 >    never move an existing one, as `git fetch --tags` refuses to clobber a moved
 >    tag.)
 >
-> Until both land, this page plus `vllm_patches/README.md` are the interim record
+> Until #286 lands, this page plus `vllm_patches/README.md` are the interim record
 > and must be kept in sync by hand.
