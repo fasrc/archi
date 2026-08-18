@@ -215,7 +215,7 @@ The switch is in the chat-app provider config (seeded to Postgres):
 services:
   chat_app:
     providers:
-      openai:
+      local:                 # the slot serving 3.6 — see the table at the top
         extra_kwargs:
           extra_body:
             chat_template_kwargs:
@@ -225,6 +225,12 @@ services:
 (in `config/environments/dev.yaml`). It is forwarded to vLLM as
 `chat_template_kwargs={"enable_thinking": false}`; the model then answers directly
 with no `<think>` trace.
+
+> **`extra_kwargs` is read per slot, not globally.**
+> `_build_provider_config_from_payload()` takes it from the selected provider's own
+> block (`chat_app/app.py:158`, the lookup at `:165`), so this setting under
+> `local:` does nothing for the `openai:` slot serving 3.8. To run 3.8 without
+> thinking as well, repeat the same `extra_kwargs` block under `openai:`.
 
 **Critical: the launch must NOT pass `--reasoning-parser qwen3`.** This image's
 custom qwen3 parser fixes `prompt_has_open_think=True` at startup, so when a
@@ -255,12 +261,24 @@ reverse order briefly serves empty answers.
 | Endpoint | `http://localhost:8002/v1` |
 | GPUs | 0,1 (`--tensor-parallel-size 2`) |
 | Container image | `/scratch/a2rchi/sifs/vllm_volta.sif` (same image as 3.6) |
-| Engine flags | Same as 3.6 except `--gpu-memory-utilization 0.80` (GPU 0 is shared with the data-manager embedding worker) |
+| Engine flags | Same as 3.6 except `--gpu-memory-utilization 0.80` — see [the note below](#the-080-cap-is-unvalidated) |
 | Logs | journald (`sudo journalctl -u vllm-qwen38`); `/scratch/a2rchi/vllm.log` **only** for the manual launcher |
 | Patches | **Required** — two bind-mounts, see below |
 
 Port 8002 rather than 8000: **8000 is already taken** by the RAGAS Dataset
 Manager on this host.
+
+### The 0.80 cap is unvalidated
+
+0.80 was set on the assumption that GPU 0 is shared with the data-manager
+embedding pass. That assumption does not hold under the configuration this page
+prescribes: embeddings are pinned to `cpu` (see
+[Embedding device](#embedding-device-why-it-must-be-cpu)) and the chatbot runs a
+CPU image, so nothing else in the archi stack holds memory on GPU 0. Treat 0.80
+as unexplained margin rather than a validated requirement — before relying on it,
+confirm what actually occupies GPU 0 (`nvidia-smi`). If nothing does, the 0.88
+reasoning from the 3.6 section applies here too and the extra headroom is
+recoverable.
 
 ```bash
 bash config/scripts/singularity_vllm_qwen38_volta.sh   # manual (backgrounds)
@@ -371,9 +389,9 @@ accepts *only* fp16 — `--dtype float32` is rejected outright).
 
 archi's providers are a **closed enum** — `openai`, `anthropic`, `gemini`,
 `openrouter`, `local`, `cern_litellm`, `huit_bedrock`. Provider config is read by
-`_build_provider_config_from_payload()` (`chat_app/app.py:155`, the enum lookup
-at `:162`), so an invented
-key like `local2:` is **not rejected — it is silently never read**. Each provider
+`_build_provider_config_from_payload()` (`chat_app/app.py:158`, the enum lookup at
+`:165`), so an invented key like `local2:` is **not rejected — it is silently
+never read**. Each provider
 type gets exactly one `base_url`, so two vLLM endpoints cannot both be `local`.
 
 Because vLLM speaks the OpenAI API and `OpenAIProvider` honors a custom
@@ -415,11 +433,11 @@ Two non-obvious requirements:
 ### The override is streaming-only
 
 Per-request model selection (`"provider": "openai", "model": "..."` in the chat
-payload) is implemented in `stream()` (`app.py:1984`); the override block begins
-at `:2111` (`_create_provider_llm`) and logs `Serving request from request-local
-view with <provider>/<model>` at `:2139`. The non-streaming
+payload) is implemented in `stream()` (`app.py:2016`); the override block begins
+at `:2143` (`_create_provider_llm`) and logs `Serving request from request-local
+view with <provider>/<model>` at `:2177`. The non-streaming
 `/api/get_chat_response` does parse `provider`/`model` — in
-`_parse_chat_request()` (`app.py:4742`, the two keys at `:4768-4769`) — and then
+`_parse_chat_request()` (`app.py:4779`, the two keys at `:4805-4806`) — and then
 **ignores them**, silently serving the default provider and still returning
 **HTTP 200**.
 
@@ -489,8 +507,9 @@ docker inspect chatbot-archi-openai-compat --format '{{.Image}}'
 ```
 
 So enabling `cuda:0` here still means **an actual chatbot image rebuild**, not
-just editing config. Think before doing so: the chatbot's reservation is `count: all`, so a
-CUDA chatbot claims GPUs 0–3 — including the pair running vLLM, which pre-reserves
+just editing config. Think before doing so: the chatbot's reservation is
+`count: all`, so a CUDA chatbot claims GPUs 0–3 — including the pair running
+vLLM, which pre-reserves
 its KV pool at startup, making it a startup-order race. The chatbot only embeds
 short queries, not the bulk ingest that the GPU data-manager work actually sped
 up. Keep `device: cpu` while vLLM owns the GPUs.
@@ -545,32 +564,44 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 | `g.sh` (repo root) | Active deploy: `archi create` of chatbot + grafana from `dev.yaml` |
 | `config/scripts/g.sh` | Separate `main-gpu-agent` deploy from `config/vllm-config.yaml` (not the chat app here) |
 
-> **`config/` is a separate repository — but none of these vLLM files are in it.**
-> `config/` is a checkout of **`fasrc/archi-config`** (private), provisioned on
-> every deploy at a pinned, SHA-verified ref by `ensure_config` (`.gitignore:40-44`,
-> `deploy/fasrc-dev/scripts/lib.sh:4-6,32-45`). It is git-ignored *in this repo*
-> only because committing it would break as a gitlink or leak
-> `config/benchmarking/secrets.env` — not because it is unversioned. Recovery
-> edits belong in that repo and its pin, not in an ignored local checkout.
+> **`config/` is a separate repository — but none of these vLLM files are in it,
+> and nothing provisions it on this host.**
+> `config/` is a checkout of **`fasrc/archi-config`** (private). It is git-ignored
+> *in this repo* only because committing it would break as a gitlink or leak
+> `config/benchmarking/secrets.env` (`.gitignore:40-44`) — not because it is
+> unversioned.
 >
-> The gap is narrower than "untracked", and worse for being invisible: as of the
+> **Provisioning is not automatic here.** `ensure_config`, which checks the
+> checkout out at a pinned, SHA-verified ref, has exactly one caller —
+> `deploy/fasrc-dev/scripts/lib.sh:208` — on the *other* deployment. This page's
+> active path is the repo-root `g.sh` calling `archi create` directly, which never
+> runs it. So on this host `config/` is simply whatever is on disk, at whatever
+> revision someone last left it, with nothing verifying it.
+>
+> **And the files that matter are not committed anywhere.** As of the
 > `deploy-pin-2026-08a` pin, `git ls-files` inside `config/` returns
 > `scripts/prune-build-cache.sh` and `scripts/systemd/**` only — **no launcher, no
 > systemd unit, no `vllm_patch/` or `vllm_patches/`**. Of the table above, only
-> `config/environments/dev.yaml` is actually tracked. So `config/` being a git
-> checkout buys these files nothing. In August 2026 `vllm_patch/sitecustomize.py`
-> and `vllm_qwen36_volta_serve.sh` were found **missing from disk** while
-> `vllm-qwen36.service` was still `enabled` and `active`: the running 3.6 server
-> survived only because it was already up, and `Restart=on-failure` or a reboot
-> would have left production down with no way to start it. Both had to be
-> reconstructed by hand — a `git checkout` in `config/` would not have restored
-> them.
+> `config/environments/dev.yaml` is tracked. In August 2026
+> `vllm_patch/sitecustomize.py` and `vllm_qwen36_volta_serve.sh` were found
+> **missing from disk** while `vllm-qwen36.service` was still `enabled` and
+> `active`: the running 3.6 server survived only because it was already up, and
+> `Restart=on-failure` or a reboot would have left production down with no way to
+> start it. Both had to be reconstructed by hand — a `git checkout` in `config/`
+> would not have restored them, because they had never been committed.
 >
-> **The fix is to commit them to `fasrc/archi-config`, not to maintain this page
-> as the record.** Add the launchers, both units, the compat shim and
-> `vllm_patches/` there, then bump the pin: create a *new* annotated tag in
-> `fasrc/archi-config` (never move an existing one — `git fetch --tags` refuses to
-> clobber a moved tag) and update `CONFIG_REF` + `CONFIG_SHA` in
-> `deploy/fasrc-dev/scripts/lib.sh` in the same PR (`lib.sh:32-45`). Until that
-> lands, this page plus `vllm_patches/README.md` are the interim record and must be
-> kept in sync by hand.
+> **Closing this takes two steps, and committing the files is only the first:**
+>
+> 1. Add the launchers, both units, the compat shim and `vllm_patches/` to
+>    `fasrc/archi-config`.
+> 2. Give *this* deployment a provisioning step that pins them. Bumping
+>    `CONFIG_REF`/`CONFIG_SHA` in `deploy/fasrc-dev/scripts/lib.sh` governs the
+>    `dev` deployment only and does nothing here. Either wrap `g.sh` so it sources
+>    `ensure_config` before `archi create`, or record an explicit
+>    `git -C config/ fetch --tags && git -C config/ checkout <tag>` step in this
+>    deployment's procedure. (When creating the tag: make a *new* annotated tag —
+>    never move an existing one, as `git fetch --tags` refuses to clobber a moved
+>    tag.)
+>
+> Until both land, this page plus `vllm_patches/README.md` are the interim record
+> and must be kept in sync by hand.
