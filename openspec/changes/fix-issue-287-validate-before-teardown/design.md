@@ -1,5 +1,9 @@
 ## Context
 
+> Line numbers in this section describe `origin/dev` **before** this change — they locate
+> the defect. Post-change anchors appear in the Decisions below and in `tasks.md`, and were
+> re-derived at the branch head after the final code commit.
+
 `create()` in `src/cli/cli_main.py` runs, in order: a Docker preflight (`:145-155`), the
 existing-deployment handling (`:164`), manager construction (`:169-170`), source resolution
 (`:172-187`), config validation (`:193`), secret validation (`:196-199`),
@@ -91,9 +95,12 @@ not cover.
 **Chosen:** separate the two responsibilities into two module-level functions in
 `src/cli/utils/helpers.py`:
 
-- `handle_existing_deployment(base_dir, name, force, dry, use_podman)` — keeps its name and
-  its non-destructive precondition: when `base_dir` exists and `force` is falsy, raise the
-  existing `ClickException` verbatim; otherwise return.
+- `handle_existing_deployment(base_dir, name, force)` — keeps its name and its
+  non-destructive precondition: when `base_dir` exists and `force` is falsy, raise the
+  existing `ClickException` verbatim; otherwise return. The `dry` and `use_podman`
+  parameters are **dropped**, not retained: both were used only by the destructive branch,
+  so keeping them would leave two dead arguments at every call site. Both callers are
+  updated in this change, so there is no external signature to preserve.
 - `remove_existing_deployment(base_dir, name, force, dry, use_podman)` — the destructive
   branch verbatim, including the dry-run notice and the `try/except` that downgrades a
   failed cleanup to a warning. It takes `force` and no-ops when it is falsy, so callers do
@@ -175,6 +182,39 @@ to pass `--env-file`. That is the actively misleading part.
 
 Reformatting `secrets_manager.py` is worth doing but is mechanical churn and belongs in its
 own PR per the project's split-churn-from-behaviour rule.
+
+### Decision 5: Verbosity selects diagnostics, never exit status
+
+Added after implementation, from round 2 of the pre-PR adversarial review.
+
+`create()`'s outer handler printed a traceback at `--verbosity 4` and then fell through
+without re-raising, so any failure inside the `try` — including the validation failures this
+change relies on — exited 0. The deployment survived, and the caller was told the
+replacement succeeded.
+
+This predates #287: the Docker preflight is deliberately placed *outside* that `try`, with a
+comment saying the handler "swallows exceptions and would report success". The earlier fix
+routed around the defect rather than fixing it. That was tolerable while the handler only
+masked failures that had already destroyed the deployment; it is not tolerable now, because
+"archi refuses instead of destroying" is worth little if the refusal reports success to a
+script that then proceeds as though the new deployment were live.
+
+**Chosen:** always raise. Print the traceback additionally at `--verbosity 4`, and re-raise
+an existing `ClickException` unchanged rather than re-wrapping it, so its message and exit
+code survive intact.
+
+**Alternative considered — move each new check outside the `try`, as #112 did for Docker.**
+Rejected: it does not generalise. The validations this change depends on are spread across
+forty lines and legitimately belong inside the error handling; hoisting them all out would
+duplicate the very structure that made this bug possible. Fixing the handler fixes every
+error path in `create()` at once, and no caller can reasonably depend on verbose mode
+suppressing a non-zero exit.
+
+**Scope note.** This is strictly wider than #287 as filed — it changes the exit status of
+every `create()` failure at `--verbosity 4`, not only the ones this change introduces. It is
+included because #287's own acceptance criterion 2 requires the command to "exit non-zero
+and leave the existing deployment directory in place", and without it that criterion is
+false whenever `-v 4` is passed.
 
 ## Risks / Trade-offs
 

@@ -110,11 +110,12 @@ the real run — the opposite of what a dry run is for.
 
 Refactoring `handle_existing_deployment()` SHALL NOT change the observable behaviour of any
 command other than `archi create`. In particular `archi evaluate --force` depends on the
-destructive branch running at its current call site: it invokes the helper at
-`src/cli/cli_main.py:748-750` and then raises "Benchmarking runtime already exists" at
-`:752-755` if the directory is still present. A split that leaves only the non-destructive
-half behind that call site would make every forced evaluate against an existing benchmark
-runtime fail.
+destructive branch running at its call site in `evaluate()`: it invokes the helper and then
+raises "Benchmarking runtime '{name}' already exists" if the directory is still present. A
+split that leaves only the non-destructive half behind that call site would make every
+forced evaluate against an existing benchmark runtime fail. (On `origin/dev` before this
+change those are `src/cli/cli_main.py:748-750` and `:752-755`; after it, the two helper
+calls sit at `:787-790`. Cited by symbol because the line numbers move.)
 
 #### Scenario: Forced evaluate against an existing benchmarking runtime
 
@@ -128,3 +129,24 @@ runtime fail.
 - **WHEN** `archi evaluate` is invoked without `--force` against an existing benchmarking
   runtime directory
 - **THEN** the command exits non-zero, exactly as it does today
+
+### Requirement: Verbosity selects diagnostics, never exit status
+
+`archi create` SHALL exit non-zero on any failure regardless of `--verbosity`. A verbosity
+setting MAY add diagnostics such as a traceback, but MUST NOT change whether the command
+succeeds. A refusal that exits 0 tells a calling script the deployment was replaced when it
+was not, which is a worse outcome than the refusal it is reporting.
+
+#### Scenario: Forced re-create failing validation at maximum verbosity
+
+- **WHEN** `archi create --force --verbosity 4` is invoked against an existing deployment
+  with a required secret missing
+- **THEN** the command exits non-zero
+- **AND** `delete_deployment()` is never called
+- **AND** the existing deployment directory is left intact
+
+#### Scenario: The same failure at default verbosity
+
+- **WHEN** the same invocation is made without `--verbosity 4`
+- **THEN** the command exits non-zero with the same message content
+- **AND** the two runs differ only in the diagnostics printed, not in exit status

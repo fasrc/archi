@@ -55,8 +55,20 @@ The codebase already encodes the judgement this change generalises, in two place
   logs "[DRY RUN] Would remove existing deployment at ..." before the dry-run summary
   prints, because its new position remains above the `if dry:` early return at
   `cli_main.py:223-239`.
-- Not **BREAKING**. A `create --force` that succeeds today succeeds identically; only the
-  failure path changes, and only by preserving something the operator previously lost.
+- Fix `create()`'s outer exception handler, which printed a traceback at `--verbosity 4` and
+  then fell through without re-raising, so a failed create exited 0. This predates #287 —
+  the Docker preflight sits outside that `try` precisely because of it — but it makes this
+  change's contract false in verbose mode: the deployment is preserved and the caller is
+  told the replacement succeeded. Verbosity now selects diagnostics only.
+- Not **BREAKING** for successful runs. A `create --force` that succeeds today succeeds
+  identically; the failure path changes, and only by preserving something the operator
+  previously lost. The verbosity fix does change the exit status of *every* `create` failure
+  at `--verbosity 4`, from 0 to non-zero — a script that treated verbose failures as
+  successes will now see them fail, which is the point.
+
+> Line numbers in the **Why** section above describe `origin/dev` before this change; they
+> locate the defect. Post-change anchors live in `design.md` and `tasks.md` and were
+> re-derived at the branch head after the final code commit.
 
 ## Capabilities
 
