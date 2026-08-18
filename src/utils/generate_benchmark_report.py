@@ -440,19 +440,25 @@ def format_html_output(
                 f"""
                 <div class="metric-item">
                     <div class="metric-value score-medium">{ret_partial}</div>
-                    <div class="metric-label">Partially Correct (some sources found)</div>
+                    <div class="metric-label">Partially Correct (some expected sources retrieved)</div>
                 </div>
             """
             )
 
-        # Incorrect
+        # Incorrect. A residual over the EXPECTED sources, so it counts questions
+        # where none of the expected sources were among those retrieved -- NOT
+        # questions where retrieval returned nothing. The old label claimed the
+        # latter: in benchmarking-ragas-205-20260817_040939 all 106 scored
+        # questions retrieved documents and none retrieved zero, yet the report
+        # announced "19 Incorrect (no sources found)", inviting the reader to
+        # diagnose a retrieval outage that had not happened.
         ret_incorrect = ret_total - ret_correct - ret_partial
         if ret_incorrect > 0:
             html_parts.append(
                 f"""
                 <div class="metric-item">
                     <div class="metric-value score-low">{ret_incorrect}</div>
-                    <div class="metric-label">Incorrect (no sources found)</div>
+                    <div class="metric-label">Incorrect (no expected sources retrieved)</div>
                 </div>
             """
             )
@@ -573,8 +579,13 @@ def format_html_output(
         # archi's Answer
         html_parts.append(f'<div class="section">')
         html_parts.append(f'<div class="section-title">🤖 archi\'s Answer</div>')
+        # Escaped: FASRC documentation is full of command placeholders such as
+        # `<jobid>` and `<rcusername>`, which a browser parses as unknown elements
+        # and renders as nothing -- silently deleting the argument the reader
+        # needs from the command they were told to run.
         html_parts.append(
-            f'<div class="answer-box">{q_data.get("answer", "N/A")}</div>'
+            f'<div class="answer-box">'
+            f'{html.escape(str(q_data.get("answer", "N/A")))}</div>'
         )
         html_parts.append(f"</div>")
 
@@ -582,7 +593,8 @@ def format_html_output(
         html_parts.append(f'<div class="section">')
         html_parts.append(f'<div class="section-title">✅ Expected Answer</div>')
         html_parts.append(
-            f'<div class="answer-box expected-box">{q_data.get("reference_answer", "N/A")}</div>'
+            f'<div class="answer-box expected-box">'
+            f'{html.escape(str(q_data.get("reference_answer", "N/A")))}</div>'
         )
         html_parts.append(f"</div>")
 

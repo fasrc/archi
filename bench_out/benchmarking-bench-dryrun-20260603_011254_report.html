@@ -112,7 +112,7 @@
 
                 <div class="metric-item">
                     <div class="metric-value score-low">4</div>
-                    <div class="metric-label">Incorrect (no sources found)</div>
+                    <div class="metric-label">Incorrect (no expected sources retrieved)</div>
                 </div>
             
 </div></div>
@@ -162,7 +162,7 @@
 <div class="section-title">🤖 archi's Answer</div>
 <div class="answer-box">I cannot answer this question using the FASRC documentation available to me. The search tools I have access to are designed to help researchers with the Cannon high-performance computing cluster, including topics like SLURM job submission, software installation, and storage policies.
 
-The name "Annie Jump Cannon" refers to a historical astronomer after whom the cluster is named, but information about her life and work is not contained in the FASRC technical documentation.
+The name &quot;Annie Jump Cannon&quot; refers to a historical astronomer after whom the cluster is named, but information about her life and work is not contained in the FASRC technical documentation.
 
 For general information about Annie Jump Cannon, I recommend checking external historical resources or contacting FASRC office hours at https://www.rc.fas.harvard.edu/office-hours/ if you have questions about the cluster itself.</div>
 </div>
@@ -242,7 +242,7 @@ For general information about Annie Jump Cannon, I recommend checking external h
 
 ### What Slurm Does
 
-Slurm functions as both a **Scheduler** and a **Resource Manager** (roughly equivalent to an "Orchestrator"):
+Slurm functions as both a **Scheduler** and a **Resource Manager** (roughly equivalent to an &quot;Orchestrator&quot;):
 
 **As a Scheduler:**
 - Prioritizes jobs and decides which jobs to run
@@ -256,7 +256,7 @@ Slurm functions as both a **Scheduler** and a **Resource Manager** (roughly equi
 - **Open-Source** (GPL-v2+)
 - Manages most AI/ML training workloads
 - Scales beyond 15,000 nodes in a cluster
-- Used by the majority of the world's top supercomputers
+- Used by the majority of the world&#x27;s top supercomputers
 
 This system allows FASRC to efficiently manage computational resources across the Cannon cluster, ensuring fair allocation and optimal utilization of hardware for researchers and students.</div>
 </div>
@@ -371,7 +371,7 @@ Example `my_script.sh`:
 #SBATCH --time=01:00:00
 #SBATCH --nodes=1
 
-echo "Running task $SLURM_ARRAY_TASK_ID on $(hostname)"
+echo &quot;Running task $SLURM_ARRAY_TASK_ID on $(hostname)&quot;
 # Your commands here
 ```
 
@@ -482,7 +482,7 @@ Would you like help tailoring this to your specific use case (e.g., specific par
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">I don't have specific documentation in the FASRC knowledge base detailing the exact application process for obtaining a new research computing account.
+<div class="answer-box">I don&#x27;t have specific documentation in the FASRC knowledge base detailing the exact application process for obtaining a new research computing account.
 
 However, based on standard FASRC procedures, you typically need to:
 1. Have a Harvard faculty member or principal investigator sponsor your request
@@ -574,7 +574,7 @@ Would you like me to search for any specific information about account types, re
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Based on the FASRC documentation retrieved from the official Slurm documentation, here's what a **job reason code** is:
+<div class="answer-box">Based on the FASRC documentation retrieved from the official Slurm documentation, here&#x27;s what a **job reason code** is:
 
 ## What is a Job Reason Code?
 
@@ -584,27 +584,27 @@ If there are multiple reasons why a job cannot start, only the reason that was e
 
 ## Common Job Reason Codes
 
-Here are the most common reason codes you'll encounter:
+Here are the most common reason codes you&#x27;ll encounter:
 
 | Reason Code | Meaning |
 |-------------|---------|
-| **AssocGrp\*** | The job's association has reached an aggregate limit |
+| **AssocGrp\*** | The job&#x27;s association has reached an aggregate limit |
 | **AssocMax\*** | A portion of the job request exceeds a maximum limit (e.g., PerJob, PerNode) for the requested association |
-| **BeginTime** | The job's earliest start time has not yet been reached |
+| **BeginTime** | The job&#x27;s earliest start time has not yet been reached |
 | **Dependency** | This job has a dependency on another job that has not been satisfied |
-| **Max*PerAccount** | A portion of the job request exceeds the per-Account limit on the job's QOS |
+| **Max*PerAccount** | A portion of the job request exceeds the per-Account limit on the job&#x27;s QOS |
 | **Priority** | One or more higher priority jobs exist for the partition associated with the job or for an advanced reservation |
-| **QOSGrp\*** | The job's QOS has reached an aggregate limit |
-| **QOSMax\*** | A portion of the job request exceeds a maximum limit on the job's QOS |
+| **QOSGrp\*** | The job&#x27;s QOS has reached an aggregate limit |
+| **QOSMax\*** | A portion of the job request exceeds a maximum limit on the job&#x27;s QOS |
 
 ## How to View Job Reason Codes
 
 You can check the reason code for pending jobs using:
 ```bash
-squeue -j <job_id>
+squeue -j &lt;job_id&gt;
 ```
 
-The "Reason" column will show you why a job is pending.
+The &quot;Reason&quot; column will show you why a job is pending.
 
 **Source**: FASRC documentation retrieved from [Slurm Workload Manager Job Reason Codes](https://slurm.schedmd.com/job_reason_codes.html)</div>
 </div>
