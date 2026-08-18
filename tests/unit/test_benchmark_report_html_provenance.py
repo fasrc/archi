@@ -93,6 +93,53 @@ def test_html_says_so_when_the_run_matched_the_selected_configuration():
     assert "matches" in html.lower()
 
 
+class TestAnUnrecordedComparisonIsNotAMatch:
+    """Codex finding 2 on #272.
+
+    An artifact written before provenance existed has no
+    ``configuration_divergence`` key at all. Collapsing that to ``[]`` made the
+    report state that the agent's configuration *matches* the selected file --
+    a positive claim about a comparison that was never performed, and on exactly
+    the historical runs whose mislabelling prompted this work.
+
+    ``[]`` and absence must stay distinct: the first means compared-and-agreed,
+    the second means nothing is known. The corpus block a few lines below already
+    draws that distinction; this one did not.
+    """
+
+    def test_a_missing_divergence_key_survives_parsing_as_none(self):
+        results, metadata = _results()
+        del results[0]["configuration_divergence"]
+
+        _, _, _, _, _, provenance = parse_benchmark_results(results, metadata)
+
+        assert provenance["configuration_divergence"] is None
+
+    def test_an_empty_list_still_parses_as_an_agreed_comparison(self):
+        results, metadata = _results(configuration_divergence=[])
+
+        _, _, _, _, _, provenance = parse_benchmark_results(results, metadata)
+
+        assert provenance["configuration_divergence"] == []
+
+    def test_the_html_reports_unknown_rather_than_claiming_a_match(self):
+        results, metadata = _results()
+        del results[0]["configuration_divergence"]
+        del results[0]["running_configuration"]
+        parsed = parse_benchmark_results(results, metadata)
+        html = format_html_output(*parsed)
+
+        assert "matches" not in html.lower()
+        assert "not recorded" in html.lower()
+
+    def test_the_block_still_renders_for_such_an_artifact(self):
+        results, metadata = _results()
+        del results[0]["configuration_divergence"]
+        parsed = parse_benchmark_results(results, metadata)
+
+        assert "Run provenance" in format_html_output(*parsed)
+
+
 def test_html_flags_a_corpus_that_changed_during_the_run():
     html = _html(
         corpus_unchanged_at_endpoints=False,

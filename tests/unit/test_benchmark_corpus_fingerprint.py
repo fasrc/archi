@@ -229,3 +229,51 @@ class TestReadsThroughTheInitializedPool:
 
         assert ResultHandler.metadata["corpus_fingerprint"].startswith("<unavailable:")
         assert ResultHandler.results[0]["scores"]["relevancy"] == 0.68
+
+
+class TestTheDigestCoversWhatTheAgentActuallyReceives:
+    """Codex findings 5 and 6 on #272.
+
+    The digest existed to make "these arms saw the same corpus" checkable. Two
+    gaps meant it could answer wrongly in both directions:
+
+    * It keyed chunks by ``document_chunks.document_id``, a SERIAL row id. Two
+      ingests of an identical corpus get different serials, so the digests
+      differ and comparable runs are REJECTED -- the cross-deployment property
+      the field claims is exactly what it could not deliver.
+    * It hashed only leaf ``chunk_text``. This deployment runs
+      ``hierarchical_rerank`` for every chunk, so the agent is handed
+      ``document_parent_nodes.parent_text``. Re-grouping children or rewriting
+      parent text left the digest unchanged, so arms that fed the agent
+      different context were CERTIFIED comparable.
+    """
+
+    def _query(self, monkeypatch):
+        pool = _install_pool(monkeypatch, _FakePool())
+        ResultHandler.get_corpus_fingerprint()
+        return pool.queries[0]
+
+    def test_chunks_are_keyed_by_content_identity_not_a_serial_row_id(
+        self, monkeypatch
+    ):
+        """Finding 6: a fresh ingest of the same corpus must digest the same."""
+        assert "'chunk:' || d.resource_hash" in self._query(monkeypatch)
+
+    def test_parent_context_text_is_hashed(self, monkeypatch):
+        """Finding 5: parent text is what the agent reads under reranking."""
+        query = self._query(monkeypatch)
+
+        assert "document_parent_nodes" in query
+        assert "parent_text" in query
+
+    def test_the_child_to_parent_grouping_is_hashed(self, monkeypatch):
+        """Regrouping children changes the context even if every text is intact."""
+        assert "parent_id" in self._query(monkeypatch)
+
+    def test_parents_are_keyed_by_content_identity_too(self, monkeypatch):
+        """A parent's serial id is as unstable as a document's."""
+        assert "'parent:' || d.resource_hash" in self._query(monkeypatch)
+
+    def test_deleted_documents_are_excluded_from_every_branch(self, monkeypatch):
+        """The old chunk half had no is_deleted filter; the corpus is live rows."""
+        assert self._query(monkeypatch).count("is_deleted = FALSE") == 3

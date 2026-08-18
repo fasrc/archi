@@ -349,3 +349,56 @@ def test_records_predating_provenance_stay_comparable():
 
     assert leaderboard["comparable"] is True
     assert all(row["rank"] is not None for row in leaderboard["rows"])
+
+
+class TestTheWithheldSummaryLineSurvivesFormatting:
+    """Codex finding 3 on #272.
+
+    Withholding sets ``wins_a``/``wins_b``/``ties`` to ``None``, but the caller's
+    format string was left as ``Wins A=%d, B=%d, Ties=%d``. ``'%d' % None``
+    raises, and although ``logging`` swallows it in ``handleError`` rather than
+    aborting the run, the line is emitted as empty and replaced by a kilobyte of
+    "--- Logging error ---" traceback on stderr. So the operator loses the pair
+    summary precisely in the case this PR added.
+    """
+
+    def test_withheld_counts_produce_a_message_instead_of_a_format_crash(self):
+        line = ResultHandler.ab_summary_line(
+            "a", "b", 5, {"wins_a": None, "wins_b": None, "ties": None}
+        )
+
+        assert "withheld" in line.lower()
+        assert "None" not in line
+
+    def test_the_message_still_names_both_arms_and_the_question_count(self):
+        line = ResultHandler.ab_summary_line(
+            "strict", "lean", 73, {"wins_a": None, "wins_b": None, "ties": None}
+        )
+
+        assert "strict" in line and "lean" in line
+        assert "73" in line
+
+    def test_ordinary_counts_still_render_the_tally(self):
+        line = ResultHandler.ab_summary_line(
+            "a", "b", 5, {"wins_a": 3, "wins_b": 1, "ties": 1}
+        )
+
+        assert "Wins A=3, B=1, Ties=1" in line
+
+    def test_a_zero_tally_is_rendered_not_mistaken_for_withheld(self):
+        """0 is a count; only None is an absence."""
+        line = ResultHandler.ab_summary_line(
+            "a", "b", 5, {"wins_a": 0, "wins_b": 0, "ties": 0}
+        )
+
+        assert "Wins A=0, B=0, Ties=0" in line
+        assert "withheld" not in line.lower()
+
+    def test_the_line_is_ready_to_log_with_no_unsubstituted_placeholders(self):
+        for aggregate in (
+            {"wins_a": None, "wins_b": None, "ties": None},
+            {"wins_a": 2, "wins_b": 2, "ties": 0},
+        ):
+            line = ResultHandler.ab_summary_line("a", "b", 4, aggregate)
+
+            assert "%d" not in line and "%s" not in line
