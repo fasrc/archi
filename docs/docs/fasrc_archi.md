@@ -522,12 +522,27 @@ Two layers:
 
 - **Source file (edit this):** `config/environments/dev.yaml`. The active deploy
   is the **repo-root** `./g.sh`:
-  `archi create --name archi-openai-compat --dev --config ./config/environments/dev.yaml --services chatbot,grafana --hostmode --force`.
+  `archi create --name archi-openai-compat --dev --config ./config/environments/dev.yaml --services chatbot,grafana --hostmode --force --env-file <path-to-secrets.env>`.
   The `--force` (`-f`) is **required** on a reseed: `archi create` aborts with
   `Deployment '...' already exists` otherwise (it overwrites the existing
   deployment dir; volumes are preserved). A *separate* `config/scripts/g.sh`
   deploys an unrelated `main-gpu-agent` from `config/vllm-config.yaml` — not the
   chat app described here.
+
+> **`--env-file` is not optional here, and omitting it takes production down
+> before it fails.** `--force` tears the running deployment down *before* any
+> secret is validated: `handle_existing_deployment()` is called at
+> `src/cli/cli_main.py:164` and runs `delete_deployment(..., remove_files=True)`
+> (`src/cli/utils/helpers.py:299-319`), while `SecretsManager` is not constructed
+> until `:170` and `validate_secrets()` does not run until `:199`.
+>
+> Without `--env-file`, `SecretsManager(None)` falls back to
+> `src/cli/managers/secrets_dummy.env`, whose entire contents are
+> `PG_PASSWORD=donuts`. The `grafana` service requires `GRAFANA_PG_PASSWORD`
+> (`src/cli/service_registry.py:114`), so validation fails — *after* the running
+> stack has already been stopped and removed. `OPENAI_API_KEY` would not have
+> reached the deployment either. Note that archi's `update` path already refuses
+> this combination explicitly (`cli_main.py:530`); `create` does not.
 - **Authoritative running config (what archi reads):** Postgres
   `static_config.services_config` (db `archi-db`, container
   `postgres-archi-openai-compat`), seeded from `dev.yaml` at `archi create`.
