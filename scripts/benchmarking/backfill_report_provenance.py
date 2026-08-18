@@ -33,6 +33,10 @@ This is a backfill, so it is strictly additive and it refuses to invent:
 Existing keys are never overwritten, and a file already stamped is skipped, so
 the script is safe to re-run.
 
+``--regenerate-html`` is independent of that skip: the HTML is a view of the JSON
+and goes stale when the *renderer* changes, not only when the data does. So a
+report-format fix re-renders every artifact, stamped or not.
+
 Usage
 -----
     python scripts/benchmarking/backfill_report_provenance.py --dry-run
@@ -62,6 +66,7 @@ from src.utils.generate_benchmark_report import (  # noqa: E402
 
 DEFAULT_GLOB = "bench_out/*.json"
 STAMP_KEYS = ("code_version", "config_version", "config_versions")
+NOT_AN_ARTIFACT = "skipped (not a benchmark artifact)"
 
 
 def stamp_file(path, dry_run=False):
@@ -77,7 +82,7 @@ def stamp_file(path, dry_run=False):
         document = json.load(handle)
 
     if not isinstance(document, dict) or "metadata" not in document:
-        return "skipped (not a benchmark artifact)"
+        return NOT_AN_ARTIFACT
 
     metadata = document["metadata"]
     if any(key in metadata for key in STAMP_KEYS):
@@ -189,6 +194,7 @@ def main():
         return 1
 
     changed = 0
+    rendered = 0
     for path in paths:
         try:
             status = stamp_file(path, dry_run=args.dry_run)
@@ -197,17 +203,29 @@ def main():
             continue
 
         print(f"{path.name}: {status}")
-        if status.startswith("skipped"):
-            continue
-        changed += 1
+        if not status.startswith("skipped"):
+            changed += 1
 
-        if args.regenerate_html:
-            note = regenerate_html(path, dry_run=args.dry_run)
+        # Deliberately NOT gated on whether the JSON changed. The HTML is a view
+        # of the JSON, so it also goes stale when the RENDERER changes -- an
+        # already-stamped artifact still needs re-rendering after a report fix.
+        # Gating this on `changed` meant a report-format correction silently
+        # reached nothing, because every artifact was already stamped.
+        if args.regenerate_html and status != NOT_AN_ARTIFACT:
+            try:
+                note = regenerate_html(path, dry_run=args.dry_run)
+            except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                print(f"{path.name}: ERROR re-rendering {exc}", file=sys.stderr)
+                continue
             if note:
+                rendered += 1
                 print(f"{path.name}: {note}")
 
     verb = "would change" if args.dry_run else "changed"
     print(f"\n{changed} of {len(paths)} artifact(s) {verb}.")
+    if args.regenerate_html:
+        noun = "would re-render" if args.dry_run else "re-rendered"
+        print(f"{noun} {rendered} report(s).")
     return 0
 
 
