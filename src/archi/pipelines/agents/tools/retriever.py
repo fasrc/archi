@@ -7,6 +7,7 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
 from src.archi.pipelines.agents.tools.base import require_tool_permission
+from src.archi.pipelines.agents.tools.result_limits import clamp_result
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -63,6 +64,14 @@ def _format_documents_for_llm(
     return "\n\n".join(snippets)
 
 
+# Enforced ceiling on the complete serialized retrieval result (issue #235).
+# ``max_chars`` bounds ``doc.page_content`` only; the snippet header interpolates
+# ``title``/``url``/``resource_hash`` straight from document metadata with no cap,
+# so one document with pathological metadata can produce an arbitrarily large
+# result. A default result is 4 documents x 800 chars plus headers.
+DEFAULT_RETRIEVER_RESULT_CHARS = 8000
+
+
 def create_retriever_tool(
     retriever: BaseRetriever,
     *,
@@ -70,6 +79,7 @@ def create_retriever_tool(
     description: Optional[str] = None,
     max_documents: int = 4,
     max_chars: int = 800,
+    max_result_chars: int = DEFAULT_RETRIEVER_RESULT_CHARS,
     store_docs: Optional[Callable[[str, Sequence[Document]], None]] = None,
     required_permission: Optional[str] = None,
     store_tool_input: Optional[Callable[[str, object], None]] = None,
@@ -89,6 +99,9 @@ def create_retriever_tool(
         description: Human-readable description of the tool.
         max_documents: Maximum number of documents to return.
         max_chars: Maximum characters per document snippet.
+        max_result_chars: Enforced ceiling on the *complete serialized output*
+            (issue #235). ``max_chars`` bounds page content only, leaving the
+            metadata-derived header uncapped.
         store_docs: Optional callback to store retrieved documents.
         required_permission: Optional RBAC permission required to use this tool.
             If None, no permission check is performed (allow all).
@@ -133,8 +146,9 @@ def create_retriever_tool(
         docs = _normalize_results(results or [])
         if store_docs:
             store_docs(f"{name}: {query}", [doc for doc, _ in docs])
-        return _format_documents_for_llm(
+        rendered = _format_documents_for_llm(
             docs, max_documents=max_documents, max_chars=max_chars
         )
+        return clamp_result(rendered, max_result_chars)
 
     return _retriever_tool

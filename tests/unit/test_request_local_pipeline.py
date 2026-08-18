@@ -14,7 +14,9 @@ these stay pure unit tests while exercising the real ``refresh_agent`` / ``tools
 """
 
 import threading
+from unittest.mock import MagicMock
 
+import pytest
 from langchain_core.documents import Document
 
 from src.archi.pipelines.agents.base_react import BaseReActAgent
@@ -172,3 +174,242 @@ def test_view_static_tool_isolates_documents_to_view_memory():
     assert len(view.active_memory.unique_documents()) == 1
     # The shared pipeline's run memory is never touched by the view's tool.
     assert source.active_memory is None
+
+
+# --- Group 7: the in-loop bound follows the model bound to the request -------
+#
+# The pipelines above override `_build_static_middleware` to return `[]`, so
+# they say nothing about the budget a view ends up with. These build the REAL
+# bound and read it back off the **compiled agent** rather than off
+# `view.middleware` — a rebuilt cache that never reaches `create_agent` is the
+# silent no-op these tests exist to catch.
+
+
+class _BudgetPipeline(BaseReActAgent):
+    """A pipeline that derives a real in-loop budget.
+
+    Only `_resolve_provider_context_window` — the provider-registry boundary —
+    is stubbed, by the same by-name lookup the real one performs.
+    """
+
+    WINDOWS = {"big-model": 200000, "small-model": 32768}
+
+    def __init__(self, agent_llm, *, provider="prov", model="big-model", config=None):
+        self.config = config or {}
+        self.pipeline_config = {}
+        self.default_provider = provider
+        self.default_model = model
+        self.selected_tool_names = []
+        self._active_memory = None
+        self._tool_budgets_cache = None
+        self._static_tools = None
+        self._mcp_tools = None
+        self._active_tools = []
+        self._static_middleware = None
+        self._active_middleware = []
+        self.agent = None
+        self.agent_llm = agent_llm
+        self.agent_prompt = ""
+
+    def _resolve_provider_context_window(self):
+        return self.WINDOWS.get(self.default_model)
+
+    def _create_agent(self, tools, middleware):
+        return {"middleware": list(middleware)}
+
+    def _build_static_tools(self):
+        return []
+
+
+def _llm(max_tokens=None):
+    """A bound model whose configured output cap is `max_tokens`."""
+    llm = MagicMock()
+    llm.max_tokens = max_tokens
+    return llm
+
+
+def _compiled_budget(pipeline):
+    """The budget of the bound the pipeline's **compiled agent** is running."""
+    installed = pipeline.agent["middleware"]
+    assert len(installed) == 1, f"expected one bound, got {len(installed)}"
+    return installed[0].budget
+
+
+def _primed_source(config=None):
+    source = _BudgetPipeline(_llm(), config=config)
+    source.refresh_agent(force=True)
+    return source
+
+
+def test_view_budget_derives_from_the_overriding_model():
+    """7.1 / 7.7: window AND output cap both describe the override.
+
+    32768 - max(15%, 8192) - 20% = 16384. Deriving the cap from the override
+    while leaving the window at the source's 200000 yields 86000 instead —
+    a budget six times the window the request will actually be sent to.
+    """
+    source = _primed_source()
+    assert _compiled_budget(source).trigger == 120000
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(max_tokens=8192),
+        provider="prov",
+        model="small-model",
+        context_window=32768,
+    )
+
+    budget = _compiled_budget(view)
+    assert budget.context_window == 32768
+    assert budget.generation_reserve == 8192
+    assert budget.trigger == 16384
+
+
+def test_view_builds_its_own_bound_rather_than_inheriting_the_cache():
+    """7.2: `_static_middleware` is a cache; the shallow copy carries it over."""
+    source = _primed_source()
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(max_tokens=8192),
+        provider="prov",
+        model="small-model",
+        context_window=32768,
+    )
+
+    assert view._static_middleware is not source._static_middleware
+    assert _compiled_budget(view) is not _compiled_budget(source)
+
+
+def test_building_a_view_leaves_the_shared_budget_untouched():
+    """7.3: the issue #86 invariant — zero writes to the shared pipeline."""
+    source = _primed_source()
+    shared_budget = _compiled_budget(source)
+    shared_agent = source.agent
+    shared_cache = source._static_middleware
+
+    _build_request_local_pipeline(
+        source,
+        _llm(max_tokens=8192),
+        provider="prov",
+        model="small-model",
+        context_window=32768,
+    )
+
+    assert source.agent is shared_agent
+    assert source._static_middleware is shared_cache
+    assert _compiled_budget(source) is shared_budget
+    assert source.default_model == "big-model"
+
+
+def test_carried_window_beats_a_name_lookup_that_cannot_resolve():
+    """7.4: the custom-provider path.
+
+    `_create_provider_llm` builds a provider from the deployment's YAML, so a
+    custom model ID has metadata there and none at all in the by-name registry
+    the agent would otherwise consult. The window must come from the model
+    actually bound.
+    """
+    source = _primed_source()
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(max_tokens=4096),
+        provider="custom",
+        model="an-unlisted-model",
+        context_window=48000,
+    )
+
+    assert _compiled_budget(view).context_window == 48000
+
+
+def test_unresolvable_override_installs_nothing_rather_than_guessing():
+    """7.4: with no window from either route, fail open — never borrow one."""
+    source = _primed_source()
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(max_tokens=4096),
+        provider="custom",
+        model="an-unlisted-model",
+        context_window=None,
+    )
+
+    assert view.agent["middleware"] == []
+
+
+def test_declared_window_does_not_follow_a_model_override():
+    """7.7: `context_editing.context_window` describes the *deployment's* model.
+
+    Applying it to an override is the same defect as inheriting the source's
+    window, arriving by a different route: measured, a declared 32768 paired
+    with an override's 64000 output cap disables the bound outright.
+    """
+    config = {"services": {"chat_app": {"context_editing": {"context_window": 32768}}}}
+    source = _primed_source(config=config)
+    assert _compiled_budget(source).context_window == 32768
+
+    # A genuinely different model from the source's configured "big-model".
+    view = _build_request_local_pipeline(
+        source,
+        _llm(max_tokens=8192),
+        provider="other",
+        model="some-other-model",
+        context_window=200000,
+    )
+
+    assert _compiled_budget(view).context_window == 200000
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, "32768", 1.5])
+def test_an_unusable_carried_window_falls_back_to_name_resolution(bad):
+    """A malformed carried window costs the shortcut, not the bound.
+
+    `True` matters most: it is an `int` in Python, and a one-token window would
+    clear every message on every call.
+    """
+    source = _primed_source()
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(max_tokens=8192),
+        provider="prov",
+        model="small-model",
+        context_window=bad,
+    )
+
+    # Resolved by name for the view's OWN model, never the source's.
+    assert _compiled_budget(view).context_window == 32768
+
+
+def test_selecting_the_deployments_own_model_keeps_its_declared_window():
+    """The chat UI sends provider+model on **every** message, not only when the
+    user switches models — `chat.js` reads `state.selectedProvider` and posts it
+    with each send. So the request-local path is the normal path, and treating
+    it as a model *change* discards the operator's declared window.
+
+    On a self-hosted deployment that is fatal rather than merely conservative:
+    nothing resolves the window by name, so the bound is not installed at all
+    and the whole feature ships inert on the deployment it was written for.
+
+    The declared window describes a model the operator named. When the request
+    names that same model, it still describes it.
+    """
+    config = {"services": {"chat_app": {"context_editing": {"context_window": 32768}}}}
+    source = _BudgetPipeline(
+        _llm(), provider="local", model="a-self-hosted-model", config=config
+    )
+    source.refresh_agent(force=True)
+    assert _compiled_budget(source).context_window == 32768
+    # The provider cannot resolve this name — the case the declaration exists for.
+    assert source._resolve_provider_context_window() is None
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(),
+        provider="local",
+        model="a-self-hosted-model",
+        context_window=None,
+    )
+
+    assert _compiled_budget(view).context_window == 32768

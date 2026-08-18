@@ -98,6 +98,7 @@
         <p><strong>Timestamp:</strong> 2026-06-03 01:27:58.678204+00:00</p>
         <p><strong>Questions Processed:</strong> 5</p>
     </div>
+    <div class='provenance'><h2>Run provenance</h2><p class='provenance-alert'>Whether the run used the selected configuration was <strong>not recorded</strong>: this artifact predates configuration provenance, so no comparison was made.</p><p class='provenance-alert'>Corpus stability is <strong>unknown</strong>: it was not observed both before and after the run (<code>None</code> &rarr; <code>None</code>).</p><ul><li>Code version: <em>not recorded &mdash; this artifact predates version stamping</em></li><li>Deploy-time commit: <code>8b21aeb49bc58fc04f036ae8873e61d98b12e32f</code> &mdash; frozen by <code>archi create</code>; it identifies the deploy, not the image this run used</li><li>Config version: <code>sha256:a4ab8bdc78bdd99d0bbcb0032a6c52fd799937a985f9b65e2a73daf80c04c580</code></li><li>Config basis: reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run</li></ul><p>Settings that define this arm:</p><table class='provenance-settings'><tr><th>Setting</th><th>Value</th></tr><tr><td><code>data_manager.chunk_overlap</code></td><td><code>0</code></td></tr><tr><td><code>data_manager.chunk_size</code></td><td><code>1000</code></td></tr><tr><td><code>data_manager.distance_metric</code></td><td><code>cosine</code></td></tr><tr><td><code>data_manager.embedding_name</code></td><td><code>HuggingFaceEmbeddings</code></td></tr><tr><td><code>data_manager.retrievers</code></td><td><code>{&quot;bm25_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}, &quot;hybrid_retriever&quot;: {&quot;bm25_weight&quot;: 0.6, &quot;num_documents_to_retrieve&quot;: 5, &quot;semantic_weight&quot;: 0.4}, &quot;semantic_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}}</code></td></tr><tr><td><code>data_manager.stemming</code></td><td><code>{&quot;enabled&quot;: false}</code></td></tr><tr><td><code>services.benchmarking.agent_class</code></td><td><code>CMSCompOpsAgent</code></td></tr><tr><td><code>services.benchmarking.agent_md_file</code></td><td><code>/root/archi/agents/fasrc-cannon-v1-strict.md</code></td></tr><tr><td><code>services.benchmarking.mode_settings</code></td><td><code>{&quot;ragas_settings&quot;: {&quot;batch_size&quot;: false, &quot;embedding_model&quot;: &quot;HuggingFace&quot;, &quot;enabled_metrics&quot;: [&quot;answer_relevancy&quot;, &quot;faithfulness&quot;, &quot;context_precision&quot;, &quot;context_recall&quot;], &quot;evaluator_model&quot;: &quot;us.anthropic.claude-sonnet-4-5-20250929-v1:0&quot;, &quot;evaluator_ollama_url&quot;: null, &quot;evaluator_provider&quot;: &quot;huit_bedrock&quot;, &quot;timeout&quot;: 180}, &quot;sources_settings&quot;: {&quot;default_match_field&quot;: &quot;url&quot;}}</code></td></tr><tr><td><code>services.benchmarking.model</code></td><td><code>Qwen/Qwen3.5-35B-A3B-GPTQ-Int4</code></td></tr><tr><td><code>services.benchmarking.modes</code></td><td><code>[&quot;RAGAS&quot;, &quot;SOURCES&quot;]</code></td></tr><tr><td><code>services.benchmarking.provider</code></td><td><code>openai</code></td></tr><tr><td><code>services.chat_app.agent_class</code></td><td><code>CMSCompOpsAgent</code></td></tr><tr><td><code>services.chat_app.default_model</code></td><td><code>llama3.2</code></td></tr><tr><td><code>services.chat_app.default_provider</code></td><td><code>local</code></td></tr><tr><td><code>services.chat_app.recursion_limit</code></td><td><code>50</code></td></tr><tr><td><code>services.vectorstore.backend</code></td><td><code>postgres</code></td></tr><tr><td><code>services.vectorstore.distance_metric</code></td><td><code>cosine</code></td></tr></table></div>
 
 <div class="metrics">
 <h2>🎯 Retrieval Accuracy</h2>
@@ -111,7 +112,7 @@
 
                 <div class="metric-item">
                     <div class="metric-value score-low">3</div>
-                    <div class="metric-label">Incorrect (no sources found)</div>
+                    <div class="metric-label">Incorrect (no expected sources retrieved)</div>
                 </div>
             
 </div></div>
@@ -243,7 +244,7 @@ For general historical information about Annie Jump Cannon, I recommend checking
 
 **What Slurm does:**
 
-Slurm functions as both a **Scheduler** and a **Resource Manager** (roughly equivalent to an "Orchestrator"):
+Slurm functions as both a **Scheduler** and a **Resource Manager** (roughly equivalent to an &quot;Orchestrator&quot;):
 
 1. **Scheduler**: 
    - Prioritizes jobs
@@ -363,7 +364,7 @@ This is the system that manages job submissions, resource allocation, and execut
 
 ---
 
-To submit a job array in Slurm on FASRC's Cannon cluster, you use the `--array` flag with your `sbatch` command. Here's how it works:
+To submit a job array in Slurm on FASRC&#x27;s Cannon cluster, you use the `--array` flag with your `sbatch` command. Here&#x27;s how it works:
 
 ## Basic Syntax
 
@@ -406,7 +407,7 @@ Use `%A` and `%a` in your output/error file specifications to get unique filenam
 
 ## Example Script
 
-Here's a complete example from the FASRC documentation:
+Here&#x27;s a complete example from the FASRC documentation:
 
 ```bash
 #!/bin/bash
@@ -419,7 +420,7 @@ Here's a complete example from the FASRC documentation:
 #SBATCH -e tophat_%A_%a.err          # Standard error
 
 source activate tophat
-tophat /n/netscratch/informatics_public/ref/ucsc/Mus_musculus/mm10/chromFatrans"${SLURM_ARRAY_TASK_ID}".fq
+tophat /n/netscratch/informatics_public/ref/ucsc/Mus_musculus/mm10/chromFatrans&quot;${SLURM_ARRAY_TASK_ID}&quot;.fq
 ```
 
 This script would be submitted with:
@@ -433,7 +434,7 @@ Each of the 30 jobs would process a different input file (trans1.fq through tran
 
 - Each array element is treated as an independent job for scheduling purposes
 - The default maximum array size (`MaxArraySize`) is 1001, with a maximum supported value of 4,000,001
-- Some Slurm commands (like `sstat`, `sreport`, `sshares`) don't recognize job arrays and require specific job IDs
+- Some Slurm commands (like `sstat`, `sreport`, `sshares`) don&#x27;t recognize job arrays and require specific job IDs
 - The `sacct`, `sattach`, and `strigger` commands can accept either job IDs or job array elements
 
 **Source**: FASRC documentation on [Running Jobs](https://docs.rc.fas.harvard.edu/kb/running-jobs/) and [Submitting Large Numbers of Jobs](https://docs.rc.fas.harvard.edu/kb/submitting-large-numbers-of-jobs/)</div>
@@ -625,7 +626,7 @@ Each of the 30 jobs would process a different input file (trans1.fq through tran
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">I don't have specific information in the FASRC documentation about the account application process. This type of procedural information (how to apply for an account, eligibility requirements, etc.) is typically found in general FASRC onboarding guides or policy documents that may not be in the technical documentation I have access to.
+<div class="answer-box">I don&#x27;t have specific information in the FASRC documentation about the account application process. This type of procedural information (how to apply for an account, eligibility requirements, etc.) is typically found in general FASRC onboarding guides or policy documents that may not be in the technical documentation I have access to.
 
 For the most accurate and up-to-date information on how to get a research computing account, I recommend:
 
@@ -723,22 +724,22 @@ If multiple reasons exist for a job not starting, Slurm displays only the reason
 
 **Common reason codes include:**
 
-- **AssocGrp\*** — The job's association has reached an aggregate resource limit
+- **AssocGrp\*** — The job&#x27;s association has reached an aggregate resource limit
 - **AssocMax\*** — A portion of the job request exceeds a maximum limit
 
 For a complete list of reason codes and their meanings, you can refer to the [Slurm Job Reason Codes documentation](https://slurm.schedmd.com/job_reason_codes.html).
 
 To see the reason code for your specific pending job, you can use:
 ```bash
-scontrol show job <job_id>
+scontrol show job &lt;job_id&gt;
 ```
 
-Or check the "Reason" field in:
+Or check the &quot;Reason&quot; field in:
 ```bash
-squeue -j <job_id>
+squeue -j &lt;job_id&gt;
 ```
 
-If you need more details about a specific reason code you're encountering, please share the exact code and I can help interpret it based on the documentation.</div>
+If you need more details about a specific reason code you&#x27;re encountering, please share the exact code and I can help interpret it based on the documentation.</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>

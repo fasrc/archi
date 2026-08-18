@@ -98,6 +98,7 @@
         <p><strong>Timestamp:</strong> 2026-06-10 01:51:20.642399+00:00</p>
         <p><strong>Questions Processed:</strong> 9</p>
     </div>
+    <div class='provenance'><h2>Run provenance</h2><p class='provenance-alert'>Whether the run used the selected configuration was <strong>not recorded</strong>: this artifact predates configuration provenance, so no comparison was made.</p><p class='provenance-alert'>Corpus stability is <strong>unknown</strong>: it was not observed both before and after the run (<code>None</code> &rarr; <code>None</code>).</p><ul><li>Code version: <em>not recorded &mdash; this artifact predates version stamping</em></li><li>Deploy-time commit: <code>be8bc3a24310a68258d79f432342f74b6b512861</code> (dirty tree) &mdash; frozen by <code>archi create</code>; it identifies the deploy, not the image this run used</li><li>Config version: <code>sha256:a4ab8bdc78bdd99d0bbcb0032a6c52fd799937a985f9b65e2a73daf80c04c580</code></li><li>Config basis: reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run</li></ul><p>Settings that define this arm:</p><table class='provenance-settings'><tr><th>Setting</th><th>Value</th></tr><tr><td><code>data_manager.chunk_overlap</code></td><td><code>0</code></td></tr><tr><td><code>data_manager.chunk_size</code></td><td><code>1000</code></td></tr><tr><td><code>data_manager.distance_metric</code></td><td><code>cosine</code></td></tr><tr><td><code>data_manager.embedding_name</code></td><td><code>HuggingFaceEmbeddings</code></td></tr><tr><td><code>data_manager.retrievers</code></td><td><code>{&quot;bm25_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}, &quot;hybrid_retriever&quot;: {&quot;bm25_weight&quot;: 0.6, &quot;num_documents_to_retrieve&quot;: 5, &quot;semantic_weight&quot;: 0.4}, &quot;semantic_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}}</code></td></tr><tr><td><code>data_manager.stemming</code></td><td><code>{&quot;enabled&quot;: false}</code></td></tr><tr><td><code>services.benchmarking.agent_class</code></td><td><code>CMSCompOpsAgent</code></td></tr><tr><td><code>services.benchmarking.agent_md_file</code></td><td><code>/root/archi/agents/fasrc-cannon-v1-strict.md</code></td></tr><tr><td><code>services.benchmarking.mode_settings</code></td><td><code>{&quot;ragas_settings&quot;: {&quot;batch_size&quot;: false, &quot;embedding_model&quot;: &quot;HuggingFace&quot;, &quot;enabled_metrics&quot;: [&quot;answer_relevancy&quot;, &quot;faithfulness&quot;, &quot;context_precision&quot;, &quot;context_recall&quot;], &quot;evaluator_model&quot;: &quot;us.anthropic.claude-sonnet-4-5-20250929-v1:0&quot;, &quot;evaluator_ollama_url&quot;: null, &quot;evaluator_provider&quot;: &quot;huit_bedrock&quot;, &quot;timeout&quot;: 180}, &quot;sources_settings&quot;: {&quot;default_match_field&quot;: &quot;url&quot;}}</code></td></tr><tr><td><code>services.benchmarking.model</code></td><td><code>Qwen/Qwen3.5-35B-A3B-GPTQ-Int4</code></td></tr><tr><td><code>services.benchmarking.modes</code></td><td><code>[&quot;RAGAS&quot;, &quot;SOURCES&quot;]</code></td></tr><tr><td><code>services.benchmarking.provider</code></td><td><code>openai</code></td></tr><tr><td><code>services.chat_app.agent_class</code></td><td><code>CMSCompOpsAgent</code></td></tr><tr><td><code>services.chat_app.default_model</code></td><td><code>llama3.2</code></td></tr><tr><td><code>services.chat_app.default_provider</code></td><td><code>local</code></td></tr><tr><td><code>services.chat_app.recursion_limit</code></td><td><code>50</code></td></tr><tr><td><code>services.vectorstore.backend</code></td><td><code>postgres</code></td></tr><tr><td><code>services.vectorstore.distance_metric</code></td><td><code>cosine</code></td></tr></table></div>
 
 <div class="metrics">
 <h2>🎯 Retrieval Accuracy</h2>
@@ -111,13 +112,13 @@
 
                 <div class="metric-item">
                     <div class="metric-value score-medium">7</div>
-                    <div class="metric-label">Partially Correct (some sources found)</div>
+                    <div class="metric-label">Partially Correct (some expected sources retrieved)</div>
                 </div>
             
 
                 <div class="metric-item">
                     <div class="metric-value score-low">2</div>
-                    <div class="metric-label">Incorrect (no sources found)</div>
+                    <div class="metric-label">Incorrect (no expected sources retrieved)</div>
                 </div>
             
 </div></div>
@@ -165,7 +166,7 @@
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Based on the FASRC documentation, here's how to check your disk usage and quota on Cannon:
+<div class="answer-box">Based on the FASRC documentation, here&#x27;s how to check your disk usage and quota on Cannon:
 
 ## Home Directory (100 GB quota)
 
@@ -179,7 +180,7 @@ This shows your current usage and quota status for your home directory (located 
 
 **Quota details:**
 - **Hard limit:** 100 GB
-- **Soft warning:** 95 GB (you'll receive notifications)
+- **Soft warning:** 95 GB (you&#x27;ll receive notifications)
 - **Path format:** `/n/home01/XXXX` through `/n/home15/XXXX`
 
 ## Lab Directory (4 TB quota)
@@ -200,7 +201,7 @@ Replace `YOURLABNAME` with your actual lab directory name.
 ## Important Notes
 
 - **Home directory quotas are global and cannot be increased** for individual users (docs.rc.fas.harvard.edu/kb/cluster-storage)
-- If you're over quota, you'll need to remove files or move data to scratch space
+- If you&#x27;re over quota, you&#x27;ll need to remove files or move data to scratch space
 - Hitting quota during large data processing can cause file write/read failures or segmentation faults
 - Lab directories have a 1 million file limit in addition to the 4 TB size limit
 
@@ -214,7 +215,7 @@ du -sh ~/* | sort -hr | head -20
 
 This shows the top 20 largest directories/files in your home.
 
-**Source:** FASRC documentation on "Home and Lab directories" (docs.rc.fas.harvard.edu/kb/cluster-storage) and "Home directory full" troubleshooting guide.</div>
+**Source:** FASRC documentation on &quot;Home and Lab directories&quot; (docs.rc.fas.harvard.edu/kb/cluster-storage) and &quot;Home directory full&quot; troubleshooting guide.</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
@@ -412,13 +413,13 @@ This shows the top 20 largest directories/files in your home.
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">I attempted to identify the correct Slurm partition for a 30-minute interactive test job on the "Cannon" cluster by performing multiple hybrid searches across vector and local document stores. The agent explored queries related to "Cannon interactive partition time limit," "test environments," and general Slurm partition documentation. However, the process hit the recursion limit of 50 before a definitive, specific configuration for "Cannon" could be extracted from the retrieved context, which primarily contained general Slurm documentation and administrative testing guides rather than the specific cluster policy.
+<div class="answer-box">I attempted to identify the correct Slurm partition for a 30-minute interactive test job on the &quot;Cannon&quot; cluster by performing multiple hybrid searches across vector and local document stores. The agent explored queries related to &quot;Cannon interactive partition time limit,&quot; &quot;test environments,&quot; and general Slurm partition documentation. However, the process hit the recursion limit of 50 before a definitive, specific configuration for &quot;Cannon&quot; could be extracted from the retrieved context, which primarily contained general Slurm documentation and administrative testing guides rather than the specific cluster policy.
 
-Based on the general Slurm principles found in the retrieved documents, interactive jobs are typically submitted to a dedicated **interactive** partition. For a short 30-minute test, you should look for a partition named `interactive` or `test` that explicitly lists a time limit of 30 minutes. While the specific "Cannon" cluster configuration was not fully resolved in the retrieved snippets, the standard command to request this on most HPC systems is:
+Based on the general Slurm principles found in the retrieved documents, interactive jobs are typically submitted to a dedicated **interactive** partition. For a short 30-minute test, you should look for a partition named `interactive` or `test` that explicitly lists a time limit of 30 minutes. While the specific &quot;Cannon&quot; cluster configuration was not fully resolved in the retrieved snippets, the standard command to request this on most HPC systems is:
 
 `srun --partition=interactive --time=00:30:00 --ntasks=1 --cpus-per-task=1`
 
-*Note: The run stopped after hitting the recursion limit of 50, so the specific partition name for "Cannon" (e.g., `cannon-interactive` vs `interactive`) could not be confirmed with 100% certainty from the available context. Please verify the exact partition name using `sinfo -p` on the Cannon cluster.*</div>
+*Note: The run stopped after hitting the recursion limit of 50, so the specific partition name for &quot;Cannon&quot; (e.g., `cannon-interactive` vs `interactive`) could not be confirmed with 100% certainty from the available context. Please verify the exact partition name using `sinfo -p` on the Cannon cluster.*</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
@@ -505,7 +506,7 @@ module load python/3.10.9-fasrc01
 
 You can then run Python directly:
 ```bash
-python -c 'print("Hi there.")'
+python -c &#x27;print(&quot;Hi there.&quot;)&#x27;
 ```
 
 **Additional Notes:**
@@ -522,7 +523,7 @@ python -c 'print("Hi there.")'
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">Use the Lmod module system: `module load python/<version>` (e.g., `module load python/3.10.13-fasrc01`). Use `module spider python` to list available Python builds.</div>
+<div class="answer-box expected-box">Use the Lmod module system: `module load python/&lt;version&gt;` (e.g., `module load python/3.10.13-fasrc01`). Use `module spider python` to list available Python builds.</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -618,7 +619,7 @@ python -c &#x27;print(&quot;Hi there.&quot;)&#x27;
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Based on the FASRC documentation, here's how to submit a Slurm job array of 50 tasks with 4 GB of memory per task and per-task output files:
+<div class="answer-box">Based on the FASRC documentation, here&#x27;s how to submit a Slurm job array of 50 tasks with 4 GB of memory per task and per-task output files:
 
 ## SLURM Batch Script Example
 
@@ -634,7 +635,7 @@ python -c &#x27;print(&quot;Hi there.&quot;)&#x27;
 
 # Your commands here
 # Use $SLURM_ARRAY_TASK_ID to reference the current task index
-echo "Running task $SLURM_ARRAY_TASK_ID"
+echo &quot;Running task $SLURM_ARRAY_TASK_ID&quot;
 # Your actual job command
 # e.g., ./my_program --input data_${SLURM_ARRAY_TASK_ID}.txt
 ```
@@ -789,7 +790,7 @@ Adjust the partition (`-p`), time limit (`-t`), and your actual commands as need
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Based on the FASRC documentation, here's the difference between the two storage types and guidance for intermediate output:
+<div class="answer-box">Based on the FASRC documentation, here&#x27;s the difference between the two storage types and guidance for intermediate output:
 
 ## **Home Directories (`/n/homeNN/XXXX`)**
 - **Purpose**: Personal storage for scripts, documentation, small analysis files, and everyday data
@@ -818,10 +819,10 @@ There are actually **two types** of scratch storage:
 ## **Recommendation for Intermediate Job Output**
 
 **Use `/n/netscratch`** for intermediate job output because:
-- It's designed for I/O-intensive workloads
-- It won't degrade performance for other users
+- It&#x27;s designed for I/O-intensive workloads
+- It won&#x27;t degrade performance for other users
 - It provides 90 days of retention for you to retrieve results
-- It's specifically intended for transient data that doesn't need permanent storage
+- It&#x27;s specifically intended for transient data that doesn&#x27;t need permanent storage
 
 **Do NOT use home directories** for intermediate output from I/O-intensive jobs, as this will cause performance issues for all users.
 
@@ -1125,31 +1126,31 @@ salloc -p gpu_test -t 2:00:00 --gpus=1 --mem 8000
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Based on the FASRC documentation, here's what you need to know about your OOM issue on the `bigmem` partition:
+<div class="answer-box">Based on the FASRC documentation, here&#x27;s what you need to know about your OOM issue on the `bigmem` partition:
 
-## What's Happening
+## What&#x27;s Happening
 
-Your job is being killed because it's exceeding the memory limit you requested. The error message "Job <jobid> exceeded <mem> memory limit, being killed" means your application is using more memory than the `--mem` or `--mem-per-cpu` value you specified in your SLURM submission.
+Your job is being killed because it&#x27;s exceeding the memory limit you requested. The error message &quot;Job &lt;jobid&gt; exceeded &lt;mem&gt; memory limit, being killed&quot; means your application is using more memory than the `--mem` or `--mem-per-cpu` value you specified in your SLURM submission.
 
-## Key Issue: You're on the Wrong Partition
+## Key Issue: You&#x27;re on the Wrong Partition
 
 According to the documentation:
 
-> **bigmem**: This partition should be used for large memory work requiring **greater than 1000 GB RAM per job**. Jobs requesting less than 1000 GB RAM are automatically rejected by the scheduler.
+&gt; **bigmem**: This partition should be used for large memory work requiring **greater than 1000 GB RAM per job**. Jobs requesting less than 1000 GB RAM are automatically rejected by the scheduler.
 
-If your job is climbing past 250 GB but you're requesting less than 1000 GB, you're likely on the wrong partition. The `bigmem` partition requires a minimum of 1000 GB per job.
+If your job is climbing past 250 GB but you&#x27;re requesting less than 1000 GB, you&#x27;re likely on the wrong partition. The `bigmem` partition requires a minimum of 1000 GB per job.
 
 ## What to Check
 
 1. **Verify your memory request**: Check your SLURM script for `--mem` or `--mem-per-cpu` values
-2. **Confirm the partition**: Make sure you're actually submitting to `bigmem` and not another partition
+2. **Confirm the partition**: Make sure you&#x27;re actually submitting to `bigmem` and not another partition
 3. **Application memory usage**: Some applications (like Java programs) may need specific heap settings (e.g., `-Xmx` JVM option)
 
 ## How to Request More Memory
 
-**If you need >1000 GB per job:**
+**If you need &gt;1000 GB per job:**
 - Use the `bigmem` partition with `--mem=1000G` or higher
-- Note: There's a 3-day time limit on `bigmem`
+- Note: There&#x27;s a 3-day time limit on `bigmem`
 - The partition has 4 nodes with 1988 GB total RAM
 
 **Example submission:**
@@ -1170,16 +1171,16 @@ The documentation mentions `--mem-update` as an option to automatically adjust m
 ## Next Steps
 
 1. Check your current partition and memory request in your SLURM script
-2. If you truly need >1000 GB, ensure you're using `bigmem` with at least 1000 GB requested
+2. If you truly need &gt;1000 GB, ensure you&#x27;re using `bigmem` with at least 1000 GB requested
 3. If you need less than 1000 GB, you should be on a different partition
 
-If you can't find the right partition for your memory needs or need further assistance, please attend FASRC office hours at https://www.rc.fas.harvard.edu/office-hours/ or email rchelp@rc.fas.harvard.edu.
+If you can&#x27;t find the right partition for your memory needs or need further assistance, please attend FASRC office hours at https://www.rc.fas.harvard.edu/office-hours/ or email rchelp@rc.fas.harvard.edu.
 
 **Source**: FASRC documentation on running jobs and partition specifications (docs.rc.fas.harvard.edu/kb/running-jobs)</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">First confirm the kill with `sacct -j <jobid> --format=JobID,State,ExitCode,MaxRSS,ReqMem` — `MaxRSS` shows the peak used and `State=OUT_OF_MEMORY` confirms the OOM. To raise the limit, increase `--mem` on the sbatch directive (the bigmem partition supports requests up to its documented per-node ceiling — check the partition page for the exact value). Also check whether your code is leaking, using mmap incorrectly, or could shard the workload across an array.</div>
+<div class="answer-box expected-box">First confirm the kill with `sacct -j &lt;jobid&gt; --format=JobID,State,ExitCode,MaxRSS,ReqMem` — `MaxRSS` shows the peak used and `State=OUT_OF_MEMORY` confirms the OOM. To raise the limit, increase `--mem` on the sbatch directive (the bigmem partition supports requests up to its documented per-node ceiling — check the partition page for the exact value). Also check whether your code is leaking, using mmap incorrectly, or could shard the workload across an array.</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -1326,15 +1327,15 @@ If you can&#x27;t find the right partition for your memory needs or need further
 ## Recommended Approach
 
 ### 1. **Archive Your Data with tar**
-Since you're transferring 2 TB, you should **tar your data into multiple archive files** rather than transferring individual files. The documentation specifically states:
+Since you&#x27;re transferring 2 TB, you should **tar your data into multiple archive files** rather than transferring individual files. The documentation specifically states:
 
-> "If your data contains directories with hundreds or thousands of files, you will need to tar those directories up into subset files."
+&gt; &quot;If your data contains directories with hundreds or thousands of files, you will need to tar those directories up into subset files.&quot;
 
 **Recommended tar file sizes: 1-100 GiB each**
 
 Reasons for this size range:
 - Files transfer more quickly, especially if interrupted
-- Prevents Globus from entering an "endpoint is too busy" state
+- Prevents Globus from entering an &quot;endpoint is too busy&quot; state
 - Avoids timeout/restart cycles
 
 ### 2. **Create tar Archives on Cannon**
@@ -1363,7 +1364,7 @@ Once your data is archived:
 7. Initiate the transfer
 
 ### 4. **Important Requirements**
-- You need **read access** to the files/directories you're transferring
+- You need **read access** to the files/directories you&#x27;re transferring
 - Globus uses your FASRC account permissions, so ensure you have proper access
 - **Symlinks do not work in Globus** - you must copy actual files
 
@@ -1377,7 +1378,7 @@ Once your data is archived:
 - [Globus File Transfer Documentation](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/)
 - [Tips for using tar to archive data](https://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving/)
 
-**Note:** The documentation doesn't specify any special limits for transferring 2 TB specifically, but the 1-100 GiB per archive recommendation should work well for your 2 TB transfer by creating approximately 20-40 archive files.
+**Note:** The documentation doesn&#x27;t specify any special limits for transferring 2 TB specifically, but the 1-100 GiB per archive recommendation should work well for your 2 TB transfer by creating approximately 20-40 archive files.
 
 If you need more specific guidance on tar commands or encounter issues during transfer, please attend FASRC office hours at https://www.rc.fas.harvard.edu/office-hours/ or email rchelp@rc.fas.harvard.edu.</div>
 </div>
@@ -1606,7 +1607,7 @@ When using MPI with `mpi4py`, if one or more ranks finish their work and exit be
 
 ## The Solution
 
-You need to ensure **all ranks call `MPI.Barrier()` or `MPI.Finalize()`** before any rank exits. Here's the proper structure:
+You need to ensure **all ranks call `MPI.Barrier()` or `MPI.Finalize()`** before any rank exits. Here&#x27;s the proper structure:
 
 ### Correct Python/mpi4py Pattern
 
@@ -1654,11 +1655,11 @@ srun -n 64 python your_script.py
 
 ### Key Points
 
-1. **Use `srun` directly** - Slurm launches MPI tasks using PMI2/PMIx APIs when you use `srun -n <num_tasks> <command>` (as shown in the MPI Support documentation)
+1. **Use `srun` directly** - Slurm launches MPI tasks using PMI2/PMIx APIs when you use `srun -n &lt;num_tasks&gt; &lt;command&gt;` (as shown in the MPI Support documentation)
 
 2. **All ranks must synchronize** - The Fortran example in the documentation shows `MPI_BARRIER` being called before `MPI_FINALIZE`, which is the same principle for Python/mpi4py
 
-3. **Don't let any rank exit early** - Even if rank 0 finishes first, it must wait at `comm.Barrier()` for all other ranks
+3. **Don&#x27;t let any rank exit early** - Even if rank 0 finishes first, it must wait at `comm.Barrier()` for all other ranks
 
 4. **Use `comm.Finalize()`** - This is the Python equivalent of `MPI_FINALIZE` in Fortran/C
 
@@ -1668,9 +1669,9 @@ The documentation shows that MPI implementations require all tasks to participat
 
 ## If You Still Have Issues
 
-If you're still experiencing hangs after implementing proper synchronization:
+If you&#x27;re still experiencing hangs after implementing proper synchronization:
 
-1. Check that all ranks are actually running (add `print(f"Rank {rank} starting")` at the beginning)
+1. Check that all ranks are actually running (add `print(f&quot;Rank {rank} starting&quot;)` at the beginning)
 2. Verify your `srun` command has the correct number of tasks
 3. Check for deadlocks in your collective operations (e.g., `comm.Allreduce`, `comm.Gather`)
 

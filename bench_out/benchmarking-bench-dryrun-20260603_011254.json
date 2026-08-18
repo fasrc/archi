@@ -743,6 +743,65 @@
                         }
                     }
                 }
+            },
+            "config_version": {
+                "digest": "sha256:f9193d184010792a25aa3f6f8ddf056c3cff9f03a2fb9f72402be3c2b9792de7",
+                "source": "reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run",
+                "selected_file": "configs/config.yaml",
+                "selected_file_digest": "sha256:f9193d184010792a25aa3f6f8ddf056c3cff9f03a2fb9f72402be3c2b9792de7",
+                "divergence_from_selected_file": null,
+                "key_settings": {
+                    "services.chat_app.agent_class": "CMSCompOpsAgent",
+                    "services.chat_app.default_model": "llama3.2",
+                    "services.chat_app.default_provider": "local",
+                    "services.chat_app.recursion_limit": 50,
+                    "services.benchmarking.agent_class": "CMSCompOpsAgent",
+                    "services.benchmarking.agent_md_file": "/root/archi/agents/fasrc-cannon-v1-strict.md",
+                    "services.benchmarking.model": "Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
+                    "services.benchmarking.modes": [
+                        "RAGAS",
+                        "SOURCES"
+                    ],
+                    "services.benchmarking.mode_settings": {
+                        "sources_settings": {
+                            "default_match_field": "url"
+                        },
+                        "ragas_settings": {
+                            "enabled_metrics": [
+                                "answer_relevancy",
+                                "faithfulness",
+                                "context_precision",
+                                "context_recall"
+                            ],
+                            "embedding_model": "HuggingFace",
+                            "timeout": 180,
+                            "batch_size": false
+                        }
+                    },
+                    "services.benchmarking.provider": "openai",
+                    "services.vectorstore.backend": "postgres",
+                    "services.vectorstore.distance_metric": "cosine",
+                    "data_manager.chunk_overlap": 0,
+                    "data_manager.chunk_size": 1000,
+                    "data_manager.distance_metric": "cosine",
+                    "data_manager.embedding_name": "HuggingFaceEmbeddings",
+                    "data_manager.retrievers": {
+                        "semantic_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "bm25_retriever": {
+                            "num_documents_to_retrieve": 5
+                        },
+                        "hybrid_retriever": {
+                            "num_documents_to_retrieve": 5,
+                            "bm25_weight": 0.6,
+                            "semantic_weight": 0.4
+                        }
+                    },
+                    "data_manager.stemming": {
+                        "enabled": false
+                    }
+                }
             }
         }
     ],
@@ -752,6 +811,17 @@
             "git_diff": "",
             "last_commit": "b983f4dc8a83976f80abe4f0e5d55241b53c5686\n"
         },
-        "corpus_snapshot_id": "230e9726-601c-4c2f-b6bb-6d8ada552dde"
+        "corpus_snapshot_id": "230e9726-601c-4c2f-b6bb-6d8ada552dde",
+        "code_version": {
+            "digest": null,
+            "source": "<not recorded: this artifact predates code-version stamping, and the code it ran cannot be recovered from it>",
+            "file_count": null,
+            "deploy_git_commit": "b983f4dc8a83976f80abe4f0e5d55241b53c5686",
+            "deploy_git_dirty": false,
+            "deploy_git_note": "Written once by `archi create` and then frozen: this identifies the deploy, not the image the benchmark ran. Two arms of one campaign share it. Compare `digest` instead."
+        },
+        "config_versions": [
+            "sha256:f9193d184010792a25aa3f6f8ddf056c3cff9f03a2fb9f72402be3c2b9792de7"
+        ]
     }
 }

@@ -98,6 +98,7 @@
         <p><strong>Timestamp:</strong> 2026-07-09 04:35:53.225464+00:00</p>
         <p><strong>Questions Processed:</strong> 27</p>
     </div>
+    <div class='provenance'><h2>Run provenance</h2><p class='provenance-alert'>Whether the run used the selected configuration was <strong>not recorded</strong>: this artifact predates configuration provenance, so no comparison was made.</p><p class='provenance-alert'>Corpus stability is <strong>unknown</strong>: it was not observed both before and after the run (<code>None</code> &rarr; <code>None</code>).</p><ul><li>Code version: <em>not recorded &mdash; this artifact predates version stamping</em></li><li>Deploy-time commit: <code>b6d9a87cb7420d243ea81901641a5297e6707270</code> &mdash; frozen by <code>archi create</code>; it identifies the deploy, not the image this run used</li><li>Config version: <code>sha256:2e158e4ffbbbd6cd1c5f25ce14746d44246427ec11f0e061c8a2c4f00dceb13e</code></li><li>Config basis: reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run</li></ul><p>Settings that define this arm:</p><table class='provenance-settings'><tr><th>Setting</th><th>Value</th></tr><tr><td><code>data_manager.chunk_overlap</code></td><td><code>0</code></td></tr><tr><td><code>data_manager.chunk_size</code></td><td><code>1000</code></td></tr><tr><td><code>data_manager.chunking</code></td><td><code>{&quot;strategy&quot;: &quot;sentence&quot;}</code></td></tr><tr><td><code>data_manager.distance_metric</code></td><td><code>cosine</code></td></tr><tr><td><code>data_manager.embedding_name</code></td><td><code>HuggingFaceEmbeddings</code></td></tr><tr><td><code>data_manager.retrievers</code></td><td><code>{&quot;bm25_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}, &quot;hierarchical_rerank&quot;: {&quot;candidate_pool_size&quot;: 20, &quot;enabled&quot;: true, &quot;num_documents_to_retrieve&quot;: 5, &quot;reranker&quot;: {&quot;model&quot;: &quot;ms-marco-MiniLM-L-12-v2&quot;}}, &quot;hybrid_retriever&quot;: {&quot;bm25_weight&quot;: 0.6, &quot;num_documents_to_retrieve&quot;: 5, &quot;semantic_weight&quot;: 0.4}, &quot;semantic_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}}</code></td></tr><tr><td><code>data_manager.stemming</code></td><td><code>{&quot;enabled&quot;: false}</code></td></tr><tr><td><code>services.benchmarking.agent_class</code></td><td><code>FASRCDocsAgent</code></td></tr><tr><td><code>services.benchmarking.agent_md_file</code></td><td><code>/root/archi/agents/fasrc-inline-v1.md</code></td></tr><tr><td><code>services.benchmarking.mode_settings</code></td><td><code>{&quot;ragas_settings&quot;: {&quot;batch_size&quot;: false, &quot;embedding_model&quot;: &quot;HuggingFace&quot;, &quot;enabled_metrics&quot;: [&quot;answer_relevancy&quot;, &quot;faithfulness&quot;, &quot;context_precision&quot;, &quot;context_recall&quot;], &quot;evaluator_model&quot;: &quot;us.anthropic.claude-sonnet-4-5-20250929-v1:0&quot;, &quot;evaluator_ollama_url&quot;: null, &quot;evaluator_provider&quot;: &quot;huit_bedrock&quot;, &quot;timeout&quot;: 180}, &quot;sources_settings&quot;: {&quot;default_match_field&quot;: &quot;url&quot;}}</code></td></tr><tr><td><code>services.benchmarking.model</code></td><td><code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code></td></tr><tr><td><code>services.benchmarking.modes</code></td><td><code>[&quot;RAGAS&quot;, &quot;SOURCES&quot;]</code></td></tr><tr><td><code>services.benchmarking.provider</code></td><td><code>openai</code></td></tr><tr><td><code>services.chat_app.agent_class</code></td><td><code>CMSCompOpsAgent</code></td></tr><tr><td><code>services.chat_app.default_model</code></td><td><code>llama3.2</code></td></tr><tr><td><code>services.chat_app.default_provider</code></td><td><code>local</code></td></tr><tr><td><code>services.chat_app.recursion_limit</code></td><td><code>50</code></td></tr><tr><td><code>services.vectorstore.backend</code></td><td><code>postgres</code></td></tr><tr><td><code>services.vectorstore.distance_metric</code></td><td><code>cosine</code></td></tr></table></div>
 
 <div class="metrics">
 <h2>🎯 Retrieval Accuracy</h2>
@@ -111,7 +112,7 @@
 
                 <div class="metric-item">
                     <div class="metric-value score-low">27</div>
-                    <div class="metric-label">Incorrect (no sources found)</div>
+                    <div class="metric-label">Incorrect (no expected sources retrieved)</div>
                 </div>
             
 </div></div>
@@ -161,7 +162,7 @@ Can you gide me where I can find it in globus? This should be a easy ticket, sor
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">Looks like that folder wasn't actually shared anywhere. I've added it to the Harvard FAS RC Boston endpoint (as that is where that data lives). You can find it under [LAB]</div>
+<div class="answer-box expected-box">Looks like that folder wasn&#x27;t actually shared anywhere. I&#x27;ve added it to the Harvard FAS RC Boston endpoint (as that is where that data lives). You can find it under [LAB]</div>
 </div>
 <div class="section">
 <div class="section-title">📊 RAGAS Scores</div>
@@ -180,8 +181,8 @@ Can you gide me where I can find it in globus? This should be a easy ticket, sor
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">Sadly no. Confusingly GPU's in have two modes, compute mode and graphics mode. Our GPU's are in compute node so they can't actually render graphics... Which is pretty hilarious given the name Graphics Processing Unit.
-We do have a V100 GPU set in graphics mode in the remoteviz partition which you are welcome to use. We don't have any of our other GPU in graphics mode due to lack of demand and the fact that it is nontrivial to setup.</div>
+<div class="answer-box expected-box">Sadly no. Confusingly GPU&#x27;s in have two modes, compute mode and graphics mode. Our GPU&#x27;s are in compute node so they can&#x27;t actually render graphics... Which is pretty hilarious given the name Graphics Processing Unit.
+We do have a V100 GPU set in graphics mode in the remoteviz partition which you are welcome to use. We don&#x27;t have any of our other GPU in graphics mode due to lack of demand and the fact that it is nontrivial to setup.</div>
 </div>
 <div class="section">
 <div class="section-title">📊 RAGAS Scores</div>
@@ -223,7 +224,7 @@ Thanks!</p>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
 <div class="answer-box expected-box">Can you provide a job ID for the interactive job? The only interactive job that I see is in gpu_test, not gpu_h200.
-The cluster has been very busy for the past few days and your lab's fairshare is low (0.151609):
+The cluster has been very busy for the past few days and your lab&#x27;s fairshare is low (0.151609):
 $ sshare --account=[LAB] -a</div>
 </div>
 <div class="section">
@@ -264,7 +265,7 @@ Could you please advise  whether there are any recommended VS Code settings or k
 <div class="section-title">✅ Expected Answer</div>
 <div class="answer-box expected-box">To launch VSCode on FASSE, are you following the instructions here: [URL] [[URL]] to get that going?
 You would need to initiate a remote tunnel session for launching VSCode on FASSE. Also, if you are interested in starting the tunnel using your local VSCode interface, then you would need to turn off the FASSE VPN, start the tunnel session, and then turn the FASSE VPN back on.
-If that doesn't work, then let me know a good time to meet tomorrow afternoon and we can troubleshoot this issue then.</div>
+If that doesn&#x27;t work, then let me know a good time to meet tomorrow afternoon and we can troubleshoot this issue then.</div>
 </div>
 <div class="section">
 <div class="section-title">📊 RAGAS Scores</div>
@@ -283,7 +284,7 @@ If that doesn't work, then let me know a good time to meet tomorrow afternoon an
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">The reason for you pending is that your lab's fairshare is low:
+<div class="answer-box expected-box">The reason for you pending is that your lab&#x27;s fairshare is low:
 [root@holy8a24507 general]# sshare --account=[LAB] -a</div>
 </div>
 <div class="section">
@@ -374,8 +375,8 @@ suspect the issue is on my end. Thank you!</p>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">You cannot submit jobs under [LAB] because you have not been added to the [LAB]'s fairshare account. Currently, you can access [LAB] storage, but the fairshare requires additional settings.
-We need approval from Prof. [NAME], cc'd in this ticket. Prof. [NAME], do you approve adding [NAME] to the [LAB] fairshare?</div>
+<div class="answer-box expected-box">You cannot submit jobs under [LAB] because you have not been added to the [LAB]&#x27;s fairshare account. Currently, you can access [LAB] storage, but the fairshare requires additional settings.
+We need approval from Prof. [NAME], cc&#x27;d in this ticket. Prof. [NAME], do you approve adding [NAME] to the [LAB] fairshare?</div>
 </div>
 <div class="section">
 <div class="section-title">📊 RAGAS Scores</div>
@@ -496,7 +497,7 @@ Could someone please take a look at this?</p>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">In this case you are hitting the reservations we have in place for the OS Upgrade: [URL] [[URL]] These are being used so we don't have to cancel people's jobs. You will need to either ask for less time than the time between now and the scheduled upgrade, or your jobs will pend until after the upgrade is complete.</div>
+<div class="answer-box expected-box">In this case you are hitting the reservations we have in place for the OS Upgrade: [URL] [[URL]] These are being used so we don&#x27;t have to cancel people&#x27;s jobs. You will need to either ask for less time than the time between now and the scheduled upgrade, or your jobs will pend until after the upgrade is complete.</div>
 </div>
 <div class="section">
 <div class="section-title">📊 RAGAS Scores</div>
@@ -608,9 +609,9 @@ Questions:
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
 <div class="answer-box expected-box">Thanks for reaching out. I opened a ticket for wider visibility of this question for our group. But, to answer your questions:
-1. General temporary files: netscratch & local scratch - That's correct. However, local scratch is attached to a job. So it will be available to the user for as long as their job is running on a compute node. The moment the job ends, local scratch goes away. So, if someone intends to use local scratch because it is the most performant for storage, they should consider moving the data out to a different storage before the job is done running, as in make it a part of their job launching script to pull the data out before the job ends. See [URL] [[URL]]
-2. No, Globus can access /n/netscratch but will not have visibility into anything else other than the Lab and Users/$USER directories. So, if you were to access /n/netscratch/[LAB] via Globus, then that's possible. But Globus will only show Lab and Users folders inside /n/netscratch/[LAB]. If they have not been created, then /n/netscratch/[LAB] will be empty on Globus. See [URL] [[URL]]
-Also, if you're interested in moving data around on the cluster from netscratch, then you can consider other CLI tools for accomplishing that. See [URL] [[URL]]
+1. General temporary files: netscratch &amp; local scratch - That&#x27;s correct. However, local scratch is attached to a job. So it will be available to the user for as long as their job is running on a compute node. The moment the job ends, local scratch goes away. So, if someone intends to use local scratch because it is the most performant for storage, they should consider moving the data out to a different storage before the job is done running, as in make it a part of their job launching script to pull the data out before the job ends. See [URL] [[URL]]
+2. No, Globus can access /n/netscratch but will not have visibility into anything else other than the Lab and Users/$USER directories. So, if you were to access /n/netscratch/[LAB] via Globus, then that&#x27;s possible. But Globus will only show Lab and Users folders inside /n/netscratch/[LAB]. If they have not been created, then /n/netscratch/[LAB] will be empty on Globus. See [URL] [[URL]]
+Also, if you&#x27;re interested in moving data around on the cluster from netscratch, then you can consider other CLI tools for accomplishing that. See [URL] [[URL]]
 3. You are right, as stated on [URL] [[URL]], the purge policy is strictly enforced unless and until an exception is raised with us, in which case, one will have to open a ticket with FASRC, explain the reason for raising that exception and the duration for which the exception must be honored/active.
 Hope that helped. Feel free to drop in our office hours, if you would like to discuss this further. See [URL] [[URL]]</div>
 </div>
@@ -636,8 +637,8 @@ way to run this on AWS or GCP through Harvard? Thank you.</p>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
 <div class="answer-box expected-box">Have you tried using serial_requeue on FASSE? There are several nodes in that partition that could meet your needs and allow you to scale out. The only danger is that your job might be preempted by higher priority work.
-If that won't work we can talk about other options internal to the cluster as I would imagine that would be cheaper for all around.
-For the record you would need to talk to HUIT for access to AWS and GCP but then you would also have to make sure you DUA's would cover that and work and any storage that is on FASSE is not generally available to those locations except via Globus.</div>
+If that won&#x27;t work we can talk about other options internal to the cluster as I would imagine that would be cheaper for all around.
+For the record you would need to talk to HUIT for access to AWS and GCP but then you would also have to make sure you DUA&#x27;s would cover that and work and any storage that is on FASSE is not generally available to those locations except via Globus.</div>
 </div>
 <div class="section">
 <div class="section-title">📊 RAGAS Scores</div>
@@ -665,8 +666,8 @@ I usually run a job array of ~400 jobs at once, in which each of these jobs has 
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">On a practical level I think they are comparable with netscratch being faster by maybe 10% or so. holystore01 is Lustre and so is known to be fast. netscratch is SSD's mounted via RDMA and thus also fast. By our benchmarks they came out roughly neck and neck, we went with VAST due to the ease of operation as Lustre is a pain in the butt to operate well.
-Anyways you should be safe reading from holystore01 and shouldn't need to move the data.</div>
+<div class="answer-box expected-box">On a practical level I think they are comparable with netscratch being faster by maybe 10% or so. holystore01 is Lustre and so is known to be fast. netscratch is SSD&#x27;s mounted via RDMA and thus also fast. By our benchmarks they came out roughly neck and neck, we went with VAST due to the ease of operation as Lustre is a pain in the butt to operate well.
+Anyways you should be safe reading from holystore01 and shouldn&#x27;t need to move the data.</div>
 </div>
 <div class="section">
 <div class="section-title">📊 RAGAS Scores</div>
@@ -707,10 +708,10 @@ for both CPU and GPU nodes? So far I was not able to find those information.</p>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">Our pricing model doesn't really work that way. The cluster is funded via two streams:
+<div class="answer-box expected-box">Our pricing model doesn&#x27;t really work that way. The cluster is funded via two streams:
 1. Overhead from grants: This funds our base operations and general cluster.
 2. Hardware Purchases: People can buy additional hardware to add to the cluster.
-We don't lease or sell cycles. We do let labs buy hardware if they need it. That said its a pretty bad time to buy as prices are crazy and highly in flux.
+We don&#x27;t lease or sell cycles. We do let labs buy hardware if they need it. That said its a pretty bad time to buy as prices are crazy and highly in flux.
 Do you need the price per hour for something? If you need a quote or an estimate I can try to provide one if I know what you are looking for.</div>
 </div>
 <div class="section">
@@ -771,8 +772,8 @@ This is the error I receive:
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">Are you still facing this issue? If yes, then can you conduct a test by directly SSH'ing into the cluster via the terminal and let me know the result.
-Also, were you on the VPN while connecting to the cluster via VSCode using Remote SSH? Few of our users were facing VPN-related problem today, so it's possible that when you tried it there might have been some connectivity issue due to a network glitch.</div>
+<div class="answer-box expected-box">Are you still facing this issue? If yes, then can you conduct a test by directly SSH&#x27;ing into the cluster via the terminal and let me know the result.
+Also, were you on the VPN while connecting to the cluster via VSCode using Remote SSH? Few of our users were facing VPN-related problem today, so it&#x27;s possible that when you tried it there might have been some connectivity issue due to a network glitch.</div>
 </div>
 <div class="section">
 <div class="section-title">📊 RAGAS Scores</div>
@@ -795,13 +796,13 @@ Additionally, I was planning to use the VS Code tunneling to access the RC resou
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">I've created a Users for you: [URL]/Users/[USERNAME], however the Users folder is now deprecated. We recommend that you use the Labs folder because you can make your own folder there. It is also easier to share data and allows others to save and clean up your folder if you ever leave the lab. Please see: [URL] [[URL]]
+<div class="answer-box expected-box">I&#x27;ve created a Users for you: [URL]/Users/[USERNAME], however the Users folder is now deprecated. We recommend that you use the Labs folder because you can make your own folder there. It is also easier to share data and allows others to save and clean up your folder if you ever leave the lab. Please see: [URL] [[URL]]
 On the system, the path is /n/boslfs02/LABS/[LAB] Engert Lab has about 14 TiB available out of 50 TiB total.
 # quota -g [LAB] /n/boslfs02
 Disk quotas for grp [LAB] (gid 402114):
 Filesystem used quota limit grace files quota limit grace
 /n/boslfs02 36.03T 50T 50T - 2736911 45088768 45088768
-I'll pass this ticket on to our VSCode specialists to investigate that issue. You should hear from them soon.</div>
+I&#x27;ll pass this ticket on to our VSCode specialists to investigate that issue. You should hear from them soon.</div>
 </div>
 <div class="section">
 <div class="section-title">📊 RAGAS Scores</div>
@@ -826,7 +827,7 @@ Do you recommend that I try to download and install aspera? How have other Harva
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">That's great! We really appreciate the update. Just a note that the login nodes have better bandwidth (i.e., better transfer rates) than compute nodes. So the login nodes are is the best option to transfer data externally!</div>
+<div class="answer-box expected-box">That&#x27;s great! We really appreciate the update. Just a note that the login nodes have better bandwidth (i.e., better transfer rates) than compute nodes. So the login nodes are is the best option to transfer data externally!</div>
 </div>
 <div class="section">
 <div class="section-title">📊 RAGAS Scores</div>
@@ -856,8 +857,8 @@ Thank you so much for your help — I really appreciate it! Let me know how you�
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">First, I would like to check with you if you are following Harvard [[URL]]'s and also FASRC's data security policies. At FASRC, the you can have DSL1 and 2 on Cannon. And DSL3 on FASSE [[URL]], our secure environment.
-If you are in agreement with those, you are likely installing the software in a location where you don't have write access. You should install the software in a location that you have write access to, such as your home directory. Can you explain how you are installing?
+<div class="answer-box expected-box">First, I would like to check with you if you are following Harvard [[URL]]&#x27;s and also FASRC&#x27;s data security policies. At FASRC, the you can have DSL1 and 2 on Cannon. And DSL3 on FASSE [[URL]], our secure environment.
+If you are in agreement with those, you are likely installing the software in a location where you don&#x27;t have write access. You should install the software in a location that you have write access to, such as your home directory. Can you explain how you are installing?
 If you prefer to chat one-on-one, we have office hours on Wednesdays from [DATE_TIME]. For how to join, see [URL] [[URL]].</div>
 </div>
 <div class="section">
@@ -881,7 +882,7 @@ Could you please advise on how to resolve this issue? Thank you very much for yo
 <div class="section-title">✅ Expected Answer</div>
 <div class="answer-box expected-box">If you look at the output.log file (/n/home11/cfu/.fasrcood/data/sys/dashboard/batch_connect/sys/Jupyter/output/866f3e99-de4a-42ac-90eb-424de7c95eb9.output.log), there is this error:
 
-ImportError: cannot import name 'run_sync_in_worker_thread' from 'anyio' (/n/home11/cfu/.local/lib/python3.8/site-packages/anyio/__init__.py)
+ImportError: cannot import name &#x27;run_sync_in_worker_thread&#x27; from &#x27;anyio&#x27; (/n/home11/cfu/.local/lib/python3.8/site-packages/anyio/__init__.py)
 We are currently working on an update that will potentially resolve this issue. I will send an update when you can test it. (Open OnDemand is under maintenance right now, and we cannot test it until maintenance is over).</div>
 </div>
 <div class="section">
@@ -907,10 +908,10 @@ our study (<= 1 month, approx [DATE_TIME]).</p>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">Thanks for generating the ticket. I had a chat with my team and the most straightforward way is to just download the models you need on /n/netscratch. You need it only for a month, so you won't have to worry about our purge policy. Netscratch has 50TiB of space ([URL] [[URL]]), so storing few tens of GBs wouldn't be an issue. While this won't solve the problem of models loaded into VRAM, at least this would reduce some latency on the user side.
+<div class="answer-box expected-box">Thanks for generating the ticket. I had a chat with my team and the most straightforward way is to just download the models you need on /n/netscratch. You need it only for a month, so you won&#x27;t have to worry about our purge policy. Netscratch has 50TiB of space ([URL] [[URL]]), so storing few tens of GBs wouldn&#x27;t be an issue. While this won&#x27;t solve the problem of models loaded into VRAM, at least this would reduce some latency on the user side.
 Another option is to have a cron job running on the cluster via Slurm, called scrontab ([URL] [[URL]]), and use that script to load the models during the time you think it would be needed by your users.
 A third option is to submit a 3-day job that would just idle waiting for work, it would have the LLM loaded and be ready to go, but it would tie up the GPU for 3 days. Then when it ended you would launch another one. This way, you would ensure that the LLM is always loaded but at the expense of fairshare. I guess this option could be used with setting up an ollama server.
-Let me know how you would like to approach this and we'll go from there.</div>
+Let me know how you would like to approach this and we&#x27;ll go from there.</div>
 </div>
 <div class="section">
 <div class="section-title">📊 RAGAS Scores</div>
@@ -953,10 +954,10 @@ Step 2 could be done via scrontab.
 Note that the cluster is not intended for immediate turn around. We cannot guarantee your jobs will run in any give amount of time as that is dependent on your fairshare. As such any work flow you develop will have to accommodate possibly waiting days or weeks for processing. If you need more timely processing I recommend looking at NERC or some cloud provider.
 
 To your final question, the cluster has full access to the internet so if the server is out there then cluster can pull the data down. The trick is going the opposite way, we have no way of exposing our storage aside from Globus. So what works then is:
-Push/Pull from the cluster -> Internet
+Push/Pull from the cluster -&gt; Internet
 Push/Pull via Globus endpoint from host mounting endpoint
 There is not option for:
-Push/Pull from Internet -> cluster
+Push/Pull from Internet -&gt; cluster
 So you have to architect around those limitations.</div>
 </div>
 <div class="section">

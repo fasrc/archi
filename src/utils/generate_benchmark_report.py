@@ -56,7 +56,187 @@ def parse_benchmark_results(results, metadata):
     config_data = result.get("configuration", {})
     timestamp = metadata.get("time", "Unknown time")
 
-    return config_data, config_name, timestamp, questions, total_results
+    # `config_data` stays the SELECTED file: the benchmark harness reads its own
+    # settings from there (services.benchmarking.modes decides which sections
+    # render below), so presenting the running configuration in its place would
+    # trade one wrong label for another. Only the agent reads Postgres, so the
+    # provenance of what the agent actually ran is reported alongside instead.
+    provenance = {
+        "running_configuration": result.get("running_configuration"),
+        # None, not []. An artifact written before configuration provenance has no
+        # such key, and [] would be read below as "compared, and they agreed" --
+        # a positive claim about a comparison that never ran, on exactly the
+        # historical runs whose mislabelling prompted this work.
+        "configuration_divergence": result.get("configuration_divergence"),
+        "corpus_fingerprint_before": result.get("corpus_fingerprint_before"),
+        "corpus_fingerprint": result.get("corpus_fingerprint"),
+        "corpus_unchanged_at_endpoints": result.get("corpus_unchanged_at_endpoints"),
+        # Identity, alongside the divergence findings above. Divergence says
+        # whether this report can be trusted; the digests say whether this run is
+        # the same code and settings as another one, which is the question a
+        # campaign actually asks. `config_version` is per arm and comes off the
+        # record; `code_version` is per invocation and comes off the metadata.
+        "config_version": result.get("config_version"),
+        "code_version": metadata.get("code_version"),
+    }
+
+    return config_data, config_name, timestamp, questions, total_results, provenance
+
+
+def format_provenance_html(provenance):
+    """Render whether the report can be trusted to describe the run.
+
+    The selected configuration and the one the agent actually used can differ:
+    the agent reads Postgres while the harness writes and reads a YAML file. A
+    report that showed only the file reported a run executed at
+    ``context_window: 8192`` as ``32768``. This block is what makes that visible
+    to the person reading the report rather than only to a container log.
+    """
+    if not provenance:
+        return ""
+
+    divergence = provenance.get("configuration_divergence")
+    if divergence:
+        config_line = (
+            "<p class='provenance-alert'>The run did <strong>not</strong> use the "
+            "selected configuration. Settings that differ between the selected "
+            "file and what the agent read:</p><ul>"
+            + "".join(f"<li><code>{item}</code></li>" for item in divergence)
+            + "</ul>"
+        )
+    elif divergence is None:
+        # Absence is not agreement. An empty list means the two were compared and
+        # agreed; a missing key means no comparison was made at all.
+        config_line = (
+            "<p class='provenance-alert'>Whether the run used the selected "
+            "configuration was <strong>not recorded</strong>: this artifact "
+            "predates configuration provenance, so no comparison was made.</p>"
+        )
+    else:
+        config_line = (
+            "<p class='provenance-ok'>The configuration the agent read "
+            "<strong>matches</strong> the selected file.</p>"
+        )
+
+    stable = provenance.get("corpus_unchanged_at_endpoints")
+    before = provenance.get("corpus_fingerprint_before")
+    after = provenance.get("corpus_fingerprint")
+    if stable is True:
+        # Deliberately weaker than "unchanged for the whole run". Two samples
+        # prove only that the endpoints matched: a corpus that changed and
+        # changed back while the questions ran would produce this same result.
+        corpus_line = (
+            "<p class='provenance-ok'>The corpus was the same at the start and "
+            f"the end of the run (<code>{after}</code>). This does not rule out "
+            "a change that was reverted in between.</p>"
+        )
+    elif stable is False:
+        corpus_line = (
+            "<p class='provenance-alert'>The corpus <strong>changed</strong> "
+            "while the run was in progress, so its questions were not all "
+            f"scored against the same documents (<code>{before}</code> &rarr; "
+            f"<code>{after}</code>).</p>"
+        )
+    else:
+        corpus_line = (
+            "<p class='provenance-alert'>Corpus stability is "
+            "<strong>unknown</strong>: it was not observed both before and "
+            f"after the run (<code>{before}</code> &rarr; <code>{after}</code>)."
+            "</p>"
+        )
+
+    return (
+        "<div class='provenance'><h2>Run provenance</h2>"
+        + config_line
+        + corpus_line
+        + format_version_html(provenance)
+        + "</div>"
+    )
+
+
+_NOT_RECORDED = "<em>not recorded &mdash; this artifact predates version stamping</em>"
+
+
+def format_version_html(provenance):
+    """Render the code and configuration identity of the run.
+
+    Divergence and corpus stability, above, say whether this report describes its
+    own run. These digests answer the question a campaign asks across runs: was
+    this the same code, and the same settings, as that other arm? Equal digests
+    mean equal inputs.
+
+    Neither is derivable from ``git_info.last_commit``: ``archi create`` writes it
+    once and freezes it, so every run between 2026-08-11 and 2026-08-17 reports
+    ``0a157cdce0`` with an empty diff. The commit is shown, labelled, so a reader
+    does not mistake it for the code this run executed.
+
+    An artifact written before stamping says so rather than being filled in with
+    a plausible guess.
+    """
+    if not provenance:
+        return ""
+
+    code = provenance.get("code_version") or {}
+    config = provenance.get("config_version") or {}
+    if not code and not config:
+        return ""
+
+    rows = []
+
+    code_digest = code.get("digest")
+    rows.append(
+        "<li>Code version: "
+        + (
+            f"<code>{html.escape(str(code_digest))}</code>"
+            if code_digest
+            else _NOT_RECORDED
+        )
+        + "</li>"
+    )
+    commit = code.get("deploy_git_commit")
+    if commit:
+        dirty = " (dirty tree)" if code.get("deploy_git_dirty") else ""
+        rows.append(
+            f"<li>Deploy-time commit: <code>{html.escape(str(commit))}</code>{dirty} "
+            "&mdash; frozen by <code>archi create</code>; it identifies the "
+            "deploy, not the image this run used</li>"
+        )
+
+    config_digest = config.get("digest")
+    rows.append(
+        "<li>Config version: "
+        + (
+            f"<code>{html.escape(str(config_digest))}</code>"
+            if config_digest
+            else _NOT_RECORDED
+        )
+        + "</li>"
+    )
+    if config.get("source"):
+        rows.append(f"<li>Config basis: {html.escape(str(config['source']))}</li>")
+
+    key_settings = config.get("key_settings") or {}
+    if key_settings:
+        settings_rows = "".join(
+            "<tr><td><code>{}</code></td><td><code>{}</code></td></tr>".format(
+                html.escape(path),
+                html.escape(
+                    json.dumps(key_settings[path], sort_keys=True, default=repr)
+                    if isinstance(key_settings[path], (dict, list))
+                    else str(key_settings[path])
+                ),
+            )
+            for path in sorted(key_settings)
+        )
+        settings_table = (
+            "<p>Settings that define this arm:</p>"
+            "<table class='provenance-settings'>"
+            "<tr><th>Setting</th><th>Value</th></tr>" + settings_rows + "</table>"
+        )
+    else:
+        settings_table = ""
+
+    return "<ul>" + "".join(rows) + "</ul>" + settings_table
 
 
 def format_total_duration(raw_duration):
@@ -96,8 +276,14 @@ def format_total_duration(raw_duration):
     return friendly, assumed_unit
 
 
-def format_html_output(config_data, config_name, timestamp, questions, total_results):
-    """Format results as HTML for easier reading"""
+def format_html_output(
+    config_data, config_name, timestamp, questions, total_results, provenance=None
+):
+    """Format results as HTML for easier reading.
+
+    ``provenance`` defaults to None so result files written before provenance was
+    recorded still render.
+    """
 
     html_parts = [
         """
@@ -204,6 +390,7 @@ def format_html_output(config_data, config_name, timestamp, questions, total_res
         <p><strong>Timestamp:</strong> {timestamp}</p>
         <p><strong>Questions Processed:</strong> {len(questions)}</p>
     </div>
+    {format_provenance_html(provenance)}
 """
     )
 
@@ -253,19 +440,25 @@ def format_html_output(config_data, config_name, timestamp, questions, total_res
                 f"""
                 <div class="metric-item">
                     <div class="metric-value score-medium">{ret_partial}</div>
-                    <div class="metric-label">Partially Correct (some sources found)</div>
+                    <div class="metric-label">Partially Correct (some expected sources retrieved)</div>
                 </div>
             """
             )
 
-        # Incorrect
+        # Incorrect. A residual over the EXPECTED sources, so it counts questions
+        # where none of the expected sources were among those retrieved -- NOT
+        # questions where retrieval returned nothing. The old label claimed the
+        # latter: in benchmarking-ragas-205-20260817_040939 all 106 scored
+        # questions retrieved documents and none retrieved zero, yet the report
+        # announced "19 Incorrect (no sources found)", inviting the reader to
+        # diagnose a retrieval outage that had not happened.
         ret_incorrect = ret_total - ret_correct - ret_partial
         if ret_incorrect > 0:
             html_parts.append(
                 f"""
                 <div class="metric-item">
                     <div class="metric-value score-low">{ret_incorrect}</div>
-                    <div class="metric-label">Incorrect (no sources found)</div>
+                    <div class="metric-label">Incorrect (no expected sources retrieved)</div>
                 </div>
             """
             )
@@ -386,8 +579,13 @@ def format_html_output(config_data, config_name, timestamp, questions, total_res
         # archi's Answer
         html_parts.append(f'<div class="section">')
         html_parts.append(f'<div class="section-title">🤖 archi\'s Answer</div>')
+        # Escaped: FASRC documentation is full of command placeholders such as
+        # `<jobid>` and `<rcusername>`, which a browser parses as unknown elements
+        # and renders as nothing -- silently deleting the argument the reader
+        # needs from the command they were told to run.
         html_parts.append(
-            f'<div class="answer-box">{q_data.get("answer", "N/A")}</div>'
+            f'<div class="answer-box">'
+            f'{html.escape(str(q_data.get("answer", "N/A")))}</div>'
         )
         html_parts.append(f"</div>")
 
@@ -395,7 +593,8 @@ def format_html_output(config_data, config_name, timestamp, questions, total_res
         html_parts.append(f'<div class="section">')
         html_parts.append(f'<div class="section-title">✅ Expected Answer</div>')
         html_parts.append(
-            f'<div class="answer-box expected-box">{q_data.get("reference_answer", "N/A")}</div>'
+            f'<div class="answer-box expected-box">'
+            f'{html.escape(str(q_data.get("reference_answer", "N/A")))}</div>'
         )
         html_parts.append(f"</div>")
 
@@ -606,7 +805,7 @@ Examples:
     # Load results
     try:
         results, metadata = load_benchmark_results(args.results_file)
-        config_data, config_name, timestamp, questions, total_results = (
+        config_data, config_name, timestamp, questions, total_results, provenance = (
             parse_benchmark_results(results, metadata)
         )
     except Exception as e:
@@ -615,11 +814,11 @@ Examples:
 
     # Generates HTML output
     html_content = format_html_output(
-        config_data, config_name, timestamp, questions, total_results
+        config_data, config_name, timestamp, questions, total_results, provenance
     )
     with open(html_path, "w") as f:
         f.write(html_content)
-    print(f"✅ HTML report generated: {args.html}")
+    print(f"✅ HTML report generated: {html_path}")
 
 
 if __name__ == "__main__":

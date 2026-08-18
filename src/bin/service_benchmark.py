@@ -22,6 +22,12 @@ from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
+from src.utils.benchmark_provenance import (
+    asserted_config_divergence,
+    collect_code_version,
+    config_version,
+    corpus_fingerprint,
+)
 from src.utils.benchmark_resilience import (
     OK,
     build_failure_entry,
@@ -56,7 +62,69 @@ from src.utils.postgres_service_factory import PostgresServiceFactory
 CONFIG_PATH = "/root/archi/config.yaml"
 OUTPUT_PATH = "/root/archi/benchmarks"
 EXTRA_METADATA_PATH = "/root/archi/git_info.yaml"
+
+# The `src` package as installed in this image. The benchmark builds the agent
+# in-process, so these files ARE the code under test -- and they are the baked
+# site-packages copy, not a bind mount, which is exactly the code a deploy-time
+# commit fails to identify. Derived from this module's own location so it follows
+# the package wherever the image puts it.
+PACKAGE_DIR = str(Path(__file__).resolve().parent.parent)
 OUTPUT_DIR = Path(OUTPUT_PATH)
+
+# The corpus's retrievable state, as opaque (key, value) pairs for
+# `corpus_fingerprint`. Every row is keyed by `documents.resource_hash`, never by
+# a SERIAL row id: two ingests of an identical corpus -- a rebuilt deployment, a
+# re-seeded database -- get different serials, so keying by `document_id` made the
+# cross-run comparison this field exists for impossible, rejecting runs that were
+# in fact comparable.
+#
+# Three kinds of row, because retrieval reads all three:
+#
+#   doc     the live document list and byte sizes.
+#   chunk   per-chunk content digests. `resource_hash` is `md5(url)`, an identity
+#           hash deliberately stable across content updates, so the document list
+#           alone would miss an edit that preserved the byte count. Hashing per
+#           chunk index also catches re-chunking.
+#   parent  `document_parent_nodes.parent_text`, plus the ordered list of child
+#           chunk indexes grouped under it. Under `hierarchical_rerank` -- enabled
+#           for every chunk in the FASRC deployment -- what reaches the agent is
+#           the parent text, not the leaf chunks, and parents are neither embedded
+#           nor indexed so no other part of this query sees them. Hashing leaves
+#           alone would certify two arms as having seen the same corpus while the
+#           context they were given differed. The child list is folded in because
+#           re-grouping children changes that context even when every individual
+#           text is untouched.
+#
+# Deleted documents are excluded from all three: soft-deleted rows stay in the
+# tables but are not part of the corpus.
+CORPUS_STATE_QUERY = """
+SELECT 'doc:' || d.resource_hash, d.size_bytes::text
+FROM documents d
+WHERE d.is_deleted = FALSE
+UNION ALL
+SELECT 'chunk:' || d.resource_hash || ':' || c.chunk_index::text,
+       md5(c.chunk_text)
+FROM document_chunks c
+JOIN documents d ON d.id = c.document_id
+WHERE d.is_deleted = FALSE
+UNION ALL
+SELECT 'parent:' || d.resource_hash || ':' || p.parent_index::text,
+       md5(
+           p.parent_text || '|' ||
+           COALESCE(
+               string_agg(c.chunk_index::text, ',' ORDER BY c.chunk_index), ''
+           )
+       )
+FROM document_parent_nodes p
+JOIN documents d ON d.id = p.document_id
+LEFT JOIN document_chunks c ON c.metadata->>'parent_id' = p.id::text
+WHERE d.is_deleted = FALSE
+GROUP BY d.resource_hash, p.parent_index, p.parent_text
+"""
+
+#: Distinguishes a provenance field that was never recorded (a result file
+#: written before provenance existed) from one recorded as undetermined.
+_NOT_RECORDED = object()
 
 setup_logging()
 logger = get_logger(__name__)
@@ -132,6 +200,123 @@ class ResultHandler:
             ResultHandler._corpus_snapshot_id = override or str(uuid.uuid4())
         return ResultHandler._corpus_snapshot_id
 
+    #: Prefix of a fingerprint that records why the corpus could not be read.
+    CORPUS_UNAVAILABLE = "<unavailable:"
+
+    @staticmethod
+    def corpus_reading_failed(fingerprint: Optional[str]) -> bool:
+        """Is *fingerprint* a non-observation rather than a corpus state?"""
+        return fingerprint is None or str(fingerprint).startswith(
+            ResultHandler.CORPUS_UNAVAILABLE
+        )
+
+    @staticmethod
+    def arms_comparable(records: List[Dict[str, Any]]) -> bool:
+        """Can these arms' scores be set against each other?
+
+        Only when, for every arm, the corpus provenance is established, they all
+        observed the same corpus, and the arm actually ran the settings it was
+        selected to run. A diverged arm did not test its intended condition, so
+        ranking it against the others asserts a controlled comparison that did
+        not happen.
+
+        Note what is NOT checked: arm identity (name, model, provider,
+        agent_md_file). The harness reads those from the selected file's
+        ``services.benchmarking`` and passes them to ``archi()`` as explicit
+        keyword arguments, so the file is authoritative for them and the labels
+        are accurate. Only ``services.chat_app`` and the rest of what the agent
+        reads from Postgres can diverge.
+
+        Used by BOTH comparison artifacts -- the leaderboard and the pairwise
+        A/B dump -- because a guard on one of them still lets a reader draw the
+        unsupported conclusion from the other.
+
+        Records with no provenance keys at all predate provenance and are left
+        comparable: historical sweeps are not retroactively invalidated.
+        """
+        fingerprints = set()
+        for record in records:
+            stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
+            if stability is not _NOT_RECORDED and stability is not True:
+                return False
+            if record.get("configuration_divergence"):
+                return False
+            fingerprint = record.get("corpus_fingerprint")
+            if fingerprint is not None:
+                fingerprints.add(fingerprint)
+        return len(fingerprints) <= 1
+
+    @staticmethod
+    def ab_summary_line(
+        name_a: str,
+        name_b: str,
+        question_count: int,
+        aggregate: Dict[str, Any],
+    ) -> str:
+        """One operator-facing line for a pair, withheld winners included.
+
+        Withholding sets the tallies to ``None``, and the caller's format string
+        was left as ``Wins A=%d, B=%d, Ties=%d``. ``'%d' % None`` raises;
+        ``logging`` catches that in ``handleError`` rather than aborting the run,
+        so the effect is not a crash but a *lost* line -- the operator gets
+        "--- Logging error ---" and a traceback where the pair summary should be,
+        in exactly the incomparable case the guard was added to report.
+
+        ``0`` is a tally, not an absence: only ``None`` means withheld.
+        """
+        head = f"  {name_a} vs {name_b}: {question_count} questions."
+        if aggregate.get("wins_a") is None:
+            return f"{head} Winners withheld: the arms are not comparable."
+        return (
+            f"{head} Wins A={aggregate['wins_a']}, "
+            f"B={aggregate['wins_b']}, Ties={aggregate['ties']}"
+        )
+
+    @staticmethod
+    def get_corpus_fingerprint() -> str:
+        """Digest of the live corpus, or a marker explaining why it is missing.
+
+        Unlike the per-invocation nonce above, equal digests mean equal corpora,
+        so "these arms were scored against the same documents" becomes a
+        checkable claim.
+
+        Covers the retrievable state, not just the document list -- see
+        ``CORPUS_STATE_QUERY`` for what is hashed and why. Re-embedding the same
+        text with a different model is NOT covered; that appears as a divergence
+        on ``data_manager.embedding_name`` in the recorded configuration.
+
+        Reads through the pool the run actually opened -- the one `_init_runtime`
+        installed on PostgresServiceFactory -- and NOT `ConnectionPool.get_instance`.
+        The two are unrelated singletons: the factory builds its pools directly
+        (`from_config`, and the lazy `connection_pool` property), so nothing ever
+        populates `ConnectionPool._instance`, and asking it for the pool raised
+        `ValueError` on every real run. Because provenance failure is swallowed
+        below, that filed an unavailable-marker instead of crashing, so the field
+        was inert wherever it was consumed while the unit tests stayed green --
+        they monkeypatched the very call that could not work (#273).
+
+        Never raises: a finished benchmark must not lose its scores because
+        provenance could not be collected. It does now warn, because an artifact
+        key nobody thinks to check is how the inert version survived review.
+        """
+        try:
+            factory = PostgresServiceFactory.get_instance()
+            if factory is None:
+                raise RuntimeError(
+                    "PostgresServiceFactory is not initialized; _init_runtime() "
+                    "installs it when this module is run as a script"
+                )
+            rows = factory.connection_pool.execute(CORPUS_STATE_QUERY)
+            return corpus_fingerprint(rows)
+        except Exception as exc:  # noqa: BLE001 - provenance is never fatal
+            logger.warning(
+                "Corpus provenance unavailable: %s. This run cannot be shown to "
+                "have scored against the same corpus as any other, so comparisons "
+                "involving it will be withheld.",
+                exc,
+            )
+            return f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
+
     @staticmethod
     def map_prompts(config: Dict[str, Any]):
         prompts = config.get("services", {}).get("benchmarking", {}).get("prompts")
@@ -151,30 +336,135 @@ class ResultHandler:
                 section[prompt_name] = prompt_str
 
     @staticmethod
-    def handle_results(config_path: Path, results: Dict, total_results: Dict):
+    def handle_results(
+        config_path: Path,
+        results: Dict,
+        total_results: Dict,
+        *,
+        running_config: Optional[Dict[str, Any]],
+        corpus_before: Optional[str] = None,
+    ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
 
         ResultHandler.map_prompts(config)
+
+        # The file above is what the operator SELECTED. The agent reads its
+        # configuration from Postgres, and load_new_configuration writes the
+        # selected file to CONFIG_PATH -- which archi() never reads. Recording
+        # only the file therefore labels the run with settings it may never have
+        # used.
+        #
+        # `running_config` is the snapshot archi.__init__ took when it built the
+        # chain (src/archi/archi.py). It is passed in rather than re-queried
+        # here: the query would run AFTER the arm's questions, so a config change
+        # during the arm would certify settings the chain never held -- and would
+        # clear the divergence list while doing it.
+        #
+        # Scoped to what the file ASSERTS, not the two dicts whole. get_full_config
+        # returns the configuration after seeding, defaulting and reshaping, so a
+        # whole-dict comparison reported ~192 differences on a deployment seeded
+        # from the very file being compared -- making arms_comparable() False on
+        # every arm of every run. See asserted_config_divergence.
+        if running_config is None:
+            divergence = ["<unavailable: the run reported no configuration>"]
+        else:
+            divergence = asserted_config_divergence(config, running_config)
+
+        if divergence:
+            logger.warning(
+                "This report may not describe the run: the selected configuration "
+                "(%s) and the configuration the agent read disagree at %d "
+                "setting(s): %s",
+                config_path,
+                len(divergence),
+                ", ".join(divergence),
+            )
+
+        corpus_after = ResultHandler.get_corpus_fingerprint()
+        # None, not False, when either reading is missing or failed. A failure is
+        # not an observation: get_corpus_fingerprint reports one as
+        # "<unavailable: ...>", and two identical failures compare equal, so
+        # plain equality would certify the corpus as stable at exactly the moment
+        # nothing about it was actually observed.
+        if ResultHandler.corpus_reading_failed(
+            corpus_before
+        ) or ResultHandler.corpus_reading_failed(corpus_after):
+            corpus_unchanged_at_endpoints = None
+        else:
+            corpus_unchanged_at_endpoints = corpus_before == corpus_after
+        if corpus_unchanged_at_endpoints is False:
+            logger.warning(
+                "The corpus changed while this arm was running (%s -> %s); its "
+                "questions were not all scored against the same documents",
+                corpus_before,
+                corpus_after,
+            )
 
         current_results = {
             "single_question_results": results,
             "total_results": total_results,
             "configuration_file": str(config_path),
             "configuration": config,
+            "running_configuration": running_config,
+            "configuration_divergence": divergence,
+            # Sampled around the arm, not once per sweep. Ingestion runs
+            # continuously in this deployment, so an arm can straddle a
+            # re-ingest and score different questions against different
+            # corpora; a single reading taken afterwards would report the final
+            # state as though it had covered the whole arm.
+            "corpus_fingerprint_before": corpus_before,
+            "corpus_fingerprint": corpus_after,
+            "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
+            # Per arm, not per file. One invocation runs every config in the
+            # sweep directory (the `while self.all_config_files` loop), so a
+            # single version on the metadata block would label every arm with
+            # whichever ran last; bench-sweep-20260610 holds three arms.
+            #
+            # Divergence above catches a mislabel while both sources are in
+            # hand. This digest answers the other question -- "was this the same
+            # configuration as that other run?" -- from the finished artifact
+            # alone, long after Postgres has moved on.
+            "config_version": config_version(
+                running=running_config,
+                selected=config,
+                selected_file=str(config_path),
+            ),
         }
 
         ResultHandler.results.append(current_results)
 
     @staticmethod
     def add_metadata():
-        with open(EXTRA_METADATA_PATH, "r") as f:
-            additional_info = yaml.safe_load(f)
+        try:
+            with open(EXTRA_METADATA_PATH, "r") as f:
+                additional_info = yaml.safe_load(f)
+        except OSError as exc:  # noqa: BLE001 - provenance is never fatal
+            logger.warning("Could not read %s: %s", EXTRA_METADATA_PATH, exc)
+            additional_info = None
 
         meta_data = {
             "time": str(datetime.now(timezone.utc)),
             "git_info": additional_info,
+            # git_info.yaml is written by `archi create` and then frozen. Re-running
+            # the benchmark container against an existing deployment reports the
+            # commit that was checked out at DEPLOY time, not the code in the image
+            # -- every arm of a campaign reports the same commit even when the arms
+            # ran different code. Say so in the artifact rather than in a comment.
+            "git_info_captured_at": "deploy (`archi create`), not the running image",
+            # What the frozen commit above cannot provide: an identity for the
+            # code this run actually executed. Digested from the `src` package
+            # files in the image, so it is per invocation (one image runs every
+            # arm) and independent of which code paths the run happened to take.
+            "code_version": collect_code_version(PACKAGE_DIR, additional_info),
+            # The config version is per arm and lives on each result record; this
+            # only summarises their digests, in the order the arms ran.
+            "config_versions": [
+                (record.get("config_version") or {}).get("digest")
+                for record in ResultHandler.results
+            ],
             "corpus_snapshot_id": ResultHandler.get_corpus_snapshot_id(),
+            "corpus_fingerprint": ResultHandler.get_corpus_fingerprint(),
         }
 
         ResultHandler.metadata.update(meta_data)
@@ -182,14 +472,14 @@ class ResultHandler:
     @staticmethod
     def dump_html(benchmark_name: Path):
 
-        config_data, config_name, timestamp, questions, total_results = (
+        config_data, config_name, timestamp, questions, total_results, provenance = (
             parse_benchmark_results(ResultHandler.results, ResultHandler.metadata)
         )
 
         logger.info(config_data)
 
         html_content = format_html_output(
-            config_data, config_name, timestamp, questions, total_results
+            config_data, config_name, timestamp, questions, total_results, provenance
         )
 
         filename = f"{benchmark_name}-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_report.html"
@@ -339,7 +629,17 @@ class ResultHandler:
 
         per_question = [asdict(r) for r in paired]
 
-        wins_a, wins_b, ties = 0, 0, 0
+        # Same guard as the leaderboard's: a per-metric winner is a claim that
+        # the two arms were measured under the same conditions. Guarding only
+        # the leaderboard would still let a reader draw the unsupported
+        # conclusion from this artifact.
+        comparable = ResultHandler.arms_comparable(
+            [ResultHandler.results[idx_a], ResultHandler.results[idx_b]]
+        )
+
+        wins_a: Optional[int] = 0
+        wins_b: Optional[int] = 0
+        ties: Optional[int] = 0
         all_metrics = set()
         for r in paired:
             for m, w in r.winner_by_metric.items():
@@ -350,6 +650,20 @@ class ResultHandler:
                     wins_b += 1
                 else:
                     ties += 1
+
+        if not comparable:
+            # Withhold the verdict, keep the measurements: per-question ragas_a
+            # and ragas_b stay so an operator can still inspect the run.
+            for row in per_question:
+                row["winner_by_metric"] = {}
+            wins_a = wins_b = ties = None
+            logger.warning(
+                "A/B winners withheld for '%s' vs '%s': corpus provenance does "
+                "not establish that both arms were scored against the same "
+                "documents",
+                config_a_meta["name"],
+                config_b_meta["name"],
+            )
 
         mean_scores_a: Dict[str, float] = {}
         mean_scores_b: Dict[str, float] = {}
@@ -372,6 +686,7 @@ class ResultHandler:
         comparison = {
             "config_a": config_a_meta,
             "config_b": config_b_meta,
+            "comparable": comparable,
             "per_question": per_question,
             "aggregate": {
                 "wins_a": wins_a,
@@ -446,7 +761,9 @@ class ResultHandler:
             "provider": set(),
             "evaluator_model": set(),
             "queries_path": set(),
+            "corpus_fingerprint": set(),
         }
+        corpus_warnings: List[str] = []
 
         for record in ResultHandler.results:
             bench = _benchmarking(record)
@@ -529,6 +846,30 @@ class ResultHandler:
             ctx_fields["provider"].add(bench.get("provider"))
             ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
             ctx_fields["queries_path"].add(bench.get("queries_path"))
+            # The corpus is a swept-context field like any other: ranking arms
+            # scored against different documents asserts controlled conditions
+            # the run cannot support.
+            ctx_fields["corpus_fingerprint"].add(record.get("corpus_fingerprint"))
+            # An ABSENT key means the record predates corpus provenance and has
+            # nothing to say; a key present and None means provenance ran and
+            # came back undetermined. Only the latter is a finding.
+            stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
+            if stability is False:
+                corpus_warnings.append(
+                    f"the corpus changed while variant '{name}' was running; its "
+                    "questions were not all scored against the same documents"
+                )
+            elif stability is None:
+                corpus_warnings.append(
+                    f"corpus stability is unknown for variant '{name}'; it was "
+                    "not observed before and after the run"
+                )
+            divergence = record.get("configuration_divergence") or []
+            if divergence:
+                corpus_warnings.append(
+                    f"variant '{name}' did not run the settings it was selected "
+                    f"to run; these differ: {', '.join(divergence)}"
+                )
 
         # Complete rows first, then by descending primary score; incomplete last.
         rows.sort(
@@ -538,6 +879,13 @@ class ResultHandler:
             )
         )
 
+        # A rank is a machine-readable claim that these variants were measured
+        # under the same conditions. When corpus provenance says they were not,
+        # withhold the ranking rather than manufacture an ordering a consumer
+        # would read from rows[*].rank without ever seeing the warnings. The
+        # metrics stay, so an operator can still inspect the run.
+        comparable = ResultHandler.arms_comparable(ResultHandler.results)
+
         # Dense ranking: equal primary scores share a rank.
         rank = 0
         prev_score: Any = object()
@@ -546,7 +894,7 @@ class ResultHandler:
             if score != prev_score:
                 rank += 1
                 prev_score = score
-            row["rank"] = rank
+            row["rank"] = rank if comparable else None
 
         warnings: List[str] = []
         shared_context: Dict[str, Any] = {
@@ -561,6 +909,7 @@ class ResultHandler:
                 warnings.append(
                     f"{field_name} differs across swept configs: {sorted(str(v) for v in present)}"
                 )
+        warnings.extend(corpus_warnings)
         if warnings:
             for w in warnings:
                 logger.warning("Leaderboard shared-context drift: %s", w)
@@ -569,6 +918,7 @@ class ResultHandler:
         ResultHandler.leaderboard = {
             "shared_context": shared_context,
             "primary_metric": primary_metric,
+            "comparable": comparable,
             "rows": rows,
         }
         return ResultHandler.leaderboard
@@ -1385,9 +1735,19 @@ class Benchmarker:
         logger.info("")
 
         while self.all_config_files:
+            # Read the corpus BEFORE the arm's questions, so the report can show
+            # whether they were all scored against the same documents.
+            corpus_before = ResultHandler.get_corpus_fingerprint()
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
-                Path(self.current_config), question_wise_results, total_results
+                Path(self.current_config),
+                question_wise_results,
+                total_results,
+                corpus_before=corpus_before,
+                # The chain's own snapshot, taken by archi.__init__ before these
+                # questions ran -- not a fresh query, which would report the
+                # config as it stands now rather than as the arm used it.
+                running_config=getattr(self.chain, "config", None),
             )
             self.load_new_configuration()
 
@@ -1408,13 +1768,9 @@ class Benchmarker:
                 name_a = comp["config_a"].get("name", f"config_{idx_a}")
                 name_b = comp["config_b"].get("name", f"config_{idx_b}")
                 logger.info(
-                    "  %s vs %s: %d questions. Wins A=%d, B=%d, Ties=%d",
-                    name_a,
-                    name_b,
-                    len(paired),
-                    comp["aggregate"]["wins_a"],
-                    comp["aggregate"]["wins_b"],
-                    comp["aggregate"]["ties"],
+                    ResultHandler.ab_summary_line(
+                        name_a, name_b, len(paired), comp["aggregate"]
+                    )
                 )
 
         # Prompt-sweep leaderboard: rank every config by mean RAGAS metric.

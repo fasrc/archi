@@ -95,6 +95,13 @@ services:
     agents_dir: "{{ services.chat_app.agents_dir | default('', true) }}"
     recursion_limit: {{ services.chat_app.recursion_limit | default(50, true) }}
     client_timeout_seconds: {{ services.chat_app.client_timeout_seconds | default(600, true) }}
+    {% if services.chat_app.context_editing is defined %}
+    # Emitted only when declared: the in-loop bound's defaults live in
+    # context_budget.py, and re-stating them here would fork them. `context_window`
+    # is the only way to declare a window for a model named in this config, so
+    # dropping the block leaves self-hosted deployments with no bound at all.
+    context_editing: {{ services.chat_app.context_editing | tojson }}
+    {% endif %}
     default_provider: {{ services.chat_app.default_provider | default("local", true) }}
     default_model: {{ services.chat_app.default_model | default("llama3.2", true) }}
     skills_dir: "{{ services.chat_app.skills_dir | default('', true) }}"

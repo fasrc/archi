@@ -60,6 +60,9 @@ from src.archi.pipelines.agents.agent_spec import (
     select_agent_spec,
     slugify_agent_name,
 )
+from src.archi.pipelines.agents.utils.context_budget import (
+    resolve_configured_model_window,
+)
 from src.archi.providers.base import ModelInfo, ProviderConfig, ProviderType
 from src.archi.utils.output_dataclass import PipelineOutput
 
@@ -181,7 +184,14 @@ def _build_provider_config_from_payload(
     )
 
 
-def _build_request_local_pipeline(pipeline: Any, override_llm: Any) -> Any:
+def _build_request_local_pipeline(
+    pipeline: Any,
+    override_llm: Any,
+    *,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    context_window: Optional[int] = None,
+) -> Any:
     """Build a request-local *view* of ``pipeline`` bound to ``override_llm``.
 
     Returns a shallow copy of the shared pipeline whose ``agent_llm`` is the
@@ -199,6 +209,16 @@ def _build_request_local_pipeline(pipeline: Any, override_llm: Any) -> Any:
     cross-request bug #86 exists to close, merely relocated from the LLM to the
     sources. We therefore reset every per-run attribute and call
     ``refresh_agent(force=True)`` so the tools rebuild bound to the view.
+
+    ``provider``/``model``/``context_window`` describe the overriding model and
+    are handed to ``adopt_request_local_model``, which gives the view its own
+    identity and clears the cached in-loop bound so it is rebuilt against that
+    model. ``context_window`` is resolved by the caller from the provider it
+    built out of the deployment's YAML, because the by-name lookup the agent
+    would otherwise fall back to has no metadata for a self-hosted or custom
+    model ID. ``refresh_agent(force=True)`` below is what carries the rebuilt
+    bound into the compiled agent: ``requires_refresh`` compares only the
+    toolset, so a middleware-only change is otherwise a silent no-op.
     """
     # D6: idempotently memoize MCP tools on the SOURCE (the one permitted write to
     # shared state) BEFORE copying, so concurrent request-local views share a single
@@ -220,6 +240,7 @@ def _build_request_local_pipeline(pipeline: Any, override_llm: Any) -> Any:
     view._active_middleware = []
     view._active_memory = None
     view._static_tools = None
+    view.adopt_request_local_model(provider, model, context_window)
     if hasattr(view, "_vector_tools"):
         view._vector_tools = None
     if hasattr(view, "_vector_retrievers"):
@@ -1622,7 +1643,9 @@ class ChatWrapper:
             api_key: Optional API key (overrides environment variable)
 
         Returns:
-            A LangChain BaseChatModel instance. Raises on failure.
+            ``(chat_model, context_window)`` — the LangChain BaseChatModel and
+            the window this deployment's provider reports for it, or ``None``
+            when it reports none. Raises on failure to build the model.
         """
         try:
             from src.archi.providers import get_provider
@@ -1646,7 +1669,16 @@ class ChatWrapper:
             )
             if api_key:
                 provider_instance.set_api_key(api_key)
-            return provider_instance.get_chat_model(model)
+            # Resolve the window HERE, against the provider just built from this
+            # deployment's YAML. The agent's own fallback builds a provider with
+            # no config and matches the model name against a list compiled into
+            # the package, where a self-hosted or custom ID never appears.
+            return (
+                provider_instance.get_chat_model(model),
+                resolve_configured_model_window(
+                    provider_instance, model, cfg.models if cfg else None
+                ),
+            )
         except Exception as e:
             logger.warning(f"Failed to create provider LLM {provider}/{model}: {e}")
             raise
@@ -2109,8 +2141,9 @@ class ChatWrapper:
             # If provider and model are specified, serve this request from a
             # request-local pipeline view bound to the override LLM (issue #86).
             if provider and model:
+                override_window = None
                 try:
-                    override_llm = self._create_provider_llm(
+                    override_llm, override_window = self._create_provider_llm(
                         provider, model, provider_api_key
                     )
                 except ValueError as e:
@@ -2134,7 +2167,11 @@ class ChatWrapper:
                 ):
                     try:
                         request_pipeline = _build_request_local_pipeline(
-                            self.archi.pipeline, override_llm
+                            self.archi.pipeline,
+                            override_llm,
+                            provider=provider,
+                            model=model,
+                            context_window=override_window,
                         )
                         logger.info(
                             f"Serving request from request-local view with "

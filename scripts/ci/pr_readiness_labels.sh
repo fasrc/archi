@@ -52,6 +52,11 @@ RETRY_MAX="${PR_LABELS_RETRY_MAX:-5}"
 RETRY_DELAY="${PR_LABELS_RETRY_DELAY:-6}"
 DRY_RUN=0
 
+# Matches the `jobs.reconcile` key in .github/workflows/pr-readiness-labels.yml
+# (which this script must NOT modify). Excluding it prevents the reconciler from
+# blocking on its own in-progress check when triggered by pull_request events.
+RECONCILER_JOB_NAME="${PR_LABELS_RECONCILER_JOB:-reconcile}"
+
 # Connections are fetched one page deep; FILTER returns each totalCount so the
 # reconciler can tell a complete snapshot from a truncated one. The two truncation
 # cases are NOT symmetric:
@@ -76,7 +81,9 @@ Usage: pr_readiness_labels.sh [--dry-run] [--repo owner/name]
   --repo      target repository (default: $PR_LABELS_REPO, else fasrc/archi)
 
 Environment: PR_LABELS_REPO, PR_LABELS_READY, PR_LABELS_CONFLICT,
-             PR_LABELS_RETRY_MAX, PR_LABELS_RETRY_DELAY
+             PR_LABELS_RETRY_MAX, PR_LABELS_RETRY_DELAY,
+             PR_LABELS_RECONCILER_JOB (the workflow job excluded from the
+             blocking-check count; default: reconcile)
 EOF
 }
 
@@ -118,18 +125,54 @@ QUERY='query($owner:String!,$name:String!,$cursor:String){
         number isDraft mergeable mergeStateStatus
         labels(first:100){ totalCount nodes{ name } }
         reviewThreads(first:100){ totalCount nodes{ isResolved isOutdated } }
+        commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){
+          totalCount
+          nodes{
+            __typename
+            ... on CheckRun{ name status conclusion }
+            ... on StatusContext{ context state }
+          }
+        }}}}}
       }
     }
   }
 }'
 
 # Flatten to TSV: one PAGE row carrying the cursor, then one PR row each.
-# `mergeable` and `mergeStateStatus` are collapsed to a single UNKNOWN so the
-# caller has one "not computed yet" state to test rather than two.
+# `mergeable` and `mergeStateStatus` are carried for conflict detection and the
+# UNKNOWN retry/revoke path; they are no longer consulted for the readiness
+# clause, which uses individual check counts instead.
+#
+# Three additional columns carry the check-rollup summary:
+#   blocking_checks  — count of non-excluded contexts that are not passing
+#   rollup_total     — totalCount from the rollup connection (0 when null)
+#   rollup_fetched   — count of contexts actually in the nodes array
+# A null statusCheckRollup produces 0/0/0 ("no checks on record"). That is not
+# read as "no block" unconditionally — the predicate cross-checks it against
+# mergeStateStatus, because an empty rollup also describes a PR whose checks have
+# not registered yet.
+# CheckRun conclusions considered passing: SUCCESS, NEUTRAL, SKIPPED.
+# StatusContext states considered passing: SUCCESS.
+# A CheckRun whose name equals $excl is excluded from the blocking count.
 FILTER='
   .data.repository.pullRequests as $p
   | (["PAGE", ($p.pageInfo.hasNextPage | tostring), ($p.pageInfo.endCursor // "")] | @tsv)
   , ( $p.nodes[]
+      | (.commits.nodes[0].commit.statusCheckRollup // null) as $rollup
+      | (if $rollup == null then 0 else $rollup.contexts.totalCount end) as $ct
+      | (if $rollup == null then [] else ($rollup.contexts.nodes // []) end) as $cnodes
+      | ($cnodes | length) as $cf
+      | ($cnodes
+         | map(select(.__typename != "CheckRun" or .name != $excl))
+         | map(
+             if .__typename == "CheckRun" then
+               (.conclusion // "" | . != "SUCCESS" and . != "NEUTRAL" and . != "SKIPPED")
+             else
+               .state != "SUCCESS"
+             end
+           )
+         | map(select(.))
+         | length) as $blocking
       | [ "PR",
           (.number | tostring),
           (.isDraft | tostring),
@@ -140,7 +183,10 @@ FILTER='
           (.reviewThreads.totalCount | tostring),
           (.labels.totalCount | tostring),
           ([.labels.nodes[].name] | any(. == $ready) | tostring),
-          ([.labels.nodes[].name] | any(. == $conflict) | tostring)
+          ([.labels.nodes[].name] | any(. == $conflict) | tostring),
+          ($blocking | tostring),
+          ($ct | tostring),
+          ($cf | tostring)
         ] | @tsv )
 '
 
@@ -181,7 +227,8 @@ fetch_snapshot() {
       return 1
     fi
     if ! rows="$(printf '%s' "$page" \
-        | jq -r --arg ready "$READY_LABEL" --arg conflict "$CONFLICT_LABEL" "$FILTER")"; then
+        | jq -r --arg ready "$READY_LABEL" --arg conflict "$CONFLICT_LABEL" \
+               --arg excl "$RECONCILER_JOB_NAME" "$FILTER")"; then
       printf '%s: could not parse the GraphQL response for %s\n' "${0##*/}" "$REPO" >&2
       return 1
     fi
@@ -244,7 +291,8 @@ failed=0
 unverifiable=0
 
 while IFS=$'\t' read -r _tag number isdraft mergeable state live \
-                        threads_total labels_total has_ready has_conflict; do
+                        threads_total labels_total has_ready has_conflict \
+                        blocking_checks rollup_total rollup_fetched; do
   if [ -z "${number:-}" ]; then
     continue
   fi
@@ -302,12 +350,59 @@ while IFS=$'\t' read -r _tag number isdraft mergeable state live \
   # The predicate. Each clause is a separate `if` rather than a `&&` chain
   # because under `set -e` a false `[ a ] && [ b ] && cmd` chain exits the
   # script instead of just skipping the command.
+  #
+  # Check state is now evaluated from individual rollup contexts, not from
+  # mergeStateStatus. mergeStateStatus is still used for conflict detection and
+  # the UNKNOWN retry path, but the readiness clause consults the blocking count.
+  # A null rollup (no checks on record) is treated as 0 blocking — it does not
+  # withhold. A truncated rollup (totalCount > fetched) is fail-closed.
+  #
+  # BEHIND is kept as an explicit clause because the rollup is BASE-AGNOSTIC. It
+  # hangs off the PR's head commit and records that the checks passed, never which
+  # base they were merged against. Retargeting a PR arrives as `edited` — which
+  # this reconciler observes but neither check producer does (ci.yml uses the
+  # default pull_request activity types, pr-preview.yml selects only
+  # opened/synchronize/reopened) — so the head commit keeps the green rollup it
+  # earned against the OLD base and blocking_checks reads 0. BEHIND is the one
+  # base-relative signal GitHub hands us: the head ref is out of date, so the
+  # checks on record cannot have tested the merge result. Withhold on it.
+  #
+  # This does NOT make the predicate fully base-aware — BEHIND is only reported
+  # when the base requires branches to be up to date before merging. Where that
+  # setting is off, a retargeted PR still reads CLEAN with stale green checks, and
+  # no signal in the API distinguishes it. That residue is a branch-protection
+  # setting, not something this script can close (issue #231).
+  #
+  # An EMPTY rollup is trusted only when the merge state agrees nothing is pending.
+  # "No contexts on record" has two meanings the rollup alone cannot separate: a PR
+  # that genuinely runs no checks, and a PR in the registration-lag window between
+  # `opened`/`synchronize` and its first check run appearing. This reconciler fires
+  # on those very events, so without a guard it grants the chip before CI has
+  # produced a result. BLOCKED is what separates them: the base expects a required
+  # check GitHub has not seen. Only BLOCKED — not UNSTABLE, which is derived from
+  # non-passing contexts and so cannot describe a rollup that has none.
+  #
+  # This is deliberately NOT a general gate on BLOCKED — that would re-block the
+  # reconciler on its own in-progress required check, which is issue #174, the
+  # regression this change exists to remove. The clause is safe against that by
+  # construction: when the reconciler's own job is running, its CheckRun sits on the
+  # head commit, so rollup_total is at least 1 and this clause cannot fire. The
+  # remaining BLOCKED slice — green checks plus a missing required approval — is a
+  # non-empty rollup, still falls through, and is tracked in #231.
   want_ready=false
-  why="not CLEAN ($state)"
+  why="blocking check"
   if [ "$isdraft" = "true" ]; then
     why="draft"
-  elif [ "$state" != "CLEAN" ]; then
-    why="not CLEAN ($state)"
+  elif [ "$mergeable" = "CONFLICTING" ]; then
+    why="conflicting"
+  elif [ "$state" = "BEHIND" ]; then
+    why="behind the base — checks on record did not test the current base"
+  elif [ "$rollup_total" -eq 0 ] && [ "$state" = "BLOCKED" ]; then
+    why="no checks on record while GitHub reports BLOCKED — cannot verify"
+  elif [ "$rollup_total" -gt "$rollup_fetched" ]; then
+    why="rollup truncated ($rollup_total checks seen, $rollup_fetched fetched) — cannot verify"
+  elif [ "$blocking_checks" -gt 0 ]; then
+    why="$blocking_checks blocking check(s)"
   elif [ "$live" -gt 0 ]; then
     why="$live live review finding(s)"
   elif [ "$threads_total" -gt "$PAGE" ]; then

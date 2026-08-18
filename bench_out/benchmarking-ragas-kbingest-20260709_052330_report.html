@@ -98,6 +98,7 @@
         <p><strong>Timestamp:</strong> 2026-07-09 05:23:30.290123+00:00</p>
         <p><strong>Questions Processed:</strong> 27</p>
     </div>
+    <div class='provenance'><h2>Run provenance</h2><p class='provenance-alert'>Whether the run used the selected configuration was <strong>not recorded</strong>: this artifact predates configuration provenance, so no comparison was made.</p><p class='provenance-alert'>Corpus stability is <strong>unknown</strong>: it was not observed both before and after the run (<code>None</code> &rarr; <code>None</code>).</p><ul><li>Code version: <em>not recorded &mdash; this artifact predates version stamping</em></li><li>Deploy-time commit: <code>b6d9a87cb7420d243ea81901641a5297e6707270</code> &mdash; frozen by <code>archi create</code>; it identifies the deploy, not the image this run used</li><li>Config version: <code>sha256:2e158e4ffbbbd6cd1c5f25ce14746d44246427ec11f0e061c8a2c4f00dceb13e</code></li><li>Config basis: reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run</li></ul><p>Settings that define this arm:</p><table class='provenance-settings'><tr><th>Setting</th><th>Value</th></tr><tr><td><code>data_manager.chunk_overlap</code></td><td><code>0</code></td></tr><tr><td><code>data_manager.chunk_size</code></td><td><code>1000</code></td></tr><tr><td><code>data_manager.chunking</code></td><td><code>{&quot;strategy&quot;: &quot;sentence&quot;}</code></td></tr><tr><td><code>data_manager.distance_metric</code></td><td><code>cosine</code></td></tr><tr><td><code>data_manager.embedding_name</code></td><td><code>HuggingFaceEmbeddings</code></td></tr><tr><td><code>data_manager.retrievers</code></td><td><code>{&quot;bm25_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}, &quot;hierarchical_rerank&quot;: {&quot;candidate_pool_size&quot;: 20, &quot;enabled&quot;: true, &quot;num_documents_to_retrieve&quot;: 5, &quot;reranker&quot;: {&quot;model&quot;: &quot;ms-marco-MiniLM-L-12-v2&quot;}}, &quot;hybrid_retriever&quot;: {&quot;bm25_weight&quot;: 0.6, &quot;num_documents_to_retrieve&quot;: 5, &quot;semantic_weight&quot;: 0.4}, &quot;semantic_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}}</code></td></tr><tr><td><code>data_manager.stemming</code></td><td><code>{&quot;enabled&quot;: false}</code></td></tr><tr><td><code>services.benchmarking.agent_class</code></td><td><code>FASRCDocsAgent</code></td></tr><tr><td><code>services.benchmarking.agent_md_file</code></td><td><code>/root/archi/agents/fasrc-inline-v1.md</code></td></tr><tr><td><code>services.benchmarking.mode_settings</code></td><td><code>{&quot;ragas_settings&quot;: {&quot;batch_size&quot;: false, &quot;embedding_model&quot;: &quot;HuggingFace&quot;, &quot;enabled_metrics&quot;: [&quot;answer_relevancy&quot;, &quot;faithfulness&quot;, &quot;context_precision&quot;, &quot;context_recall&quot;], &quot;evaluator_model&quot;: &quot;us.anthropic.claude-sonnet-4-5-20250929-v1:0&quot;, &quot;evaluator_ollama_url&quot;: null, &quot;evaluator_provider&quot;: &quot;huit_bedrock&quot;, &quot;timeout&quot;: 180}, &quot;sources_settings&quot;: {&quot;default_match_field&quot;: &quot;url&quot;}}</code></td></tr><tr><td><code>services.benchmarking.model</code></td><td><code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code></td></tr><tr><td><code>services.benchmarking.modes</code></td><td><code>[&quot;RAGAS&quot;, &quot;SOURCES&quot;]</code></td></tr><tr><td><code>services.benchmarking.provider</code></td><td><code>openai</code></td></tr><tr><td><code>services.chat_app.agent_class</code></td><td><code>CMSCompOpsAgent</code></td></tr><tr><td><code>services.chat_app.default_model</code></td><td><code>llama3.2</code></td></tr><tr><td><code>services.chat_app.default_provider</code></td><td><code>local</code></td></tr><tr><td><code>services.chat_app.recursion_limit</code></td><td><code>50</code></td></tr><tr><td><code>services.vectorstore.backend</code></td><td><code>postgres</code></td></tr><tr><td><code>services.vectorstore.distance_metric</code></td><td><code>cosine</code></td></tr></table></div>
 
 <div class="metrics">
 <h2>🎯 Retrieval Accuracy</h2>
@@ -111,7 +112,7 @@
 
                 <div class="metric-item">
                     <div class="metric-value score-low">27</div>
-                    <div class="metric-label">Incorrect (no sources found)</div>
+                    <div class="metric-label">Incorrect (no expected sources retrieved)</div>
                 </div>
             
 </div></div>
@@ -165,7 +166,7 @@ Can you gide me where I can find it in globus? This should be a easy ticket, sor
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">No worries — this is a common point of confusion! Here's what's going on:
+<div class="answer-box">No worries — this is a common point of confusion! Here&#x27;s what&#x27;s going on:
 
 ## Your data is on **rcstorenfs02**, not on the Holyoke lab share
 
@@ -177,21 +178,21 @@ is on **rcstorenfs02**, which is a separate storage system from the Holyoke lab 
 
 ## Globus only sees the **Lab** directory on the Holyoke/Boston collections
 
-According to the Globus documentation, Globus can only see folders inside **`Lab`** and **`Users/$USER`** on the FAS RC collections ([Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/)). The `rcstorenfs02` storage is **not automatically exposed** through the standard "Harvard FAS RC Holyoke" or "Harvard FAS RC Boston" Globus endpoints.
+According to the Globus documentation, Globus can only see folders inside **`Lab`** and **`Users/$USER`** on the FAS RC collections ([Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/)). The `rcstorenfs02` storage is **not automatically exposed** through the standard &quot;Harvard FAS RC Holyoke&quot; or &quot;Harvard FAS RC Boston&quot; Globus endpoints.
 
 ## What you can do
 
-1. **Check if rcstorenfs02 has its own Globus endpoint** — some FASRC storage systems have dedicated Globus collections. Search the Globus File Manager for an endpoint named something like "Harvard FAS RC rcstore" or similar.
+1. **Check if rcstorenfs02 has its own Globus endpoint** — some FASRC storage systems have dedicated Globus collections. Search the Globus File Manager for an endpoint named something like &quot;Harvard FAS RC rcstore&quot; or similar.
 
-2. **Contact FASRC Support** — since rcstorenfs02 is a specialized storage system, they can confirm whether it's available via Globus and help you set up access. You can reach them at [help@rc.fas.harvard.edu](mailto:help@rc.fas.harvard.edu) or through the FASRC Service Portal.
+2. **Contact FASRC Support** — since rcstorenfs02 is a specialized storage system, they can confirm whether it&#x27;s available via Globus and help you set up access. You can reach them at [help@rc.fas.harvard.edu](mailto:help@rc.fas.harvard.edu) or through the FASRC Service Portal.
 
-3. **Alternative: Copy data to your Lab share** — If you need to share this data externally via Globus, you could copy the relevant files into your lab's `Lab` directory (e.g., `/n/holylabs/[LAB]/Lab/...`), which **is** available through Globus. Just be mindful of storage quotas and data security policies.
+3. **Alternative: Copy data to your Lab share** — If you need to share this data externally via Globus, you could copy the relevant files into your lab&#x27;s `Lab` directory (e.g., `/n/holylabs/[LAB]/Lab/...`), which **is** available through Globus. Just be mindful of storage quotas and data security policies.
 
 Would you like help with any of these options?</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">Looks like that folder wasn't actually shared anywhere. I've added it to the Harvard FAS RC Boston endpoint (as that is where that data lives). You can find it under [LAB]</div>
+<div class="answer-box expected-box">Looks like that folder wasn&#x27;t actually shared anywhere. I&#x27;ve added it to the Harvard FAS RC Boston endpoint (as that is where that data lives). You can find it under [LAB]</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -323,15 +324,15 @@ Would you like help with any of these options?</div>
 <div class="section-title">🤖 archi's Answer</div>
 <div class="answer-box">Based on my search of the FASRC documentation, I cannot find specific guidance on using EGL for off-screen graphics rendering in the `gpu_h200` partition. The documentation covers general GPU computing with CUDA but does not address EGL or off-screen rendering configurations.
 
-The error you're seeing about "not having a display" is typical when EGL tries to initialize on a headless compute node with no X server or virtual framebuffer. Here are some general approaches that are commonly used in HPC environments for EGL off-screen rendering:
+The error you&#x27;re seeing about &quot;not having a display&quot; is typical when EGL tries to initialize on a headless compute node with no X server or virtual framebuffer. Here are some general approaches that are commonly used in HPC environments for EGL off-screen rendering:
 
 1. **Use a virtual framebuffer** (e.g., `Xvfb` or `xvfb-run`) to provide a virtual display
-2. **Use EGL's off-screen rendering capabilities** directly without a display server by ensuring the EGL library can find the GPU device files (`/dev/nvidia*`)
+2. **Use EGL&#x27;s off-screen rendering capabilities** directly without a display server by ensuring the EGL library can find the GPU device files (`/dev/nvidia*`)
 3. **Set the `EGL_PLATFORM` environment variable** appropriately (e.g., `eglinfo` can help diagnose EGL platform availability)
 
 However, I cannot confirm from the FASRC documentation whether these approaches are supported or recommended on the `gpu_h200` partition specifically.
 
-**I recommend contacting FASRC support** at `rc-help@fas.harvard.edu` or checking with your project's technical contact to ask:
+**I recommend contacting FASRC support** at `rc-help@fas.harvard.edu` or checking with your project&#x27;s technical contact to ask:
 - Whether EGL off-screen rendering is supported on GPU nodes
 - If there are any specific environment modules or configurations needed
 - Whether virtual framebuffer solutions (like `Xvfb`) are permitted on compute nodes
@@ -340,8 +341,8 @@ Would you like help with any other GPU-related questions that are covered in the
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">Sadly no. Confusingly GPU's in have two modes, compute mode and graphics mode. Our GPU's are in compute node so they can't actually render graphics... Which is pretty hilarious given the name Graphics Processing Unit.
-We do have a V100 GPU set in graphics mode in the remoteviz partition which you are welcome to use. We don't have any of our other GPU in graphics mode due to lack of demand and the fact that it is nontrivial to setup.</div>
+<div class="answer-box expected-box">Sadly no. Confusingly GPU&#x27;s in have two modes, compute mode and graphics mode. Our GPU&#x27;s are in compute node so they can&#x27;t actually render graphics... Which is pretty hilarious given the name Graphics Processing Unit.
+We do have a V100 GPU set in graphics mode in the remoteviz partition which you are welcome to use. We don&#x27;t have any of our other GPU in graphics mode due to lack of demand and the fact that it is nontrivial to setup.</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -622,7 +623,7 @@ Thanks!</p>
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">I don't have specific information about job 59923907 or the current status of the queues in our documentation. To check for errors or delays with your specific job, you can use these SLURM commands:
+<div class="answer-box">I don&#x27;t have specific information about job 59923907 or the current status of the queues in our documentation. To check for errors or delays with your specific job, you can use these SLURM commands:
 
 1. **Check your job status:**
    ```bash
@@ -644,14 +645,14 @@ Thanks!</p>
    sreport cluster utilization
    ```
 
-If your job shows a "Pending" state with a reason code, that will tell you why it's waiting (e.g., resources unavailable, QOS limits, etc.). You can also check the SLURM documentation at [Slurm Workload Manager - squeue](https://slurm.schedmd.com/squeue.html) for more details on interpreting job states.
+If your job shows a &quot;Pending&quot; state with a reason code, that will tell you why it&#x27;s waiting (e.g., resources unavailable, QOS limits, etc.). You can also check the SLURM documentation at [Slurm Workload Manager - squeue](https://slurm.schedmd.com/squeue.html) for more details on interpreting job states.
 
-If you're seeing unusual delays compared to the `salloc` and `h200` queues, it might be worth checking if there are any QoS (Quality of Service) limits or if your job is requesting resources that are currently unavailable.</div>
+If you&#x27;re seeing unusual delays compared to the `salloc` and `h200` queues, it might be worth checking if there are any QoS (Quality of Service) limits or if your job is requesting resources that are currently unavailable.</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
 <div class="answer-box expected-box">Can you provide a job ID for the interactive job? The only interactive job that I see is in gpu_test, not gpu_h200.
-The cluster has been very busy for the past few days and your lab's fairshare is low (0.151609):
+The cluster has been very busy for the past few days and your lab&#x27;s fairshare is low (0.151609):
 $ sshare --account=[LAB] -a</div>
 </div>
 <div class="section">
@@ -785,17 +786,17 @@ The documentation notes several important constraints:
    - **Login node session**: Use for writing and/or editing your code **only**. Do **not** use it to run Jupyter notebooks, R, MATLAB, or any other script [VSCode Remote Development via SSH and Tunnel](https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel/).
    - **Compute node session**: Use for running notebooks and scripts. Avoid using for writing and/or editing code as this is non-compute work [VSCode Remote Development via SSH and Tunnel](https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel/).
 
-3. **VS Code Remote-SSH may hang** if the login node environment doesn't support the server installation steps (e.g., missing dependencies, restrictive shell configurations, or resource limits).
+3. **VS Code Remote-SSH may hang** if the login node environment doesn&#x27;t support the server installation steps (e.g., missing dependencies, restrictive shell configurations, or resource limits).
 
 ### Troubleshooting Steps
 
-Since you've already tried the standard fixes (reinstalling extension, clearing cache, removing remote server files), consider:
+Since you&#x27;ve already tried the standard fixes (reinstalling extension, clearing cache, removing remote server files), consider:
 
-1. **Check your SSH config** – Ensure you're using the correct host configuration for FASSE/Cannon. The documentation provides an example SSH config file for establishing connections to the login (cannon) and compute (vscode/compute) nodes [VSCode Remote Development via SSH and Tunnel](https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel/).
+1. **Check your SSH config** – Ensure you&#x27;re using the correct host configuration for FASSE/Cannon. The documentation provides an example SSH config file for establishing connections to the login (cannon) and compute (vscode/compute) nodes [VSCode Remote Development via SSH and Tunnel](https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel/).
 
 2. **Try connecting to a compute node instead** – If you need to run code, use the Remote Tunnel approach via a batch job, which launches VS Code on a compute node rather than a login node [VSCode Remote Development via SSH and Tunnel](https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel/).
 
-3. **Check for resource issues** – If your home directory is full or you're over quota, VS Code server installation can fail. Check your disk usage with `quota -v` and clean up if needed [Home directory full](https://docs.rc.fas.harvard.edu/kb/home-directory-full/).
+3. **Check for resource issues** – If your home directory is full or you&#x27;re over quota, VS Code server installation can fail. Check your disk usage with `quota -v` and clean up if needed [Home directory full](https://docs.rc.fas.harvard.edu/kb/home-directory-full/).
 
 4. **Use the Tunnel approach** – The recommended method involves:
    - Copying the `vscode.job` script to your home directory
@@ -805,13 +806,13 @@ Since you've already tried the standard fixes (reinstalling extension, clearing 
 
 ### Next Steps
 
-I'd recommend switching to the **Remote Tunnel via batch job** approach, as it's the officially recommended method and avoids the login node limitations that may be causing the hang. Would you like me to provide the detailed steps for setting up the Tunnel approach?</div>
+I&#x27;d recommend switching to the **Remote Tunnel via batch job** approach, as it&#x27;s the officially recommended method and avoids the login node limitations that may be causing the hang. Would you like me to provide the detailed steps for setting up the Tunnel approach?</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
 <div class="answer-box expected-box">To launch VSCode on FASSE, are you following the instructions here: [URL] [[URL]] to get that going?
 You would need to initiate a remote tunnel session for launching VSCode on FASSE. Also, if you are interested in starting the tunnel using your local VSCode interface, then you would need to turn off the FASSE VPN, start the tunnel session, and then turn the FASSE VPN back on.
-If that doesn't work, then let me know a good time to meet tomorrow afternoon and we can troubleshoot this issue then.</div>
+If that doesn&#x27;t work, then let me know a good time to meet tomorrow afternoon and we can troubleshoot this issue then.</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -974,11 +975,11 @@ I&#x27;d recommend switching to the **Remote Tunnel via batch job** approach, as
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">I understand your frustration with the long wait times for GPU resources. Based on the documentation, here's what's happening and what you can do:
+<div class="answer-box">I understand your frustration with the long wait times for GPU resources. Based on the documentation, here&#x27;s what&#x27;s happening and what you can do:
 
 ## How Fairshare Works
 
-Fairshare ensures that all research labs get their appropriate portion of the cluster. Your lab's **Fairshare score** is calculated based on your **Share** (your resource grant) versus how much you've actually **used**. If you've used more than your fair share, your jobs get lower priority. If you haven't used your full share, you get higher priority.
+Fairshare ensures that all research labs get their appropriate portion of the cluster. Your lab&#x27;s **Fairshare score** is calculated based on your **Share** (your resource grant) versus how much you&#x27;ve actually **used**. If you&#x27;ve used more than your fair share, your jobs get lower priority. If you haven&#x27;t used your full share, you get higher priority.
 
 ## Why You Might Be Waiting
 
@@ -988,21 +989,21 @@ Fairshare ensures that all research labs get their appropriate portion of the cl
 
 ## What You Can Check
 
-- **Your fairshare score**: Run `sprio` to see your account's priority factors
-- **Pending queue**: Use `showq -o -p <partitionname>` to see the pending queue ordered by priority
-- **TRES billing weights**: Run `scontrol show partition <partitionname>` to see how GPU usage is weighted
+- **Your fairshare score**: Run `sprio` to see your account&#x27;s priority factors
+- **Pending queue**: Use `showq -o -p &lt;partitionname&gt;` to see the pending queue ordered by priority
+- **TRES billing weights**: Run `scontrol show partition &lt;partitionname&gt;` to see how GPU usage is weighted
 
 ## Recommendations
 
 1. **Check your fairshare** using `sprio` to see if your lab has overused its allocation
 2. **Consider job age** — if your job has been pending for several days, it should get priority boost
-3. **Contact FASRC Support** if you believe there's a systemic issue — they can check partition-level GPU availability and your account's fairshare status
+3. **Contact FASRC Support** if you believe there&#x27;s a systemic issue — they can check partition-level GPU availability and your account&#x27;s fairshare status
 
 Would you like help running any of these diagnostic commands?</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">The reason for you pending is that your lab's fairshare is low:
+<div class="answer-box expected-box">The reason for you pending is that your lab&#x27;s fairshare is low:
 [root@holy8a24507 general]# sshare --account=[LAB] -a</div>
 </div>
 <div class="section">
@@ -1163,7 +1164,7 @@ to have a look at that job's output.)</p>
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">I'm sorry, but the conversation history has grown too large for me to process. Please start a new conversation to continue.</div>
+<div class="answer-box">I&#x27;m sorry, but the conversation history has grown too large for me to process. Please start a new conversation to continue.</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
@@ -1222,12 +1223,12 @@ The `seas_gpu` (and `seas_compute`) partitions are **restricted to members of th
 
 As stated in the [SEAS Compute Resources documentation](https://docs.rc.fas.harvard.edu/kb/seas-compute-resources/):
 
-> **Note**: SEAS partitions are restricted to SEAS and requires membership in the `seas` group when logged into the FASRC cluster. You can view your groups using the `id` command:
->
-> ```bash
-> [jharvard@rclogin ~]$ id
-> uid=12345(jharvard) gid=99999(harvard_lab) groups=34540(cluster_users_2),34739(seas)
-> ```
+&gt; **Note**: SEAS partitions are restricted to SEAS and requires membership in the `seas` group when logged into the FASRC cluster. You can view your groups using the `id` command:
+&gt;
+&gt; ```bash
+&gt; [jharvard@rclogin ~]$ id
+&gt; uid=12345(jharvard) gid=99999(harvard_lab) groups=34540(cluster_users_2),34739(seas)
+&gt; ```
 
 If you do not have `seas` in your group list, you cannot access these partitions, even if your lab account has the financial allocation for them. Specifying `--account` will not bypass this group-level access restriction.
 
@@ -1252,8 +1253,8 @@ If you cannot get `seas` group membership, you may need to use other GPU partiti
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">You cannot submit jobs under [LAB] because you have not been added to the [LAB]'s fairshare account. Currently, you can access [LAB] storage, but the fairshare requires additional settings.
-We need approval from Prof. [NAME], cc'd in this ticket. Prof. [NAME], do you approve adding [NAME] to the [LAB] fairshare?</div>
+<div class="answer-box expected-box">You cannot submit jobs under [LAB] because you have not been added to the [LAB]&#x27;s fairshare account. Currently, you can access [LAB] storage, but the fairshare requires additional settings.
+We need approval from Prof. [NAME], cc&#x27;d in this ticket. Prof. [NAME], do you approve adding [NAME] to the [LAB] fairshare?</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -1426,7 +1427,7 @@ for it to be resolved?</p>
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">The agent attempted to diagnose job failures by searching the knowledge base for errors related to "Stale file handle" in the Helmod/Lmod environment on Rocky 8 and missing `GLIBCXX` symbols. The search returned general documentation on Slurm metrics and kernel parameters, but no specific resolution for this environment-specific issue.
+<div class="answer-box">The agent attempted to diagnose job failures by searching the knowledge base for errors related to &quot;Stale file handle&quot; in the Helmod/Lmod environment on Rocky 8 and missing `GLIBCXX` symbols. The search returned general documentation on Slurm metrics and kernel parameters, but no specific resolution for this environment-specific issue.
 
 **Summary of Issue:**
 The failure is caused by a combination of two distinct problems, likely triggered by a system update or file system inconsistency:
@@ -1437,7 +1438,7 @@ The failure is caused by a combination of two distinct problems, likely triggere
 You should **not** simply wait for it to resolve automatically, as this appears to be a persistent environment state issue. Please take the following steps:
 1.  **Refresh your environment:** Log out and log back in to force a fresh load of the environment modules. If using a script, ensure you are sourcing the correct Helmod initialization script at the start of your job script.
 2.  **Check Module Versions:** Verify if the `gcc` or `libstdc++` module versions have changed. You may need to load a specific older version of GCC/libstdc++ that matches the binary you compiled, or recompile `c8_air_shower` on the current cluster nodes.
-3.  **Contact Support:** Since the "Stale file handle" error affects the core Lmod initialization, this may require IT support to remount the `/n/sw` filesystem or clear stale handles on the cluster nodes. Please submit a ticket referencing Job ID 1338487 and the "Stale file handle" error.
+3.  **Contact Support:** Since the &quot;Stale file handle&quot; error affects the core Lmod initialization, this may require IT support to remount the `/n/sw` filesystem or clear stale handles on the cluster nodes. Please submit a ticket referencing Job ID 1338487 and the &quot;Stale file handle&quot; error.
 
 **Note:** This run stopped after hitting the recursion limit of 50, preventing further tool calls or deeper investigation.</div>
 </div>
@@ -1537,9 +1538,9 @@ do you know why that is?</p>
 <div class="section-title">🤖 archi's Answer</div>
 <div class="answer-box">The `PD (ReqNodeNotAvail, May be reserved for other job)` status in Slurm means your job is waiting because the nodes it needs are currently reserved for another job. This typically happens when:
 
-1. **There's an active reservation** on the partition or nodes your job is targeting. Reservations can be set up for specific groups, projects, or maintenance windows, and they take priority over regular jobs.
+1. **There&#x27;s an active reservation** on the partition or nodes your job is targeting. Reservations can be set up for specific groups, projects, or maintenance windows, and they take priority over regular jobs.
 
-2. **Your job requirements don't match available nodes** — for example, requesting more CPUs, GPUs, or memory than what's available outside of the reservation.
+2. **Your job requirements don&#x27;t match available nodes** — for example, requesting more CPUs, GPUs, or memory than what&#x27;s available outside of the reservation.
 
 ### What you can do:
 
@@ -1549,17 +1550,17 @@ do you know why that is?</p>
   ```
   This will show you who the reservations are for and when they expire.
 
-- **Check what's currently running** on the cluster:
+- **Check what&#x27;s currently running** on the cluster:
   ```bash
   squeue -u $USER
   squeue --states=RUN
   ```
 
-- **Try submitting to a different partition** if you have access to one that isn't reserved.
+- **Try submitting to a different partition** if you have access to one that isn&#x27;t reserved.
 
 - **Wait for the reservation to end** — once the reserved job completes or the reservation window closes, your job should start.
 
-If you're unsure why this started "since yesterday," it's likely that a new reservation was created or an existing one was extended. You may want to reach out to FASRC Support or your project's allocation manager to clarify who set up the reservation and when it ends.</div>
+If you&#x27;re unsure why this started &quot;since yesterday,&quot; it&#x27;s likely that a new reservation was created or an existing one was extended. You may want to reach out to FASRC Support or your project&#x27;s allocation manager to clarify who set up the reservation and when it ends.</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
@@ -1681,9 +1682,9 @@ To resolve this:
 
 1.  **Consult your PI** for details on gaining Kempner job privileges.
 2.  **Complete the Kempner access form** (your PI should provide the link).
-3.  Once access is granted, you can submit jobs to these partitions, but you must specify the correct fairshare pool using the `#SBATCH --account=<kempner_fairshare_pool>` directive.
+3.  Once access is granted, you can submit jobs to these partitions, but you must specify the correct fairshare pool using the `#SBATCH --account=&lt;kempner_fairshare_pool&gt;` directive.
 
-For further questions regarding usage, etiquette, or the "Kempner Institute Computing Handbook," please contact [Kempner Support](mailto:kempnerhelp@rc.fas.harvard.edu) or ping the `#cluster-users` channel in the Kempner Slack space.
+For further questions regarding usage, etiquette, or the &quot;Kempner Institute Computing Handbook,&quot; please contact [Kempner Support](mailto:kempnerhelp@rc.fas.harvard.edu) or ping the `#cluster-users` channel in the Kempner Slack space.
 
 Source: [Kempner Institute Partitions – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/kempner-partitions/)</div>
 </div>
@@ -1782,26 +1783,26 @@ Could someone please take a look at this?</p>
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">I don't see specific documentation in our indexed sources about the **eddy** partition's time limits or the "Required node not available" error you're encountering. The general SLURM documentation we have covers configuration options and scheduling concepts, but doesn't include FASRC-specific partition policies for eddy.
+<div class="answer-box">I don&#x27;t see specific documentation in our indexed sources about the **eddy** partition&#x27;s time limits or the &quot;Required node not available&quot; error you&#x27;re encountering. The general SLURM documentation we have covers configuration options and scheduling concepts, but doesn&#x27;t include FASRC-specific partition policies for eddy.
 
 A few things to check:
 
-1. **Partition time limits**: In SLURM, the `MaxTime` directive in a partition's configuration controls the maximum job duration. If this was recently changed from unlimited (or `NONE`) to 20 days, jobs requesting more than that would be rejected. You can check the current partition settings with:
+1. **Partition time limits**: In SLURM, the `MaxTime` directive in a partition&#x27;s configuration controls the maximum job duration. If this was recently changed from unlimited (or `NONE`) to 20 days, jobs requesting more than that would be rejected. You can check the current partition settings with:
    ```bash
-   sinfo -p eddy -o "%P %m %t"
+   sinfo -p eddy -o &quot;%P %m %t&quot;
    ```
 
-2. **The "Required node not available" error**: This can occur when SLURM cannot satisfy the job's constraints (time limit, node count, etc.). If the partition's `MaxTime` is set to 20 days, a job requesting `-t 0` (unlimited) or more than 20 days would fail with this error.
+2. **The &quot;Required node not available&quot; error**: This can occur when SLURM cannot satisfy the job&#x27;s constraints (time limit, node count, etc.). If the partition&#x27;s `MaxTime` is set to 20 days, a job requesting `-t 0` (unlimited) or more than 20 days would fail with this error.
 
 3. **Workaround**: If you need to run jobs longer than 20 days, you could try submitting with a time limit just under the partition maximum (e.g., `-t 19-23:59:59`) and then using `scontrol requeue` or checkpointing to extend runtime.
 
-For partition-specific policy changes (such as restoring unlimited time requests on eddy), you'd need to contact FASRC support directly, as this requires changes to the SLURM configuration on the cluster side. You can reach out through the [FASRC Help Desk](https://docs.rc.fas.harvard.edu/kb/help-desk/) or the [FASRC Slack](https://docs.rc.fas.harvard.edu/kb/slack/) channels.
+For partition-specific policy changes (such as restoring unlimited time requests on eddy), you&#x27;d need to contact FASRC support directly, as this requires changes to the SLURM configuration on the cluster side. You can reach out through the [FASRC Help Desk](https://docs.rc.fas.harvard.edu/kb/help-desk/) or the [FASRC Slack](https://docs.rc.fas.harvard.edu/kb/slack/) channels.
 
-Would you like help checking your partition's current configuration or exploring workarounds for long-running jobs?</div>
+Would you like help checking your partition&#x27;s current configuration or exploring workarounds for long-running jobs?</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">In this case you are hitting the reservations we have in place for the OS Upgrade: [URL] [[URL]] These are being used so we don't have to cancel people's jobs. You will need to either ask for less time than the time between now and the scheduled upgrade, or your jobs will pend until after the upgrade is complete.</div>
+<div class="answer-box expected-box">In this case you are hitting the reservations we have in place for the OS Upgrade: [URL] [[URL]] These are being used so we don&#x27;t have to cancel people&#x27;s jobs. You will need to either ask for less time than the time between now and the scheduled upgrade, or your jobs will pend until after the upgrade is complete.</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -1933,7 +1934,7 @@ the page by running the first line, but not sure how to view it.</p>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
 <div class="answer-box">### Summary of Attempt
-The agent attempted to locate specific documentation for the Harvard FAS Research Computing (RC) environment to guide you through setting up a local web server on the cluster and accessing it via your local browser. It performed multiple hybrid vector searches for keywords like "python http.server," "port forwarding," "SSH tunnel," and "RC machine" to find the correct procedure for exposing a local port on the remote cluster to your local machine.
+The agent attempted to locate specific documentation for the Harvard FAS Research Computing (RC) environment to guide you through setting up a local web server on the cluster and accessing it via your local browser. It performed multiple hybrid vector searches for keywords like &quot;python http.server,&quot; &quot;port forwarding,&quot; &quot;SSH tunnel,&quot; and &quot;RC machine&quot; to find the correct procedure for exposing a local port on the remote cluster to your local machine.
 
 ### Best Possible Answer
 You are correct that running `python -m http.server 8000` on the RC machine serves the files, but because the RC machine is a remote server, your local browser cannot directly access port 8000 on it. You need to create an **SSH tunnel** (also known as port forwarding) to bridge the connection.
@@ -1948,7 +1949,7 @@ Here is the step-by-step guide to viewing your webpage:
     *Note: Keep this terminal window open. The server will run until you stop it (Ctrl+C).*
 
 2.  **Create an SSH Tunnel from Your Local Machine:**
-    Open a **new** terminal window on your local computer (not the one connected to RC). Run the following command to forward local port 8000 to the RC machine's port 8000:
+    Open a **new** terminal window on your local computer (not the one connected to RC). Run the following command to forward local port 8000 to the RC machine&#x27;s port 8000:
     ```bash
     ssh -L 8000:localhost:8000 your_username@rc.fas.harvard.edu
     ```
@@ -2077,7 +2078,7 @@ This run stopped after hitting the recursion limit of 50. The agent was unable t
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">I don't see any documentation in the FASRC knowledge base about **Quarto** being available as a software module or installed globally on the cluster.
+<div class="answer-box">I don&#x27;t see any documentation in the FASRC knowledge base about **Quarto** being available as a software module or installed globally on the cluster.
 
 Here are your options for using Quarto on FASRC:
 
@@ -2198,17 +2199,17 @@ How can I get Globus Connect Personal to work for me?</p>
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">The error you're seeing (`relaytool setup failed`) typically means your computer **cannot reach the Globus service** over the network. As the Globus website notes, this is usually a **network/firewall issue**, not a problem with Globus Connect Personal itself or your installation.
+<div class="answer-box">The error you&#x27;re seeing (`relaytool setup failed`) typically means your computer **cannot reach the Globus service** over the network. As the Globus website notes, this is usually a **network/firewall issue**, not a problem with Globus Connect Personal itself or your installation.
 
 ### What this means
-Your institution's network (or your current network location) is **blocking access** to the Globus service endpoints (specific IP ranges used by Globus). This prevents the setup tool from authenticating and configuring your endpoint.
+Your institution&#x27;s network (or your current network location) is **blocking access** to the Globus service endpoints (specific IP ranges used by Globus). This prevents the setup tool from authenticating and configuring your endpoint.
 
 ### How to fix it
 
 1. **Try a different network**  
-   The Globus documentation explicitly suggests: *"you will not be able to initiate transfers without moving your machine to a different network (eg. from a home/other network without the network restriction in place)."*  
-   - If you're on campus or a restricted network, try connecting from home or another network without the same firewall rules.
-   - If you're on a home network and still see this, try mobile hotspot or a different Wi-Fi.
+   The Globus documentation explicitly suggests: *&quot;you will not be able to initiate transfers without moving your machine to a different network (eg. from a home/other network without the network restriction in place).&quot;*  
+   - If you&#x27;re on campus or a restricted network, try connecting from home or another network without the same firewall rules.
+   - If you&#x27;re on a home network and still see this, try mobile hotspot or a different Wi-Fi.
 
 2. **Contact your networking/admin team**  
    If you need to use this on your current network (e.g., Harvard campus), your IT/networking team needs to **unblock the Globus service IPs** mentioned in the error. They can add the necessary allow rules for:
@@ -2216,13 +2217,13 @@ Your institution's network (or your current network location) is **blocking acce
    - The IPv6 address (`[IP_ADDRESS]`)
 
 3. **Verify your setup key**  
-   While you've already tried generating a new setup key, make sure you're using the **correct one** from the Globus website and that it hasn't expired.
+   While you&#x27;ve already tried generating a new setup key, make sure you&#x27;re using the **correct one** from the Globus website and that it hasn&#x27;t expired.
 
 ### Quick check
 - Can you ping or reach `app.globus.org` from your machine? If not, that confirms the network block.
-- If you're on the Harvard network, you may need to ensure you're not behind a proxy or firewall that blocks Globus traffic.
+- If you&#x27;re on the Harvard network, you may need to ensure you&#x27;re not behind a proxy or firewall that blocks Globus traffic.
 
-If you're on the Harvard campus network and need help with network access, consider reaching out to **FASRC support** or your department's IT team for assistance with firewall rules.</div>
+If you&#x27;re on the Harvard campus network and need help with network access, consider reaching out to **FASRC support** or your department&#x27;s IT team for assistance with firewall rules.</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
@@ -2345,7 +2346,7 @@ Questions:
 
 According to the [Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/) documentation:
 
-*   **Source:** You can only transfer files from directories inside your **Lab** share (`/n/holylabs/<labname>/Lab`) or your deprecated `Users/$USER` directory. Globus **cannot** see scratch spaces like `/n/netscratch`, `Everyone`, or `Transfer` folders.
+*   **Source:** You can only transfer files from directories inside your **Lab** share (`/n/holylabs/&lt;labname&gt;/Lab`) or your deprecated `Users/$USER` directory. Globus **cannot** see scratch spaces like `/n/netscratch`, `Everyone`, or `Transfer` folders.
 *   **Destination:** Similarly, you can only receive files into directories inside your **Lab** share.
 
 In short: Globus only works with your persistent Lab storage, not with temporary scratch spaces.
@@ -2356,7 +2357,7 @@ In short: Globus only works with your persistent Lab storage, not with temporary
 
 The [Scratch](https://docs.rc.fas.harvard.edu/kb/policy-scratch/) documentation states:
 
-> "This is temporary high-performance space and files older than 90 days will be deleted through a periodic purge process. This purge can run at *any* time, especially if scratch is getting full and is also often run at the start of the month during our monthly maintenance period."
+&gt; &quot;This is temporary high-performance space and files older than 90 days will be deleted through a periodic purge process. This purge can run at *any* time, especially if scratch is getting full and is also often run at the start of the month during our monthly maintenance period.&quot;
 
 Key points to remember:
 *   Netscratch is **volatile** and **not backed up**.
@@ -2366,9 +2367,9 @@ Key points to remember:
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
 <div class="answer-box expected-box">Thanks for reaching out. I opened a ticket for wider visibility of this question for our group. But, to answer your questions:
-1. General temporary files: netscratch & local scratch - That's correct. However, local scratch is attached to a job. So it will be available to the user for as long as their job is running on a compute node. The moment the job ends, local scratch goes away. So, if someone intends to use local scratch because it is the most performant for storage, they should consider moving the data out to a different storage before the job is done running, as in make it a part of their job launching script to pull the data out before the job ends. See [URL] [[URL]]
-2. No, Globus can access /n/netscratch but will not have visibility into anything else other than the Lab and Users/$USER directories. So, if you were to access /n/netscratch/[LAB] via Globus, then that's possible. But Globus will only show Lab and Users folders inside /n/netscratch/[LAB]. If they have not been created, then /n/netscratch/[LAB] will be empty on Globus. See [URL] [[URL]]
-Also, if you're interested in moving data around on the cluster from netscratch, then you can consider other CLI tools for accomplishing that. See [URL] [[URL]]
+1. General temporary files: netscratch &amp; local scratch - That&#x27;s correct. However, local scratch is attached to a job. So it will be available to the user for as long as their job is running on a compute node. The moment the job ends, local scratch goes away. So, if someone intends to use local scratch because it is the most performant for storage, they should consider moving the data out to a different storage before the job is done running, as in make it a part of their job launching script to pull the data out before the job ends. See [URL] [[URL]]
+2. No, Globus can access /n/netscratch but will not have visibility into anything else other than the Lab and Users/$USER directories. So, if you were to access /n/netscratch/[LAB] via Globus, then that&#x27;s possible. But Globus will only show Lab and Users folders inside /n/netscratch/[LAB]. If they have not been created, then /n/netscratch/[LAB] will be empty on Globus. See [URL] [[URL]]
+Also, if you&#x27;re interested in moving data around on the cluster from netscratch, then you can consider other CLI tools for accomplishing that. See [URL] [[URL]]
 3. You are right, as stated on [URL] [[URL]], the purge policy is strictly enforced unless and until an exception is raised with us, in which case, one will have to open a ticket with FASRC, explain the reason for raising that exception and the duration for which the exception must be honored/active.
 Hope that helped. Feel free to drop in our office hours, if you would like to discuss this further. See [URL] [[URL]]</div>
 </div>
@@ -2490,24 +2491,24 @@ way to run this on AWS or GCP through Harvard? Thank you.</p>
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">FASRC no longer provides a general virtual machine service, and it does not directly offer AWS or GCP compute through its core infrastructure ([Virtual Machines & Virtual Hosting](https://docs.rc.fas.harvard.edu/kb/virtual-machines)).
+<div class="answer-box">FASRC no longer provides a general virtual machine service, and it does not directly offer AWS or GCP compute through its core infrastructure ([Virtual Machines &amp; Virtual Hosting](https://docs.rc.fas.harvard.edu/kb/virtual-machines)).
 
-However, Harvard does have **cloud credit programs** that researchers can use for AWS/GCP compute. You'll want to check with your PI or department about:
+However, Harvard does have **cloud credit programs** that researchers can use for AWS/GCP compute. You&#x27;ll want to check with your PI or department about:
 
-1. **Harvard's AWS/GCP credits** — Harvard has institutional agreements with cloud providers that often include research credits. Your department or PI may have access to these.
-2. **FASRC's cloud resources** — While FASRC doesn't run VMs directly anymore, they may have information on current cloud credit programs or partnerships. I'd recommend contacting [FASRC Help](https://docs.rc.fas.harvard.edu/kb/access-and-login/) directly to ask about current cloud compute options.
-3. **Alternative approaches on-cluster** — Since you're processing 365 days of data, you could potentially:
+1. **Harvard&#x27;s AWS/GCP credits** — Harvard has institutional agreements with cloud providers that often include research credits. Your department or PI may have access to these.
+2. **FASRC&#x27;s cloud resources** — While FASRC doesn&#x27;t run VMs directly anymore, they may have information on current cloud credit programs or partnerships. I&#x27;d recommend contacting [FASRC Help](https://docs.rc.fas.harvard.edu/kb/access-and-login/) directly to ask about current cloud compute options.
+3. **Alternative approaches on-cluster** — Since you&#x27;re processing 365 days of data, you could potentially:
    - **Parallelize across multiple nodes** — split your 8.7 TB dataset into smaller chunks and process them concurrently on multiple nodes, reducing per-job memory requirements
-   - **Use the `fasse_ultramem` queue** — even though it's drained, you could submit jobs and they'll queue; 35+ days may be long but it's a guaranteed path
+   - **Use the `fasse_ultramem` queue** — even though it&#x27;s drained, you could submit jobs and they&#x27;ll queue; 35+ days may be long but it&#x27;s a guaranteed path
    - **Optimize your DuckDB queries** — window operations can sometimes be restructured to use less memory
 
-For the cloud route specifically, I'd recommend reaching out to FASRC Help or your department's research computing liaison to ask about current Harvard cloud credit programs, as these can change and may not be well-documented in the public KB.</div>
+For the cloud route specifically, I&#x27;d recommend reaching out to FASRC Help or your department&#x27;s research computing liaison to ask about current Harvard cloud credit programs, as these can change and may not be well-documented in the public KB.</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
 <div class="answer-box expected-box">Have you tried using serial_requeue on FASSE? There are several nodes in that partition that could meet your needs and allow you to scale out. The only danger is that your job might be preempted by higher priority work.
-If that won't work we can talk about other options internal to the cluster as I would imagine that would be cheaper for all around.
-For the record you would need to talk to HUIT for access to AWS and GCP but then you would also have to make sure you DUA's would cover that and work and any storage that is on FASSE is not generally available to those locations except via Globus.</div>
+If that won&#x27;t work we can talk about other options internal to the cluster as I would imagine that would be cheaper for all around.
+For the record you would need to talk to HUIT for access to AWS and GCP but then you would also have to make sure you DUA&#x27;s would cover that and work and any storage that is on FASSE is not generally available to those locations except via Globus.</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -2615,27 +2616,27 @@ I usually run a job array of ~400 jobs at once, in which each of these jobs has 
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Based on the available documentation, here's what we know about scratch vs. storage:
+<div class="answer-box">Based on the available documentation, here&#x27;s what we know about scratch vs. storage:
 
-**Scratch (`/n/netscratch`)** is described as **"temporary high-performance space"** for high I/O jobs [Scratch – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/policy-scratch).
+**Scratch (`/n/netscratch`)** is described as **&quot;temporary high-performance space&quot;** for high I/O jobs [Scratch – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/policy-scratch).
 
-**Storage (`/n/holystore01`)** is the persistent lab storage, which the documentation notes can have significantly slower I/O that can "drag down a fast code" [Job Efficiency and Optimization Best Practices](https://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices).
+**Storage (`/n/holystore01`)** is the persistent lab storage, which the documentation notes can have significantly slower I/O that can &quot;drag down a fast code&quot; [Job Efficiency and Optimization Best Practices](https://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices).
 
 **For your use case:**
-Given that you're running hundreds to thousands of jobs that each need to read files at startup, **you should continue copying files to scratch before running jobs**. Here's why:
+Given that you&#x27;re running hundreds to thousands of jobs that each need to read files at startup, **you should continue copying files to scratch before running jobs**. Here&#x27;s why:
 
-1. **High I/O contention**: With 400–5,000 jobs all trying to read from storage simultaneously, you'll create massive I/O contention on the persistent storage system, which can slow down not just your jobs but potentially affect other users' work.
+1. **High I/O contention**: With 400–5,000 jobs all trying to read from storage simultaneously, you&#x27;ll create massive I/O contention on the persistent storage system, which can slow down not just your jobs but potentially affect other users&#x27; work.
 
-2. **Scratch is designed for this**: Netscratch is explicitly intended as "high-performance space" for high I/O workloads [Scratch – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/policy-scratch).
+2. **Scratch is designed for this**: Netscratch is explicitly intended as &quot;high-performance space&quot; for high I/O workloads [Scratch – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/policy-scratch).
 
-3. **Performance difference**: While the documentation doesn't give exact throughput numbers, it emphasizes that storage I/O can significantly impact job efficiency, implying scratch is substantially faster for read-heavy workloads.
+3. **Performance difference**: While the documentation doesn&#x27;t give exact throughput numbers, it emphasizes that storage I/O can significantly impact job efficiency, implying scratch is substantially faster for read-heavy workloads.
 
-**Recommendation**: Copy your files to scratch at the beginning of your job array submission (or as part of the job script's setup phase), then have each job read from scratch. This will give you better performance and reduce I/O pressure on the shared storage system.</div>
+**Recommendation**: Copy your files to scratch at the beginning of your job array submission (or as part of the job script&#x27;s setup phase), then have each job read from scratch. This will give you better performance and reduce I/O pressure on the shared storage system.</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">On a practical level I think they are comparable with netscratch being faster by maybe 10% or so. holystore01 is Lustre and so is known to be fast. netscratch is SSD's mounted via RDMA and thus also fast. By our benchmarks they came out roughly neck and neck, we went with VAST due to the ease of operation as Lustre is a pain in the butt to operate well.
-Anyways you should be safe reading from holystore01 and shouldn't need to move the data.</div>
+<div class="answer-box expected-box">On a practical level I think they are comparable with netscratch being faster by maybe 10% or so. holystore01 is Lustre and so is known to be fast. netscratch is SSD&#x27;s mounted via RDMA and thus also fast. By our benchmarks they came out roughly neck and neck, we went with VAST due to the ease of operation as Lustre is a pain in the butt to operate well.
+Anyways you should be safe reading from holystore01 and shouldn&#x27;t need to move the data.</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -2751,11 +2752,11 @@ However, based on general HPC knowledge and the documentation we do have, here a
 
 ## Potential Causes
 
-1. **Storage I/O Bottleneck**: The [Job Efficiency and Optimization Best Practices](https://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best practices/) documentation notes that "Nothing can drag down a fast code faster than slow IO speed." If your source code, build directory, or temporary files are on a storage volume with degraded performance (e.g., `/home` vs. `/project` vs. `/data`), this could significantly impact compilation, especially during linking when many object files are read.
+1. **Storage I/O Bottleneck**: The [Job Efficiency and Optimization Best Practices](https://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best practices/) documentation notes that &quot;Nothing can drag down a fast code faster than slow IO speed.&quot; If your source code, build directory, or temporary files are on a storage volume with degraded performance (e.g., `/home` vs. `/project` vs. `/data`), this could significantly impact compilation, especially during linking when many object files are read.
 
-2. **Parallel Compilation Overhead**: Running `make -j32` on a single node may cause resource contention if the node's storage or CPU resources are shared with other users. The [Job Efficiency and Optimization Best Practices](https://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices/) documentation also mentions that hardware constraints can affect performance.
+2. **Parallel Compilation Overhead**: Running `make -j32` on a single node may cause resource contention if the node&#x27;s storage or CPU resources are shared with other users. The [Job Efficiency and Optimization Best Practices](https://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices/) documentation also mentions that hardware constraints can affect performance.
 
-3. **Recent Infrastructure Changes**: Without specific documentation about recent changes, it's possible there was a system update, storage migration, or configuration change affecting compilation performance.
+3. **Recent Infrastructure Changes**: Without specific documentation about recent changes, it&#x27;s possible there was a system update, storage migration, or configuration change affecting compilation performance.
 
 ## Troubleshooting Steps
 
@@ -2768,17 +2769,17 @@ However, based on general HPC knowledge and the documentation we do have, here a
    - Linking is often I/O-bound, so fewer parallel jobs may actually complete faster
 
 3. **Check storage performance**:
-   - Run `df -h` to see which filesystem you're using
+   - Run `df -h` to see which filesystem you&#x27;re using
    - Check if there are any known storage issues via the [FASRC status page](https://status.rc.fas.harvard.edu/) or by contacting FASRC support
 
 4. **Profile the build**:
    - Use `time make [executable] -j32` to see where time is spent
-   - Check if it's truly the linking step or if compilation is also slow
+   - Check if it&#x27;s truly the linking step or if compilation is also slow
 
-If the issue persists, I'd recommend contacting FASRC support directly with details about:
+If the issue persists, I&#x27;d recommend contacting FASRC support directly with details about:
 - The specific storage location of your build directory
 - A sample build with timing output
-- The node you're using (if known)
+- The node you&#x27;re using (if known)
 
 They may have information about recent infrastructure changes or known issues affecting compilation performance.</div>
 </div>
@@ -2924,7 +2925,7 @@ for both CPU and GPU nodes? So far I was not able to find those information.</p>
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">I don't have specific pricing information for the FASRC cluster (e.g., price per node-hour for CPU or GPU nodes) in the available documentation. The FASRC cluster is a shared research resource for Harvard researchers, and access is typically managed through compute allocations or credits rather than direct per-node pricing.
+<div class="answer-box">I don&#x27;t have specific pricing information for the FASRC cluster (e.g., price per node-hour for CPU or GPU nodes) in the available documentation. The FASRC cluster is a shared research resource for Harvard researchers, and access is typically managed through compute allocations or credits rather than direct per-node pricing.
 
 For details on compute allocations, costs, or how to access cluster resources, I recommend:
 
@@ -2935,10 +2936,10 @@ Would you like help finding information on how to request cluster access or appl
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">Our pricing model doesn't really work that way. The cluster is funded via two streams:
+<div class="answer-box expected-box">Our pricing model doesn&#x27;t really work that way. The cluster is funded via two streams:
 1. Overhead from grants: This funds our base operations and general cluster.
 2. Hardware Purchases: People can buy additional hardware to add to the cluster.
-We don't lease or sell cycles. We do let labs buy hardware if they need it. That said its a pretty bad time to buy as prices are crazy and highly in flux.
+We don&#x27;t lease or sell cycles. We do let labs buy hardware if they need it. That said its a pretty bad time to buy as prices are crazy and highly in flux.
 Do you need the price per hour for something? If you need a quote or an estimate I can try to provide one if I know what you are looking for.</div>
 </div>
 <div class="section">
@@ -3083,7 +3084,7 @@ Here are the most likely causes and solutions:
 1.  **Job Allocation Failure/Timeout:** The `salloc --immediate=180` might be failing because no GPU nodes are available, or the allocation is taking longer than expected.
     *   **Test:** Run the `ProxyCommand` manually in your local terminal to see the output:
         ```bash
-        ssh -q cannon "salloc --immediate=180 --job-name=vscode --partition gpu_test --gres=gpu:1 --time=0-04:00 --mem=4GB --quiet /bin/bash -c 'echo $SLURM_JOBID > ~/vscode-job-id; nc \$SLURM_NODELIST 22'"
+        ssh -q cannon &quot;salloc --immediate=180 --job-name=vscode --partition gpu_test --gres=gpu:1 --time=0-04:00 --mem=4GB --quiet /bin/bash -c &#x27;echo $SLURM_JOBID &gt; ~/vscode-job-id; nc \$SLURM_NODELIST 22&#x27;&quot;
         ```
     *   If this hangs or returns an error, the issue is with SLURM (no GPUs available, partition down, etc.).
 
@@ -3091,14 +3092,14 @@ Here are the most likely causes and solutions:
     *   **Alternative:** Try using `ssh -W` instead of `nc` if the SLURM version supports it, or ensure `nc` is installed. However, `nc` is standard. A more robust approach often used is to let SLURM handle the allocation and then SSH directly if possible, but for VS Code, the tunnel is necessary.
     *   **Debugging:** Add `set -x` to the bash command in the ProxyCommand to see exactly what is happening:
         ```ssh-config
-        ProxyCommand ssh -q cannon "salloc --immediate=180 --job-name=vscode --partition gpu_test --gres=gpu:1 --time=0-04:00 --mem=4GB --quiet /bin/bash -c 'set -x; echo $SLURM_JOBID > ~/vscode-job-id; nc \$SLURM_NODELIST 22'"
+        ProxyCommand ssh -q cannon &quot;salloc --immediate=180 --job-name=vscode --partition gpu_test --gres=gpu:1 --time=0-04:00 --mem=4GB --quiet /bin/bash -c &#x27;set -x; echo $SLURM_JOBID &gt; ~/vscode-job-id; nc \$SLURM_NODELIST 22&#x27;&quot;
         ```
         Check the VS Code output channel for the `set -x` output.
 
 3.  **Firewall/Network Restrictions:** The compute node might not allow inbound SSH connections on port 22 from the login node (`cannon`). This is rare in HPC clusters but possible.
     *   **Check:** Can you SSH from `cannon` to the compute node directly?
         ```bash
-        ssh [USERNAME]@<compute_node_name>
+        ssh [USERNAME]@&lt;compute_node_name&gt;
         ```
         If this fails, the network path is blocked.
 
@@ -3113,8 +3114,8 @@ First, verify the `salloc` command works interactively. If it hangs, the issue i
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">Are you still facing this issue? If yes, then can you conduct a test by directly SSH'ing into the cluster via the terminal and let me know the result.
-Also, were you on the VPN while connecting to the cluster via VSCode using Remote SSH? Few of our users were facing VPN-related problem today, so it's possible that when you tried it there might have been some connectivity issue due to a network glitch.</div>
+<div class="answer-box expected-box">Are you still facing this issue? If yes, then can you conduct a test by directly SSH&#x27;ing into the cluster via the terminal and let me know the result.
+Also, were you on the VPN while connecting to the cluster via VSCode using Remote SSH? Few of our users were facing VPN-related problem today, so it&#x27;s possible that when you tried it there might have been some connectivity issue due to a network glitch.</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -3221,7 +3222,7 @@ Additionally, I was planning to use the VS Code tunneling to access the RC resou
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">I can't create folders for you, but I can help you figure out where to create them and how to set up VS Code Tunneling.
+<div class="answer-box">I can&#x27;t create folders for you, but I can help you figure out where to create them and how to set up VS Code Tunneling.
 
 ### 1. Finding your storage paths
 
@@ -3230,21 +3231,21 @@ FASRC provides two main complimentary storage locations for groups:
 - **Lab Directory (holylabs):** Path `/n/holylabs` (4TB, retention allowed)
 - **netscratch:** Path `/n/netscratch` (50TB, 90-day retention policy)
 
-To find your specific group's storage path, you can use the **Starfish** tool:
+To find your specific group&#x27;s storage path, you can use the **Starfish** tool:
 1. Connect to the FASRC VPN
 2. Go to the [Starfish dashboard](https://starfish.rc.fas.harvard.edu/#/login)
 3. Log in with your FASRC username and password
-4. Right-click on your group folder and select "Copy mount path to clipboard"
+4. Right-click on your group folder and select &quot;Copy mount path to clipboard&quot;
 
-Once you have the path (e.g., `/n/vast-holylabs/C/jharvard_lab`), you'll need to make two edits: remove `vast-` and `/C`. The final path would be `/n/holylabs/jharvard_lab` [Getting Started with FASRC Storage](https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage/).
+Once you have the path (e.g., `/n/vast-holylabs/C/jharvard_lab`), you&#x27;ll need to make two edits: remove `vast-` and `/C`. The final path would be `/n/holylabs/jharvard_lab` [Getting Started with FASRC Storage](https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage/).
 
-You can then navigate to this folder in an interactive session using `cd /n/holylabs/<your_lab_name>/`.
+You can then navigate to this folder in an interactive session using `cd /n/holylabs/&lt;your_lab_name&gt;/`.
 
 ### 2. VS Code Tunneling Setup
 
 The FASRC recommends using **Approach I: Remote – Tunnel via batch job** for VS Code connections, as it provides resilience against network glitches [VSCode Remote Development via SSH and Tunnel](https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel/).
 
-Here's how to set it up:
+Here&#x27;s how to set it up:
 
 1. **Create a job script** (e.g., `vscode.job`):
 ```bash
@@ -3259,7 +3260,7 @@ MY_SCRATCH=$(TMPDIR=/scratch mktemp -d)
 echo $MY_SCRATCH
 
 # Obtain the VS Code CLI and run it
-curl -Lk 'https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-x64' | tar -C $MY_SCRATCH -xzf -
+curl -Lk &#x27;https://code.visualstudio.com/sha/download?build=stable&amp;os=cli-alpine-x64&#x27; | tar -C $MY_SCRATCH -xzf -
 
 # Authenticate using Microsoft (HarvardKey)
 VSCODE_CLI_DISABLE_KEYCHAIN_ENCRYPT=1 $MY_SCRATCH/code tunnel user login --provider microsoft
@@ -3275,25 +3276,25 @@ sbatch vscode.job
 
 3. **Check the output** to get the tunnel URL:
 ```bash
-tail -f <output_file>
+tail -f &lt;output_file&gt;
 ```
 
 **Important notes:**
-- The tunnel name `cannontunnel` is what you'll look for in your local VS Code's Remote Explorer
+- The tunnel name `cannontunnel` is what you&#x27;ll look for in your local VS Code&#x27;s Remote Explorer
 - You can only have **one VS Code tunnel session** at a time per user
 - FASRC limits users to a maximum of 5 login sessions, so be mindful of how many VS Code instances you spawn [VSCode Remote Development via SSH and Tunnel](https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel/)
 
-If you're getting an error when trying to run the tunnel in the browser, it might be related to authentication or the tunnel session not being properly established. Make sure you're authenticating with the correct provider (Microsoft for HarvardKey) and that the job completed successfully before trying to connect.</div>
+If you&#x27;re getting an error when trying to run the tunnel in the browser, it might be related to authentication or the tunnel session not being properly established. Make sure you&#x27;re authenticating with the correct provider (Microsoft for HarvardKey) and that the job completed successfully before trying to connect.</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">I've created a Users for you: [URL]/Users/[USERNAME], however the Users folder is now deprecated. We recommend that you use the Labs folder because you can make your own folder there. It is also easier to share data and allows others to save and clean up your folder if you ever leave the lab. Please see: [URL] [[URL]]
+<div class="answer-box expected-box">I&#x27;ve created a Users for you: [URL]/Users/[USERNAME], however the Users folder is now deprecated. We recommend that you use the Labs folder because you can make your own folder there. It is also easier to share data and allows others to save and clean up your folder if you ever leave the lab. Please see: [URL] [[URL]]
 On the system, the path is /n/boslfs02/LABS/[LAB] Engert Lab has about 14 TiB available out of 50 TiB total.
 # quota -g [LAB] /n/boslfs02
 Disk quotas for grp [LAB] (gid 402114):
 Filesystem used quota limit grace files quota limit grace
 /n/boslfs02 36.03T 50T 50T - 2736911 45088768 45088768
-I'll pass this ticket on to our VSCode specialists to investigate that issue. You should hear from them soon.</div>
+I&#x27;ll pass this ticket on to our VSCode specialists to investigate that issue. You should hear from them soon.</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -3449,26 +3450,26 @@ Do you recommend that I try to download and install aspera? How have other Harva
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Based on the available documentation, I don't see specific guidance for uploading sequencing data to NCBI from the Harvard cluster. However, I can share what I found about data transfer options:
+<div class="answer-box">Based on the available documentation, I don&#x27;t see specific guidance for uploading sequencing data to NCBI from the Harvard cluster. However, I can share what I found about data transfer options:
 
 **For getting data to/from the cluster**, FASRC generally recommends **SCP** (Secure Copy), which is available across login nodes, interactive sessions, and batch jobs [Copying Data to the FASRC cluster using SCP or SFTP](https://docs.rc.fas.harvard.edu/kb/copying-data-to-and-from-cluster-using-scp).
 
 **Regarding your specific questions:**
 
-1. **Aspera CLI**: You're correct that Aspera isn't available as a module on the cluster. The Aspera command-line client (ascp) is a standalone tool that can be installed in your home directory — it's not browser-only. NCBI does provide instructions for using the `ascp` command directly from the command line. You would need to download the Aspera Connect SDK/CLI from the NCBI website and install it locally.
+1. **Aspera CLI**: You&#x27;re correct that Aspera isn&#x27;t available as a module on the cluster. The Aspera command-line client (ascp) is a standalone tool that can be installed in your home directory — it&#x27;s not browser-only. NCBI does provide instructions for using the `ascp` command directly from the command line. You would need to download the Aspera Connect SDK/CLI from the NCBI website and install it locally.
 
-2. **FTP**: You're right that `ftp` is not available on the cluster login nodes.
+2. **FTP**: You&#x27;re right that `ftp` is not available on the cluster login nodes.
 
-3. **Alternative approach**: Since you're on the cluster, you could:
+3. **Alternative approach**: Since you&#x27;re on the cluster, you could:
    - Download the Aspera CLI to your home directory
    - Use `ascp` from a batch job or interactive session to upload directly to NCBI
    - Or use SCP/SFTP to transfer files to your local machine first, then upload from there
 
-I'd recommend checking NCBI's documentation for the exact `ascp` command syntax. Would you like help with setting up the Aspera CLI installation or configuring an SCP-based transfer workflow?</div>
+I&#x27;d recommend checking NCBI&#x27;s documentation for the exact `ascp` command syntax. Would you like help with setting up the Aspera CLI installation or configuring an SCP-based transfer workflow?</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">That's great! We really appreciate the update. Just a note that the login nodes have better bandwidth (i.e., better transfer rates) than compute nodes. So the login nodes are is the best option to transfer data externally!</div>
+<div class="answer-box expected-box">That&#x27;s great! We really appreciate the update. Just a note that the login nodes have better bandwidth (i.e., better transfer rates) than compute nodes. So the login nodes are is the best option to transfer data externally!</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -3614,8 +3615,8 @@ They will be able to assist you with installing the necessary VPN client on your
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">First, I would like to check with you if you are following Harvard [[URL]]'s and also FASRC's data security policies. At FASRC, the you can have DSL1 and 2 on Cannon. And DSL3 on FASSE [[URL]], our secure environment.
-If you are in agreement with those, you are likely installing the software in a location where you don't have write access. You should install the software in a location that you have write access to, such as your home directory. Can you explain how you are installing?
+<div class="answer-box expected-box">First, I would like to check with you if you are following Harvard [[URL]]&#x27;s and also FASRC&#x27;s data security policies. At FASRC, the you can have DSL1 and 2 on Cannon. And DSL3 on FASSE [[URL]], our secure environment.
+If you are in agreement with those, you are likely installing the software in a location where you don&#x27;t have write access. You should install the software in a location that you have write access to, such as your home directory. Can you explain how you are installing?
 If you prefer to chat one-on-one, we have office hours on Wednesdays from [DATE_TIME]. For how to join, see [URL] [[URL]].</div>
 </div>
 <div class="section">
@@ -3727,7 +3728,7 @@ Could you please advise on how to resolve this issue? Thank you very much for yo
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">Based on the FASRC documentation, here's what's happening and how to fix it:
+<div class="answer-box">Based on the FASRC documentation, here&#x27;s what&#x27;s happening and how to fix it:
 
 ## The Issue
 
@@ -3735,7 +3736,7 @@ Jupyter sessions on FASRC clusters can terminate immediately if there is a `cond
 
 ## The Fix
 
-1. **Check your `~/.bashrc`** for a `conda initialize` section (it typically looks like a block of code between `### >>> conda initialize >>>` and `### <<< conda initialize <<<`).
+1. **Check your `~/.bashrc`** for a `conda initialize` section (it typically looks like a block of code between `### &gt;&gt;&gt; conda initialize &gt;&gt;&gt;` and `### &lt;&lt;&lt; conda initialize &lt;&lt;&lt;`).
 
 2. **Delete or comment out** that entire `conda initialize` block. If you also have any `source activate` commands in your `.bashrc` or `~/.bash_profile`, remove or comment those out as well [Python Package Installation](https://docs.rc.fas.harvard.edu/kb/python-package-installation/).
 
@@ -3752,13 +3753,13 @@ source activate your_environment_name
 
 See the [Python (Anaconda) page](https://docs.rc.fas.harvard.edu/kb/python/) for more details on using `source activate` instead of `conda activate`.
 
-If you're unable to locate the `conda initialize` section or the issue persists after removing it, please contact [RCHelp](https://portal.rc.fas.harvard.edu/) with details about your setup.</div>
+If you&#x27;re unable to locate the `conda initialize` section or the issue persists after removing it, please contact [RCHelp](https://portal.rc.fas.harvard.edu/) with details about your setup.</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
 <div class="answer-box expected-box">If you look at the output.log file (/n/home11/cfu/.fasrcood/data/sys/dashboard/batch_connect/sys/Jupyter/output/866f3e99-de4a-42ac-90eb-424de7c95eb9.output.log), there is this error:
 
-ImportError: cannot import name 'run_sync_in_worker_thread' from 'anyio' (/n/home11/cfu/.local/lib/python3.8/site-packages/anyio/__init__.py)
+ImportError: cannot import name &#x27;run_sync_in_worker_thread&#x27; from &#x27;anyio&#x27; (/n/home11/cfu/.local/lib/python3.8/site-packages/anyio/__init__.py)
 We are currently working on an update that will potentially resolve this issue. I will send an update when you can test it. (Open OnDemand is under maintenance right now, and we cannot test it until maintenance is over).</div>
 </div>
 <div class="section">
@@ -3894,7 +3895,7 @@ our study (<= 1 month, approx [DATE_TIME]).</p>
 </div>
 <div class="section">
 <div class="section-title">🤖 archi's Answer</div>
-<div class="answer-box">I don't have access to the specific details of your discussion with Manasvita at office hours, but I can help you think through options for keeping large language models loaded in VRAM on the FASSE H200 nodes.
+<div class="answer-box">I don&#x27;t have access to the specific details of your discussion with Manasvita at office hours, but I can help you think through options for keeping large language models loaded in VRAM on the FASSE H200 nodes.
 
 Here are a few approaches to consider:
 
@@ -3907,16 +3908,16 @@ Here are a few approaches to consider:
 To give you the most accurate guidance, could you share:
 - The approximate number of H200 nodes you need?
 - Whether you need interactive access or can run batch-style queries?
-- The specific inference framework you're planning to use (e.g., vLLM, Hugging Face Transformers, etc.)?
+- The specific inference framework you&#x27;re planning to use (e.g., vLLM, Hugging Face Transformers, etc.)?
 
-Also, since this involves GPU resource allocation and potentially long-running jobs, I'd recommend following up with Manasvita or the FASRC support team to ensure your request aligns with current cluster policies and availability.</div>
+Also, since this involves GPU resource allocation and potentially long-running jobs, I&#x27;d recommend following up with Manasvita or the FASRC support team to ensure your request aligns with current cluster policies and availability.</div>
 </div>
 <div class="section">
 <div class="section-title">✅ Expected Answer</div>
-<div class="answer-box expected-box">Thanks for generating the ticket. I had a chat with my team and the most straightforward way is to just download the models you need on /n/netscratch. You need it only for a month, so you won't have to worry about our purge policy. Netscratch has 50TiB of space ([URL] [[URL]]), so storing few tens of GBs wouldn't be an issue. While this won't solve the problem of models loaded into VRAM, at least this would reduce some latency on the user side.
+<div class="answer-box expected-box">Thanks for generating the ticket. I had a chat with my team and the most straightforward way is to just download the models you need on /n/netscratch. You need it only for a month, so you won&#x27;t have to worry about our purge policy. Netscratch has 50TiB of space ([URL] [[URL]]), so storing few tens of GBs wouldn&#x27;t be an issue. While this won&#x27;t solve the problem of models loaded into VRAM, at least this would reduce some latency on the user side.
 Another option is to have a cron job running on the cluster via Slurm, called scrontab ([URL] [[URL]]), and use that script to load the models during the time you think it would be needed by your users.
 A third option is to submit a 3-day job that would just idle waiting for work, it would have the LLM loaded and be ready to go, but it would tie up the GPU for 3 days. Then when it ended you would launch another one. This way, you would ensure that the LLM is always loaded but at the expense of fairshare. I guess this option could be used with setting up an ollama server.
-Let me know how you would like to approach this and we'll go from there.</div>
+Let me know how you would like to approach this and we&#x27;ll go from there.</div>
 </div>
 <div class="section">
 <div class="section-title">🎯 Expected Source Documents</div>
@@ -4032,11 +4033,11 @@ The agent attempted to retrieve specific documentation regarding automated Globu
 Globus is indeed the recommended and most suitable solution for this use case, particularly because it supports **automated endpoints** and **transfer triggers** without requiring interactive login. Here is how to achieve your fully automated pipeline:
 
 1.  **Automated Transfers (Globus):**
-    *   **Endpoints:** You need to set up "Automated Endpoints" on both the CfA server and the Harvard cluster. Unlike standard endpoints that require manual login, automated endpoints use a service account (or a specific user account with pre-authenticated credentials) to allow background transfers.
+    *   **Endpoints:** You need to set up &quot;Automated Endpoints&quot; on both the CfA server and the Harvard cluster. Unlike standard endpoints that require manual login, automated endpoints use a service account (or a specific user account with pre-authenticated credentials) to allow background transfers.
     *   **2FA Bypass:** To avoid 2FA interruptions, you must configure the Globus endpoint to use **password-based authentication** (if supported by the OS) or, more securely, **SSH key-based authentication** for the service account. Globus Connect Personal or Server can be configured to run as a background service using these keys, eliminating the need for interactive 2FA prompts during automated runs.
-    *   **Triggers:** You can use the **Globus Transfer Triggers** feature. This allows you to set up a "watch" on the source directory. When new data arrives, Globus automatically initiates the transfer to the destination. Alternatively, you can use a simple cron job or a file-watcher script (e.g., `inotifywait`) on the CfA server to trigger a `globus transfer` command via the Globus CLI/SDK.
+    *   **Triggers:** You can use the **Globus Transfer Triggers** feature. This allows you to set up a &quot;watch&quot; on the source directory. When new data arrives, Globus automatically initiates the transfer to the destination. Alternatively, you can use a simple cron job or a file-watcher script (e.g., `inotifywait`) on the CfA server to trigger a `globus transfer` command via the Globus CLI/SDK.
 
-2.  **Job Submission & Analysis:**
+2.  **Job Submission &amp; Analysis:**
     *   **Event-Driven:** Once the Globus transfer completes, you can use the **Globus Web API** or a local script to trigger the analysis. A common pattern is to have a script on the Harvard cluster that monitors the incoming directory (using `inotifywait` or a similar tool) and submits jobs to the scheduler (Slurm/PBS) as soon as files appear.
     *   **Scheduled:** If event-driven is not feasible, a cron job on the cluster can periodically check for new files and submit jobs.
     *   **Singularity:** You can indeed deploy Singularity containers from the CfA server. However, it is often more efficient to build the container on the cluster (where the compute resources are) and store it in a shared location (like `/n/holylabs` or a project-specific storage) to avoid transferring large container images repeatedly. If you must run from CfA, ensure the Singularity binary is installed and configured to use the cluster’s file systems correctly.
@@ -4044,7 +4045,7 @@ Globus is indeed the recommended and most suitable solution for this use case, p
 3.  **Result Synchronization:**
     *   Use a second Globus Automated Endpoint or a simple `rsync`/`scp` script triggered by the completion of the analysis job to transfer results back to the CfA. Globus is preferred for its resume capability and performance with large datasets.
 
-4.  **Configuration & Permissions:**
+4.  **Configuration &amp; Permissions:**
     *   **FASRC Side:** Ensure your Harvard account has access to the necessary storage (e.g., `/n/holylabs` or project storage) and that the Globus endpoint is configured with the correct permissions. You may need to request a **Globus Service Account** or configure your personal account for automated access.
     *   **CfA Side:** Ensure the CfA server has Globus Connect Server installed and configured as an automated endpoint.
     *   **Firewall/Network:** Ensure that the necessary ports (typically 8446 for Globus) are open for outbound connections from both servers.
@@ -4062,10 +4063,10 @@ Step 2 could be done via scrontab.
 Note that the cluster is not intended for immediate turn around. We cannot guarantee your jobs will run in any give amount of time as that is dependent on your fairshare. As such any work flow you develop will have to accommodate possibly waiting days or weeks for processing. If you need more timely processing I recommend looking at NERC or some cloud provider.
 
 To your final question, the cluster has full access to the internet so if the server is out there then cluster can pull the data down. The trick is going the opposite way, we have no way of exposing our storage aside from Globus. So what works then is:
-Push/Pull from the cluster -> Internet
+Push/Pull from the cluster -&gt; Internet
 Push/Pull via Globus endpoint from host mounting endpoint
 There is not option for:
-Push/Pull from Internet -> cluster
+Push/Pull from Internet -&gt; cluster
 So you have to architect around those limitations.</div>
 </div>
 <div class="section">
