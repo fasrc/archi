@@ -302,10 +302,17 @@ def create(
         )
 
     except Exception as e:
+        # Verbosity selects diagnostics, never exit status. This branch used to
+        # print the traceback and fall through at >= 4, so a create that failed
+        # validation exited 0 and reported success — which is why the Docker
+        # preflight above deliberately sits outside this try. Now that refusing
+        # before teardown is the contract, a refusal that exits 0 would tell a
+        # calling script the replacement succeeded (fasrc/archi#287).
         if verbosity >= 4:
             traceback.print_exc()
-        else:
-            raise click.ClickException(str(e))
+        if isinstance(e, click.ClickException):
+            raise
+        raise click.ClickException(str(e))
 
 
 @click.command()

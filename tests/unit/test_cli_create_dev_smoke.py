@@ -870,3 +870,55 @@ def test_force_create_continues_when_teardown_fails(env_file, archi_home, monkey
     assert (
         SENTINEL in result.output
     ), f"a failed teardown should not abort the create. output:\n{result.output}\n"
+
+
+def test_force_create_with_missing_secret_fails_under_verbose_logging(
+    archi_home, monkeypatch
+):
+    """Verbosity must change diagnostics, never exit status.
+
+    create()'s outer handler prints a traceback at verbosity >= 4 and does not
+    re-raise, so a failed create exits 0 and any script chaining on it treats an
+    unapplied replacement as a success. The Docker preflight was moved outside
+    that handler to dodge this; validation failures are still inside it, which
+    would make this fix's central promise -- refuse instead of destroy -- report
+    success while refusing.
+    """
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-v",
+            "4",
+            "-n",
+            "smoke",
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "--services",
+            "chatbot,grafana",
+            "--hostmode",
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before validation. "
+        f"output:\n{result.output}\n"
+    )
+    assert (
+        existing / "marker.txt"
+    ).exists(), f"existing deployment directory was removed. output:\n{result.output}\n"
+    assert result.exit_code != 0, (
+        f"a create that failed validation must not exit 0 just because "
+        f"--verbosity 4 was passed. exit_code={result.exit_code}\n"
+        f"output:\n{result.output}\n"
+    )
