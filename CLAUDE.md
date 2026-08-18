@@ -22,7 +22,10 @@
   dispatched ref — Dockerfile base-image updates after the smoke test, and a
   `pyproject.toml`/`docs/mkdocs.yml` version bump if the release PR missed it — so
   the tag may sit ahead of the release-PR merge commit, and `main`'s branch
-  protection must permit those bot pushes), notes from the milestone's closed items.
+  protection must permit those bot pushes. **Dispatch a branch, not a commit SHA**:
+  the pushes target the dispatched ref by name, so a SHA dispatch fails at those
+  steps mid-release — images already published, no tag), notes from the milestone's
+  closed items.
   Bump `pyproject.toml` to the PEP 440 form (e.g. `2026.8.0`) in the release PR.
   Upstream's unmerged commits: cherry-pick only, no sync release.
 
