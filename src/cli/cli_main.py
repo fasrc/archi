@@ -159,11 +159,13 @@ def create(
 
         # Combine services and data sources for processing
         enabled_services = services.copy()
-        # Handle existing deployment
+        # Refuse an existing deployment when --force was not given. This is the
+        # non-destructive half and belongs here: "already exists" should outrank
+        # an unrelated config error for an operator who never asked to replace
+        # anything. The destructive --force teardown runs much later, once
+        # nothing is left that could still refuse the replacement.
         base_dir = Path(ARCHI_DIR) / f"archi-{name}"
-        handle_existing_deployment(
-            base_dir, name, force, dry, other_flags.get("podman", False)
-        )
+        handle_existing_deployment(base_dir, name, force)
 
         # Initialize managers
         config_manager = ConfigurationManager(config_files, env)
@@ -196,7 +198,20 @@ def create(
         required_secrets, all_secrets = secrets_manager.get_secrets(
             set(enabled_services), set(enabled_sources)
         )
-        secrets_manager.validate_secrets(required_secrets)
+        try:
+            secrets_manager.validate_secrets(required_secrets)
+        except ValueError as secrets_error:
+            if not env_file:
+                # Without --env-file the manager fell back to the packaged
+                # placeholder file, so its "add these to your .env file" advice
+                # points inside archi's own package. Name the flag instead.
+                raise click.ClickException(
+                    f"{secrets_error}\n"
+                    "No --env-file was given, so only the packaged placeholder "
+                    "secrets were available. Re-run with --env-file <path> "
+                    "supplying the secrets listed above."
+                )
+            raise
         logger.info(
             f"Required secrets validated: {', '.join(sorted(required_secrets))}"
         )
@@ -217,6 +232,19 @@ def create(
             enabled_sources=enabled_sources,
             secrets=all_secrets,
             **other_flags,
+        )
+
+        # Everything above this line can still refuse the deployment — service
+        # selection, config validation, secret validation, and the compose plan
+        # itself (build_compose_config calls _discover_repo_path() under --dev,
+        # which raises outside a checkout). So the --force teardown goes here and
+        # nowhere earlier: a create that was always going to fail must not cost
+        # the operator a running deployment first (fasrc/archi#287).
+        #
+        # It cannot move below the --dry return either, or a dry run would stop
+        # reporting the removal it would have performed.
+        remove_existing_deployment(
+            base_dir, name, force, dry, other_flags.get("podman", False)
         )
 
         # Handle dry run
@@ -745,7 +773,12 @@ def evaluate(
                 "Benchmark question bank failed preflight:\n" + "\n".join(bank_errors)
             )
 
-        handle_existing_deployment(
+        # Both halves, back to back, so this path keeps the combined behaviour it
+        # had when these were one function: refuse without --force, tear down with
+        # it. evaluate() depends on the teardown having happened by the time it
+        # reaches the "already exists" check just below.
+        handle_existing_deployment(base_dir, name, force)
+        remove_existing_deployment(
             base_dir, name, force, False, other_flags.get("podman", False)
         )
 

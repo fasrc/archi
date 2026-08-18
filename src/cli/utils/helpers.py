@@ -296,33 +296,58 @@ def log_dependency_resolution(services: List[str], enabled_services: List[str]) 
             logger.info(f"Auto-enabling dependencies: {', '.join(added_services)}")
 
 
-def handle_existing_deployment(
+def handle_existing_deployment(base_dir: Path, name: str, force: bool) -> None:
+    """Refuse an existing deployment unless --force was given. Non-destructive.
+
+    This is the half that is safe to run early, and it is meant to: the
+    "already exists" refusal should take precedence over unrelated config or
+    secret errors, because an operator who did not pass --force has not asked
+    us to replace anything and should be told that first.
+
+    The destructive half lives in remove_existing_deployment().
+    """
+    if base_dir.exists() and not force:
+        raise click.ClickException(
+            f"Deployment '{name}' already exists at {base_dir}.\n"
+            f"Use --force to overwrite, or delete it first with: archi delete --name {name}"
+        )
+
+
+def remove_existing_deployment(
     base_dir: Path, name: str, force: bool, dry: bool, use_podman: bool
 ) -> None:
-    """Handle existing deployment - either remove it or raise error"""
-    if base_dir.exists():
-        if force:
-            if not dry:
-                logger.info(f"Removing existing deployment at {base_dir}")
-                from src.cli.managers.deployment_manager import DeploymentManager
+    """Tear down an existing deployment under --force. DESTRUCTIVE.
 
-                deployment_manager = DeploymentManager(use_podman)
-                try:
-                    deployment_manager.delete_deployment(
-                        deployment_name=name,
-                        remove_images=False,
-                        remove_volumes=False,
-                        remove_files=True,
-                    )
-                except Exception as e:
-                    logger.info(f"Warning: Could not clean up existing deployment: {e}")
-            else:
-                logger.info(f"[DRY RUN] Would remove existing deployment at {base_dir}")
-        else:
-            raise click.ClickException(
-                f"Deployment '{name}' already exists at {base_dir}.\n"
-                f"Use --force to overwrite, or delete it first with: archi delete --name {name}"
-            )
+    Call this only after every step that could still refuse the replacement
+    deployment has succeeded. Anything that can fail after this point costs the
+    operator a running deployment they cannot get back: the containers are
+    stopped and the deployment directory is removed, and a create that then
+    aborts leaves them with neither the old deployment nor a new one
+    (fasrc/archi#287).
+
+    "Can this step fail" is the test, not "does this step read base_dir" — a
+    step that never touches the old deployment can still refuse the new one.
+    """
+    if not (base_dir.exists() and force):
+        return
+
+    if dry:
+        logger.info(f"[DRY RUN] Would remove existing deployment at {base_dir}")
+        return
+
+    logger.info(f"Removing existing deployment at {base_dir}")
+    from src.cli.managers.deployment_manager import DeploymentManager
+
+    deployment_manager = DeploymentManager(use_podman)
+    try:
+        deployment_manager.delete_deployment(
+            deployment_name=name,
+            remove_images=False,
+            remove_volumes=False,
+            remove_files=True,
+        )
+    except Exception as e:
+        logger.info(f"Warning: Could not clean up existing deployment: {e}")
 
 
 def print_dry_run_summary(
