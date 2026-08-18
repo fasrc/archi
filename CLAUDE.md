@@ -1,5 +1,24 @@
 # archi — project instructions
 
+## Release plan (pinned)
+**All work is evaluated against `docs/docs/proposals/release-plan-2026.md`** (adopted
+2026-08-18, PR #281). Before scheduling, triaging, or starting anything:
+
+- **Check the issue's milestone first.** The four CalVer milestones
+  (`v2026.08.0`–`v2026.11.0`) hold the only gating issues; milestone order is the
+  work order (benchmark integrity precedes retrieval quality — it is its evidence rig).
+- **`parked` label = deliberately unscheduled.** Do not schedule, re-triage, or
+  re-prioritize parked issues. An issue leaves parked only by a human deciding it
+  gates a future feature release — never by aging or nightly triage.
+- **New work is judged by the plan's gate bar:** it enters a milestone only if that
+  release's feature is broken/wrong/dishonest without it, evidenced by a file:line,
+  measured number, or repro. Anything end-user-visible in chat outranks track
+  membership and rides the earliest feasible release.
+- **Release mechanics:** CalVer tag `v2026.MM.N` — milestone issues closed → PR
+  `dev`→`main` → dispatch `test-and-build-tag.yml` with the tag; bump
+  `pyproject.toml` to the PEP 440 form (e.g. `2026.8.0`) in the release PR.
+  Upstream's unmerged commits: cherry-pick only, no sync release.
+
 ## Development Workflow
 For non-trivial changes, follow the two-loop spec-driven flow — invoke `/spec-driven-workflow`
 for the full steps. This project's values:
