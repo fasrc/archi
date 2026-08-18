@@ -59,6 +59,57 @@ OUTPUT_PATH = "/root/archi/benchmarks"
 EXTRA_METADATA_PATH = "/root/archi/git_info.yaml"
 OUTPUT_DIR = Path(OUTPUT_PATH)
 
+# The corpus's retrievable state, as opaque (key, value) pairs for
+# `corpus_fingerprint`. Every row is keyed by `documents.resource_hash`, never by
+# a SERIAL row id: two ingests of an identical corpus -- a rebuilt deployment, a
+# re-seeded database -- get different serials, so keying by `document_id` made the
+# cross-run comparison this field exists for impossible, rejecting runs that were
+# in fact comparable.
+#
+# Three kinds of row, because retrieval reads all three:
+#
+#   doc     the live document list and byte sizes.
+#   chunk   per-chunk content digests. `resource_hash` is `md5(url)`, an identity
+#           hash deliberately stable across content updates, so the document list
+#           alone would miss an edit that preserved the byte count. Hashing per
+#           chunk index also catches re-chunking.
+#   parent  `document_parent_nodes.parent_text`, plus the ordered list of child
+#           chunk indexes grouped under it. Under `hierarchical_rerank` -- enabled
+#           for every chunk in the FASRC deployment -- what reaches the agent is
+#           the parent text, not the leaf chunks, and parents are neither embedded
+#           nor indexed so no other part of this query sees them. Hashing leaves
+#           alone would certify two arms as having seen the same corpus while the
+#           context they were given differed. The child list is folded in because
+#           re-grouping children changes that context even when every individual
+#           text is untouched.
+#
+# Deleted documents are excluded from all three: soft-deleted rows stay in the
+# tables but are not part of the corpus.
+CORPUS_STATE_QUERY = """
+SELECT 'doc:' || d.resource_hash, d.size_bytes::text
+FROM documents d
+WHERE d.is_deleted = FALSE
+UNION ALL
+SELECT 'chunk:' || d.resource_hash || ':' || c.chunk_index::text,
+       md5(c.chunk_text)
+FROM document_chunks c
+JOIN documents d ON d.id = c.document_id
+WHERE d.is_deleted = FALSE
+UNION ALL
+SELECT 'parent:' || d.resource_hash || ':' || p.parent_index::text,
+       md5(
+           p.parent_text || '|' ||
+           COALESCE(
+               string_agg(c.chunk_index::text, ',' ORDER BY c.chunk_index), ''
+           )
+       )
+FROM document_parent_nodes p
+JOIN documents d ON d.id = p.document_id
+LEFT JOIN document_chunks c ON c.metadata->>'parent_id' = p.id::text
+WHERE d.is_deleted = FALSE
+GROUP BY d.resource_hash, p.parent_index, p.parent_text
+"""
+
 #: Distinguishes a provenance field that was never recorded (a result file
 #: written before provenance existed) from one recorded as undetermined.
 _NOT_RECORDED = object()
@@ -184,6 +235,32 @@ class ResultHandler:
         return len(fingerprints) <= 1
 
     @staticmethod
+    def ab_summary_line(
+        name_a: str,
+        name_b: str,
+        question_count: int,
+        aggregate: Dict[str, Any],
+    ) -> str:
+        """One operator-facing line for a pair, withheld winners included.
+
+        Withholding sets the tallies to ``None``, and the caller's format string
+        was left as ``Wins A=%d, B=%d, Ties=%d``. ``'%d' % None`` raises;
+        ``logging`` catches that in ``handleError`` rather than aborting the run,
+        so the effect is not a crash but a *lost* line -- the operator gets
+        "--- Logging error ---" and a traceback where the pair summary should be,
+        in exactly the incomparable case the guard was added to report.
+
+        ``0`` is a tally, not an absence: only ``None`` means withheld.
+        """
+        head = f"  {name_a} vs {name_b}: {question_count} questions."
+        if aggregate.get("wins_a") is None:
+            return f"{head} Winners withheld: the arms are not comparable."
+        return (
+            f"{head} Wins A={aggregate['wins_a']}, "
+            f"B={aggregate['wins_b']}, Ties={aggregate['ties']}"
+        )
+
+    @staticmethod
     def get_corpus_fingerprint() -> str:
         """Digest of the live corpus, or a marker explaining why it is missing.
 
@@ -191,13 +268,10 @@ class ResultHandler:
         so "these arms were scored against the same documents" becomes a
         checkable claim.
 
-        Covers the retrievable state, not just the document list. ``resource_hash``
-        is ``md5(url)`` -- an identity hash deliberately stable across content
-        updates -- so documents alone would miss an edit that preserved the byte
-        count. Retrieval reads ``document_chunks``, so the chunk index is hashed
-        too, which also catches re-chunking. Re-embedding the same text with a
-        different model is NOT covered here; that appears as a divergence on
-        ``data_manager.embedding_name`` in the recorded configuration.
+        Covers the retrievable state, not just the document list -- see
+        ``CORPUS_STATE_QUERY`` for what is hashed and why. Re-embedding the same
+        text with a different model is NOT covered; that appears as a divergence
+        on ``data_manager.embedding_name`` in the recorded configuration.
 
         Reads through the pool the run actually opened -- the one `_init_runtime`
         installed on PostgresServiceFactory -- and NOT `ConnectionPool.get_instance`.
@@ -220,13 +294,7 @@ class ResultHandler:
                     "PostgresServiceFactory is not initialized; _init_runtime() "
                     "installs it when this module is run as a script"
                 )
-            rows = factory.connection_pool.execute(
-                "SELECT 'doc:' || resource_hash, size_bytes::text "
-                "FROM documents WHERE is_deleted = FALSE "
-                "UNION ALL "
-                "SELECT 'chunk:' || document_id::text || ':' || chunk_index::text, "
-                "md5(chunk_text) FROM document_chunks"
-            )
+            rows = factory.connection_pool.execute(CORPUS_STATE_QUERY)
             return corpus_fingerprint(rows)
         except Exception as exc:  # noqa: BLE001 - provenance is never fatal
             logger.warning(
@@ -1653,13 +1721,9 @@ class Benchmarker:
                 name_a = comp["config_a"].get("name", f"config_{idx_a}")
                 name_b = comp["config_b"].get("name", f"config_{idx_b}")
                 logger.info(
-                    "  %s vs %s: %d questions. Wins A=%d, B=%d, Ties=%d",
-                    name_a,
-                    name_b,
-                    len(paired),
-                    comp["aggregate"]["wins_a"],
-                    comp["aggregate"]["wins_b"],
-                    comp["aggregate"]["ties"],
+                    ResultHandler.ab_summary_line(
+                        name_a, name_b, len(paired), comp["aggregate"]
+                    )
                 )
 
         # Prompt-sweep leaderboard: rank every config by mean RAGAS metric.

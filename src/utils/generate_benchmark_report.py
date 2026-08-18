@@ -63,7 +63,11 @@ def parse_benchmark_results(results, metadata):
     # provenance of what the agent actually ran is reported alongside instead.
     provenance = {
         "running_configuration": result.get("running_configuration"),
-        "configuration_divergence": result.get("configuration_divergence") or [],
+        # None, not []. An artifact written before configuration provenance has no
+        # such key, and [] would be read below as "compared, and they agreed" --
+        # a positive claim about a comparison that never ran, on exactly the
+        # historical runs whose mislabelling prompted this work.
+        "configuration_divergence": result.get("configuration_divergence"),
         "corpus_fingerprint_before": result.get("corpus_fingerprint_before"),
         "corpus_fingerprint": result.get("corpus_fingerprint"),
         "corpus_unchanged_at_endpoints": result.get("corpus_unchanged_at_endpoints"),
@@ -84,7 +88,7 @@ def format_provenance_html(provenance):
     if not provenance:
         return ""
 
-    divergence = provenance.get("configuration_divergence") or []
+    divergence = provenance.get("configuration_divergence")
     if divergence:
         config_line = (
             "<p class='provenance-alert'>The run did <strong>not</strong> use the "
@@ -92,6 +96,14 @@ def format_provenance_html(provenance):
             "file and what the agent read:</p><ul>"
             + "".join(f"<li><code>{item}</code></li>" for item in divergence)
             + "</ul>"
+        )
+    elif divergence is None:
+        # Absence is not agreement. An empty list means the two were compared and
+        # agreed; a missing key means no comparison was made at all.
+        config_line = (
+            "<p class='provenance-alert'>Whether the run used the selected "
+            "configuration was <strong>not recorded</strong>: this artifact "
+            "predates configuration provenance, so no comparison was made.</p>"
         )
     else:
         config_line = (
