@@ -611,8 +611,8 @@ Two layers:
 >
 > For contrast, `archi restart` refuses the grafana-without-`--env-file`
 > combination only when it re-renders config: the guard at
-> `cli_main.py:556-560` sits inside the `if config_files or config_dir:` block
-> that opens at `cli_main.py:501`, so `archi restart --config` / `--config-dir`
+> `cli_main.py:563-566` sits inside the `if config_files or config_dir:` block
+> that opens at `cli_main.py:508`, so `archi restart --config` / `--config-dir`
 > raises, while a plain `archi restart` skips that block entirely. `create` has
 > no such special-case guard — it does not need one, because its ordering makes
 > every required secret fail safely, not just grafana's.
