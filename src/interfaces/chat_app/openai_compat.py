@@ -390,16 +390,26 @@ def _non_streaming_response(request_id, model, stream_kwargs):
     final_content = ""
     source_documents = []
     source_scores = []
+    append_citations = False
 
     try:
         for event in _chat_wrapper.stream(**stream_kwargs):
             event_type = event.get("type", "")
 
             if event_type == "final":
-                # The final event's response is a plain string from
-                # ChatWrapper._finalize_result — use it directly.
-                response = event.get("response")
-                if response:
+                # Prefer the plain `answer` text: `response` has already been
+                # suffixed with the chat wrapper's own source list, so
+                # appending format_citations() on top of it would duplicate
+                # the source list (issue #245).
+                answer = event.get("answer")
+                if answer is not None:
+                    final_content = answer
+                    append_citations = True
+                else:
+                    # Defensive fallback for events without an `answer` key —
+                    # keep the already-suffixed response text and don't
+                    # append a second source list on top of it.
+                    response = event.get("response")
                     final_content = response or ""
                 docs = event.get("source_documents", [])
                 scores_list = event.get("retriever_scores", [])
@@ -417,9 +427,10 @@ def _non_streaming_response(request_id, model, stream_kwargs):
             "server error; see chat logs for message", "server_error", 500
         )
 
-    citation_text = format_citations(source_documents, source_scores)
-    if citation_text:
-        final_content += citation_text
+    if append_citations:
+        citation_text = format_citations(source_documents, source_scores)
+        if citation_text:
+            final_content += citation_text
 
     return jsonify(
         {

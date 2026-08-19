@@ -74,6 +74,7 @@ from src.interfaces.chat_app.config_fingerprint import (
     resolve_provider_boot_summary,
 )
 from src.interfaces.chat_app.document_utils import *
+from src.interfaces.chat_app.final_event import build_final_event
 from src.interfaces.chat_app.request_validation import (
     InvalidClientTiming,
     InvalidLastMessage,
@@ -2696,26 +2697,19 @@ class ChatWrapper:
                     total_duration_ms=total_duration_ms,
                 )
 
-            yield {
-                "type": "final",
-                "response": output,
-                "conversation_id": context.conversation_id,
-                "archi_msg_id": message_ids[-1] if message_ids else None,
-                "message_id": message_ids[-1] if message_ids else None,
-                "user_message_id": (
-                    message_ids[0] if message_ids and len(message_ids) > 1 else None
-                ),
-                "trace_id": trace_id,
-                "server_response_msg_ts": timestamps[
-                    "server_response_msg_ts"
-                ].timestamp(),
-                "final_response_msg_ts": datetime.now(timezone.utc).timestamp(),
-                "usage": usage,
-                "model": model,
-                "model_used": reported_model,
-                "source_documents": raw_source_documents,
-                "retriever_scores": raw_retriever_scores,
-            }
+            yield build_final_event(
+                last_output=last_output,
+                response=output,
+                conversation_id=context.conversation_id,
+                message_ids=message_ids,
+                trace_id=trace_id,
+                server_response_msg_ts=timestamps["server_response_msg_ts"].timestamp(),
+                usage=usage,
+                model=model,
+                model_used=reported_model,
+                source_documents=raw_source_documents,
+                retriever_scores=raw_retriever_scores,
+            )
 
         except GeneratorExit:
             # User cancelled the stream
