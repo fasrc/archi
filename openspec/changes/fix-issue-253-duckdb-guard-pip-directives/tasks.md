@@ -1,6 +1,6 @@
 ## 1. Close the fail-open hole (TDD)
 
-- [ ] 1.1 Write the directive tests red, then make them green — **in this one task**,
+- [x] 1.1 Write the directive tests red, then make them green — **in this one task**,
       because the gate runs before every commit and a task that ends with the suite red can
       never be committed. All work is in `tests/unit/test_requirements_hygiene.py`; no
       `src/` file changes in this change.
