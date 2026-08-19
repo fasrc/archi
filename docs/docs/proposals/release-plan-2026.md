@@ -22,6 +22,10 @@ Result: **17 issues gate the four releases. 4 were closed as already fixed or
 superseded (with evidence). 35 are parked.** Anything impacting end-user chat
 experience outranks track membership and rides the earliest feasible release.
 
+One further state exists since the 2026-08-19 amendment: **`evidence-trial`** —
+operator-driven trial work, milestone-exempt while the trial runs (see "The
+invariant" below). Such issues are neither gating nor parked; do not park them.
+
 ---
 
 ## Versioning
@@ -41,10 +45,13 @@ experience outranks track membership and rides the earliest feasible release.
   every port commit) as a targeted, hunk-classified port, to trial a capability
   before any adoption decision. The trial PR merges only after the trial passes
   from the PR branch **and** a human records the adopt decision on the trial's
-  tracking issue; a rejected trial merges nothing. Adoption itself still enters a
-  milestone through the normal gate bar — the trial produces the evidence, never
-  the schedule. Wholesale copies of files that exist on the fork stay forbidden;
-  every file in the candidate diff needs a recorded disposition.
+  tracking issue; a rejected trial merges nothing. The trial record on the tracking
+  issue MUST name the **tested PR-head SHA**; if the PR head moves after the trial
+  (review fixes, hunk adjustments), the trial reruns on the new head before merge —
+  stale evidence never merges. Adoption itself still enters a milestone through the
+  normal gate bar — the trial produces the evidence, never the schedule. Wholesale
+  copies of files that exist on the fork stay forbidden; every file in the
+  candidate diff needs a recorded disposition.
 
 **Release mechanics** (per release):
 
@@ -212,9 +219,11 @@ are scheduled or parked.
 currently upstream capability trials (see "Evidence trials" under Versioning). These
 issues are milestone-exempt while the trial runs, and nightly automation must never
 schedule, triage, or drain them — like `parked`, but with active operator-driven
-work. The state ends when a human records the adopt/reject decision on the issue:
-adopt → the follow-on work enters a milestone through the normal gate bar; reject →
-the issue closes with the writeup as the record.
+work. **The label stays on the issue until the issue closes**, so the invariant
+holds through the decision-to-merge interval. Adopt → the label remains while the
+trial PR merges and the follow-on work is filed into a milestone through the normal
+gate bar, then the issue closes. Reject → the issue closes at once with the writeup
+as the record.
 
 Mirrored to Asana: project *p-Search-Engine-LLM* › Milestones, one task per release
 with gating issues as subtasks.
