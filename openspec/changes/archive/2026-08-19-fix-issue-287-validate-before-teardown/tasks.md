@@ -72,7 +72,7 @@ false in verbose mode — the deployment survives, but the caller is told it suc
 
 - [x] 7.1 `--env-file` blockquote in `docs/docs/fasrc_archi.md` rewritten for the new ordering, with all six anchors re-derived at the final head
 - [x] 7.2 The remaining warning kept accurate: `--env-file` is still required for grafana, and `--force` still leaves no running deployment if it fails *after* validation. The fix is not described as making `--force` safe
-- [ ] 7.3 Note on issue #288 that its #287-dependent item is done, and drop #287 from its pending list
+- [x] 7.3 Noted on [#288](https://github.com/fasrc/archi/issues/288#issuecomment-5336384475), with the remaining Part 2 items (#262, #286) and the two lessons: put the doc edit in the same PR as its fix, and do not cite line numbers for a file the same PR edits
 
 ## 8. File what was deliberately left out
 
@@ -88,6 +88,6 @@ false in verbose mode — the deployment survives, but the caller is told it suc
 ## 9. Review loops
 
 - [x] 9.1 Pre-PR adversarial review, 4 rounds. Round 1 (design): two wrong assumptions — `evaluate()` also calls the helper, and `build_compose_config` can refuse — plus a self-contradictory dry-run scenario. Round 2 (design): approve. Round 3 (implementation): the verbosity-4 exit-status defect. Round 4: stale docs anchors, then this artifact reconciliation
-- [ ] 9.2 Open the PR against `fasrc/archi:dev` with the red-test output, the approach taken and why, and the review findings that changed the plan
-- [ ] 9.3 Post-PR: request Codex review as a **comment**, then triage → fix → reply in-thread → push → re-request until a clean round or only-nits-deferred, posting an `<!-- archi-review-round:N -->` log every round
-- [ ] 9.4 Merge once the re-review is clean and CI green, then `/opsx:archive fix-issue-287-validate-before-teardown`
+- [x] 9.2 [PR #292](https://github.com/fasrc/archi/pull/292) opened with the red-test output, approach (a) and why, and the design-review findings that changed the plan
+- [x] 9.3 Five post-PR rounds, nine findings, eight fixed and one deferred (#293). Round logs 1-5 posted; round 5 clean on `d1d0d37e`. Two of the nine were defects introduced by my own earlier fixes, both a check and the operation it guards keying on different predicates
+- [x] 9.4 Squash-merged to `dev` as `430ab855` with all six CI checks green; #287 closed automatically. Archived here
