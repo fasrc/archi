@@ -24,9 +24,13 @@ adopt decision on the tracking issue (0.1).
 
 ## 1. Eval core and CLI
 
-- [ ] 1.1 `model: opus` — Fetch the pin (`git fetch
-  https://github.com/archi-physics/archi feat/live-eval`; verify tag
-  `upstream-live-eval-pin` = `bebfbe56...`). Generate the **disposition table**:
+- [ ] 1.1 `model: opus` — Fetch and publish the pin: `git fetch
+  https://github.com/archi-physics/archi feat/live-eval`; verify `bebfbe56...` is
+  reachable; `git push origin
+  bebfbe56640b4e6ee9fbd2ca5f7f766af27343ab:refs/tags/upstream-live-eval-pin` so
+  every clone can recover the snapshot (`git fetch origin tag
+  upstream-live-eval-pin`) even if upstream force-pushes the branch away. Only
+  then generate the **disposition table**:
   every file in `git diff --name-status d1c29380 bebfbe56` (220 files) gets exactly
   one of `port-verbatim` / `port-hunks` / `skip-unrelated-upstream` /
   `skip-dead-on-fork` plus a one-line reason; commit the table with the PR
@@ -177,13 +181,20 @@ adopt decision on the tracking issue (0.1).
   scenarios on the tracking issue, **naming the tested PR-head SHA and the tested
   base (`origin/dev`) SHA** (amended plan: stale evidence never merges — if either
   moves after the trial, rerun on the current pair).
-- [ ] 7.2 Console trial on FASRC dev, deployed from the PR branch checkout: host
-  config `services.chat_app.evaluations: {enabled: true, mcp_config_path:
-  qa_evaluation_mcp.console.yaml}`; copy `fake_mcp_server.py` into the host dir
-  mounted at `/root/archi/evaluations`; `deploy/fasrc-dev/scripts/redeploy.sh`;
-  verify via `archi-dev-deploy-verify` (chat 200 + `GET /evaluations` 200 + nav
-  link); run the full console loop; record results. Rollback = disable the block,
-  redeploy from `dev`.
+- [ ] 7.2 Console trial on FASRC dev, deployed from the PR branch checkout.
+  **Provenance first** (the redeploy can silently run a stale installed CLI): in
+  the deploy env, `pip install -e .` from the PR checkout, then verify
+  `python -c "import src.cli.managers.templates_manager as m; print(m.__file__)"`
+  resolves inside the PR checkout; record that output and the checkout's head SHA
+  on the tracking issue before treating the deployment as PR-branch evidence.
+  Then: host config `services.chat_app.evaluations: {enabled: true,
+  mcp_config_path: <PR-checkout>/examples/qa_eval/qa_evaluation_mcp.console.yaml}`
+  (the fixture's actual path — the staging step validates it as a host source file
+  and copies it into the generated `evaluation_config/`); copy
+  `fake_mcp_server.py` into the host dir mounted at `/root/archi/evaluations`;
+  `deploy/fasrc-dev/scripts/redeploy.sh`; verify via `archi-dev-deploy-verify`
+  (chat 200 + `GET /evaluations` 200 + nav link); run the full console loop;
+  record results. Rollback = disable the block, redeploy from `dev`.
 - [ ] 7.3 Adopt/reject writeup posted on the tracking issue: functional results;
   verdict agreement on 10–20 golden-set rows converted to Dataset V2 vs the RAGAS
   stack; capability delta; cost (tokens/row, wall time, gate-time delta);

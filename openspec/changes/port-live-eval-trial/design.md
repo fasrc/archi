@@ -4,10 +4,17 @@
 
 - Upstream repo: `archi-physics/archi`, branch `feat/live-eval`, PR #608 (base =
   `feat/archi-eval-command`, PR #596; both open).
-- **Pin: `bebfbe56640b4e6ee9fbd2ca5f7f766af27343ab`** (2026-08-18). Local tag
-  `upstream-live-eval-pin` (not pushed). Every port commit message records the short
-  SHA. PR #608 still moves upstream; a re-pin is a deliberate act, never implicit.
-- Fetch: `git fetch https://github.com/archi-physics/archi feat/live-eval`.
+- **Pin: `bebfbe56640b4e6ee9fbd2ca5f7f766af27343ab`** (2026-08-18). Every port
+  commit message records the short SHA. PR #608 still moves upstream; a re-pin is a
+  deliberate act, never implicit.
+- **Reproducibility (review)**: upstream can force-push `feat/live-eval` away from
+  the pin, and a fresh clone then cannot reach `bebfbe56` at all. Therefore the pin
+  is published as an immutable tag on the fork:
+  `git fetch https://github.com/archi-physics/archi feat/live-eval`, verify the pin
+  is reachable, then `git push origin
+  bebfbe56640b4e6ee9fbd2ca5f7f766af27343ab:refs/tags/upstream-live-eval-pin`. Any
+  clone recovers the snapshot with `git fetch origin tag upstream-live-eval-pin`.
+  The disposition table is generated only after the tag verifies.
 
 ## Policy basis (review round 2)
 
@@ -257,12 +264,16 @@ failed rows.** Tool-trace presence on the live forced-tool row is recorded evide
 only — the gating trace proofs are the deterministic unit tests (task 1.4 real-seam
 callback, task 1.5c persistence); one rule, no operator ambiguity (review round 4).
 
-Console (FASRC dev): set `services.chat_app.evaluations: {enabled: true,
-mcp_config_path: qa_evaluation_mcp.console.yaml}` in the host config; copy
-`fake_mcp_server.py` into the host dir that mounts to `/root/archi/evaluations`;
-`redeploy.sh`; verify chat 200 + `GET /evaluations` 200 + nav link; then import
-dataset → import profile → generate atoms → review/approve → run → score → history.
-Rollback: disable the block, redeploy from `dev`.
+Console (FASRC dev): first prove provenance — the redeploy renders with whatever
+`archi` the host resolves, so `pip install -e .` from the PR checkout and verify
+the imported `templates_manager` file lives inside the checkout. Then set
+`services.chat_app.evaluations: {enabled: true, mcp_config_path:
+<PR-checkout>/examples/qa_eval/qa_evaluation_mcp.console.yaml}` in the host config
+(the fixture's actual path; staging copies it into the generated
+`evaluation_config/`); copy `fake_mcp_server.py` into the host dir that mounts to
+`/root/archi/evaluations`; `redeploy.sh`; verify chat 200 + `GET /evaluations` 200
++ nav link; then import dataset → import profile → generate atoms → review/approve
+→ run → score → history. Rollback: disable the block, redeploy from `dev`.
 
 ## Risks
 

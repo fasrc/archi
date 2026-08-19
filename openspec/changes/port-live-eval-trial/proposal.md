@@ -27,9 +27,11 @@ tree). A disposition table accounts for every file in the candidate diff
 (`d1c29380..bebfbe56`, 220 files) so nothing enters unreviewed.
 
 **Tracker disposition**: this is operator-initiated evidence work under the
-release plan's **evidence-trial** state (added by the plan amendment that precedes
-this implementation — see `docs/docs/proposals/release-plan-2026.md`, "Evidence
-trials"). The tracking issue (task 0.1) carries the `evidence-trial` label. The
+release plan's **evidence-trial** state (added by the plan amendment PR — see
+`docs/docs/proposals/release-plan-2026.md`, "Evidence trials"). **The amendment PR
+is a merge prerequisite for THIS change PR itself**, not only for implementation:
+without it, `dev` would carry a proposal that references a state and an intake
+path the pinned plan does not define. The tracking issue (task 0.1) carries the `evidence-trial` label. The
 implementation PR merges only after the trial passes from the PR branch and the
 human records the adopt decision on that issue; a rejected trial closes the PR
 unmerged. Adoption itself enters a milestone through the plan's normal gate bar.
