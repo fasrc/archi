@@ -50,7 +50,11 @@ invariant" below). Such issues are neither gating nor parked; do not park them.
   if either differs at merge time (review fixes, hunk adjustments, or the base
   advancing under a clean merge), the trial reruns on the current pair before
   merge — stale evidence never merges, and head-only tracking is not enough
-  because a non-conflicting base change can still alter runtime behavior. Adoption itself still enters a milestone through the
+  because a non-conflicting base change can still alter runtime behavior. The
+  trial PR stays a **draft** until the adoption record completes: the hourly
+  PR-readiness reconciler advertises any non-draft, clean, green PR as
+  `ready-to-merge`, and draft status is the one input its predicate already
+  respects — so an unadopted trial can never be advertised as mergeable. Adoption itself still enters a milestone through the
   normal gate bar — the trial produces the evidence, never the schedule. Wholesale
   copies of files that exist on the fork stay forbidden; every file in the
   candidate diff needs a recorded disposition.
@@ -224,10 +228,15 @@ issues are milestone-exempt while the trial runs, and nightly automation must ne
 schedule, triage, or drain them — like `parked`, but with active operator-driven
 work. **The label stays on the issue until the issue closes**, so the invariant
 holds through the decision-to-merge interval. Adopt → **in this order**: first file
-the adoption's follow-on work into a milestone through the normal gate bar (that
-milestone entry is the adoption record — the capability never lands as an invisible
-ride-along), then merge the trial PR, then close the issue; the label stays until
-closure. Reject → the issue closes at once with the writeup as the record.
+the adoption's follow-on work into a milestone through the normal gate bar, and the
+adoption record **names the release the capability ships in** — on this single
+trunk, code merged to `dev` rides the next release regardless of its milestone, so
+either that named release is the next one, or the capability must be **dark**
+(off-by-default toggle, no user-visible surface) in every release before it; a
+capability that cannot ship dark waits unmerged for its release. Then mark the
+draft trial PR ready and merge it, then close the issue; the label stays until
+closure. Reject → **close the trial PR first, then the issue** (a green open PR
+must never outlive its rejection), with the writeup as the record.
 
 Mirrored to Asana: project *p-Search-Engine-LLM* › Milestones, one task per release
 with gating issues as subtasks.
