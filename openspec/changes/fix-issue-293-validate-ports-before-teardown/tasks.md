@@ -113,17 +113,17 @@
 
 ## 3. Make the probe's position durable and the artifacts truthful (one commit)
 
-- [ ] 3.1 Add a comment on the probe loop inside `_check_ports_available()` stating why
+- [x] 3.1 Add a comment on the probe loop inside `_check_ports_available()` stating why
       it cannot run pre-teardown: the existing deployment still holds its ports, so an
       early probe would report a false conflict for every port the running deployment
       uses (acceptance criterion 5).
-- [ ] 3.2 Verify one derivation on the validation path: `grep -rn "port_config_path"
+- [x] 3.2 Verify one derivation on the validation path: `grep -rn "port_config_path"
       src/` shows the config walk implemented in `extract_port_config`, the registry
       definitions, the delegator call sites — and ONE pre-existing hit outside the
       validation path: `show_service_urls` (`src/cli/utils/helpers.py:397-424`), the
       display-path walk with divergent fallback semantics that design.md D6 scopes out.
       Any OTHER walk is a defect in this change.
-- [ ] 3.3 File the follow-up issue for `show_service_urls` (per design.md D6 and the
+- [x] 3.3 File the follow-up issue for `show_service_urls` (per design.md D6 and the
       `archi-followup-issue` conventions: objective, paths, plan, acceptance criteria):
       it reimplements the `port_config_path` walk with fallback semantics that diverge
       from `extract_port_config` (host mode: `default_container_port` vs
@@ -132,11 +132,11 @@
       printed output, hence out of scope here. The PR body must state that the issue's
       acceptance criterion 4 is met on the validation path and link this follow-up for
       the display path.
-- [ ] 3.4 Check `docs/docs/fasrc_archi.md` for any statement about what `create --force`
+- [x] 3.4 Check `docs/docs/fasrc_archi.md` for any statement about what `create --force`
       validates before teardown; update only if it names ports or enumerates the checks
       in a way this change falsifies. If nothing needs changing, note that in the PR
       body instead of inventing a doc edit.
-- [ ] 3.5 Gate green. Commit.
+- [x] 3.5 Gate green. Commit.
 
 ## 4. PR
 

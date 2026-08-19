@@ -901,6 +901,10 @@ class TemplateManager:
             context.plan, context.config_manager, port_config
         )
 
+        # The probe runs here — after teardown — not pre-teardown: the existing
+        # deployment still holds its ports, so an early probe would report a false
+        # conflict for every port the replacement reuses, refusing exactly the
+        # re-creates that should succeed (spec acceptance criterion 5).
         if not allow_port_reuse:
             for port, services in sorted(port_to_services.items()):
                 error = self._probe_port(port)
