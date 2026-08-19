@@ -10,6 +10,9 @@ All work is evaluated against `docs/docs/proposals/release-plan-2026.md` (adopte
   work order.
 - **`parked` label = deliberately unscheduled.** Never schedule, re-triage, or
   re-prioritize a parked issue; only a human moves an issue out of parked.
+- **`evidence-trial` label = operator-driven trial work.** Milestone-exempt while
+  the trial runs. Never schedule, triage, or drain these; the label stays until a
+  human closes the tracking issue with a recorded adopt/reject decision.
 - **New work enters a milestone only if that release's feature is
   broken/wrong/dishonest without it**, evidenced by a file:line, a measured number,
   or a repro. Anything end-user-visible in chat outranks track membership.

@@ -22,6 +22,10 @@ Result: **17 issues gate the four releases. 4 were closed as already fixed or
 superseded (with evidence). 35 are parked.** Anything impacting end-user chat
 experience outranks track membership and rides the earliest feasible release.
 
+One further state exists since the 2026-08-19 amendment: **`evidence-trial`** —
+operator-driven trial work, milestone-exempt while the trial runs (see "The
+invariant" below). Such issues are neither gating nor parked; do not park them.
+
 ---
 
 ## Versioning
@@ -36,6 +40,27 @@ experience outranks track membership and rides the earliest feasible release.
 - Upstream's 77 unmerged commits (v2.3.0→v2.5.0): **cherry-pick only**, no wholesale
   sync release. Nominate candidates from `git log --oneline v2.3.0..v2.5.0` on the
   upstream remote; port a commit when it fixes something we ship, decline the rest.
+- **Evidence trials** are the one other upstream-intake path (amendment, 2026-08-19).
+  An operator may port a **pinned upstream branch snapshot** (exact SHA recorded in
+  every port commit) as a targeted, hunk-classified port, to trial a capability
+  before any adoption decision. The trial PR merges only after the trial passes
+  from the PR branch **and** a human records the adopt decision on the trial's
+  tracking issue; a rejected trial merges nothing. The trial record on the tracking
+  issue MUST name the **tested PR-head SHA and the tested base (`origin/dev`) SHA**;
+  if either differs at merge time (review fixes, hunk adjustments, or the base
+  advancing under a clean merge), the trial reruns before merge — and the rerun
+  head MUST contain the current base (`git merge-base --is-ancestor <base>
+  <head>`: merge or rebase the base into the branch first), because rerunning an
+  unchanged head against a newly recorded base never tests the pair the merge
+  will produce. Stale evidence never merges, and head-only tracking is not enough
+  because a non-conflicting base change can still alter runtime behavior. The
+  trial PR stays a **draft** until the adoption record completes: the hourly
+  PR-readiness reconciler advertises any non-draft, clean, green PR as
+  `ready-to-merge`, and draft status is the one input its predicate already
+  respects — so an unadopted trial can never be advertised as mergeable. Adoption itself still enters a milestone through the
+  normal gate bar — the trial produces the evidence, never the schedule. Wholesale
+  copies of files that exist on the fork stay forbidden; every file in the
+  candidate diff needs a recorded disposition.
 
 **Release mechanics** (per release):
 
@@ -193,10 +218,28 @@ bar is whether that release's stated feature is broken, wrong, or dishonest with
 it.**
 
 **The invariant:** every open issue carries exactly one of {a milestone, the `parked`
-label}, so `milestone-assigned + parked == open`. Anything in neither state is a
-scheduling decision nobody has made, and it is invisible to every report that reads
-the milestones. Re-check this section against the tracker whenever issues are
-scheduled or parked.
+label, the `evidence-trial` label}, so
+`milestone-assigned + parked + evidence-trial == open`. Anything in none of these
+states is a scheduling decision nobody has made, and it is invisible to every report
+that reads the milestones. Re-check this section against the tracker on every
+classification transition — an issue scheduled, parked, or an evidence-trial opened
+or closed.
+
+**`evidence-trial`** (amendment, 2026-08-19) marks operator-initiated evidence work —
+currently upstream capability trials (see "Evidence trials" under Versioning). These
+issues are milestone-exempt while the trial runs, and nightly automation must never
+schedule, triage, or drain them — like `parked`, but with active operator-driven
+work. **The label stays on the issue until the issue closes**, so the invariant
+holds through the decision-to-merge interval. Adopt → **in this order**: first file
+the adoption's follow-on work into a milestone through the normal gate bar, and the
+adoption record **names the release the capability ships in** — on this single
+trunk, code merged to `dev` rides the next release regardless of its milestone, so
+either that named release is the next one, or the capability must be **dark**
+(off-by-default toggle, no user-visible surface) in every release before it; a
+capability that cannot ship dark waits unmerged for its release. Then mark the
+draft trial PR ready and merge it, then close the issue; the label stays until
+closure. Reject → **close the trial PR first, then the issue** (a green open PR
+must never outlive its rejection), with the writeup as the record.
 
 Mirrored to Asana: project *p-Search-Engine-LLM* › Milestones, one task per release
 with gating issues as subtasks.
