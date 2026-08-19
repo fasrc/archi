@@ -193,14 +193,15 @@ adopt decision on the tracking issue (0.1).
 
 ## 8. Merge decision (human gate)
 
-- [ ] 8.1 The human records adopt/reject on the tracking issue. **Adopt** → merge
-  the PR only when the recorded tested head AND base SHAs equal the current PR
-  head and `origin/dev` tip (either moved → rerun the trial first), the review
-  round is clean, and CI is
-  green; the `evidence-trial` label stays on the issue until the merge and the
-  milestone filing of follow-on work complete, then the issue closes. **Reject** →
-  close the PR unmerged, revert the dev-stack deploy to `dev`, close the issue
-  with the writeup as the record.
+- [ ] 8.1 The human records adopt/reject on the tracking issue. **Adopt** — in
+  this order per the amended plan: (1) file the adoption's follow-on work into a
+  milestone through the normal gate bar (that entry is the adoption record);
+  (2) merge the PR, only when the recorded tested head AND base SHAs equal the
+  current PR head and `origin/dev` tip (either moved → rerun the trial first),
+  the review round is clean, and CI is green; (3) close the issue — the
+  `evidence-trial` label stays until closure. **Reject** → close the PR unmerged,
+  revert the dev-stack deploy to `dev`, close the issue with the writeup as the
+  record.
 
 ## 9. Archive (path depends on the 8.1 decision)
 
