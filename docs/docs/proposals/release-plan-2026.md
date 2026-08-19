@@ -36,6 +36,15 @@ experience outranks track membership and rides the earliest feasible release.
 - Upstream's 77 unmerged commits (v2.3.0→v2.5.0): **cherry-pick only**, no wholesale
   sync release. Nominate candidates from `git log --oneline v2.3.0..v2.5.0` on the
   upstream remote; port a commit when it fixes something we ship, decline the rest.
+- **Evidence trials** are the one other upstream-intake path (amendment, 2026-08-19).
+  An operator may port a **pinned upstream branch snapshot** (exact SHA recorded in
+  every port commit) as a targeted, hunk-classified port, to trial a capability
+  before any adoption decision. The trial PR merges only after the trial passes
+  from the PR branch **and** a human records the adopt decision on the trial's
+  tracking issue; a rejected trial merges nothing. Adoption itself still enters a
+  milestone through the normal gate bar — the trial produces the evidence, never
+  the schedule. Wholesale copies of files that exist on the fork stay forbidden;
+  every file in the candidate diff needs a recorded disposition.
 
 **Release mechanics** (per release):
 
@@ -193,10 +202,19 @@ bar is whether that release's stated feature is broken, wrong, or dishonest with
 it.**
 
 **The invariant:** every open issue carries exactly one of {a milestone, the `parked`
-label}, so `milestone-assigned + parked == open`. Anything in neither state is a
-scheduling decision nobody has made, and it is invisible to every report that reads
-the milestones. Re-check this section against the tracker whenever issues are
-scheduled or parked.
+label, the `evidence-trial` label}, so
+`milestone-assigned + parked + evidence-trial == open`. Anything in none of these
+states is a scheduling decision nobody has made, and it is invisible to every report
+that reads the milestones. Re-check this section against the tracker whenever issues
+are scheduled or parked.
+
+**`evidence-trial`** (amendment, 2026-08-19) marks operator-initiated evidence work —
+currently upstream capability trials (see "Evidence trials" under Versioning). These
+issues are milestone-exempt while the trial runs, and nightly automation must never
+schedule, triage, or drain them — like `parked`, but with active operator-driven
+work. The state ends when a human records the adopt/reject decision on the issue:
+adopt → the follow-on work enters a milestone through the normal gate bar; reject →
+the issue closes with the writeup as the record.
 
 Mirrored to Asana: project *p-Search-Engine-LLM* › Milestones, one task per release
 with gating issues as subtasks.

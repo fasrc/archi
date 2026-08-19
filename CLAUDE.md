@@ -10,6 +10,10 @@
 - **`parked` label = deliberately unscheduled.** Do not schedule, re-triage, or
   re-prioritize parked issues. An issue leaves parked only by a human deciding it
   gates a future feature release — never by aging or nightly triage.
+- **`evidence-trial` label = operator-driven trial work.** Milestone-exempt while
+  the trial runs; nightly automation never schedules, triages, or drains these.
+  The trial PR merges only after a human records the adopt decision on the issue.
+  See the plan's "Evidence trials" section.
 - **New work is judged by the plan's gate bar:** it enters a milestone only if that
   release's feature is broken/wrong/dishonest without it, evidenced by a file:line,
   measured number, or repro. Anything end-user-visible in chat outranks track
@@ -27,7 +31,10 @@
   steps mid-release — images already published, no tag), notes from the milestone's
   closed items.
   Bump `pyproject.toml` to the PEP 440 form (e.g. `2026.8.0`) in the release PR.
-  Upstream's unmerged commits: cherry-pick only, no sync release.
+  Upstream's unmerged commits: cherry-pick only, no sync release. The one other
+  intake path is an **evidence trial**: a pinned-SHA, hunk-classified port of an
+  upstream branch snapshot, merged only on a recorded adopt decision (plan:
+  "Evidence trials").
 
 ## Development Workflow
 For non-trivial changes, follow the two-loop spec-driven flow — invoke `/spec-driven-workflow`
