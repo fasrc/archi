@@ -87,3 +87,24 @@ Explicitly **not** done:
 - **Related issues**: #278 (monitored-file-set manifest) and #254 (artifact reconciliation)
   are independent and stay independent; #254 should reconcile *after* this lands so the
   archived design records the final guard shape, as its own body requests.
+
+## Round-2 additions (Codex review of PR #298)
+
+Review of the first change set found three more live directive spellings the pattern does
+not read. All three were reproduced against pip 26.1.2's own parser, and the first change
+set's guard reports **zero** unreadable lines for all three when they are planted in
+`requirements/requirements-base.txt`:
+
+- **Abbreviated long options.** pip resolves any unambiguous prefix, so
+  `--edit git+https://host/duckdb.git` is an editable install. The pattern now matches every
+  prefix of the three long names (design D6).
+- **Environment-built option names.** pip expands `${VAR}` before parsing, so
+  `-${DIRECTIVE} extra.txt` is a live include when the build sets `DIRECTIVE=r`. A `${...}`
+  in an option *name* now fails closed; one in a *value* stays inert (design D7).
+- **Backslash continuations.** pip joins `--edit\` onto the next line before parsing.
+  Read physically, the two halves look like an inert option and a requirement named `able`,
+  so this shape defeated the duckdb name check as well — the most severe of the three. The
+  guard now joins continuations first, mirroring pip's `join_lines` (design D8).
+
+The file scan moved into `unreadable_requirement_lines()` so the read path is testable
+without planting into a monitored file. Suite: 43 → 74 tests.

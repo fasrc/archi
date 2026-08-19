@@ -71,3 +71,37 @@
       reported rather than followed recursively and why (design D2); and that diff-cover
       reports no measurable lines because the diff is tests-only. **Never merge** — a
       human merges in daylight.
+
+## 4. Close the round-2 holes Codex review found on PR #298
+
+- [x] 4.1 Reproduce all three claims against pip 26.1.2 itself before accepting them —
+      call `join_lines`, `build_parser().parse_args` and `expand_env_variables` from
+      `pip._internal.req.req_file` directly, and run the PR-head guard over a
+      `requirements-base.txt` with the three shapes planted. Record that the head guard
+      reports zero unreadable lines for all three.
+- [x] 4.2 Refactor first, green to green: extract the file scan out of
+      `test_requirements_files_declare_only_readable_requirements` into
+      `unreadable_requirement_lines(text)`, so the read path can be tested against
+      synthetic content instead of a planted file. Suite stays at 43 passed.
+- [x] 4.3 Write the round-2 cases red: `test_abbreviated_install_directives_are_flagged`,
+      `test_variable_bearing_option_names_are_flagged`,
+      `test_variables_in_inert_option_values_are_not_flagged`,
+      `test_inert_options_stay_inert`, `test_logical_lines_joins_pip_continuations`,
+      `test_continued_install_directives_are_flagged_at_the_first_line` and
+      `test_a_continuation_cannot_hide_a_duckdb_name`. Confirm 15 fail — 13 on the
+      assertion, 2 on the not-yet-written `logical_lines`.
+- [x] 4.4 Make them green: widen `_INSTALL_DIRECTIVE_PATTERN` to every long-name prefix
+      (design D6), fail closed on a `${VAR}` in an option name only (design D7), and add
+      `logical_lines()` porting pip's `join_lines` (design D8). Update the module
+      docstring, `_requirement_body`'s and `declares_unreadable_requirement`'s to state
+      the new coverage and the guard's boundary.
+- [x] 4.5 Re-run the plant-and-revert with the three new shapes
+      (`--edit git+...duckdb`, `--require\` + `ment extra-requirements.txt`,
+      `-${DIRECTIVE} constraints.txt`). Confirm all three are named with the right line
+      numbers, then `git checkout -- requirements/requirements-base.txt` and confirm the
+      suite is green and the tree carries only the intended change files.
+- [x] 4.6 Run `bash scripts/gate.sh` bare and `openspec validate
+      fix-issue-253-duckdb-guard-pip-directives --strict`.
+- [x] 4.7 Reply in thread to each of the four Codex findings, and escalate the P1 —
+      issue #253 carries the `parked` label, so whether this PR ships at all is a human
+      scheduling decision, not one this change set can make.

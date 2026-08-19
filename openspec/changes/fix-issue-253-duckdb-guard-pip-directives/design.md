@@ -87,3 +87,69 @@ into the same capability without collision.
   single-hyphen spellings of long flags (e.g. `-editable ...`); pip would reject such a
   line, and failing closed on garbage in a monitored file is the guard's job, not a false
   positive.
+
+## Round-2 decisions (Codex review of PR #298)
+
+Codex review found three more ways to write a live install directive that the D1 pattern
+does not read. Each was reproduced against pip 26.1.2's own parser before being accepted:
+`join_lines`, `build_parser().parse_args` and `expand_env_variables` were called directly,
+and the PR-head guard was run over a planted `requirements-base.txt` — it reported zero
+unreadable lines for all three shapes.
+
+### D6 — Match every long-option abbreviation, not the full spelling
+
+pip's option parser resolves any prefix of a long option that is unambiguous, so
+`--edit git+https://host/duckdb.git` is an editable install and `--requirem extra.txt` is
+an include. `_INSTALL_DIRECTIVE_PATTERN` now matches every prefix of `editable`,
+`requirement` and `constraint` rather than the three full names.
+
+The pattern deliberately also matches prefixes pip rejects as ambiguous — `--e` (editable
+or extra-index-url), `--c` (constraint, cert or client-cert). Failing closed on a line pip
+refuses to parse is the guard's job; the alternative is to hard-code pip's full option
+table into a test file and re-check it at every pip upgrade.
+
+No inert option collides: a prefix match requires `=`, whitespace or end-of-line right
+after it, and `--extra-index-url`, `--require-hashes`, `--cert` and `--client-cert` all
+continue with a letter or a hyphen. `test_inert_options_stay_inert` is the fence.
+
+### D7 — Fail closed on an option *name* built from the environment, not on a *value*
+
+pip runs `expand_env_variables` over each line before parsing, so `-${DIRECTIVE} extra.txt`
+becomes `-r extra.txt` in a build that sets `DIRECTIVE=r`. The guard cannot read the
+environment of every future image build, so it reports the shape instead of guessing.
+
+The rule looks at the option name only — the text before the first `=` or space. A variable
+in a *value* is ordinary and stays inert: `--extra-index-url https://${TOKEN}@host/simple`
+is an index URL with a credential in it, not a hidden directive.
+
+The name check is wider than pip's own `${[A-Z0-9_]+}` grammar (it matches any `${...}`),
+because over-reading an option name fails closed, which is the safe direction.
+
+### D8 — Join backslash continuations before reading, mirroring pip
+
+This one is not a line-shape rule; it is how the file is read. pip's `join_lines` joins a
+physical line ending in `\` onto the next before anything is parsed, so
+
+```
+--edit\
+able git+https://host/duckdb.git#egg=duckdb
+```
+
+is one `--editable` directive. Read physically, the first line is an inert-looking option
+and the second parses as a requirement named `able` — **both** guards pass, the name check
+included. This was the only one of the three findings that also defeats the duckdb name
+check, so it is the most severe.
+
+`logical_lines()` ports pip's algorithm, comment-terminates-a-join rule included, and keeps
+the first physical line's number so the failure message still points at a real line. The
+file scan moved into `unreadable_requirement_lines()` so the joining path is testable
+against synthetic content without planting into a monitored file.
+
+Joining also closes a name-check hole for free: `duck\` + `db==1.0` now resolves to
+`duckdb`.
+
+### Boundary, stated rather than implied
+
+The guard reads the five files in `DUCKDB_PIN_PATHS` and nothing they point at. It does not
+expand environment variables and does not open an include target; it reports both shapes.
+The module docstring says so, so the next reviewer does not have to rediscover it.
