@@ -219,15 +219,26 @@ only. Consequences:
   artifact may contain the oracle alias, tool name, recipe fields, sentinel,
   provenance, or gold-atom text (review round 2).
 
-**Where the proofs live (review round 3).** Grep-level trial checks cannot see the
-serialized request the model actually receives, and a live model cannot be forced
-to call a tool. The gating proofs are therefore deterministic, gate-enforced unit
-tests at the invocation boundary (task 1.5): a stub pipeline class and stub model
-factory record everything the ported runtime hands them, an isolation test walks
-those structures for oracle content on a sentinel-resolved live row, and a
-callback test emits a programmatic tool call and asserts the exact trace payload.
-The trial-level grep and the live forced-tool row remain as recorded secondary
-evidence only.
+**Where the proofs live (review rounds 3–4).** Grep-level trial checks cannot see
+the serialized request the model actually receives, a live model cannot be forced
+to call a tool, and a stub pipeline cannot vouch for the real pipeline's message
+building. The gating proofs are therefore deterministic, gate-enforced unit tests
+at BOTH production seams:
+
+- Isolation, runtime seam (task 1.5a): a stub pipeline records everything the
+  ported runtime hands it on a sentinel-resolved live row; the walk finds no
+  oracle content.
+- Isolation, agent seam (task 1.5b): the real `BaseReActAgent` message-building
+  path runs with the provider replaced by a recording fake model; the exact
+  serialized request is walked for the same oracle content. Evaluator-model
+  traffic is asserted separately (it legitimately carries truth and atoms).
+- Callback port, real seam (task 1.4): the supplied callback object provably
+  reaches the compiled agent's invoke configuration.
+- Trace persistence (task 1.5c): a programmatic tool call's exact name and payload
+  round-trip into the workspace trace records.
+
+The trial-level grep and the live forced-tool row remain recorded secondary
+evidence only, and never gate.
 
 ## Trial acceptance (pre-merge)
 
@@ -241,8 +252,10 @@ tracking issue. A failed trial closes the PR; nothing lands on `dev`.
 CLI (full-deps env, `ANTHROPIC_API_KEY` set): prepare → run (`--attempts 2
 --run-workers 2`) → score, then the composite single command in a fresh dir, then
 the determinism probe (`QA_FAKE_MCP_VALUE_FILE` pointing at a file with `9` changes
-the resolved live answer). Pass = exit 0 each phase, zero failed rows, tool-trace
-records present in `answers.jsonl`.
+the resolved live answer). **Pass = exit 0 each phase, `scored` manifest, zero
+failed rows.** Tool-trace presence on the live forced-tool row is recorded evidence
+only — the gating trace proofs are the deterministic unit tests (task 1.4 real-seam
+callback, task 1.5c persistence); one rule, no operator ambiguity (review round 4).
 
 Console (FASRC dev): set `services.chat_app.evaluations: {enabled: true,
 mcp_config_path: qa_evaluation_mcp.console.yaml}` in the host config; copy

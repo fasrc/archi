@@ -57,14 +57,20 @@ adopt decision on the tracking issue (0.1).
   mcp-selected path, apply the recorded fix: `refresh_agent(force=True)` in
   `_runtime_for_attempt`.
 - [ ] 1.5 `model: opus` — Fork-authored boundary tests (gate-enforced, no live
-  model), TDD: (a) **isolation** — run the ported runtime on a live row whose
-  oracle resolves to a sentinel, with a stub pipeline class and stub model factory
-  that record every constructor argument, invoke argument, and message; walk the
-  recorded structures and assert no oracle registry/config, recipe field, resolved
-  truth, provenance, gold-atom text, or sentinel-derived value is present;
-  (b) **callback port** — a stub pipeline programmatically emits one call to a
-  known tool with a known payload; assert the workspace tool-trace records carry
-  that exact name and payload end to end.
+  model), TDD: (a) **isolation, runtime seam** — run the ported runtime on a live
+  row whose oracle resolves to a sentinel, with a stub pipeline class recording
+  every constructor and invoke argument; walk the recordings and assert no oracle
+  registry/config, recipe field, resolved truth, provenance, gold-atom text, or
+  sentinel-derived value; (b) **isolation, agent seam** — run the real
+  `BaseReActAgent` message-building path with the provider replaced by a recording
+  fake model (patch `get_model`); structurally walk the exact serialized request
+  the model received for the same oracle content (evaluator-model traffic asserted
+  separately — it legitimately carries truth and atoms); (c) **trace
+  persistence** — a stub pipeline programmatically emits one call to a known tool
+  with a known payload; assert the workspace tool-trace records carry that exact
+  name and payload end to end. The real-seam callback gate is task 1.4's test:
+  it MUST assert the supplied callback object reaches the compiled agent's invoke
+  configuration.
 - [ ] 1.6 `model: opus` — Run the imported eval suite (`python -m pytest
   tests/unit/evaluation/ -x -q`) and then the full gate; commit 1: `port qa eval
   core and cli from upstream feat/live-eval (bebfbe56)`.
@@ -183,7 +189,12 @@ adopt decision on the tracking issue (0.1).
   the PR (clean review round + green CI + trials passed). **Reject** → close the PR
   unmerged, revert the dev-stack deploy to `dev`, keep the writeup as the record.
 
-## 9. Archive
+## 9. Archive (path depends on the 8.1 decision)
 
-- [ ] 9.1 `model: haiku` — `/opsx:archive port-live-eval-trial`, archive PR (no
-  codex review), merge.
+- [ ] 9.1 `model: haiku` — **Adopt**: verify the implementation PR actually merged,
+  then `/opsx:archive port-live-eval-trial` (spec deltas sync into
+  `openspec/specs/`), archive PR (no codex review), merge. **Reject**: abandon
+  path — archive the change WITHOUT syncing the spec deltas into canonical specs
+  (the capability was never implemented); record the rejection and the writeup
+  link in the archived proposal, and never publish `qa-evaluation-trial`
+  requirements to `openspec/specs/`.

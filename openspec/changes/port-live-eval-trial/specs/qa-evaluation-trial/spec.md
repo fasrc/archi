@@ -23,12 +23,16 @@ not upstream's.
   config, and agent spec against a fresh output directory
 - **THEN** it exits 0 and produces a `scored` manifest in one invocation
 
-#### Scenario: A deterministic unit test proves the agent callback port
+#### Scenario: Deterministic unit tests prove the agent callback port at both seams
 
-- **WHEN** the ported runtime runs against a stub pipeline that programmatically
-  emits one call to a known tool with a known payload
-- **THEN** the workspace's tool-trace records carry that exact tool name and
-  payload, asserted in a gate-enforced unit test with no live model involved
+- **WHEN** (a) a gate-enforced unit test invokes the real `BaseReActAgent` with a
+  recording fake model and a supplied callback, and (b) a second test runs the
+  ported runtime against a stub pipeline that programmatically emits one call to a
+  known tool with a known payload
+- **THEN** test (a) asserts the supplied callback reaches the compiled agent's
+  invoke configuration (the actual ported hunk), and test (b) asserts the
+  workspace tool-trace records carry that exact tool name and payload — no live
+  model involved in either
 
 #### Scenario: Live forced-tool row is recorded, not gating
 
@@ -58,15 +62,18 @@ server, recipe, resolved truth, or gold atoms.
   re-runs into a fresh output directory
 - **THEN** the resolved live answer reflects capacity 9, not the default 7
 
-#### Scenario: Oracle isolation is asserted at the model invocation boundary
+#### Scenario: Oracle isolation is asserted at both production seams
 
-- **WHEN** a gate-enforced unit test runs the ported runtime on a live row whose
-  oracle resolves to a sentinel value, with a stub pipeline class and stub model
-  factory that record every constructor argument, every invoke argument, and every
-  message they receive
-- **THEN** a structural walk of everything the stubs received finds no oracle
-  registry or configuration, no recipe field, no resolved truth, no provenance
-  string, no gold-atom text, and no sentinel-derived value
+- **WHEN** gate-enforced unit tests run on a live row whose oracle resolves to a
+  sentinel value: (a) the ported runtime with a stub pipeline class recording
+  every constructor and invoke argument, and (b) the real `BaseReActAgent`
+  message-building path with the provider replaced by a recording fake model that
+  captures the exact serialized request it receives
+- **THEN** a structural walk of everything the stub pipeline and the recording
+  model received finds no oracle registry or configuration, no recipe field, no
+  resolved truth, no provenance string, no gold-atom text, and no
+  sentinel-derived value (evaluator-model traffic is asserted separately — it
+  legitimately receives resolved truth and gold atoms)
 
 #### Scenario: Trial-level isolation grep as secondary evidence
 
