@@ -51,12 +51,12 @@
 
 ## 2. Verify against the issue's acceptance criteria
 
-- [ ] 2.1 Run `bash scripts/gate.sh` **bare — no pipe, no redirect** (it refuses to run
+- [x] 2.1 Run `bash scripts/gate.sh` **bare — no pipe, no redirect** (it refuses to run
       when its output is piped or redirected). Format, lint and the unit suite must pass.
       Expect diff-cover to report **no lines with coverage information**: this diff is
       tests-only (plus OpenSpec markdown), so there are no measurable `src/` lines. That
       is a legitimate pass, not a bypassed gate. Never `--no-verify`.
-- [ ] 2.2 Run `openspec validate fix-issue-253-duckdb-guard-pip-directives --strict` and
+- [x] 2.2 Run `openspec validate fix-issue-253-duckdb-guard-pip-directives --strict` and
       confirm it passes.
 
 ## 3. Ship it (no merge)
