@@ -46,9 +46,11 @@ invariant" below). Such issues are neither gating nor parked; do not park them.
   before any adoption decision. The trial PR merges only after the trial passes
   from the PR branch **and** a human records the adopt decision on the trial's
   tracking issue; a rejected trial merges nothing. The trial record on the tracking
-  issue MUST name the **tested PR-head SHA**; if the PR head moves after the trial
-  (review fixes, hunk adjustments), the trial reruns on the new head before merge —
-  stale evidence never merges. Adoption itself still enters a milestone through the
+  issue MUST name the **tested PR-head SHA and the tested base (`origin/dev`) SHA**;
+  if either differs at merge time (review fixes, hunk adjustments, or the base
+  advancing under a clean merge), the trial reruns on the current pair before
+  merge — stale evidence never merges, and head-only tracking is not enough
+  because a non-conflicting base change can still alter runtime behavior. Adoption itself still enters a milestone through the
   normal gate bar — the trial produces the evidence, never the schedule. Wholesale
   copies of files that exist on the fork stay forbidden; every file in the
   candidate diff needs a recorded disposition.
@@ -212,8 +214,9 @@ it.**
 label, the `evidence-trial` label}, so
 `milestone-assigned + parked + evidence-trial == open`. Anything in none of these
 states is a scheduling decision nobody has made, and it is invisible to every report
-that reads the milestones. Re-check this section against the tracker whenever issues
-are scheduled or parked.
+that reads the milestones. Re-check this section against the tracker on every
+classification transition — an issue scheduled, parked, or an evidence-trial opened
+or closed.
 
 **`evidence-trial`** (amendment, 2026-08-19) marks operator-initiated evidence work —
 currently upstream capability trials (see "Evidence trials" under Versioning). These
