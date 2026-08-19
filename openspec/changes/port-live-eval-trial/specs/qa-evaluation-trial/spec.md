@@ -106,6 +106,11 @@ thin call sites only.
 - **THEN** `GET /evaluations` returns 200, the nav link renders, and a full console
   loop (import dataset → import profile → generate and approve atoms → run → score
   → history) completes
+- **AND** the recorded runtime evidence shows the chatbot container's logs for the
+  evaluation job (job start, MCP stdio subprocess launch, live pre/post checks,
+  score completion) with no tracebacks, and the run's artifacts present under the
+  host directory backing `/root/archi/evaluations` — HTTP and UI success alone
+  never satisfy this scenario
 
 #### Scenario: Auth-off deployments authorize all console requests
 
@@ -164,7 +169,17 @@ hunks only.
 
 The implementation PR SHALL NOT merge before (a) the CLI smoke and the console
 trial both pass, executed from the PR branch, and (b) a human records the adopt
-decision on the tracking issue. A rejected trial SHALL close the PR unmerged.
+decision on the tracking issue. The trial record SHALL name the tested PR-head
+SHA and the tested base (`origin/dev`) SHA, and the tested head MUST contain the
+tested base (`git merge-base --is-ancestor`). Trial evidence expires when either
+SHA differs from the tips at merge time: the base merges into the head and the
+trial reruns before any merge. A rejected trial SHALL close the PR unmerged.
+
+#### Scenario: Stale evidence never merges
+
+- **WHEN** the PR head or `origin/dev` moves after a recorded passing trial
+- **THEN** the merge waits until the current base is merged into the head and the
+  trial passes again on the new head/base pair
 
 #### Scenario: Failed trial never lands
 

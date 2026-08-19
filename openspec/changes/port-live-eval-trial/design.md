@@ -274,7 +274,12 @@ the imported `templates_manager` file lives inside the checkout. Then set
 `evaluation_config/`); copy `fake_mcp_server.py` into the host dir that mounts to
 `/root/archi/evaluations`; `redeploy.sh`; verify chat 200 + `GET /evaluations` 200
 + nav link; then import dataset → import profile → generate atoms → review/approve
-→ run → score → history. Rollback: disable the block, redeploy from `dev`.
+→ run → score → history, with runtime evidence recorded (chatbot logs for the job,
+no tracebacks, artifacts under the host-backed evaluations dir). Rollback (both
+decision paths): the editable install rebound the ambient `archi` to the PR
+checkout, so first reinstall editable from the dev checkout with the same
+entry-point interpreter and re-verify the imported `templates_manager.__file__`
+resolves inside the dev checkout, then disable the block and redeploy from `dev`.
 
 ## Risks
 
