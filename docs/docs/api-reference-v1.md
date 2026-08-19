@@ -162,9 +162,11 @@ pipeline returned without a score are listed last, without a `(relevance: ...)` 
 
 Collection labels appear only when sources span multiple collections.
 
-A `/v1` response contains **exactly one** citation block, in the format above. The native chat
-UI's own source list (a `Show all sources` details block) never appears in `/v1` content:
-non-streaming responses are built from the `final` event's bare `answer` field with one
-citation block appended, and streaming responses append the same block after the streamed
-chunks. If a `final` event ever arrives without the `answer` field, the endpoint returns the
-finalized `response` unchanged instead of appending a second block.
+A `/v1` response never carries two source lists. On the normal path it contains **exactly one**
+citation block, in the format above, and the native chat UI's own source list (a `Show all
+sources` details block) does not appear: non-streaming responses are built from the `final`
+event's bare `answer` field with one citation block appended, and streaming responses append
+the same block after the streamed chunks. If a `final` event ever arrives without the `answer`
+field, the endpoint returns the finalized `response` unchanged — that text ends with the chat
+UI's own source list, and no citation block is appended on top of it, so the response still
+carries only one list.
