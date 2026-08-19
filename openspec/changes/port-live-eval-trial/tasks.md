@@ -158,11 +158,13 @@ adopt decision on the tracking issue (0.1).
   (`/codex:adversarial-review --wait`): verify each finding, fix (TDD) or push back
   with reasons, commit, re-run; stop at zero findings or nits-only (file nits as
   issues; bound 3–4 rounds). Carry the round summary into the PR body.
-- [ ] 6.2 `model: sonnet` — Push, open the PR (`gh pr create --repo fasrc/archi
-  --base dev`) with the trial-gated merge condition stated in the body, comment
+- [ ] 6.2 `model: sonnet` — Push, open the PR **as a draft** (`gh pr create
+  --draft --repo fasrc/archi --base dev`) with the trial-gated merge condition
+  stated in the body — draft status keeps the hourly readiness reconciler from
+  ever advertising the unadopted trial as `ready-to-merge` (amended plan). Comment
   `@codex review`, drive the post-PR loop per `archi-pr-review-response`
-  (round-log comments) to a clean round. **Do not merge** — merge is gated on
-  section 7.
+  (round-log comments) to a clean round. **Do not mark ready or merge** — that is
+  section 8.
 
 ## 7. Trial execution from the PR branch (operator present — needs-deploy)
 
@@ -206,13 +208,16 @@ adopt decision on the tracking issue (0.1).
 
 - [ ] 8.1 The human records adopt/reject on the tracking issue. **Adopt** — in
   this order per the amended plan: (1) file the adoption's follow-on work into a
-  milestone through the normal gate bar (that entry is the adoption record);
-  (2) merge the PR, only when the recorded tested head AND base SHAs equal the
+  milestone through the normal gate bar, and name the release the capability
+  ships in — this capability satisfies the dark-ride-along rule (the console
+  activates only on `evaluations.enabled: true`, off in every deployed config by
+  default), so an earlier release may carry it dark; (2) mark the draft PR ready
+  and merge it, only when the recorded tested head AND base SHAs equal the
   current PR head and `origin/dev` tip (either moved → rerun the trial first),
   the review round is clean, and CI is green; (3) close the issue — the
-  `evidence-trial` label stays until closure. **Reject** → close the PR unmerged,
-  revert the dev-stack deploy to `dev`, close the issue with the writeup as the
-  record.
+  `evidence-trial` label stays until closure. **Reject** — close the PR first,
+  then revert the dev-stack deploy to `dev`, then close the issue with the
+  writeup as the record (a green open PR never outlives its rejection).
 
 ## 9. Archive (path depends on the 8.1 decision)
 
