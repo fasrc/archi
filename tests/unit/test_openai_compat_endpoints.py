@@ -633,3 +633,155 @@ class TestErrorHandling:
         assert "error" in data
         assert data["error"]["type"] == "server_error"
         assert "server error; see chat logs for message" in data["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Single source list (issue #245)
+# ---------------------------------------------------------------------------
+
+
+def _make_source_doc(display_name):
+    """Create a fake source document with a `.metadata` dict."""
+    doc = MagicMock()
+    doc.metadata = {"display_name": display_name}
+    return doc
+
+
+class TestSingleSourceList:
+
+    def test_non_streaming_with_sources_has_exactly_one_source_section(
+        self, app_no_auth
+    ):
+        app, chat_wrapper = app_no_auth
+        chat_wrapper.stream.return_value = iter(
+            [
+                {"type": "chunk", "content": "The answer."},
+                {
+                    "type": "final",
+                    "answer": "The answer.",
+                    "response": (
+                        "The answer.\n\n---\n"
+                        "<details><summary><strong>Show all sources (1)</strong></summary>\n\n"
+                        "- [doc.md](https://example.com/doc) (0.90)\n\n"
+                        "</details>\n"
+                    ),
+                    "source_documents": [_make_source_doc("doc.md")],
+                    "retriever_scores": [0.9],
+                },
+            ]
+        )
+
+        client = app.test_client()
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        content = resp.get_json()["choices"][0]["message"]["content"]
+        assert content.count("**Sources:**") == 1
+        assert "Show all sources" not in content
+        assert content.startswith("The answer.")
+
+    def test_non_streaming_answer_without_sources_is_bare(self, app_no_auth):
+        app, chat_wrapper = app_no_auth
+        chat_wrapper.stream.return_value = iter(
+            [
+                {"type": "chunk", "content": "Just an answer."},
+                {
+                    "type": "final",
+                    "answer": "Just an answer.",
+                    "response": "Just an answer.",
+                    "source_documents": [],
+                    "retriever_scores": [],
+                },
+            ]
+        )
+
+        client = app.test_client()
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        content = resp.get_json()["choices"][0]["message"]["content"]
+        assert content == "Just an answer."
+
+    def test_non_streaming_empty_answer_with_sources_yields_citations_only(
+        self, app_no_auth
+    ):
+        app, chat_wrapper = app_no_auth
+        chat_wrapper.stream.return_value = iter(
+            [
+                {
+                    "type": "final",
+                    "answer": "",
+                    "response": (
+                        "\n\n---\n"
+                        "<details><summary><strong>Show all sources (1)</strong></summary>\n\n"
+                        "- [doc.md](https://example.com/doc) (0.90)\n\n"
+                        "</details>\n"
+                    ),
+                    "source_documents": [_make_source_doc("doc.md")],
+                    "retriever_scores": [0.9],
+                },
+            ]
+        )
+
+        client = app.test_client()
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        content = resp.get_json()["choices"][0]["message"]["content"]
+        assert "Show all sources" not in content
+        assert content.count("**Sources:**") == 1
+        assert content.startswith("\n\n---\n**Sources:**")
+
+    def test_non_streaming_missing_answer_key_never_appends(self, app_no_auth):
+        app, chat_wrapper = app_no_auth
+        response_text = (
+            "Old answer.\n\n---\n"
+            "<details><summary><strong>Show all sources (1)</strong></summary>\n\n"
+            "- [doc.md](https://example.com/doc) (0.90)\n\n"
+            "</details>\n"
+        )
+        chat_wrapper.stream.return_value = iter(
+            [
+                {
+                    "type": "final",
+                    "response": response_text,
+                    "source_documents": [_make_source_doc("doc.md")],
+                    "retriever_scores": [0.9],
+                },
+            ]
+        )
+
+        client = app.test_client()
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        content = resp.get_json()["choices"][0]["message"]["content"]
+        assert content == response_text
