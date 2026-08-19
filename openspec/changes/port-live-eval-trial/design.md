@@ -105,8 +105,8 @@ upstream-main content (rule 2 above).
 | `base-compose.yaml` | Add the `./data/evaluations` mount and the conditional read-only `./evaluation_config` mount. |
 | `pyproject.toml` | Add `mcp==1.27.2`, `ijson==3.5.1`, and the pytest `markers` section. Keep every fork-only dep. |
 | `tools/mcp.py`, `utils/mcp_utils.py` | **Skip.** Upstream's hunks serve upstream-main skills/http-auth work; the eval runtime does not import them. |
-| `docs/cli_reference.md` | Content merge (+274 upstream lines — the one real docs merge). |
-| `docs/configuration.md`, `docs/benchmarking.md` | Merge the eval sections. |
+| `docs/docs/cli_reference.md` | Content merge (+274 upstream lines — the one real docs merge). |
+| `docs/docs/configuration.md`, `docs/docs/benchmarking.md` | Merge the eval sections. |
 | `docs/mkdocs.yml` | Nav entry `Evaluation: evaluation.md` after Benchmarking. |
 | `README.md` | Optional one-line mention; take ours otherwise. |
 

@@ -33,7 +33,8 @@ adopt decision on the tracking issue (0.1).
   then generate the **disposition table**:
   every file in `git diff --name-status d1c29380 bebfbe56` (220 files) gets exactly
   one of `port-verbatim` / `port-hunks` / `skip-unrelated-upstream` /
-  `skip-dead-on-fork` plus a one-line reason; commit the table with the PR
+  `skip-dead-on-fork` / `omitted-optional` plus a one-line reason; commit the
+  table with the PR
   (`openspec/changes/port-live-eval-trial/disposition.md`). Then copy verbatim from
   the pin (eval-capability files absent on the fork only): `src/evaluation/**`
   (23 files), `src/cli/qa_eval.py`, `tests/unit/evaluation/**` (including
@@ -176,8 +177,9 @@ adopt decision on the tracking issue (0.1).
 
 - [ ] 7.1 CLI smoke in the full-deps env with `ANTHROPIC_API_KEY`: staged phases,
   composite re-run, determinism probe (`QA_FAKE_MCP_VALUE_FILE` → 9). One pass
-  rule for staged AND composite: exit 0, `scored` manifest, zero failed rows —
-  inspect the failed-row count in both workspaces explicitly. Then two
+  rule for staged AND composite: exit 0, `scored` manifest, zero failed rows, and
+  `report.md` present and inspected — check all four in both workspaces
+  explicitly. Then two
   **secondary-evidence checks** (the gating proofs are the unit tests in 1.5):
   (a) isolation grep — re-run with `QA_FAKE_MCP_VALUE_FILE` →
   `examples/qa_eval/sentinel_value.txt`; grep the persisted agent config, agent
@@ -206,8 +208,16 @@ adopt decision on the tracking issue (0.1).
   and copies it into the generated `evaluation_config/`); copy
   `fake_mcp_server.py` into the host dir mounted at `/root/archi/evaluations`;
   `deploy/fasrc-dev/scripts/redeploy.sh`; verify via `archi-dev-deploy-verify`
-  (chat 200 + `GET /evaluations` 200 + nav link); run the full console loop;
-  record results. Rollback = disable the block, redeploy from `dev`.
+  (chat 200 + `GET /evaluations` 200 + nav link); run the full console loop.
+  **Runtime evidence, not just HTTP**: inspect the chatbot container's logs for
+  the evaluation job (job start, MCP stdio subprocess launch, live pre/post
+  checks, score completion — no tracebacks), confirm the run's artifacts landed
+  under the host dir backing `/root/archi/evaluations`, and record log excerpts
+  with the results. **Rollback (both decision paths)**: the editable install
+  above rebound the ambient `archi` to the PR checkout, so first
+  `"$ARCHI_PY" -m pip install -e <dev-checkout>` and re-verify the imported
+  `templates_manager.__file__` resolves inside the dev checkout, then disable the
+  `evaluations` block and run `redeploy.sh` from the dev checkout.
 - [ ] 7.3 Adopt/reject writeup posted on the tracking issue: functional results;
   verdict agreement on 10–20 golden-set rows converted to Dataset V2 vs the RAGAS
   stack; capability delta; cost (tokens/row, wall time, gate-time delta);
@@ -227,10 +237,13 @@ adopt decision on the tracking issue (0.1).
   current PR head and `origin/dev` tip AND the tested head contains the tested
   base (`git merge-base --is-ancestor`) — if either moved, merge the base into
   the head and rerun the trial first — with a clean review round and green CI;
-  (3) close the issue — the
+  (3) run the 7.2 rollback (rebind `archi` to the dev checkout, disable the
+  `evaluations` block, redeploy) so the dev stack does not keep the trial console
+  and the auth-off seam enabled after evidence collection — the capability rides
+  dark until its milestone turns it on properly; (4) close the issue — the
   `evidence-trial` label stays until closure. **Reject** — close the PR first,
-  then revert the dev-stack deploy to `dev`, then close the issue with the
-  writeup as the record (a green open PR never outlives its rejection).
+  then run the same 7.2 rollback, then close the issue with the writeup as the
+  record (a green open PR never outlives its rejection).
 
 ## 9. Archive (path depends on the 8.1 decision)
 
