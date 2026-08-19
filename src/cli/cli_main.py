@@ -37,6 +37,13 @@ env = Environment(
 )
 ARCHI_DIR = os.environ.get("ARCHI_DIR", os.path.join(os.path.expanduser("~"), ".archi"))
 
+# Both places that can fail for want of secrets point at the flag, rather than at
+# archi's packaged placeholder file, which is not something an operator chose.
+_ENV_FILE_HINT = (
+    "No --env-file was given, so archi fell back to its packaged placeholder "
+    "secrets. Re-run with --env-file <path> supplying the secrets it needs."
+)
+
 
 @click.group()
 def cli():
@@ -137,11 +144,14 @@ def create(
 
     warn_if_template_mismatch()
 
-    # Check if Docker is available when --podman is not specified. This has to
-    # run before handle_existing_deployment() (a --force cleanup tears the old
-    # deployment down and would leave nothing behind if the runtime is missing)
-    # and outside the try below (whose verbosity>=4 branch swallows exceptions
-    # and would report success). --dry inspects only, so it needs no runtime.
+    # Check if Docker is available when --podman is not specified. Kept here,
+    # ahead of everything else, because a deployment that cannot be brought back
+    # up should be refused before any work is done. The two hazards this once
+    # dodged are now fixed at their source rather than routed around: the --force
+    # teardown moved below every step that can refuse the deployment
+    # (remove_existing_deployment, further down), and the try below no longer
+    # swallows exceptions at verbosity>=4. --dry inspects only, so it needs no
+    # runtime.
     if (
         not dry
         and not other_flags.get("podman", False)
@@ -159,15 +169,27 @@ def create(
 
         # Combine services and data sources for processing
         enabled_services = services.copy()
-        # Handle existing deployment
+        # Refuse an existing deployment when --force was not given. This is the
+        # non-destructive half and belongs here: "already exists" should outrank
+        # an unrelated config error for an operator who never asked to replace
+        # anything. The destructive --force teardown runs much later, once
+        # nothing is left that could still refuse the replacement.
         base_dir = Path(ARCHI_DIR) / f"archi-{name}"
-        handle_existing_deployment(
-            base_dir, name, force, dry, other_flags.get("podman", False)
-        )
+        handle_existing_deployment(base_dir, name, force)
 
         # Initialize managers
         config_manager = ConfigurationManager(config_files, env)
-        secrets_manager = SecretsManager(env_file, config_manager)
+        try:
+            secrets_manager = SecretsManager(env_file, config_manager)
+        except FileNotFoundError as env_error:
+            if not env_file:
+                # The fallback is the relative path
+                # src/cli/managers/secrets_dummy.env, which is not shipped as
+                # package data, so an installed archi run from anywhere but the
+                # repo root cannot find it and fails here — before the
+                # validate_secrets() handler below ever sees it.
+                raise click.ClickException(f"{env_error}\n{_ENV_FILE_HINT}")
+            raise
 
         # Resolve enabled sources from config (no CLI source overrides).
         # Keep links enabled by default.
@@ -196,7 +218,15 @@ def create(
         required_secrets, all_secrets = secrets_manager.get_secrets(
             set(enabled_services), set(enabled_sources)
         )
-        secrets_manager.validate_secrets(required_secrets)
+        try:
+            secrets_manager.validate_secrets(required_secrets)
+        except ValueError as secrets_error:
+            if not env_file:
+                # Without --env-file the manager fell back to the packaged
+                # placeholder file, so its "add these to your .env file" advice
+                # points inside archi's own package. Name the flag instead.
+                raise click.ClickException(f"{secrets_error}\n{_ENV_FILE_HINT}")
+            raise
         logger.info(
             f"Required secrets validated: {', '.join(sorted(required_secrets))}"
         )
@@ -217,6 +247,19 @@ def create(
             enabled_sources=enabled_sources,
             secrets=all_secrets,
             **other_flags,
+        )
+
+        # Everything above this line can still refuse the deployment — service
+        # selection, config validation, secret validation, and the compose plan
+        # itself (build_compose_config calls _discover_repo_path() under --dev,
+        # which raises outside a checkout). So the --force teardown goes here and
+        # nowhere earlier: a create that was always going to fail must not cost
+        # the operator a running deployment first (fasrc/archi#287).
+        #
+        # It cannot move below the --dry return either, or a dry run would stop
+        # reporting the removal it would have performed.
+        remove_existing_deployment(
+            base_dir, name, force, dry, other_flags.get("podman", False)
         )
 
         # Handle dry run
@@ -274,10 +317,17 @@ def create(
         )
 
     except Exception as e:
+        # Verbosity selects diagnostics, never exit status. This branch used to
+        # print the traceback and fall through at >= 4, so a create that failed
+        # validation exited 0 and reported success — which is why the Docker
+        # preflight above deliberately sits outside this try. Now that refusing
+        # before teardown is the contract, a refusal that exits 0 would tell a
+        # calling script the replacement succeeded (fasrc/archi#287).
         if verbosity >= 4:
             traceback.print_exc()
-        else:
-            raise click.ClickException(str(e))
+        if isinstance(e, click.ClickException):
+            raise
+        raise click.ClickException(str(e))
 
 
 @click.command()
@@ -745,7 +795,12 @@ def evaluate(
                 "Benchmark question bank failed preflight:\n" + "\n".join(bank_errors)
             )
 
-        handle_existing_deployment(
+        # Both halves, back to back, so this path keeps the combined behaviour it
+        # had when these were one function: refuse without --force, tear down with
+        # it. evaluate() depends on the teardown having happened by the time it
+        # reaches the "already exists" check just below.
+        handle_existing_deployment(base_dir, name, force)
+        remove_existing_deployment(
             base_dir, name, force, False, other_flags.get("podman", False)
         )
 

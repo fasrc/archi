@@ -141,6 +141,23 @@ class TemplateContext:
         return bool(self.options.get("benchmarking"))
 
     @property
+    def needs_agent_specs(self) -> bool:
+        """Whether any enabled service reads agent specs from data/agents.
+
+        Not "is the chatbot enabled": piazza and redmine-mailer both call
+        select_agent_spec() on the staged directory and fail when it is empty,
+        so an integration-only deployment still needs agents staged. Nor "does
+        anything mount data/agents": grader and mattermost mount it without
+        reading specs. The registry flag records which services actually
+        consume them.
+        """
+        definitions = service_registry.get_all_services()
+        return any(
+            getattr(definitions.get(name), "consumes_agent_specs", False)
+            for name in self.plan.get_enabled_services()
+        )
+
+    @property
     def build(self) -> bool:
         # Whether this run will (re)build the image. Source is only copied — and the
         # SOURCE_COMMIT provenance file only refreshed — when a build actually happens,
@@ -259,6 +276,19 @@ class TemplateManager:
                     )
                 staged_by_basename[source_path.name] = source_path
                 shutil.copyfile(source_path, dst_dir / source_path.name)
+            return
+
+        # Agents exist to be consumed by a service that reads specs from them --
+        # the chat app, piazza, or redmine-mailer. A deployment with none --
+        # the grader-only flow, examples/deployments/grading/config.yaml, whose
+        # services are grader_app only -- has no services.chat_app section at
+        # all, and config validation skips the chat-app checks for exactly that
+        # reason. Demanding agents_dir here anyway raised after the deployment
+        # directory had been created, and so under --force after the existing
+        # deployment was torn down (fasrc/archi#287). Nothing this stage can
+        # reject may reach that point.
+        if not getattr(context, "needs_agent_specs", True):
+            logger.debug("no enabled service consumes agent specs; skipping")
             return
 
         agents_dir = (services_cfg.get("chat_app") or {}).get("agents_dir")
@@ -924,14 +954,21 @@ class TemplateManager:
             return
 
         for input_list in input_lists:
-            if os.path.exists(input_list):
+            # isfile, not exists: a directory satisfies exists() and then makes
+            # shutil.copyfile raise IsADirectoryError here — inside
+            # prepare_deployment_files(), so under --force after the existing
+            # deployment was torn down (fasrc/archi#287). Staging already
+            # tolerates a missing input list by warning and skipping, and a path
+            # that is not a regular file is no more usable than an absent one.
+            if os.path.isfile(input_list):
                 shutil.copyfile(
                     input_list, weblists_path / os.path.basename(input_list)
                 )
                 logger.debug(f"Copied input list {input_list}")
             else:
                 logger.warning(
-                    f"Configured input list {input_list} not found; skipping"
+                    f"Configured input list {input_list} is not a readable file; "
+                    f"skipping"
                 )
 
     def copy_source_code(self, base_dir: Path) -> None:

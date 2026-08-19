@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Set
 import yaml
 
 from src.cli.managers.templates_manager import BASE_CONFIG_TEMPLATE
+from src.cli.service_registry import service_registry
 from src.cli.source_registry import source_registry
 from src.utils.logging import get_logger
 
@@ -168,6 +169,7 @@ class ConfigurationManager:
             required_fields = static_requirements + pipeline_requirements
             self._validate_config(required_fields, config)
             self._validate_chat_app_config(config, services)
+            self._validate_agent_specs_config(config, services)
             self._validate_benchmarking_config(config, services)
             self._validate_source_fields(config, sources)
 
@@ -187,14 +189,8 @@ class ConfigurationManager:
                 "Legacy keys detected: 'services.chat_app.provider'/'services.chat_app.model'. "
                 "Use 'services.chat_app.default_provider' and 'services.chat_app.default_model' instead."
             )
-        if "agent_dir" in chat_cfg and "agents_dir" not in chat_cfg:
-            raise ValueError(
-                "Missing required field: 'services.chat_app.agents_dir' (did you mean 'agent_dir'?)"
-            )
-
         required = [
             ("agent_class", "services.chat_app.agent_class"),
-            ("agents_dir", "services.chat_app.agents_dir"),
             ("default_provider", "services.chat_app.default_provider"),
             ("default_model", "services.chat_app.default_model"),
         ]
@@ -203,15 +199,6 @@ class ConfigurationManager:
             if not value:
                 raise ValueError(
                     f"Missing required field: '{path}' in the configuration"
-                )
-
-        agents_dir = Path(str(chat_cfg.get("agents_dir"))).expanduser()
-        if agents_dir.exists():
-            if not agents_dir.is_dir():
-                raise ValueError(f"agents_dir must be a directory: '{agents_dir}'")
-            if not list(agents_dir.glob("*.md")):
-                raise ValueError(
-                    f"agents_dir must contain at least one .md file: '{agents_dir}'"
                 )
 
         # Guard against self-contradictory provider config:
@@ -251,6 +238,65 @@ class ConfigurationManager:
             raise ValueError(
                 f"Invalid field: '{timeout_path}' must be <= 86400 seconds"
             )
+
+    def _validate_agent_specs_config(
+        self, config: Dict[str, Any], services: List[str]
+    ) -> None:
+        """Validate agent inputs for every service that reads agent specs.
+
+        This deliberately does NOT key on chatbot. piazza and redmine-mailer
+        also call select_agent_spec() on the staged data/agents directory, so
+        they need the same inputs; keying validation on chatbot while
+        TemplateManager._stage_agents() keys staging on the wider predicate
+        would leave exactly the gap this is closing — validation passes,
+        staging raises, and staging runs after the forced teardown
+        (fasrc/archi#287).
+
+        The rest of the chat-app schema (agent_class, default_provider,
+        default_model) stays chatbot-only: an integration needs the agent
+        files, not a chat app's provider defaults.
+        """
+        if not self._consumes_agent_specs(services):
+            return
+
+        chat_cfg = (config.get("services", {}) or {}).get("chat_app", {}) or {}
+
+        if "agent_dir" in chat_cfg and "agents_dir" not in chat_cfg:
+            raise ValueError(
+                "Missing required field: 'services.chat_app.agents_dir' (did you mean 'agent_dir'?)"
+            )
+        if not chat_cfg.get("agents_dir"):
+            raise ValueError(
+                "Missing required field: 'services.chat_app.agents_dir' in the configuration"
+            )
+
+        # Refuse here, where nothing has been destroyed yet, rather than in
+        # _stage_agents() which runs after the deployment directory is created.
+        agents_dir = Path(str(chat_cfg.get("agents_dir"))).expanduser()
+        if not agents_dir.exists():
+            raise ValueError(f"agents_dir not found: '{agents_dir}'")
+        if not agents_dir.is_dir():
+            raise ValueError(f"agents_dir must be a directory: '{agents_dir}'")
+        # Same predicate _stage_agents() uses to copy, or inputs exist that pass
+        # one and fail the other. glob("*.md") differed in both directions: it
+        # matches a *directory* named "notes.md", and misses "AGENT.MD" that
+        # staging would happily copy.
+        if not any(
+            entry.is_file() and entry.suffix.lower() == ".md"
+            for entry in agents_dir.iterdir()
+        ):
+            raise ValueError(
+                f"agents_dir must contain at least one .md file: '{agents_dir}'"
+            )
+
+    @staticmethod
+    def _consumes_agent_specs(services: List[str]) -> bool:
+        """Whether any enabled service reads agent specs from data/agents."""
+        definitions = service_registry.get_all_services()
+        return any(
+            getattr(definitions.get(name), "consumes_agent_specs", False)
+            for name in (services or [])
+        )
 
     def _validate_benchmarking_config(
         self, config: Dict[str, Any], services: List[str]
