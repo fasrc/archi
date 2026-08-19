@@ -9,7 +9,7 @@
 
 ## 1. Lift the derivation and the pure checks (red unit tests + refactor, one commit)
 
-- [ ] 1.1 Create `tests/unit/test_templates_port_checks.py` targeting the module-level
+- [x] 1.1 Create `tests/unit/test_templates_port_checks.py` targeting the module-level
       functions `extract_port_config(plan, config_manager)` and
       `validate_port_config(plan, config_manager, port_config)` in
       `src.cli.managers.templates_manager`. Cover:
@@ -34,7 +34,7 @@
         behaviour lifted verbatim, pinned so a future "fix" is a conscious choice.
       Run them and watch them fail (`ImportError`: the functions do not exist yet) —
       capture the output.
-- [ ] 1.2 In `src/cli/managers/templates_manager.py`, lift to module level:
+- [x] 1.2 In `src/cli/managers/templates_manager.py`, lift to module level:
       `extract_port_config(plan, config_manager)` (body of `_extract_port_config`,
       `self.registry` → the module-global `service_registry`,
       `self._resolve_ports_from_config` → the lifted module function);
