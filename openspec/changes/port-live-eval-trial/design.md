@@ -255,7 +255,11 @@ finding: unit tests cannot validate the baked-site-packages deploy path, config
 staging, container mounts, or MCP subprocess behavior). Both trials run from the PR
 branch — the dev stack deploys from a local checkout, so no merge is needed. The PR
 merges only after both trials pass AND the human records the adopt decision on the
-tracking issue. A failed trial closes the PR; nothing lands on `dev`.
+tracking issue. The trial record names the tested PR-head SHA and the tested
+`origin/dev` SHA, and the tested head must contain the tested base
+(`git merge-base --is-ancestor`); movement of either SHA expires the evidence —
+merge or rebase the base into the head and rerun the trial before any merge. A
+failed trial closes the PR; nothing lands on `dev`.
 
 CLI (full-deps env, `ANTHROPIC_API_KEY` set): prepare → run (`--attempts 2
 --run-workers 2`) → score, then the composite single command in a fresh dir, then
