@@ -138,6 +138,13 @@ archi's native streaming events are translated to OpenAI format:
 | `thinking_start` | _(dropped)_ | No OpenAI equivalent |
 | `error` | `delta.content: "[Error: ...]"` | Mid-stream errors |
 
+The native `final` event carries two answer fields: `response`, the finalized text as the
+native chat UI renders it (it ends with the UI's own appended source list), and `answer`, the
+bare pipeline answer without that list. `answer` is omitted — never emitted as an empty
+placeholder — when the pipeline produced no answer value. Non-streaming `/v1` responses build
+their message content from `answer`, so the endpoint controls citation formatting itself (see
+below).
+
 ## Source Citations
 
 When the pipeline returns source documents, a citation block is appended to the response:
@@ -154,3 +161,10 @@ same document contributes more than one chunk it is listed once, at its best sco
 pipeline returned without a score are listed last, without a `(relevance: ...)` suffix.
 
 Collection labels appear only when sources span multiple collections.
+
+A `/v1` response contains **exactly one** citation block, in the format above. The native chat
+UI's own source list (a `Show all sources` details block) never appears in `/v1` content:
+non-streaming responses are built from the `final` event's bare `answer` field with one
+citation block appended, and streaming responses append the same block after the streamed
+chunks. If a `final` event ever arrives without the `answer` field, the endpoint returns the
+finalized `response` unchanged instead of appending a second block.
