@@ -11,18 +11,39 @@
 
 ## Where the port diff comes from
 
-Merge base with upstream `main` is `d1c29380` (2026-03-24). The correct per-file
-port diff is `git diff d1c29380 bebfbe56 -- <path>`, **not** the PR #608 view: the PR
-diff hides eval code that landed on upstream `main` after March. Proven example: the
-`services.chat_app.evaluations` block in `base-config.yaml` is context in the PR
-view, and it is absent on our `dev`.
+Merge base with upstream `main` is `d1c29380` (2026-03-24). Two scopes must not be
+confused:
 
-Scope vs upstream `main`: 35 commits, 86 files. Of these, ~70 do not exist on our
-`dev` (verbatim copies), 14 need hand-ported hunks, and the rest is skipped.
+- **Candidate field**: `git diff --name-status d1c29380 bebfbe56` — 220 files,
+  ~55k additions. It contains 5 months of unrelated upstream-`main` work
+  (playbooks, A/B testing, Jira docs, skills). Nothing enters the port from this
+  field without an explicit disposition.
+- **Eval scope**: the 86 files of `main...feat/live-eval` (the eval feature
+  itself), plus any `main`-era prerequisite hunk the eval code needs. The PR #608
+  view alone is NOT sufficient: it hides eval prerequisites that landed on `main`
+  after March (proven example: the `services.chat_app.evaluations` block in
+  `base-config.yaml` is context in the PR view and absent on our `dev`). Per-file
+  hunks are therefore read from `git diff d1c29380 bebfbe56 -- <path>` and
+  **hunk-classified**: eval-relevant (port), unrelated upstream-main (skip),
+  dead-on-fork (skip).
+
+**Required artifact — the disposition table.** Task 1.1 generates a table that
+assigns every one of the 220 candidate files exactly one disposition:
+`port-verbatim` / `port-hunks` / `skip-unrelated-upstream` / `skip-dead-on-fork`,
+with a one-line reason. The table is committed with the implementation PR. A file
+missing from the table is a defect. Two hard rules:
+
+1. `port-verbatim` is legal only for a file that does **not exist on the fork** AND
+   is part of the eval capability (src/evaluation/**, eval routes/assets/templates,
+   eval tests, `evaluation.md`).
+2. A file that **exists on the fork** — modified by us or not — never gets a
+   wholesale copy. It receives eval-relevant hunks only. (Wholesale copies of
+   fork-existing files were rejected in adversarial review round 1: the pin's
+   `chat.css` and `user_guide.md` carry unrelated playbook/AB/Jira content.)
 
 ## File dispositions
 
-### Verbatim adds (do not exist on `dev`)
+### Verbatim adds (do not exist on `dev`; eval-capability files only)
 
 - `src/evaluation/**` (23 files: dataset gateway, oracle, oracle_config,
   live_checks, preparation, workflow, runtime, scoring, schema, workspace, catalog,
@@ -36,13 +57,16 @@ Scope vs upstream `main`: 35 commits, 86 files. Of these, ~70 do not exist on ou
   (fork test tree is a package).
 - `docs/docs/evaluation.md`.
 
-### Take-theirs (files the fork never modified since the merge base)
+### Eval-hunks-only, conflict-free (fork never modified them since the merge base)
 
-`src/utils/rbac/permission_enum.py` (Evaluations permissions),
-`src/interfaces/chat_app/templates/index.html` (nav link),
-`static/chat.css`, `docs/docs/index.md`, `docs/docs/user_guide.md`.
+`src/utils/rbac/permission_enum.py` (the Evaluations permissions),
+`src/interfaces/chat_app/templates/index.html` (the nav link),
+`static/chat.css` (the evaluations styles), `docs/docs/index.md`,
+`docs/docs/user_guide.md`. These apply cleanly because the fork never touched them,
+but they take **eval-relevant hunks only** — the pin's full versions carry unrelated
+upstream-main content (rule 2 above).
 
-### Hand-ported files (the 14)
+### Hand-ported files (the 14 both sides modified)
 
 | File | Disposition |
 | --- | --- |
@@ -124,6 +148,20 @@ module instead.
   two generated dockerfile `requirements.txt` files are regenerated
   (`test_requirements_generated_in_sync.py` enforces the concatenation).
 - LangChain pins are identical on both sides — no framework skew.
+- **Resolution evidence (review round 1)**: `mcp==1.27.2` raises the transitive
+  version the agent MCP stack (`langchain-mcp-adapters`) resolves today. A smoke
+  import is not enough. Required: a fresh-env install of the full dependency set
+  followed by `pip check` (clean), plus the full unit suite (the fork's existing
+  agent/MCP tests run there). The imported upstream suite itself contains real
+  stdio and streamable-HTTP MCP integration tests, which exercise the pinned SDK's
+  transports directly.
+- **RAGAS non-regression evidence**: the port shares no module with the RAGAS stack
+  (`service_benchmark.py`, `goldenset_maintenance.py`, `benchmark_sut.py` are
+  untouched; the only shared files are `pyproject.toml` and the `cli_main.py`
+  registration line). Evidence = clean dependency resolution + the untouched RAGAS
+  unit suites passing + `archi evaluate --help` / `archi grade --help` exit 0. The
+  trial writeup then runs both stacks side by side on the same golden-set rows,
+  which is a stronger live check than a snapshot diff.
 
 ## Gate strategy
 
@@ -155,7 +193,14 @@ only. Consequences:
 - `agent-spec.md` — minimal spec. Live rows exercise the evaluator's oracle, not
   agent tools.
 
-## Trial acceptance
+## Trial acceptance (pre-merge)
+
+The trial IS the acceptance evidence for the implementation PR (review round 1
+finding: unit tests cannot validate the baked-site-packages deploy path, config
+staging, container mounts, or MCP subprocess behavior). Both trials run from the PR
+branch — the dev stack deploys from a local checkout, so no merge is needed. The PR
+merges only after both trials pass AND the human records the adopt decision on the
+tracking issue. A failed trial closes the PR; nothing lands on `dev`.
 
 CLI (full-deps env, `ANTHROPIC_API_KEY` set): prepare → run (`--attempts 2
 --run-workers 2`) → score, then the composite single command in a fresh dir, then

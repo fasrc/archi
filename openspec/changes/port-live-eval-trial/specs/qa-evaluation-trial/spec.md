@@ -97,6 +97,41 @@ fixed container path.
 - **THEN** no `evaluation_config/` staging occurs and the compose file has no
   evaluation-config mount
 
+### Requirement: Port inventory accounted and no wholesale copies of shared files
+
+The port SHALL ship a disposition table that assigns every file in the candidate
+diff (`git diff --name-status d1c29380 bebfbe56`) exactly one disposition:
+`port-verbatim`, `port-hunks`, `skip-unrelated-upstream`, or `skip-dead-on-fork`,
+each with a reason. `port-verbatim` MUST be limited to eval-capability files that do
+not exist on the fork. A file that exists on the fork MUST receive eval-relevant
+hunks only.
+
+#### Scenario: Every candidate file has a disposition
+
+- **WHEN** the disposition table is checked against
+  `git diff --name-status d1c29380 bebfbe56`
+- **THEN** every listed file appears in the table with exactly one disposition and
+  a reason, and no file is unaccounted
+
+#### Scenario: No unrelated upstream content rides the port
+
+- **WHEN** a fork-existing file (for example `static/chat.css` or
+  `docs/docs/user_guide.md`) is compared before and after the port
+- **THEN** the diff contains only eval-relevant hunks, and none of the pin's
+  unrelated upstream-main content (playbooks, A/B testing, Jira docs)
+
+### Requirement: Trial acceptance precedes merge
+
+The implementation PR SHALL NOT merge before (a) the CLI smoke and the console
+trial both pass, executed from the PR branch, and (b) a human records the adopt
+decision on the tracking issue. A rejected trial SHALL close the PR unmerged.
+
+#### Scenario: Failed trial never lands
+
+- **WHEN** either trial fails and no fix is found on the PR branch
+- **THEN** the PR closes unmerged, the dev stack redeploys from `dev`, and the
+  writeup records the failure
+
 ### Requirement: Existing RAGAS evaluation stack unchanged
 
 The port MUST NOT change the behavior of `archi evaluate`, `archi grade`, the

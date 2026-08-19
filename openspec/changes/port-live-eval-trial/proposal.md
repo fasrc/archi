@@ -19,9 +19,18 @@ A git merge is not an option. The fork and upstream `main` split at `d1c29380`
 release plan allows cherry-pick only, no sync. A 35-commit cherry-pick would conflict
 at almost every step against our diverged files. The chosen method is a **targeted
 port** pinned to upstream commit `bebfbe56640b4e6ee9fbd2ca5f7f766af27343ab`
-(head of `feat/live-eval`, 2026-08-18): ~70 files copy verbatim (they do not exist on
-our `dev`), 14 files take hand-ported hunks, and helm-only parts are skipped (the
-fork has no helm tree).
+(head of `feat/live-eval`, 2026-08-18): eval-capability files that do not exist on
+our `dev` copy verbatim; every file that exists on the fork receives hand-ported
+eval hunks only (never a wholesale copy — the pin's versions of shared files carry
+unrelated upstream-main content); helm-only parts are skipped (the fork has no helm
+tree). A disposition table accounts for every file in the candidate diff
+(`d1c29380..bebfbe56`, 220 files) so nothing enters unreviewed.
+
+**Tracker disposition**: this is operator-initiated evidence work, recorded in a
+tracking issue filed before implementation (task 0.1). It carries no milestone and
+no `parked` label. The implementation PR merges only after the trial passes from
+the PR branch and the human records the adopt decision on that issue; a rejected
+trial closes the PR unmerged. The adopt writeup carries the milestone case, if any.
 
 ## What Changes
 
@@ -79,7 +88,12 @@ maintenance) is untouched and keeps its behavior.
   `__init__.py`. The pytest `markers` section is added.
 - **Deployment**: off by default. The console activates only when
   `services.chat_app.evaluations.enabled: true` is set at deploy time. The FASRC dev
-  trial flips it on; rollback = disable and redeploy.
+  trial flips it on **from the PR branch, before any merge**; rollback = disable and
+  redeploy from `dev`.
+- **Dependency evidence**: `mcp==1.27.2` raises the version the agent MCP stack
+  resolves transitively today, so the change requires a clean fresh-env resolution
+  (`pip check`) and the full unit suite, not just a smoke import. The imported
+  upstream tests include real stdio and streamable-HTTP MCP integration coverage.
 - **UX note**: `archi eval` (ported) and `archi evaluate` (ours) will coexist on the
   trial branch. The naming collision is a recorded adoption question, not fixed here.
 - **Not in scope**: adoption into a release milestone, an SSO/bearer-aware
