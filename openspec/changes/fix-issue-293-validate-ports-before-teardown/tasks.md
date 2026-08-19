@@ -140,7 +140,7 @@
 
 ## 4. PR
 
-- [ ] 4.1 Push the branch (`git push -u origin fix/issue-293-validate-ports-before-teardown`)
+- [x] 4.1 Push the branch (`git push -u origin fix/issue-293-validate-ports-before-teardown`)
       and open the PR against `fasrc/archi:dev` with `closes #293` **in the body** (a
       closing keyword in the title does not link the issue). Include: the captured red
       output from 1.1 and 2.1, why the probe cannot move, the double-run rationale
@@ -148,5 +148,5 @@
       per item — stating explicitly that criterion 4 is satisfied on the validation
       path with the display-path walk deferred to the 3.3 follow-up issue — and the
       note from 3.4 if no doc edit was needed.
-- [ ] 4.2 Confirm the PR↔issue link exists via the GraphQL closing-issues API, not by
+- [x] 4.2 Confirm the PR↔issue link exists via the GraphQL closing-issues API, not by
       reading the body.
