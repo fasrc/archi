@@ -63,7 +63,7 @@
 
 ## 2. Hoist the pure checks above the teardown in `create()` (red smoke tests + fix, one commit)
 
-- [ ] 2.1 In `tests/unit/test_cli_create_dev_smoke.py`, add
+- [x] 2.1 In `tests/unit/test_cli_create_dev_smoke.py`, add
       `test_force_create_with_invalid_port_keeps_existing_deployment` and
       `test_force_create_with_duplicate_ports_keeps_existing_deployment`, modelled on
       `test_force_create_with_unbuildable_compose_plan_keeps_existing_deployment`
@@ -83,7 +83,7 @@
       outer handler wraps as `ClickException(str(e))`, preserving the message). Run
       both and watch them fail for the right reason — `teardowns != []` — and capture
       the output for the PR.
-- [ ] 2.2 In `src/cli/cli_main.py`, import `extract_port_config` and
+- [x] 2.2 In `src/cli/cli_main.py`, import `extract_port_config` and
       `validate_port_config` alongside the existing `TemplateManager` import, and call
       them in `create()` after `ServiceBuilder.build_compose_config(...)` (`:242-250`)
       and before `remove_existing_deployment(...)` (`:261`), raising
@@ -94,7 +94,7 @@
       tests' sentinel patches it to raise, and
       `test_force_create_still_tears_down_once_validation_passes` (`:623`) asserts the
       teardown happens before the sentinel fires.
-- [ ] 2.3 Add `test_dry_force_create_with_invalid_port_fails` (`--dry --force`,
+- [x] 2.3 Add `test_dry_force_create_with_invalid_port_fails` (`--dry --force`,
       `--hostmode`): exits non-zero, performs no teardown, and does NOT print the
       "[DRY RUN] Would remove existing deployment" notice (a real run would refuse
       before reaching the teardown). Also add
@@ -103,12 +103,12 @@
       runs now mirror real runs. Both should go green with the 2.2 insertion alone
       because the `--dry` return (`:266`) sits below the new call site — if not, the
       call site is in the wrong place; fix the placement, not the test.
-- [ ] 2.4 Confirm every pre-existing test in `test_cli_create_dev_smoke.py` passes
+- [x] 2.4 Confirm every pre-existing test in `test_cli_create_dev_smoke.py` passes
       UNMODIFIED — in particular
       `test_force_create_still_tears_down_once_validation_passes` (the sentinel) and
       `test_dry_force_create_reports_teardown_without_performing_it` (valid dry run
       still prints the notice and exits 0).
-- [ ] 2.5 Full suite green; `bash scripts/gate.sh` green (diff coverage ≥ 80%). Commit
+- [x] 2.5 Full suite green; `bash scripts/gate.sh` green (diff coverage ≥ 80%). Commit
       (message like `fix(#293): validate port config before the --force teardown`).
 
 ## 3. Make the probe's position durable and the artifacts truthful (one commit)
