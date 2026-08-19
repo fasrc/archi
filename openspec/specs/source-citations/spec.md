@@ -94,13 +94,15 @@ wired with a catalog/vectorstore retrieval tool and SHALL NOT be applied to agen
 
 ### Requirement: A /v1 chat completion presents exactly one source list
 
-A `/v1/chat/completions` response SHALL NOT present two source lists. When the `final` stream
-event carries the bare answer — the normal path — a response with source documents SHALL
-contain exactly one source list in its message content, built by `format_citations`, and the
-chat wrapper's own appended source list (`format_links_markdown` output) SHALL NOT appear in
-that content. When the bare answer is absent (the defensive arm covered by the last scenario
-below), the wrapper's already-appended list is the response's single list and a
-`format_citations` list SHALL NOT be added on top of it. The `final` stream event SHALL expose
+A `/v1/chat/completions` response SHALL carry at most one source list, and SHALL NOT present
+two. When the `final` stream event carries the bare answer — the normal path — a response with
+source documents SHALL contain exactly one source list in its message content, built by
+`format_citations`, and the chat wrapper's own appended source list (`format_links_markdown`
+output) SHALL NOT appear in that content. When the bare answer is absent (the defensive arm
+covered by the last scenario below), the endpoint SHALL NOT add a `format_citations` list on
+top of the wrapper-finalized text, so the response carries only whatever single list that text
+already held — the wrapper's list when the turn had source documents, and no list at all when
+it had none. The `final` stream event SHALL expose
 the bare answer (the pipeline answer without the wrapper's appended source list) alongside the
 existing finalized `response` field, which SHALL remain unchanged for existing consumers.
 
