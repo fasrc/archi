@@ -223,10 +223,11 @@ currently upstream capability trials (see "Evidence trials" under Versioning). T
 issues are milestone-exempt while the trial runs, and nightly automation must never
 schedule, triage, or drain them — like `parked`, but with active operator-driven
 work. **The label stays on the issue until the issue closes**, so the invariant
-holds through the decision-to-merge interval. Adopt → the label remains while the
-trial PR merges and the follow-on work is filed into a milestone through the normal
-gate bar, then the issue closes. Reject → the issue closes at once with the writeup
-as the record.
+holds through the decision-to-merge interval. Adopt → **in this order**: first file
+the adoption's follow-on work into a milestone through the normal gate bar (that
+milestone entry is the adoption record — the capability never lands as an invisible
+ride-along), then merge the trial PR, then close the issue; the label stays until
+closure. Reject → the issue closes at once with the writeup as the record.
 
 Mirrored to Asana: project *p-Search-Engine-LLM* › Milestones, one task per release
 with gating issues as subtasks.
