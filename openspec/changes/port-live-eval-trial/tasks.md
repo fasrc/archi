@@ -174,7 +174,8 @@ adopt decision on the tracking issue (0.1).
   revision, and gold-atom text — all absent; (b) forced-tool row — record whether
   the live model produced the mandated retrieval-tool trace; investigate and
   record a miss, do not fail the trial on it alone. Record pass/fail per the spec
-  scenarios on the tracking issue.
+  scenarios on the tracking issue, **naming the tested PR-head SHA** (amended plan:
+  stale evidence never merges — if the PR head moves after the trial, rerun).
 - [ ] 7.2 Console trial on FASRC dev, deployed from the PR branch checkout: host
   config `services.chat_app.evaluations: {enabled: true, mcp_config_path:
   qa_evaluation_mcp.console.yaml}`; copy `fake_mcp_server.py` into the host dir
@@ -192,8 +193,12 @@ adopt decision on the tracking issue (0.1).
 ## 8. Merge decision (human gate)
 
 - [ ] 8.1 The human records adopt/reject on the tracking issue. **Adopt** → merge
-  the PR (clean review round + green CI + trials passed). **Reject** → close the PR
-  unmerged, revert the dev-stack deploy to `dev`, keep the writeup as the record.
+  the PR only when the recorded tested PR-head SHA equals the current PR head
+  (head moved → rerun the trial first), the review round is clean, and CI is
+  green; the `evidence-trial` label stays on the issue until the merge and the
+  milestone filing of follow-on work complete, then the issue closes. **Reject** →
+  close the PR unmerged, revert the dev-stack deploy to `dev`, close the issue
+  with the writeup as the record.
 
 ## 9. Archive (path depends on the 8.1 decision)
 
