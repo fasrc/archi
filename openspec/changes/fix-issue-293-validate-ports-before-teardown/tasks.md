@@ -52,12 +52,12 @@
       is truthy), and raises the single combined
       `ValueError("Port check failed:\n" + ...)` when non-empty — byte-identical to
       today, including co-occurring duplicate + in-use errors in one message.
-- [ ] 1.3 Add delegator tests (same new test file, `_probe_port` monkeypatched — never
+- [x] 1.3 Add delegator tests (same new test file, `_probe_port` monkeypatched — never
       bind real ports): probe runs when `allow_port_reuse` is falsy; probe skipped when
       truthy while duplicate detection still refuses (the behaviour `restart()` relies
       on via `allow_port_reuse=True`); combined duplicate + in-use message matches
       today's format exactly.
-- [ ] 1.4 New unit tests pass; full `pytest tests/unit/` green;
+- [x] 1.4 New unit tests pass; full `pytest tests/unit/` green;
       `bash scripts/gate.sh` green. Commit (message like
       `refactor(#293): lift pure port checks to module level`).
 
