@@ -30,6 +30,10 @@ langgraph==1.0.2
 # langgraph is bumped. See issue #15.
 langgraph-prebuilt<1.0.9
 langchain-mcp-adapters==0.1.11
+# The QA evaluator imports the mcp SDK directly (ClientSession, stdio/http
+# clients), so the pin cannot stay transitive-only. ijson streams Dataset V2.
+mcp==1.27.2
+ijson==3.5.1
 langchain==1.0.3
 langchain_ollama==1.0.0
 loguru==0.7.2

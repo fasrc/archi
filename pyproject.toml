@@ -42,6 +42,12 @@ dependencies = [
     # use). Versions match requirements-base.txt.
     "llama-index-core==0.14.19",
     "flashrank==0.2.10",
+    # port-live-eval-trial: the QA evaluator (src/evaluation/qa/) imports the mcp
+    # SDK directly (ClientSession, stdio/streamable-http clients) and streams
+    # Dataset V2 files with ijson. Deployment images install via `pip install .`,
+    # so both MUST be declared here. Versions match requirements-base.txt.
+    "mcp==1.27.2",
+    "ijson==3.5.1",
     # html-markdown-categorize-ingest: HTML->Markdown conversion at the persist
     # seam. Built on the already-present beautifulsoup4. Pin matches
     # requirements/requirements-base.txt.
@@ -73,6 +79,9 @@ build-backend = "setuptools.build_meta"
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 addopts = "-v --tb=short"
+markers = [
+    "integration: marks tests that need a live database or external services (deselect with '-m \"not integration\"')",
+]
 
 [tool.pyright]
 pythonVersion = "3.11"
