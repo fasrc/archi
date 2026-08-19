@@ -92,25 +92,34 @@ wired with a catalog/vectorstore retrieval tool and SHALL NOT be applied to agen
 - **THEN** none instruct the model to cite by bare numeric result indices, and the citation
   style they model is the inline `[title](url)` Markdown link
 
-### Requirement: A /v1 chat completion presents exactly one source list
+### Requirement: A /v1 chat completion presents at most one source list
 
-A `/v1/chat/completions` response SHALL carry at most one source list, and SHALL NOT present
-two. Which content the endpoint builds SHALL be decided solely by whether the `final` stream
-event carries the bare answer, never by what retrieval returned:
+A `/v1/chat/completions` response SHALL carry at most one source list appended by the chat
+wrapper or by the endpoint, and SHALL NOT present two. The invariant scopes to those appended
+lists: a source section the model itself wrote into its answer text is passed through as written,
+neither detected nor normalized, and is out of scope for this requirement.
+
+For a **non-streaming** request, which content the endpoint builds SHALL be decided solely by
+whether the `final` stream event carries the bare answer, never by what retrieval returned:
 
 - Bare answer present (the normal path) — the content SHALL be that answer with the
   `format_citations` output appended. The chat wrapper's own appended source list
-  (`format_links_markdown` output) SHALL NOT appear in `/v1` content, so any list the response
-  does carry SHALL be the `format_citations` block.
+  (`format_links_markdown` output) SHALL NOT appear in `/v1` content, so any appended list the
+  response does carry SHALL be the `format_citations` block.
 - Bare answer absent (the defensive arm covered by the last scenario below) — the endpoint SHALL
   use the event's finalized `response` verbatim and SHALL NOT append `format_citations`, so any
-  list the response carries SHALL be the wrapper's own.
+  appended list the response carries SHALL be the wrapper's own.
 
-Neither arm's list count SHALL be inferred from the retrieval result: each formatter
+For a **streaming** request the endpoint SHALL assemble content from the `chunk` events and append
+the `format_citations` output when the `final` event arrives, whether or not that event carries the
+bare answer; it SHALL NOT read the finalized `response`, so the wrapper's own list SHALL NOT appear
+in a streamed response either.
+
+Neither path's list count SHALL be inferred from the retrieval result: each formatter
 independently yields nothing on a non-empty result — `format_citations` when no document carries
 a usable display name, and the wrapper's list when its own similarity, visibility, and
 display-name filtering (`get_top_sources`) leaves nothing to render. A response with no source
-list therefore satisfies this requirement; two lists never do.
+list therefore satisfies this requirement; two appended lists never do.
 
 The `final` stream event SHALL expose the bare answer (the pipeline answer without the wrapper's
 appended source list) alongside the existing finalized `response` field, which SHALL remain
@@ -147,8 +156,9 @@ unchanged for existing consumers.
 
 #### Scenario: Final event without a bare answer never produces two lists
 
-- **WHEN** the `final` event does not carry the bare-answer field (a defensive arm — the
-  wrapper and endpoint ship in the same image, so this state indicates a producer regression)
+- **WHEN** a non-streaming `/v1/chat/completions` request's `final` event does not carry the
+  bare-answer field (a defensive arm — the wrapper and endpoint ship in the same image, so this
+  state indicates a producer regression)
 - **THEN** the endpoint uses the event's `response` verbatim and does NOT append
   `format_citations`, so the content carries at most the wrapper's single appended source
   list and the duplicate-list defect cannot be reintroduced
