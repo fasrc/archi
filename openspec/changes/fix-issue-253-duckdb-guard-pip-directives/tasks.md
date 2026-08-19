@@ -61,7 +61,7 @@
 
 ## 3. Ship it (no merge)
 
-- [ ] 3.1 Push with `git push -u origin fix/issue-253-duckdb-guard-pip-directives` — the
+- [x] 3.1 Push with `git push -u origin fix/issue-253-duckdb-guard-pip-directives` — the
       branch was created from `origin/dev` and tracks the trunk until `-u` repoints it.
 - [ ] 3.2 Open the PR: `gh pr create --repo fasrc/archi --base dev`. The **body** MUST
       contain `closes #253` — a closes-keyword in the title does not link the issue. The
