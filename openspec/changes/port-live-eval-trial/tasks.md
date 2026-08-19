@@ -48,10 +48,14 @@ adopt decision on the tracking issue (0.1).
   `sources` registration ~line 985). Do NOT port the helm `install` hunk (dead on
   the fork). Verify `archi eval qa --help`, the three subcommand helps, and
   `archi evaluate --help` / `archi grade --help` all exit 0.
-- [ ] 1.4 `model: opus` — `base_react.py` hunks, RED first (port upstream's callback
-  test case into the fork's test layout): (a) `invoke(self, callbacks=None,
-  **kwargs)` pass-through into the invoke config; (b) `loaded_mcp_tools` property
-  over the existing `_mcp_tools` field (base_react.py:132). Skip the cached-tokens
+- [ ] 1.4 `model: opus` — `base_react.py` hunks, RED first: (a) `invoke(self,
+  callbacks=None, **kwargs)` pass-through into the invoke config; (b)
+  `loaded_mcp_tools` property over the existing `_mcp_tools` field
+  (base_react.py:132). The RED test is ONE test on the real seam: patch the agent
+  module's `get_model` with a recording fake model, invoke the real
+  `BaseReActAgent` with a supplied callback object, and assert that exact callback
+  object reaches the compiled agent's invoke configuration (port upstream's
+  callback case into this shape). Skip the cached-tokens
   and `_mcp_skills_text` hunks. This file is a known black-churn trap — run the
   black-seam check before editing. If imported runtime tests fail on the
   mcp-selected path, apply the recorded fix: `refresh_agent(force=True)` in
@@ -159,7 +163,9 @@ adopt decision on the tracking issue (0.1).
 ## 7. Trial execution from the PR branch (operator present — needs-deploy)
 
 - [ ] 7.1 CLI smoke in the full-deps env with `ANTHROPIC_API_KEY`: staged phases,
-  composite re-run, determinism probe (`QA_FAKE_MCP_VALUE_FILE` → 9). Then two
+  composite re-run, determinism probe (`QA_FAKE_MCP_VALUE_FILE` → 9). One pass
+  rule for staged AND composite: exit 0, `scored` manifest, zero failed rows —
+  inspect the failed-row count in both workspaces explicitly. Then two
   **secondary-evidence checks** (the gating proofs are the unit tests in 1.5):
   (a) isolation grep — re-run with `QA_FAKE_MCP_VALUE_FILE` →
   `examples/qa_eval/sentinel_value.txt`; grep the persisted agent config, agent

@@ -212,8 +212,8 @@ only. Consequences:
 - `agent-spec.md` — enables the retrieval tool and mandates its use before any
   knowledge-base answer. The tested agent gets NO tool that reaches the oracle, so
   the oracle sentinel is a valid isolation probe. One static row (the forced-tool
-  row) demands a knowledge-base lookup, which makes the tool-trace assertion
-  deterministic instead of model-dependent (review round 2).
+  row) demands a knowledge-base lookup; its live trace is recorded evidence only —
+  the deterministic proofs live in the unit tests (review rounds 2–5).
 - `sentinel_value.txt` — a distinctive oracle value (for example `7314159`) for the
   isolation probe: after a run with the oracle serving the sentinel, no agent-facing
   artifact may contain the oracle alias, tool name, recipe fields, sentinel,

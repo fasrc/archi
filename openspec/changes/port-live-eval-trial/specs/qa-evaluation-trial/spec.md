@@ -21,7 +21,8 @@ not upstream's.
 
 - **WHEN** `archi eval qa` runs with the same dataset, profile, registry, agent
   config, and agent spec against a fresh output directory
-- **THEN** it exits 0 and produces a `scored` manifest in one invocation
+- **THEN** it exits 0, produces a `scored` manifest in one invocation, and no row
+  is a failed row (the same pass rule as the staged phases)
 
 #### Scenario: Deterministic unit tests prove the agent callback port at both seams
 
