@@ -26,11 +26,13 @@ unrelated upstream-main content); helm-only parts are skipped (the fork has no h
 tree). A disposition table accounts for every file in the candidate diff
 (`d1c29380..bebfbe56`, 220 files) so nothing enters unreviewed.
 
-**Tracker disposition**: this is operator-initiated evidence work, recorded in a
-tracking issue filed before implementation (task 0.1). It carries no milestone and
-no `parked` label. The implementation PR merges only after the trial passes from
-the PR branch and the human records the adopt decision on that issue; a rejected
-trial closes the PR unmerged. The adopt writeup carries the milestone case, if any.
+**Tracker disposition**: this is operator-initiated evidence work under the
+release plan's **evidence-trial** state (added by the plan amendment that precedes
+this implementation — see `docs/docs/proposals/release-plan-2026.md`, "Evidence
+trials"). The tracking issue (task 0.1) carries the `evidence-trial` label. The
+implementation PR merges only after the trial passes from the PR branch and the
+human records the adopt decision on that issue; a rejected trial closes the PR
+unmerged. Adoption itself enters a milestone through the plan's normal gate bar.
 
 ## What Changes
 

@@ -23,10 +23,13 @@ not upstream's.
   config, and agent spec against a fresh output directory
 - **THEN** it exits 0 and produces a `scored` manifest in one invocation
 
-#### Scenario: Tool traces prove the agent callback port
+#### Scenario: A forced tool call proves the agent callback port
 
-- **WHEN** the tested agent uses at least one tool during the `run` phase
-- **THEN** `answers.jsonl` contains tool-trace records for that attempt
+- **WHEN** the `run` phase executes the fixture's forced-tool static row (its
+  question demands a knowledge-base lookup and the agent spec mandates the
+  retrieval tool before answering)
+- **THEN** `answers.jsonl` contains at least one tool-trace record for that row
+  whose tool name is the mandated retrieval tool
 
 ### Requirement: Live rows resolve through an evaluator-only MCP oracle
 
@@ -46,6 +49,16 @@ server, recipe, resolved truth, or gold atoms.
 - **WHEN** `QA_FAKE_MCP_VALUE_FILE` points at a file containing `9` and `prepare`
   re-runs into a fresh output directory
 - **THEN** the resolved live answer reflects capacity 9, not the default 7
+
+#### Scenario: Oracle truth is provably isolated from the tested agent
+
+- **WHEN** the trial runs with the oracle serving a distinctive sentinel value
+  (via `QA_FAKE_MCP_VALUE_FILE`) and the tested agent has no tool that reaches the
+  oracle
+- **THEN** every agent-facing artifact in the run workspace — the persisted agent
+  configuration, the agent spec, and each attempt's recorded agent input — contains
+  no oracle registry alias, no oracle tool name, no recipe field, no sentinel
+  value, no resolved-answer provenance string, and no gold-atom text
 
 ### Requirement: Evaluations console behind a config toggle
 

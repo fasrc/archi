@@ -13,11 +13,14 @@ adopt decision on the tracking issue (0.1).
 
 ## 0. Tracker disposition
 
+- [ ] 0.0 `model: fable` — **Blocker for everything below**: the release-plan
+  amendment (evidence-trial state + pinned-SHA trial intake path) is merged to
+  `dev` (its own small docs PR; see design.md "Policy basis").
 - [ ] 0.1 `model: sonnet` — File the tracking issue (`archi-followup-issue` flow):
   operator-initiated trial of upstream feat/live-eval (pin `bebfbe56`), linked to
-  this OpenSpec change; states that the adopt/reject decision (7.3) and any
-  milestone case are recorded there by a human before the implementation PR merges.
-  No milestone, no `parked` label — it is active operator-driven evidence work.
+  this OpenSpec change, labeled **`evidence-trial`** per the amended plan; states
+  that the adopt/reject decision (7.3) and any milestone case are recorded there
+  by a human before the implementation PR merges.
 
 ## 1. Eval core and CLI
 
@@ -112,7 +115,11 @@ adopt decision on the tracking issue (0.1).
   plus `evaluator-profile.vllm.yaml` (`provider: openai` + `OPENAI_BASE_URL` env
   note); `agent-config.yaml` (rendered dev config copy with
   `services.chat_app.{agent_class, default_provider, default_model}`);
-  `agent-spec.md` (minimal). Validate `dataset.json` and both registries with the
+  `agent-spec.md` (enables the retrieval tool and mandates its use before any
+  knowledge-base answer; the tested agent gets NO tool that reaches the oracle).
+  One static row is the **forced-tool row**: its question demands a knowledge-base
+  lookup. Add `sentinel_value.txt` (a distinctive value, for example `7314159`)
+  for the isolation probe. Validate `dataset.json` and both registries with the
   ported validators in a unit test. Gate; commit 4: `add qa eval trial fixtures`.
 
 ## 5. Optional playwright port
@@ -137,7 +144,15 @@ adopt decision on the tracking issue (0.1).
 ## 7. Trial execution from the PR branch (operator present — needs-deploy)
 
 - [ ] 7.1 CLI smoke in the full-deps env with `ANTHROPIC_API_KEY`: staged phases,
-  composite re-run, determinism probe (`QA_FAKE_MCP_VALUE_FILE` → 9). Record
+  composite re-run, determinism probe (`QA_FAKE_MCP_VALUE_FILE` → 9). Then the
+  **isolation probe**: re-run with `QA_FAKE_MCP_VALUE_FILE` →
+  `examples/qa_eval/sentinel_value.txt`; grep every agent-facing artifact in the
+  workspace (persisted agent config, agent spec, each attempt's recorded agent
+  input) for the oracle alias `capacity`, the oracle tool name
+  `current_capacity`, any recipe field, the sentinel value, the provenance
+  revision string, and each gold-atom text — all MUST be absent. Then the
+  **forced-tool assertion**: the forced-tool row's `answers.jsonl` records carry
+  at least one tool trace whose tool name is the mandated retrieval tool. Record
   pass/fail per the spec scenarios on the tracking issue.
 - [ ] 7.2 Console trial on FASRC dev, deployed from the PR branch checkout: host
   config `services.chat_app.evaluations: {enabled: true, mcp_config_path:

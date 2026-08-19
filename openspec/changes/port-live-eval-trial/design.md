@@ -9,6 +9,25 @@
   SHA. PR #608 still moves upstream; a re-pin is a deliberate act, never implicit.
 - Fetch: `git fetch https://github.com/archi-physics/archi feat/live-eval`.
 
+## Policy basis (review round 2)
+
+The pinned release plan is amended before implementation (separate docs PR to
+`dev`), adding two things:
+
+1. An **evidence-trial** issue state: operator-initiated trials carry the
+   `evidence-trial` label; the tracker invariant becomes
+   `milestone-assigned + parked + evidence-trial == open`. Nightly automation
+   never schedules evidence-trial issues. The trial's merge is gated on a
+   human-recorded adopt decision; adoption enters a milestone via the normal gate
+   bar.
+2. A named upstream-intake path for trials: an operator may port a **pinned
+   upstream branch snapshot** as a targeted, hunk-classified port to trial a
+   capability. A rejected trial merges nothing.
+
+Without the amendment, this change would violate the plan's tracker invariant and
+its "port a commit when it fixes something we ship" intake rule. Task 0.0 blocks
+implementation until the amendment is merged.
+
 ## Where the port diff comes from
 
 Merge base with upstream `main` is `d1c29380` (2026-03-24). Two scopes must not be
@@ -190,8 +209,15 @@ only. Consequences:
   env; that variant ships as `evaluator-profile.vllm.yaml` (fallback).
 - `agent-config.yaml` — a copy of the rendered dev config (must carry
   `services.chat_app.{agent_class, default_provider, default_model}`).
-- `agent-spec.md` — minimal spec. Live rows exercise the evaluator's oracle, not
-  agent tools.
+- `agent-spec.md` — enables the retrieval tool and mandates its use before any
+  knowledge-base answer. The tested agent gets NO tool that reaches the oracle, so
+  the oracle sentinel is a valid isolation probe. One static row (the forced-tool
+  row) demands a knowledge-base lookup, which makes the tool-trace assertion
+  deterministic instead of model-dependent (review round 2).
+- `sentinel_value.txt` — a distinctive oracle value (for example `7314159`) for the
+  isolation probe: after a run with the oracle serving the sentinel, no agent-facing
+  artifact may contain the oracle alias, tool name, recipe fields, sentinel,
+  provenance, or gold-atom text (review round 2).
 
 ## Trial acceptance (pre-merge)
 
