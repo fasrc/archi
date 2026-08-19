@@ -37,7 +37,7 @@
       `test_requirements_files_declare_only_readable_requirements` stays green on the
       clean tree.
 
-- [ ] 1.2 Prove the guard fires end-to-end by planting and reverting (issue #253
+- [x] 1.2 Prove the guard fires end-to-end by planting and reverting (issue #253
       acceptance criterion 2). Append three lines to
       `requirements/requirements-base.txt`:
       `-e git+https://host/duckdb.git#egg=duckdb`, `-e ./vendor/duckdb`,
