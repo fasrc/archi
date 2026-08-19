@@ -48,8 +48,11 @@ invariant" below). Such issues are neither gating nor parked; do not park them.
   tracking issue; a rejected trial merges nothing. The trial record on the tracking
   issue MUST name the **tested PR-head SHA and the tested base (`origin/dev`) SHA**;
   if either differs at merge time (review fixes, hunk adjustments, or the base
-  advancing under a clean merge), the trial reruns on the current pair before
-  merge — stale evidence never merges, and head-only tracking is not enough
+  advancing under a clean merge), the trial reruns before merge — and the rerun
+  head MUST contain the current base (`git merge-base --is-ancestor <base>
+  <head>`: merge or rebase the base into the branch first), because rerunning an
+  unchanged head against a newly recorded base never tests the pair the merge
+  will produce. Stale evidence never merges, and head-only tracking is not enough
   because a non-conflicting base change can still alter runtime behavior. The
   trial PR stays a **draft** until the adoption record completes: the hourly
   PR-readiness reconciler advertises any non-draft, clean, green PR as
