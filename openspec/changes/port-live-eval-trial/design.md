@@ -55,8 +55,9 @@ confused:
 
 **Required artifact — the disposition table.** Task 1.1 generates a table that
 assigns every one of the 220 candidate files exactly one disposition:
-`port-verbatim` / `port-hunks` / `skip-unrelated-upstream` / `skip-dead-on-fork`,
-with a one-line reason. The table is committed with the implementation PR. A file
+`port-verbatim` / `port-hunks` / `skip-unrelated-upstream` / `skip-dead-on-fork` /
+`omitted-optional` (an eval-capability file deliberately left out of the gating
+port — currently only the optional playwright specs), with a one-line reason. The table is committed with the implementation PR. A file
 missing from the table is a defect. Two hard rules:
 
 1. `port-verbatim` is legal only for a file that does **not exist on the fork** AND

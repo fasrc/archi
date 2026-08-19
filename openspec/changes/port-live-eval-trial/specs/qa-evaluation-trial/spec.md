@@ -138,8 +138,11 @@ fixed container path.
 
 The port SHALL ship a disposition table that assigns every file in the candidate
 diff (`git diff --name-status d1c29380 bebfbe56`) exactly one disposition:
-`port-verbatim`, `port-hunks`, `skip-unrelated-upstream`, or `skip-dead-on-fork`,
-each with a reason. `port-verbatim` MUST be limited to eval-capability files that do
+`port-verbatim`, `port-hunks`, `skip-unrelated-upstream`, `skip-dead-on-fork`, or
+`omitted-optional` (an eval-capability file deliberately left out of the gating
+port), each with a reason. A file whose content is locally adapted during the port
+MUST be reclassified to `port-hunks` — the table never calls adapted code a
+verbatim copy. `port-verbatim` MUST be limited to eval-capability files that do
 not exist on the fork. A file that exists on the fork MUST receive eval-relevant
 hunks only.
 

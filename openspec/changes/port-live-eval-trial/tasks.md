@@ -63,7 +63,10 @@ adopt decision on the tracking issue (0.1).
   and `_mcp_skills_text` hunks. This file is a known black-churn trap — run the
   black-seam check before editing. If imported runtime tests fail on the
   mcp-selected path, apply the recorded fix: `refresh_agent(force=True)` in
-  `_runtime_for_attempt`.
+  `_runtime_for_attempt` — and when that happens, **reclassify
+  `src/evaluation/qa/runtime.py` from `port-verbatim` to `port-hunks`** in the
+  disposition table with this reason; the table must never call adapted code a
+  verbatim copy.
 - [ ] 1.5 `model: opus` — Fork-authored boundary tests (gate-enforced, no live
   model), TDD: (a) **isolation, runtime seam** — run the ported runtime on a live
   row whose oracle resolves to a sentinel, with a stub pipeline class recording
@@ -150,7 +153,10 @@ adopt decision on the tracking issue (0.1).
 - [ ] 5.1 `model: haiku` — Copy `tests/ui/evaluations.spec.ts`,
   `tests/ui/evaluation_test_server.py`, `tests/ui/evaluation_test_worker.py`
   (outside the gate; run once by hand, record the result). Commit 5: `port qa eval
-  playwright specs (bebfbe56)`.
+  playwright specs (bebfbe56)`. If this optional task is skipped, these files take
+  the `omitted-optional` disposition in the table (eval-capability files
+  deliberately left out of the gating port) — never `skip-unrelated-upstream` or
+  `skip-dead-on-fork`.
 
 ## 6. Pre-PR review and PR (no merge yet)
 
@@ -181,12 +187,17 @@ adopt decision on the tracking issue (0.1).
   the live model produced the mandated retrieval-tool trace; investigate and
   record a miss, do not fail the trial on it alone. Record pass/fail per the spec
   scenarios on the tracking issue, **naming the tested PR-head SHA and the tested
-  base (`origin/dev`) SHA** (amended plan: stale evidence never merges — if either
-  moves after the trial, rerun on the current pair).
+  base (`origin/dev`) SHA**, where the tested head MUST contain the tested base
+  (`git merge-base --is-ancestor <base> <head>` — merge or rebase `origin/dev`
+  into the branch first). Amended plan: stale evidence never merges — if either
+  SHA moves after the trial, bring the base into the head again and rerun.
 - [ ] 7.2 Console trial on FASRC dev, deployed from the PR branch checkout.
-  **Provenance first** (the redeploy can silently run a stale installed CLI): in
-  the deploy env, `pip install -e .` from the PR checkout, then verify
-  `python -c "import src.cli.managers.templates_manager as m; print(m.__file__)"`
+  **Provenance first** (the redeploy can silently run a stale installed CLI, and
+  `python` on PATH may not be the interpreter behind the `archi` entry point):
+  derive the interpreter from the entry point's shebang —
+  `ARCHI_PY=$(sed -n '1s/^#!//p' "$(command -v archi)")` — then
+  `"$ARCHI_PY" -m pip install -e <PR-checkout>` and verify
+  `"$ARCHI_PY" -c "import src.cli.managers.templates_manager as m; print(m.__file__)"`
   resolves inside the PR checkout; record that output and the checkout's head SHA
   on the tracking issue before treating the deployment as PR-branch evidence.
   Then: host config `services.chat_app.evaluations: {enabled: true,
@@ -213,8 +224,10 @@ adopt decision on the tracking issue (0.1).
   activates only on `evaluations.enabled: true`, off in every deployed config by
   default), so an earlier release may carry it dark; (2) mark the draft PR ready
   and merge it, only when the recorded tested head AND base SHAs equal the
-  current PR head and `origin/dev` tip (either moved → rerun the trial first),
-  the review round is clean, and CI is green; (3) close the issue — the
+  current PR head and `origin/dev` tip AND the tested head contains the tested
+  base (`git merge-base --is-ancestor`) — if either moved, merge the base into
+  the head and rerun the trial first — with a clean review round and green CI;
+  (3) close the issue — the
   `evidence-trial` label stays until closure. **Reject** — close the PR first,
   then revert the dev-stack deploy to `dev`, then close the issue with the
   writeup as the record (a green open PR never outlives its rejection).
