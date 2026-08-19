@@ -23,13 +23,21 @@ not upstream's.
   config, and agent spec against a fresh output directory
 - **THEN** it exits 0 and produces a `scored` manifest in one invocation
 
-#### Scenario: A forced tool call proves the agent callback port
+#### Scenario: A deterministic unit test proves the agent callback port
+
+- **WHEN** the ported runtime runs against a stub pipeline that programmatically
+  emits one call to a known tool with a known payload
+- **THEN** the workspace's tool-trace records carry that exact tool name and
+  payload, asserted in a gate-enforced unit test with no live model involved
+
+#### Scenario: Live forced-tool row is recorded, not gating
 
 - **WHEN** the `run` phase executes the fixture's forced-tool static row (its
   question demands a knowledge-base lookup and the agent spec mandates the
-  retrieval tool before answering)
-- **THEN** `answers.jsonl` contains at least one tool-trace record for that row
-  whose tool name is the mandated retrieval tool
+  retrieval tool)
+- **THEN** the writeup records whether the live model produced the mandated
+  trace; a missing trace is investigated and recorded, and does not by itself fail
+  the trial (the deterministic unit test is the gating proof)
 
 ### Requirement: Live rows resolve through an evaluator-only MCP oracle
 
@@ -50,15 +58,23 @@ server, recipe, resolved truth, or gold atoms.
   re-runs into a fresh output directory
 - **THEN** the resolved live answer reflects capacity 9, not the default 7
 
-#### Scenario: Oracle truth is provably isolated from the tested agent
+#### Scenario: Oracle isolation is asserted at the model invocation boundary
 
-- **WHEN** the trial runs with the oracle serving a distinctive sentinel value
-  (via `QA_FAKE_MCP_VALUE_FILE`) and the tested agent has no tool that reaches the
-  oracle
-- **THEN** every agent-facing artifact in the run workspace — the persisted agent
-  configuration, the agent spec, and each attempt's recorded agent input — contains
-  no oracle registry alias, no oracle tool name, no recipe field, no sentinel
-  value, no resolved-answer provenance string, and no gold-atom text
+- **WHEN** a gate-enforced unit test runs the ported runtime on a live row whose
+  oracle resolves to a sentinel value, with a stub pipeline class and stub model
+  factory that record every constructor argument, every invoke argument, and every
+  message they receive
+- **THEN** a structural walk of everything the stubs received finds no oracle
+  registry or configuration, no recipe field, no resolved truth, no provenance
+  string, no gold-atom text, and no sentinel-derived value
+
+#### Scenario: Trial-level isolation grep as secondary evidence
+
+- **WHEN** the trial runs with the oracle serving the sentinel and the tested
+  agent has no tool that reaches the oracle
+- **THEN** the persisted agent configuration, the agent spec, and each attempt's
+  recorded agent input also contain none of those oracle strings (recorded in the
+  writeup; the unit test above is the gating proof)
 
 ### Requirement: Evaluations console behind a config toggle
 

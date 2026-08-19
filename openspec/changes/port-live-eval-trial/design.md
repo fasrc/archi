@@ -219,6 +219,16 @@ only. Consequences:
   artifact may contain the oracle alias, tool name, recipe fields, sentinel,
   provenance, or gold-atom text (review round 2).
 
+**Where the proofs live (review round 3).** Grep-level trial checks cannot see the
+serialized request the model actually receives, and a live model cannot be forced
+to call a tool. The gating proofs are therefore deterministic, gate-enforced unit
+tests at the invocation boundary (task 1.5): a stub pipeline class and stub model
+factory record everything the ported runtime hands them, an isolation test walks
+those structures for oracle content on a sentinel-resolved live row, and a
+callback test emits a programmatic tool call and asserts the exact trace payload.
+The trial-level grep and the live forced-tool row remain as recorded secondary
+evidence only.
+
 ## Trial acceptance (pre-merge)
 
 The trial IS the acceptance evidence for the implementation PR (review round 1

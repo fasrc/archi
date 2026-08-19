@@ -56,7 +56,16 @@ adopt decision on the tracking issue (0.1).
   black-seam check before editing. If imported runtime tests fail on the
   mcp-selected path, apply the recorded fix: `refresh_agent(force=True)` in
   `_runtime_for_attempt`.
-- [ ] 1.5 `model: opus` — Run the imported eval suite (`python -m pytest
+- [ ] 1.5 `model: opus` — Fork-authored boundary tests (gate-enforced, no live
+  model), TDD: (a) **isolation** — run the ported runtime on a live row whose
+  oracle resolves to a sentinel, with a stub pipeline class and stub model factory
+  that record every constructor argument, invoke argument, and message; walk the
+  recorded structures and assert no oracle registry/config, recipe field, resolved
+  truth, provenance, gold-atom text, or sentinel-derived value is present;
+  (b) **callback port** — a stub pipeline programmatically emits one call to a
+  known tool with a known payload; assert the workspace tool-trace records carry
+  that exact name and payload end to end.
+- [ ] 1.6 `model: opus` — Run the imported eval suite (`python -m pytest
   tests/unit/evaluation/ -x -q`) and then the full gate; commit 1: `port qa eval
   core and cli from upstream feat/live-eval (bebfbe56)`.
 
@@ -144,16 +153,16 @@ adopt decision on the tracking issue (0.1).
 ## 7. Trial execution from the PR branch (operator present — needs-deploy)
 
 - [ ] 7.1 CLI smoke in the full-deps env with `ANTHROPIC_API_KEY`: staged phases,
-  composite re-run, determinism probe (`QA_FAKE_MCP_VALUE_FILE` → 9). Then the
-  **isolation probe**: re-run with `QA_FAKE_MCP_VALUE_FILE` →
-  `examples/qa_eval/sentinel_value.txt`; grep every agent-facing artifact in the
-  workspace (persisted agent config, agent spec, each attempt's recorded agent
-  input) for the oracle alias `capacity`, the oracle tool name
-  `current_capacity`, any recipe field, the sentinel value, the provenance
-  revision string, and each gold-atom text — all MUST be absent. Then the
-  **forced-tool assertion**: the forced-tool row's `answers.jsonl` records carry
-  at least one tool trace whose tool name is the mandated retrieval tool. Record
-  pass/fail per the spec scenarios on the tracking issue.
+  composite re-run, determinism probe (`QA_FAKE_MCP_VALUE_FILE` → 9). Then two
+  **secondary-evidence checks** (the gating proofs are the unit tests in 1.5):
+  (a) isolation grep — re-run with `QA_FAKE_MCP_VALUE_FILE` →
+  `examples/qa_eval/sentinel_value.txt`; grep the persisted agent config, agent
+  spec, and each attempt's recorded agent input for the oracle alias `capacity`,
+  the tool name `current_capacity`, recipe fields, the sentinel, the provenance
+  revision, and gold-atom text — all absent; (b) forced-tool row — record whether
+  the live model produced the mandated retrieval-tool trace; investigate and
+  record a miss, do not fail the trial on it alone. Record pass/fail per the spec
+  scenarios on the tracking issue.
 - [ ] 7.2 Console trial on FASRC dev, deployed from the PR branch checkout: host
   config `services.chat_app.evaluations: {enabled: true, mcp_config_path:
   qa_evaluation_mcp.console.yaml}`; copy `fake_mcp_server.py` into the host dir
