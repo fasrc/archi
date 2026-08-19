@@ -50,7 +50,7 @@
       body: `_streaming_response` accumulates only mid-pipeline `chunk` events and never
       re-emits the finalized `response`, so it already emits exactly one source list.
 - [x] 4.3 `model: haiku` — `openspec validate fix-issue-245-single-v1-source-list --strict`.
-- [ ] 4.4 `model: sonnet` — live end-to-end verification, BLOCKING for archive and for
+- [x] 4.4 `model: sonnet` — live end-to-end verification, BLOCKING for archive and for
       closing #245 (not for opening the PR): at the first dev redeploy carrying this change,
       issue a real non-streaming `/v1/chat/completions` request that returns sources and
       assert the content has exactly one `**Sources:**` section and no `Show all sources`
