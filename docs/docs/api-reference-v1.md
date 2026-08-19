@@ -162,12 +162,15 @@ pipeline returned without a score are listed last, without a `(relevance: ...)` 
 
 Collection labels appear only when sources span multiple collections.
 
-A `/v1` response carries **at most one** source list, and never two. On the normal path a
-response with sources contains exactly one citation block, in the format above, and the native
-chat UI's own source list (a `Show all sources` details block) does not appear: non-streaming
-responses are built from the `final` event's bare `answer` field with one citation block
-appended, and streaming responses append the same block after the streamed chunks. If a `final`
-event ever arrives without the `answer` field, the endpoint returns the finalized `response`
-unchanged and appends no citation block, so the response carries whatever that text already
-held — the chat UI's own source list when the turn had sources, and no list at all when it
-did not.
+A `/v1` response carries **at most one** source list, and never two. Which text the endpoint
+returns depends only on whether the `final` event carried the bare `answer` field, never on what
+retrieval returned. On the normal path the content is that answer plus one citation block in the
+format above, and the native chat UI's own source list (a `Show all sources` details block) does
+not appear; streaming responses append the same citation block after the streamed chunks. If a
+`final` event ever arrives without the `answer` field, the endpoint returns the finalized
+`response` unchanged and appends no citation block, so the content carries at most the chat UI's
+own list.
+
+Either path can come back with no source list at all, even when retrieval found documents: the
+citation block is empty when no document carries a usable display name, and the chat UI's list is
+empty when its own relevance and visibility filtering leaves nothing to show.

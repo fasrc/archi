@@ -95,29 +95,40 @@ wired with a catalog/vectorstore retrieval tool and SHALL NOT be applied to agen
 ### Requirement: A /v1 chat completion presents exactly one source list
 
 A `/v1/chat/completions` response SHALL carry at most one source list, and SHALL NOT present
-two. When the `final` stream event carries the bare answer — the normal path — a response with
-source documents SHALL contain exactly one source list in its message content, built by
-`format_citations`, and the chat wrapper's own appended source list (`format_links_markdown`
-output) SHALL NOT appear in that content. When the bare answer is absent (the defensive arm
-covered by the last scenario below), the endpoint SHALL NOT add a `format_citations` list on
-top of the wrapper-finalized text, so the response carries only whatever single list that text
-already held — the wrapper's list when the turn had source documents, and no list at all when
-it had none. The `final` stream event SHALL expose
-the bare answer (the pipeline answer without the wrapper's appended source list) alongside the
-existing finalized `response` field, which SHALL remain unchanged for existing consumers.
+two. Which content the endpoint builds SHALL be decided solely by whether the `final` stream
+event carries the bare answer, never by what retrieval returned:
+
+- Bare answer present (the normal path) — the content SHALL be that answer with the
+  `format_citations` output appended. The chat wrapper's own appended source list
+  (`format_links_markdown` output) SHALL NOT appear in `/v1` content, so any list the response
+  does carry SHALL be the `format_citations` block.
+- Bare answer absent (the defensive arm covered by the last scenario below) — the endpoint SHALL
+  use the event's finalized `response` verbatim and SHALL NOT append `format_citations`, so any
+  list the response carries SHALL be the wrapper's own.
+
+Neither arm's list count SHALL be inferred from the retrieval result: each formatter
+independently yields nothing on a non-empty result — `format_citations` when no document carries
+a usable display name, and the wrapper's list when its own similarity, visibility, and
+display-name filtering (`get_top_sources`) leaves nothing to render. A response with no source
+list therefore satisfies this requirement; two lists never do.
+
+The `final` stream event SHALL expose the bare answer (the pipeline answer without the wrapper's
+appended source list) alongside the existing finalized `response` field, which SHALL remain
+unchanged for existing consumers.
 
 #### Scenario: Non-streaming response with sources has a single source section
 
-- **WHEN** a non-streaming `/v1/chat/completions` request completes with source documents and
-  retriever scores, and the `final` event's `response` already ends with the wrapper's
-  appended source list
+- **WHEN** a non-streaming `/v1/chat/completions` request completes with retriever scores and
+  source documents that carry citable display names, the `final` event carries the bare answer,
+  and that event's `response` already ends with the wrapper's appended source list
 - **THEN** the returned message content contains exactly one `**Sources:**` block (the
   `format_citations` output)
 - **AND** the wrapper's `Show all sources` block does not appear in the content
 
 #### Scenario: Non-streaming response without sources has no source section
 
-- **WHEN** a non-streaming `/v1/chat/completions` request completes with no source documents
+- **WHEN** a non-streaming `/v1/chat/completions` request completes with no source documents and
+  the `final` event carries the bare answer
 - **THEN** the returned message content is the bare answer with no source list appended
 
 #### Scenario: Empty answer with sources yields citations only
