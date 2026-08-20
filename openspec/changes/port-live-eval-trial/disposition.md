@@ -4,7 +4,7 @@ Candidate field: `git diff --name-status d1c29380 bebfbe56` — 220 files.
 Eval scope: `git diff --name-only 9c9e1cb0 bebfbe56` (upstream main → pin) — 86 files.
 Every candidate file carries exactly one disposition (design.md rules).
 
-Totals: omitted-optional 3, port-hunks 23, port-verbatim 51, skip-dead-on-fork 26, skip-unrelated-upstream 117
+Totals: omitted-optional 3, port-hunks 24, port-verbatim 50, skip-dead-on-fork 26, skip-unrelated-upstream 117
 
 | File | Δ | Eval scope | Disposition | Reason |
 | --- | --- | --- | --- | --- |
@@ -126,7 +126,7 @@ Totals: omitted-optional 3, port-hunks 23, port-verbatim 51, skip-dead-on-fork 2
 | `src/evaluation/qa/tool_traces.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
 | `src/evaluation/qa/validation.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
 | `src/evaluation/qa/worker.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
-| `src/evaluation/qa/workflow.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
+| `src/evaluation/qa/workflow.py` | A | yes | port-hunks | verbatim except resume-path integrity: run() verifies the frozen agent_config.resolved.yaml / agent_spec.resolved.md digests against the paused manifest before reuse (upstream defect: a paused-workspace edit was silently re-sealed under a fresh digest) |
 | `src/evaluation/qa/workspace.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
 | `src/interfaces/chat_app/api.py` | M | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `src/interfaces/chat_app/app.py` | M | yes | port-hunks | thin call sites only; logic in the tested seam module |

@@ -46,8 +46,9 @@ def build_evaluation_service(
     policy, not upstream's. Every run copies the named file into its own run
     directory as ``agent_config.resolved.yaml``, on a host mount the console then
     serves, so naming the live config would publish that config's secrets. Name a
-    redacted copy instead. The refusal is a literal path comparison, not a
-    resolved one: it stops the copy-paste default, not a determined operator.
+    redacted copy instead. The refusal compares canonical targets — both sides go
+    through ``Path.resolve()`` — so a ``..`` segment, a doubled separator, or a
+    symlink that lands on the live config is refused with it.
 
     Each refusal logs an error and returns ``None``. ``app.py`` calls this during
     init, so the console turns itself off while chat stays up.
@@ -66,7 +67,11 @@ def build_evaluation_service(
             "config, never the live deployment config."
         )
         return None
-    if Path(agent_config_path) == Path(LIVE_AGENT_CONFIG_PATH):
+    # resolve() is lexical for ".." and follows symlinks on the running host, and
+    # with strict=False (the default) a path that does not exist yet still
+    # normalizes. Both sides go through it, so every alias of the live config
+    # lands on the same target and is refused.
+    if Path(agent_config_path).resolve() == Path(LIVE_AGENT_CONFIG_PATH).resolve():
         logger.error(
             "Evaluation console disabled: evaluations.agent_config_path must not "
             "be the live deployment config %s. Every run copies that file into "

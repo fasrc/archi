@@ -90,10 +90,17 @@ def test_evaluation_service_requires_a_named_agent_config(evaluations_config, ca
     [
         "/root/archi/configs/config.yaml",
         "/root/archi/configs//config.yaml",
+        "/root/archi/configs/./config.yaml",
+        "/root/archi/configs/../configs/config.yaml",
+        "/root/archi/../archi/configs/config.yaml",
     ],
 )
 def test_evaluation_service_refuses_the_live_deployment_config(configured_path, caplog):
-    """The live config is the one path the console must never snapshot."""
+    """The live config is the one path the console must never snapshot.
+
+    Every spelling of it counts: a ``..`` segment names the same file, so the
+    guard compares canonical targets, not the text it was handed.
+    """
     with caplog.at_level(
         logging.ERROR, logger="src.interfaces.chat_app.evaluation_console"
     ):
@@ -104,6 +111,32 @@ def test_evaluation_service_refuses_the_live_deployment_config(configured_path, 
     assert service is None
     assert [record.levelname for record in caplog.records] == ["ERROR"]
     assert "/root/archi/configs/config.yaml" in caplog.text
+    assert "live deployment config" in caplog.text
+
+
+def test_evaluation_service_refuses_a_symlink_to_the_live_deployment_config(
+    monkeypatch, tmp_path, caplog
+):
+    """A symlink pointing at the live config resolves to it, so it is refused.
+
+    The refused location moves into ``tmp_path``: the case needs a real symlink
+    and a real target, and the gate cannot write under ``/root``.
+    """
+    live = tmp_path / "config.yaml"
+    live.write_text("live: true\n", encoding="utf-8")
+    alias = tmp_path / "alias.yaml"
+    alias.symlink_to(live)
+    monkeypatch.setattr(evaluation_console, "LIVE_AGENT_CONFIG_PATH", str(live))
+
+    with caplog.at_level(
+        logging.ERROR, logger="src.interfaces.chat_app.evaluation_console"
+    ):
+        service = build_evaluation_service(
+            {"evaluations": {"enabled": True, "agent_config_path": str(alias)}}
+        )
+
+    assert service is None
+    assert [record.levelname for record in caplog.records] == ["ERROR"]
     assert "live deployment config" in caplog.text
 
 
