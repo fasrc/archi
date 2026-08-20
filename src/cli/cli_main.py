@@ -795,19 +795,13 @@ def evaluate(
                 "Benchmark question bank failed preflight:\n" + "\n".join(bank_errors)
             )
 
-        # Both halves, back to back, so this path keeps the combined behaviour it
-        # had when these were one function: refuse without --force, tear down with
-        # it. evaluate() depends on the teardown having happened by the time it
-        # reaches the "already exists" check just below.
+        # handle_existing_deployment stays here for error precedence: without
+        # --force it must refuse before any validation or teardown logic runs.
+        # The destructive half (remove_existing_deployment) and the existence
+        # assertion travel together below, after everything that can refuse the
+        # replacement has succeeded — nothing destructive until the replacement
+        # is known to be valid and constructible (fasrc/archi#290).
         handle_existing_deployment(base_dir, name, force)
-        remove_existing_deployment(
-            base_dir, name, force, False, other_flags.get("podman", False)
-        )
-
-        if base_dir.exists():
-            raise click.ClickException(
-                f"Benchmarking runtime '{name}' already exists at {base_dir}"
-            )
 
         secrets_manager = SecretsManager(env_file, config_manager)
 
@@ -856,6 +850,15 @@ def evaluate(
             secrets=all_secrets,
             **other_flags,
         )
+
+        remove_existing_deployment(
+            base_dir, name, force, False, other_flags.get("podman", False)
+        )
+
+        if base_dir.exists():
+            raise click.ClickException(
+                f"Benchmarking runtime '{name}' already exists at {base_dir}"
+            )
 
         template_manager = TemplateManager(env, verbosity)
         base_dir.mkdir(parents=True, exist_ok=True)

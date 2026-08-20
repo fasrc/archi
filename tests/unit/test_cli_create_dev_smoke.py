@@ -800,6 +800,225 @@ def test_force_evaluate_still_removes_existing_runtime(
     )
 
 
+def test_force_evaluate_with_missing_secret_keeps_existing_runtime(
+    archi_home, benchmark_config, monkeypatch, tmp_path
+):
+    """evaluate --force must not tear down the runtime when secrets validation fails.
+
+    An env file without PG_PASSWORD causes validate_secrets to refuse. The
+    teardown must not run until after every refusing step succeeds
+    (fasrc/archi#290).
+    """
+    import shutil
+
+    from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+
+    existing = _existing_deployment(archi_home)
+
+    teardowns = []
+
+    def _delete(self, **kwargs):
+        teardowns.append(kwargs)
+        shutil.rmtree(existing, ignore_errors=True)
+
+    env_no_pg = tmp_path / "no-pg.env"
+    env_no_pg.write_text("OPENAI_API_KEY=sk-test\n" "HUGGING_FACE_HUB_TOKEN=test-hf\n")
+
+    monkeypatch.setattr(DeploymentManager, "delete_deployment", _delete)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_no_pg),
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"evaluate --force with a missing secret should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert teardowns == [], (
+        f"evaluate --force must not tear down the runtime before secrets validation. "
+        f"teardowns={teardowns}\noutput:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"the existing runtime must survive a secrets validation failure. "
+        f"output:\n{result.output}\n"
+    )
+
+
+def test_force_evaluate_with_invalid_config_keeps_existing_runtime(
+    env_file, archi_home, monkeypatch
+):
+    """evaluate --force must not tear down the runtime when config validation fails.
+
+    EXAMPLE_CONFIG (basic-openai) has no services.benchmarking block so
+    validate_configs refuses. The teardown must not run until after every
+    refusing step succeeds (fasrc/archi#290). This distinguishes an ordering
+    fix from a secrets-only special case: a teardown moved below only
+    validate_secrets passes the missing-secret test but fails here.
+    """
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    import shutil
+
+    from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+
+    existing = _existing_deployment(archi_home)
+
+    teardowns = []
+
+    def _delete(self, **kwargs):
+        teardowns.append(kwargs)
+        shutil.rmtree(existing, ignore_errors=True)
+
+    monkeypatch.setattr(DeploymentManager, "delete_deployment", _delete)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"evaluate --force with an invalid config should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert teardowns == [], (
+        f"evaluate --force must not tear down the runtime before config validation. "
+        f"teardowns={teardowns}\noutput:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"the existing runtime must survive a config validation failure. "
+        f"output:\n{result.output}\n"
+    )
+
+
+def test_evaluate_without_force_refuses_existing_runtime(
+    env_file, archi_home, benchmark_config, monkeypatch
+):
+    """evaluate without --force must refuse an existing runtime without removing it.
+
+    handle_existing_deployment stays before validation for error precedence.
+    Without --force it raises before any teardown or validation logic runs
+    (fasrc/archi#290).
+    """
+    from src.cli import cli_main
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"evaluate without --force should refuse an existing runtime. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        "already exists" in result.output
+    ), f"expected the already-exists refusal. output:\n{result.output}\n"
+    assert (
+        teardowns == []
+    ), f"a refusal must not remove anything. output:\n{result.output}\n"
+    assert (
+        existing / "marker.txt"
+    ).exists(), f"a refusal removed the existing runtime. output:\n{result.output}\n"
+
+
+def test_force_evaluate_refuses_when_removal_silently_fails(
+    env_file, archi_home, benchmark_config, monkeypatch
+):
+    """evaluate --force must refuse when remove_existing_deployment silently failed.
+
+    If delete_deployment records but does not remove the directory (simulating a
+    swallowed cleanup error), base_dir still exists after the removal attempt.
+    The exists() guard then refuses rather than proceeding to write a new runtime
+    on top of the old one (fasrc/archi#290).
+    """
+    from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+
+    _existing_deployment(archi_home)
+    teardowns = []
+    monkeypatch.setattr(
+        DeploymentManager,
+        "delete_deployment",
+        lambda self, **kwargs: teardowns.append(kwargs),
+    )
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"evaluate --force should fail when the directory survived removal. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert "already exists" in result.output, (
+        f"expected the already-exists refusal from the post-removal guard. "
+        f"output:\n{result.output}\n"
+    )
+    assert len(teardowns) == 1, (
+        f"deletion must have been attempted exactly once. "
+        f"teardowns={teardowns}\noutput:\n{result.output}\n"
+    )
+
+
 def test_create_without_force_refuses_existing_deployment(
     env_file, archi_home, monkeypatch
 ):
