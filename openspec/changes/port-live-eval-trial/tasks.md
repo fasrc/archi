@@ -161,11 +161,11 @@ adopt decision on the tracking issue (0.1).
 
 ## 6. Pre-PR review and PR (no merge yet)
 
-- [ ] 6.1 `model: opus` — Adversarial review LOOP on the branch
+- [x] 6.1 `model: opus` — Adversarial review LOOP on the branch
   (`/codex:adversarial-review --wait`): verify each finding, fix (TDD) or push back
   with reasons, commit, re-run; stop at zero findings or nits-only (file nits as
   issues; bound 3–4 rounds). Carry the round summary into the PR body.
-- [ ] 6.2 `model: sonnet` — Push, open the PR **as a draft** (`gh pr create
+- [x] 6.2 `model: sonnet` — Push, open the PR **as a draft** (`gh pr create
   --draft --repo fasrc/archi --base dev`) with the trial-gated merge condition
   stated in the body — draft status keeps the hourly readiness reconciler from
   ever advertising the unadopted trial as `ready-to-merge` (amended plan). Comment
