@@ -373,3 +373,27 @@ statement is *about*.
 
 The spec now states that distinction where the demotion is explained, so the next reader does not
 have to re-derive it.
+
+## Review loop, terminal state
+
+Four rounds against the local Codex CLI, plus one Greptile pass. The GitHub Codex connector was
+asked twice and answered both times with "You have reached your Codex usage limits for code
+reviews", so it contributed nothing — a silent connector on this repo means no review happened,
+not a clean review.
+
+| round | reviewer | verdict | findings | adopted |
+| --- | --- | --- | --- | --- |
+| 1 | Codex CLI | needs-attention | 2 medium | 2 |
+| 2 | Codex CLI | needs-attention | 2 medium | 2 |
+| 3 | Greptile + Codex CLI | 4/5 + needs-attention | 1 P2 + 2 medium | 2 of 3 — D14 records the rejection |
+| 4 | Codex CLI | **approve** | none | — |
+
+Seven findings, six adopted. **Not one was in the reformat**: every round confirmed the module's
+syntax tree is identical to `origin/dev`. Every finding was in the surrounding artifacts, and all
+but one were the same defect — a claim the code, the workflows, or production reachability does
+not support. That pattern is the reusable lesson here. A formatting-only change is trivially
+verifiable by AST equality, and the risk migrates entirely into what the change *says about
+itself*, which nothing executes.
+
+Two follow-ups came out of the loop and neither blocks this change: **#313**, the CI formatting
+blind spot, and **#314**, the dead model-name loop.

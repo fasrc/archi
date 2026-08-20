@@ -87,7 +87,7 @@
 
 ## 4. Push and open the PR
 
-- [ ] 4.1 Push with an explicit upstream — this branch was created from `origin/dev` and so
+- [x] 4.1 Push with an explicit upstream — this branch was created from `origin/dev` and so
       currently tracks the trunk: `git push -u origin fix/issue-291-black-clean-secret-manager`.
       Open the PR against `dev` with an explicit head:
       `gh pr create --repo fasrc/archi --base dev --head fix/issue-291-black-clean-secret-manager`.
@@ -150,3 +150,16 @@
 - [x] 7.5 `model: opus` — Push back on demoting the two module-level scenarios, and correct the
       round-2 rationale that invited the reading (D14).
 - [x] 7.6 `model: opus` — Reply in-thread to Greptile's inline comment and post the round log.
+
+## 8. Terminal state of the pre-merge review loop
+
+- [x] 8.1 `model: opus` — Self-audit `proposal.md`, the one artifact no round scrutinised.
+      Three inaccuracies of the same class found and fixed, and the red-state patch coverage
+      re-measured first-hand rather than inherited from 7cfa41f6's commit body (53.3%, 7 of 15
+      missing — the two agree exactly).
+- [x] 8.2 `model: opus` — Round 4 returned **`approve`, no material findings**. The loop ended
+      on a clean round rather than on the round bound. Four rounds, seven findings: six adopted,
+      one rejected with the reasoning recorded as D14.
+- [ ] 8.3 A human merges. Do **not** self-merge: issue #291 is `parked`, and task 4.1 reserves
+      the merge for a human in daylight. Two follow-ups are open and neither blocks this PR —
+      #313 (CI cannot see the module) and #314 (the dead model-name loop).
