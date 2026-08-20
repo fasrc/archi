@@ -130,9 +130,7 @@ class TestGetModelBasedSecrets:
                         "benchmarking": {
                             "provider": "openai",
                             "mode_settings": {
-                                "ragas_settings": {
-                                    "evaluator_provider": "HUIT_Bedrock"
-                                }
+                                "ragas_settings": {"evaluator_provider": "HUIT_Bedrock"}
                             },
                         }
                     }
