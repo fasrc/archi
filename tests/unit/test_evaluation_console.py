@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -138,6 +139,56 @@ def test_evaluation_service_refuses_a_symlink_to_the_live_deployment_config(
     assert service is None
     assert [record.levelname for record in caplog.records] == ["ERROR"]
     assert "live deployment config" in caplog.text
+
+
+def test_evaluation_service_refuses_a_hard_link_to_the_live_deployment_config(
+    monkeypatch, tmp_path, caplog
+):
+    """A hard link is a second name for one file, so it is refused as well.
+
+    Path canonicalization cannot see it — both names are already canonical — so
+    the guard asks the filesystem for identity instead. A bind mount of the live
+    config into the container reads the same way. The refused location moves into
+    ``tmp_path``: the case needs two real names for one real file.
+    """
+    live = tmp_path / "config.yaml"
+    live.write_text("live: true\n", encoding="utf-8")
+    alias = tmp_path / "alias.yaml"
+    os.link(live, alias)
+    monkeypatch.setattr(evaluation_console, "LIVE_AGENT_CONFIG_PATH", str(live))
+
+    with caplog.at_level(
+        logging.ERROR, logger="src.interfaces.chat_app.evaluation_console"
+    ):
+        service = build_evaluation_service(
+            {"evaluations": {"enabled": True, "agent_config_path": str(alias)}}
+        )
+
+    assert service is None
+    assert [record.levelname for record in caplog.records] == ["ERROR"]
+    assert "live deployment config" in caplog.text
+
+
+def test_evaluation_service_accepts_a_distinct_existing_config(monkeypatch, tmp_path):
+    """The identity check must not refuse a real file that is a different file."""
+    live = tmp_path / "config.yaml"
+    live.write_text("live: true\n", encoding="utf-8")
+    redacted = tmp_path / "evaluation.yaml"
+    redacted.write_text("redacted: true\n", encoding="utf-8")
+    monkeypatch.setattr(evaluation_console, "LIVE_AGENT_CONFIG_PATH", str(live))
+
+    service = build_evaluation_service(
+        {
+            "evaluations": {
+                "enabled": True,
+                "root": str(tmp_path / "evaluations"),
+                "agent_config_path": str(redacted),
+            }
+        }
+    )
+
+    assert service is not None
+    assert service.agent_config_path == redacted
 
 
 def test_evaluation_service_honours_configured_paths(tmp_path):

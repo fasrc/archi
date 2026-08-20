@@ -16,6 +16,7 @@ bearer-token or SSO branch, so an SSO deployment that turns the console on gets 
 is off by default and the dev stack runs auth-off.
 """
 
+import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -33,6 +34,26 @@ LIVE_AGENT_CONFIG_PATH = "/root/archi/configs/config.yaml"
 DEFAULT_AGENTS_DIR = "/root/archi/agents"
 
 
+def _is_live_agent_config(candidate: Path) -> bool:
+    """Return ``True`` when ``candidate`` names the live deployment config.
+
+    Two questions, because neither answers alone. ``os.path.samefile`` compares
+    device and inode, so it catches a hard link and a bind mount of the live
+    config — aliases no amount of path canonicalization can see. It needs both
+    files to exist, though, and it raises when either is missing or unreadable.
+    So a resolved-path comparison follows: it covers a path that does not exist
+    yet, and it stands in wherever the live config itself is absent (a test host,
+    anything outside the container), where identity cannot be asked at all.
+    """
+    live = Path(LIVE_AGENT_CONFIG_PATH)
+    try:
+        if os.path.samefile(candidate, live):
+            return True
+    except OSError:
+        pass
+    return candidate.resolve() == live.resolve()
+
+
 def build_evaluation_service(
     chat_app_config: Dict[str, Any]
 ) -> Optional[EvaluationConsoleService]:
@@ -46,9 +67,10 @@ def build_evaluation_service(
     policy, not upstream's. Every run copies the named file into its own run
     directory as ``agent_config.resolved.yaml``, on a host mount the console then
     serves, so naming the live config would publish that config's secrets. Name a
-    redacted copy instead. The refusal compares canonical targets — both sides go
-    through ``Path.resolve()`` — so a ``..`` segment, a doubled separator, or a
-    symlink that lands on the live config is refused with it.
+    redacted copy instead. The refusal covers every way of naming that one file:
+    an odd spelling (a ``..`` segment, a doubled separator), a symlink, and a
+    hard link or bind mount that shares its inode (see
+    ``_is_live_agent_config``).
 
     Each refusal logs an error and returns ``None``. ``app.py`` calls this during
     init, so the console turns itself off while chat stays up.
@@ -67,11 +89,7 @@ def build_evaluation_service(
             "config, never the live deployment config."
         )
         return None
-    # resolve() is lexical for ".." and follows symlinks on the running host, and
-    # with strict=False (the default) a path that does not exist yet still
-    # normalizes. Both sides go through it, so every alias of the live config
-    # lands on the same target and is refused.
-    if Path(agent_config_path).resolve() == Path(LIVE_AGENT_CONFIG_PATH).resolve():
+    if _is_live_agent_config(Path(agent_config_path)):
         logger.error(
             "Evaluation console disabled: evaluations.agent_config_path must not "
             "be the live deployment config %s. Every run copies that file into "
