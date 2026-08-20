@@ -798,9 +798,18 @@ def evaluate(
         # handle_existing_deployment stays here for error precedence: without
         # --force it must refuse before any validation or teardown logic runs.
         # The destructive half (remove_existing_deployment) and the existence
-        # assertion travel together below, after everything that can refuse the
-        # replacement has succeeded — nothing destructive until the replacement
-        # is known to be valid and constructible (fasrc/archi#290).
+        # assertion travel together below, after the steps that can refuse the
+        # replacement on config input: config validation, secret construction
+        # and validation, and the compose plan (fasrc/archi#290).
+        #
+        # That is strictly weaker than "the replacement is constructible". The
+        # ten stages of prepare_deployment_files() (_build_workflow() in
+        # templates_manager.py) still run below the teardown, and several raise
+        # on deterministic config input — _stage_agents() on two configs whose
+        # agent_md_file share a basename, _check_ports_available() on an invalid
+        # or duplicated port. Enumerating those routes one at a time is what
+        # fasrc/archi#294 exists to stop doing; it closes the class for both
+        # create() and evaluate() by rendering before destroying.
         handle_existing_deployment(base_dir, name, force)
 
         secrets_manager = SecretsManager(env_file, config_manager)
