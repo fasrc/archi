@@ -218,8 +218,8 @@ nothing in CI guards it.
 
 Fixed in the spec text rather than in the ignore rule: the requirement now states that CI's
 directory-walk assert cannot see the file, that the invariant rests on the local pre-commit
-writer alone, and that closing the gap is issue #313. A new scenario pins the gap itself, so a
-later reader cannot mistake silence for enforcement.
+writer alone, and that closing the gap is issue #313. (Round 2 revisited how that gap is
+expressed — see D10; it is descriptive prose, not a scenario.)
 
 Rejected the reviewer's first option — "narrow the requirement to the current reformat only".
 The requirement is not wrong; it is unguarded. Narrowing it to a one-time event would lose the
@@ -255,3 +255,57 @@ the spec "calls out" `ragas_settings.evaluator_provider`. The spec delta does no
 HUIT path at all. The test was added anyway, on the stronger ground that black re-wrapped that
 expression, which puts it squarely inside what a characterization test for this reflow must
 cover.
+
+## Round-2 decisions (adversarial review of PR #308)
+
+Round 2 returned `needs-attention` with two medium findings, both on the spec text and both
+confirmed. It again found no semantic change in the reformat.
+
+### D10 — Two spec defects that round 1 introduced or left standing
+
+**The requirement described a gate that does not exist.** The opening paragraph said "The gate
+runs black as a formatter rather than a checker: it rewrites files in place". That is true of
+one of the gate's two modes and false of the other. `_check_format_scope`
+(`scripts/gate.sh:65-71`) runs `black --check` and rewrites nothing; it is what runs when `$CI`
+is set, and the `lint` job mirrors it (`.github/workflows/pr-preview.yml:29-33`).
+`_format_changed` (`scripts/gate.sh:74-80`) is the writer, and it runs only from the local
+pre-commit hook. Since the spec archives into `openspec/specs/`, an absolute claim about the
+control plane would mislead every later reader. Replaced with a two-row table naming both modes
+and their line anchors, and the rationale re-based on the writer specifically.
+
+**Round 1's fix introduced the defect it was fixing.** To record the CI blind spot, round 1
+added `#### Scenario: CI cannot detect a later drift in this module`. A scenario is a normative
+check, and nothing in this repository executes that one — no test touches `scripts/gate.sh` path
+selection or the `lint` job's scope. So round 1 answered an unbacked claim with another unbacked
+claim, one step further into normative language. The scenario is demoted to descriptive prose
+inside the requirement, and the requirement now says outright why it is prose and not a
+scenario. Issue #313 carries the executable pin.
+
+Recorded for #313 rather than acted on here: the `gate` CI job installs black 24.10.0
+(`.github/workflows/ci.yml:47-51`) and runs `pytest tests/unit/`, so a unit test that shells out
+to `black --check` on an explicit path would work there. The separate `unit-tests` job installs
+only `requirements/requirements-base.txt` and `pytest`, so the same test errors in that job
+without a guard. That constraint shapes the fix, and it is cheaper to write down now than to
+rediscover.
+
+### D11 — The pre-commit writer can commit content it has already rewritten
+
+Hit while landing the round-1 fixes, and worth recording because the failure mode is invisible
+locally. `_format_changed` rewrites the **working tree**. Content staged before the hook runs is
+already snapshotted, so black's rewrite lands in the working tree and not in the commit. The
+result is a commit carrying unformatted content while the working tree holds the formatted
+version — and every local `black --check` then reads the working tree and passes.
+
+CI caught it because the `lint` job reads the commit, not the working tree. Reproducing it also
+needs the right tree: `pull_request` checks out the **merge ref**, not the branch head.
+
+```
+git fetch origin refs/pull/<N>/merge
+git worktree add <dir> FETCH_HEAD
+black --check src tests scripts     # 1 file would be reformatted
+```
+
+**The check that catches it is `git status --porcelain` immediately after the commit** — the
+task list already demands it for `src/`, and it applies to every path in the commit, not just
+the reformatted module. Fixed in a follow-up commit rather than an amend, because the prior
+commit was already pushed and cited by SHA in the PR's round-1 log.

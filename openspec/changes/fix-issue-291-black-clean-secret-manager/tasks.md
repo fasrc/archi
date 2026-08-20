@@ -118,3 +118,19 @@
       confirm `git diff` on it is empty.
 - [x] 5.5 `model: opus` — Re-run the gate, confirm patch coverage is still at or above the floor,
       and post the round log on the PR.
+
+## 6. Close the round-2 findings from the adversarial review of PR #308
+
+- [x] 6.1 `model: opus` — Verify both findings against `scripts/gate.sh` and the workflow files
+      before editing. Confirm `_check_format_scope` uses `black --check` and `_format_changed`
+      uses the writer, and confirm no test in the repository executes the CI-blind-spot claim.
+- [x] 6.2 `model: opus` — Replace the spec's single-mode description of the gate with a table
+      naming both modes and their line anchors. Verify every anchor by reading the cited lines.
+- [x] 6.3 `model: opus` — Demote `Scenario: CI cannot detect a later drift in this module` to
+      descriptive prose, and state in the requirement why it is prose. Correct D8's claim that a
+      scenario pins the gap. Re-run `openspec validate --strict`.
+- [x] 6.4 `model: opus` — Record in #313 that the `gate` CI job has black but the `unit-tests`
+      job does not, so the executable pin needs a guard.
+- [x] 6.5 `model: opus` — Fix the CI `lint` failure: the pre-commit writer reformatted the test
+      file after it was staged, so the commit carried unformatted content. Land the formatted
+      version as a new commit, and confirm `git status --porcelain` is empty afterwards.

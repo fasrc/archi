@@ -6,11 +6,18 @@
 versions the gate pins (black 24.10.0, isort 6.0.1 with `profile = "black"`), so that a later
 edit of one line in the module produces a patch of one line.
 
-The gate runs black as a formatter rather than a checker: it rewrites files in place and then
-scores patch coverage with `diff-cover --fail-under=80`. A module that is not already
-black-clean therefore taxes every future edit to it — the reflow enters the patch, uncovered
-reflowed lines drag patch coverage below the floor, and the gate fails for reasons unrelated to
-the edit. Measured on `origin/dev` at `07e007df`, this module carried 81 lines of pending black
+`scripts/gate.sh` runs black in **two different modes**, and the distinction is what makes an
+unformatted module expensive:
+
+| mode | selects | what black does | where |
+| --- | --- | --- | --- |
+| `_check_format_scope` (`scripts/gate.sh:65-71`) | directory args `src tests scripts` | `black --check` — reports, rewrites nothing | CI, when `$CI` is set; mirrored by the `lint` job at `.github/workflows/pr-preview.yml:29-33` |
+| `_format_changed` (`scripts/gate.sh:74-80`) | explicit paths from `git diff` | `black` — **rewrites in place** | the local pre-commit hook |
+
+The local writer is the one that taxes an edit. It rewrites the touched file before the gate
+scores patch coverage with `diff-cover --fail-under=80`, so a module that is not already
+black-clean drags the whole reflow into the patch, uncovered reflowed lines pull the score below
+the floor, and the gate fails for reasons unrelated to the edit. Measured on `origin/dev` at `07e007df`, this module carried 81 lines of pending black
 churn in 185 lines of source, which is what made the operator-facing `validate_secrets` message
 (`:123-141`) uneconomic to improve in issue #287.
 
@@ -25,6 +32,15 @@ tracked separately as issue #313 rather than done here (design.md, Decision 6). 
 requirement as "the module is black-clean and must be kept so", not as "an automated check
 guarantees it".
 
+Nothing in this repository executes that CI-blind-spot claim, so it is stated here as
+description and deliberately **not** written as a scenario: a scenario is a normative check, and
+a normative check nothing runs is the same defect this requirement's own history is about. Issue
+#313 carries the executable pin. Note for whoever takes it: the `gate` CI job installs black
+24.10.0 (`.github/workflows/ci.yml:47-51`) and runs `pytest tests/unit/`, so a test that shells
+out to black works there — but the separate `unit-tests` job installs only
+`requirements/requirements-base.txt` and `pytest`, so the same test needs a guard or it errors
+in that job.
+
 #### Scenario: The module needs no reformatting
 
 - **WHEN** `black --check src/cli/managers/secrets_manager.py` is run
@@ -33,17 +49,9 @@ guarantees it".
 
 #### Scenario: A one-line edit yields a one-line patch
 
-- **WHEN** a maintainer changes a single statement in the module and runs the gate
-- **THEN** the gate's black step leaves the rest of the module untouched
+- **WHEN** a maintainer changes a single statement in the module and runs the local pre-commit gate
+- **THEN** the writer step (`_format_changed`) leaves the rest of the module untouched
 - **AND** the patch `diff-cover` scores contains that edit rather than a whole-file reflow
-
-#### Scenario: CI cannot detect a later drift in this module
-
-- **WHEN** the CI whole-scope format assert runs `black --check` with directory arguments
-- **THEN** it skips `src/cli/managers/secrets_manager.py`, because `.gitignore:19` matches the
-  basename and black honours `.gitignore` on a directory walk
-- **AND** CI reports green even if the module has drifted, so the black-clean state is held by
-  the local pre-commit hook until issue #313 closes the gap
 
 ### Requirement: A formatting change to the module preserves its syntax tree
 
