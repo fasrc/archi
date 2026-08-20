@@ -59,7 +59,7 @@ the artifacts must describe. Each task ends in its own commit.
       paths. Leave tasks 1.2, 1.3, and groups 2 and 3 of that file alone — they are about the
       pin deletion and the three-deleted-lines blast radius, and they are still accurate.
       Commit.
-- [ ] 1.4 Reconcile the **guard** requirement in
+- [x] 1.4 Reconcile the **guard** requirement in
       `openspec/changes/fix-issue-246-remove-dead-duckdb-pin/specs/dependency-pin-hygiene/spec.md`,
       in a commit of its own so it can be dropped alone (design D3 of this change). Only the
       requirement "A reintroduced duckdb pin SHALL fail the test suite" and its scenarios are
@@ -78,10 +78,26 @@ the artifacts must describe. Each task ends in its own commit.
       -deleted-lines scenario. Every `### Requirement:` heading and every requirement's lead
       sentence MUST keep its `SHALL` on the first physical line; `openspec validate --strict`
       reads only that line and a wrapped lead sentence fails. Commit.
+- [x] 1.5 Close the two gaps the adversarial review of PR #307 named, both raised because
+      the reconciliation stopped short of the four shipped facts it set out to record.
+      First, task 1.1 of `openspec/changes/fix-issue-246-remove-dead-duckdb-pin/tasks.md`
+      described only the single name-comparison scan, so a maintainer replaying it verbatim
+      would build a guard materially weaker than the shipped one: add the fail-closed
+      unreadable-requirement predicate and its test, and the both-directions equality
+      self-check between the monitored path list and the paths
+      `scripts/dev/build_docker_images.sh` references, with the note that the latter is a
+      drift alarm rather than a proof of coverage. Second, the guard requirement reconciled
+      in 1.4 gains a paragraph and a scenario for each of those two behaviours, since the
+      spec is the artifact `openspec archive` promotes into `openspec/specs/` and the
+      requirement is the guard's durable contract. Provenance was checked before writing:
+      `git log -S` confirms the five monitored paths, the unreadable-shape predicate and the
+      generator-path self-check all landed in `5fceb8ae` (PR #251), the issue-246 commit, so
+      all four facts belong to this change's artifacts and not to a later guard change.
+      Commit.
 
 ## 2. Verify against the issue's acceptance criteria
 
-- [ ] 2.1 Prove the reconciliation is faithful and confined, then record it. Check each of the
+- [x] 2.1 Prove the reconciliation is faithful and confined, then record it. Check each of the
       four criteria of issue #254:
       (a) every guard-design statement now in `design.md`, `tasks.md:1.1` and the guard
       requirement of `spec.md` can be pointed at a line of
@@ -101,7 +117,7 @@ the artifacts must describe. Each task ends in its own commit.
       because a Markdown-only diff has no measurable `src/` lines. That is a legitimate pass;
       never use `--no-verify`. Finally tick the boxes for the tasks that are done and commit
       that tick, so this task has a commit of its own.
-- [ ] 2.2 Confirm the change still validates:
+- [x] 2.2 Confirm the change still validates:
       `openspec validate fix-issue-254-reconcile-246-guard-artifacts --strict`, and
       `openspec validate fix-issue-246-remove-dead-duckdb-pin --strict` so the edits above did
       not break the change being reconciled. The `openspec` binary exists on the host but
@@ -113,10 +129,10 @@ the artifacts must describe. Each task ends in its own commit.
 
 ## 3. Ship it (no merge)
 
-- [ ] 3.1 Push with `git push -u origin fix/issue-254-reconcile-246-guard-artifacts`. The
+- [x] 3.1 Push with `git push -u origin fix/issue-254-reconcile-246-guard-artifacts`. The
       branch was created from `origin/dev` and therefore tracks the trunk until `-u` repoints
       it — check `git rev-parse --abbrev-ref @{u}` names the feature branch afterwards.
-- [ ] 3.2 Open the PR against `dev`: `gh pr create --repo fasrc/archi --base dev`. Write the
+- [x] 3.2 Open the PR against `dev`: `gh pr create --repo fasrc/archi --base dev`. Write the
       body to a file and pass `--body-file`; the body MUST contain `closes #254`, because a
       closing keyword in the *title* does not link the issue. Verify the link afterwards with
       the GraphQL `closingIssuesReferences` field rather than assuming it. The body must
@@ -131,3 +147,37 @@ the artifacts must describe. Each task ends in its own commit.
       the diff is Markdown only, not a skipped gate; and that #253 (PR #298) is in flight and
       extends the guard, which is why the reconciled text describes the guard's contract
       instead of enumerating covered shapes. **Never merge** — a human merges in daylight.
+
+## Verification record (2.1 / 2.2)
+
+Run on `8cad6276` by the nightly reviewer-responder, 2026-08-20.
+
+- **(a) four shipped facts anchored.** `tests/unit/test_requirements_hygiene.py:19`
+  (`cpu-requirementsHEADER.txt`, one of the five monitored paths), `:42`
+  (`_NAME_SEPARATOR_PATTERN = re.compile(r"[-_.]+")`) with `:98`
+  (`.sub("-", name).lower()`) for PEP 503 normalization, `:60`
+  (`declares_unreadable_requirement`) for the fail-closed check, and `:207`
+  (`test_guard_monitors_every_requirements_file_the_generator_touches`) for the
+  bidirectional generator-path discovery.
+- **(b) pin-deletion narrative intact.** The spec edit produced three hunks, all inside the
+  guard requirement and the one in-scope phrase of the every-environment requirement. The
+  first requirement ("SHALL NOT pin duckdb", naming the three files that carried the pin) and
+  the last ("SHALL NOT regenerate", with its exactly-three-deleted-lines scenario) show zero
+  changed lines.
+- **(c) diff confined.** `git diff --name-only origin/dev...HEAD` lists eight paths, all under
+  `openspec/changes/`. All are Markdown except
+  `fix-issue-254-reconcile-246-guard-artifacts/.openspec.yaml`, the new change's own
+  descriptor — the one non-Markdown file, disclosed in the PR body. No source, test,
+  requirements or control-plane path appears.
+- **(d) literal strip-filter pattern.** Two occurrences remain, both deliberate: `design.md:27`
+  and `proposal.md:21`, each quoting the loop image's own `grep -ivE` filter. Neither claims
+  the guard uses that pattern.
+- **2.2 strict validation.** Both `fix-issue-246-remove-dead-duckdb-pin` and
+  `fix-issue-254-reconcile-246-guard-artifacts` report valid under
+  `openspec validate --strict` on the host.
+- **Gate.** Run bare on the host; exits 0. Diff coverage reports "No lines with coverage
+  information in this diff", which is the expected pass for a Markdown-only diff.
+
+3.1 and 3.2 were completed on the original run: the branch is pushed and PR #307 is open with
+`closes #254` in its body. The body's "What is NOT done" section is superseded by this
+record — group 1 and group 2 are now complete.
