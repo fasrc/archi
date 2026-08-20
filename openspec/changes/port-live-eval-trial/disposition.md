@@ -4,7 +4,7 @@ Candidate field: `git diff --name-status d1c29380 bebfbe56` — 220 files.
 Eval scope: `git diff --name-only 9c9e1cb0 bebfbe56` (upstream main → pin) — 86 files.
 Every candidate file carries exactly one disposition (design.md rules).
 
-Totals: omitted-optional 3, port-hunks 19, port-verbatim 55, skip-dead-on-fork 26, skip-unrelated-upstream 117
+Totals: omitted-optional 3, port-hunks 20, port-verbatim 53, skip-dead-on-fork 26, skip-unrelated-upstream 118
 
 | File | Δ | Eval scope | Disposition | Reason |
 | --- | --- | --- | --- | --- |
@@ -18,7 +18,7 @@ Totals: omitted-optional 3, port-hunks 19, port-verbatim 55, skip-dead-on-fork 2
 | `docs/docs/cli_reference.md` | M | yes | port-hunks | content-merge the eval sections (the one real docs merge) |
 | `docs/docs/configuration.md` | M | yes | port-hunks | merge the eval config sections |
 | `docs/docs/data_sources.md` | M | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
-| `docs/docs/evaluation.md` | A | yes | port-verbatim | eval-capability file; absent on the fork |
+| `docs/docs/evaluation.md` | A | yes | port-hunks | verbatim minus two upstream-only references: a helm deployment clause (fork has no helm) and the `ab_only` frontmatter sentence (fork agent-spec loader has no A/B support) |
 | `docs/docs/helm_deployment.md` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `docs/docs/index.md` | M | yes | port-hunks | eval hunks only; fork-unmodified |
 | `docs/docs/install.md` | M | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
@@ -133,7 +133,7 @@ Totals: omitted-optional 3, port-hunks 19, port-verbatim 55, skip-dead-on-fork 2
 | `src/interfaces/chat_app/evaluation_routes.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
 | `src/interfaces/chat_app/event_formatter.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `src/interfaces/chat_app/playbook_routes.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
-| `src/interfaces/chat_app/static/chat.css` | M | yes | port-hunks | eval hunks only (evaluations styles); pin version carries unrelated playbook/AB content |
+| `src/interfaces/chat_app/static/chat.css` | M | no | skip-unrelated-upstream | verified in task 2.2: the pin's diff carries no eval hunk (console ships `evaluations.css`; the nav link reuses the existing `.header-tab` rules) |
 | `src/interfaces/chat_app/static/chat.js` | M | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `src/interfaces/chat_app/static/data.css` | M | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `src/interfaces/chat_app/static/evaluations.css` | A | yes | port-verbatim | eval-capability file; absent on the fork |
@@ -202,7 +202,7 @@ Totals: omitted-optional 3, port-hunks 19, port-verbatim 55, skip-dead-on-fork 2
 | `tests/unit/test_ab_agent_spec_service.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `tests/unit/test_ab_pending_limit.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `tests/unit/test_ab_testing.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
-| `tests/unit/test_base_compose_mcp_mounts.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
+| `tests/unit/test_base_compose_mcp_mounts.py` | A | yes | port-hunks | adapted: kept the evaluation-mount cases, dropped the `host_file_mounts` case (unported upstream MCP sidecar mounts) |
 | `tests/unit/test_basic_auth_login.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `tests/unit/test_chat_app_authorization.py` | A | yes | skip-dead-on-fork | imports app.py / upstream authorize_request; fork uses the seam module |
 | `tests/unit/test_chat_wrapper_playbooks.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
@@ -210,7 +210,7 @@ Totals: omitted-optional 3, port-hunks 19, port-verbatim 55, skip-dead-on-fork 2
 | `tests/unit/test_config_seed.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `tests/unit/test_env.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `tests/unit/test_evaluation_config.py` | A | yes | port-hunks | adapted: imports the seam module, never app.py |
-| `tests/unit/test_evaluation_config_staging.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
+| `tests/unit/test_evaluation_config_staging.py` | A | yes | port-hunks | adapted: dropped the helm-configmap case with the helm branch (no helm tree on the fork) |
 | `tests/unit/test_evaluation_routes.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
 | `tests/unit/test_import_boundaries.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `tests/unit/test_jira.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
@@ -224,7 +224,7 @@ Totals: omitted-optional 3, port-hunks 19, port-verbatim 55, skip-dead-on-fork 2
 | `tests/unit/test_postgres_services.py` | M | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `tests/unit/test_service_chat_bootstrap.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `tests/unit/test_service_jira.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
-| `tests/unit/test_templates_manager_ab_agents.py` | A | yes | skip-dead-on-fork | covers upstream ab-agents staging not ported (verify during task 2.3; record verdict here) |
+| `tests/unit/test_templates_manager_ab_agents.py` | A | no | skip-dead-on-fork | verdict (task 2.3): all three cases cover A/B agents staging and the A/B-era benchmarking-flag refactor; the fork has no `ab_testing`/`ab_agents_dir` machinery and none of it was ported. `evaluation_mcp_configured=False` in its fake context is scaffolding, not coverage |
 | `tests/unit/test_templates_mcp_copy.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `tests/unit/test_utils_jira.py` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `tests/unit/test_vectorstore_manager_batch_commit.py` | M | no | skip-unrelated-upstream | upstream-main work outside the eval scope |

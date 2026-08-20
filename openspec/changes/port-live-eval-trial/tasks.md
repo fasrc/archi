@@ -89,7 +89,7 @@ adopt decision on the tracking issue (0.1).
 
 ## 2. Console and deploy templates
 
-- [ ] 2.1 `model: opus` — Seam module
+- [x] 2.1 `model: opus` — Seam module
   `src/interfaces/chat_app/evaluation_console.py` (pattern:
   `config_fingerprint.py`), TDD with a new fork test file:
   `build_evaluation_service(chat_app_config)` (root default
@@ -98,7 +98,7 @@ adopt decision on the tracking issue (0.1).
   `is True`); `build_authorize_request(auth_enabled)` (auth off → always allow;
   auth on → session + `has_permission` → 401/403 JSON);
   `can_view_evaluations(evaluations_enabled, auth_enabled)`.
-- [ ] 2.2 `model: opus` — Console port: copy verbatim `evaluation_routes.py`,
+- [x] 2.2 `model: opus` — Console port: copy verbatim `evaluation_routes.py`,
   `static/evaluations.css`, `static/evaluations.js`, `templates/evaluations.html`,
   `tests/unit/test_evaluation_routes.py`. Adapt upstream
   `tests/unit/test_evaluation_config.py` to import the seam module (never
@@ -108,7 +108,7 @@ adopt decision on the tracking issue (0.1).
   thin call sites only: build the service near the openai_compat block (~line
   2853); `register_evaluations(...)` after `register_service_alerts` (~line 3280);
   `can_view_evaluations` into the index render.
-- [ ] 2.3 `model: opus` — Deploy templates + staging: `templates_manager.py`
+- [x] 2.3 `model: opus` — Deploy templates + staging: `templates_manager.py`
   (constants, `evaluation_mcp_configured` context field,
   `_stage_evaluation_config` minus the helm branch, stage-list entry, runtime-path
   substitution in `_render_config_files`); `base-config.yaml` `evaluations` block;
@@ -117,12 +117,12 @@ adopt decision on the tracking issue (0.1).
   `test_base_compose_mcp_mounts.py`; verify whether
   `test_templates_manager_ab_agents.py` covers only non-ported upstream work before
   dropping it (record the verdict in the disposition table).
-- [ ] 2.4 `model: opus` — Full gate; commit 2: `port qa eval console and deploy
+- [x] 2.4 `model: opus` — Full gate; commit 2: `port qa eval console and deploy
   templates (bebfbe56)`.
 
 ## 3. Docs
 
-- [ ] 3.1 `model: sonnet` — Add `docs/docs/evaluation.md` verbatim. Content-merge
+- [x] 3.1 `model: sonnet` — Add `docs/docs/evaluation.md` verbatim. Content-merge
   the eval sections into `docs/docs/cli_reference.md` (+274 upstream lines — the
   one real merge), `configuration.md`, and `benchmarking.md`. Apply eval-relevant
   hunks only to `index.md` and `user_guide.md` (the pin's versions carry unrelated
@@ -132,7 +132,7 @@ adopt decision on the tracking issue (0.1).
 
 ## 4. Trial fixtures
 
-- [ ] 4.1 `model: sonnet` — `examples/qa_eval/`: `dataset.json` (qa-dataset-v2; 3
+- [x] 4.1 `model: sonnet` — `examples/qa_eval/`: `dataset.json` (qa-dataset-v2; 3
   static rows + 2 live rows whose recipes call `current_capacity` on alias
   `capacity`); `qa_evaluation_mcp.cli.yaml` and `qa_evaluation_mcp.console.yaml`
   (qa-evaluation-mcp-v1; stdio; `authentication: {mode: inherited_environment}`;

@@ -74,6 +74,12 @@ from src.interfaces.chat_app.config_fingerprint import (
     resolve_provider_boot_summary,
 )
 from src.interfaces.chat_app.document_utils import *
+from src.interfaces.chat_app.evaluation_console import (
+    build_authorize_request,
+    build_evaluation_service,
+    can_view_evaluations,
+)
+from src.interfaces.chat_app.evaluation_routes import register_evaluations
 from src.interfaces.chat_app.final_event import build_final_event
 from src.interfaces.chat_app.request_validation import (
     InvalidClientTiming,
@@ -2857,6 +2863,11 @@ class FlaskAppWrapper(object):
                 token_ttl_days=openai_compat_config.get("token_ttl_days", 90),
             )
 
+        # QA evaluation console: off unless services.chat_app.evaluations.enabled
+        # is exactly true. All parsing lives in the seam module.
+        self.evaluation_service = build_evaluation_service(self.chat_app_config)
+        self.evaluations_enabled = self.evaluation_service is not None
+
         # enable CORS:
         CORS(self.app)
 
@@ -3278,6 +3289,14 @@ class FlaskAppWrapper(object):
             chat_app_config=self.chat_app_config,
             require_auth=self.require_auth,
         )
+
+        if self.evaluation_service is not None:
+            logger.info("Adding QA evaluation console endpoints")
+            register_evaluations(
+                self.app,
+                authorize_request=build_authorize_request(self.auth_enabled),
+                service=self.evaluation_service,
+            )
 
         # add unified auth endpoints
         if self.auth_enabled:
@@ -4975,7 +4994,12 @@ class FlaskAppWrapper(object):
         )
 
     def index(self):
-        return render_template("index.html")
+        return render_template(
+            "index.html",
+            can_view_evaluations=can_view_evaluations(
+                self.evaluations_enabled, self.auth_enabled
+            ),
+        )
 
     def terms(self):
         return render_template("terms.html")
