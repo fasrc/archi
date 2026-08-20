@@ -17,10 +17,12 @@ unformatted module expensive:
 The local writer is the one that taxes an edit. It rewrites the touched file before the gate
 scores patch coverage with `diff-cover --fail-under=80`, so a module that is not already
 black-clean drags the whole reflow into the patch, uncovered reflowed lines pull the score below
-the floor, and the gate fails for reasons unrelated to the edit. Measured on `origin/dev` at `07e007df`, this module carried 81 lines of pending black
-churn in 185 lines of source, which is what made the operator-facing `validate_secrets` message
-uneconomic to improve in issue #287. That method sits at `:123-141` on `07e007df`; this change's
-reflow moves it to `:144-162`, so read the anchor against the commit it names.
+the floor, and the gate fails for reasons unrelated to the edit.
+
+Measured on `origin/dev` at `07e007df`, this module carried 81 lines of pending black churn in
+185 lines of source, which is what made the operator-facing `validate_secrets` message uneconomic
+to improve in issue #287. That method sits at `:123-141` on `07e007df`; this change's reflow
+moves it to `:144-162`, so read the anchor against the commit it names.
 
 **This requirement is currently unenforced by CI, and that is a known gap, not an oversight.**
 `.gitignore:19`'s bare `*secrets*` pattern matches this file's basename, and black honours
@@ -40,11 +42,13 @@ black-clean" is one, and it stays a scenario even while nothing automated checks
 paragraph above says so plainly. "CI's directory walk skips this file" is not a requirement on
 the module at all; it is an observation about the tooling, it is nobody's contract to uphold, and
 it becomes false the day #313 lands. Observations that expire belong in prose. Issue #313 carries
-the executable pin. Note for whoever takes it: the `gate` CI job installs black
-24.10.0 (`.github/workflows/ci.yml:47-51`) and runs `pytest tests/unit/`, so a test that shells
-out to black works there — but the separate `unit-tests` job installs only
-`requirements/requirements-base.txt` and `pytest`, so the same test needs a guard or it errors
-in that job.
+the executable pin.
+
+Note for whoever takes #313: the `gate` CI job installs black 24.10.0
+(`.github/workflows/ci.yml:47-51`) and runs `pytest tests/unit/`, so a test that shells out to
+black works there — but the separate `unit-tests` job installs only
+`requirements/requirements-base.txt` and `pytest`, so the same test needs a guard or it errors in
+that job.
 
 #### Scenario: The module needs no reformatting
 
