@@ -203,9 +203,15 @@ adopt decision on the tracking issue (0.1).
   resolves inside the PR checkout; record that output and the checkout's head SHA
   on the tracking issue before treating the deployment as PR-branch evidence.
   Then: host config `services.chat_app.evaluations: {enabled: true,
-  mcp_config_path: <PR-checkout>/examples/qa_eval/qa_evaluation_mcp.console.yaml}`
-  (the fixture's actual path — the staging step validates it as a host source file
-  and copies it into the generated `evaluation_config/`); copy
+  mcp_config_path: <PR-checkout>/examples/qa_eval/qa_evaluation_mcp.console.yaml,
+  agent_config_path: /root/archi/evaluations/agent-config.trial.yaml}` — the
+  agent_config_path override is a SECURITY requirement (review round 2): each run
+  snapshots the whole agent config verbatim into the host-mounted workspace
+  (`agent_config.resolved.yaml`), so the console must never snapshot the live
+  running config; stage the sanitized `examples/qa_eval/agent-config.yaml` copy
+  at that path instead (the eval runtime reads provider keys from env, so the
+  sanitized config runs identically). Copy the fixture registry per the
+  mcp_config_path above and copy
   `fake_mcp_server.py` into the host dir mounted at `/root/archi/evaluations`;
   `deploy/fasrc-dev/scripts/redeploy.sh`; verify via `archi-dev-deploy-verify`
   (chat 200 + `GET /evaluations` 200 + nav link); run the full console loop.
@@ -223,7 +229,12 @@ adopt decision on the tracking issue (0.1).
   stack; capability delta; cost (tokens/row, wall time, gate-time delta);
   maintenance burden (disposition table + skip lists = re-sync cost); the
   `eval`/`evaluate` naming collision; adoption preconditions (SSO-aware
-  authorize_request, RBAC mapping, golden-set convergence, milestone case).
+  authorize_request; RBAC mapping; golden-set convergence; milestone case;
+  **secret-safe config snapshots** — upstream persists the full agent config
+  verbatim per run and retries re-read it, so adoption needs redaction or an
+  enforced sanitized-config path; **viewer-facing redaction** — upstream serves
+  full run detail incl. oracle truth, gold atoms, and raw answers to
+  `evaluations:view`, which breaks benchmark isolation on any real dataset).
 
 ## 8. Merge decision (human gate)
 
