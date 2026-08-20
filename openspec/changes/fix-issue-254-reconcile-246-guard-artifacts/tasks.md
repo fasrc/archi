@@ -107,8 +107,14 @@ the artifacts must describe. Each task ends in its own commit.
       (b) the pin-deletion narrative still reads correctly — `git diff` must show no change at
       `design.md:3`, `design.md:33` or `design.md:64`, and none to the first or last
       requirement of `spec.md`;
-      (c) `git diff --name-only origin/dev...HEAD` lists only `.md` files under
-      `openspec/changes/` — no source, no test, no requirements file, no control-plane path;
+      (c) `git diff --name-only origin/dev...HEAD` lists nothing outside
+      `openspec/changes/`, and nothing inside it but `.md` files and this change's own
+      `.openspec.yaml` descriptor — no source, no test, no requirements file, no
+      control-plane path. The descriptor is required: every non-archived change directory
+      under `openspec/changes/` carries one, so a new change cannot be `.md`-only. The
+      criterion originally said "only `.md` files", which no new change can satisfy; it was
+      corrected here after an adversarial review round pointed out that task 2.1 had been
+      ticked against a condition the branch does not meet;
       (d) `git grep -n 'duckdb(\[=<>!~' -- openspec/changes/fix-issue-246-remove-dead-duckdb-pin/`
       prints nothing outside the paragraph that deliberately quotes the strip filter's own
       pattern.
@@ -164,11 +170,14 @@ Run on `8cad6276` by the nightly reviewer-responder, 2026-08-20.
   first requirement ("SHALL NOT pin duckdb", naming the three files that carried the pin) and
   the last ("SHALL NOT regenerate", with its exactly-three-deleted-lines scenario) show zero
   changed lines.
-- **(c) diff confined.** `git diff --name-only origin/dev...HEAD` lists eight paths, all under
-  `openspec/changes/`. All are Markdown except
-  `fix-issue-254-reconcile-246-guard-artifacts/.openspec.yaml`, the new change's own
-  descriptor — the one non-Markdown file, disclosed in the PR body. No source, test,
-  requirements or control-plane path appears.
+- **(c) diff confined.** `git diff --name-only origin/dev...HEAD` lists eight paths, none
+  outside `openspec/changes/`. Seven are Markdown; the eighth is
+  `fix-issue-254-reconcile-246-guard-artifacts/.openspec.yaml`, this change's own required
+  descriptor. No source, test, requirements or control-plane path appears. Criterion (c) was
+  corrected above before this box was ticked: as originally drafted it demanded a Markdown-only
+  diff, which no new change directory can produce, so ticking it against the real diff would
+  have recorded a false verification. Verified: `git diff --name-only origin/dev...HEAD |
+  grep -v '^openspec/changes/'` is empty, and the only non-`.md` entry is that descriptor.
 - **(d) literal strip-filter pattern.** Two occurrences remain, both deliberate: `design.md:27`
   and `proposal.md:21`, each quoting the loop image's own `grep -ivE` filter. Neither claims
   the guard uses that pattern.
