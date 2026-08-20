@@ -1,0 +1,17 @@
+# Evaluator MCP registry (qa-evaluation-mcp-v1) for the QA eval trial, browser
+# Console variant.
+#
+# The browser Console executes stdio commands inside the deployed chatbot
+# container, not on the operator's machine (see "Evaluator MCP registry" in
+# docs/docs/evaluation.md). `args` is therefore the container path where
+# fake_mcp_server.py is copied by task 7.2, backed by the host directory
+# mounted at /root/archi/evaluations.
+schema_version: qa-evaluation-mcp-v1
+servers:
+  capacity:
+    transport: stdio
+    command: python3
+    args:
+      - /root/archi/evaluations/fake_mcp_server.py
+    authentication:
+      mode: inherited_environment
