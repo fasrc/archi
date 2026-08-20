@@ -1,6 +1,6 @@
 ## 1. Confirm the premise and record the red state
 
-- [ ] 1.1 No commit in this task — it measures and prepares only. Do all of the following and
+- [x] 1.1 No commit in this task — it measures and prepares only. Do all of the following and
       record every number in the next task's commit body.
       **(a)** Confirm the module is still dirty on this branch:
       `black --check --diff src/cli/managers/secrets_manager.py | grep -c '^[+-]'`
@@ -25,7 +25,7 @@
 
 ## 2. Characterization tests for the members the reflow touches
 
-- [ ] 2.1 Create `tests/unit/test_secret_manager_provisioning.py` covering the four members.
+- [x] 2.1 Create `tests/unit/test_secret_manager_provisioning.py` covering the four members.
       **The filename uses `secret` singular on purpose.** `.gitignore:19`'s `*secrets*` rule
       matches any path component containing `secrets`, so `test_secrets_manager_*.py` is
       unaddable: `git add` skips it with a hint and the commit then contains nothing. Before
