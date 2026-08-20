@@ -19,7 +19,8 @@ scores patch coverage with `diff-cover --fail-under=80`, so a module that is not
 black-clean drags the whole reflow into the patch, uncovered reflowed lines pull the score below
 the floor, and the gate fails for reasons unrelated to the edit. Measured on `origin/dev` at `07e007df`, this module carried 81 lines of pending black
 churn in 185 lines of source, which is what made the operator-facing `validate_secrets` message
-(`:123-141`) uneconomic to improve in issue #287.
+uneconomic to improve in issue #287. That method sits at `:123-141` on `07e007df`; this change's
+reflow moves it to `:144-162`, so read the anchor against the commit it names.
 
 **This requirement is currently unenforced by CI, and that is a known gap, not an oversight.**
 `.gitignore:19`'s bare `*secrets*` pattern matches this file's basename, and black honours
@@ -32,10 +33,14 @@ tracked separately as issue #313 rather than done here (design.md, Decision 6). 
 requirement as "the module is black-clean and must be kept so", not as "an automated check
 guarantees it".
 
-Nothing in this repository executes that CI-blind-spot claim, so it is stated here as
-description and deliberately **not** written as a scenario: a scenario is a normative check, and
-a normative check nothing runs is the same defect this requirement's own history is about. Issue
-#313 carries the executable pin. Note for whoever takes it: the `gate` CI job installs black
+That CI-blind-spot claim is stated here as description and deliberately **not** written as a
+scenario. The dividing line is what a statement is *about*, not whether a test runs it. A
+scenario states a requirement on the thing this capability governs — "the module is
+black-clean" is one, and it stays a scenario even while nothing automated checks it, because the
+paragraph above says so plainly. "CI's directory walk skips this file" is not a requirement on
+the module at all; it is an observation about the tooling, it is nobody's contract to uphold, and
+it becomes false the day #313 lands. Observations that expire belong in prose. Issue #313 carries
+the executable pin. Note for whoever takes it: the `gate` CI job installs black
 24.10.0 (`.github/workflows/ci.yml:47-51`) and runs `pytest tests/unit/`, so a test that shells
 out to black works there — but the separate `unit-tests` job installs only
 `requirements/requirements-base.txt` and `pytest`, so the same test needs a guard or it errors
@@ -93,8 +98,24 @@ required secret, and SHALL instead emit a warning that a HuggingFace token may b
 not enforced. The three name tests are an ordered `if`/`elif` chain, so a name matching more
 than one provider resolves to the first match.
 
-This requirement records behaviour that already exists. It is specified here because these
-lines had no test reaching them, which is what blocked the module from being reformatted.
+This requirement records behaviour that already exists **in the code**, and it is specified here
+because these lines had no test reaching them, which is what blocked the module from being
+reformatted.
+
+**The model-name loop is unreachable in production, and the requirement must be read that way.**
+`get_models_configs()` has exactly one implementation and it returns a constant empty list
+(`src/cli/managers/config_manager.py:471-473`, docstring "Legacy models configuration accessor
+(archi section removed)"). `ConfigurationManager` has no subclass, and all four
+`SecretsManager(...)` construction sites pass one (`src/cli/cli_main.py:183, 572, 584, 812`). So
+no key is derived from a model name today and the open-source warning never prints. The config
+shape the loop reads was removed with the `archi` section, so no user configuration reaches it
+either.
+
+What this requirement pins is therefore the behaviour of **dormant code**: it exists so that
+reviving the accessor, or deleting the loop, is a visible decision rather than a silent one.
+Issue #314 carries that decision. The second half of `_get_model_based_secrets` — the
+`huit_bedrock` scan over `config_manager.get_configs()` — is live, and the requirement below
+covers it.
 
 #### Scenario: A commercial provider requires its key
 
@@ -128,6 +149,10 @@ missing-secret case is already refused by the caller. `get_env_file_path` SHALL 
 path of the `.env` file the manager loaded.
 
 This requirement records behaviour that already exists, for the same reason as the previous one.
+Unlike the model-name loop above, `write_secrets_to_files` is live: `src/cli/cli_main.py:288`,
+`:577`, and `:863` all call it, and it calls `write_env_file` itself. One caveat for
+completeness — `get_env_file_path` has no caller anywhere in the repository outside its own
+test, so the clause covering it pins an accessor nothing currently reads (noted in #314).
 
 #### Scenario: Each secret becomes a lowercased file
 

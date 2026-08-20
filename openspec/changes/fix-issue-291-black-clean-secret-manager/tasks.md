@@ -134,3 +134,19 @@
 - [x] 6.5 `model: opus` — Fix the CI `lint` failure: the pre-commit writer reformatted the test
       file after it was staged, so the commit carried unformatted content. Land the formatted
       version as a new commit, and confirm `git status --porcelain` is empty afterwards.
+
+## 7. Close the round-3 findings (Greptile and adversarial review) on PR #308
+
+- [x] 7.1 `model: opus` — Verify Greptile's reachability claim by tracing
+      `get_models_configs()` to every implementation and every `SecretsManager` construction
+      site, rather than accepting or dismissing it on sight.
+- [x] 7.2 `model: opus` — File the dead-loop decision as its own issue (#314) with the
+      severity stated honestly: cleanup, not a missing-secret bug.
+- [x] 7.3 `model: opus` — State the reachability of both affected requirements in the spec
+      delta, including `get_env_file_path` having no caller.
+- [x] 7.4 `model: opus` — Re-derive **every** file:line citation in the change directory and
+      name the commit each is read against. Fix D9's `:88`/`:118-121` and the spec's
+      `:123-141`, which this change's own reflow moves.
+- [x] 7.5 `model: opus` — Push back on demoting the two module-level scenarios, and correct the
+      round-2 rationale that invited the reading (D14).
+- [x] 7.6 `model: opus` — Reply in-thread to Greptile's inline comment and post the round log.

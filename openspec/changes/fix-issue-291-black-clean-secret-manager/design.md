@@ -234,10 +234,14 @@ touching `.gitignore` at all.
 The reviewer's charge was that the tests lift patch coverage without pinning the contract. Three
 concrete gaps, all confirmed against the code:
 
+Line anchors below are in `src/cli/managers/secrets_manager.py` **as of commit `8956f5be`**, the
+reformat. Read them with `git show 8956f5be:src/cli/managers/secrets_manager.py` rather than
+against a later tree.
+
 | gap | why the old test could not catch it |
 | --- | --- |
-| `continue` vs `break` on a non-mapping section (`:88`) | the config had one section, so both control-flow choices give `set()` |
-| the `evaluator_provider` arm of `if "huit_bedrock" in (sut_provider, evaluator_provider)` (`:118-121`) | only the `sut_provider` arm was exercised, and black re-wrapped that exact expression |
+| `continue` vs `break` on a non-mapping section (guard `:88`, `continue` `:89`) | the config had one section, so both control-flow choices give `set()` |
+| the `evaluator_provider` arm of `if "huit_bedrock" in (sut_provider, evaluator_provider)` (assignment `:119-121`, branch `:122`) | only the `sut_provider` arm was exercised, and black re-wrapped that assignment |
 | "no file is left holding an empty value" (spec scenario) | the test asserted only that `ValueError` was raised |
 
 Two tests added and one existing test strengthened, taking the file from 8 to 10 tests. Each of
@@ -309,3 +313,63 @@ black --check src tests scripts     # 1 file would be reformatted
 task list already demands it for `src/`, and it applies to every path in the commit, not just
 the reformatted module. Fixed in a follow-up commit rather than an amend, because the prior
 commit was already pushed and cited by SHA in the PR's round-1 log.
+
+## Round-3 decisions (Greptile, and adversarial review round 3, on PR #308)
+
+### D12 — Two of the four characterized members are not reachable in production
+
+Greptile's P2 on `tests/unit/test_secret_manager_provisioning.py`, confirmed by tracing the
+accessor to its only implementation.
+
+`_get_model_based_secrets` opens by deriving `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from model
+names in `config_manager.get_models_configs()`. That accessor has exactly one implementation and
+it returns a constant empty list (`src/cli/managers/config_manager.py:471-473`, docstring "Legacy
+models configuration accessor (archi section removed)"). `ConfigurationManager` has no subclass,
+and all four construction sites pass one (`src/cli/cli_main.py:183, 572, 584, 812`). The loop
+body therefore never executes in production.
+
+A second, milder case found in the same sweep: `get_env_file_path` has no caller anywhere in the
+repository outside its own test.
+
+**Not a defect in this change** — the reformat is unaffected, and the tests still earn their
+keep: they pin what the code does today, so reviving the accessor or deleting the loop becomes a
+visible decision. What *was* a defect is the spec delta describing the derivation as live
+production behaviour. Both requirements now state their reachability, and issue #314 carries the
+delete-or-restore decision.
+
+Scope of the live parts, so the record is complete: the `huit_bedrock` scan over
+`get_configs()` is live, and `write_secrets_to_files` is called from `src/cli/cli_main.py:288`,
+`:577`, and `:863`.
+
+### D13 — Every anchor is verified against a named commit, not against "the file"
+
+Round 3 caught two anchors in D9 that were off by a line or a range: the `continue` is `:89`, not
+`:88` (`:88` is its guard), and the `huit_bedrock` branch is `:122`, while `:119-121` is only the
+`evaluator_provider` assignment. The spec carried a third: `validate_secrets` at `:123-141` was
+measured on `07e007df`, and this change's own reflow moves it to `:144-162` — an anchor that a
+reader after the merge would follow into the wrong method.
+
+That is a class, not three slips: a file:line written while a change is in flight is anchored to
+a tree that the change itself moves. Every citation in this change directory was re-derived and
+each now names the commit it is read against. D9 states `8956f5be` explicitly.
+
+### D14 — Where a scenario is the wrong shape, and where it is not
+
+Round 3 argued that if the CI-blind-spot claim had to be demoted for having no executable check,
+then `Scenario: The module needs no reformatting` and `Scenario: A one-line edit yields a
+one-line patch` must go too, since nothing runs those either.
+
+Not adopted, and the round-2 wording that invited the reading is corrected instead. Round 2 said
+"a normative check nothing runs is the same defect", which is too strong: it would empty most of
+the spec set, since specs state contracts and tests verify them. The real dividing line is what a
+statement is *about*.
+
+- "The module is black-clean" is a requirement **on the thing this capability governs**. It stays
+  a scenario. Nothing automated checks it yet, and the requirement says so in bold two paragraphs
+  above, which is where that belongs.
+- "CI's directory walk skips this file" is **an observation about the tooling**. It is nobody's
+  contract to uphold, and it becomes false the day #313 lands. Observations that expire belong in
+  prose.
+
+The spec now states that distinction where the demotion is explained, so the next reader does not
+have to re-derive it.
