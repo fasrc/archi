@@ -42,7 +42,7 @@ the artifacts must describe. Each task ends in its own commit.
       concatenates them ahead of `requirements-base.txt`, so a declaration added to a header
       would leave the tracked outputs green until the next base-image build installed it.
       Commit.
-- [ ] 1.3 Reconcile task 1.1 of
+- [x] 1.3 Reconcile task 1.1 of
       `openspec/changes/fix-issue-246-remove-dead-duckdb-pin/tasks.md` (`:3-22`). Replace the
       three-path module-level mapping with the five shipped paths, still resolved from
       `REPO_ROOT = Path(__file__).resolve().parents[2]`. Replace "One test scans every line of
