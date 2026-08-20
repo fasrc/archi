@@ -23,7 +23,7 @@ because the teardown precedes that refusal, so group 2 would turn it red for the
 reason. Fix the fixture first, while the assertion is still reachable — this group is green
 on unmodified `src/`.
 
-- [ ] 1.1 Add a `benchmark_config` fixture writing a benchmarking-valid config into
+- [x] 1.1 Add a `benchmark_config` fixture writing a benchmarking-valid config into
   `tmp_path`. `validate_configs` requires all five blank-valued benchmarking keys from the
   rendered `base-config.yaml` — `agent_class`, `agent_md_file`, `provider`, `model`,
   `ollama_url`. **`ollama_url` is required even when `provider` is not `local`**; the
@@ -34,19 +34,19 @@ on unmodified `src/`.
   (`chat_app`, `vectorstore`, `data_manager`, plus the `data_manager.sources.links` block).
   Do **not** reuse `examples/benchmarking/benchmarking_configs/example_conf.yaml`: it sets
   `provider: local` with no `ollama_url` and fails validation too.
-- [ ] 1.2 Point `test_force_evaluate_still_removes_existing_runtime` at that fixture and add
+- [x] 1.2 Point `test_force_evaluate_still_removes_existing_runtime` at that fixture and add
   the `cli_main.TemplateManager` → `RuntimeError(SENTINEL)` guard used by the `create` tests
   (`:181-183`). The guard is **mandatory** here: with a valid config the run no longer dies
   at `validate_configs`, so without it the test would proceed to `VolumeManager` and
   `DeploymentManager` and create real volumes and containers on the host.
-- [ ] 1.3 Assert `SENTINEL in result.output` alongside the existing `len(teardowns) == 1` and
+- [x] 1.3 Assert `SENTINEL in result.output` alongside the existing `len(teardowns) == 1` and
   `"already exists" not in result.output`. The sentinel is what proves the run got as far as
   deployment setup rather than dying early and passing vacuously — the exact failure this
   group exists to remove.
-- [ ] 1.4 Run it against **unmodified** `src/` and confirm it passes. It must: the teardown at
+- [x] 1.4 Run it against **unmodified** `src/` and confirm it passes. It must: the teardown at
   `:803` still runs before anything can refuse. A failure here means the fixture is wrong, not
   the code.
-- [ ] 1.5 Run the gate, then commit. Tests-only diff, so diff-cover reports no measurable
+- [x] 1.5 Run the gate, then commit. Tests-only diff, so diff-cover reports no measurable
   lines and the 80% floor does not apply.
 
 ## 2. Move the teardown below everything that can refuse, and prove it

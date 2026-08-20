@@ -49,6 +49,67 @@ def env_file(tmp_path):
     return p
 
 
+@pytest.fixture
+def benchmark_config(tmp_path):
+    """Write a benchmarking-valid config to tmp_path and return the path.
+
+    Satisfies all five blank keys that the rendered base-config.yaml exposes
+    for the benchmarking service (agent_class, agent_md_file, provider, model,
+    ollama_url) so validate_configs passes with services=["postgres",
+    "benchmarking"].  agent_md_file uses an absolute path to an existing repo
+    file so the exists() check in _validate_benchmarking_config passes.
+    """
+    agent_md = REPO_ROOT / "examples" / "agents" / "cms-comp-ops.md"
+    miscellanea = (
+        REPO_ROOT / "examples" / "deployments" / "basic-openai" / "miscellanea.list"
+    )
+    config_text = f"""\
+name: smoke-benchmark
+
+services:
+  chat_app:
+    agent_class: CMSCompOpsAgent
+    agents_dir: examples/agents
+    client_timeout_seconds: 1800
+    default_provider: openai
+    default_model: gpt-4o
+    providers:
+      openai:
+        enabled: true
+        default_model: gpt-4o
+        models:
+          - gpt-4o
+      local:
+        enabled: false
+    trained_on: My data
+    port: 7866
+    external_port: 7866
+  vectorstore:
+    backend: postgres
+  data_manager:
+    port: 7889
+    external_port: 7889
+    auth:
+      enabled: false
+  benchmarking:
+    agent_class: CMSCompOpsAgent
+    agent_md_file: {str(agent_md)}
+    provider: openai
+    model: gpt-4o
+    ollama_url: http://localhost:11434
+
+data_manager:
+  sources:
+    links:
+      input_lists:
+        - {str(miscellanea)}
+  embedding_name: HuggingFaceEmbeddings
+"""
+    p = tmp_path / "benchmark.yaml"
+    p.write_text(config_text)
+    return p
+
+
 @pytest.mark.usefixtures("fake_repo_root")
 def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
@@ -671,7 +732,7 @@ def test_force_create_still_tears_down_once_validation_passes(
 
 
 def test_force_evaluate_still_removes_existing_runtime(
-    env_file, archi_home, monkeypatch
+    env_file, archi_home, benchmark_config, monkeypatch
 ):
     """Splitting the helper must not break archi evaluate --force.
 
@@ -679,10 +740,13 @@ def test_force_evaluate_still_removes_existing_runtime(
     remove_existing_deployment(), then refuses if the directory still exists. It
     depends on the destructive half running at that call site, which is why the
     split had to update it rather than leave only the precondition behind.
-    """
-    if not EXAMPLE_CONFIG.exists():
-        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
 
+    The TemplateManager sentinel stops the run before any host mutation so the
+    test never creates real volumes or containers.  The sentinel appearing in
+    the output proves the run reached deployment setup, meaning the teardown
+    genuinely ran rather than the test passing vacuously because validation
+    refused first.
+    """
     import shutil
 
     from src.cli import cli_main
@@ -696,11 +760,15 @@ def test_force_evaluate_still_removes_existing_runtime(
         teardowns.append(kwargs)
         shutil.rmtree(existing, ignore_errors=True)
 
+    def _stop_before_host_mutation(*args, **kwargs):
+        raise RuntimeError(SENTINEL)
+
     monkeypatch.setattr(DeploymentManager, "delete_deployment", _delete)
     monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
     monkeypatch.setattr(
         cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
     )
+    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -710,7 +778,7 @@ def test_force_evaluate_still_removes_existing_runtime(
             "-n",
             "smoke",
             "-c",
-            str(EXAMPLE_CONFIG),
+            str(benchmark_config),
             "-e",
             str(env_file),
         ],
@@ -724,6 +792,11 @@ def test_force_evaluate_still_removes_existing_runtime(
         f"evaluate --force refused a runtime it was supposed to have removed, "
         f"which is what happens if the destructive half no longer runs at its "
         f"call site. output:\n{result.output}\n"
+    )
+    assert SENTINEL in result.output, (
+        f"expected the run to reach deployment setup and stop at the sentinel, "
+        f"which proves the teardown ran before the replacement was written. "
+        f"output:\n{result.output}\n"
     )
 
 
