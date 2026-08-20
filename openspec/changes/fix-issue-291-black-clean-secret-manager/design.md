@@ -202,3 +202,56 @@ adjacent change to every import site.
 `git check-ignore -v --no-index <path>`. If it reports a match, rename the path. Do **not**
 reach for `git add -f` — that tracks a file the ignore rules say should not be tracked, and the
 next person to read the rule cannot tell it was deliberate.
+
+## Round-1 decisions (adversarial review of PR #308)
+
+The local Codex adversarial pass returned `needs-attention` with two medium findings and
+**no semantic delta in the reformat itself**. Both findings held on verification.
+
+### D8 — The spec delta records an invariant CI does not enforce
+
+`design.md` Decision 6 and `proposal.md`'s risk list both state the recurrence hole plainly, so
+the branch never hid it. The **spec delta** did not, and the spec delta is the artifact that
+archives into `openspec/specs/` and outlives this change. A future reader would take
+"`src/cli/managers/secrets_manager.py` SHALL satisfy `black --check`" as a guarded contract when
+nothing in CI guards it.
+
+Fixed in the spec text rather than in the ignore rule: the requirement now states that CI's
+directory-walk assert cannot see the file, that the invariant rests on the local pre-commit
+writer alone, and that closing the gap is issue #313. A new scenario pins the gap itself, so a
+later reader cannot mistake silence for enforcement.
+
+Rejected the reviewer's first option — "narrow the requirement to the current reformat only".
+The requirement is not wrong; it is unguarded. Narrowing it to a one-time event would lose the
+statement that the module must *stay* black-clean, which is the whole point of #291. Rejected the
+second option — fix the ignore rule here — for Decision 6's reason: it weakens a secret-leak
+guard, and issue #291 asked for a formatting-only change. Issue #313 carries both options and a
+third the reviewer did not raise: an explicit-path formatter test, which closes the hole without
+touching `.gitignore` at all.
+
+### D9 — Three characterization tests were coverage-shaped, not behaviour-shaped
+
+The reviewer's charge was that the tests lift patch coverage without pinning the contract. Three
+concrete gaps, all confirmed against the code:
+
+| gap | why the old test could not catch it |
+| --- | --- |
+| `continue` vs `break` on a non-mapping section (`:88`) | the config had one section, so both control-flow choices give `set()` |
+| the `evaluator_provider` arm of `if "huit_bedrock" in (sut_provider, evaluator_provider)` (`:118-121`) | only the `sut_provider` arm was exercised, and black re-wrapped that exact expression |
+| "no file is left holding an empty value" (spec scenario) | the test asserted only that `ValueError` was raised |
+
+Two tests added and one existing test strengthened, taking the file from 8 to 10 tests. Each of
+the three was proved to have teeth by mutating the source and confirming that test — and only
+that test — turns red:
+
+| mutation | test that fails |
+| --- | --- |
+| `continue` -> `break` | `test_a_non_mapping_section_does_not_stop_the_remaining_sections` |
+| `in (sut_provider, evaluator_provider)` -> `in (sut_provider,)` | `test_huit_bedrock_as_the_ragas_evaluator_requires_huit_api_key` |
+| `touch()` the secret file before resolving it | `test_secret_absent_from_env_raises_value_error_naming_it` |
+
+One part of the reviewer's reasoning does not hold and is recorded rather than adopted: it said
+the spec "calls out" `ragas_settings.evaluator_provider`. The spec delta does not specify the
+HUIT path at all. The test was added anyway, on the stronger ground that black re-wrapped that
+expression, which puts it squarely inside what a characterization test for this reflow must
+cover.

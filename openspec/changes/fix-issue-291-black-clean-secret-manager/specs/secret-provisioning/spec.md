@@ -14,6 +14,17 @@ the edit. Measured on `origin/dev` at `07e007df`, this module carried 81 lines o
 churn in 185 lines of source, which is what made the operator-facing `validate_secrets` message
 (`:123-141`) uneconomic to improve in issue #287.
 
+**This requirement is currently unenforced by CI, and that is a known gap, not an oversight.**
+`.gitignore:19`'s bare `*secrets*` pattern matches this file's basename, and black honours
+`.gitignore` when it walks a directory. The CI whole-scope assert passes directory arguments
+(`scripts/gate.sh:70`), so the walk skips this file; the local pre-commit writer passes explicit
+changed paths (`scripts/gate.sh:78`), so it does not. The invariant above therefore rests on the
+local hook alone: a hand-edit that lands without it re-introduces the drift silently, and CI
+stays green. Narrowing the ignore rule would weaken a secret-leak guard, so closing the gap is
+tracked separately as issue #313 rather than done here (design.md, Decision 6). Read this
+requirement as "the module is black-clean and must be kept so", not as "an automated check
+guarantees it".
+
 #### Scenario: The module needs no reformatting
 
 - **WHEN** `black --check src/cli/managers/secrets_manager.py` is run
@@ -25,6 +36,14 @@ churn in 185 lines of source, which is what made the operator-facing `validate_s
 - **WHEN** a maintainer changes a single statement in the module and runs the gate
 - **THEN** the gate's black step leaves the rest of the module untouched
 - **AND** the patch `diff-cover` scores contains that edit rather than a whole-file reflow
+
+#### Scenario: CI cannot detect a later drift in this module
+
+- **WHEN** the CI whole-scope format assert runs `black --check` with directory arguments
+- **THEN** it skips `src/cli/managers/secrets_manager.py`, because `.gitignore:19` matches the
+  basename and black honours `.gitignore` on a directory walk
+- **AND** CI reports green even if the module has drifted, so the black-clean state is held by
+  the local pre-commit hook until issue #313 closes the gap
 
 ### Requirement: A formatting change to the module preserves its syntax tree
 

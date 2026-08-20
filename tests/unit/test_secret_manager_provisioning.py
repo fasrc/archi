@@ -83,10 +83,60 @@ class TestGetModelBasedSecrets:
         assert secrets == set()
         assert any("won't be explicitly enforced" in r.message for r in caplog.records)
 
+    def test_a_non_mapping_section_does_not_stop_the_remaining_sections(self, tmp_path):
+        """The bad section is skipped, not treated as the end of the scan.
+
+        A single-section config cannot tell ``continue`` apart from ``break``.
+        This one puts a valid section *after* the bad one, so a ``break`` here
+        would drop ``OPENAI_API_KEY`` and turn the test red.
+        """
+        config_manager = _config_manager(
+            models_configs=[
+                {
+                    "not_a_section": "Anthropic:claude-3-haiku",
+                    "sut": {"model": "OpenAI:gpt-4o"},
+                }
+            ]
+        )
+        manager = _manager(tmp_path, config_manager=config_manager)
+
+        secrets = manager._get_model_based_secrets()
+
+        assert secrets == {"OPENAI_API_KEY"}
+
     def test_huit_bedrock_provider_requires_huit_api_key(self, tmp_path):
         config_manager = _config_manager(
             configs=[
                 {"services": {"benchmarking": {"provider": "HUIT_Bedrock"}}},
+            ]
+        )
+        manager = _manager(tmp_path, config_manager=config_manager)
+
+        secrets = manager._get_model_based_secrets()
+
+        assert secrets == {"HUIT_API_KEY"}
+
+    def test_huit_bedrock_as_the_ragas_evaluator_requires_huit_api_key(self, tmp_path):
+        """The evaluator arm of the provider check, not just the SUT arm.
+
+        ``benchmarking.mode_settings.ragas_settings.evaluator_provider`` is the
+        second half of the ``in (sut_provider, evaluator_provider)`` test, and
+        black re-wrapped that expression, so the reflow touched it.
+        """
+        config_manager = _config_manager(
+            configs=[
+                {
+                    "services": {
+                        "benchmarking": {
+                            "provider": "openai",
+                            "mode_settings": {
+                                "ragas_settings": {
+                                    "evaluator_provider": "HUIT_Bedrock"
+                                }
+                            },
+                        }
+                    }
+                },
             ]
         )
         manager = _manager(tmp_path, config_manager=config_manager)
@@ -119,6 +169,10 @@ class TestWriteSecretsToFiles:
 
         with pytest.raises(ValueError, match="MISSING_SECRET"):
             manager.write_secrets_to_files(target_dir, {"MISSING_SECRET"})
+
+        # The refusal must not leave an empty file behind for the caller to
+        # mount as if it held a real secret.
+        assert not (target_dir / "secrets" / "missing_secret.txt").exists()
 
 
 class TestWriteEnvFile:

@@ -60,7 +60,7 @@
 
 ## 3. The reformat
 
-- [ ] 3.1 Capture the module's syntax tree, reformat, and prove nothing moved:
+- [x] 3.1 Capture the module's syntax tree, reformat, and prove nothing moved:
       ```
       python -c "import ast,pathlib;print(ast.dump(ast.parse(pathlib.Path('src/cli/managers/secrets_manager.py').read_text())))" > /tmp/ast_before.txt
       black src/cli/managers/secrets_manager.py && isort src/cli/managers/secrets_manager.py
@@ -102,3 +102,19 @@
         criterion 5 asks for, with the reason: a one-file reformat scores 50% patch coverage and
         the gate refuses it at 80%. Behaviour is unchanged; only the file count departs.
       Do not merge. A human reviews and merges in daylight.
+
+## 5. Close the round-1 findings from the adversarial review of PR #308
+
+- [x] 5.1 `model: opus` — Verify both findings against the code before acting. Confirm the
+      CI/local gate split at `scripts/gate.sh:70` (directory args, walk skips the file) versus
+      `:78` (explicit changed paths, reflows it), and confirm each of the three test gaps by
+      reading the code path rather than the reviewer's summary.
+- [x] 5.2 `model: opus` — File the CI-visibility gap as its own issue (#313) with both candidate
+      fixes and the trade-off, rather than narrowing `.gitignore:19` inside a formatting-only PR.
+- [x] 5.3 `model: opus` — Amend the spec delta so it states the enforcement gap and pins it with
+      its own scenario. Re-run `openspec validate --strict`.
+- [x] 5.4 `model: opus` — Close the three characterization gaps, then prove each has teeth
+      by mutating the source and confirming that test alone turns red. Restore the source and
+      confirm `git diff` on it is empty.
+- [x] 5.5 `model: opus` — Re-run the gate, confirm patch coverage is still at or above the floor,
+      and post the round log on the PR.
