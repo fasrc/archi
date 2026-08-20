@@ -53,65 +53,65 @@ on unmodified `src/`.
 
 Red steps and the fix ship together in this one commit.
 
-- [ ] 2.1 Add `test_force_evaluate_with_missing_secret_keeps_existing_runtime`: the group-1
+- [x] 2.1 Add `test_force_evaluate_with_missing_secret_keeps_existing_runtime`: the group-1
   `benchmark_config`, an env file omitting `PG_PASSWORD` (postgres is always in
   `enabled_services` for evaluate), `DeploymentManager.delete_deployment` patched to record
   **and** `shutil.rmtree` the directory, a marker file inside the existing runtime. Assert
   exit non-zero, `teardowns == []`, and the marker survives.
-- [ ] 2.2 Add `test_force_evaluate_with_invalid_config_keeps_existing_runtime`, same shape but
+- [x] 2.2 Add `test_force_evaluate_with_invalid_config_keeps_existing_runtime`, same shape but
   passing `EXAMPLE_CONFIG` (`basic-openai`, no `services.benchmarking`) so `validate_configs`
   is the refusing step. This distinguishes an ordering fix from a secrets special-case: a
   teardown moved below only `validate_secrets` passes 2.1 and fails this.
-- [ ] 2.3 Add `test_evaluate_without_force_refuses_existing_runtime`: no `--force`, existing
+- [x] 2.3 Add `test_evaluate_without_force_refuses_existing_runtime`: no `--force`, existing
   runtime, valid config. Assert exit non-zero, `teardowns == []`, and that the output names
   the runtime as already existing. This guards the precedence that
   `handle_existing_deployment()` staying put is meant to preserve.
-- [ ] 2.4 Run 2.1-2.3 and record each failure reason. Expect 2.1 and 2.2 red because the
+- [x] 2.4 Run 2.1-2.3 and record each failure reason. Expect 2.1 and 2.2 red because the
   teardown ran, and 2.3 green as a pre-existing guard. Paste the assertion text into the PR
   body — "the tests failed" is not evidence they failed for the right reason.
-- [ ] 2.5 Move `remove_existing_deployment(...)` from `cli_main.py:803-805` to sit directly
+- [x] 2.5 Move `remove_existing_deployment(...)` from `cli_main.py:803-805` to sit directly
   **after** `ServiceBuilder.build_compose_config(...)` (`:849-857`) and directly **before**
   `template_manager = TemplateManager(env, verbosity)` (`:859`). Above `TemplateManager` and
   not below it, because the tests patch that constructor to stop before host mutation; a
   teardown below it never runs under the guard. `create()` resolves the same tension the same
   way (its teardown at `:261` sits above its own `TemplateManager` construction).
-- [ ] 2.6 Move the `if base_dir.exists(): raise "Benchmarking runtime '{name}' already
+- [x] 2.6 Move the `if base_dir.exists(): raise "Benchmarking runtime '{name}' already
   exists"` block (`:807-810`) down with the teardown, keeping it immediately below. Keep the
   message byte-identical. Do **not** make it conditional on `not force` — under `not force` it
   is unreachable and under `force` it is the only check that catches a cleanup
   `remove_existing_deployment()` downgraded to a warning, so gating it on `not force` removes
   it exactly where it does work.
-- [ ] 2.7 Replace the stale `# Both halves, back to back, ...` comment at `:799-801`, which
+- [x] 2.7 Replace the stale `# Both halves, back to back, ...` comment at `:799-801`, which
   will no longer be true. State the invariant and why: nothing destructive until the
   replacement is known to be valid and constructible, `handle_existing_deployment` stays early
   for error precedence, and the `exists()` assertion travels with the teardown. Reference
   fasrc/archi#290.
-- [ ] 2.8 Leave `handle_existing_deployment(...)` at `:802`, `src/cli/utils/helpers.py`
+- [x] 2.8 Leave `handle_existing_deployment(...)` at `:802`, `src/cli/utils/helpers.py`
   untouched, and `create()` untouched. The helper split from #287 is reused, not revised.
-- [ ] 2.9 Re-run 2.1-2.3 and group 1's test. All four green, and group 1's must still show the
+- [x] 2.9 Re-run 2.1-2.3 and group 1's test. All four green, and group 1's must still show the
   sentinel — that is what proves the relocated teardown is still reached on the success path.
-- [ ] 2.10 Run the gate, then commit.
+- [x] 2.10 Run the gate, then commit.
 
 ## 3. Verify nothing else moved
 
-- [ ] 3.1 `pytest tests/unit/test_cli_create_dev_smoke.py` — every pre-existing test other
+- [x] 3.1 `pytest tests/unit/test_cli_create_dev_smoke.py` — every pre-existing test other
   than `test_force_evaluate_still_removes_existing_runtime` passes **unmodified**. If any
   `create` test needed touching, the change leaked out of `evaluate()`; revert and re-scope.
-- [ ] 3.2 Run the benchmarking and CLI unit tests, since `evaluate()` was edited. Green in the
+- [x] 3.2 Run the benchmarking and CLI unit tests, since `evaluate()` was edited. Green in the
   full suite.
-- [ ] 3.3 `grep -rn "remove_existing_deployment\|handle_existing_deployment" src/ tests/` and
+- [x] 3.3 `grep -rn "remove_existing_deployment\|handle_existing_deployment" src/ tests/` and
   confirm the caller inventory is unchanged apart from the relocation — derived by grep, not
   from memory. This is the check that caught #287's first draft being wrong about `evaluate()`.
-- [ ] 3.4 Confirm the port-availability probe still sits **below** the teardown: it runs inside
+- [x] 3.4 Confirm the port-availability probe still sits **below** the teardown: it runs inside
   `TemplateManager.prepare_deployment_files()` (`templates_manager.py:727-729`), reached from
   `cli_main.py:867`, which is after the relocated call. It must stay there — the old runtime
   holds its ports until removal, so hoisting it would make every forced evaluate fail
   (fasrc/archi#293).
-- [ ] 3.5 Gate green with patch coverage at or above 80%. Compute the patch coverage yourself
+- [x] 3.5 Gate green with patch coverage at or above 80%. Compute the patch coverage yourself
   before trusting a red verdict: stale `origin/dev...HEAD` line numbers scored against a dirty
   working tree produce a false red.
-- [ ] 3.6 No `Co-Authored-By` or session trailer on any commit.
-- [ ] 3.7 **Not run, recorded as a gap:** a real forced evaluate through to a live
+- [x] 3.6 No `Co-Authored-By` or session trailer on any commit.
+- [x] 3.7 **Not run, recorded as a gap:** a real forced evaluate through to a live
   benchmarking runtime. That needs images, containers and roughly fifty minutes of ingest, and
   the project forbids a non-dry run against a real runtime. The teardown code is unchanged —
   only relocated — and group 1's test covers the success path up to the first host mutation.
