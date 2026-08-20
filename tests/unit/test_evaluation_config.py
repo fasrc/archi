@@ -64,9 +64,18 @@ def test_evaluation_console_routes_require_explicit_enablement(
 ):
     evaluations_config = chat_app_config.get("evaluations")
     if evaluations_config is not None:
+        # An explicit ``agent_config_path`` is fork policy: the seam requires one
+        # and refuses the live deployment config, because every run snapshots
+        # that file into its own run directory. This test measures route
+        # registration, so it names a throwaway path and leaves the enablement
+        # flag as the only thing under test.
         chat_app_config = {
             **chat_app_config,
-            "evaluations": {**evaluations_config, "root": str(tmp_path)},
+            "evaluations": {
+                **evaluations_config,
+                "root": str(tmp_path),
+                "agent_config_path": str(tmp_path / "evaluation.yaml"),
+            },
         }
 
     service = build_evaluation_service(chat_app_config)

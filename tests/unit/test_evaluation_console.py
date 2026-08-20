@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,16 +39,72 @@ def test_evaluation_service_requires_strictly_true_enablement(chat_app_config):
 def test_evaluation_service_uses_deployment_defaults():
     # The defaults are container paths, so the constructor is recorded rather
     # than run: a real build would mkdir /root/archi/evaluations on the host.
+    # agent_config_path has no default — it is required, and named here.
     with patch.object(evaluation_console, "EvaluationConsoleService") as factory:
-        service = build_evaluation_service({"evaluations": {"enabled": True}})
+        service = build_evaluation_service(
+            {
+                "evaluations": {
+                    "enabled": True,
+                    "agent_config_path": "/root/archi/configs/evaluation.yaml",
+                }
+            }
+        )
 
     assert service is factory.return_value
     assert factory.call_args.args == (Path("/root/archi/evaluations"),)
     assert factory.call_args.kwargs == {
-        "agent_config_path": Path("/root/archi/configs/config.yaml"),
+        "agent_config_path": Path("/root/archi/configs/evaluation.yaml"),
         "agents_dir": Path("/root/archi/agents"),
         "mcp_config_path": None,
     }
+
+
+@pytest.mark.parametrize(
+    "evaluations_config",
+    [
+        {"enabled": True},
+        {"enabled": True, "agent_config_path": None},
+        {"enabled": True, "agent_config_path": ""},
+        {"enabled": True, "agent_config_path": "   "},
+        {"enabled": True, "agent_config_path": 7},
+    ],
+)
+def test_evaluation_service_requires_a_named_agent_config(evaluations_config, caplog):
+    """An enabled console without an explicit config path stays off.
+
+    Each run copies the named file into its own run directory, so there is no
+    safe default: the deployment must name a redacted copy.
+    """
+    with caplog.at_level(
+        logging.ERROR, logger="src.interfaces.chat_app.evaluation_console"
+    ):
+        service = build_evaluation_service({"evaluations": evaluations_config})
+
+    assert service is None
+    assert [record.levelname for record in caplog.records] == ["ERROR"]
+    assert "evaluations.agent_config_path is required" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "configured_path",
+    [
+        "/root/archi/configs/config.yaml",
+        "/root/archi/configs//config.yaml",
+    ],
+)
+def test_evaluation_service_refuses_the_live_deployment_config(configured_path, caplog):
+    """The live config is the one path the console must never snapshot."""
+    with caplog.at_level(
+        logging.ERROR, logger="src.interfaces.chat_app.evaluation_console"
+    ):
+        service = build_evaluation_service(
+            {"evaluations": {"enabled": True, "agent_config_path": configured_path}}
+        )
+
+    assert service is None
+    assert [record.levelname for record in caplog.records] == ["ERROR"]
+    assert "/root/archi/configs/config.yaml" in caplog.text
+    assert "live deployment config" in caplog.text
 
 
 def test_evaluation_service_honours_configured_paths(tmp_path):
@@ -73,7 +130,15 @@ def test_evaluation_service_honours_configured_paths(tmp_path):
 def test_evaluation_service_creates_the_catalog_tree(tmp_path):
     root = tmp_path / "evaluations"
 
-    build_evaluation_service({"evaluations": {"enabled": True, "root": str(root)}})
+    build_evaluation_service(
+        {
+            "evaluations": {
+                "enabled": True,
+                "root": str(root),
+                "agent_config_path": str(tmp_path / "evaluation.yaml"),
+            }
+        }
+    )
 
     assert (root / "datasets").is_dir()
     assert (root / "runs").is_dir()

@@ -289,6 +289,19 @@ resolves inside the dev checkout, then disable the block and redeploy from `dev`
 
 - **Seam narrows auth** (no bearer/SSO branch): fine on auth-off dev; recorded
   adoption cost.
+- **Upstream trust-model gaps found in review** (rounds 2–3 of the pre-PR loop):
+  (1) runs snapshot the full agent config verbatim and retries re-read it — the
+  fork seam therefore REFUSES the live running config as `agent_config_path`
+  (explicit sanitized path required; console stays off otherwise), and snapshot
+  redaction is an adoption precondition. Deliberate: `base-config.yaml` keeps
+  upstream's template default (the refused literal), so a deployment that flips
+  `enabled: true` without an override fails closed with the explicit
+  refuses-the-live-config error log; (2) `evaluations:view` receives full run
+  detail including oracle truth and gold atoms — adoption precondition, benign in
+  the auth-off trial; (3) upstream's `continue_evaluation` reread the LIVE config
+  and spec on resume, silently swapping the system under test mid-run — fixed in
+  the fork (resume from the run's frozen artifacts, mirroring upstream's own
+  retry path); this is an upstream defect to report on PR #608.
 - **`loaded_mcp_tools` lazy-build timing**: imported runtime tests catch it; the
   recorded fix is `refresh_agent(force=True)` in `_runtime_for_attempt`.
 - **Upstream keeps moving**: the pin is deliberate; the writeup lists every skipped
