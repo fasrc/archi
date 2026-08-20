@@ -5,13 +5,17 @@
 185-line module: blank lines around the class, a wrapped `logger.warning(...)`, a wrapped
 `get_secrets` signature, a split boolean expression, and trailing whitespace.
 
-The project gate runs black as a **formatter, not a checker** — it rewrites files in place —
-and then scores patch coverage with `diff-cover --fail-under=80` against `origin/dev`. So the
-moment anyone edits one line of this module, black reflows the rest of it, `diff-cover` counts
-every reflowed line as part of the patch, and the gate fails for reasons unrelated to the edit.
+The project gate runs black in two modes, and the local one is a **formatter, not a checker**:
+`_format_changed` (`scripts/gate.sh:74-80`) rewrites the changed files in place before the gate
+scores patch coverage with `diff-cover --fail-under=80` against `origin/dev`. (In CI,
+`_check_format_scope` at `scripts/gate.sh:65-71` runs `black --check` and rewrites nothing — see
+the spec delta for why that distinction matters here.) So the moment anyone edits one line of
+this module locally, black reflows the rest of it, `diff-cover` counts every reflowed line as
+part of the patch, and the gate fails for reasons unrelated to the edit.
 
 Issue #291 records where this bit: in #287, the natural fix was to improve the operator-facing
-error in `validate_secrets` (`src/cli/managers/secrets_manager.py:123-141`), which names
+error in `validate_secrets` (`src/cli/managers/secrets_manager.py:123-141` on `07e007df`;
+`:144-162` after this change's reflow), which names
 `src/cli/managers/secrets_dummy.env` — a placeholder inside archi's own package — as the file
 to add secrets to. The change was routed into `src/cli/cli_main.py` instead, partly on layering
 grounds and partly because editing this module would have failed the gate. The layering
@@ -23,12 +27,17 @@ distorting decisions until the module is reformatted.
 - Reformat `src/cli/managers/secrets_manager.py` with black 24.10.0 and isort 6.0.1. No
   behaviour change, no renames, no signature changes, no docstring rewrites.
 - Add the first unit tests to reach four members of `SecretsManager`, because **the reformat
-  alone cannot pass the gate**. Measured on the reformatted file, the patch touches 51 lines,
-  16 of which are measurable statements, and only 8 of those are covered by the existing
-  suite — **patch coverage 50%, against a floor of 80%.** The uncovered reflowed lines sit in
-  `_get_model_based_secrets` (87, 90, 95, 100), `write_secrets_to_files` (180, 184),
-  `write_env_file` (195), and `get_env_file_path` (209). Covering them lifts the patch to
-  16/16.
+  alone cannot pass the gate**. The patch touches 51 lines, and `diff-cover` finds 15
+  measurable statements among them.
+
+  Planning estimated 16 measurable lines and 8 uncovered, for 50%. The measured figures, taken
+  on the reformatted module with the characterization tests removed, are **15 measurable and 7
+  uncovered — patch coverage 53.3%, against a floor of 80%**, with the uncovered lines at
+  87, 90, 95, 100 (`_get_model_based_secrets`), 180, 184 (`write_secrets_to_files`), and 195
+  (`write_env_file`). `get_env_file_path` was estimated uncovered and is not. Covering the seven
+  lifts the patch to 15/15. Both sets of numbers are recorded because the estimate is what the
+  plan was built on and the measurement is what the gate actually scores; where they differ, the
+  measurement governs.
 - Prove the reformat is behaviour-preserving by **AST equality**, not by `git diff -w`. The
   issue proposes `git diff -w` as the proof; that check does not hold, because `-w` ignores
   whitespace *within* a line and black's reflow changes line *boundaries*. Run on the real
