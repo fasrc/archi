@@ -4,7 +4,7 @@ Candidate field: `git diff --name-status d1c29380 bebfbe56` — 220 files.
 Eval scope: `git diff --name-only 9c9e1cb0 bebfbe56` (upstream main → pin) — 86 files.
 Every candidate file carries exactly one disposition (design.md rules).
 
-Totals: omitted-optional 3, port-hunks 20, port-verbatim 53, skip-dead-on-fork 26, skip-unrelated-upstream 118
+Totals: omitted-optional 3, port-hunks 21, port-verbatim 52, skip-dead-on-fork 26, skip-unrelated-upstream 118
 
 | File | Δ | Eval scope | Disposition | Reason |
 | --- | --- | --- | --- | --- |
@@ -120,7 +120,7 @@ Totals: omitted-optional 3, port-hunks 20, port-verbatim 53, skip-dead-on-fork 2
 | `src/evaluation/qa/phases.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
 | `src/evaluation/qa/preparation.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
 | `src/evaluation/qa/profile.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
-| `src/evaluation/qa/runtime.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
+| `src/evaluation/qa/runtime.py` | A | yes | port-hunks | eval-capability file, absent on the fork, with one adaptation: the mcp guard in `_runtime_for_attempt` now calls `refresh_agent(force=True)` first, because the fork's `BaseReActAgent` loads MCP tools lazily and upstream's guard would fail every mcp-selected spec (design.md's recorded remedy for the `loaded_mcp_tools` lazy-build timing risk) |
 | `src/evaluation/qa/schema.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
 | `src/evaluation/qa/scoring.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |
 | `src/evaluation/qa/tool_traces.py` | A | yes | port-verbatim | eval-capability file; absent on the fork |

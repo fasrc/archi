@@ -57,6 +57,19 @@ def build_authorize_request(auth_enabled: bool) -> Callable[[str], Optional[Any]
 
     The returned callable answers ``None`` when the request may proceed, and a
     ``(response, status)`` pair otherwise.
+
+    Auth scope — fail-closed on purpose. With auth on, the one credential this
+    check accepts is a Flask login session (``session["logged_in"]``) that
+    carries roles. Every other credential the main app accepts — a bearer
+    token, an SSO session, an OIDC redirect — gets a flat 401 here, because
+    this callable holds no bearer branch and no SSO branch at all.
+
+    That is the recorded scope of this trial, not an oversight. The capability
+    ships dark: the console exists only when ``evaluations.enabled`` is exactly
+    ``True``, which no deployed config sets, and the dev stack runs auth-off. An
+    SSO-aware or bearer-aware ``authorize_request`` is a written adoption
+    precondition (proposal.md "Not in scope"; adopt writeup, tasks.md 7.3), so
+    do not enable this console on an auth-on deployment before that lands.
     """
 
     def authorize_request(permission: str) -> Optional[Any]:
