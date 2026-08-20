@@ -123,13 +123,26 @@ the rail.
 
 ### D5 — Failure names every offender, not the first
 
-The guard collects offending `path:line` strings across all three files and asserts on the
-collected list, rather than asserting per-file and aborting on the first hit. The pin arrives
-in all three files at once — that is how upstream carries it — so a guard that reports one
-file at a time turns one red run into three sequential red runs for whoever is resolving the
-merge. Asserting on the list also makes the red step self-evidencing: it must report exactly
-three hits on `origin/dev`, which proves the guard reads all three files rather than passing
-vacuously on a path it failed to find.
+The guard collects offending `path:line` strings across the five monitored paths and asserts
+on the collected list, rather than asserting per-file and aborting on the first hit:
+
+- `requirements/requirements-base.txt`
+- `requirements/cpu-requirementsHEADER.txt`
+- `requirements/gpu-requirementsHEADER.txt`
+- `src/cli/templates/dockerfiles/base-python-image/requirements.txt`
+- `src/cli/templates/dockerfiles/base-pytorch-image/requirements.txt`
+
+The two header files are monitored even though they never carried the pin: the generator in
+`scripts/dev/build_docker_images.sh` concatenates them ahead of `requirements-base.txt` to
+produce the two image requirements files, so a declaration added to a header would leave the
+tracked outputs green until the next base-image build installed it.
+
+The pin arrives in three of the five monitored files at once — that is how upstream carries it
+— so a guard that reports one file at a time turns one red run into three sequential red runs
+for whoever is resolving the merge. Asserting on the list also makes the red step
+self-evidencing: it must report exactly three hits out of five monitored paths on `origin/dev`,
+which proves the guard reads all five files rather than passing vacuously on a path it failed
+to find.
 
 ## Risks / Trade-offs
 

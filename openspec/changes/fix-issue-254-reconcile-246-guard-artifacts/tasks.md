@@ -7,7 +7,7 @@ guard, and it is the reference the reconciled text must match. Read it first —
 and `test_guard_monitors_every_requirements_file_the_generator_touches()` are the four things
 the artifacts must describe. Each task ends in its own commit.
 
-- [ ] 1.1 Reconcile decision D3 of
+- [x] 1.1 Reconcile decision D3 of
       `openspec/changes/fix-issue-246-remove-dead-duckdb-pin/design.md` (the matching
       rationale, around `:89-104`). Replace the literal-pattern claim — currently "the guard
       matches `^\s*duckdb([=<>!~ ]|$)` per line, which is deliberately the same shape as the
@@ -27,7 +27,7 @@ the artifacts must describe. Each task ends in its own commit.
       guard is already enforcing the stronger condition. Do **not** edit the filter or the
       container definition, and do not touch D4, which correctly records it as a human
       follow-up. Commit.
-- [ ] 1.2 Reconcile decision D5 of the same `design.md` (the collection behaviour, around
+- [x] 1.2 Reconcile decision D5 of the same `design.md` (the collection behaviour, around
       `:116-124`). It currently says the guard collects offenders "across all three files" and
       that the red step "must report exactly three hits on `origin/dev`". Restate it over the
       five monitored paths from `DUCKDB_PIN_PATHS`, naming them: `requirements/
