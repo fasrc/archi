@@ -119,11 +119,15 @@ Red steps and the fix ship together in this one commit.
 
 ## 4. Open the PR
 
-- [ ] 4.1 Push with `git push -u origin fix/issue-290-evaluate-validate-before-teardown`. The
+- [x] 4.1 Push with `git push -u origin fix/issue-290-evaluate-validate-before-teardown`. The
   branch was created with `checkout -b ... origin/dev`, so its upstream is the trunk until
   `-u` corrects it.
-- [ ] 4.2 `gh pr create --repo fasrc/archi --base dev`. Put `closes #290` in the **body** — a
+- [x] 4.2 `gh pr create --repo fasrc/archi --base dev`. Put `closes #290` in the **body** — a
   closing keyword in the title does not link the issue. Include the group-2.4 red-test output,
   the seam decision from `design.md` and why `TemplateManager` bounds it, and the 3.7 gap.
-- [ ] 4.3 Verify the link landed via the GraphQL closing-issues API rather than assuming it.
+- [x] 4.3 Verify the link landed via the GraphQL closing-issues API rather than assuming it.
 - [ ] 4.4 Request review and work the findings. Never merge.
+  Requested three times; every round returned "Codex usage limits have been reached for
+  code reviews" instead of findings, so the review budget was spent without a single
+  comment to work. This task stays open for a human: read the diff, or top up the review
+  credits and re-request.
