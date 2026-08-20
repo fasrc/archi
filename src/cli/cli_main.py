@@ -795,19 +795,22 @@ def evaluate(
                 "Benchmark question bank failed preflight:\n" + "\n".join(bank_errors)
             )
 
-        # Both halves, back to back, so this path keeps the combined behaviour it
-        # had when these were one function: refuse without --force, tear down with
-        # it. evaluate() depends on the teardown having happened by the time it
-        # reaches the "already exists" check just below.
+        # handle_existing_deployment stays here for error precedence: without
+        # --force it must refuse before any validation or teardown logic runs.
+        # The destructive half (remove_existing_deployment) and the existence
+        # assertion travel together below, after the steps that can refuse the
+        # replacement on config input: config validation, secret construction
+        # and validation, and the compose plan (fasrc/archi#290).
+        #
+        # That is strictly weaker than "the replacement is constructible". The
+        # ten stages of prepare_deployment_files() (_build_workflow() in
+        # templates_manager.py) still run below the teardown, and several raise
+        # on deterministic config input — _stage_agents() on two configs whose
+        # agent_md_file share a basename, _check_ports_available() on an invalid
+        # or duplicated port. Enumerating those routes one at a time is what
+        # fasrc/archi#294 exists to stop doing; it closes the class for both
+        # create() and evaluate() by rendering before destroying.
         handle_existing_deployment(base_dir, name, force)
-        remove_existing_deployment(
-            base_dir, name, force, False, other_flags.get("podman", False)
-        )
-
-        if base_dir.exists():
-            raise click.ClickException(
-                f"Benchmarking runtime '{name}' already exists at {base_dir}"
-            )
 
         secrets_manager = SecretsManager(env_file, config_manager)
 
@@ -856,6 +859,15 @@ def evaluate(
             secrets=all_secrets,
             **other_flags,
         )
+
+        remove_existing_deployment(
+            base_dir, name, force, False, other_flags.get("podman", False)
+        )
+
+        if base_dir.exists():
+            raise click.ClickException(
+                f"Benchmarking runtime '{name}' already exists at {base_dir}"
+            )
 
         template_manager = TemplateManager(env, verbosity)
         base_dir.mkdir(parents=True, exist_ok=True)

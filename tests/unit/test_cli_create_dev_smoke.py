@@ -49,6 +49,67 @@ def env_file(tmp_path):
     return p
 
 
+@pytest.fixture
+def benchmark_config(tmp_path):
+    """Write a benchmarking-valid config to tmp_path and return the path.
+
+    Satisfies all five blank keys that the rendered base-config.yaml exposes
+    for the benchmarking service (agent_class, agent_md_file, provider, model,
+    ollama_url) so validate_configs passes with services=["postgres",
+    "benchmarking"].  agent_md_file uses an absolute path to an existing repo
+    file so the exists() check in _validate_benchmarking_config passes.
+    """
+    agent_md = REPO_ROOT / "examples" / "agents" / "cms-comp-ops.md"
+    miscellanea = (
+        REPO_ROOT / "examples" / "deployments" / "basic-openai" / "miscellanea.list"
+    )
+    config_text = f"""\
+name: smoke-benchmark
+
+services:
+  chat_app:
+    agent_class: CMSCompOpsAgent
+    agents_dir: examples/agents
+    client_timeout_seconds: 1800
+    default_provider: openai
+    default_model: gpt-4o
+    providers:
+      openai:
+        enabled: true
+        default_model: gpt-4o
+        models:
+          - gpt-4o
+      local:
+        enabled: false
+    trained_on: My data
+    port: 7866
+    external_port: 7866
+  vectorstore:
+    backend: postgres
+  data_manager:
+    port: 7889
+    external_port: 7889
+    auth:
+      enabled: false
+  benchmarking:
+    agent_class: CMSCompOpsAgent
+    agent_md_file: {str(agent_md)}
+    provider: openai
+    model: gpt-4o
+    ollama_url: http://localhost:11434
+
+data_manager:
+  sources:
+    links:
+      input_lists:
+        - {str(miscellanea)}
+  embedding_name: HuggingFaceEmbeddings
+"""
+    p = tmp_path / "benchmark.yaml"
+    p.write_text(config_text)
+    return p
+
+
 @pytest.mark.usefixtures("fake_repo_root")
 def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
@@ -671,7 +732,7 @@ def test_force_create_still_tears_down_once_validation_passes(
 
 
 def test_force_evaluate_still_removes_existing_runtime(
-    env_file, archi_home, monkeypatch
+    env_file, archi_home, benchmark_config, monkeypatch
 ):
     """Splitting the helper must not break archi evaluate --force.
 
@@ -679,6 +740,135 @@ def test_force_evaluate_still_removes_existing_runtime(
     remove_existing_deployment(), then refuses if the directory still exists. It
     depends on the destructive half running at that call site, which is why the
     split had to update it rather than leave only the precondition behind.
+
+    The TemplateManager sentinel stops the run before any host mutation so the
+    test never creates real volumes or containers.  The sentinel appearing in
+    the output proves the run reached deployment setup, meaning the teardown
+    genuinely ran rather than the test passing vacuously because validation
+    refused first.
+    """
+    import shutil
+
+    from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+
+    existing = _existing_deployment(archi_home)
+
+    teardowns = []
+
+    def _delete(self, **kwargs):
+        teardowns.append(kwargs)
+        shutil.rmtree(existing, ignore_errors=True)
+
+    def _stop_before_host_mutation(*args, **kwargs):
+        raise RuntimeError(SENTINEL)
+
+    monkeypatch.setattr(DeploymentManager, "delete_deployment", _delete)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert len(teardowns) == 1, (
+        f"evaluate --force must still remove the existing benchmarking runtime. "
+        f"teardowns={teardowns}\noutput:\n{result.output}\n"
+    )
+    assert "already exists" not in result.output, (
+        f"evaluate --force refused a runtime it was supposed to have removed, "
+        f"which is what happens if the destructive half no longer runs at its "
+        f"call site. output:\n{result.output}\n"
+    )
+    assert SENTINEL in result.output, (
+        f"expected the run to reach deployment setup and stop at the sentinel, "
+        f"which proves the teardown ran before the replacement was written. "
+        f"output:\n{result.output}\n"
+    )
+
+
+def test_force_evaluate_with_missing_secret_keeps_existing_runtime(
+    archi_home, benchmark_config, monkeypatch, tmp_path
+):
+    """evaluate --force must not tear down the runtime when secrets validation fails.
+
+    An env file without PG_PASSWORD causes validate_secrets to refuse. The
+    teardown must not run until after every refusing step succeeds
+    (fasrc/archi#290).
+    """
+    import shutil
+
+    from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+
+    existing = _existing_deployment(archi_home)
+
+    teardowns = []
+
+    def _delete(self, **kwargs):
+        teardowns.append(kwargs)
+        shutil.rmtree(existing, ignore_errors=True)
+
+    env_no_pg = tmp_path / "no-pg.env"
+    env_no_pg.write_text("OPENAI_API_KEY=sk-test\n" "HUGGING_FACE_HUB_TOKEN=test-hf\n")
+
+    monkeypatch.setattr(DeploymentManager, "delete_deployment", _delete)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_no_pg),
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"evaluate --force with a missing secret should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert teardowns == [], (
+        f"evaluate --force must not tear down the runtime before secrets validation. "
+        f"teardowns={teardowns}\noutput:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"the existing runtime must survive a secrets validation failure. "
+        f"output:\n{result.output}\n"
+    )
+
+
+def test_force_evaluate_with_invalid_config_keeps_existing_runtime(
+    env_file, archi_home, monkeypatch
+):
+    """evaluate --force must not tear down the runtime when config validation fails.
+
+    EXAMPLE_CONFIG (basic-openai) has no services.benchmarking block so
+    validate_configs refuses. The teardown must not run until after every
+    refusing step succeeds (fasrc/archi#290). This distinguishes an ordering
+    fix from a secrets-only special case: a teardown moved below only
+    validate_secrets passes the missing-secret test but fails here.
     """
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
@@ -716,14 +906,116 @@ def test_force_evaluate_still_removes_existing_runtime(
         ],
     )
 
-    assert len(teardowns) == 1, (
-        f"evaluate --force must still remove the existing benchmarking runtime. "
+    assert result.exit_code != 0, (
+        f"evaluate --force with an invalid config should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert teardowns == [], (
+        f"evaluate --force must not tear down the runtime before config validation. "
         f"teardowns={teardowns}\noutput:\n{result.output}\n"
     )
-    assert "already exists" not in result.output, (
-        f"evaluate --force refused a runtime it was supposed to have removed, "
-        f"which is what happens if the destructive half no longer runs at its "
-        f"call site. output:\n{result.output}\n"
+    assert (existing / "marker.txt").exists(), (
+        f"the existing runtime must survive a config validation failure. "
+        f"output:\n{result.output}\n"
+    )
+
+
+def test_evaluate_without_force_refuses_existing_runtime(
+    env_file, archi_home, benchmark_config, monkeypatch
+):
+    """evaluate without --force must refuse an existing runtime without removing it.
+
+    handle_existing_deployment stays before validation for error precedence.
+    Without --force it raises before any teardown or validation logic runs
+    (fasrc/archi#290).
+    """
+    from src.cli import cli_main
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"evaluate without --force should refuse an existing runtime. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        "already exists" in result.output
+    ), f"expected the already-exists refusal. output:\n{result.output}\n"
+    assert (
+        teardowns == []
+    ), f"a refusal must not remove anything. output:\n{result.output}\n"
+    assert (
+        existing / "marker.txt"
+    ).exists(), f"a refusal removed the existing runtime. output:\n{result.output}\n"
+
+
+def test_force_evaluate_refuses_when_removal_silently_fails(
+    env_file, archi_home, benchmark_config, monkeypatch
+):
+    """evaluate --force must refuse when remove_existing_deployment silently failed.
+
+    If delete_deployment records but does not remove the directory (simulating a
+    swallowed cleanup error), base_dir still exists after the removal attempt.
+    The exists() guard then refuses rather than proceeding to write a new runtime
+    on top of the old one (fasrc/archi#290).
+    """
+    from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+
+    _existing_deployment(archi_home)
+    teardowns = []
+    monkeypatch.setattr(
+        DeploymentManager,
+        "delete_deployment",
+        lambda self, **kwargs: teardowns.append(kwargs),
+    )
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"evaluate --force should fail when the directory survived removal. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert "already exists" in result.output, (
+        f"expected the already-exists refusal from the post-removal guard. "
+        f"output:\n{result.output}\n"
+    )
+    assert len(teardowns) == 1, (
+        f"deletion must have been attempted exactly once. "
+        f"teardowns={teardowns}\noutput:\n{result.output}\n"
     )
 
 
