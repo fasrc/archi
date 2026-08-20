@@ -4,7 +4,7 @@ Candidate field: `git diff --name-status d1c29380 bebfbe56` — 220 files.
 Eval scope: `git diff --name-only 9c9e1cb0 bebfbe56` (upstream main → pin) — 86 files.
 Every candidate file carries exactly one disposition (design.md rules).
 
-Totals: omitted-optional 3, port-hunks 21, port-verbatim 52, skip-dead-on-fork 26, skip-unrelated-upstream 118
+Totals: omitted-optional 3, port-hunks 22, port-verbatim 52, skip-dead-on-fork 26, skip-unrelated-upstream 117
 
 | File | Δ | Eval scope | Disposition | Reason |
 | --- | --- | --- | --- | --- |
@@ -35,7 +35,7 @@ Totals: omitted-optional 3, port-hunks 21, port-verbatim 52, skip-dead-on-fork 2
 | `package-lock.json` | M | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `package.json` | M | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `pyproject.toml` | M | yes | port-hunks | add mcp==1.27.2, ijson==3.5.1, pytest markers; keep fork deps |
-| `requirements/requirements-base.txt` | M | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
+| `requirements/requirements-base.txt` | M | no | port-hunks | fork-side dep pins (mcp==1.27.2, ijson==3.5.1) required by the ported eval code; upstream's own changes to this file not taken |
 | `scripts/dev/build_docker_images.sh` | M | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `scripts/dev/docker_common.sh` | M | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
 | `skills/indico.md` | A | no | skip-unrelated-upstream | upstream-main work outside the eval scope |
