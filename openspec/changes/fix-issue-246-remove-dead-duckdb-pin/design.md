@@ -88,20 +88,28 @@ always present next to the test, so the guard is executable wherever the suite i
 
 ### D3 — Match the distribution, not the version string
 
-The guard matches `^\s*duckdb([=<>!~ ]|$)` per line, which is deliberately the same shape as
-the filter at `Containerfile:72`. Two properties follow, and both matter:
+The guard reads the project name a requirement line declares, normalizes it per PEP 503 (case
+folded, runs of `-`, `_` and `.` folded to a single `-`) and compares it to `duckdb`. Two
+properties follow, and both matter:
 
-- **A reintroduction at any version is caught.** Upstream could merge `duckdb==0.10.0` or
-  `duckdb>=1.0`; a guard matching the literal `duckdb==0.8.1` would wave those through. The
-  requirement is "this project does not depend on duckdb", not "not on that one version".
-- **A different distribution is not a false positive.** `duckdb-engine==0.13.0` does not
-  match: after `duckdb` comes `-`, which is neither in the character class nor end-of-line.
-  Should the project ever legitimately want a `duckdb-`prefixed package, the guard does not
-  stand in the way — which is what keeps it from being disabled wholesale later.
+- **A reintroduction at any version or specifier is caught.** Upstream could merge
+  `duckdb==0.10.0` or `duckdb>=1.0`; a guard matching the literal `duckdb==0.8.1` would wave
+  those through. The requirement is "this project does not depend on duckdb", not "not on
+  that one version". The version string is never consulted — only the normalized project name.
+- **`duckdb-engine` is not a false positive.** `duckdb-engine==0.13.0` normalizes to
+  `duckdb-engine`, a different project name. Should the project ever legitimately want a
+  `duckdb-`prefixed package, the guard does not stand in the way — which is what keeps it
+  from being disabled wholesale later.
 
-Having the guard and the `Containerfile` workaround agree, character for character, on what
-counts as a duckdb pin is intentional: the day someone deletes the filter, the guard is
-already enforcing the condition the filter assumed.
+Three shapes a literal-pattern approach would miss are caught by the normalized comparison:
+`DuckDB==1.0` (case difference), `duckdb[httpfs]==1.0` (extras bracket stops the character
+class), and `duckdb; python_version >= "3.11"` (marker separator also stops it).
+
+The guard is deliberately **stricter** than the loop image's duckdb-stripping filter at
+`Containerfile:72`. That filter's character class stops at `[=<>!~ ]` and would pass
+`duckdb[httpfs]==1.0` through unchanged. The guard fails the suite before such a declaration
+can reach an image build, so the day the filter is deleted the guard is already enforcing the
+stronger condition.
 
 ### D4 — `Containerfile:72` stays, and that is recorded rather than fixed
 
