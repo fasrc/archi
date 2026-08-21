@@ -758,6 +758,7 @@ class ResultHandler:
             )
 
         rows: List[Dict[str, Any]] = []
+        primary_was_enabled = False
         # Accumulate shared-context candidates to detect drift across configs.
         ctx_fields: Dict[str, set] = {
             "model": set(),
@@ -788,6 +789,8 @@ class ResultHandler:
                 "ragas_settings"
             ) or {}
             expected = ragas_settings.get("enabled_metrics") or DEFAULT_ENABLED_METRICS
+            if primary_metric in expected:
+                primary_was_enabled = True
 
             metrics: Dict[str, Optional[float]] = {}
             incomplete = False
@@ -818,6 +821,15 @@ class ResultHandler:
             single_question_results = record.get("single_question_results") or {}
             scored_counts: Dict[str, int] = {}
             for metric_name, _agg_key in ResultHandler.LEADERBOARD_METRICS:
+                # Publish a sample size unless we are making no claim at all
+                # about this metric: not enabled AND no score. A static list would
+                # report 0 for a metric nobody enabled, which reads identically to
+                # an enabled metric whose every judge call failed. A metric that
+                # DID produce a score always keeps its count, even when it is
+                # absent from `expected` (which falls back to the template
+                # default when a record carries no metric list).
+                if metric_name not in expected and metrics[metric_name] is None:
+                    continue
                 count = 0
                 for q in single_question_results.values():
                     if not isinstance(q, dict):
@@ -837,9 +849,9 @@ class ResultHandler:
             # Surface under-sampling even when the aggregate is a valid float.
             answered = len(single_question_results)
             undersampled = [
-                f"{m}={scored_counts[m]}/{answered}"
+                f"{m}={scored_counts.get(m, 0)}/{answered}"
                 for m in metric_names
-                if metrics[m] is not None and scored_counts[m] < answered
+                if metrics[m] is not None and scored_counts.get(m, 0) < answered
             ]
             if undersampled:
                 logger.warning(
@@ -906,6 +918,18 @@ class ResultHandler:
         # would read from rows[*].rank without ever seeing the warnings. The
         # metrics stay, so an operator can still inspect the run.
         comparable = ResultHandler.arms_comparable(ResultHandler.results)
+
+        # Withholding every rank is correct but silent on its own; say why, or the
+        # only symptom an operator sees is a leaderboard of null ranks.
+        if rows and not primary_was_enabled:
+            logger.warning(
+                "Leaderboard: primary_metric '%s' was not enabled by any swept "
+                "config, so no variant scored it and every rank is withheld "
+                "(null). Add it to "
+                "services.benchmarking.mode_settings.ragas_settings.enabled_metrics, "
+                "or rank by a metric the run actually scored.",
+                primary_metric,
+            )
 
         # Dense ranking: equal primary scores share a rank.
         rank = 0

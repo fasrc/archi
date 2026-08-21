@@ -487,3 +487,95 @@ def test_complete_rows_still_rank_densely(monkeypatch):
     assert by_name["tie-b"]["rank"] == 2
     # The unscored row neither ranks nor consumes a rank number.
     assert by_name["no-primary"]["rank"] is None
+
+
+def test_scored_counts_only_cover_metrics_the_run_enabled(monkeypatch):
+    """`scored_counts` must not publish a sample size for a metric nobody asked
+    for.
+
+    Same defect class as the aggregate placeholders: a static metric list makes
+    "never enabled" and "enabled but nothing scored" both read as 0, so a reader
+    cannot tell a configuration choice from a total judge failure.
+    """
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record(
+                "four-metric-run",
+                "/p/a.md",
+                answer_correctness=None,
+                enabled_metrics=[
+                    "answer_relevancy",
+                    "faithfulness",
+                    "context_precision",
+                    "context_recall",
+                ],
+            )
+        ],
+    )
+    counts = ResultHandler.build_leaderboard("faithfulness")["rows"][0]["scored_counts"]
+
+    assert "answer_correctness" not in counts
+    assert set(counts) == {
+        "answer_relevancy",
+        "faithfulness",
+        "context_precision",
+        "context_recall",
+    }
+
+
+def test_scored_counts_keep_an_enabled_metric_that_scored_nothing(monkeypatch):
+    """The counterpart: an ENABLED metric with no scores must still report 0, so a
+    total judge failure stays visible instead of vanishing."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record(
+                "five-metric-run",
+                "/p/a.md",
+                answer_correctness=None,
+                enabled_metrics=[
+                    "answer_relevancy",
+                    "faithfulness",
+                    "context_precision",
+                    "context_recall",
+                    "answer_correctness",
+                ],
+            )
+        ],
+    )
+    counts = ResultHandler.build_leaderboard("faithfulness")["rows"][0]["scored_counts"]
+
+    assert counts["answer_correctness"] == 0
+
+
+def test_warns_when_the_primary_metric_was_never_enabled(monkeypatch, caplog):
+    """An operator handed a leaderboard with no ranks deserves to be told why.
+
+    Withholding the rank is correct but silent on its own; without a message the
+    only symptom is every `rank` being null.
+    """
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record(
+                "a",
+                "/p/a.md",
+                answer_correctness=None,
+                enabled_metrics=["answer_relevancy", "faithfulness"],
+            )
+        ],
+    )
+    with caplog.at_level("WARNING"):
+        board = ResultHandler.build_leaderboard("answer_correctness")
+
+    assert [r["rank"] for r in board["rows"]] == [None]
+    # The reason must be in the message itself, not in an `extra=` field: the
+    # project's log formatter renders %(message)s only.
+    assert any(
+        "answer_correctness" in r.getMessage() and "enabled" in r.getMessage()
+        for r in caplog.records
+    )
