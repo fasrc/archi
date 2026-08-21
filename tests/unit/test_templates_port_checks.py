@@ -104,8 +104,10 @@ def test_extract_port_config_host_mode_external_port_only_used_for_both():
 
 
 def test_resolve_ports_from_config_host_mode_external_port_zero_is_present():
-    # external_port: 0 is treated as present (D1) — derivation returns it even though
-    # extract_port_config's truthy guard drops it later (that is #311's scope).
+    # external_port: 0 is treated as present (D1) — derivation returns it. The truthy
+    # guard in extract_port_config that used to drop it afterwards is gone (#311), so
+    # the value now survives to validation; see
+    # test_validate_port_config_host_mode_falsy_external_port_raises.
     host, container = _resolve_ports_from_config(
         {"port": 7861, "external_port": 0},
         host_mode=True,
@@ -168,24 +170,26 @@ def test_extract_port_config_falls_back_to_registry_defaults():
 
 
 # ---------------------------------------------------------------------------
-# extract_port_config — falsy values (0, "") are dropped without error
+# extract_port_config — falsy values (0, "") are preserved, not discarded
 # ---------------------------------------------------------------------------
 
 
-def test_extract_port_config_falsy_zero_dropped():
-    # A configured port of 0 is falsy; lifted verbatim: no entry, no error.
+def test_extract_port_config_falsy_zero_preserved():
+    # A configured port of 0 is preserved and later validated, not silently dropped.
     plan = _plan(["chatbot"])
     cm = _cm({"chat_app": 0})
     result = extract_port_config(plan, cm)
-    assert "chatbot_port_host" not in result
+    assert "chatbot_port_host" in result
+    assert result["chatbot_port_host"] == 0
 
 
-def test_extract_port_config_falsy_empty_string_dropped():
-    # An empty string is falsy; same behaviour.
+def test_extract_port_config_falsy_empty_string_preserved():
+    # An empty string is preserved and later validated (AC2).
     plan = _plan(["chatbot"])
     cm = _cm({"chat_app": ""})
     result = extract_port_config(plan, cm)
-    assert "chatbot_port_host" not in result
+    assert "chatbot_port_host" in result
+    assert result["chatbot_port_host"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +242,49 @@ def test_validate_port_config_host_mode_without_external_port_names_port():
 
 
 # ---------------------------------------------------------------------------
+# validate_port_config — YAML booleans are not ports (Codex review, PR #317)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("host_mode", [True, False])
+def test_validate_port_config_boolean_port_is_refused(host_mode):
+    # PyYAML resolves `on`, `yes` and `true` to True, so `port: on` is a realistic typo.
+    # int(True) is 1, so without an explicit bool guard preflight accepts it as port 1 —
+    # and port_config carries the bool itself into template rendering.
+    plan = _plan(["chatbot"], host_mode=host_mode)
+    cm = _cm({"chat_app": {"port": True}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "services.chat_app.port" in msg
+
+
+def test_validate_port_config_boolean_external_port_is_refused():
+    # Container mode: external_port supplies the host-side port, so the same guard applies.
+    plan = _plan(["chatbot"], host_mode=False)
+    cm = _cm({"chat_app": {"port": 7861, "external_port": True}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "services.chat_app.external_port" in msg
+
+
+def test_validate_port_config_boolean_false_is_refused_as_a_bool_not_as_zero():
+    # `port: off` already raised, but only because int(False) == 0 tripped the range check.
+    # The message must identify it as an invalid value, not report a port number of 0.
+    plan = _plan(["chatbot"], host_mode=False)
+    cm = _cm({"chat_app": {"port": False}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "Invalid port value" in msg
+    assert "out of range" not in msg
+
+
+# ---------------------------------------------------------------------------
 # validate_port_config — out-of-range host-side port raises ValueError
 # ---------------------------------------------------------------------------
 
@@ -251,14 +298,12 @@ def test_validate_port_config_port_too_high_raises():
 
 
 def test_validate_port_config_port_zero_raises_when_reached():
-    # Port 0 is dropped by extract_port_config (falsy), so validate_port_config
-    # never sees it — this test pins that boundary so a future "fix" is deliberate.
+    # Port 0 is preserved by extract_port_config and validated; it is out of range.
     plan = _plan(["chatbot"], host_mode=True)
     cm = _cm({"chat_app": 0})
     port_config = extract_port_config(plan, cm)
-    # No chatbot entry → validate_port_config returns no errors.
-    _, errors = validate_port_config(plan, cm, port_config)
-    assert errors == []
+    with pytest.raises(ValueError):
+        validate_port_config(plan, cm, port_config)
 
 
 # ---------------------------------------------------------------------------
@@ -486,3 +531,207 @@ def test_extract_port_config_delegator_returns_same_as_module_function():
     via_delegator = tm._extract_port_config(_ctx(plan, cm))
     via_module = extract_port_config(plan, cm)
     assert via_delegator == via_module
+
+
+# ---------------------------------------------------------------------------
+# extract_port_config — falsy configured values are preserved (AC2, D1)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_port_config_falsy_zero_dict_preserved():
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": 0}})
+    result = extract_port_config(plan, cm)
+    assert "chatbot_port_host" in result
+    assert result["chatbot_port_host"] == 0
+
+
+def test_extract_port_config_falsy_empty_string_dict_preserved():
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": ""}})
+    result = extract_port_config(plan, cm)
+    assert "chatbot_port_host" in result
+    assert result["chatbot_port_host"] == ""
+
+
+def test_extract_port_config_falsy_none_dict_preserved():
+    # A configured null is distinct from an absent key (design.md D1).
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": None}})
+    result = extract_port_config(plan, cm)
+    assert "chatbot_port_host" in result
+    assert result["chatbot_port_host"] is None
+
+
+def test_validate_port_config_falsy_zero_raises():
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": 0}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "chatbot" in msg
+    assert "services.chat_app" in msg
+
+
+def test_validate_port_config_falsy_empty_string_raises():
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": ""}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "chatbot" in msg
+    assert "services.chat_app" in msg
+
+
+def test_validate_port_config_falsy_null_raises():
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": None}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "chatbot" in msg
+    assert "services.chat_app" in msg
+
+
+def test_validate_port_config_host_mode_falsy_external_port_raises():
+    # The seam between #310/#316 and #311. In host mode external_port is the value
+    # the deployment binds, so a falsy external_port is the real outage shape: it was
+    # always going to be refused. #316 derives it (present, not None) and #311 stops
+    # extraction from dropping it, so validation now refuses it before the teardown.
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": 7861, "external_port": 0}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "chatbot" in msg
+    assert "services.chat_app.external_port" in msg
+
+
+def test_validate_port_config_host_mode_valid_external_port_shadows_falsy_port():
+    # Accepted limitation, pinned so the precedence rule is visible. In host mode a
+    # valid external_port overrides port on the render side too
+    # (_apply_host_mode_port_overrides), so a falsy `port` underneath it is dead
+    # config: the deployment binds 9000 and succeeds. Nothing is refused, and no
+    # deployment is lost -- which is why this is a strictness gap, not the outage
+    # #311 fixes. Refusing dead config would need a check on a value no longer in
+    # port_config; that is follow-up work, not this merge's.
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": 0, "external_port": 9000}})
+    port_config = extract_port_config(plan, cm)
+    assert port_config["chatbot_port_host"] == 9000
+    assert port_config["chatbot_port_container"] == 9000
+    _, errors = validate_port_config(plan, cm, port_config)
+    assert errors == []
+
+
+def test_extract_port_config_scalar_zero_preserved():
+    # Scalar route: a configured falsy scalar is preserved (AC2).
+    plan = _plan(["chatbot"])
+    cm = _cm({"chat_app": 0})
+    result = extract_port_config(plan, cm)
+    assert "chatbot_port_host" in result
+
+
+def test_extract_port_config_scalar_empty_string_preserved():
+    plan = _plan(["chatbot"])
+    cm = _cm({"chat_app": ""})
+    result = extract_port_config(plan, cm)
+    assert "chatbot_port_host" in result
+
+
+# ---------------------------------------------------------------------------
+# Regression guards — must pass both before and after the fix (AC4, D4)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_port_config_no_section_uses_registry_defaults():
+    # No chat_app section → registry defaults are used and emitted.
+    plan = _plan(["chatbot"])
+    cm = _cm({})
+    result = extract_port_config(plan, cm)
+    assert result["chatbot_port_host"] == 7861
+    assert result["chatbot_port_container"] == 7861
+    _, errors = validate_port_config(plan, cm, result)
+    assert errors == []
+
+
+def test_extract_port_config_section_no_port_key_uses_registry_defaults():
+    # Section present but no port key at all → registry defaults for both sides
+    # (D1 route 2: "not configured", distinct from a configured null).
+    # The section must carry no port key of any kind: in host mode external_port is
+    # itself authoritative (#310/#316), so a section holding only external_port is
+    # not the "no port key" case and is pinned by
+    # test_extract_port_config_host_mode_external_port_only_used_for_both instead.
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"agent_class": "SomeAgent"}})
+    result = extract_port_config(plan, cm)
+    assert result["chatbot_port_host"] == 7861
+    assert result["chatbot_port_container"] == 7861
+    _, errors = validate_port_config(plan, cm, result)
+    assert errors == []
+
+
+def test_extract_port_config_postgres_not_emitted_validate_no_postgres_error():
+    # Postgres has no port default and no config path; it must not appear in the
+    # extraction output.  Replacing the emission guard with a bare emit would add
+    # postgres with value None and cause _normalize_port to raise here instead.
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": 7861}})
+    result = extract_port_config(plan, cm)
+    assert "postgres_port_host" not in result
+    _, errors = validate_port_config(plan, cm, result)
+    assert not any("postgres" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# validate_port_config — non-host-mode configured container port is range-checked
+# (D2: container side validity without duplicate detection)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_port_config_non_host_falsy_zero_raises():
+    # In non-host mode, 'port' is the container port. port=0 is out of range
+    # and must be refused even though the host port (from registry default) is valid.
+    plan = _plan(["chatbot"], host_mode=False)
+    cm = _cm({"chat_app": {"port": 0}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "chatbot" in msg
+    assert "services.chat_app" in msg
+
+
+def test_validate_port_config_non_host_falsy_empty_string_raises():
+    # Non-host mode container port of "" is non-numeric and must be refused.
+    plan = _plan(["chatbot"], host_mode=False)
+    cm = _cm({"chat_app": {"port": ""}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "chatbot" in msg
+    assert "services.chat_app" in msg
+
+
+# ---------------------------------------------------------------------------
+# Fence: chatbot+grader container port sharing is legal (D2, AC6)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_port_config_chatbot_grader_both_enabled_no_duplicate_error():
+    # chatbot and grader both default to container port 7861 (separate namespaces).
+    # Only host ports are duplicate-checked: chatbot=7861, grader=7862 -> no conflict.
+    # If this test ever goes red, container ports were added to duplicate detection.
+    plan = _plan(["chatbot", "grader"], host_mode=False)
+    cm = _cm({})
+    port_config = extract_port_config(plan, cm)
+    port_to_services, errors = validate_port_config(plan, cm, port_config)
+    assert errors == []
+    assert 7861 in port_to_services
+    assert len(port_to_services[7861]) == 1
+    assert port_to_services[7861][0][0] == "chatbot"

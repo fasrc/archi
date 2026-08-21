@@ -302,6 +302,41 @@ services:
     external_port: 3001  # default: 3000
 ```
 
+### Rejected port values
+
+`archi create` refuses a configuration that sets a port key to a value that cannot be a port,
+rather than falling back to a default and failing later. The check runs during preflight, before
+a `--force` run tears down the existing deployment, so a typo in the configuration file costs
+nothing.
+
+| Configured value | Result |
+|------------------|--------|
+| `port: 0` | `Port out of range for <service> (services.<service>.port): 0` |
+| `port: 70000` | `Port out of range for <service> (services.<service>.port): 70000` |
+| `port: ""` | `Invalid port value '' for <service> (services.<service>.port)` |
+| `port: null` (or `port: ~`) | `Invalid port value 'None' for <service> (services.<service>.port)` |
+| `port: true` (or `port: on`, `port: yes`) | `Invalid port value 'True' for <service> (services.<service>.port)` |
+| `port: false` (or `port: off`, `port: no`) | `Invalid port value 'False' for <service> (services.<service>.port)` |
+
+The boolean rows are worth knowing about: YAML resolves the bare words `on`, `off`, `yes` and
+`no` to `true`/`false`, so `port: on` is a boolean rather than a port number. It is refused as an
+invalid value, not silently read as port `1`.
+
+Omitting a key is not the same as setting it. A service with no `port` key — or with no section
+of its own at all — keeps its built-in default, and nothing is refused. Only a value you wrote is
+checked.
+
+`external_port` supplies the host-side port and is checked the same way, in both container mode
+and host mode, so `external_port: 0` is refused with `services.<service>.external_port` named in
+the message. The message always names the key it read, which is the key to edit.
+
+Under `--hostmode` the two keys interact, because host mode binds `external_port` and lets it
+override the `port` beside it. Preflight checks the key the deployment will really bind, so an
+`external_port` you wrote is checked as above. A falsy `port` sitting under a valid
+`external_port` is dead configuration that nothing reads, and preflight does not refuse it — the
+deployment starts on the `external_port` value. Leaving `external_port` empty is not a value: it
+means "do not override", and host mode falls back to checking `port`.
+
 ### GPU Issues
 
 GPU access requires NVIDIA drivers and the NVIDIA Container Toolkit.

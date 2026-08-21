@@ -165,7 +165,19 @@ class TemplateContext:
         return bool(self.options.get("build", True))
 
 
+# Sentinel meaning "the configuration did not supply a value"; a None-valued
+# registry default is not a substitute (design.md D1).
+_UNSET = object()
+
+
 def _normalize_port(port: Any, service_name: str, config_hint: Optional[str]) -> int:
+    # bool is a subclass of int, so int(True) is 1 and int(False) is 0 -- without this guard
+    # `port: on` (PyYAML resolves on/yes/true to True) passes preflight as port 1, and the
+    # bool itself is what port_config carries into template rendering. `off` was refused only
+    # by accident, reported as an out-of-range port 0 rather than as a bad value.
+    if isinstance(port, bool):
+        location = f" ({config_hint})" if config_hint else ""
+        raise ValueError(f"Invalid port value '{port}' for {service_name}{location}")
     try:
         port_value = int(port)
     except (TypeError, ValueError):
@@ -219,8 +231,17 @@ def _resolve_ports_from_config(
     host_port = host_default
     container_port = container_default
     if isinstance(config_value, dict):
-        container_port = config_value.get("port", container_port)
+        container_port = (
+            config_value["port"] if "port" in config_value else container_port
+        )
         if host_mode:
+            # Mirror _apply_host_mode_port_overrides (#310): in host mode the port the
+            # deployment binds is external_port when that key is present and not None,
+            # so that is the value validation must check. Key presence alone is not the
+            # test here -- a present-but-null external_port overrides nothing on the
+            # render side, so it must override nothing here either. `port` above does
+            # use key presence, so a configured falsy `port` still reaches
+            # _normalize_port instead of being dropped (design.md D1).
             external = config_value.get("external_port")
             if external is not None:
                 host_port = external
@@ -228,7 +249,11 @@ def _resolve_ports_from_config(
             else:
                 host_port = container_port
         else:
-            host_port = config_value.get("external_port", host_port)
+            host_port = (
+                config_value["external_port"]
+                if "external_port" in config_value
+                else host_port
+            )
     else:
         host_port = config_value
     return host_port, container_port
@@ -241,25 +266,51 @@ def extract_port_config(plan: DeploymentPlan, config_manager: Any) -> Dict[str, 
 
     for service_name, service_def in service_registry.get_all_services().items():
         key_prefix = service_name.replace("-", "_")
-        host_port = service_def.default_host_port
-        container_port = service_def.default_container_port
+        configured_host: Any = _UNSET
+        configured_container: Any = _UNSET
 
         if service_def.port_config_path:
+            # _MISSING means the dotted path is absent from the config; _UNSET means the
+            # path resolved but supplied no value for that side. Both fall back to the
+            # registry default, and neither is a configured value.
             config_value = _walk_port_config_path(
                 base_config, service_def.port_config_path
             )
             if config_value is not _MISSING:
-                host_port, container_port = _resolve_ports_from_config(
+                configured_host, configured_container = _resolve_ports_from_config(
                     config_value,
                     host_mode=host_mode,
-                    host_default=host_port,
-                    container_default=container_port,
+                    host_default=_UNSET,
+                    container_default=_UNSET,
                 )
 
-        if host_port:
+        host_port = (
+            configured_host
+            if configured_host is not _UNSET
+            else service_def.default_host_port
+        )
+        container_port = (
+            configured_container
+            if configured_container is not _UNSET
+            else service_def.default_container_port
+        )
+
+        # Emit when the configuration supplied a value or the registry default is
+        # not None.  Postgres has no port default and no config path; it is handled
+        # separately in validate_port_config, so a bare emit here would incorrectly
+        # add postgres_port_host with value None and cause _normalize_port to raise.
+        if configured_host is not _UNSET or service_def.default_host_port is not None:
             port_config[f"{key_prefix}_port_host"] = host_port
-        if container_port:
+        if (
+            configured_container is not _UNSET
+            or service_def.default_container_port is not None
+        ):
             port_config[f"{key_prefix}_port_container"] = container_port
+        # Signal for validate_port_config: was the container port operator-configured?
+        # Registry defaults are never re-checked; only operator-supplied values need
+        # validation (D2 — container validity without duplicate detection).
+        if configured_container is not _UNSET:
+            port_config[f"{key_prefix}_port_container_configured"] = True
 
     return port_config
 
@@ -281,9 +332,10 @@ def validate_port_config(
         if service_name not in service_registry.get_all_services():
             continue
         key_prefix = service_name.replace("-", "_")
-        host_port = port_config.get(f"{key_prefix}_port_host")
-        if host_port is None:
+        host_port_key = f"{key_prefix}_port_host"
+        if host_port_key not in port_config:
             continue
+        host_port = port_config[host_port_key]
         service_def = service_registry.get_service(service_name)
         svc_config_value = (
             _walk_port_config_path(base_config, service_def.port_config_path)
@@ -302,6 +354,20 @@ def validate_port_config(
                 config_hint,
             )
         )
+        # Validate the configured container port for validity only — never for
+        # duplicate detection, because container ports share namespaces (D2).
+        # Only when operator-configured: registry defaults are already known-good.
+        container_key = f"{key_prefix}_port_container"
+        if (
+            port_config.get(f"{key_prefix}_port_container_configured")
+            and container_key in port_config
+        ):
+            container_hint = (
+                f"{service_def.port_config_path}.port"
+                if service_def.port_config_path
+                else None
+            )
+            _normalize_port(port_config[container_key], service_name, container_hint)
 
     if host_mode and plan.get_service("postgres").enabled:
         postgres_port = services_cfg.get("postgres", {}).get("port", 5432)
