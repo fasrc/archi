@@ -85,12 +85,16 @@ def source_hits(
     return (relative, strict)
 
 
-# Aggregate output key -> RAGAS metric column.
+# Aggregate output key -> RAGAS metric column. Every metric the harness can score
+# belongs here so the all-failed placeholder output carries the SAME key set a
+# scored run does; a consumer then reads a NaN rather than special-casing an
+# absent key on exactly the path where stable output matters most.
 _RAGAS_AGG = {
     "aggregate_answer_relevancy": "answer_relevancy",
     "aggregate_faithfulness": "faithfulness",
     "aggregate_context_precision": "context_precision",
     "aggregate_context_recall": "context_recall",
+    "aggregate_answer_correctness": "answer_correctness",
 }
 
 
@@ -104,7 +108,12 @@ def build_ragas_aggregates(ragas_results: Any) -> Dict[str, Any]:
     """
     if ragas_results is None:
         return {key: float("nan") for key in _RAGAS_AGG}
-    return {key: ragas_results[col].mean() for key, col in _RAGAS_AGG.items()}
+    # A scoring frame only carries the columns the run enabled, so a metric this
+    # map names but the run did not score reads as NaN rather than raising.
+    return {
+        key: (ragas_results[col].mean() if col in ragas_results else float("nan"))
+        for key, col in _RAGAS_AGG.items()
+    }
 
 
 def build_source_aggregates(

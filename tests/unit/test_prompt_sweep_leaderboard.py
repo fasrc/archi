@@ -367,3 +367,59 @@ def test_enabled_answer_correctness_missing_marks_incomplete(monkeypatch):
 
     assert row["incomplete"] is True
     assert row["metrics"]["answer_correctness"] is None
+
+
+def test_legacy_run_is_never_ranked_on_a_metric_it_never_measured(monkeypatch):
+    """A rank is a claim about the metric being ranked BY, so a row with no value
+    for the primary metric must not sit in the ranked tier.
+
+    Scoping ``incomplete`` to a run's enabled metrics must NOT reopen this hole:
+    the sort reads a ``None`` primary score as 0.0, so a legacy record that never
+    measured the primary metric would otherwise take a normal numeric rank
+    alongside runs that did measure it.
+    """
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            # Legacy record: no enabled_metrics list at all, no aggregate for the
+            # metric being ranked by.
+            _make_record("legacy", "/p/legacy.md", answer_correctness=None),
+            _make_record("measured", "/p/measured.md", answer_correctness=0.30),
+        ],
+    )
+    board = ResultHandler.build_leaderboard("answer_correctness")
+    by_name = {r["name"]: r for r in board["rows"]}
+
+    assert by_name["legacy"]["primary_score"] is None
+    assert by_name["legacy"]["incomplete"] is True
+    # The measured variant leads despite a low score; the legacy row sorts last.
+    assert board["rows"][0]["name"] == "measured"
+    assert board["rows"][-1]["name"] == "legacy"
+
+
+def test_declining_a_metric_stays_complete_when_ranked_by_another(monkeypatch):
+    """The false-alarm fix must survive the primary-metric guard: declining an
+    optional metric is not a defect when the run is ranked by a metric it did
+    measure."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record(
+                "four-metric-run",
+                "/p/a.md",
+                answer_correctness=None,
+                enabled_metrics=[
+                    "answer_relevancy",
+                    "faithfulness",
+                    "context_precision",
+                    "context_recall",
+                ],
+            )
+        ],
+    )
+    row = ResultHandler.build_leaderboard("faithfulness")["rows"][0]
+
+    assert row["incomplete"] is False
+    assert row["primary_score"] is not None

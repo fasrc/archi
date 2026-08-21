@@ -260,6 +260,7 @@ def test_build_ragas_aggregates_nan_when_none():
         "aggregate_faithfulness",
         "aggregate_context_precision",
         "aggregate_context_recall",
+        "aggregate_answer_correctness",
     }
     assert all(isinstance(v, float) and math.isnan(v) for v in aggs.values())
 
@@ -483,3 +484,33 @@ def test_pair_ab_results_carries_answer_correctness(monkeypatch):
     assert paired[0].ragas_a["answer_correctness"] == 0.9
     assert paired[0].ragas_b["answer_correctness"] == 0.4
     assert paired[0].winner_by_metric["answer_correctness"] == "a"
+
+
+def test_build_ragas_aggregates_none_emits_answer_correctness_placeholder():
+    """An all-failed config must report the SAME aggregate key set a scored run
+    does, so a consumer never has to tell "absent because the run failed" from
+    "absent because this key is never emitted". A config that enables ONLY
+    answer_correctness would otherwise get failure output with no aggregate at
+    all for the one metric it asked for."""
+    aggs = build_ragas_aggregates(None)
+    assert "aggregate_answer_correctness" in aggs
+    assert math.isnan(aggs["aggregate_answer_correctness"])
+
+
+def test_build_ragas_aggregates_tolerates_a_frame_without_the_column():
+    """Scoring frames only carry the columns the run enabled, so a metric key in
+    the aggregate map must never KeyError on a frame that omits it."""
+    import pandas as pd
+
+    df = pd.DataFrame(
+        {
+            "answer_relevancy": [1.0, 0.0],
+            "faithfulness": [1.0, 1.0],
+            "context_precision": [0.5, 0.5],
+            "context_recall": [0.0, 1.0],
+        }
+    )
+    aggs = build_ragas_aggregates(df)
+
+    assert aggs["aggregate_answer_relevancy"] == 0.5
+    assert math.isnan(aggs["aggregate_answer_correctness"])

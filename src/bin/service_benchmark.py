@@ -800,6 +800,14 @@ class ResultHandler:
                 else:
                     metrics[metric_name] = float(value)
 
+            # A rank is a claim about the metric being ranked BY, so a row with no
+            # value for the primary metric cannot be ordered against one that has
+            # it — whatever the run enabled. The sort reads a None primary score
+            # as 0.0, so without this the row would take a normal numeric rank in
+            # the complete tier instead of sorting last.
+            if metrics[primary_metric] is None:
+                incomplete = True
+
             # Per-metric sample size actually behind each mean. The RAGAS block
             # computes aggregate_* via pandas .mean(), which skips NaN, so a
             # judge timeout on one question silently shrinks the sample for that
@@ -855,9 +863,6 @@ class ResultHandler:
                 }
             )
 
-            ragas_settings = (bench.get("mode_settings", {}) or {}).get(
-                "ragas_settings", {}
-            ) or {}
             ctx_fields["model"].add(bench.get("model"))
             ctx_fields["provider"].add(bench.get("provider"))
             ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
