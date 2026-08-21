@@ -258,7 +258,7 @@ adopt decision on the tracking issue (0.1).
 
 ## 9. Archive (path depends on the 8.1 decision)
 
-- [ ] 9.1 `model: haiku` — **Adopt**: verify the implementation PR actually merged,
+- [x] 9.1 `model: haiku` — **Adopt**: verify the implementation PR actually merged,
   then `/opsx:archive port-live-eval-trial` (spec deltas sync into
   `openspec/specs/`), archive PR (no codex review), merge. **Reject**: abandon
   path — archive the change WITHOUT syncing the spec deltas into canonical specs
