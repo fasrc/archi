@@ -563,3 +563,89 @@ def test_process_config_all_failed_emits_only_the_enabled_metrics():
         "aggregate_answer_correctness",
     ):
         assert disabled not in total
+
+
+# --- A/B must not claim anything about a metric only one arm scored ----------
+
+
+def _ab_row(**scores):
+    row = {"question": "q", "reference_answer": "r", "status": OK}
+    row.update(scores)
+    return row
+
+
+def test_pair_ab_results_omits_a_metric_only_one_arm_scored(monkeypatch):
+    """A metric one arm never scored has no winner, because there is nothing to
+    compare it against.
+
+    The loop iterated arm A's keys and read arm B with a NaN default, so an
+    unscored arm B came back as "tie" — a published verdict on a metric it never
+    measured. Reachable as soon as two arms enable different metrics, which the
+    opt-in metric makes possible.
+    """
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            {
+                "single_question_results": {
+                    "question_1": _ab_row(faithfulness=0.8, answer_correctness=0.9)
+                }
+            },
+            {"single_question_results": {"question_1": _ab_row(faithfulness=0.4)}},
+        ],
+    )
+    paired = ResultHandler.pair_ab_results(0, 1)
+
+    assert len(paired) == 1
+    assert paired[0].winner_by_metric == {"faithfulness": "a"}
+    assert "answer_correctness" not in paired[0].ragas_a
+    assert "answer_correctness" not in paired[0].ragas_b
+
+
+def test_ab_aggregate_never_fabricates_a_zero_for_an_unscored_metric(monkeypatch):
+    """The mean falls back to 0.0 when an arm has no values, and 0.0 is the WORST
+    possible score — so publishing it for a metric the arm never enabled reads as
+    "this arm is terrible at correctness" rather than "this arm did not measure
+    it"."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            {
+                "configuration": {},
+                "single_question_results": {
+                    "question_1": _ab_row(faithfulness=0.8, answer_correctness=0.9)
+                },
+            },
+            {
+                "configuration": {},
+                "single_question_results": {"question_1": _ab_row(faithfulness=0.4)},
+            },
+        ],
+    )
+    monkeypatch.setattr(ResultHandler, "ab_comparisons", [])
+    paired = ResultHandler.pair_ab_results(0, 1)
+    ResultHandler.dump_ab_comparison(paired, 0, 1)
+    agg = ResultHandler.ab_comparisons[-1]["aggregate"]
+
+    assert "answer_correctness" not in agg["mean_scores_b"]
+    assert "answer_correctness" not in agg["mean_scores_a"]
+    assert agg["mean_scores_a"]["faithfulness"] == 0.8
+
+
+def test_pair_ab_results_still_ties_on_nan_both_sides(monkeypatch):
+    """Regression guard: a metric BOTH arms scored, where the judge returned NaN,
+    stays a tie. That is scored-but-failed, not never-measured."""
+    nan = float("nan")
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            {"single_question_results": {"question_1": _ab_row(faithfulness=nan)}},
+            {"single_question_results": {"question_1": _ab_row(faithfulness=0.4)}},
+        ],
+    )
+    paired = ResultHandler.pair_ab_results(0, 1)
+
+    assert paired[0].winner_by_metric == {"faithfulness": "tie"}

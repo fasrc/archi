@@ -557,8 +557,15 @@ class ResultHandler:
                 )
                 continue
 
-            ragas_a = {m: qa.get(m, float("nan")) for m in ragas_metrics if m in qa}
-            ragas_b = {m: qb.get(m, float("nan")) for m in ragas_metrics if m in qb}
+            # Only metrics BOTH arms scored can be compared. Reading a missing
+            # side as NaN published a "tie" verdict on a metric one arm never
+            # measured, and the aggregate then fabricated a 0.0 mean for it — the
+            # WORST possible score — reading as "this arm is bad at it" rather
+            # than "this arm did not measure it". Present-but-NaN on both sides is
+            # a different case: that is scored-and-failed, and stays a tie.
+            shared_metrics = [m for m in ragas_metrics if m in qa and m in qb]
+            ragas_a = {m: qa.get(m, float("nan")) for m in shared_metrics}
+            ragas_b = {m: qb.get(m, float("nan")) for m in shared_metrics}
 
             winner_by_metric: Dict[str, str] = {}
             for m in ragas_a:
@@ -789,8 +796,6 @@ class ResultHandler:
                 "ragas_settings"
             ) or {}
             expected = ragas_settings.get("enabled_metrics") or DEFAULT_ENABLED_METRICS
-            if primary_metric in expected:
-                primary_was_enabled = True
 
             metrics: Dict[str, Optional[float]] = {}
             incomplete = False
@@ -810,6 +815,13 @@ class ResultHandler:
             # the complete tier instead of sorting last.
             if metrics[primary_metric] is None:
                 incomplete = True
+
+            # A record with no metric list but a real score for the primary metric
+            # demonstrably ran it, so an observed score counts as evidence. Warning
+            # "never enabled" there would be false, and a false warning teaches the
+            # operator to ignore the real one.
+            if primary_metric in expected or metrics[primary_metric] is not None:
+                primary_was_enabled = True
 
             # Per-metric sample size actually behind each mean. The RAGAS block
             # computes aggregate_* via pandas .mean(), which skips NaN, so a
@@ -1655,7 +1667,9 @@ class Benchmarker:
                     or {}
                 ).get("enabled_metrics")
                 total_results.update(
-                    build_ragas_aggregates(None, enabled_metrics=enabled)
+                    build_ragas_aggregates(
+                        None, enabled_metrics=enabled or DEFAULT_ENABLED_METRICS
+                    )
                 )
 
         if "SOURCES" in modes_being_run:

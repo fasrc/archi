@@ -579,3 +579,23 @@ def test_warns_when_the_primary_metric_was_never_enabled(monkeypatch, caplog):
         "answer_correctness" in r.getMessage() and "enabled" in r.getMessage()
         for r in caplog.records
     )
+
+
+def test_no_spurious_warning_when_the_metric_was_scored_without_a_metric_list(
+    monkeypatch, caplog
+):
+    """A record carrying no `enabled_metrics` but a real score for the primary
+    metric was demonstrably run with it. Warning "never enabled" there would be
+    false, and would train the operator to ignore the warning."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [_make_record("legacy-but-scored", "/p/a.md", answer_correctness=0.7)],
+    )
+    with caplog.at_level("WARNING"):
+        board = ResultHandler.build_leaderboard("answer_correctness")
+
+    assert board["rows"][0]["rank"] == 1
+    assert not any(
+        "was not enabled by any swept" in r.getMessage() for r in caplog.records
+    )
