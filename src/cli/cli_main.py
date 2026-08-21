@@ -11,7 +11,11 @@ from jinja2 import ChainableUndefined, Environment, PackageLoader, select_autoes
 from src.cli.managers.config_manager import ConfigurationManager
 from src.cli.managers.deployment_manager import DeploymentManager
 from src.cli.managers.secrets_manager import SecretsManager
-from src.cli.managers.templates_manager import TemplateManager
+from src.cli.managers.templates_manager import (
+    TemplateManager,
+    extract_port_config,
+    validate_port_config,
+)
 from src.cli.managers.volume_manager import VolumeManager
 from src.cli.qa_eval import eval_cli
 from src.cli.service_registry import service_registry
@@ -250,10 +254,22 @@ def create(
             **other_flags,
         )
 
+        # Pure port checks run here — before any destructive action — so a
+        # refusable config never costs the operator a running deployment.  The
+        # availability probe (socket bind) cannot move here: the existing
+        # deployment still holds its ports, so an early probe would report a
+        # false conflict for every port it uses (see design.md D3).
+        _, port_errors = validate_port_config(
+            compose_config,
+            config_manager,
+            extract_port_config(compose_config, config_manager),
+        )
+        if port_errors:
+            raise ValueError("Port check failed:\n" + "\n".join(port_errors))
+
         # Everything above this line can still refuse the deployment — service
-        # selection, config validation, secret validation, and the compose plan
-        # itself (build_compose_config calls _discover_repo_path() under --dev,
-        # which raises outside a checkout). So the --force teardown goes here and
+        # selection, config validation, secret validation, the compose plan,
+        # and the pure port checks.  So the --force teardown goes here and
         # nowhere earlier: a create that was always going to fail must not cost
         # the operator a running deployment first (fasrc/archi#287).
         #
@@ -796,19 +812,22 @@ def evaluate(
                 "Benchmark question bank failed preflight:\n" + "\n".join(bank_errors)
             )
 
-        # Both halves, back to back, so this path keeps the combined behaviour it
-        # had when these were one function: refuse without --force, tear down with
-        # it. evaluate() depends on the teardown having happened by the time it
-        # reaches the "already exists" check just below.
+        # handle_existing_deployment stays here for error precedence: without
+        # --force it must refuse before any validation or teardown logic runs.
+        # The destructive half (remove_existing_deployment) and the existence
+        # assertion travel together below, after the steps that can refuse the
+        # replacement on config input: config validation, secret construction
+        # and validation, and the compose plan (fasrc/archi#290).
+        #
+        # That is strictly weaker than "the replacement is constructible". The
+        # ten stages of prepare_deployment_files() (_build_workflow() in
+        # templates_manager.py) still run below the teardown, and several raise
+        # on deterministic config input — _stage_agents() on two configs whose
+        # agent_md_file share a basename, _check_ports_available() on an invalid
+        # or duplicated port. Enumerating those routes one at a time is what
+        # fasrc/archi#294 exists to stop doing; it closes the class for both
+        # create() and evaluate() by rendering before destroying.
         handle_existing_deployment(base_dir, name, force)
-        remove_existing_deployment(
-            base_dir, name, force, False, other_flags.get("podman", False)
-        )
-
-        if base_dir.exists():
-            raise click.ClickException(
-                f"Benchmarking runtime '{name}' already exists at {base_dir}"
-            )
 
         secrets_manager = SecretsManager(env_file, config_manager)
 
@@ -857,6 +876,15 @@ def evaluate(
             secrets=all_secrets,
             **other_flags,
         )
+
+        remove_existing_deployment(
+            base_dir, name, force, False, other_flags.get("podman", False)
+        )
+
+        if base_dir.exists():
+            raise click.ClickException(
+                f"Benchmarking runtime '{name}' already exists at {base_dir}"
+            )
 
         template_manager = TemplateManager(env, verbosity)
         base_dir.mkdir(parents=True, exist_ok=True)

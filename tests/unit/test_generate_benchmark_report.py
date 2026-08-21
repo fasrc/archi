@@ -76,3 +76,25 @@ def test_report_renders_with_degraded_row_missing_matched():
     # a miss (INCORRECT), never as source-correct.
     assert "https://docs.example/gpu" in html
     assert "INCORRECT" in html
+
+
+def test_report_renders_per_question_answer_correctness_score():
+    """The PER-QUESTION RAGAS block renders from a fixed key -> display-name map,
+    so a metric absent from that map is computed and dumped but never shown on
+    the question card.
+
+    The run-summary section is deliberately excluded from this test: it derives
+    its labels generically from the ``aggregate_*`` keys, so leaving the
+    aggregate out of ``totals`` makes the per-question map the ONLY thing that
+    can produce the label.
+    """
+    row = _ok_row()
+    row["answer_correctness"] = 0.42
+
+    html = format_html_output(
+        _CONFIG, "ragas-bench", "2026-08-20", {"question_1": row}, _TOTALS
+    )
+
+    assert "aggregate_answer_correctness" not in str(_TOTALS)
+    assert "Answer Correctness" in html
+    assert "0.420" in html

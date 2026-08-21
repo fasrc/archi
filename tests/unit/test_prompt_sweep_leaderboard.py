@@ -22,6 +22,8 @@ def _make_record(
     faithfulness: Optional[float] = 0.8,
     context_precision: Optional[float] = 0.8,
     context_recall: Optional[float] = 0.8,
+    answer_correctness: Optional[float] = None,
+    enabled_metrics=None,
     model="Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
     provider="openai",
     evaluator_model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -36,6 +38,7 @@ def _make_record(
         ("aggregate_faithfulness", faithfulness),
         ("aggregate_context_precision", context_precision),
         ("aggregate_context_recall", context_recall),
+        ("aggregate_answer_correctness", answer_correctness),
     ):
         if value is not None:  # omit the key entirely to model a missing metric
             total_results[key] = value
@@ -47,6 +50,10 @@ def _make_record(
         "queries_path": queries_path,
         "mode_settings": {"ragas_settings": {"evaluator_model": evaluator_model}},
     }
+    if enabled_metrics is not None:
+        benchmarking["mode_settings"]["ragas_settings"][
+            "enabled_metrics"
+        ] = enabled_metrics
     if include_name:
         benchmarking["name"] = name
 
@@ -96,6 +103,7 @@ def test_one_row_per_config():
         "faithfulness",
         "context_precision",
         "context_recall",
+        "answer_correctness",
     }
     assert row["metrics"]["faithfulness"] == pytest.approx(0.9)
 
@@ -124,12 +132,13 @@ def test_configured_primary_metric_reranks():
     lb = ResultHandler.build_leaderboard("answer_relevancy")
     assert lb["primary_metric"] == "answer_relevancy"
     assert lb["rows"][0]["name"] == "b"
-    # all four metric values still present regardless of primary
+    # every metric value still present regardless of primary
     assert set(lb["rows"][0]["metrics"]) == {
         "answer_relevancy",
         "faithfulness",
         "context_precision",
         "context_recall",
+        "answer_correctness",
     }
 
 
@@ -271,3 +280,322 @@ def test_shared_context_flags_model_drift():
     assert any("model" in w for w in ctx["warnings"])
     # rows still emitted despite drift
     assert len(lb["rows"]) == 2
+
+
+# -- answer_correctness on the leaderboard ------------------------------------
+
+
+def test_leaderboard_reports_answer_correctness():
+    """The direct answer-vs-reference metric must be a first-class leaderboard
+    column, otherwise a run that computes it cannot rank variants by it."""
+    assert (
+        "answer_correctness",
+        "aggregate_answer_correctness",
+    ) in ResultHandler.LEADERBOARD_METRICS
+
+
+def test_leaderboard_ranks_by_answer_correctness(monkeypatch):
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record("low", "/p/low.md", answer_correctness=0.20),
+            _make_record("high", "/p/high.md", answer_correctness=0.90),
+        ],
+    )
+    board = ResultHandler.build_leaderboard("answer_correctness")
+
+    assert board["primary_metric"] == "answer_correctness"
+    assert [r["name"] for r in board["rows"]] == ["high", "low"]
+    assert board["rows"][0]["metrics"]["answer_correctness"] == 0.90
+
+
+def test_disabled_answer_correctness_does_not_mark_rows_incomplete(monkeypatch):
+    """A run that never enabled the metric is NOT an incomplete run.
+
+    ``incomplete`` means "a metric this run was supposed to produce is missing";
+    it drives a console flag and sorts rows last. Because LEADERBOARD_METRICS is
+    a static list, adding a metric would otherwise flag EVERY pre-existing sweep
+    as defective simply for not enabling it — a false alarm on honest runs.
+    """
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record(
+                "four-metric-run",
+                "/p/a.md",
+                answer_correctness=None,  # aggregate key absent
+                enabled_metrics=[
+                    "answer_relevancy",
+                    "faithfulness",
+                    "context_precision",
+                    "context_recall",
+                ],
+            )
+        ],
+    )
+    row = ResultHandler.build_leaderboard("faithfulness")["rows"][0]
+
+    assert row["incomplete"] is False
+    # The column still reports honestly that there is no score for it.
+    assert row["metrics"]["answer_correctness"] is None
+
+
+def test_enabled_answer_correctness_missing_marks_incomplete(monkeypatch):
+    """The flag must still fire when the run DID enable the metric and it is
+    absent — that is a real gap, not a configuration choice."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record(
+                "five-metric-run",
+                "/p/a.md",
+                answer_correctness=None,  # enabled but never aggregated
+                enabled_metrics=[
+                    "answer_relevancy",
+                    "faithfulness",
+                    "context_precision",
+                    "context_recall",
+                    "answer_correctness",
+                ],
+            )
+        ],
+    )
+    row = ResultHandler.build_leaderboard("faithfulness")["rows"][0]
+
+    assert row["incomplete"] is True
+    assert row["metrics"]["answer_correctness"] is None
+
+
+def test_legacy_run_is_never_ranked_on_a_metric_it_never_measured(monkeypatch):
+    """A rank is a claim about the metric being ranked BY, so a row with no value
+    for the primary metric must not sit in the ranked tier.
+
+    Scoping ``incomplete`` to a run's enabled metrics must NOT reopen this hole:
+    the sort reads a ``None`` primary score as 0.0, so a legacy record that never
+    measured the primary metric would otherwise take a normal numeric rank
+    alongside runs that did measure it.
+    """
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            # Legacy record: no enabled_metrics list at all, no aggregate for the
+            # metric being ranked by.
+            _make_record("legacy", "/p/legacy.md", answer_correctness=None),
+            _make_record("measured", "/p/measured.md", answer_correctness=0.30),
+        ],
+    )
+    board = ResultHandler.build_leaderboard("answer_correctness")
+    by_name = {r["name"]: r for r in board["rows"]}
+
+    assert by_name["legacy"]["primary_score"] is None
+    assert by_name["legacy"]["incomplete"] is True
+    # The measured variant leads despite a low score; the legacy row sorts last.
+    assert board["rows"][0]["name"] == "measured"
+    assert board["rows"][-1]["name"] == "legacy"
+
+
+def test_declining_a_metric_stays_complete_when_ranked_by_another(monkeypatch):
+    """The false-alarm fix must survive the primary-metric guard: declining an
+    optional metric is not a defect when the run is ranked by a metric it did
+    measure."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record(
+                "four-metric-run",
+                "/p/a.md",
+                answer_correctness=None,
+                enabled_metrics=[
+                    "answer_relevancy",
+                    "faithfulness",
+                    "context_precision",
+                    "context_recall",
+                ],
+            )
+        ],
+    )
+    row = ResultHandler.build_leaderboard("faithfulness")["rows"][0]
+
+    assert row["incomplete"] is False
+    assert row["primary_score"] is not None
+
+
+def test_row_without_a_primary_score_carries_no_rank(monkeypatch):
+    """A rank is a machine-readable claim about the primary metric, so a row with
+    no score for it must carry NO rank at all.
+
+    Sorting such a row last is not enough: the dense-ranking loop assigned a
+    number to every row, so a legacy arm still came out as "rank 2 on
+    answer_correctness" — an ordering on a metric it never measured, readable
+    straight out of the JSON by a consumer who never sees the warnings.
+    """
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record("legacy", "/p/legacy.md", answer_correctness=None),
+            _make_record("measured", "/p/measured.md", answer_correctness=0.30),
+        ],
+    )
+    board = ResultHandler.build_leaderboard("answer_correctness")
+    by_name = {r["name"]: r for r in board["rows"]}
+
+    assert by_name["measured"]["rank"] == 1
+    assert by_name["legacy"]["rank"] is None
+
+
+def test_no_ranks_at_all_when_every_row_lacks_the_primary_metric(monkeypatch):
+    """If nothing measured the primary metric there is no ordering to publish."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record("a", "/p/a.md", answer_correctness=None),
+            _make_record("b", "/p/b.md", answer_correctness=None),
+        ],
+    )
+    board = ResultHandler.build_leaderboard("answer_correctness")
+
+    assert [r["rank"] for r in board["rows"]] == [None, None]
+    assert all(r["incomplete"] for r in board["rows"])
+
+
+def test_complete_rows_still_rank_densely(monkeypatch):
+    """Regression guard: withholding a rank from unscored rows must not disturb
+    the ranking of rows that DO have the primary metric, including shared ranks
+    for ties."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record("top", "/p/top.md", faithfulness=0.9),
+            _make_record("tie-a", "/p/tie-a.md", faithfulness=0.5),
+            _make_record("tie-b", "/p/tie-b.md", faithfulness=0.5),
+            _make_record("no-primary", "/p/none.md", faithfulness=None),
+        ],
+    )
+    board = ResultHandler.build_leaderboard("faithfulness")
+    by_name = {r["name"]: r for r in board["rows"]}
+
+    assert by_name["top"]["rank"] == 1
+    assert by_name["tie-a"]["rank"] == 2
+    assert by_name["tie-b"]["rank"] == 2
+    # The unscored row neither ranks nor consumes a rank number.
+    assert by_name["no-primary"]["rank"] is None
+
+
+def test_scored_counts_only_cover_metrics_the_run_enabled(monkeypatch):
+    """`scored_counts` must not publish a sample size for a metric nobody asked
+    for.
+
+    Same defect class as the aggregate placeholders: a static metric list makes
+    "never enabled" and "enabled but nothing scored" both read as 0, so a reader
+    cannot tell a configuration choice from a total judge failure.
+    """
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record(
+                "four-metric-run",
+                "/p/a.md",
+                answer_correctness=None,
+                enabled_metrics=[
+                    "answer_relevancy",
+                    "faithfulness",
+                    "context_precision",
+                    "context_recall",
+                ],
+            )
+        ],
+    )
+    counts = ResultHandler.build_leaderboard("faithfulness")["rows"][0]["scored_counts"]
+
+    assert "answer_correctness" not in counts
+    assert set(counts) == {
+        "answer_relevancy",
+        "faithfulness",
+        "context_precision",
+        "context_recall",
+    }
+
+
+def test_scored_counts_keep_an_enabled_metric_that_scored_nothing(monkeypatch):
+    """The counterpart: an ENABLED metric with no scores must still report 0, so a
+    total judge failure stays visible instead of vanishing."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record(
+                "five-metric-run",
+                "/p/a.md",
+                answer_correctness=None,
+                enabled_metrics=[
+                    "answer_relevancy",
+                    "faithfulness",
+                    "context_precision",
+                    "context_recall",
+                    "answer_correctness",
+                ],
+            )
+        ],
+    )
+    counts = ResultHandler.build_leaderboard("faithfulness")["rows"][0]["scored_counts"]
+
+    assert counts["answer_correctness"] == 0
+
+
+def test_warns_when_the_primary_metric_was_never_enabled(monkeypatch, caplog):
+    """An operator handed a leaderboard with no ranks deserves to be told why.
+
+    Withholding the rank is correct but silent on its own; without a message the
+    only symptom is every `rank` being null.
+    """
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record(
+                "a",
+                "/p/a.md",
+                answer_correctness=None,
+                enabled_metrics=["answer_relevancy", "faithfulness"],
+            )
+        ],
+    )
+    with caplog.at_level("WARNING"):
+        board = ResultHandler.build_leaderboard("answer_correctness")
+
+    assert [r["rank"] for r in board["rows"]] == [None]
+    # The reason must be in the message itself, not in an `extra=` field: the
+    # project's log formatter renders %(message)s only.
+    assert any(
+        "answer_correctness" in r.getMessage() and "enabled" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_no_spurious_warning_when_the_metric_was_scored_without_a_metric_list(
+    monkeypatch, caplog
+):
+    """A record carrying no `enabled_metrics` but a real score for the primary
+    metric was demonstrably run with it. Warning "never enabled" there would be
+    false, and would train the operator to ignore the warning."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [_make_record("legacy-but-scored", "/p/a.md", answer_correctness=0.7)],
+    )
+    with caplog.at_level("WARNING"):
+        board = ResultHandler.build_leaderboard("answer_correctness")
+
+    assert board["rows"][0]["rank"] == 1
+    assert not any(
+        "was not enabled by any swept" in r.getMessage() for r in caplog.records
+    )

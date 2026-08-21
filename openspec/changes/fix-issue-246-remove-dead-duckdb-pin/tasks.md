@@ -3,23 +3,36 @@
 - [x] 1.1 Write the guard red, then make it green — **in this one task**, because the gate
       runs before every commit and a task that ends with the suite red can never be
       committed. First create `tests/unit/test_requirements_hygiene.py` with a module-level
-      mapping of the three paths, resolved from
+      mapping of the five paths, resolved from
       `REPO_ROOT = Path(__file__).resolve().parents[2]`:
       `requirements/requirements-base.txt`,
+      `requirements/cpu-requirementsHEADER.txt`,
+      `requirements/gpu-requirementsHEADER.txt`,
       `src/cli/templates/dockerfiles/base-python-image/requirements.txt`,
-      `src/cli/templates/dockerfiles/base-pytorch-image/requirements.txt`. One test scans
-      every line of each file against `^\s*duckdb([=<>!~ ]|$)`, collects offenders as
-      `path:line` strings, and asserts the collected **list** is empty so the failure names
-      all of them at once (design D5). Give the module and the test docstrings stating why
-      the guard exists: upstream still carries this pin, so an upstream merge would otherwise
-      reintroduce it silently. **No module-level `pytest.mark.skipif`, and no git call** —
-      that is the whole reason this is not in `test_repo_hygiene.py` (design D2).
+      `src/cli/templates/dockerfiles/base-pytorch-image/requirements.txt`. A helper resolves
+      each line's PEP 503-normalized project name (case folded, runs of `-`, `_` and `.`
+      folded to a single `-`); the scan collects every line whose normalized name is `duckdb`
+      as `path:line` strings, and asserts the collected **list** is empty so the failure
+      names all of them at once (design D5). The name comparison alone would fail open, so
+      the module needs two more protections beside it — both shipped, both required:
+      (a) a companion predicate that reports a line whose project name cannot be read at
+      all — a bare wheel URL, a `git+https://…#egg=duckdb`, a local path — with its own test
+      asserting no monitored line is of that shape, so such a line fails the suite instead of
+      passing as "not duckdb"; and (b) a self-check that the monitored path list and the
+      requirements paths `scripts/dev/build_docker_images.sh` references are **equal in both
+      directions**, not merely a subset, because a subset check would let coverage evaporate
+      silently if the generator were restructured beyond the discovery regex. Give the module
+      and the test docstrings stating why the guard exists: upstream still carries this pin,
+      so an upstream merge would otherwise reintroduce it silently, and state that (b) is a
+      drift alarm rather than a proof of coverage since it cannot see paths built from
+      variables or command substitution. **No module-level `pytest.mark.skipif`, and no git
+      call** — that is the whole reason this is not in `test_repo_hygiene.py` (design D2).
       Run `python -m pytest tests/unit/test_requirements_hygiene.py -x -q` and confirm it
-      **FAILS reporting exactly three hits** — one per file, on the assertion, not on an
-      import or a missing path. Then delete the pin, one line per file, with
-      `sed -i '/^duckdb==0\.8\.1$/d'` over the three paths (design D1) — do **not** run
-      `scripts/dev/build_docker_images.sh` and do **not** otherwise regenerate the two
-      derived files. Re-run the guard: green.
+      **FAILS reporting exactly three hits across the five monitored paths** — one per file
+      that declared the pin, on the assertion, not on an import or a missing path. Then
+      delete the pin, one line per file, with `sed -i '/^duckdb==0\.8\.1$/d'` over the
+      three paths (design D1) — do **not** run `scripts/dev/build_docker_images.sh` and do
+      **not** otherwise regenerate the two derived files. Re-run the guard: green.
 - [x] 1.2 Prove the blast radius mechanically before committing, because "I was careful" is
       not the check — regeneration is (design D1):
       `git diff --name-only` lists exactly the three requirements files;

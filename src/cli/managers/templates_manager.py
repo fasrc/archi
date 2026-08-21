@@ -171,6 +171,235 @@ class TemplateContext:
         return bool(self.options.get("build", True))
 
 
+# Sentinel meaning "the configuration did not supply a value"; a None-valued
+# registry default is not a substitute (design.md D1).
+_UNSET = object()
+
+
+def _normalize_port(port: Any, service_name: str, config_hint: Optional[str]) -> int:
+    # bool is a subclass of int, so int(True) is 1 and int(False) is 0 -- without this guard
+    # `port: on` (PyYAML resolves on/yes/true to True) passes preflight as port 1, and the
+    # bool itself is what port_config carries into template rendering. `off` was refused only
+    # by accident, reported as an out-of-range port 0 rather than as a bad value.
+    if isinstance(port, bool):
+        location = f" ({config_hint})" if config_hint else ""
+        raise ValueError(f"Invalid port value '{port}' for {service_name}{location}")
+    try:
+        port_value = int(port)
+    except (TypeError, ValueError):
+        location = f" ({config_hint})" if config_hint else ""
+        raise ValueError(f"Invalid port value '{port}' for {service_name}{location}")
+    if port_value < 1 or port_value > 65535:
+        location = f" ({config_hint})" if config_hint else ""
+        raise ValueError(
+            f"Port out of range for {service_name}{location}: {port_value}"
+        )
+    return port_value
+
+
+_MISSING: Any = object()
+
+
+def _walk_port_config_path(base_config: Any, port_config_path: str) -> Any:
+    """Walk a dotted path into base_config; return the value or _MISSING on KeyError/TypeError."""
+    value: Any = base_config
+    try:
+        for key in port_config_path.split("."):
+            value = value[key]
+    except (KeyError, TypeError):
+        return _MISSING
+    return value
+
+
+def _service_port_config_hint(
+    service_def, host_mode: bool, config_value: Any = None
+) -> Optional[str]:
+    if not service_def.port_config_path:
+        return None
+    if host_mode:
+        has_external = (
+            isinstance(config_value, dict)
+            and config_value.get("external_port") is not None
+        )
+        suffix = "external_port" if has_external else "port"
+    else:
+        suffix = "external_port"
+    return f"{service_def.port_config_path}.{suffix}"
+
+
+def _resolve_ports_from_config(
+    config_value: Any,
+    *,
+    host_mode: bool,
+    host_default: Optional[int],
+    container_default: Optional[int],
+) -> Tuple[Optional[int], Optional[int]]:
+    host_port = host_default
+    container_port = container_default
+    if isinstance(config_value, dict):
+        container_port = (
+            config_value["port"] if "port" in config_value else container_port
+        )
+        if host_mode:
+            # Mirror _apply_host_mode_port_overrides (#310): in host mode the port the
+            # deployment binds is external_port when that key is present and not None,
+            # so that is the value validation must check. Key presence alone is not the
+            # test here -- a present-but-null external_port overrides nothing on the
+            # render side, so it must override nothing here either. `port` above does
+            # use key presence, so a configured falsy `port` still reaches
+            # _normalize_port instead of being dropped (design.md D1).
+            external = config_value.get("external_port")
+            if external is not None:
+                host_port = external
+                container_port = external
+            else:
+                host_port = container_port
+        else:
+            host_port = (
+                config_value["external_port"]
+                if "external_port" in config_value
+                else host_port
+            )
+    else:
+        host_port = config_value
+    return host_port, container_port
+
+
+def extract_port_config(plan: DeploymentPlan, config_manager: Any) -> Dict[str, Any]:
+    port_config: Dict[str, Any] = {}
+    host_mode = plan.host_mode
+    base_config = (config_manager.get_configs() or [{}])[0]
+
+    for service_name, service_def in service_registry.get_all_services().items():
+        key_prefix = service_name.replace("-", "_")
+        configured_host: Any = _UNSET
+        configured_container: Any = _UNSET
+
+        if service_def.port_config_path:
+            # _MISSING means the dotted path is absent from the config; _UNSET means the
+            # path resolved but supplied no value for that side. Both fall back to the
+            # registry default, and neither is a configured value.
+            config_value = _walk_port_config_path(
+                base_config, service_def.port_config_path
+            )
+            if config_value is not _MISSING:
+                configured_host, configured_container = _resolve_ports_from_config(
+                    config_value,
+                    host_mode=host_mode,
+                    host_default=_UNSET,
+                    container_default=_UNSET,
+                )
+
+        host_port = (
+            configured_host
+            if configured_host is not _UNSET
+            else service_def.default_host_port
+        )
+        container_port = (
+            configured_container
+            if configured_container is not _UNSET
+            else service_def.default_container_port
+        )
+
+        # Emit when the configuration supplied a value or the registry default is
+        # not None.  Postgres has no port default and no config path; it is handled
+        # separately in validate_port_config, so a bare emit here would incorrectly
+        # add postgres_port_host with value None and cause _normalize_port to raise.
+        if configured_host is not _UNSET or service_def.default_host_port is not None:
+            port_config[f"{key_prefix}_port_host"] = host_port
+        if (
+            configured_container is not _UNSET
+            or service_def.default_container_port is not None
+        ):
+            port_config[f"{key_prefix}_port_container"] = container_port
+        # Signal for validate_port_config: was the container port operator-configured?
+        # Registry defaults are never re-checked; only operator-supplied values need
+        # validation (D2 — container validity without duplicate detection).
+        if configured_container is not _UNSET:
+            port_config[f"{key_prefix}_port_container_configured"] = True
+
+    return port_config
+
+
+def validate_port_config(
+    plan: DeploymentPlan,
+    config_manager: Any,
+    port_config: Dict[str, Any],
+) -> Tuple[Dict[int, List[Tuple[str, Optional[str]]]], List[str]]:
+    host_mode = plan.host_mode
+    enabled_services = plan.get_enabled_services()
+    base_config = (config_manager.get_configs() or [{}])[0]
+    services_cfg = (
+        base_config.get("services", {}) if isinstance(base_config, dict) else {}
+    )
+
+    port_usages: List[Tuple[int, str, Optional[str]]] = []
+    for service_name in enabled_services:
+        if service_name not in service_registry.get_all_services():
+            continue
+        key_prefix = service_name.replace("-", "_")
+        host_port_key = f"{key_prefix}_port_host"
+        if host_port_key not in port_config:
+            continue
+        host_port = port_config[host_port_key]
+        service_def = service_registry.get_service(service_name)
+        svc_config_value = (
+            _walk_port_config_path(base_config, service_def.port_config_path)
+            if service_def.port_config_path
+            else _MISSING
+        )
+        config_hint = _service_port_config_hint(
+            service_def,
+            host_mode,
+            config_value=svc_config_value if svc_config_value is not _MISSING else None,
+        )
+        port_usages.append(
+            (
+                _normalize_port(host_port, service_name, config_hint),
+                service_name,
+                config_hint,
+            )
+        )
+        # Validate the configured container port for validity only — never for
+        # duplicate detection, because container ports share namespaces (D2).
+        # Only when operator-configured: registry defaults are already known-good.
+        container_key = f"{key_prefix}_port_container"
+        if (
+            port_config.get(f"{key_prefix}_port_container_configured")
+            and container_key in port_config
+        ):
+            container_hint = (
+                f"{service_def.port_config_path}.port"
+                if service_def.port_config_path
+                else None
+            )
+            _normalize_port(port_config[container_key], service_name, container_hint)
+
+    if host_mode and plan.get_service("postgres").enabled:
+        postgres_port = services_cfg.get("postgres", {}).get("port", 5432)
+        port_usages.append(
+            (
+                _normalize_port(postgres_port, "postgres", "services.postgres.port"),
+                "postgres",
+                "services.postgres.port",
+            )
+        )
+
+    port_to_services: Dict[int, List[Tuple[str, Optional[str]]]] = {}
+    for port, service_name, config_hint in port_usages:
+        port_to_services.setdefault(port, []).append((service_name, config_hint))
+
+    errors: List[str] = []
+    for port, services in sorted(port_to_services.items()):
+        if len(services) > 1:
+            details = ", ".join(
+                f"{service} ({hint})" if hint else service for service, hint in services
+            )
+            errors.append(f"Port {port} is assigned to multiple services: {details}")
+
+    return port_to_services, errors
+
+
 class TemplateManager:
     """Manages template rendering and file preparation using service registry"""
 
@@ -842,36 +1071,7 @@ class TemplateManager:
         logger.info(f"Rendered compose file {dest}")
 
     def _extract_port_config(self, context: TemplateContext) -> Dict[str, Any]:
-        port_config: Dict[str, Any] = {}
-        host_mode = context.plan.host_mode
-        base_config = (context.config_manager.get_configs() or [{}])[0]
-
-        for service_name, service_def in self.registry.get_all_services().items():
-            key_prefix = service_name.replace("-", "_")
-            host_port = service_def.default_host_port
-            container_port = service_def.default_container_port
-
-            if service_def.port_config_path:
-                try:
-                    config_value: Any = base_config
-                    for key in service_def.port_config_path.split("."):
-                        config_value = config_value[key]
-
-                    host_port, container_port = self._resolve_ports_from_config(
-                        config_value,
-                        host_mode=host_mode,
-                        host_default=host_port,
-                        container_default=container_port,
-                    )
-                except (KeyError, TypeError):
-                    pass
-
-            if host_port:
-                port_config[f"{key_prefix}_port_host"] = host_port
-            if container_port:
-                port_config[f"{key_prefix}_port_container"] = container_port
-
-        return port_config
+        return extract_port_config(context.plan, context.config_manager)
 
     def _check_ports_available(
         self,
@@ -880,61 +1080,14 @@ class TemplateManager:
         *,
         allow_port_reuse: bool = False,
     ) -> None:
-        host_mode = context.plan.host_mode
-        enabled_services = context.plan.get_enabled_services()
-        base_config = (context.config_manager.get_configs() or [{}])[0]
-        services_cfg = (
-            base_config.get("services", {}) if isinstance(base_config, dict) else {}
+        port_to_services, errors = validate_port_config(
+            context.plan, context.config_manager, port_config
         )
 
-        port_usages: List[tuple[int, str, Optional[str]]] = []
-        for service_name in enabled_services:
-            if service_name not in self.registry.get_all_services():
-                continue
-            key_prefix = service_name.replace("-", "_")
-            host_port = port_config.get(f"{key_prefix}_port_host")
-            if host_port is None:
-                continue
-            service_def = self.registry.get_service(service_name)
-            config_hint = self._service_port_config_hint(service_def, host_mode)
-            port_usages.append(
-                (
-                    self._normalize_port(host_port, service_name, config_hint),
-                    service_name,
-                    config_hint,
-                )
-            )
-
-        if host_mode and context.plan.get_service("postgres").enabled:
-            postgres_port = services_cfg.get("postgres", {}).get("port", 5432)
-            port_usages.append(
-                (
-                    self._normalize_port(
-                        postgres_port, "postgres", "services.postgres.port"
-                    ),
-                    "postgres",
-                    "services.postgres.port",
-                )
-            )
-
-        if not port_usages:
-            return
-
-        port_to_services: Dict[int, List[tuple[str, Optional[str]]]] = {}
-        for port, service_name, config_hint in port_usages:
-            port_to_services.setdefault(port, []).append((service_name, config_hint))
-
-        errors: List[str] = []
-        for port, services in sorted(port_to_services.items()):
-            if len(services) > 1:
-                details = ", ".join(
-                    f"{service} ({hint})" if hint else service
-                    for service, hint in services
-                )
-                errors.append(
-                    f"Port {port} is assigned to multiple services: {details}"
-                )
-
+        # The probe runs here — after teardown — not pre-teardown: the existing
+        # deployment still holds its ports, so an early probe would report a false
+        # conflict for every port the replacement reuses, refusing exactly the
+        # re-creates that should succeed (spec acceptance criterion 5).
         if not allow_port_reuse:
             for port, services in sorted(port_to_services.items()):
                 error = self._probe_port(port)
@@ -947,31 +1100,6 @@ class TemplateManager:
 
         if errors:
             raise ValueError("Port check failed:\n" + "\n".join(errors))
-
-    def _service_port_config_hint(self, service_def, host_mode: bool) -> Optional[str]:
-        if not service_def.port_config_path:
-            return None
-        suffix = "port" if host_mode else "external_port"
-        return f"{service_def.port_config_path}.{suffix}"
-
-    def _normalize_port(
-        self, port: Any, service_name: str, config_hint: Optional[str]
-    ) -> int:
-        try:
-            port_value = int(port)
-        except (TypeError, ValueError):
-            location = f" ({config_hint})" if config_hint else ""
-            raise ValueError(
-                f"Invalid port value '{port}' for {service_name}{location}"
-            )
-
-        if port_value < 1 or port_value > 65535:
-            location = f" ({config_hint})" if config_hint else ""
-            raise ValueError(
-                f"Port out of range for {service_name}{location}: {port_value}"
-            )
-
-        return port_value
 
     def _probe_port(self, port: int) -> Optional[str]:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -1001,30 +1129,6 @@ class TemplateManager:
             external = service_cfg.get("external_port")
             if external is not None:
                 service_cfg["port"] = external
-
-    def _resolve_ports_from_config(
-        self,
-        config_value: Any,
-        *,
-        host_mode: bool,
-        host_default: Optional[int],
-        container_default: Optional[int],
-    ) -> tuple[Optional[int], Optional[int]]:
-        """Extract host/container ports using the standardized keys."""
-        host_port = host_default
-        container_port = container_default
-
-        if isinstance(config_value, dict):
-            container_port = config_value.get("port", container_port)
-            host_port = (
-                container_port
-                if host_mode
-                else config_value.get("external_port", host_port)
-            )
-        else:
-            host_port = config_value
-
-        return host_port, container_port
 
     # input list / source copying helpers
     def _copy_web_input_lists(self, context: TemplateContext) -> None:

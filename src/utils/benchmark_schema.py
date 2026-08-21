@@ -80,11 +80,20 @@ LEGACY_TO_MODERN: Dict[str, str] = {
 }
 
 # ragas 0.3.5 metric -> the bank column it additionally REQUIRES beyond
-# ``user_input`` / ``response`` / ``retrieved_contexts``. The context metrics
-# need the ground-truth ``reference``; the answer metrics do not.
+# ``user_input`` / ``response`` / ``retrieved_contexts``. The context metrics need
+# the ground-truth ``reference`` to grade retrieval against; ``answer_correctness``
+# needs it to grade the ANSWER against. ``answer_relevancy`` and ``faithfulness``
+# judge the answer only against the question and the retrieved contexts, so they
+# score a reference-less draft row too.
+#
+# Register EVERY metric here, including the ones that need nothing:
+# ``metric_required_column`` reads this map with ``.get(metric)``, so an
+# unregistered name reads back as "no requirement" and would be scored on rows
+# that cannot support it.
 _METRIC_REQUIRED_COLUMN: Dict[str, Optional[str]] = {
     "context_precision": "reference",
     "context_recall": "reference",
+    "answer_correctness": "reference",
     "answer_relevancy": None,
     "faithfulness": None,
 }

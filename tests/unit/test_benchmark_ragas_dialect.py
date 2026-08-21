@@ -68,6 +68,7 @@ def _install_ragas_stub(monkeypatch):
             faithfulness=types.SimpleNamespace(name="faithfulness"),
             context_precision=types.SimpleNamespace(name="context_precision"),
             context_recall=types.SimpleNamespace(name="context_recall"),
+            answer_correctness=types.SimpleNamespace(name="answer_correctness"),
         ),
     )
     return captured_from_list
@@ -218,3 +219,44 @@ def test_merge_anchor_questions_skips_empty_anchor_file(tmp_path):
     bench._merge_anchor_questions()
 
     assert bench.queries_to_answers == original
+
+
+def test_get_ragas_results_scores_answer_correctness_against_the_reference(
+    monkeypatch,
+):
+    """``answer_correctness`` must be resolvable by name and score only the rows
+    that carry a reference.
+
+    The harness maps an enabled metric name to a ragas metric object through the
+    ``all_metrics`` dict; a name absent from that dict is dropped BEFORE ragas is
+    ever called, so the metric would silently never run. This drives the metric
+    through the real ``get_ragas_results`` path rather than asserting on the map.
+    """
+    captured = _install_ragas_stub(monkeypatch)
+    bench = _ragas_bench(["answer_correctness"])
+
+    rows = [
+        {
+            "user_input": "q1",
+            "retrieved_contexts": ["c1"],
+            "response": "a1",
+            "reference": "r1",
+        },
+        {  # draft row: no reference, so there is nothing to grade against
+            "user_input": "q2",
+            "retrieved_contexts": ["c2"],
+            "response": "a2",
+            "reference": "",
+        },
+    ]
+    keys = ["question_1", "question_2"]
+    results_by_key = {"question_1": {}, "question_2": {}}
+
+    out = bench.get_ragas_results(rows, keys, results_by_key)
+
+    # ragas was invoked, and only over the one eligible row.
+    assert [len(batch) for batch in captured] == [1]
+    assert out["answer_correctness_scored"] == "1 of 2"
+    assert out["aggregate_answer_correctness"] == 0.9
+    assert results_by_key["question_1"]["answer_correctness"] == 0.9
+    assert "answer_correctness" not in results_by_key["question_2"]

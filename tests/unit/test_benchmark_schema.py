@@ -22,6 +22,7 @@ import math
 
 from src.utils.benchmark_schema import (
     bank_status_counts,
+    metric_required_column,
     normalize_bank,
     normalize_record,
     required_fields_for_modes,
@@ -375,3 +376,29 @@ def test_aggregate_is_nan_when_every_eligible_cell_is_nan():
     out = score_metrics_per_eligibility(rows, keys, ["context_recall"], qwr, score_fn)
     assert math.isnan(out["aggregate_context_recall"])
     assert out["context_recall_scored"] == "1 of 1"
+
+
+# --- answer_correctness eligibility (direct answer-vs-reference metric) ------
+
+
+def test_answer_correctness_requires_a_reference():
+    """``answer_correctness`` grades the answer AGAINST the reference, so a row
+    with no reference has nothing to grade against and must stay out of the
+    denominator — the same eligibility rule the two context metrics follow.
+
+    Guards a silent-wrong-score bug rather than a cosmetic gap:
+    ``metric_required_column`` reads the map with ``.get(metric)``, so an
+    UNREGISTERED metric reads back as ``None`` (no requirement) and every
+    reference-less row would be scored anyway.
+    """
+    assert metric_required_column("answer_correctness") == "reference"
+
+
+def test_answer_correctness_excludes_reference_less_rows():
+    scored = {"user_input": "q", "response": "a", "reference": "r"}
+    draft = {"user_input": "q", "response": "a", "reference": ""}
+
+    assert row_is_eligible(scored, "answer_correctness") is True
+    assert row_is_eligible(draft, "answer_correctness") is False
+    # The answer-only metrics are unaffected by a missing reference.
+    assert row_is_eligible(draft, "answer_relevancy") is True

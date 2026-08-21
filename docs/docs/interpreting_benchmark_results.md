@@ -100,7 +100,7 @@ grading** in Argilla. See [`benchmarking.md`](benchmarking.md#human-grading-via-
 
 Archi reports two families of scores. All are between 0 and 1, higher is better.
 
-### 2.1 The four RAGAS metrics
+### 2.1 The five RAGAS metrics
 
 RAGAS is the open-source library (version 0.3.5) that computes these. Each metric
 answers a different question, and — critically — **each one looks at a different
@@ -112,6 +112,7 @@ subset of the available information.**
 | `faithfulness` | Is every claim in the answer supported by the retrieved chunks? | answer + retrieved chunks |
 | `context_precision` | Of the chunks retrieved, how many were actually useful? | chunks + reference answer |
 | `context_recall` | Did retrieval find everything the reference answer needed? | chunks + reference answer |
+| `answer_correctness` | Is the answer *correct* against the reference answer? | answer + reference answer |
 
 Read that last column carefully, because it determines what each metric can
 detect.
@@ -124,11 +125,24 @@ detect.
 - **`answer_relevancy` never looks at the retrieved chunks.** An answer can be
   perfectly relevant and entirely made up.
 
-- **The two `context_*` metrics require a non-empty reference answer.** Rows
-  without one are silently excluded from those two metrics only. (In code:
-  `src/utils/benchmark_schema.py`, `_METRIC_REQUIRED_COLUMN`.) This is why the
-  four metrics can each be averaged over a *different number of questions* in the
-  same run — see [Denominator drift](#34-denominator-drift-the-quiet-one).
+- **`answer_correctness` is the only metric that compares the answer to the
+  reference answer.** The other four grade *relevance* and *grounding*; none of
+  them can tell a right answer from a wrong one. A fluent answer, grounded in
+  correctly retrieved chunks, that still contradicts the reference scores well on
+  all four and poorly only here. It blends factual overlap with the reference
+  (weight 0.75) and embedding similarity (0.25).
+
+    This metric is **opt-in**: add it to
+    `services.benchmarking.mode_settings.ragas_settings.enabled_metrics`. A run
+    that omits it reports the original four, so an older run's JSON carries no
+    `aggregate_answer_correctness` key at all.
+
+- **Three metrics require a non-empty reference answer** — the two `context_*`
+  metrics and `answer_correctness`. Rows without one are silently excluded from
+  those metrics only. (In code: `src/utils/benchmark_schema.py`,
+  `_METRIC_REQUIRED_COLUMN`.) This is why the metrics can each be averaged over a
+  *different number of questions* in the same run — see
+  [Denominator drift](#34-denominator-drift-the-quiet-one).
 
 ### 2.2 The two source metrics
 
@@ -156,7 +170,13 @@ else changed too.
 | If you change… | Expect movement in | Should barely move |
 |---|---|---|
 | chunking, reranking, retrieval weights | `context_precision`, `context_recall`, both source metrics | `answer_relevancy` |
-| the system prompt, or the SUT model | `faithfulness`, `answer_relevancy` | the `context_*` metrics |
+| the system prompt, or the SUT model | `faithfulness`, `answer_relevancy`, `answer_correctness` | the `context_*` metrics |
+
+`answer_correctness` is the one metric that can move when nothing else does. If a
+change makes the bot *right* more often without changing what it retrieved or how
+grounded it sounds, only this metric registers it. In the other direction, a
+retrieval change moves it only when retrieval was the thing standing between the
+bot and a correct answer.
 
 !!! danger "The coupling that breaks this table"
     Archi's agent decides *its own search queries* as it reasons. So changing the
@@ -421,8 +441,14 @@ d = json.load(open("bench_out/<the-run>.json"))
 arms = d["benchmarking_results"]
 
 for metric in ["answer_relevancy", "faithfulness",
-               "context_precision", "context_recall"]:
-    vals = [a["total_results"][f"aggregate_{metric}"] for a in arms]
+               "context_precision", "context_recall",
+               "answer_correctness"]:
+    # .get(): answer_correctness is opt-in, so a run that did not enable it has
+    # no aggregate key at all. Skip the metric rather than KeyError.
+    vals = [a["total_results"][f"aggregate_{metric}"] for a in arms
+            if f"aggregate_{metric}" in a["total_results"]]
+    if not vals:
+        continue
     print(f"{metric:20s} mean={statistics.fmean(vals):.4f} "
           f"noise floor sigma={statistics.stdev(vals):.4f}")
 ```
@@ -455,7 +481,8 @@ into a notebook. It implements G5 and G6.
 import json, math, statistics
 
 METRICS = ["answer_relevancy", "faithfulness",
-           "context_precision", "context_recall"]
+           "context_precision", "context_recall",
+           "answer_correctness"]
 
 def load(path, arm=0):
     """Clean rows of one arm, keyed by question text."""
@@ -524,7 +551,8 @@ bench_out/benchmarking-<name>-<timestamp>.json
             ├── status         # "ok" | "degraded" | ...
             ├── anchor_type    # anchors only: easy_retrieve|reasoning|should_refuse
             ├── difficulty     # bank rows only: easy|medium|hard
-            └── answer_relevancy, faithfulness, context_precision, context_recall
+            └── answer_relevancy, faithfulness, context_precision,
+                context_recall, answer_correctness  # last one: opt-in
 ```
 
 Report the bank sliced by `difficulty`, not as one number. A single mean over 40

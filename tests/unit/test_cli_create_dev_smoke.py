@@ -49,6 +49,67 @@ def env_file(tmp_path):
     return p
 
 
+@pytest.fixture
+def benchmark_config(tmp_path):
+    """Write a benchmarking-valid config to tmp_path and return the path.
+
+    Satisfies all five blank keys that the rendered base-config.yaml exposes
+    for the benchmarking service (agent_class, agent_md_file, provider, model,
+    ollama_url) so validate_configs passes with services=["postgres",
+    "benchmarking"].  agent_md_file uses an absolute path to an existing repo
+    file so the exists() check in _validate_benchmarking_config passes.
+    """
+    agent_md = REPO_ROOT / "examples" / "agents" / "cms-comp-ops.md"
+    miscellanea = (
+        REPO_ROOT / "examples" / "deployments" / "basic-openai" / "miscellanea.list"
+    )
+    config_text = f"""\
+name: smoke-benchmark
+
+services:
+  chat_app:
+    agent_class: CMSCompOpsAgent
+    agents_dir: examples/agents
+    client_timeout_seconds: 1800
+    default_provider: openai
+    default_model: gpt-4o
+    providers:
+      openai:
+        enabled: true
+        default_model: gpt-4o
+        models:
+          - gpt-4o
+      local:
+        enabled: false
+    trained_on: My data
+    port: 7866
+    external_port: 7866
+  vectorstore:
+    backend: postgres
+  data_manager:
+    port: 7889
+    external_port: 7889
+    auth:
+      enabled: false
+  benchmarking:
+    agent_class: CMSCompOpsAgent
+    agent_md_file: {str(agent_md)}
+    provider: openai
+    model: gpt-4o
+    ollama_url: http://localhost:11434
+
+data_manager:
+  sources:
+    links:
+      input_lists:
+        - {str(miscellanea)}
+  embedding_name: HuggingFaceEmbeddings
+"""
+    p = tmp_path / "benchmark.yaml"
+    p.write_text(config_text)
+    return p
+
+
 @pytest.mark.usefixtures("fake_repo_root")
 def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
@@ -523,6 +584,289 @@ def test_force_create_with_unbuildable_compose_plan_keeps_existing_deployment(
     )
 
 
+def test_force_create_with_invalid_port_keeps_existing_deployment(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """A nonnumeric host-side port value is detectable before teardown.
+
+    Port normalization raises ValueError immediately when it cannot convert the
+    configured value to an integer.  That check must fire before the --force
+    teardown, not seven stages later inside prepare_deployment_files(), so an
+    operator whose config was always going to be refused does not lose their
+    running deployment first.
+
+    The red run (unfixed code) fails because teardowns != []: the teardown
+    executes before the port check fires inside _check_ports_available().
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    # In host mode external_port is the field that drives port derivation; set both
+    # so the invalid value is what validation sees regardless of which key is present.
+    data["services"]["chat_app"]["port"] = "notaport"
+    data["services"]["chat_app"]["external_port"] = "notaport"
+    bad_config = tmp_path / "config-bad-port.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    def _stop_before_host_mutation(*args, **kwargs):
+        raise RuntimeError(SENTINEL)
+
+    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before port validation ran. "
+        f"output:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed despite an invalid port "
+        f"config. output:\n{result.output}\n"
+    )
+    assert result.exit_code != 0, (
+        f"a nonnumeric port value should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        "Invalid port value" in result.output
+    ), f"the error should name the invalid port value. output:\n{result.output}\n"
+
+
+def test_force_create_with_falsy_port_keeps_existing_deployment(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """A configured falsy port (e.g. 0) is detectable before teardown.
+
+    Port 0 is an invalid port value (out of range).  The check must fire before
+    the --force teardown, so an operator whose config was always going to be
+    refused does not lose their running deployment first.
+
+    The red run (unfixed code) fails because teardowns != []: the falsy value is
+    silently dropped by extract_port_config, the port check passes, and teardown
+    runs before the config refusal surfaces.
+
+    This runs under --hostmode, where external_port is the value the deployment
+    actually binds (#310/#316) and it overrides port. The example config sets both
+    keys, so both are zeroed here: zeroing port alone would leave a valid
+    external_port in charge, and the run would be refused by nothing.
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    data["services"]["chat_app"]["port"] = 0
+    data["services"]["chat_app"]["external_port"] = 0
+    bad_config = tmp_path / "config-zero-port.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    def _stop_before_host_mutation(*args, **kwargs):
+        raise RuntimeError(SENTINEL)
+
+    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before port validation ran. "
+        f"output:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed despite an invalid port "
+        f"config. output:\n{result.output}\n"
+    )
+    assert result.exit_code != 0, (
+        f"a port value of 0 should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+
+
+def test_force_create_with_falsy_container_port_non_host_mode_keeps_existing_deployment(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """A configured falsy container port in non-host mode is detectable before teardown.
+
+    In non-host mode, the 'port' key configures the container port; the host port
+    comes from 'external_port' or the registry default (and is valid).  A container
+    port of 0 is out of range and must be refused before the --force teardown, so
+    the operator does not lose a running deployment before the config error is reported.
+
+    The red run (unfixed code) fails because teardowns != []: the host port is valid
+    so the port check passes, teardown runs, then TemplateManager raises the sentinel.
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    data["services"]["chat_app"]["port"] = 0
+    bad_config = tmp_path / "config-zero-container-port.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    def _stop_before_host_mutation(*args, **kwargs):
+        raise RuntimeError(SENTINEL)
+
+    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            # No --hostmode: 'port' is the container side here.
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before port validation ran. "
+        f"output:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed despite an invalid container "
+        f"port config. output:\n{result.output}\n"
+    )
+    assert result.exit_code != 0, (
+        f"a container port value of 0 should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+
+
+def test_force_create_with_duplicate_ports_keeps_existing_deployment(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """Duplicate host-side port assignments are detectable before teardown.
+
+    When two enabled services share the same host port, validate_port_config()
+    returns an errors list and the caller must raise before reaching the
+    --force teardown.  data-manager is auto-enabled, so giving both
+    services.chat_app.port and services.data_manager.port the same value
+    exercises the duplicate check with only --services chatbot.
+
+    The red run (unfixed code) fails because teardowns != []: the teardown
+    executes before the duplicate check fires inside _check_ports_available().
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    # In host mode external_port drives port derivation; set both keys so the
+    # duplicate is what validation sees regardless of which key is present.
+    data["services"]["chat_app"]["port"] = 7866
+    data["services"]["chat_app"]["external_port"] = 7866
+    data["services"]["data_manager"]["port"] = 7866
+    data["services"]["data_manager"]["external_port"] = 7866
+    bad_config = tmp_path / "config-dup-ports.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    def _stop_before_host_mutation(*args, **kwargs):
+        raise RuntimeError(SENTINEL)
+
+    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before port validation ran. "
+        f"output:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed despite a duplicate port "
+        f"config. output:\n{result.output}\n"
+    )
+    assert result.exit_code != 0, (
+        f"duplicate host-side port assignment should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert "assigned to multiple services" in result.output, (
+        f"the error should name the duplicate port assignment. "
+        f"output:\n{result.output}\n"
+    )
+
+
 @pytest.mark.usefixtures("fake_repo_root")
 def test_dry_force_create_reports_teardown_without_performing_it(
     env_file, archi_home, monkeypatch
@@ -671,7 +1015,7 @@ def test_force_create_still_tears_down_once_validation_passes(
 
 
 def test_force_evaluate_still_removes_existing_runtime(
-    env_file, archi_home, monkeypatch
+    env_file, archi_home, benchmark_config, monkeypatch
 ):
     """Splitting the helper must not break archi evaluate --force.
 
@@ -679,6 +1023,135 @@ def test_force_evaluate_still_removes_existing_runtime(
     remove_existing_deployment(), then refuses if the directory still exists. It
     depends on the destructive half running at that call site, which is why the
     split had to update it rather than leave only the precondition behind.
+
+    The TemplateManager sentinel stops the run before any host mutation so the
+    test never creates real volumes or containers.  The sentinel appearing in
+    the output proves the run reached deployment setup, meaning the teardown
+    genuinely ran rather than the test passing vacuously because validation
+    refused first.
+    """
+    import shutil
+
+    from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+
+    existing = _existing_deployment(archi_home)
+
+    teardowns = []
+
+    def _delete(self, **kwargs):
+        teardowns.append(kwargs)
+        shutil.rmtree(existing, ignore_errors=True)
+
+    def _stop_before_host_mutation(*args, **kwargs):
+        raise RuntimeError(SENTINEL)
+
+    monkeypatch.setattr(DeploymentManager, "delete_deployment", _delete)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert len(teardowns) == 1, (
+        f"evaluate --force must still remove the existing benchmarking runtime. "
+        f"teardowns={teardowns}\noutput:\n{result.output}\n"
+    )
+    assert "already exists" not in result.output, (
+        f"evaluate --force refused a runtime it was supposed to have removed, "
+        f"which is what happens if the destructive half no longer runs at its "
+        f"call site. output:\n{result.output}\n"
+    )
+    assert SENTINEL in result.output, (
+        f"expected the run to reach deployment setup and stop at the sentinel, "
+        f"which proves the teardown ran before the replacement was written. "
+        f"output:\n{result.output}\n"
+    )
+
+
+def test_force_evaluate_with_missing_secret_keeps_existing_runtime(
+    archi_home, benchmark_config, monkeypatch, tmp_path
+):
+    """evaluate --force must not tear down the runtime when secrets validation fails.
+
+    An env file without PG_PASSWORD causes validate_secrets to refuse. The
+    teardown must not run until after every refusing step succeeds
+    (fasrc/archi#290).
+    """
+    import shutil
+
+    from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+
+    existing = _existing_deployment(archi_home)
+
+    teardowns = []
+
+    def _delete(self, **kwargs):
+        teardowns.append(kwargs)
+        shutil.rmtree(existing, ignore_errors=True)
+
+    env_no_pg = tmp_path / "no-pg.env"
+    env_no_pg.write_text("OPENAI_API_KEY=sk-test\n" "HUGGING_FACE_HUB_TOKEN=test-hf\n")
+
+    monkeypatch.setattr(DeploymentManager, "delete_deployment", _delete)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_no_pg),
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"evaluate --force with a missing secret should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert teardowns == [], (
+        f"evaluate --force must not tear down the runtime before secrets validation. "
+        f"teardowns={teardowns}\noutput:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"the existing runtime must survive a secrets validation failure. "
+        f"output:\n{result.output}\n"
+    )
+
+
+def test_force_evaluate_with_invalid_config_keeps_existing_runtime(
+    env_file, archi_home, monkeypatch
+):
+    """evaluate --force must not tear down the runtime when config validation fails.
+
+    EXAMPLE_CONFIG (basic-openai) has no services.benchmarking block so
+    validate_configs refuses. The teardown must not run until after every
+    refusing step succeeds (fasrc/archi#290). This distinguishes an ordering
+    fix from a secrets-only special case: a teardown moved below only
+    validate_secrets passes the missing-secret test but fails here.
     """
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
@@ -716,14 +1189,116 @@ def test_force_evaluate_still_removes_existing_runtime(
         ],
     )
 
-    assert len(teardowns) == 1, (
-        f"evaluate --force must still remove the existing benchmarking runtime. "
+    assert result.exit_code != 0, (
+        f"evaluate --force with an invalid config should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert teardowns == [], (
+        f"evaluate --force must not tear down the runtime before config validation. "
         f"teardowns={teardowns}\noutput:\n{result.output}\n"
     )
-    assert "already exists" not in result.output, (
-        f"evaluate --force refused a runtime it was supposed to have removed, "
-        f"which is what happens if the destructive half no longer runs at its "
-        f"call site. output:\n{result.output}\n"
+    assert (existing / "marker.txt").exists(), (
+        f"the existing runtime must survive a config validation failure. "
+        f"output:\n{result.output}\n"
+    )
+
+
+def test_evaluate_without_force_refuses_existing_runtime(
+    env_file, archi_home, benchmark_config, monkeypatch
+):
+    """evaluate without --force must refuse an existing runtime without removing it.
+
+    handle_existing_deployment stays before validation for error precedence.
+    Without --force it raises before any teardown or validation logic runs
+    (fasrc/archi#290).
+    """
+    from src.cli import cli_main
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"evaluate without --force should refuse an existing runtime. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        "already exists" in result.output
+    ), f"expected the already-exists refusal. output:\n{result.output}\n"
+    assert (
+        teardowns == []
+    ), f"a refusal must not remove anything. output:\n{result.output}\n"
+    assert (
+        existing / "marker.txt"
+    ).exists(), f"a refusal removed the existing runtime. output:\n{result.output}\n"
+
+
+def test_force_evaluate_refuses_when_removal_silently_fails(
+    env_file, archi_home, benchmark_config, monkeypatch
+):
+    """evaluate --force must refuse when remove_existing_deployment silently failed.
+
+    If delete_deployment records but does not remove the directory (simulating a
+    swallowed cleanup error), base_dir still exists after the removal attempt.
+    The exists() guard then refuses rather than proceeding to write a new runtime
+    on top of the old one (fasrc/archi#290).
+    """
+    from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+
+    _existing_deployment(archi_home)
+    teardowns = []
+    monkeypatch.setattr(
+        DeploymentManager,
+        "delete_deployment",
+        lambda self, **kwargs: teardowns.append(kwargs),
+    )
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"evaluate --force should fail when the directory survived removal. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert "already exists" in result.output, (
+        f"expected the already-exists refusal from the post-removal guard. "
+        f"output:\n{result.output}\n"
+    )
+    assert len(teardowns) == 1, (
+        f"deletion must have been attempted exactly once. "
+        f"teardowns={teardowns}\noutput:\n{result.output}\n"
     )
 
 
@@ -924,6 +1499,124 @@ def test_force_create_with_missing_secret_fails_under_verbose_logging(
         f"--verbosity 4 was passed. exit_code={result.exit_code}\n"
         f"output:\n{result.output}\n"
     )
+
+
+def test_dry_force_create_with_invalid_port_fails(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """A dry --force create with a bad port exits non-zero and omits the teardown notice.
+
+    The pure port check runs before remove_existing_deployment(), so a real run
+    would refuse before reaching the teardown.  A dry run must mirror that
+    behaviour: if the real run would not perform the teardown, the dry run must
+    not claim it would (see test_dry_force_create_with_missing_secret_omits_teardown_notice
+    for the analogous secret-validation case).
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    # In host mode external_port is the field that drives port derivation; set both
+    # so the invalid value is what validation sees regardless of which key is present.
+    data["services"]["chat_app"]["port"] = "notaport"
+    data["services"]["chat_app"]["external_port"] = "notaport"
+    bad_config = tmp_path / "config-bad-port.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--dry",
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"a dry run with a nonnumeric port should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        teardowns == []
+    ), f"a dry run must not call delete_deployment. output:\n{result.output}\n"
+    assert (
+        existing / "marker.txt"
+    ).exists(), f"a dry run removed the existing deployment. output:\n{result.output}\n"
+    assert "Would remove existing deployment" not in result.output, (
+        f"a dry run that refuses before the teardown must not claim it would "
+        f"remove the deployment. output:\n{result.output}\n"
+    )
+    assert (
+        "Invalid port value" in result.output
+    ), f"the error should name the invalid port value. output:\n{result.output}\n"
+
+
+def test_dry_create_with_invalid_port_fails(env_file, monkeypatch, tmp_path):
+    """A plain dry run with a bad port exits non-zero.
+
+    The pure port check is not gated on --force, so it fires for plain --dry
+    creates too.  The call site sits above the --dry early return, so there is
+    no need for a separate dry-run branch.
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
+
+    from src.cli import cli_main
+
+    monkeypatch.setattr(cli_main, "ARCHI_DIR", str(tmp_path / "archi-home"))
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    # In host mode external_port is the field that drives port derivation; set both
+    # so the invalid value is what validation sees regardless of which key is present.
+    data["services"]["chat_app"]["port"] = "notaport"
+    data["services"]["chat_app"]["external_port"] = "notaport"
+    bad_config = tmp_path / "config-bad-port.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--dry",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"a dry run with a nonnumeric port should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        "Invalid port value" in result.output
+    ), f"the error should name the invalid port value. output:\n{result.output}\n"
 
 
 def _config_with_agents_dir(tmp_path, agents_dir):

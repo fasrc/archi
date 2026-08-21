@@ -605,11 +605,10 @@ Two layers:
 > request that changed them. Grep the name.)
 >
 > **This does not make `--force` safe in general.** Config, secrets, the compose
-> plan and the agent files are checked before anything is destroyed. Other
-> deterministic input errors are not yet: a bad or duplicated port is still
-> caught after the teardown ([#293](https://github.com/fasrc/archi/issues/293)),
-> and closing that class properly means rendering the replacement before
-> destroying the old deployment rather than adding checks one at a time
+> plan, the agent files, and port configuration (bad or duplicated values) are
+> checked before anything is destroyed. Closing this class of errors more
+> completely means rendering the replacement before destroying the old deployment
+> rather than adding checks one at a time
 > ([#294](https://github.com/fasrc/archi/issues/294)). Beyond that, a failure
 > while *starting* the deployment — an image that will not pull, a port already
 > taken by something else, a compose error — still leaves you without a running
