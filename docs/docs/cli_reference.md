@@ -302,6 +302,28 @@ services:
     external_port: 3001  # default: 3000
 ```
 
+### Rejected port values
+
+`archi create` refuses a configuration that sets a port key to a value that cannot be a port,
+rather than falling back to a default and failing later. The check runs during preflight, before
+a `--force` run tears down the existing deployment, so a typo in the configuration file costs
+nothing.
+
+| Configured value | Result |
+|------------------|--------|
+| `port: 0` | `Port out of range for <service> (services.<service>.port): 0` |
+| `port: ""` | `Invalid port value '' for <service> (services.<service>.port)` |
+| `port: null` | `Invalid port value 'None' for <service> (services.<service>.port)` |
+| `port: 70000` | `Port out of range for <service> (services.<service>.port): 70000` |
+
+Omitting a key is not the same as setting it. A service with no `port` key — or with no section
+of its own at all — keeps its built-in default, and nothing is refused. Only a value you wrote is
+checked.
+
+In container mode `external_port` supplies the host-side port and is checked the same way, so
+`external_port: 0` is refused with `services.<service>.external_port` named in the message. The
+message always names the key it read, which is the key to edit.
+
 ### GPU Issues
 
 GPU access requires NVIDIA drivers and the NVIDIA Container Toolkit.
