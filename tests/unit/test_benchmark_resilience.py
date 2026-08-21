@@ -260,6 +260,7 @@ def test_build_ragas_aggregates_nan_when_none():
         "aggregate_faithfulness",
         "aggregate_context_precision",
         "aggregate_context_recall",
+        "aggregate_answer_correctness",
     }
     assert all(isinstance(v, float) and math.isnan(v) for v in aggs.values())
 
@@ -451,3 +452,200 @@ def test_process_config_passes_only_scorable_to_ragas():
     # exactly the scorable row's modern dataset_result is scored.
     assert captured["rows"] == [{"user_input": "q", "reference": "r"}]
     assert total["aggregate_faithfulness"] == 1.0
+
+
+# --- answer_correctness: A/B pairing ----------------------------------------
+
+
+def test_pair_ab_results_carries_answer_correctness(monkeypatch):
+    """A/B pairing builds its payload from a fixed metric-name list, so a metric
+    missing from that list is dropped from both the paired scores and the
+    per-metric winner — the comparison would silently ignore it."""
+
+    def _row(ac):
+        return {
+            "question": "q",
+            "reference_answer": "r",
+            "status": OK,
+            "answer_correctness": ac,
+        }
+
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            {"single_question_results": {"question_1": _row(0.9)}},
+            {"single_question_results": {"question_1": _row(0.4)}},
+        ],
+    )
+    paired = ResultHandler.pair_ab_results(0, 1)
+
+    assert len(paired) == 1
+    assert paired[0].ragas_a["answer_correctness"] == 0.9
+    assert paired[0].ragas_b["answer_correctness"] == 0.4
+    assert paired[0].winner_by_metric["answer_correctness"] == "a"
+
+
+def test_build_ragas_aggregates_none_emits_answer_correctness_placeholder():
+    """An all-failed config must report the SAME aggregate key set a scored run
+    does, so a consumer never has to tell "absent because the run failed" from
+    "absent because this key is never emitted". A config that enables ONLY
+    answer_correctness would otherwise get failure output with no aggregate at
+    all for the one metric it asked for."""
+    aggs = build_ragas_aggregates(None)
+    assert "aggregate_answer_correctness" in aggs
+    assert math.isnan(aggs["aggregate_answer_correctness"])
+
+
+def test_build_ragas_aggregates_tolerates_a_frame_without_the_column():
+    """Scoring frames only carry the columns the run enabled, so a metric key in
+    the aggregate map must never KeyError on a frame that omits it."""
+    import pandas as pd
+
+    df = pd.DataFrame(
+        {
+            "answer_relevancy": [1.0, 0.0],
+            "faithfulness": [1.0, 1.0],
+            "context_precision": [0.5, 0.5],
+            "context_recall": [0.0, 1.0],
+        }
+    )
+    aggs = build_ragas_aggregates(df)
+
+    assert aggs["aggregate_answer_relevancy"] == 0.5
+    assert math.isnan(aggs["aggregate_answer_correctness"])
+
+
+def test_all_failed_aggregates_only_cover_enabled_metrics():
+    """Key presence must mean "this run asked for the metric".
+
+    An all-failed run must emit the SAME key set a successful run of the same
+    config would emit — no more. Emitting an opt-in metric the config never
+    enabled makes "metric omitted by config" indistinguishable from "metric
+    requested but unscored", and breaks readers that branch on key presence.
+    """
+    four = [
+        "answer_relevancy",
+        "faithfulness",
+        "context_precision",
+        "context_recall",
+    ]
+    aggs = build_ragas_aggregates(None, enabled_metrics=four)
+    assert "aggregate_answer_correctness" not in aggs
+    assert set(aggs) == {f"aggregate_{m}" for m in four}
+
+    with_ac = build_ragas_aggregates(
+        None, enabled_metrics=four + ["answer_correctness"]
+    )
+    assert math.isnan(with_ac["aggregate_answer_correctness"])
+
+
+def test_process_config_all_failed_emits_only_the_enabled_metrics():
+    """End-to-end wiring: the failure path must consult the run's enabled list.
+
+    Guards against the aggregate keys being driven by a static metric map, which
+    would publish an opt-in metric's key for a config that never enabled it.
+    """
+    agent = _ConfigStub(queries=[{"user_input": "q"}], bundles=[_fail_bundle()])
+    agent.benchmarking_configs = {
+        "mode_settings": {
+            "ragas_settings": {"enabled_metrics": ["answer_relevancy", "faithfulness"]}
+        }
+    }
+
+    _qwr, total = agent._process_config({"RAGAS"})
+
+    assert math.isnan(total["aggregate_answer_relevancy"])
+    assert math.isnan(total["aggregate_faithfulness"])
+    for disabled in (
+        "aggregate_context_precision",
+        "aggregate_context_recall",
+        "aggregate_answer_correctness",
+    ):
+        assert disabled not in total
+
+
+# --- A/B must not claim anything about a metric only one arm scored ----------
+
+
+def _ab_row(**scores):
+    row = {"question": "q", "reference_answer": "r", "status": OK}
+    row.update(scores)
+    return row
+
+
+def test_pair_ab_results_omits_a_metric_only_one_arm_scored(monkeypatch):
+    """A metric one arm never scored has no winner, because there is nothing to
+    compare it against.
+
+    The loop iterated arm A's keys and read arm B with a NaN default, so an
+    unscored arm B came back as "tie" — a published verdict on a metric it never
+    measured. Reachable as soon as two arms enable different metrics, which the
+    opt-in metric makes possible.
+    """
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            {
+                "single_question_results": {
+                    "question_1": _ab_row(faithfulness=0.8, answer_correctness=0.9)
+                }
+            },
+            {"single_question_results": {"question_1": _ab_row(faithfulness=0.4)}},
+        ],
+    )
+    paired = ResultHandler.pair_ab_results(0, 1)
+
+    assert len(paired) == 1
+    assert paired[0].winner_by_metric == {"faithfulness": "a"}
+    assert "answer_correctness" not in paired[0].ragas_a
+    assert "answer_correctness" not in paired[0].ragas_b
+
+
+def test_ab_aggregate_never_fabricates_a_zero_for_an_unscored_metric(monkeypatch):
+    """The mean falls back to 0.0 when an arm has no values, and 0.0 is the WORST
+    possible score — so publishing it for a metric the arm never enabled reads as
+    "this arm is terrible at correctness" rather than "this arm did not measure
+    it"."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            {
+                "configuration": {},
+                "single_question_results": {
+                    "question_1": _ab_row(faithfulness=0.8, answer_correctness=0.9)
+                },
+            },
+            {
+                "configuration": {},
+                "single_question_results": {"question_1": _ab_row(faithfulness=0.4)},
+            },
+        ],
+    )
+    monkeypatch.setattr(ResultHandler, "ab_comparisons", [])
+    paired = ResultHandler.pair_ab_results(0, 1)
+    ResultHandler.dump_ab_comparison(paired, 0, 1)
+    agg = ResultHandler.ab_comparisons[-1]["aggregate"]
+
+    assert "answer_correctness" not in agg["mean_scores_b"]
+    assert "answer_correctness" not in agg["mean_scores_a"]
+    assert agg["mean_scores_a"]["faithfulness"] == 0.8
+
+
+def test_pair_ab_results_still_ties_on_nan_both_sides(monkeypatch):
+    """Regression guard: a metric BOTH arms scored, where the judge returned NaN,
+    stays a tie. That is scored-but-failed, not never-measured."""
+    nan = float("nan")
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            {"single_question_results": {"question_1": _ab_row(faithfulness=nan)}},
+            {"single_question_results": {"question_1": _ab_row(faithfulness=0.4)}},
+        ],
+    )
+    paired = ResultHandler.pair_ab_results(0, 1)
+
+    assert paired[0].winner_by_metric == {"faithfulness": "tie"}

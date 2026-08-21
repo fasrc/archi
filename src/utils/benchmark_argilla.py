@@ -16,11 +16,15 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# NOTE: currently unused — the export declares and serializes each metric by name
+# (see the ``metadata=[...]`` blocks below). Kept in sync anyway so it cannot hand
+# a future reader a short metric list.
 RAGAS_METRICS = [
     "answer_relevancy",
     "faithfulness",
     "context_precision",
     "context_recall",
+    "answer_correctness",
 ]
 
 # Inline style fragments applied directly to elements because Argilla's
@@ -262,6 +266,12 @@ def push_ab_results_to_argilla(
             rg.FloatMetadataProperty(
                 name="ragas_recall_b", title="RAGAS Context Recall (B)"
             ),
+            rg.FloatMetadataProperty(
+                name="ragas_correctness_a", title="RAGAS Answer Correctness (A)"
+            ),
+            rg.FloatMetadataProperty(
+                name="ragas_correctness_b", title="RAGAS Answer Correctness (B)"
+            ),
             rg.FloatMetadataProperty(name="time_a", title="Response Time (A)"),
             rg.FloatMetadataProperty(name="time_b", title="Response Time (B)"),
             rg.TermsMetadataProperty(
@@ -310,6 +320,12 @@ def push_ab_results_to_argilla(
         brc = ragas_b.get("context_recall")
         if brc is not None and brc == brc:
             metadata["ragas_recall_b"] = float(brc)
+        aac = ragas_a.get("answer_correctness")
+        if aac is not None and aac == aac:
+            metadata["ragas_correctness_a"] = float(aac)
+        bac = ragas_b.get("answer_correctness")
+        if bac is not None and bac == bac:
+            metadata["ragas_correctness_b"] = float(bac)
         ta = item.get("time_a")
         if ta is not None:
             metadata["time_a"] = float(ta)
@@ -426,6 +442,9 @@ def push_single_results_to_argilla(
                 name="ragas_precision", title="RAGAS Context Precision"
             ),
             rg.FloatMetadataProperty(name="ragas_recall", title="RAGAS Context Recall"),
+            rg.FloatMetadataProperty(
+                name="ragas_correctness", title="RAGAS Answer Correctness"
+            ),
             rg.FloatMetadataProperty(name="time_elapsed", title="Response Time"),
             rg.TermsMetadataProperty(
                 name="corpus_snapshot_id", title="Corpus snapshot id"
@@ -466,6 +485,9 @@ def push_single_results_to_argilla(
         cr = item.get("context_recall")
         if cr is not None and cr == cr:
             metadata["ragas_recall"] = float(cr)
+        ac = item.get("answer_correctness")
+        if ac is not None and ac == ac:
+            metadata["ragas_correctness"] = float(ac)
         te = item.get("time_elapsed")
         if te is not None:
             metadata["time_elapsed"] = float(te)

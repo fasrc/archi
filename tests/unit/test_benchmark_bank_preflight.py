@@ -442,3 +442,19 @@ def test_anchor_errors_unreadable_file_is_empty(tmp_path):
 
 def test_preflight_configs_empty_list_is_empty():
     assert preflight_benchmark_configs([]) == ([], [])
+
+
+def test_answer_correctness_warns_with_denominator():
+    """An operator enabling ``answer_correctness`` must see the real sample size
+    BEFORE spending an ingest: the metric needs a reference, so draft rows drop
+    out of its mean exactly as they do for the context metrics."""
+    bank = [
+        {"user_input": "q1", "reference": "r1"},
+        {"user_input": "q2", "reference": ""},  # draft: nothing to grade against
+        {"user_input": "q3", "reference": "r3"},
+    ]
+    warnings = bank_eligibility_warnings(
+        bank, _cfg_with_metrics(["RAGAS"], ["answer_correctness"])
+    )
+    assert any("answer_correctness" in w for w in warnings)
+    assert any("2/3" in w for w in warnings)

@@ -39,6 +39,7 @@ from src.utils.benchmark_resilience import (
     source_hits,
 )
 from src.utils.benchmark_schema import (
+    DEFAULT_ENABLED_METRICS,
     normalize_bank,
     required_fields_for_modes,
     score_metrics_per_eligibility,
@@ -528,6 +529,7 @@ class ResultHandler:
             "faithfulness",
             "context_precision",
             "context_recall",
+            "answer_correctness",
         ]
 
         paired: List[ABResult] = []
@@ -555,8 +557,15 @@ class ResultHandler:
                 )
                 continue
 
-            ragas_a = {m: qa.get(m, float("nan")) for m in ragas_metrics if m in qa}
-            ragas_b = {m: qb.get(m, float("nan")) for m in ragas_metrics if m in qb}
+            # Only metrics BOTH arms scored can be compared. Reading a missing
+            # side as NaN published a "tie" verdict on a metric one arm never
+            # measured, and the aggregate then fabricated a 0.0 mean for it — the
+            # WORST possible score — reading as "this arm is bad at it" rather
+            # than "this arm did not measure it". Present-but-NaN on both sides is
+            # a different case: that is scored-and-failed, and stays a tie.
+            shared_metrics = [m for m in ragas_metrics if m in qa and m in qb]
+            ragas_a = {m: qa.get(m, float("nan")) for m in shared_metrics}
+            ragas_b = {m: qb.get(m, float("nan")) for m in shared_metrics}
 
             winner_by_metric: Dict[str, str] = {}
             for m in ragas_a:
@@ -714,6 +723,7 @@ class ResultHandler:
         ("faithfulness", "aggregate_faithfulness"),
         ("context_precision", "aggregate_context_precision"),
         ("context_recall", "aggregate_context_recall"),
+        ("answer_correctness", "aggregate_answer_correctness"),
     ]
 
     @staticmethod
@@ -755,6 +765,7 @@ class ResultHandler:
             )
 
         rows: List[Dict[str, Any]] = []
+        primary_was_enabled = False
         # Accumulate shared-context candidates to detect drift across configs.
         ctx_fields: Dict[str, set] = {
             "model": set(),
@@ -774,15 +785,43 @@ class ResultHandler:
                 Path(agent_md_file).stem if agent_md_file else ""
             )
 
+            # ``incomplete`` means "a metric this run was SUPPOSED to produce is
+            # missing" — it flags the row in the console table and sorts it last.
+            # LEADERBOARD_METRICS is a static SUPERSET of what any one run scores,
+            # so judge only the metrics this run actually enabled; otherwise every
+            # run that declines an optional metric reads as a defective run. A
+            # config that omits the list runs the template default, which
+            # DEFAULT_ENABLED_METRICS mirrors.
+            ragas_settings = (bench.get("mode_settings") or {}).get(
+                "ragas_settings"
+            ) or {}
+            expected = ragas_settings.get("enabled_metrics") or DEFAULT_ENABLED_METRICS
+
             metrics: Dict[str, Optional[float]] = {}
             incomplete = False
             for metric_name, agg_key in ResultHandler.LEADERBOARD_METRICS:
                 value = total.get(agg_key)
                 if value is None or (isinstance(value, float) and math.isnan(value)):
                     metrics[metric_name] = None
-                    incomplete = True
+                    if metric_name in expected:
+                        incomplete = True
                 else:
                     metrics[metric_name] = float(value)
+
+            # A rank is a claim about the metric being ranked BY, so a row with no
+            # value for the primary metric cannot be ordered against one that has
+            # it — whatever the run enabled. The sort reads a None primary score
+            # as 0.0, so without this the row would take a normal numeric rank in
+            # the complete tier instead of sorting last.
+            if metrics[primary_metric] is None:
+                incomplete = True
+
+            # A record with no metric list but a real score for the primary metric
+            # demonstrably ran it, so an observed score counts as evidence. Warning
+            # "never enabled" there would be false, and a false warning teaches the
+            # operator to ignore the real one.
+            if primary_metric in expected or metrics[primary_metric] is not None:
+                primary_was_enabled = True
 
             # Per-metric sample size actually behind each mean. The RAGAS block
             # computes aggregate_* via pandas .mean(), which skips NaN, so a
@@ -794,6 +833,15 @@ class ResultHandler:
             single_question_results = record.get("single_question_results") or {}
             scored_counts: Dict[str, int] = {}
             for metric_name, _agg_key in ResultHandler.LEADERBOARD_METRICS:
+                # Publish a sample size unless we are making no claim at all
+                # about this metric: not enabled AND no score. A static list would
+                # report 0 for a metric nobody enabled, which reads identically to
+                # an enabled metric whose every judge call failed. A metric that
+                # DID produce a score always keeps its count, even when it is
+                # absent from `expected` (which falls back to the template
+                # default when a record carries no metric list).
+                if metric_name not in expected and metrics[metric_name] is None:
+                    continue
                 count = 0
                 for q in single_question_results.values():
                     if not isinstance(q, dict):
@@ -808,14 +856,14 @@ class ResultHandler:
                     "Leaderboard: variant '%s' (%s) is incomplete — missing/NaN metrics: %s",
                     name,
                     agent_md_file,
-                    [m for m in metric_names if metrics[m] is None],
+                    [m for m in metric_names if metrics[m] is None and m in expected],
                 )
             # Surface under-sampling even when the aggregate is a valid float.
             answered = len(single_question_results)
             undersampled = [
-                f"{m}={scored_counts[m]}/{answered}"
+                f"{m}={scored_counts.get(m, 0)}/{answered}"
                 for m in metric_names
-                if metrics[m] is not None and scored_counts[m] < answered
+                if metrics[m] is not None and scored_counts.get(m, 0) < answered
             ]
             if undersampled:
                 logger.warning(
@@ -839,9 +887,6 @@ class ResultHandler:
                 }
             )
 
-            ragas_settings = (bench.get("mode_settings", {}) or {}).get(
-                "ragas_settings", {}
-            ) or {}
             ctx_fields["model"].add(bench.get("model"))
             ctx_fields["provider"].add(bench.get("provider"))
             ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
@@ -886,11 +931,31 @@ class ResultHandler:
         # metrics stay, so an operator can still inspect the run.
         comparable = ResultHandler.arms_comparable(ResultHandler.results)
 
+        # Withholding every rank is correct but silent on its own; say why, or the
+        # only symptom an operator sees is a leaderboard of null ranks.
+        if rows and not primary_was_enabled:
+            logger.warning(
+                "Leaderboard: primary_metric '%s' was not enabled by any swept "
+                "config, so no variant scored it and every rank is withheld "
+                "(null). Add it to "
+                "services.benchmarking.mode_settings.ragas_settings.enabled_metrics, "
+                "or rank by a metric the run actually scored.",
+                primary_metric,
+            )
+
         # Dense ranking: equal primary scores share a rank.
         rank = 0
         prev_score: Any = object()
         for row in rows:
             score = row["primary_score"]
+            if score is None:
+                # A rank is a claim ABOUT the primary metric, so a row with no
+                # score for it carries no rank — not a number a consumer would
+                # compare. Sorting it last is not enough: the number itself is
+                # what gets read out of the JSON. It also does not consume a rank,
+                # so the scored rows keep 1..n.
+                row["rank"] = None
+                continue
             if score != prev_score:
                 rank += 1
                 prev_score = score
@@ -1445,17 +1510,23 @@ class Benchmarker:
         from ragas.embeddings import LangchainEmbeddingsWrapper
         from ragas.llms import LangchainLLMWrapper
         from ragas.metrics import (
+            answer_correctness,
             answer_relevancy,
             context_precision,
             context_recall,
             faithfulness,
         )
 
+        # Use the PRE-INSTANTIATED ``answer_correctness`` rather than building a
+        # FactualCorrectness: scores are read back as ``to_pandas()[metric]``, and
+        # only the pre-instantiated object's result column is named exactly after
+        # the metric (FactualCorrectness's can carry a mode suffix).
         all_metrics = {
             "answer_relevancy": answer_relevancy,
             "faithfulness": faithfulness,
             "context_precision": context_precision,
             "context_recall": context_recall,
+            "answer_correctness": answer_correctness,
         }
         enabled_metrics = self.benchmarking_configs["mode_settings"]["ragas_settings"][
             "enabled_metrics"
@@ -1582,7 +1653,24 @@ class Benchmarker:
             else:
                 # No scorable input (all failed/degraded): #92's config-level n/a
                 # guard emits NaN for every metric, with no empty-Dataset ragas call.
-                total_results.update(build_ragas_aggregates(None))
+                # Tolerant read: this is the FAILURE path, so an unreadable or
+                # absent metric list must not turn a degraded run into a crash.
+                # None falls back to emitting every known metric, the behaviour
+                # before the list was threaded through.
+                enabled = (
+                    (
+                        (getattr(self, "benchmarking_configs", None) or {}).get(
+                            "mode_settings"
+                        )
+                        or {}
+                    ).get("ragas_settings")
+                    or {}
+                ).get("enabled_metrics")
+                total_results.update(
+                    build_ragas_aggregates(
+                        None, enabled_metrics=enabled or DEFAULT_ENABLED_METRICS
+                    )
+                )
 
         if "SOURCES" in modes_being_run:
             # Denominator is the questions that DECLARE expected sources, not the
@@ -1788,13 +1876,14 @@ class Benchmarker:
                 leaderboard["primary_metric"],
             )
             logger.info(
-                "  %-4s %-28s %-10s %-10s %-10s %-10s %-10s %s",
+                "  %-4s %-28s %-10s %-10s %-10s %-10s %-10s %-10s %s",
                 "rank",
                 "name",
                 "ans_rel",
                 "faith",
                 "ctx_prec",
                 "ctx_rec",
+                "ans_corr",
                 "n_q",
                 "prompt",
             )
@@ -1815,13 +1904,14 @@ class Benchmarker:
 
                 flag = "  (incomplete)" if row["incomplete"] else ""
                 logger.info(
-                    "  %-4d %-28s %-12s %-12s %-12s %-12s %-10d %s%s",
+                    "  %-4d %-28s %-12s %-12s %-12s %-12s %-12s %-10d %s%s",
                     row["rank"],
                     row["name"][:28],
                     _fmt("answer_relevancy"),
                     _fmt("faithfulness"),
                     _fmt("context_precision"),
                     _fmt("context_recall"),
+                    _fmt("answer_correctness"),
                     answered,
                     row["agent_md_file"],
                     flag,

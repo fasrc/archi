@@ -907,3 +907,110 @@ def test_assert_single_sweep_ignores_blank_ids():
         "Q3": {"corpus_snapshot_id": "", "responses": []},
     }
     assert assert_single_sweep(grades) == "snap-abc"
+
+
+# -- answer_correctness reaches the human-grading datasets --------------------
+
+
+@patch("src.utils.benchmark_argilla._get_workspace", return_value="admin")
+@patch("src.utils.benchmark_argilla._get_client")
+def test_push_single_results_carries_answer_correctness(mock_client, mock_ws):
+    """A scored metric that never reaches Argilla is invisible to the graders.
+
+    The export serializes RAGAS scores field by field, so a metric the harness
+    computes but the export does not name is silently dropped — the dataset looks
+    valid while missing one of the run's metrics.
+    """
+    data = {
+        "benchmarking_results": [
+            {
+                "single_question_results": {
+                    "q0": {
+                        "question": "Q",
+                        "reference_answer": "A",
+                        "answer": "X",
+                        "answer_correctness": 0.62,
+                    }
+                }
+            }
+        ]
+    }
+
+    rg_mock = MagicMock()
+    captured_records = []
+
+    def capture_record(**kw):
+        captured_records.append(kw)
+        return SimpleNamespace(**kw)
+
+    with patch.dict("sys.modules", {"argilla": rg_mock}):
+        mock_dataset = MagicMock()
+        rg_mock.Dataset.return_value = mock_dataset
+        rg_mock.Settings = MagicMock()
+        rg_mock.TextField = MagicMock()
+        rg_mock.RatingQuestion = MagicMock()
+        rg_mock.TextQuestion = MagicMock()
+        rg_mock.FloatMetadataProperty = MagicMock()
+        rg_mock.Record = MagicMock(side_effect=capture_record)
+
+        push_single_results_to_argilla(data, "test-correctness")
+
+        meta = captured_records[0]["metadata"]
+        assert meta["ragas_correctness"] == 0.62
+        # The dataset must also DECLARE the property, or the push has nowhere to
+        # put it.
+        declared = {
+            call.kwargs.get("name")
+            for call in rg_mock.FloatMetadataProperty.call_args_list
+        }
+        assert "ragas_correctness" in declared
+
+
+@patch("src.utils.benchmark_argilla._get_workspace", return_value="admin")
+@patch("src.utils.benchmark_argilla._get_client")
+def test_push_ab_results_carries_answer_correctness(mock_client, mock_ws):
+    """Both arms of an A/B dataset must carry the metric, else a grader compares
+    two answers with the correctness scores stripped out."""
+    data = {
+        "ab_comparison": {
+            "per_question": [
+                {
+                    "question": "Q1",
+                    "reference_answer": "A1",
+                    "answer_a": "A",
+                    "answer_b": "B",
+                    "ragas_a": {"answer_correctness": 0.90},
+                    "ragas_b": {"answer_correctness": 0.40},
+                },
+            ],
+        },
+    }
+
+    rg_mock = MagicMock()
+    captured_records = []
+
+    def capture_record(**kw):
+        captured_records.append(kw)
+        return SimpleNamespace(**kw)
+
+    with patch.dict("sys.modules", {"argilla": rg_mock}):
+        mock_dataset = MagicMock()
+        rg_mock.Dataset.return_value = mock_dataset
+        rg_mock.Settings = MagicMock()
+        rg_mock.TextField = MagicMock()
+        rg_mock.LabelQuestion = MagicMock()
+        rg_mock.RatingQuestion = MagicMock()
+        rg_mock.TextQuestion = MagicMock()
+        rg_mock.FloatMetadataProperty = MagicMock()
+        rg_mock.Record = MagicMock(side_effect=capture_record)
+
+        push_ab_results_to_argilla(data, "test-correctness-ab")
+
+        meta = captured_records[0]["metadata"]
+        assert meta["ragas_correctness_a"] == 0.90
+        assert meta["ragas_correctness_b"] == 0.40
+        declared = {
+            call.kwargs.get("name")
+            for call in rg_mock.FloatMetadataProperty.call_args_list
+        }
+        assert {"ragas_correctness_a", "ragas_correctness_b"} <= declared
