@@ -326,9 +326,16 @@ Omitting a key is not the same as setting it. A service with no `port` key — o
 of its own at all — keeps its built-in default, and nothing is refused. Only a value you wrote is
 checked.
 
-In container mode `external_port` supplies the host-side port and is checked the same way, so
-`external_port: 0` is refused with `services.<service>.external_port` named in the message. The
-message always names the key it read, which is the key to edit.
+`external_port` supplies the host-side port and is checked the same way, in both container mode
+and host mode, so `external_port: 0` is refused with `services.<service>.external_port` named in
+the message. The message always names the key it read, which is the key to edit.
+
+Under `--hostmode` the two keys interact, because host mode binds `external_port` and lets it
+override the `port` beside it. Preflight checks the key the deployment will really bind, so an
+`external_port` you wrote is checked as above. A falsy `port` sitting under a valid
+`external_port` is dead configuration that nothing reads, and preflight does not refuse it — the
+deployment starts on the `external_port` value. Leaving `external_port` empty is not a value: it
+means "do not override", and host mode falls back to checking `port`.
 
 ### GPU Issues
 

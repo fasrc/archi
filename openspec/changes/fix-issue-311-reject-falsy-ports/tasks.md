@@ -11,10 +11,18 @@
 > Line anchors are as of `origin/dev` at `2c404822`. Re-derive before citing any of them in
 > the PR body - do not paste these numbers forward.
 >
+> MERGE NOTE (dev merged in after group 4). PR #316 (issue #310) landed on `dev` and rewrote
+> host-mode derivation, which task 1.7 had deliberately left alone. Host mode no longer
+> mirrors `host_port = container_port`; it binds `external_port` when that key holds a value
+> and derives both ports from it. Two consequences for the plan as written: the group 1.4
+> fixture below could no longer use a section holding only `external_port`, and a `port`
+> beneath a valid `external_port` is now inert, so it is not refused. The precedence and that
+> limitation are recorded in the spec delta and in `docs/docs/cli_reference.md`.
+>
 > Scope fences (design.md D6) - if you find yourself editing any of these, stop and reduce
 > the change: `_apply_host_mode_port_overrides` (`:936-948`, that is #310 / PR #316),
 > `_normalize_port` (`:168-179`, its rejections are the behaviour being restored),
-> `src/cli/utils/helpers.py` (that is #300), `test_extract_port_config_host_mode_uses_port_for_both`
+> `src/cli/utils/helpers.py` (that is #300), `test_extract_port_config_host_mode_no_external_port_uses_port_for_both`
 > (`:78`, that is #310), and any call site in `src/cli/cli_main.py` (that is #293 / #294).
 
 ## 1. A configured falsy port survives extraction and is refused before the teardown (red tests + fix + characterization updates, one commit)
@@ -48,8 +56,11 @@
       wrong fix, so write them now:
       - `_cm({})` (no `chat_app` section) -> `chatbot_port_host == 7861` and
         `chatbot_port_container == 7861`, no error;
-      - `_cm({"chat_app": {"external_port": 9000}})` in host mode (section present, no
-        `port` key) -> both ports are the registry default `7861`, no error;
+      - a section present with no port key of any kind, in host mode -> both ports are the
+        registry default `7861`, no error. Use a non-port key such as
+        `_cm({"chat_app": {"agent_class": "SomeAgent"}})`: after PR #316 merged, a section
+        holding only `external_port` is **not** the "no port key" case, because host mode
+        binds `external_port` and derives both ports from it;
       - host mode with `chatbot` enabled -> `postgres_port_host` is **not** in the extraction
         output, and `validate_port_config` reports no error mentioning `postgres`. Postgres
         is auto-enabled and has no port default and no config path, so this is the test that
@@ -91,7 +102,7 @@
         it to expect the `ValueError`, and rewrite the comment. Note the name already says
         "raises when reached", so it needs no rename.
 - [x] 1.11 Confirm these still pass with **no** edit, and stop and reduce the change if any
-      needs one: `test_extract_port_config_host_mode_uses_port_for_both` (`:78`),
+      needs one: `test_extract_port_config_host_mode_no_external_port_uses_port_for_both` (`:78`),
       `test_extract_port_config_non_host_mode_uses_external_port` (`:69`),
       `test_extract_port_config_scalar_config_value` (`:92`),
       `test_extract_port_config_falls_back_to_registry_defaults` (`:105`), and every

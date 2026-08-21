@@ -197,3 +197,26 @@ def test_the_section_names_the_external_port_path():
     assert (
         message is not None and "external_port" in message
     ), "container-mode external_port: 0 must be refused naming the external_port key"
+
+
+@pytest.mark.parametrize("spelling", ["0", "70000", '""', "true", "on", "notaport"])
+def test_host_mode_external_port_is_refused_too(spelling):
+    # The section claims external_port is checked in both modes. Host mode binds
+    # external_port and lets it override port (#310/#316), so it is the key preflight has
+    # to check -- and the key the message has to name. Nothing pinned host mode here: the
+    # older cases all ran container mode, which is the mode the section used to describe.
+    value = yaml.safe_load(f"v: {spelling}")["v"]
+    message = _verdict("external_port", value, host_mode=True)
+    assert message is not None, f"host mode accepts `external_port: {spelling}`"
+    assert (
+        "external_port" in message
+    ), f"host mode refuses `external_port: {spelling}` but names the wrong key: {message!r}"
+
+
+def test_host_mode_empty_external_port_falls_back_to_port():
+    # The section's closing sentence. An empty external_port is not a value, it is "do not
+    # override" -- the same reading _apply_host_mode_port_overrides uses on the render side.
+    # So the valid port beside it is what preflight checks, and nothing is refused.
+    assert (
+        _verdict("external_port", None, host_mode=True) is None
+    ), "an empty external_port must mean 'no override', not a refusable value"

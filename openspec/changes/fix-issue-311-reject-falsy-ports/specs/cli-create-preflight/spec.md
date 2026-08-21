@@ -18,6 +18,13 @@ registry default for a configured-but-invalid port is the same defect wearing di
 clothes: a config that was always going to be refused instead deploys, on a port nobody
 asked for.
 
+Where two keys can supply one port, the key validated is the key the deployment binds. Under
+`--hostmode` that is `external_port`, which overrides `port` on the render side
+(`_apply_host_mode_port_overrides`). So host mode validates `external_port` when it holds a
+value, and a `port` beneath a valid `external_port` is inert configuration no check reads.
+That precedence is fasrc/archi#310's contract (PR #316); this requirement inherits it instead
+of restating it, which keeps the refused value the value the deployment would really bind.
+
 #### Scenario: Forced re-create with a service configured `port: 0`
 
 - **WHEN** `archi create --force` is invoked against an existing deployment with an enabled
@@ -58,6 +65,21 @@ an absent key and an implementation built on it will silently pick the other rea
 In non-host mode `port` is the container-side value and the host side comes from
 `external_port` or the registry default, so a fix that inspects only the host side satisfies
 the host-mode scenarios and fails this one.
+
+#### Scenario: Host mode validates the key it binds when both keys are configured
+
+- **WHEN** `archi create --force --hostmode` is invoked with a service configured
+  `external_port: 0` beside a valid `port`
+- **THEN** the command exits non-zero
+- **AND** the existing deployment directory and its contents are left intact
+- **AND** the error names `services.<service>.external_port`, the key host mode binds
+- **AND** the reverse configuration — a valid `external_port` above `port: 0` — is accepted,
+  because the deployment binds the valid `external_port` and never reads the `port` beneath it
+
+This scenario is the seam between this change and #310, and each half fails a different way
+without it. Validating `port` in host mode refuses a deployment that would have worked;
+validating only `port` misses the value actually bound. The shipped example config sets both
+keys, so this is the common shape, not an edge case.
 
 #### Scenario: The availability probe is offered no value it is not offered today
 

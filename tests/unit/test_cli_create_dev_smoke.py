@@ -606,7 +606,10 @@ def test_force_create_with_invalid_port_keeps_existing_deployment(
     from src.cli import cli_main
 
     data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    # In host mode external_port is the field that drives port derivation; set both
+    # so the invalid value is what validation sees regardless of which key is present.
     data["services"]["chat_app"]["port"] = "notaport"
+    data["services"]["chat_app"]["external_port"] = "notaport"
     bad_config = tmp_path / "config-bad-port.yaml"
     bad_config.write_text(yaml.safe_dump(data))
 
@@ -665,6 +668,11 @@ def test_force_create_with_falsy_port_keeps_existing_deployment(
     The red run (unfixed code) fails because teardowns != []: the falsy value is
     silently dropped by extract_port_config, the port check passes, and teardown
     runs before the config refusal surfaces.
+
+    This runs under --hostmode, where external_port is the value the deployment
+    actually binds (#310/#316) and it overrides port. The example config sets both
+    keys, so both are zeroed here: zeroing port alone would leave a valid
+    external_port in charge, and the run would be refused by nothing.
     """
     import yaml
 
@@ -675,6 +683,7 @@ def test_force_create_with_falsy_port_keeps_existing_deployment(
 
     data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
     data["services"]["chat_app"]["port"] = 0
+    data["services"]["chat_app"]["external_port"] = 0
     bad_config = tmp_path / "config-zero-port.yaml"
     bad_config.write_text(yaml.safe_dump(data))
 
@@ -805,8 +814,12 @@ def test_force_create_with_duplicate_ports_keeps_existing_deployment(
     from src.cli import cli_main
 
     data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    # In host mode external_port drives port derivation; set both keys so the
+    # duplicate is what validation sees regardless of which key is present.
     data["services"]["chat_app"]["port"] = 7866
+    data["services"]["chat_app"]["external_port"] = 7866
     data["services"]["data_manager"]["port"] = 7866
+    data["services"]["data_manager"]["external_port"] = 7866
     bad_config = tmp_path / "config-dup-ports.yaml"
     bad_config.write_text(yaml.safe_dump(data))
 
@@ -1507,7 +1520,10 @@ def test_dry_force_create_with_invalid_port_fails(
     from src.cli import cli_main
 
     data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    # In host mode external_port is the field that drives port derivation; set both
+    # so the invalid value is what validation sees regardless of which key is present.
     data["services"]["chat_app"]["port"] = "notaport"
+    data["services"]["chat_app"]["external_port"] = "notaport"
     bad_config = tmp_path / "config-bad-port.yaml"
     bad_config.write_text(yaml.safe_dump(data))
 
@@ -1570,7 +1586,10 @@ def test_dry_create_with_invalid_port_fails(env_file, monkeypatch, tmp_path):
     monkeypatch.setattr(cli_main, "ARCHI_DIR", str(tmp_path / "archi-home"))
 
     data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    # In host mode external_port is the field that drives port derivation; set both
+    # so the invalid value is what validation sees regardless of which key is present.
     data["services"]["chat_app"]["port"] = "notaport"
+    data["services"]["chat_app"]["external_port"] = "notaport"
     bad_config = tmp_path / "config-bad-port.yaml"
     bad_config.write_text(yaml.safe_dump(data))
 

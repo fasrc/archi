@@ -15,12 +15,18 @@ Checks if retrieved documents contain the correct sources by comparing metadata 
 
 ### RAGAS Mode
 
-Uses the [Ragas](https://docs.ragas.io/en/stable/concepts/metrics/) evaluator for four metrics:
+Uses the [Ragas](https://docs.ragas.io/en/stable/concepts/metrics/) evaluator. Four
+metrics are on by default and a fifth is opt-in:
 
 - **Answer relevancy**: How relevant the answer is to the question
 - **Faithfulness**: Whether the answer is grounded in the retrieved context
 - **Context precision**: How relevant the retrieved documents are
-- **Context relevancy**: How much of the retrieved context is useful
+- **Context recall**: Whether retrieval found everything the reference answer needed
+- **Answer correctness** (opt-in): Whether the answer is *correct* against the
+  reference answer. The other four grade relevance and grounding, so none of them
+  can tell a right answer from a wrong one. Enable it by adding
+  `answer_correctness` to
+  `services.benchmarking.mode_settings.ragas_settings.enabled_metrics`.
 
 ---
 
@@ -53,9 +59,9 @@ read (`question`→`user_input`, `answer`→`reference`, `contexts`→`retrieved
 | `source_match_field` | No | Metadata fields to match sources against (defaults to config value) |
 
 ¹ Only `user_input` is required at load (plus `sources` for SOURCES mode). An
-empty `reference` is a valid draft row: it is skipped by the context metrics
-(`context_precision`/`context_recall`) but still scored by `answer_relevancy` and
-`faithfulness`.
+empty `reference` is a valid draft row: it is skipped by every metric that needs
+the ground truth (`context_precision`, `context_recall` and `answer_correctness`)
+but still scored by `answer_relevancy` and `faithfulness`.
 
 See `examples/benchmarking/queries.json` for a complete example.
 
@@ -177,9 +183,14 @@ prompts:
 ```
 
 `primary_metric` is one of `answer_relevancy`, `faithfulness`,
-`context_precision`, `context_recall` (default `faithfulness` — grounding is the
-load-bearing property for a "never guess" support bot). All four metrics are
-reported per variant regardless; this only sets the ranking key.
+`context_precision`, `context_recall`, `answer_correctness` (default
+`faithfulness` — grounding is the load-bearing property for a "never guess"
+support bot). Every enabled metric is reported per variant regardless; this only
+sets the ranking key.
+
+Ranking by a metric the run did not enable is not silently tolerated: a variant
+with no score for the primary metric is marked `incomplete` and left unranked
+rather than being ordered as if it had scored zero.
 
 ### 2. Generate the per-prompt configs
 
@@ -205,12 +216,22 @@ because 2+ configs ran, emits a `leaderboard` block in the dump JSON.
 
 The dump JSON gains a `leaderboard` key:
 
-- `rows` — one per variant: `name`, `agent_md_file`, the four mean RAGAS
-  `metrics`, `primary_score`, `rank`, `query_count`, and `incomplete`. Rows are
-  ranked best-first by `primary_metric`; ties share a rank. A variant that
-  failed to produce a metric (missing/NaN) has `None` for it, is marked
-  `incomplete: true`, and sorts after all complete variants — it is never
+- `rows` — one per variant: `name`, `agent_md_file`, the mean RAGAS `metrics`,
+  `primary_score`, `rank`, `query_count`, `scored_counts`, and `incomplete`. Rows
+  are ranked best-first by `primary_metric`; ties share a rank. A metric the
+  variant produced no score for (missing or NaN) reads `None` and is never
   treated as a zero.
+
+    `incomplete: true` means a metric this run was *supposed* to produce is
+    missing, and such rows sort after all complete ones. It is judged against the
+    run's own `enabled_metrics`, so declining an optional metric does not flag the
+    run as defective.
+
+    A variant with no score for the **primary** metric is always `incomplete`
+    *and* gets `rank: null` — a rank is a claim about the metric being ranked by,
+    so there is nothing to claim. Handle a null `rank`: if no variant scored the
+    primary metric, every row has one. Unranked rows do not consume rank numbers,
+    so the scored variants still read 1..n.
 - `shared_context` — the model, provider, judge `evaluator_model`,
   `queries_path`, and `corpus_snapshot_id` shared by all variants. If any of
   these differ across the swept configs, the discrepancy is recorded in
@@ -267,7 +288,7 @@ delta.
 
 ### Measuring the three deltas
 
-- **Quality** — the four RAGAS metrics per arm, reported overall and (using the
+- **Quality** — the RAGAS metrics per arm, reported overall and (using the
   typed `fasrc_ragas_queries.json` bank) sliced by `anchor_type`
   (`easy_retrieve` / `reasoning` / `should_refuse`). The hypothesis is that
   returning parent context helps multi-step `reasoning` questions more than

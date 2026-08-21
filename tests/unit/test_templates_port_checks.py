@@ -14,6 +14,7 @@ import pytest
 from src.cli.managers.templates_manager import (
     TemplateContext,
     TemplateManager,
+    _resolve_ports_from_config,
     extract_port_config,
     validate_port_config,
 )
@@ -75,13 +76,71 @@ def test_extract_port_config_non_host_mode_uses_external_port():
     assert result["chatbot_port_container"] == 8000
 
 
-def test_extract_port_config_host_mode_uses_port_for_both():
-    # In host mode the host port mirrors the container port.
+def test_extract_port_config_host_mode_uses_external_port_for_both():
+    # In host mode both ports come from external_port when present; host mirrors the override.
     plan = _plan(["chatbot"], host_mode=True)
-    cm = _cm({"chat_app": {"port": 8000, "external_port": 9000}})
+    cm = _cm({"chat_app": {"port": 7861, "external_port": 9000}})
     result = extract_port_config(plan, cm)
-    assert result["chatbot_port_host"] == 8000
-    assert result["chatbot_port_container"] == 8000
+    assert result["chatbot_port_host"] == 9000
+    assert result["chatbot_port_container"] == 9000
+
+
+def test_extract_port_config_host_mode_no_external_port_uses_port_for_both():
+    # In host mode with no external_port, both ports come from port (AC3, no regression).
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": 7861}})
+    result = extract_port_config(plan, cm)
+    assert result["chatbot_port_host"] == 7861
+    assert result["chatbot_port_container"] == 7861
+
+
+def test_extract_port_config_host_mode_external_port_only_used_for_both():
+    # In host mode with external_port present and port absent, both come from external_port.
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"external_port": 9000}})
+    result = extract_port_config(plan, cm)
+    assert result["chatbot_port_host"] == 9000
+    assert result["chatbot_port_container"] == 9000
+
+
+def test_resolve_ports_from_config_host_mode_external_port_zero_is_present():
+    # external_port: 0 is treated as present (D1) — derivation returns it. The truthy
+    # guard in extract_port_config that used to drop it afterwards is gone (#311), so
+    # the value now survives to validation; see
+    # test_validate_port_config_host_mode_falsy_external_port_raises.
+    host, container = _resolve_ports_from_config(
+        {"port": 7861, "external_port": 0},
+        host_mode=True,
+        host_default=7861,
+        container_default=7861,
+    )
+    assert host == 0
+    assert container == 0
+
+
+# ---------------------------------------------------------------------------
+# validate_port_config — host-mode duplicate external_port returns error (AC2)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_port_config_host_mode_duplicate_external_port_returns_error():
+    # Two enabled services with the same external_port in host mode must conflict.
+    plan = _plan(["chatbot", "data-manager"], host_mode=True)
+    cm = _cm(
+        {
+            "chat_app": {"port": 7861, "external_port": 9000},
+            "data_manager": {"port": 7871, "external_port": 9000},
+        }
+    )
+    port_config = extract_port_config(plan, cm)
+    _, errors = validate_port_config(plan, cm, port_config)
+    assert len(errors) == 1
+    assert "assigned to multiple services" in errors[0]
+    # The conflict message must name the key that produced the colliding value, not the
+    # inert `port` key underneath it — the duplicate path reads the same config hint as the
+    # invalid-value path, and nothing pinned that (Greptile review, PR #316).
+    assert "services.chat_app.external_port" in errors[0]
+    assert "services.data_manager.external_port" in errors[0]
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +217,28 @@ def test_validate_port_config_nonnumeric_names_service_and_hint():
     assert "chatbot" in msg
     # The config hint names the path (services.chat_app.port in host mode).
     assert "services.chat_app" in msg
+
+
+def test_validate_port_config_host_mode_with_external_port_names_external_port():
+    # AC5: host mode, external_port present and invalid → hint suffix is external_port.
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": 7861, "external_port": "notaport"}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "services.chat_app.external_port" in msg
+
+
+def test_validate_port_config_host_mode_without_external_port_names_port():
+    # AC5: host mode, no external_port, port invalid → hint suffix is port.
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": "notaport"}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "services.chat_app.port" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +596,38 @@ def test_validate_port_config_falsy_null_raises():
     assert "services.chat_app" in msg
 
 
+def test_validate_port_config_host_mode_falsy_external_port_raises():
+    # The seam between #310/#316 and #311. In host mode external_port is the value
+    # the deployment binds, so a falsy external_port is the real outage shape: it was
+    # always going to be refused. #316 derives it (present, not None) and #311 stops
+    # extraction from dropping it, so validation now refuses it before the teardown.
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": 7861, "external_port": 0}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "chatbot" in msg
+    assert "services.chat_app.external_port" in msg
+
+
+def test_validate_port_config_host_mode_valid_external_port_shadows_falsy_port():
+    # Accepted limitation, pinned so the precedence rule is visible. In host mode a
+    # valid external_port overrides port on the render side too
+    # (_apply_host_mode_port_overrides), so a falsy `port` underneath it is dead
+    # config: the deployment binds 9000 and succeeds. Nothing is refused, and no
+    # deployment is lost -- which is why this is a strictness gap, not the outage
+    # #311 fixes. Refusing dead config would need a check on a value no longer in
+    # port_config; that is follow-up work, not this merge's.
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": 0, "external_port": 9000}})
+    port_config = extract_port_config(plan, cm)
+    assert port_config["chatbot_port_host"] == 9000
+    assert port_config["chatbot_port_container"] == 9000
+    _, errors = validate_port_config(plan, cm, port_config)
+    assert errors == []
+
+
 def test_extract_port_config_scalar_zero_preserved():
     # Scalar route: a configured falsy scalar is preserved (AC2).
     plan = _plan(["chatbot"])
@@ -547,9 +660,14 @@ def test_extract_port_config_no_section_uses_registry_defaults():
 
 
 def test_extract_port_config_section_no_port_key_uses_registry_defaults():
-    # Section present but no port key → registry defaults for both sides.
+    # Section present but no port key at all → registry defaults for both sides
+    # (D1 route 2: "not configured", distinct from a configured null).
+    # The section must carry no port key of any kind: in host mode external_port is
+    # itself authoritative (#310/#316), so a section holding only external_port is
+    # not the "no port key" case and is pinned by
+    # test_extract_port_config_host_mode_external_port_only_used_for_both instead.
     plan = _plan(["chatbot"], host_mode=True)
-    cm = _cm({"chat_app": {"external_port": 9000}})
+    cm = _cm({"chat_app": {"agent_class": "SomeAgent"}})
     result = extract_port_config(plan, cm)
     assert result["chatbot_port_host"] == 7861
     assert result["chatbot_port_container"] == 7861

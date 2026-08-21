@@ -141,7 +141,7 @@ Stop and reduce the change if you find yourself editing:
 - `_normalize_port` (`:168-179`) — its rejections are the specification being restored; a
   change here means the fix went in the wrong place.
 - Any call site in `src/cli/cli_main.py` — teardown ordering is #293 and #294.
-- `test_extract_port_config_host_mode_uses_port_for_both` (`:78`) — host-mode derivation is
+- `test_extract_port_config_host_mode_no_external_port_uses_port_for_both` (`:78`) — host-mode derivation is
   #310's business. This change must leave it passing untouched.
 
 ## Alternatives rejected
