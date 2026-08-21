@@ -524,3 +524,53 @@ def test_extract_port_config_postgres_not_emitted_validate_no_postgres_error():
     assert "postgres_port_host" not in result
     _, errors = validate_port_config(plan, cm, result)
     assert not any("postgres" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# validate_port_config — non-host-mode configured container port is range-checked
+# (D2: container side validity without duplicate detection)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_port_config_non_host_falsy_zero_raises():
+    # In non-host mode, 'port' is the container port. port=0 is out of range
+    # and must be refused even though the host port (from registry default) is valid.
+    plan = _plan(["chatbot"], host_mode=False)
+    cm = _cm({"chat_app": {"port": 0}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "chatbot" in msg
+    assert "services.chat_app" in msg
+
+
+def test_validate_port_config_non_host_falsy_empty_string_raises():
+    # Non-host mode container port of "" is non-numeric and must be refused.
+    plan = _plan(["chatbot"], host_mode=False)
+    cm = _cm({"chat_app": {"port": ""}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "chatbot" in msg
+    assert "services.chat_app" in msg
+
+
+# ---------------------------------------------------------------------------
+# Fence: chatbot+grader container port sharing is legal (D2, AC6)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_port_config_chatbot_grader_both_enabled_no_duplicate_error():
+    # chatbot and grader both default to container port 7861 (separate namespaces).
+    # Only host ports are duplicate-checked: chatbot=7861, grader=7862 -> no conflict.
+    # If this test ever goes red, container ports were added to duplicate detection.
+    plan = _plan(["chatbot", "grader"], host_mode=False)
+    cm = _cm({})
+    port_config = extract_port_config(plan, cm)
+    port_to_services, errors = validate_port_config(plan, cm, port_config)
+    assert errors == []
+    assert 7861 in port_to_services
+    assert len(port_to_services[7861]) == 1
+    assert port_to_services[7861][0][0] == "chatbot"

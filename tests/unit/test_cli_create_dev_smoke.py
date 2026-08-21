@@ -718,6 +718,71 @@ def test_force_create_with_falsy_port_keeps_existing_deployment(
     )
 
 
+def test_force_create_with_falsy_container_port_non_host_mode_keeps_existing_deployment(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """A configured falsy container port in non-host mode is detectable before teardown.
+
+    In non-host mode, the 'port' key configures the container port; the host port
+    comes from 'external_port' or the registry default (and is valid).  A container
+    port of 0 is out of range and must be refused before the --force teardown, so
+    the operator does not lose a running deployment before the config error is reported.
+
+    The red run (unfixed code) fails because teardowns != []: the host port is valid
+    so the port check passes, teardown runs, then TemplateManager raises the sentinel.
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    data["services"]["chat_app"]["port"] = 0
+    bad_config = tmp_path / "config-zero-container-port.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    def _stop_before_host_mutation(*args, **kwargs):
+        raise RuntimeError(SENTINEL)
+
+    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            # No --hostmode: 'port' is the container side here.
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before port validation ran. "
+        f"output:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed despite an invalid container "
+        f"port config. output:\n{result.output}\n"
+    )
+    assert result.exit_code != 0, (
+        f"a container port value of 0 should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+
+
 def test_force_create_with_duplicate_ports_keeps_existing_deployment(
     env_file, archi_home, monkeypatch, tmp_path
 ):

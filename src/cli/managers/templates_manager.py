@@ -265,6 +265,11 @@ def extract_port_config(plan: DeploymentPlan, config_manager: Any) -> Dict[str, 
             or service_def.default_container_port is not None
         ):
             port_config[f"{key_prefix}_port_container"] = container_port
+        # Signal for validate_port_config: was the container port operator-configured?
+        # Registry defaults are never re-checked; only operator-supplied values need
+        # validation (D2 — container validity without duplicate detection).
+        if configured_container is not _UNSET:
+            port_config[f"{key_prefix}_port_container_configured"] = True
 
     return port_config
 
@@ -299,6 +304,20 @@ def validate_port_config(
                 config_hint,
             )
         )
+        # Validate the configured container port for validity only — never for
+        # duplicate detection, because container ports share namespaces (D2).
+        # Only when operator-configured: registry defaults are already known-good.
+        container_key = f"{key_prefix}_port_container"
+        if (
+            port_config.get(f"{key_prefix}_port_container_configured")
+            and container_key in port_config
+        ):
+            container_hint = (
+                f"{service_def.port_config_path}.port"
+                if service_def.port_config_path
+                else None
+            )
+            _normalize_port(port_config[container_key], service_name, container_hint)
 
     if host_mode and plan.get_service("postgres").enabled:
         postgres_port = services_cfg.get("postgres", {}).get("port", 5432)
