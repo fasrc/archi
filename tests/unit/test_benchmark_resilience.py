@@ -451,3 +451,35 @@ def test_process_config_passes_only_scorable_to_ragas():
     # exactly the scorable row's modern dataset_result is scored.
     assert captured["rows"] == [{"user_input": "q", "reference": "r"}]
     assert total["aggregate_faithfulness"] == 1.0
+
+
+# --- answer_correctness: A/B pairing ----------------------------------------
+
+
+def test_pair_ab_results_carries_answer_correctness(monkeypatch):
+    """A/B pairing builds its payload from a fixed metric-name list, so a metric
+    missing from that list is dropped from both the paired scores and the
+    per-metric winner — the comparison would silently ignore it."""
+
+    def _row(ac):
+        return {
+            "question": "q",
+            "reference_answer": "r",
+            "status": OK,
+            "answer_correctness": ac,
+        }
+
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            {"single_question_results": {"question_1": _row(0.9)}},
+            {"single_question_results": {"question_1": _row(0.4)}},
+        ],
+    )
+    paired = ResultHandler.pair_ab_results(0, 1)
+
+    assert len(paired) == 1
+    assert paired[0].ragas_a["answer_correctness"] == 0.9
+    assert paired[0].ragas_b["answer_correctness"] == 0.4
+    assert paired[0].winner_by_metric["answer_correctness"] == "a"

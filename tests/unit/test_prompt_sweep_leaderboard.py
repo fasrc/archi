@@ -22,6 +22,8 @@ def _make_record(
     faithfulness: Optional[float] = 0.8,
     context_precision: Optional[float] = 0.8,
     context_recall: Optional[float] = 0.8,
+    answer_correctness: Optional[float] = None,
+    enabled_metrics=None,
     model="Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
     provider="openai",
     evaluator_model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -36,6 +38,7 @@ def _make_record(
         ("aggregate_faithfulness", faithfulness),
         ("aggregate_context_precision", context_precision),
         ("aggregate_context_recall", context_recall),
+        ("aggregate_answer_correctness", answer_correctness),
     ):
         if value is not None:  # omit the key entirely to model a missing metric
             total_results[key] = value
@@ -47,6 +50,10 @@ def _make_record(
         "queries_path": queries_path,
         "mode_settings": {"ragas_settings": {"evaluator_model": evaluator_model}},
     }
+    if enabled_metrics is not None:
+        benchmarking["mode_settings"]["ragas_settings"][
+            "enabled_metrics"
+        ] = enabled_metrics
     if include_name:
         benchmarking["name"] = name
 
@@ -96,6 +103,7 @@ def test_one_row_per_config():
         "faithfulness",
         "context_precision",
         "context_recall",
+        "answer_correctness",
     }
     assert row["metrics"]["faithfulness"] == pytest.approx(0.9)
 
@@ -124,12 +132,13 @@ def test_configured_primary_metric_reranks():
     lb = ResultHandler.build_leaderboard("answer_relevancy")
     assert lb["primary_metric"] == "answer_relevancy"
     assert lb["rows"][0]["name"] == "b"
-    # all four metric values still present regardless of primary
+    # every metric value still present regardless of primary
     assert set(lb["rows"][0]["metrics"]) == {
         "answer_relevancy",
         "faithfulness",
         "context_precision",
         "context_recall",
+        "answer_correctness",
     }
 
 
@@ -271,3 +280,90 @@ def test_shared_context_flags_model_drift():
     assert any("model" in w for w in ctx["warnings"])
     # rows still emitted despite drift
     assert len(lb["rows"]) == 2
+
+
+# -- answer_correctness on the leaderboard ------------------------------------
+
+
+def test_leaderboard_reports_answer_correctness():
+    """The direct answer-vs-reference metric must be a first-class leaderboard
+    column, otherwise a run that computes it cannot rank variants by it."""
+    assert (
+        "answer_correctness",
+        "aggregate_answer_correctness",
+    ) in ResultHandler.LEADERBOARD_METRICS
+
+
+def test_leaderboard_ranks_by_answer_correctness(monkeypatch):
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record("low", "/p/low.md", answer_correctness=0.20),
+            _make_record("high", "/p/high.md", answer_correctness=0.90),
+        ],
+    )
+    board = ResultHandler.build_leaderboard("answer_correctness")
+
+    assert board["primary_metric"] == "answer_correctness"
+    assert [r["name"] for r in board["rows"]] == ["high", "low"]
+    assert board["rows"][0]["metrics"]["answer_correctness"] == 0.90
+
+
+def test_disabled_answer_correctness_does_not_mark_rows_incomplete(monkeypatch):
+    """A run that never enabled the metric is NOT an incomplete run.
+
+    ``incomplete`` means "a metric this run was supposed to produce is missing";
+    it drives a console flag and sorts rows last. Because LEADERBOARD_METRICS is
+    a static list, adding a metric would otherwise flag EVERY pre-existing sweep
+    as defective simply for not enabling it — a false alarm on honest runs.
+    """
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record(
+                "four-metric-run",
+                "/p/a.md",
+                answer_correctness=None,  # aggregate key absent
+                enabled_metrics=[
+                    "answer_relevancy",
+                    "faithfulness",
+                    "context_precision",
+                    "context_recall",
+                ],
+            )
+        ],
+    )
+    row = ResultHandler.build_leaderboard("faithfulness")["rows"][0]
+
+    assert row["incomplete"] is False
+    # The column still reports honestly that there is no score for it.
+    assert row["metrics"]["answer_correctness"] is None
+
+
+def test_enabled_answer_correctness_missing_marks_incomplete(monkeypatch):
+    """The flag must still fire when the run DID enable the metric and it is
+    absent — that is a real gap, not a configuration choice."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record(
+                "five-metric-run",
+                "/p/a.md",
+                answer_correctness=None,  # enabled but never aggregated
+                enabled_metrics=[
+                    "answer_relevancy",
+                    "faithfulness",
+                    "context_precision",
+                    "context_recall",
+                    "answer_correctness",
+                ],
+            )
+        ],
+    )
+    row = ResultHandler.build_leaderboard("faithfulness")["rows"][0]
+
+    assert row["incomplete"] is True
+    assert row["metrics"]["answer_correctness"] is None

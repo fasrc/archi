@@ -734,6 +734,7 @@ def format_html_output(
             "faithfulness": "Faithfulness",
             "context_precision": "Context Precision",
             "context_recall": "Context Recall",
+            "answer_correctness": "Answer Correctness",
         }
 
         if "RAGAS" in config_data.get("services", {}).get("benchmarking", {}).get(

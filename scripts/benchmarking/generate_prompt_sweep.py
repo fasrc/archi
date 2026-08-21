@@ -49,6 +49,7 @@ KNOWN_METRICS = {
     "faithfulness",
     "context_precision",
     "context_recall",
+    "answer_correctness",
 }
 
 

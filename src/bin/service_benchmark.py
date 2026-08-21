@@ -39,6 +39,7 @@ from src.utils.benchmark_resilience import (
     source_hits,
 )
 from src.utils.benchmark_schema import (
+    DEFAULT_ENABLED_METRICS,
     normalize_bank,
     required_fields_for_modes,
     score_metrics_per_eligibility,
@@ -528,6 +529,7 @@ class ResultHandler:
             "faithfulness",
             "context_precision",
             "context_recall",
+            "answer_correctness",
         ]
 
         paired: List[ABResult] = []
@@ -714,6 +716,7 @@ class ResultHandler:
         ("faithfulness", "aggregate_faithfulness"),
         ("context_precision", "aggregate_context_precision"),
         ("context_recall", "aggregate_context_recall"),
+        ("answer_correctness", "aggregate_answer_correctness"),
     ]
 
     @staticmethod
@@ -774,13 +777,26 @@ class ResultHandler:
                 Path(agent_md_file).stem if agent_md_file else ""
             )
 
+            # ``incomplete`` means "a metric this run was SUPPOSED to produce is
+            # missing" — it flags the row in the console table and sorts it last.
+            # LEADERBOARD_METRICS is a static SUPERSET of what any one run scores,
+            # so judge only the metrics this run actually enabled; otherwise every
+            # run that declines an optional metric reads as a defective run. A
+            # config that omits the list runs the template default, which
+            # DEFAULT_ENABLED_METRICS mirrors.
+            ragas_settings = (bench.get("mode_settings") or {}).get(
+                "ragas_settings"
+            ) or {}
+            expected = ragas_settings.get("enabled_metrics") or DEFAULT_ENABLED_METRICS
+
             metrics: Dict[str, Optional[float]] = {}
             incomplete = False
             for metric_name, agg_key in ResultHandler.LEADERBOARD_METRICS:
                 value = total.get(agg_key)
                 if value is None or (isinstance(value, float) and math.isnan(value)):
                     metrics[metric_name] = None
-                    incomplete = True
+                    if metric_name in expected:
+                        incomplete = True
                 else:
                     metrics[metric_name] = float(value)
 
@@ -808,7 +824,7 @@ class ResultHandler:
                     "Leaderboard: variant '%s' (%s) is incomplete — missing/NaN metrics: %s",
                     name,
                     agent_md_file,
-                    [m for m in metric_names if metrics[m] is None],
+                    [m for m in metric_names if metrics[m] is None and m in expected],
                 )
             # Surface under-sampling even when the aggregate is a valid float.
             answered = len(single_question_results)
@@ -1445,17 +1461,23 @@ class Benchmarker:
         from ragas.embeddings import LangchainEmbeddingsWrapper
         from ragas.llms import LangchainLLMWrapper
         from ragas.metrics import (
+            answer_correctness,
             answer_relevancy,
             context_precision,
             context_recall,
             faithfulness,
         )
 
+        # Use the PRE-INSTANTIATED ``answer_correctness`` rather than building a
+        # FactualCorrectness: scores are read back as ``to_pandas()[metric]``, and
+        # only the pre-instantiated object's result column is named exactly after
+        # the metric (FactualCorrectness's can carry a mode suffix).
         all_metrics = {
             "answer_relevancy": answer_relevancy,
             "faithfulness": faithfulness,
             "context_precision": context_precision,
             "context_recall": context_recall,
+            "answer_correctness": answer_correctness,
         }
         enabled_metrics = self.benchmarking_configs["mode_settings"]["ragas_settings"][
             "enabled_metrics"
@@ -1788,13 +1810,14 @@ class Benchmarker:
                 leaderboard["primary_metric"],
             )
             logger.info(
-                "  %-4s %-28s %-10s %-10s %-10s %-10s %-10s %s",
+                "  %-4s %-28s %-10s %-10s %-10s %-10s %-10s %-10s %s",
                 "rank",
                 "name",
                 "ans_rel",
                 "faith",
                 "ctx_prec",
                 "ctx_rec",
+                "ans_corr",
                 "n_q",
                 "prompt",
             )
@@ -1815,13 +1838,14 @@ class Benchmarker:
 
                 flag = "  (incomplete)" if row["incomplete"] else ""
                 logger.info(
-                    "  %-4d %-28s %-12s %-12s %-12s %-12s %-10d %s%s",
+                    "  %-4d %-28s %-12s %-12s %-12s %-12s %-12s %-10d %s%s",
                     row["rank"],
                     row["name"][:28],
                     _fmt("answer_relevancy"),
                     _fmt("faithfulness"),
                     _fmt("context_precision"),
                     _fmt("context_recall"),
+                    _fmt("answer_correctness"),
                     answered,
                     row["agent_md_file"],
                     flag,
