@@ -134,31 +134,31 @@
 
 ## 3. Verify against the acceptance criteria and open the PR
 
-- [ ] 3.1 Re-run the 1.1 and 2.1 measurements. Host mode `port: 0` / `""` / `null` must now
+- [x] 3.1 Re-run the 1.1 and 2.1 measurements. Host mode `port: 0` / `""` / `null` must now
       be present in the extraction output and raise in validation, and non-host `port: 0`
       must raise. `'notaport'` must behave exactly as before. Paste before and after into the
       PR body - that table is the evidence this change exists for.
-- [ ] 3.2 Prove no new value reaches the socket probe (design.md D3, and the issue's explicit
+- [x] 3.2 Prove no new value reaches the socket probe (design.md D3, and the issue's explicit
       constraint). State in the PR body that `_normalize_port` raises inside
       `validate_port_config` (`:900`) before the probe loop (`:908`), so every newly
       preserved value is refused before `_probe_port` is reachable, and name the delegator
       tests at `:334-409` that still pass unchanged as the evidence.
-- [ ] 3.3 Walk the issue's acceptance criteria one by one and name, for each, the test that
+- [x] 3.3 Walk the issue's acceptance criteria one by one and name, for each, the test that
       covers it. Pay particular attention to "No test in the repo still asserts that a
       configured falsy port is silently dropped" - `grep -rn "dropped\|falsy" tests/unit/`
       and read every hit, rather than assuming the three tests from 1.10 were the only ones.
       Any criterion without a test is unfinished work, not a judgement call.
-- [ ] 3.4 The project gate exits 0 from a clean tree. Patch coverage is measured against
+- [x] 3.4 The project gate exits 0 from a clean tree. Patch coverage is measured against
       `origin/dev`; the touched source lines are few and directly tested, so a low number
       means a test is not reaching them - investigate rather than adding filler. Confirm
       `git status --porcelain` is empty after the commit: the pre-commit formatter is a
       writer while CI only asserts, so format before `git add`, not after.
-- [ ] 3.5 Push the branch with `git push -u origin fix/issue-311-reject-falsy-ports` (the
+- [x] 3.5 Push the branch with `git push -u origin fix/issue-311-reject-falsy-ports` (the
       `-u` matters: the branch was created from `origin/dev` and would otherwise track the
       trunk). Open the PR with `gh pr create --repo fasrc/archi --base dev`. Put
       `closes #311` in the PR **body** - a closing keyword in the title does not link the
       issue. No `Co-Authored-By` or session trailers.
-- [ ] 3.6 In the PR body state plainly: this is a behaviour change, not a refactor. A config
+- [x] 3.6 In the PR body state plainly: this is a behaviour change, not a refactor. A config
       that previously passed the port check and failed later is now refused at the port
       check, and that refusal is the fix working. Say which reading of `port: null` was
       encoded and why (design.md D1). Name #310 / PR #316 as touching the same functions for
