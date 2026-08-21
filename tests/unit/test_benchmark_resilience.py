@@ -514,3 +514,52 @@ def test_build_ragas_aggregates_tolerates_a_frame_without_the_column():
 
     assert aggs["aggregate_answer_relevancy"] == 0.5
     assert math.isnan(aggs["aggregate_answer_correctness"])
+
+
+def test_all_failed_aggregates_only_cover_enabled_metrics():
+    """Key presence must mean "this run asked for the metric".
+
+    An all-failed run must emit the SAME key set a successful run of the same
+    config would emit — no more. Emitting an opt-in metric the config never
+    enabled makes "metric omitted by config" indistinguishable from "metric
+    requested but unscored", and breaks readers that branch on key presence.
+    """
+    four = [
+        "answer_relevancy",
+        "faithfulness",
+        "context_precision",
+        "context_recall",
+    ]
+    aggs = build_ragas_aggregates(None, enabled_metrics=four)
+    assert "aggregate_answer_correctness" not in aggs
+    assert set(aggs) == {f"aggregate_{m}" for m in four}
+
+    with_ac = build_ragas_aggregates(
+        None, enabled_metrics=four + ["answer_correctness"]
+    )
+    assert math.isnan(with_ac["aggregate_answer_correctness"])
+
+
+def test_process_config_all_failed_emits_only_the_enabled_metrics():
+    """End-to-end wiring: the failure path must consult the run's enabled list.
+
+    Guards against the aggregate keys being driven by a static metric map, which
+    would publish an opt-in metric's key for a config that never enabled it.
+    """
+    agent = _ConfigStub(queries=[{"user_input": "q"}], bundles=[_fail_bundle()])
+    agent.benchmarking_configs = {
+        "mode_settings": {
+            "ragas_settings": {"enabled_metrics": ["answer_relevancy", "faithfulness"]}
+        }
+    }
+
+    _qwr, total = agent._process_config({"RAGAS"})
+
+    assert math.isnan(total["aggregate_answer_relevancy"])
+    assert math.isnan(total["aggregate_faithfulness"])
+    for disabled in (
+        "aggregate_context_precision",
+        "aggregate_context_recall",
+        "aggregate_answer_correctness",
+    ):
+        assert disabled not in total

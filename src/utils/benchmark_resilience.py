@@ -98,21 +98,35 @@ _RAGAS_AGG = {
 }
 
 
-def build_ragas_aggregates(ragas_results: Any) -> Dict[str, Any]:
+def build_ragas_aggregates(
+    ragas_results: Any, enabled_metrics: Optional[Sequence[str]] = None
+) -> Dict[str, Any]:
     """Mean per RAGAS metric, or ``NaN`` for every metric when there is no scorable
     input (``ragas_results is None`` — an all-failed configuration).
 
     ``NaN`` (not the string ``"n/a"``) is used so the numeric consumers stay happy:
     the leaderboard already maps ``NaN`` to an incomplete/None metric, and the HTML
     report formats it as ``nan`` without raising on ``float`` / ``:.3f`` (Codex F2).
+
+    ``enabled_metrics`` restricts the emitted keys to the metrics the run actually
+    asked for, so an all-failed run emits the SAME key set a successful run of that
+    config would. Without it every known metric is emitted, which would make an
+    opt-in metric's key appear for a config that never enabled it — leaving a
+    reader unable to tell "omitted by config" from "requested but unscored".
+    Omit the argument only where the caller has no metric list to hand.
     """
+    if enabled_metrics is not None:
+        wanted = set(enabled_metrics)
+        agg_map = {k: v for k, v in _RAGAS_AGG.items() if v in wanted}
+    else:
+        agg_map = dict(_RAGAS_AGG)
     if ragas_results is None:
-        return {key: float("nan") for key in _RAGAS_AGG}
+        return {key: float("nan") for key in agg_map}
     # A scoring frame only carries the columns the run enabled, so a metric this
     # map names but the run did not score reads as NaN rather than raising.
     return {
         key: (ragas_results[col].mean() if col in ragas_results else float("nan"))
-        for key, col in _RAGAS_AGG.items()
+        for key, col in agg_map.items()
     }
 
 

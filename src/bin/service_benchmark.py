@@ -912,6 +912,14 @@ class ResultHandler:
         prev_score: Any = object()
         for row in rows:
             score = row["primary_score"]
+            if score is None:
+                # A rank is a claim ABOUT the primary metric, so a row with no
+                # score for it carries no rank — not a number a consumer would
+                # compare. Sorting it last is not enough: the number itself is
+                # what gets read out of the JSON. It also does not consume a rank,
+                # so the scored rows keep 1..n.
+                row["rank"] = None
+                continue
             if score != prev_score:
                 rank += 1
                 prev_score = score
@@ -1609,7 +1617,22 @@ class Benchmarker:
             else:
                 # No scorable input (all failed/degraded): #92's config-level n/a
                 # guard emits NaN for every metric, with no empty-Dataset ragas call.
-                total_results.update(build_ragas_aggregates(None))
+                # Tolerant read: this is the FAILURE path, so an unreadable or
+                # absent metric list must not turn a degraded run into a crash.
+                # None falls back to emitting every known metric, the behaviour
+                # before the list was threaded through.
+                enabled = (
+                    (
+                        (getattr(self, "benchmarking_configs", None) or {}).get(
+                            "mode_settings"
+                        )
+                        or {}
+                    ).get("ragas_settings")
+                    or {}
+                ).get("enabled_metrics")
+                total_results.update(
+                    build_ragas_aggregates(None, enabled_metrics=enabled)
+                )
 
         if "SOURCES" in modes_being_run:
             # Denominator is the questions that DECLARE expected sources, not the

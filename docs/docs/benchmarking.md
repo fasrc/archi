@@ -225,9 +225,13 @@ The dump JSON gains a `leaderboard` key:
     `incomplete: true` means a metric this run was *supposed* to produce is
     missing, and such rows sort after all complete ones. It is judged against the
     run's own `enabled_metrics`, so declining an optional metric does not flag the
-    run as defective. It is also always set when the variant has no score for the
-    primary metric, so a variant is never ranked on a metric it did not
-    measure.
+    run as defective.
+
+    A variant with no score for the **primary** metric is always `incomplete`
+    *and* gets `rank: null` — a rank is a claim about the metric being ranked by,
+    so there is nothing to claim. Handle a null `rank`: if no variant scored the
+    primary metric, every row has one. Unranked rows do not consume rank numbers,
+    so the scored variants still read 1..n.
 - `shared_context` — the model, provider, judge `evaluator_model`,
   `queries_path`, and `corpus_snapshot_id` shared by all variants. If any of
   these differ across the swept configs, the discrepancy is recorded in

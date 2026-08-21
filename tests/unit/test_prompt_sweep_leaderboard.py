@@ -423,3 +423,67 @@ def test_declining_a_metric_stays_complete_when_ranked_by_another(monkeypatch):
 
     assert row["incomplete"] is False
     assert row["primary_score"] is not None
+
+
+def test_row_without_a_primary_score_carries_no_rank(monkeypatch):
+    """A rank is a machine-readable claim about the primary metric, so a row with
+    no score for it must carry NO rank at all.
+
+    Sorting such a row last is not enough: the dense-ranking loop assigned a
+    number to every row, so a legacy arm still came out as "rank 2 on
+    answer_correctness" — an ordering on a metric it never measured, readable
+    straight out of the JSON by a consumer who never sees the warnings.
+    """
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record("legacy", "/p/legacy.md", answer_correctness=None),
+            _make_record("measured", "/p/measured.md", answer_correctness=0.30),
+        ],
+    )
+    board = ResultHandler.build_leaderboard("answer_correctness")
+    by_name = {r["name"]: r for r in board["rows"]}
+
+    assert by_name["measured"]["rank"] == 1
+    assert by_name["legacy"]["rank"] is None
+
+
+def test_no_ranks_at_all_when_every_row_lacks_the_primary_metric(monkeypatch):
+    """If nothing measured the primary metric there is no ordering to publish."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record("a", "/p/a.md", answer_correctness=None),
+            _make_record("b", "/p/b.md", answer_correctness=None),
+        ],
+    )
+    board = ResultHandler.build_leaderboard("answer_correctness")
+
+    assert [r["rank"] for r in board["rows"]] == [None, None]
+    assert all(r["incomplete"] for r in board["rows"])
+
+
+def test_complete_rows_still_rank_densely(monkeypatch):
+    """Regression guard: withholding a rank from unscored rows must not disturb
+    the ranking of rows that DO have the primary metric, including shared ranks
+    for ties."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            _make_record("top", "/p/top.md", faithfulness=0.9),
+            _make_record("tie-a", "/p/tie-a.md", faithfulness=0.5),
+            _make_record("tie-b", "/p/tie-b.md", faithfulness=0.5),
+            _make_record("no-primary", "/p/none.md", faithfulness=None),
+        ],
+    )
+    board = ResultHandler.build_leaderboard("faithfulness")
+    by_name = {r["name"]: r for r in board["rows"]}
+
+    assert by_name["top"]["rank"] == 1
+    assert by_name["tie-a"]["rank"] == 2
+    assert by_name["tie-b"]["rank"] == 2
+    # The unscored row neither ranks nor consumes a rank number.
+    assert by_name["no-primary"]["rank"] is None
