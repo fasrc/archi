@@ -3,6 +3,7 @@ key.py
 *.txt
 !requirements.txt
 !requirements/*.txt
+!examples/qa_eval/sentinel_value.txt
 !templates/dockerfiles/base-pytorch-image/*
 !templates/dockerfiles/base-python-image/*
 *.ipynb

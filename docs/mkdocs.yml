@@ -14,6 +14,7 @@ nav:
   - CLI Reference: cli_reference.md
   - API Reference: api_reference.md
   - Benchmarking: benchmarking.md
+  - Evaluation: evaluation.md
   - Interpreting Results: interpreting_benchmark_results.md
   - Advanced Setup: advanced_setup_deploy.md
   - Adding Providers: adding_providers.md

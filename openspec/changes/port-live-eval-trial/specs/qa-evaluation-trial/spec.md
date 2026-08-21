@@ -99,6 +99,23 @@ thin call sites only.
 - **THEN** `/evaluations` is not registered and the index page shows no
   evaluations nav link
 
+#### Scenario: Console refuses the live running config
+
+- **WHEN** `evaluations.enabled` is `true` but `agent_config_path` is omitted or
+  names the live running config (`/root/archi/configs/config.yaml`)
+- **THEN** the service does not build, an error log names the reason, the chat
+  app stays up, and the console stays off — each run snapshots the whole agent
+  config into the host-mounted workspace, so the live config must never be the
+  snapshot source
+
+#### Scenario: Paused runs resume against frozen inputs
+
+- **WHEN** a run paused as `attention_required` is continued after the deployed
+  agent config or agent spec changed on disk
+- **THEN** the continuation executes against the run's frozen
+  `agent_config.resolved.yaml` and `agent_spec.resolved.md`, not the live files —
+  the system under test cannot change without a new run
+
 #### Scenario: Console on for the trial deployment
 
 - **WHEN** the dev deployment sets `evaluations.enabled: true` with a staged

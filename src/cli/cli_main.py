@@ -17,6 +17,7 @@ from src.cli.managers.templates_manager import (
     validate_port_config,
 )
 from src.cli.managers.volume_manager import VolumeManager
+from src.cli.qa_eval import eval_cli
 from src.cli.service_registry import service_registry
 from src.cli.source_registry import source_registry
 from src.cli.tools import sources_builder
@@ -1065,5 +1066,6 @@ def main():
     cli.add_command(list_deployments)
     cli.add_command(evaluate)
     cli.add_command(grade)
+    cli.add_command(eval_cli)
     cli.add_command(sources)
     cli()

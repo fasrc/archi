@@ -104,3 +104,12 @@ maintenance) is untouched and keeps its behavior.
   `authorize_request`, RBAC role mapping for evaluations permissions, a real FASRC
   oracle MCP server, golden-set convergence, and any upstream sync. The adopt/reject
   writeup decides the follow-ups.
+- **Recorded upstream trust-model gaps** (adversarial review of the port; both are
+  adoption preconditions, both neutralized for the trial): (1) each run persists
+  the full agent config verbatim into the run workspace and retries re-read it —
+  the trial therefore never points the console at the live running config, only at
+  a staged sanitized copy (the eval runtime reads provider keys from env, so
+  behavior is identical); (2) `evaluations:view` receives full run detail
+  including oracle truth, gold atoms, and raw answers — benign in the auth-off
+  trial with fake-oracle fixtures, but any auth-on deployment with real datasets
+  needs viewer-facing redaction or manage-gated run detail first.

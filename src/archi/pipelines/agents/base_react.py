@@ -389,18 +389,31 @@ class BaseReActAgent:
                 return str(reasoning_content)
         return ""
 
-    def invoke(self, **kwargs) -> PipelineOutput:
-        """Synchronously invoke the agent graph and return the final output."""
+    def invoke(
+        self,
+        *,
+        callbacks: Optional[Sequence[Any]] = None,
+        **kwargs,
+    ) -> PipelineOutput:
+        """Synchronously invoke the agent graph and return the final output.
+
+        ``callbacks`` are LangChain callback handlers, forwarded to the compiled
+        agent so a caller can observe the run (the QA evaluation collects its
+        tool trace this way). Keyword-only on purpose: ``Archi.invoke`` relays
+        positional arguments, so a positional history must stay a TypeError
+        rather than silently bind to ``callbacks``.
+        """
         logger.debug("Invoking %s", self.__class__.__name__)
         agent_inputs = self._prepare_agent_inputs(**kwargs)
         if self.agent is None:
             self.refresh_agent(force=True)
         logger.debug("Agent refreshed, invoking now")
         recursion_limit = self._recursion_limit()
+        invoke_config: Dict[str, Any] = {"recursion_limit": recursion_limit}
+        if callbacks is not None:
+            invoke_config["callbacks"] = list(callbacks)
         try:
-            answer_output = self.agent.invoke(
-                agent_inputs, {"recursion_limit": recursion_limit}
-            )
+            answer_output = self.agent.invoke(agent_inputs, invoke_config)
             logger.debug("Agent invocation completed")
             logger.debug(answer_output)
             messages = self._extract_messages(answer_output)
@@ -1271,6 +1284,11 @@ class BaseReActAgent:
     def tools(self, value: Sequence[Callable]) -> None:
         """Explicitly set the static tools cache."""
         self._static_tools = list(value)
+
+    @property
+    def loaded_mcp_tools(self) -> List[Callable]:
+        """Return the MCP tools successfully loaded for this agent."""
+        return list(self._mcp_tools or [])
 
     def refresh_agent(
         self,

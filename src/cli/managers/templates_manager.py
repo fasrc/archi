@@ -69,6 +69,11 @@ BASE_GRAFANA_DATASOURCES_TEMPLATE = "grafana/datasources.yaml"
 BASE_GRAFANA_DASHBOARDS_TEMPLATE = "grafana/dashboards.yaml"
 BASE_GRAFANA_ARCHI_DEFAULT_DASHBOARDS_TEMPLATE = "grafana/archi-default-dashboard.json"
 BASE_GRAFANA_CONFIG_TEMPLATE = "grafana/grafana.ini"
+EVALUATION_CONFIG_DIR = "evaluation_config"
+EVALUATION_MCP_CONFIG_FILENAME = "qa_evaluation_mcp.yaml"
+EVALUATION_MCP_RUNTIME_PATH = (
+    f"/root/archi/{EVALUATION_CONFIG_DIR}/{EVALUATION_MCP_CONFIG_FILENAME}"
+)
 
 
 def get_git_information() -> Dict[str, str]:
@@ -126,6 +131,7 @@ class TemplateContext:
     options: Dict[str, Any]
     base_dir: Path = field(init=False)
     prompt_mappings: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    evaluation_mcp_configured: bool = False
 
     def __post_init__(self) -> None:
         self.base_dir = self.plan.base_dir
@@ -442,6 +448,7 @@ class TemplateManager:
             self._stage_prompts,
             self._stage_agents,
             self._stage_skills,
+            self._stage_evaluation_config,
             self._stage_configs,
             self._stage_service_artifacts,
             self._stage_postgres_init,
@@ -592,6 +599,74 @@ class TemplateManager:
                         logger.debug(
                             f"Copied default prompt: {prompt_type}/{prompt_file.name}"
                         )
+
+    def _stage_evaluation_config(self, context: TemplateContext) -> None:
+        """Validate and stage the evaluator-owned MCP registry.
+
+        The deployment configuration names a host path. Runtime configuration
+        always receives the fixed path where this stage mounts the validated
+        snapshot into the chatbot container.
+        """
+        config = context.config_manager.config or {}
+        services = config.get("services", {}) or {}
+        chat_app = services.get("chat_app", {}) or {}
+        evaluations = chat_app.get("evaluations", {}) or {}
+        raw_path = evaluations.get("mcp_config_path")
+
+        staged_path = (
+            context.base_dir / EVALUATION_CONFIG_DIR / EVALUATION_MCP_CONFIG_FILENAME
+        )
+
+        if raw_path is None:
+            context.evaluation_mcp_configured = False
+            if staged_path.exists() or staged_path.is_symlink():
+                staged_path.unlink()
+            return
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError(
+                "services.chat_app.evaluations.mcp_config_path must be a "
+                "non-empty string"
+            )
+
+        source_path = Path(raw_path).expanduser()
+        if not source_path.is_absolute():
+            config_path_raw = config.get("_config_path")
+            if not config_path_raw:
+                raise ValueError(
+                    "Cannot resolve relative evaluator MCP configuration path "
+                    "without the deployment configuration file path"
+                )
+            config_path = Path(str(config_path_raw)).expanduser()
+            source_path = (config_path.parent / source_path).resolve()
+
+        try:
+            if not source_path.exists():
+                raise ValueError(
+                    f"Evaluator MCP configuration file not found: {source_path}"
+                )
+            if not source_path.is_file():
+                raise ValueError(
+                    f"Evaluator MCP configuration must be a file: {source_path}"
+                )
+
+            # Imported here so loading the CLI does not pull in the MCP client
+            # until an evaluator registry is actually configured.
+            from src.evaluation.qa.oracle_config import EvaluatorMCPRegistry
+
+            EvaluatorMCPRegistry.load(source_path)
+        except PermissionError:
+            raise ValueError(
+                f"Evaluator MCP configuration is not readable: {source_path}"
+            ) from None
+
+        context.evaluation_mcp_configured = True
+        staged_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_path, staged_path)
+        logger.info(
+            "Staged evaluator MCP configuration from %s to %s",
+            source_path,
+            staged_path,
+        )
 
     def _stage_configs(self, context: TemplateContext) -> None:
         self._render_config_files(context)
@@ -746,6 +821,14 @@ class TemplateManager:
                     service_cfg["agents_dir"] = "/root/archi/agents"
                     if service_cfg.get("skills_dir"):
                         service_cfg["skills_dir"] = "/root/archi/skills"
+                    if service_name == "chat_app":
+                        evaluations_cfg = service_cfg.get("evaluations")
+                        if isinstance(evaluations_cfg, dict):
+                            evaluations_cfg["mcp_config_path"] = (
+                                EVALUATION_MCP_RUNTIME_PATH
+                                if context.evaluation_mcp_configured
+                                else None
+                            )
             if context.benchmarking:
                 benchmark_cfg = services_cfg.get("benchmarking")
                 if isinstance(benchmark_cfg, dict):
@@ -974,6 +1057,7 @@ class TemplateManager:
         template_vars.setdefault("rubrics", [])
 
         template_vars["benchmark_anchors_target"] = self._anchor_mount_target(context)
+        template_vars["evaluation_mcp_configured"] = context.evaluation_mcp_configured
 
         if context.plan.get_service("grader").enabled:
             template_vars["rubrics"] = self._get_grader_rubrics(context.config_manager)

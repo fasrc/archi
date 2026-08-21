@@ -1,0 +1,17 @@
+# vLLM evaluator variant. The evaluator profile schema (src/evaluation/qa/profile.py)
+# has no base_url field, so a vLLM judge is only reachable through the openai
+# provider pointed at the vLLM endpoint via environment, not through profile fields:
+#   export OPENAI_BASE_URL=http://<LLM_HOST>:8001/v1
+#   export OPENAI_API_KEY=dummy-not-checked-by-vllm   # any non-empty placeholder
+#
+# Replace <LLM_MODEL_ID> with the model your vLLM endpoint serves.
+version: 1
+qa:
+  atoms_extractor:
+    provider: openai
+    model: "<LLM_MODEL_ID>"
+    timeout: 120
+  evaluator:
+    provider: openai
+    model: "<LLM_MODEL_ID>"
+    timeout: 120
