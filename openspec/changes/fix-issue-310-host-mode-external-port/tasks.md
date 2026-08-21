@@ -18,14 +18,14 @@
 
 ## 1. Host-mode derivation follows `external_port` (red tests + fix + characterization update, one commit)
 
-- [ ] 1.1 Confirm the defect first, so the red you see later is the right red. From the repo
+- [x] 1.1 Confirm the defect first, so the red you see later is the right red. From the repo
       root run the repro printed in issue #310 and record both numbers: the validated pair
       from `_resolve_ports_from_config(dict(cfg), host_mode=True, host_default=7861,
       container_default=7861)` for `cfg = {"port": 7861, "external_port": 9000}`, and the
       rendered value of `services.chat_app.port` after
       `_apply_host_mode_port_overrides({"services": {"chat_app": dict(cfg)}})`.
       Expected before the fix: validated `(7861, 7861)`, rendered `9000`.
-- [ ] 1.2 In `tests/unit/test_templates_port_checks.py`, next to the existing host-mode cases
+- [x] 1.2 In `tests/unit/test_templates_port_checks.py`, next to the existing host-mode cases
       (around `:78`), add failing tests using the file's own `_plan` / `_cm` helpers:
       - host mode, `{"port": 7861, "external_port": 9000}` -> `chatbot_port_host == 9000`
         **and** `chatbot_port_container == 9000` (design.md D2);
@@ -37,7 +37,7 @@
         present (D1). Assert on the *derivation* by calling `_resolve_ports_from_config`
         directly, not through `extract_port_config`, because the truthy guard at `:236`
         drops `0` before it reaches the output dict and that guard is #311's business.
-- [ ] 1.3 Add a failing duplicate-detection test (AC2): two enabled services in host mode,
+- [x] 1.3 Add a failing duplicate-detection test (AC2): two enabled services in host mode,
       both `external_port: 9000`, with **different** `port` values -
       `{"chat_app": {"port": 7861, "external_port": 9000}, "data_manager": {"port": 7871,
       "external_port": 9000}}`, plan `["chatbot", "data-manager"], host_mode=True`. Assert
@@ -45,55 +45,55 @@
       "assigned to multiple services" text. Model the assertion on the existing
       `test_validate_port_config_duplicate_port_returns_error_string` (`:190`) so the
       expected string matches the real one.
-- [ ] 1.4 Run `python -m pytest tests/unit/test_templates_port_checks.py -k "host_mode or duplicate" -q`
+- [x] 1.4 Run `python -m pytest tests/unit/test_templates_port_checks.py -k "host_mode or duplicate" -q`
       and confirm the failures are the 7861-vs-9000 assertions and the missing duplicate
       error - NOT an import error, a fixture error, or a helper signature mismatch. A red
       for the wrong reason proves nothing. Capture the output.
-- [ ] 1.5 Change only the `host_mode` side of the dict branch in
+- [x] 1.5 Change only the `host_mode` side of the dict branch in
       `_resolve_ports_from_config` (`src/cli/managers/templates_manager.py:189-206`) so that
       when `config_value.get("external_port") is not None` both the host and the container
       port take that value, and otherwise both take `config_value.get("port", <default>)`.
       Key off `is not None`, mirroring `_apply_host_mode_port_overrides` (`:936-948`)
       exactly - see design.md D1. Leave the non-host branch and the non-dict branch
       untouched (D4).
-- [ ] 1.6 Update the characterization test
+- [x] 1.6 Update the characterization test
       `test_extract_port_config_host_mode_uses_port_for_both` (`:78`) in this same commit:
       rename it to name the new behaviour (for example
       `test_extract_port_config_host_mode_uses_external_port_for_both`), flip its assertions
       to `9000`, and replace its comment with one sentence saying host mode mirrors the
       override. It pins the old behaviour deliberately, so leaving it would make this commit
       red and unable to pass the gate.
-- [ ] 1.7 Confirm the non-host characterization test
+- [x] 1.7 Confirm the non-host characterization test
       `test_extract_port_config_non_host_mode_uses_external_port` (`:69`) still passes with
       no edit, and that
       `test_validate_port_config_port_zero_raises_when_reached` (`:174`) still passes with no
       edit. Either one needing a change means the diff has grown past this issue (D4, D5).
-- [ ] 1.8 Run the full suite: `python -m pytest tests/unit/ -q`. Host mode is also read by
+- [x] 1.8 Run the full suite: `python -m pytest tests/unit/ -q`. Host mode is also read by
       the compose templates, so read any failure rather than assuming this module is
       isolated. Then run the project gate and commit only on green.
 
 ## 2. The error message names the key that was validated (red test + fix, one commit)
 
-- [ ] 2.1 Add a failing test (AC5): in host mode, a service whose config sets
+- [x] 2.1 Add a failing test (AC5): in host mode, a service whose config sets
       `external_port` and whose host-side value is invalid produces a `ValueError` naming
       `services.chat_app.external_port`; and the same service with `port` only names
       `services.chat_app.port`. Model it on
       `test_validate_port_config_nonnumeric_names_service_and_hint` (`:149`). Note that the
       existing hint assertion at `:158` is a prefix check (`"services.chat_app" in msg`) and
       does not pin the suffix, so it needs no edit - assert the full suffix in the new test.
-- [ ] 2.2 Run it, confirm it fails on the suffix (host mode still says `.port` for a service
+- [x] 2.2 Run it, confirm it fails on the suffix (host mode still says `.port` for a service
       that sets `external_port`), and capture the output.
-- [ ] 2.3 Extract the `port_config_path` walk from `extract_port_config` (`:218-225`, the
+- [x] 2.3 Extract the `port_config_path` walk from `extract_port_config` (`:218-225`, the
       `try` / `for key in ...split(".")` / `except (KeyError, TypeError)` block) into one
       module-level helper that returns the walked value or `None`, absorbing
       `KeyError`/`TypeError` exactly as today. Call it from `extract_port_config` in place of
       the inline walk. Do not change what `extract_port_config` returns for any input.
-- [ ] 2.4 Give `_service_port_config_hint` (`:182-186`) the walked config value and have it
+- [x] 2.4 Give `_service_port_config_hint` (`:182-186`) the walked config value and have it
       pick the host-mode suffix accordingly: `external_port` when the value is a dict whose
       `external_port` `is not None`, otherwise `port`. Non-host mode keeps `external_port`
       unconditionally. Feed it from `validate_port_config` using the helper from 2.3 -
       `base_config` is already in scope there, so do not add a second walk (design.md D3).
-- [ ] 2.5 Full suite green (`python -m pytest tests/unit/ -q`), the project gate exits 0,
+- [x] 2.5 Full suite green (`python -m pytest tests/unit/ -q`), the project gate exits 0,
       commit.
 
 ## 3. Verify against the acceptance criteria and open the PR

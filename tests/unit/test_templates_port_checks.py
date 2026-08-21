@@ -210,6 +210,28 @@ def test_validate_port_config_nonnumeric_names_service_and_hint():
     assert "services.chat_app" in msg
 
 
+def test_validate_port_config_host_mode_with_external_port_names_external_port():
+    # AC5: host mode, external_port present and invalid → hint suffix is external_port.
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": 7861, "external_port": "notaport"}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "services.chat_app.external_port" in msg
+
+
+def test_validate_port_config_host_mode_without_external_port_names_port():
+    # AC5: host mode, no external_port, port invalid → hint suffix is port.
+    plan = _plan(["chatbot"], host_mode=True)
+    cm = _cm({"chat_app": {"port": "notaport"}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "services.chat_app.port" in msg
+
+
 # ---------------------------------------------------------------------------
 # validate_port_config — out-of-range host-side port raises ValueError
 # ---------------------------------------------------------------------------
