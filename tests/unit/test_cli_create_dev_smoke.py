@@ -606,7 +606,10 @@ def test_force_create_with_invalid_port_keeps_existing_deployment(
     from src.cli import cli_main
 
     data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    # In host mode external_port is the field that drives port derivation; set both
+    # so the invalid value is what validation sees regardless of which key is present.
     data["services"]["chat_app"]["port"] = "notaport"
+    data["services"]["chat_app"]["external_port"] = "notaport"
     bad_config = tmp_path / "config-bad-port.yaml"
     bad_config.write_text(yaml.safe_dump(data))
 
@@ -675,8 +678,12 @@ def test_force_create_with_duplicate_ports_keeps_existing_deployment(
     from src.cli import cli_main
 
     data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    # In host mode external_port drives port derivation; set both keys so the
+    # duplicate is what validation sees regardless of which key is present.
     data["services"]["chat_app"]["port"] = 7866
+    data["services"]["chat_app"]["external_port"] = 7866
     data["services"]["data_manager"]["port"] = 7866
+    data["services"]["data_manager"]["external_port"] = 7866
     bad_config = tmp_path / "config-dup-ports.yaml"
     bad_config.write_text(yaml.safe_dump(data))
 
@@ -1377,7 +1384,10 @@ def test_dry_force_create_with_invalid_port_fails(
     from src.cli import cli_main
 
     data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    # In host mode external_port is the field that drives port derivation; set both
+    # so the invalid value is what validation sees regardless of which key is present.
     data["services"]["chat_app"]["port"] = "notaport"
+    data["services"]["chat_app"]["external_port"] = "notaport"
     bad_config = tmp_path / "config-bad-port.yaml"
     bad_config.write_text(yaml.safe_dump(data))
 
@@ -1440,7 +1450,10 @@ def test_dry_create_with_invalid_port_fails(env_file, monkeypatch, tmp_path):
     monkeypatch.setattr(cli_main, "ARCHI_DIR", str(tmp_path / "archi-home"))
 
     data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    # In host mode external_port is the field that drives port derivation; set both
+    # so the invalid value is what validation sees regardless of which key is present.
     data["services"]["chat_app"]["port"] = "notaport"
+    data["services"]["chat_app"]["external_port"] = "notaport"
     bad_config = tmp_path / "config-bad-port.yaml"
     bad_config.write_text(yaml.safe_dump(data))
 

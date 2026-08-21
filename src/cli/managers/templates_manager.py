@@ -179,10 +179,33 @@ def _normalize_port(port: Any, service_name: str, config_hint: Optional[str]) ->
     return port_value
 
 
-def _service_port_config_hint(service_def, host_mode: bool) -> Optional[str]:
+_MISSING: Any = object()
+
+
+def _walk_port_config_path(base_config: Any, port_config_path: str) -> Any:
+    """Walk a dotted path into base_config; return the value or _MISSING on KeyError/TypeError."""
+    value: Any = base_config
+    try:
+        for key in port_config_path.split("."):
+            value = value[key]
+    except (KeyError, TypeError):
+        return _MISSING
+    return value
+
+
+def _service_port_config_hint(
+    service_def, host_mode: bool, config_value: Any = None
+) -> Optional[str]:
     if not service_def.port_config_path:
         return None
-    suffix = "port" if host_mode else "external_port"
+    if host_mode:
+        has_external = (
+            isinstance(config_value, dict)
+            and config_value.get("external_port") is not None
+        )
+        suffix = "external_port" if has_external else "port"
+    else:
+        suffix = "external_port"
     return f"{service_def.port_config_path}.{suffix}"
 
 
@@ -197,11 +220,15 @@ def _resolve_ports_from_config(
     container_port = container_default
     if isinstance(config_value, dict):
         container_port = config_value.get("port", container_port)
-        host_port = (
-            container_port
-            if host_mode
-            else config_value.get("external_port", host_port)
-        )
+        if host_mode:
+            external = config_value.get("external_port")
+            if external is not None:
+                host_port = external
+                container_port = external
+            else:
+                host_port = container_port
+        else:
+            host_port = config_value.get("external_port", host_port)
     else:
         host_port = config_value
     return host_port, container_port
@@ -218,19 +245,16 @@ def extract_port_config(plan: DeploymentPlan, config_manager: Any) -> Dict[str, 
         container_port = service_def.default_container_port
 
         if service_def.port_config_path:
-            try:
-                config_value: Any = base_config
-                for key in service_def.port_config_path.split("."):
-                    config_value = config_value[key]
-
+            config_value = _walk_port_config_path(
+                base_config, service_def.port_config_path
+            )
+            if config_value is not _MISSING:
                 host_port, container_port = _resolve_ports_from_config(
                     config_value,
                     host_mode=host_mode,
                     host_default=host_port,
                     container_default=container_port,
                 )
-            except (KeyError, TypeError):
-                pass
 
         if host_port:
             port_config[f"{key_prefix}_port_host"] = host_port
@@ -261,7 +285,16 @@ def validate_port_config(
         if host_port is None:
             continue
         service_def = service_registry.get_service(service_name)
-        config_hint = _service_port_config_hint(service_def, host_mode)
+        svc_config_value = (
+            _walk_port_config_path(base_config, service_def.port_config_path)
+            if service_def.port_config_path
+            else _MISSING
+        )
+        config_hint = _service_port_config_hint(
+            service_def,
+            host_mode,
+            config_value=svc_config_value if svc_config_value is not _MISSING else None,
+        )
         port_usages.append(
             (
                 _normalize_port(host_port, service_name, config_hint),

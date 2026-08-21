@@ -40,6 +40,32 @@ Default accepted files: `.pdf`, `.md`, `.txt`, `.docx`, `.html`, `.htm`, `.json`
 
 Configuration for containerized services. Each service has its own subsection.
 
+### Service ports
+
+Each service that is reachable over the network takes two port keys, and which one supplies
+the host-side mapping depends on the deployment mode.
+
+| Mode | Host-side port | Container-side port |
+|------|----------------|---------------------|
+| Container mode (default) | `external_port` | `port` |
+| Host mode (`--hostmode`) | `external_port` when it is set, otherwise `port` | same value as the host-side port |
+
+In host mode the two sides are always the same number, because the process binds the port
+directly on the host instead of being mapped into a container. Setting `external_port` in host
+mode therefore moves *both* sides; the per-service tables below describe `external_port` as the
+host-mapped port, which is its container-mode role.
+
+`archi create` validates the effective host-side port of every enabled service during
+preflight, before it tears down an existing deployment. The run is refused when a port:
+
+- is not a whole number between 1 and 65535, or
+- is assigned to two enabled services at once.
+
+The diagnostic names the exact key it validated — `services.<service>.external_port` in host
+mode when that key is set, and `services.<service>.port` otherwise — so the key the message
+names is always the key to edit.
+
+
 ### `services.chat_app`
 
 The main chat interface.
