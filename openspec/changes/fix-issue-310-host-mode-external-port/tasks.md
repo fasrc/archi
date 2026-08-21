@@ -98,23 +98,23 @@
 
 ## 3. Verify against the acceptance criteria and open the PR
 
-- [ ] 3.1 Re-run the 1.1 repro. It must now print validated `(9000, 9000)` and rendered
+- [x] 3.1 Re-run the 1.1 repro. It must now print validated `(9000, 9000)` and rendered
       `9000`. Paste the before and after into the PR body - that pair is the evidence this
       change exists for.
-- [ ] 3.2 Walk the issue's acceptance criteria one by one and name, for each, the test that
+- [x] 3.2 Walk the issue's acceptance criteria one by one and name, for each, the test that
       covers it. Any criterion without a test is unfinished work, not a judgement call.
-- [ ] 3.3 The project gate exits 0 from a clean tree. Patch coverage is measured against
+- [x] 3.3 The project gate exits 0 from a clean tree. Patch coverage is measured against
       `origin/dev`; the touched source lines are few and directly tested, so a low number
       means a test is not reaching them - investigate rather than adding filler. Confirm
       `git status --porcelain` is empty after the commit: the pre-commit formatter is a
       writer while CI only asserts, so format before `git add`, not after.
-- [ ] 3.4 Push the branch with `git push -u origin fix/issue-310-host-mode-external-port`
+- [x] 3.4 Push the branch with `git push -u origin fix/issue-310-host-mode-external-port`
       (the `-u` matters: the branch was created from `origin/dev` and would otherwise track
       the trunk). Open the PR with
       `gh pr create --repo fasrc/archi --base dev`. Put `closes #310` in the PR **body** -
       a closing keyword in the title does not link the issue. No `Co-Authored-By` or session
       trailers.
-- [ ] 3.5 In the PR body state plainly: this is a behaviour change, not a refactor; a
+- [x] 3.5 In the PR body state plainly: this is a behaviour change, not a refactor; a
       host-mode config with two enabled services sharing one `external_port` is now refused
       where it previously passed, and that refusal is the fix working. Name #300 and #311 as
       adjacent and deliberately untouched. STOP at the open PR - do not merge.
