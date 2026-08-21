@@ -134,6 +134,11 @@ def test_validate_port_config_host_mode_duplicate_external_port_returns_error():
     _, errors = validate_port_config(plan, cm, port_config)
     assert len(errors) == 1
     assert "assigned to multiple services" in errors[0]
+    # The conflict message must name the key that produced the colliding value, not the
+    # inert `port` key underneath it — the duplicate path reads the same config hint as the
+    # invalid-value path, and nothing pinned that (Greptile review, PR #316).
+    assert "services.chat_app.external_port" in errors[0]
+    assert "services.data_manager.external_port" in errors[0]
 
 
 # ---------------------------------------------------------------------------
