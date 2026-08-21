@@ -175,7 +175,7 @@ adopt decision on the tracking issue (0.1).
 
 ## 7. Trial execution from the PR branch (operator present — needs-deploy)
 
-- [ ] 7.1 CLI smoke in the full-deps env with `ANTHROPIC_API_KEY`: staged phases,
+- [x] 7.1 CLI smoke in the full-deps env with `ANTHROPIC_API_KEY`: staged phases,
   composite re-run, determinism probe (`QA_FAKE_MCP_VALUE_FILE` → 9). One pass
   rule for staged AND composite: exit 0, `scored` manifest, zero failed rows, and
   `report.md` present and inspected — check all four in both workspaces
@@ -193,7 +193,7 @@ adopt decision on the tracking issue (0.1).
   (`git merge-base --is-ancestor <base> <head>` — merge or rebase `origin/dev`
   into the branch first). Amended plan: stale evidence never merges — if either
   SHA moves after the trial, bring the base into the head again and rerun.
-- [ ] 7.2 Console trial on FASRC dev, deployed from the PR branch checkout.
+- [x] 7.2 Console trial on FASRC dev, deployed from the PR branch checkout.
   **Provenance first** (the redeploy can silently run a stale installed CLI, and
   `python` on PATH may not be the interpreter behind the `archi` entry point):
   derive the interpreter from the entry point's shebang —
@@ -224,7 +224,7 @@ adopt decision on the tracking issue (0.1).
   `"$ARCHI_PY" -m pip install -e <dev-checkout>` and re-verify the imported
   `templates_manager.__file__` resolves inside the dev checkout, then disable the
   `evaluations` block and run `redeploy.sh` from the dev checkout.
-- [ ] 7.3 Adopt/reject writeup posted on the tracking issue: functional results;
+- [x] 7.3 Adopt/reject writeup posted on the tracking issue: functional results;
   verdict agreement on 10–20 golden-set rows converted to Dataset V2 vs the RAGAS
   stack; capability delta; cost (tokens/row, wall time, gate-time delta);
   maintenance burden (disposition table + skip lists = re-sync cost); the
@@ -238,7 +238,7 @@ adopt decision on the tracking issue (0.1).
 
 ## 8. Merge decision (human gate)
 
-- [ ] 8.1 The human records adopt/reject on the tracking issue. **Adopt** — in
+- [x] 8.1 The human records adopt/reject on the tracking issue. **Adopt** — in
   this order per the amended plan: (1) file the adoption's follow-on work into a
   milestone through the normal gate bar, and name the release the capability
   ships in — this capability satisfies the dark-ride-along rule (the console
