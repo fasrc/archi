@@ -197,11 +197,15 @@ def _resolve_ports_from_config(
     container_port = container_default
     if isinstance(config_value, dict):
         container_port = config_value.get("port", container_port)
-        host_port = (
-            container_port
-            if host_mode
-            else config_value.get("external_port", host_port)
-        )
+        if host_mode:
+            external = config_value.get("external_port")
+            if external is not None:
+                host_port = external
+                container_port = external
+            else:
+                host_port = container_port
+        else:
+            host_port = config_value.get("external_port", host_port)
     else:
         host_port = config_value
     return host_port, container_port
