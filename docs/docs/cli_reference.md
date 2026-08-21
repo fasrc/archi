@@ -312,9 +312,15 @@ nothing.
 | Configured value | Result |
 |------------------|--------|
 | `port: 0` | `Port out of range for <service> (services.<service>.port): 0` |
-| `port: ""` | `Invalid port value '' for <service> (services.<service>.port)` |
-| `port: null` | `Invalid port value 'None' for <service> (services.<service>.port)` |
 | `port: 70000` | `Port out of range for <service> (services.<service>.port): 70000` |
+| `port: ""` | `Invalid port value '' for <service> (services.<service>.port)` |
+| `port: null` (or `port: ~`) | `Invalid port value 'None' for <service> (services.<service>.port)` |
+| `port: true` (or `port: on`, `port: yes`) | `Invalid port value 'True' for <service> (services.<service>.port)` |
+| `port: false` (or `port: off`, `port: no`) | `Invalid port value 'False' for <service> (services.<service>.port)` |
+
+The boolean rows are worth knowing about: YAML resolves the bare words `on`, `off`, `yes` and
+`no` to `true`/`false`, so `port: on` is a boolean rather than a port number. It is refused as an
+invalid value, not silently read as port `1`.
 
 Omitting a key is not the same as setting it. A service with no `port` key — or with no section
 of its own at all — keeps its built-in default, and nothing is refused. Only a value you wrote is

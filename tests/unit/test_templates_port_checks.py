@@ -161,6 +161,49 @@ def test_validate_port_config_nonnumeric_names_service_and_hint():
 
 
 # ---------------------------------------------------------------------------
+# validate_port_config — YAML booleans are not ports (Codex review, PR #317)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("host_mode", [True, False])
+def test_validate_port_config_boolean_port_is_refused(host_mode):
+    # PyYAML resolves `on`, `yes` and `true` to True, so `port: on` is a realistic typo.
+    # int(True) is 1, so without an explicit bool guard preflight accepts it as port 1 —
+    # and port_config carries the bool itself into template rendering.
+    plan = _plan(["chatbot"], host_mode=host_mode)
+    cm = _cm({"chat_app": {"port": True}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "services.chat_app.port" in msg
+
+
+def test_validate_port_config_boolean_external_port_is_refused():
+    # Container mode: external_port supplies the host-side port, so the same guard applies.
+    plan = _plan(["chatbot"], host_mode=False)
+    cm = _cm({"chat_app": {"port": 7861, "external_port": True}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "services.chat_app.external_port" in msg
+
+
+def test_validate_port_config_boolean_false_is_refused_as_a_bool_not_as_zero():
+    # `port: off` already raised, but only because int(False) == 0 tripped the range check.
+    # The message must identify it as an invalid value, not report a port number of 0.
+    plan = _plan(["chatbot"], host_mode=False)
+    cm = _cm({"chat_app": {"port": False}})
+    port_config = extract_port_config(plan, cm)
+    with pytest.raises(ValueError) as exc_info:
+        validate_port_config(plan, cm, port_config)
+    msg = str(exc_info.value)
+    assert "Invalid port value" in msg
+    assert "out of range" not in msg
+
+
+# ---------------------------------------------------------------------------
 # validate_port_config — out-of-range host-side port raises ValueError
 # ---------------------------------------------------------------------------
 

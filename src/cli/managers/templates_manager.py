@@ -171,6 +171,13 @@ _UNSET = object()
 
 
 def _normalize_port(port: Any, service_name: str, config_hint: Optional[str]) -> int:
+    # bool is a subclass of int, so int(True) is 1 and int(False) is 0 -- without this guard
+    # `port: on` (PyYAML resolves on/yes/true to True) passes preflight as port 1, and the
+    # bool itself is what port_config carries into template rendering. `off` was refused only
+    # by accident, reported as an out-of-range port 0 rather than as a bad value.
+    if isinstance(port, bool):
+        location = f" ({config_hint})" if config_hint else ""
+        raise ValueError(f"Invalid port value '{port}' for {service_name}{location}")
     try:
         port_value = int(port)
     except (TypeError, ValueError):
