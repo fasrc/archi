@@ -165,6 +165,11 @@ class TemplateContext:
         return bool(self.options.get("build", True))
 
 
+# Sentinel meaning "the configuration did not supply a value"; a None-valued
+# registry default is not a substitute (design.md D1).
+_UNSET = object()
+
+
 def _normalize_port(port: Any, service_name: str, config_hint: Optional[str]) -> int:
     try:
         port_value = int(port)
@@ -196,11 +201,17 @@ def _resolve_ports_from_config(
     host_port = host_default
     container_port = container_default
     if isinstance(config_value, dict):
-        container_port = config_value.get("port", container_port)
+        container_port = (
+            config_value["port"] if "port" in config_value else container_port
+        )
         host_port = (
             container_port
             if host_mode
-            else config_value.get("external_port", host_port)
+            else (
+                config_value["external_port"]
+                if "external_port" in config_value
+                else host_port
+            )
         )
     else:
         host_port = config_value
@@ -214,8 +225,8 @@ def extract_port_config(plan: DeploymentPlan, config_manager: Any) -> Dict[str, 
 
     for service_name, service_def in service_registry.get_all_services().items():
         key_prefix = service_name.replace("-", "_")
-        host_port = service_def.default_host_port
-        container_port = service_def.default_container_port
+        configured_host: Any = _UNSET
+        configured_container: Any = _UNSET
 
         if service_def.port_config_path:
             try:
@@ -223,18 +234,36 @@ def extract_port_config(plan: DeploymentPlan, config_manager: Any) -> Dict[str, 
                 for key in service_def.port_config_path.split("."):
                     config_value = config_value[key]
 
-                host_port, container_port = _resolve_ports_from_config(
+                configured_host, configured_container = _resolve_ports_from_config(
                     config_value,
                     host_mode=host_mode,
-                    host_default=host_port,
-                    container_default=container_port,
+                    host_default=_UNSET,
+                    container_default=_UNSET,
                 )
             except (KeyError, TypeError):
                 pass
 
-        if host_port:
+        host_port = (
+            configured_host
+            if configured_host is not _UNSET
+            else service_def.default_host_port
+        )
+        container_port = (
+            configured_container
+            if configured_container is not _UNSET
+            else service_def.default_container_port
+        )
+
+        # Emit when the configuration supplied a value or the registry default is
+        # not None.  Postgres has no port default and no config path; it is handled
+        # separately in validate_port_config, so a bare emit here would incorrectly
+        # add postgres_port_host with value None and cause _normalize_port to raise.
+        if configured_host is not _UNSET or service_def.default_host_port is not None:
             port_config[f"{key_prefix}_port_host"] = host_port
-        if container_port:
+        if (
+            configured_container is not _UNSET
+            or service_def.default_container_port is not None
+        ):
             port_config[f"{key_prefix}_port_container"] = container_port
 
     return port_config
@@ -257,9 +286,10 @@ def validate_port_config(
         if service_name not in service_registry.get_all_services():
             continue
         key_prefix = service_name.replace("-", "_")
-        host_port = port_config.get(f"{key_prefix}_port_host")
-        if host_port is None:
+        host_port_key = f"{key_prefix}_port_host"
+        if host_port_key not in port_config:
             continue
+        host_port = port_config[host_port_key]
         service_def = service_registry.get_service(service_name)
         config_hint = _service_port_config_hint(service_def, host_mode)
         port_usages.append(
