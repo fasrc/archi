@@ -38,8 +38,15 @@ anchors in issue #122 were taken at `bd2d519c` and have all drifted; PR #265
 
 ### New Capabilities
 - `agent-streaming-thinking`: how the ReAct agent decides what reasoning-model
-  output is safe to stream to the user as visible text, so private
-  chain-of-thought (including the orphan-`</think>` case) is never displayed.
+  output is safe to stream into the **answer body** as visible `text` events, so
+  chain-of-thought (including the orphan-`</think>` case) never appears there.
+  This is deliberately scoped to the message body. Reasoning still reaches the
+  user through the collapsible thinking-step panel, which
+  `renderThinkingEnd()` fills from the `thinking_end` event's `thinking_content`
+  (`src/interfaces/chat_app/static/chat.js:2317-2337`). That panel is a designed
+  disclosure surface, not the defect: issue #122 is about reasoning appearing as
+  the answer, and suppressing the panel would delete a feature the issue never
+  asks to remove.
 
 ### Modified Capabilities
 <!-- None: no existing capability spec covers streaming thinking-content display. -->
@@ -59,4 +66,6 @@ anchors in issue #122 were taken at `bd2d519c` and have all drifted; PR #265
   shows pre-`</think>` reasoning. On a thinking-disabled provider nothing changes.
 - **Out of scope**: the stored/final-answer sanitize already fixed in PR #121 at
   `_build_output_from_messages` (:1766/:1781); a retract-on-close chat contract; a
-  start-of-reasoning content heuristic; non-streaming `invoke()` output.
+  start-of-reasoning content heuristic; non-streaming `invoke()` output; and the
+  `thinking_end` / `thinking_content` trace panel described under Capabilities,
+  which stays exactly as it is.

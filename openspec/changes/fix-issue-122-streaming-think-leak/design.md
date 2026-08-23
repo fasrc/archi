@@ -35,6 +35,11 @@ only the stored/final answer at `_build_output_from_messages` (:1766/:1781).
 - Any change to non-streaming `invoke()`.
 - The `reasoning_content` provider path (Ollama), which already keeps reasoning
   separate at :606 and does not leak.
+- The thinking-step panel. `renderThinkingEnd()` fills it from the `thinking_end`
+  event's `thinking_content` (`src/interfaces/chat_app/static/chat.js:2317-2337`),
+  so reasoning stays visible there by design. Issue #122 is about reasoning
+  arriving as the answer; the panel is the sanctioned place for it, and this
+  change neither touches nor claims to close that surface.
 
 ## Decisions
 
@@ -139,11 +144,20 @@ run together:
 
 - **Content inspection** cannot separate reasoning from an answer before the tag.
   That is true, and it is the whole reason the gate is config-keyed (Decision 2).
-- **The template contract** does determine it. On a provider with
-  `enable_thinking` true, the chat template pre-fills the `<think>` opener, so the
-  model begins generating *inside* the reasoning block and must emit `</think>` to
-  leave it. That pre-filled opener is precisely why the closing tag arrives
-  orphaned — it is the same mechanism the leak itself depends on.
+- **The template contract** does determine it, for the backend this repo actually
+  documents. On the Qwen-style vLLM setup, `enable_thinking` makes the chat
+  template pre-fill the `<think>` opener, so the model begins generating *inside*
+  the reasoning block and must emit `</think>` to leave it. That pre-filled opener
+  is precisely why the closing tag arrives orphaned — it is the same mechanism the
+  leak itself depends on.
+
+  This is a claim about Qwen on vLLM, not about every `openai_compat` backend.
+  `chat_template_kwargs` is a vLLM-specific request field, and another
+  OpenAI-compatible server (LM Studio, say) may ignore it or read it differently.
+  A backend that accepts the key without the pre-filled-opener behavior lands in
+  the misconfigured case in the risks below and is handled there, by the same
+  provider-split remedy — the discard rule is not claimed to be safe for a
+  template contract nobody has verified.
 
 So on a thinking-enabled provider, "text held because no `</think>` has arrived" is
 "text the model produced while still inside its reasoning block". Discarding it on
@@ -168,6 +182,12 @@ discard-on-error as a scenario so a later "flush on error" refactor is caught.
   leak persists for that deployment. This is a deliberate limit of a config-keyed
   gate; the fix is to correct the config, which
   `config_fingerprint.py` already surfaces on `/api/health`. Noted in the spec.
+- **[An `openai_compat` backend accepts `enable_thinking` without the Qwen contract]**
+  → The gate turns on, but the model never opens a reasoning block, so its plain
+  answer is held and, on an error exit, dropped. This is the same failure shape as
+  the mixed-model case below and takes the same remedy: give that backend its own
+  provider entry with the key unset. Recorded separately because the trigger is a
+  backend difference rather than a model list.
 - **[One provider serves both a thinking and a non-thinking model]** → Every model
   on that provider is gated, so the non-thinking model's plain answers are held to
   the `final` event instead of streaming incrementally. The schema offers no
