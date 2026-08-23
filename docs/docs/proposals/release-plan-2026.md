@@ -168,7 +168,7 @@ lot by gating a future feature release, not by aging.
 | #156, #157 | Incremental re-ingest PR-2/PR-3 — track not a driver; both blocked on an unmerged PR-1 enabler |
 | #276 | lastmod hand-list vs sitemap ownership — metadata-only, both outcomes small and opposite |
 | #166 | CRUD for source list — exploration; deliverable is a note, must not change behavior |
-| #278, #253, #254 | duckdb-guard completeness gaps — the guard is already a net improvement with zero live failures; #254 is artifact reconciliation |
+| #278 | duckdb-guard completeness gap — the guard is already a net improvement with zero live failures |
 | #250 | Template-mismatch check misses `migrations/` — issue itself states developer-facing only, no runtime risk |
 | #255, #234, #231 | Merge-hygiene reconciler/branch-protection — settings or nearest-miss issues; gate neither chat nor the release build |
 | #224 | Loop-container toolchain preflight — nightly harness, outside `src/`, needs a human session |
@@ -189,9 +189,8 @@ lot by gating a future feature release, not by aging.
 | #130 | Bedrock reranker — rerank already default-on (+19% RAGAS); residual below judge noise, awaits egress decision |
 | #241 | Citation-floor semantics on non-cosine scales — latent while the shipped default disables the floor |
 | #285 | Non-branch ref in `test-and-build-tag.yml` — real defect on the advertised commit-SHA input, but the release mechanics above prescribe dispatching `main`, and that path publishes and tags cleanly |
-| #290 | `archi evaluate --force` teardown ordering — destructive and real, but `corpus_fingerprint` (`benchmark_provenance.py:288`) is content-derived and per-arm, so a rebuilt corpus is detectable in the artifact; September's numbers stay attributable without it |
 | #288 | Keep `fasrc_archi.md` truthful as its dependencies land — docs-only, same disposition as #190/#115 |
-| #291 | Reformat `secrets_manager.py` to black — enabler; no milestone issue edits this file |
+| #309 | Nightly loop halts on a phantom CI failure (queued check read as failed) — loop-harness observability, no product surface; parked 2026-08-20 but never rowed here |
 | #300 | `show_service_urls` port-walk consolidation — divergence is success-banner-only, operator-cosmetic; the validated path already uses `extract_port_config` |
 | #312 | Pre-teardown port availability probe — robustness beyond #293's recorded decision D3; the shipped probe still refuses the create, one teardown later than ideal |
 | #313 | `.gitignore` `*secrets*` masks `secrets_manager.py` from CI's black walk — gate hygiene; the drifted instance was fixed by #308, the structural hole gates no feature |
@@ -231,7 +230,10 @@ feature, which measurably accepts a host-mode `external_port: 0` and renders
 #313, #314 and #322 parked (reasons in the table above). #269 was closed as
 delivered: PR #272 (`48fb4f99`) records `running_configuration` with an asserted
 divergence list, and PR #270 (`9e899848`) records `code_version` computed from the
-running code (`src/bin/service_benchmark.py:345-430,460`).
+running code (`src/bin/service_benchmark.py:345-430,460`). Rows for #253, #254, #290
+and #291 — parked issues closed between 2026-08-19 and this entry — were pruned from
+the parked table, and a missing row was added for #309 (parked 2026-08-20, never
+rowed), so the table matches its own query.
 
 **The invariant:** every open issue carries exactly one of {a milestone, the `parked`
 label, the `evidence-trial` label}, so
