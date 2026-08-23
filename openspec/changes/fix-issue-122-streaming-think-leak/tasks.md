@@ -99,8 +99,13 @@ All anchors are verified against `origin/dev` @ `4fb0050c` (2026-08-23).
       `deploy/fasrc-dev/scripts/redeploy.sh`. A restart is NOT enough: the running
       config is seeded into Postgres at deploy, and the container runs baked
       site-packages code, so both the config and the code need the redeploy.
-      Restore the key to `false` afterwards — it is the standing workaround for
-      this leak on that deployment.
+      Restore the key to `false` afterwards **and redeploy a second time**. The
+      restore is subject to the same rule as the change: editing `config.yaml`
+      alone leaves the running service on the thinking-enabled config already
+      seeded into Postgres, so a file-only restore would leave fasrc-dev serving
+      with this leak's standing workaround switched off. Treat the validation as
+      unfinished until the second redeploy lands and the effective config is
+      confirmed back at `false`.
 - [ ] 5.4 `model: opus` — Know the standing blocker before scheduling 5.3: `dev` now carries
       the #305 evaluation stack, which adds `mcp` and `ijson` to the base-image
       requirements, and per issue #266 `archi create` pulls the upstream base image
