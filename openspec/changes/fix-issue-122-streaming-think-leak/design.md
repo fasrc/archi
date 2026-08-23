@@ -68,16 +68,27 @@ This keeps the operator's original Option 1 mechanism (suppress-until-decided) a
 its stated cost model ("latency only in the ambiguous case"), and defines
 "ambiguous" as "this provider can emit reasoning at all".
 
-**Decision 3: the gate reads `self.default_provider`, so it follows a model switch.**
+**Decision 3: the gate reads `self.default_provider`, and is provider-granular.**
 
 `adopt_request_local_model()` (:1641) rewrites `self.default_provider` and
 `self.default_model` on the request-local view before the stream runs. Reading the
-gate from `self.default_provider` therefore tracks a dropdown model switch with no
-extra plumbing. Reusing `resolved_enable_thinking()` as-is would **not**: it
-resolves `services.chat_app.default_provider` from config, which is the configured
-default, not the provider this request will call. The new helper takes the
-provider name explicitly for that reason. This is the same class of defect as
+gate from `self.default_provider` therefore tracks a request-local **provider**
+switch with no extra plumbing. Reusing `resolved_enable_thinking()` as-is would
+**not**: it resolves `services.chat_app.default_provider` from config, which is the
+configured default, not the provider this request will call. The new helper takes
+the provider name explicitly for that reason. This is the same class of defect as
 issue #262, which is why it is called out rather than left implicit.
+
+The gate is **provider-granular, not model-granular**, and that matches the
+mechanism rather than merely the config layout. A provider block holds a `models`
+list and one `extra_kwargs` (`src/cli/templates/base-config.yaml:110`,
+`deploy/fasrc-dev/config.example.yaml:102-113`); `enable_thinking` lives in
+`extra_kwargs.extra_body.chat_template_kwargs`, which is spread verbatim into the
+request body for **every** model called through that provider. There is no
+per-model `enable_thinking` in the schema, so a model-keyed gate would key on data
+that does not exist. A switch between two models of one provider therefore leaves
+the gate unchanged — correctly, because it also leaves the transmitted kwarg
+unchanged. The cost of that granularity is recorded as a risk below.
 
 **Decision 4: compute the gate once per stream call, not per delta.**
 
@@ -94,6 +105,18 @@ event whose `final_answer` is parsed from the accumulated content (:726-746, and
 :1047-1055 in `astream()`). If a thinking-enabled provider never emits a
 `</think>`, the held text is still delivered there — as one event at the end
 rather than incrementally. Nothing is lost; only the incremental display is.
+
+Two consequences of the existing final path, both verified rather than assumed:
+
+- A **non-empty** held answer is delivered by the `final` branch at :761-768.
+- An **orphan-only** stream (reasoning, `</think>`, then end) parses to an empty
+  `final_answer`, so :769-776 takes the fallback and
+  `_build_output_from_messages()` substitutes the placeholder "No answer generated
+  by the agent." (:1783). The final answer in that case is therefore the
+  placeholder, **not** an empty string — the behavior PR #121 deliberately
+  installed, as the comment at :1779 records. The spec scenario asserts the
+  placeholder for that reason; asserting an empty answer would be a permanently
+  red test against a contract this change does not touch.
 
 **Decision 6: put the logic in a helper module, not inline in `base_react.py`.**
 
@@ -112,6 +135,19 @@ how `utils/context_budget.py:245` holds the config walk for the #235 bound.
   leak persists for that deployment. This is a deliberate limit of a config-keyed
   gate; the fix is to correct the config, which
   `config_fingerprint.py` already surfaces on `/api/health`. Noted in the spec.
+- **[One provider serves both a thinking and a non-thinking model]** → Every model
+  on that provider is gated, so the non-thinking model's plain answers are held to
+  the `final` event instead of streaming incrementally. The schema offers no
+  per-model `enable_thinking` to key on (Decision 3), and the same provider-level
+  kwarg is sent for both models regardless, so this is a limit of the config shape
+  rather than of the gate. The degradation is bounded — the answer still arrives —
+  and the remedy available today is to declare the two models as two providers.
+- **[The gate is inert on fasrc-dev as currently configured]** → That deployment
+  sets `enable_thinking: false` (`deploy/fasrc-dev/config.example.yaml:113`) as the
+  standing workaround for this very leak, so `thinking_possible` is false and
+  nothing is held. The change is preventive there: it closes the leak for the day
+  an operator turns thinking back on, and for any deployment that already has.
+  This is recorded so no one reads a quiet dev stack as evidence the fix works.
 - **[Malformed or absent config]** → The helper walks each level with an
   `isinstance` check and returns `False` (stream as today) rather than raising.
   A streaming path must not crash on a config typo.
