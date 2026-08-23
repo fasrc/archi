@@ -104,7 +104,8 @@ separate end-of-stream release path to build: `stream()` already emits a `final`
 event whose `final_answer` is parsed from the accumulated content (:726-746, and
 :1047-1055 in `astream()`). If a thinking-enabled provider never emits a
 `</think>`, the held text is still delivered there — as one event at the end
-rather than incrementally. Nothing is lost; only the incremental display is.
+rather than incrementally. On a stream that completes normally, nothing is lost;
+only the incremental display is. Streams that end early are Decision 7.
 
 Two consequences of the existing final path, both verified rather than assumed:
 
@@ -124,6 +125,23 @@ Two consequences of the existing final path, both verified rather than assumed:
 functions in `src/archi/pipelines/agents/utils/thinking_gate.py` are directly
 unit-testable and keep the `base_react.py` diff to a handful of lines, mirroring
 how `utils/context_budget.py:245` holds the config walk for the #235 bound.
+
+**Decision 7: on an early error exit, discard the held text — do not flush it.**
+
+`stream()` and `astream()` do not always reach the final block. Both return early
+on `GraphRecursionError` and on a context-overflow exception, yielding only the
+error output (`:628-693` sync, `:938-1003` async). Held text is dropped on those
+paths, so Decision 5's guarantee is scoped to normal completion.
+
+Discarding is the correct behavior here, not a gap to patch. Held text is by
+definition text that never reached a `</think>`, so the change cannot tell whether
+it is an answer or reasoning. Flushing it on the way out would leak exactly the
+chain-of-thought this change exists to suppress, and it would leak it in the
+degraded case, where the user is least able to tell reasoning from an answer. The
+cost is bounded and only applies to thinking-enabled providers: a partial answer
+that would previously have appeared before the error message now does not, and the
+error output itself is unchanged. The spec pins this as a scenario so a later
+"flush on error" refactor is caught.
 
 ## Risks / Trade-offs
 
@@ -148,6 +166,15 @@ how `utils/context_budget.py:245` holds the config walk for the #235 bound.
   nothing is held. The change is preventive there: it closes the leak for the day
   an operator turns thinking back on, and for any deployment that already has.
   This is recorded so no one reads a quiet dev stack as evidence the fix works.
+- **[No standing deployment exercises the gate]** → `AGENTS.md:58-63` requires an
+  end-to-end check against a running deployment, and neither default surface can
+  provide a meaningful one. The PR preview stack runs Ollama
+  (`.github/workflows/pr-preview.yml:228`), which reports reasoning through the
+  separate `reasoning_content` field and so never takes the leaking branch at all;
+  fasrc-dev sets `enable_thinking: false`. A validation that proves anything needs
+  a provider deliberately configured with `enable_thinking: true` against an
+  OpenAI-compatible reasoning endpoint. Task group 5 states that precondition
+  rather than letting a green run on an unaffected stack read as proof.
 - **[Malformed or absent config]** → The helper walks each level with an
   `isinstance` check and returns `False` (stream as today) rather than raising.
   A streaming path must not crash on a config typo.

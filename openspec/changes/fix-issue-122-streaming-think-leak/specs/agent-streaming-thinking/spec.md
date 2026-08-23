@@ -6,9 +6,12 @@ The agent SHALL NOT stream a reasoning model's private chain-of-thought to the
 user as visible text. When the provider the agent is about to call is configured
 to emit thinking, the streaming paths (`stream()` and `astream()`) SHALL hold
 visible text output while no `</think>` has been observed in the
-accumulated content, and SHALL release it once a `</think>` is observed. Held text
-that is never released by a `</think>` SHALL still reach the user through the
-existing end-of-stream `final` event, so holding never discards content.
+accumulated content, and SHALL release it once a `</think>` is observed. On a
+stream that completes normally, held text that is never released by a `</think>`
+SHALL still reach the user through the existing end-of-stream `final` event. On a
+stream that terminates early through an error path, held text SHALL be discarded
+rather than flushed, because content that never reached a `</think>` cannot be
+shown to be an answer rather than reasoning.
 
 #### Scenario: Orphan reasoning precedes the closing tag
 
@@ -31,6 +34,14 @@ existing end-of-stream `final` event, so holding never discards content.
 - **WHEN** the stream delivers `["The ", "quick ", "answer"]` with no `</think>` anywhere
 - **THEN** no incremental visible `text` event is emitted during the stream
 - **AND** the end-of-stream `final` event still carries the complete answer ("The quick answer")
+
+#### Scenario: The stream terminates early through an error path
+
+- **GIVEN** the active provider is configured with `enable_thinking` true
+- **AND** the stream has held text because no `</think>` has been observed
+- **WHEN** the stream ends early through the recursion-limit or context-overflow path
+- **THEN** the held text is discarded and is never emitted as a visible `text` event
+- **AND** the error output for that path is emitted exactly as it is today
 
 ### Requirement: Providers that do not emit thinking stream unchanged
 

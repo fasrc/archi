@@ -66,14 +66,43 @@ All anchors are verified against `origin/dev` @ `4fb0050c` (2026-08-23).
       `reasoning_content` branch (:606), and the stored-answer sanitize at
       `_build_output_from_messages` (:1766/:1781) are all untouched.
 
-## 4. Verify and finalize
+## 4. Error-path behavior
 
-- [ ] 4.1 `model: sonnet` — Run groups 1 and 2 and confirm every test now passes (red → green).
-- [ ] 4.2 `model: sonnet` — Run `bash scripts/gate.sh` and confirm it exits 0 (black/isort,
+- [ ] 4.1 `model: opus` — Add a failing test for the recursion-limit exit: with thinking
+      enabled and text held (no `</think>` yet), make the fake agent raise
+      `GraphRecursionError`, and assert the held text is never emitted as a visible
+      `text` event and the recursion error output is unchanged (:628-693 sync,
+      :938-1003 async).
+- [ ] 4.2 `model: opus` — Same for the context-overflow exit. These pin Decision 7: held
+      text is discarded, never flushed, because undecided text cannot be shown to be
+      an answer rather than reasoning.
+
+## 5. Deployment validation (AGENTS.md:58-63)
+
+- [ ] 5.1 `model: opus` — Name the runtime path before validating, per `AGENTS.md:59`:
+      confirm whether the service under test imports the workspace source or the
+      baked `site-packages` copy, and record which. A code change is invisible to a
+      container running baked code until it is rebuilt.
+- [ ] 5.2 `model: opus` — PRECONDITION, state it before running anything: the validating
+      deployment MUST have a provider with `enable_thinking: true` against an
+      OpenAI-compatible reasoning endpoint. The PR preview stack runs Ollama
+      (`.github/workflows/pr-preview.yml:228`), which reports reasoning through
+      `reasoning_content` and never reaches the leaking branch; fasrc-dev sets
+      `enable_thinking: false`. A green run on either stack as configured proves
+      nothing about this change and MUST NOT be recorded as validation.
+- [ ] 5.3 `model: opus` — Drive one chat turn that provokes orphan reasoning against the
+      named service and confirm from the streamed events that no `text` event
+      carries pre-`</think>` reasoning and no chunk carries a bare `</think>`.
+      Record the service name and the observed events on the PR.
+
+## 6. Verify and finalize
+
+- [ ] 6.1 `model: sonnet` — Run groups 1, 2, and 4 and confirm every test now passes (red → green).
+- [ ] 6.2 `model: sonnet` — Run `bash scripts/gate.sh` and confirm it exits 0 (black/isort,
       pytest, ≥80% diff coverage vs `origin/dev`).
-- [ ] 4.3 `model: opus` — Run `/codex:adversarial-review --wait` on the branch; verify each
+- [ ] 6.3 `model: opus` — Run `/codex:adversarial-review --wait` on the branch; verify each
       finding against the code, fix what holds (TDD), push back with reasons on
       what does not, then re-run until a round is clean or only nits remain.
-- [ ] 4.4 `model: sonnet` — Open the PR against `dev` referencing issue #122 and PR #121,
+- [ ] 6.4 `model: sonnet` — Open the PR against `dev` referencing issue #122 and PR #121,
       recording that the July predicate was a no-op and that the operator chose the
       config-keyed gate on 2026-08-23.
