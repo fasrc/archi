@@ -90,10 +90,32 @@ All anchors are verified against `origin/dev` @ `4fb0050c` (2026-08-23).
       `reasoning_content` and never reaches the leaking branch; fasrc-dev sets
       `enable_thinking: false`. A green run on either stack as configured proves
       nothing about this change and MUST NOT be recorded as validation.
-- [ ] 5.3 `model: opus` — Drive one chat turn that provokes orphan reasoning against the
+- [ ] 5.3 `model: opus` — The concrete target, which needs operator authorization before it
+      is touched: fasrc-dev's `local` provider already runs `mode: openai_compat`
+      against the Qwen vLLM server, so it is one config key away from being a valid
+      environment. Set
+      `services.chat_app.providers.local.extra_kwargs.extra_body.chat_template_kwargs.enable_thinking`
+      to `true` in the deployment's `config.yaml`, then redeploy with
+      `deploy/fasrc-dev/scripts/redeploy.sh`. A restart is NOT enough: the running
+      config is seeded into Postgres at deploy, and the container runs baked
+      site-packages code, so both the config and the code need the redeploy.
+      Restore the key to `false` afterwards — it is the standing workaround for
+      this leak on that deployment.
+- [ ] 5.4 `model: opus` — Know the standing blocker before scheduling 5.3: `dev` now carries
+      the #305 evaluation stack, which adds `mcp` and `ijson` to the base-image
+      requirements, and per issue #266 `archi create` pulls the upstream base image
+      rather than building the fork's own. Confirm the redeployed image actually
+      contains both packages, or resolve #266 first; otherwise the chatbot fails to
+      import its own code and the validation cannot run at all.
+- [ ] 5.5 `model: opus` — Drive one chat turn that provokes orphan reasoning against the
       named service and confirm from the streamed events that no `text` event
       carries pre-`</think>` reasoning and no chunk carries a bare `</think>`.
       Record the service name and the observed events on the PR.
+- [ ] 5.6 `model: opus` — If the operator declines the 5.3 config change, or #266 blocks the
+      redeploy, do NOT record the change as runtime-validated. State on the PR that
+      unit coverage is complete and runtime validation is outstanding, and name the
+      reason. Groups 1-4 and 6 do not depend on this group and can land on their
+      own; only the runtime claim is withheld.
 
 ## 6. Verify and finalize
 

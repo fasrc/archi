@@ -133,15 +133,30 @@ on `GraphRecursionError` and on a context-overflow exception, yielding only the
 error output (`:628-693` sync, `:938-1003` async). Held text is dropped on those
 paths, so Decision 5's guarantee is scoped to normal completion.
 
-Discarding is the correct behavior here, not a gap to patch. Held text is by
-definition text that never reached a `</think>`, so the change cannot tell whether
-it is an answer or reasoning. Flushing it on the way out would leak exactly the
-chain-of-thought this change exists to suppress, and it would leak it in the
-degraded case, where the user is least able to tell reasoning from an answer. The
-cost is bounded and only applies to thinking-enabled providers: a partial answer
-that would previously have appeared before the error message now does not, and the
-error output itself is unchanged. The spec pins this as a scenario so a later
-"flush on error" refactor is caught.
+Discarding is the correct behavior here, not a gap to patch, and the reason is the
+chat template rather than a shrug about ambiguity. Two different claims must not be
+run together:
+
+- **Content inspection** cannot separate reasoning from an answer before the tag.
+  That is true, and it is the whole reason the gate is config-keyed (Decision 2).
+- **The template contract** does determine it. On a provider with
+  `enable_thinking` true, the chat template pre-fills the `<think>` opener, so the
+  model begins generating *inside* the reasoning block and must emit `</think>` to
+  leave it. That pre-filled opener is precisely why the closing tag arrives
+  orphaned — it is the same mechanism the leak itself depends on.
+
+So on a thinking-enabled provider, "text held because no `</think>` has arrived" is
+"text the model produced while still inside its reasoning block". Discarding it on
+an error exit drops reasoning, not an answer. Salvaging it into a visible or
+"truncated answer" channel would re-open the leak this change exists to close, and
+would do it in the degraded case, where a user is least able to judge what they are
+looking at. Compared with today, the user on that path loses only the sight of
+streamed reasoning before the error; the error output itself is unchanged.
+
+The one case where held text really could be an answer is the misconfigured
+mixed-model provider in the risks below, and the remedy there is the config fix
+already named, not a salvage channel bolted onto every error exit. The spec pins
+discard-on-error as a scenario so a later "flush on error" refactor is caught.
 
 ## Risks / Trade-offs
 
@@ -160,6 +175,12 @@ error output itself is unchanged. The spec pins this as a scenario so a later
   kwarg is sent for both models regardless, so this is a limit of the config shape
   rather than of the gate. The degradation is bounded — the answer still arrives —
   and the remedy available today is to declare the two models as two providers.
+  This is also the one configuration in which Decision 7 can drop real answer text:
+  the non-thinking model never emits `</think>`, so on an error exit its held
+  partial answer is discarded rather than reasoning. The trigger is a provider
+  declared thinking-enabled while serving a model that does not think — a config
+  error — and the loss is a partial answer that the error output supersedes. The
+  fix is the same provider split, not a salvage channel on every error exit.
 - **[The gate is inert on fasrc-dev as currently configured]** → That deployment
   sets `enable_thinking: false` (`deploy/fasrc-dev/config.example.yaml:113`) as the
   standing workaround for this very leak, so `thinking_possible` is false and
