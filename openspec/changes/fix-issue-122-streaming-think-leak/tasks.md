@@ -1,0 +1,65 @@
+All anchors are verified against `origin/dev` @ `4fb0050c` (2026-08-23).
+
+## 1. Helper: the thinking gate (TDD — red first)
+
+- [ ] 1.1 `model: sonnet` — Add `tests/unit/test_thinking_gate.py` with failing tests for
+      `provider_emits_thinking(config, provider)`: true only when
+      `services.chat_app.providers.<provider>.extra_kwargs.extra_body.chat_template_kwargs.enable_thinking`
+      is exactly `True`; false for absent provider, absent block, `None`, a
+      non-mapping at any level, and a string `"true"`. Watch it FAIL (no module).
+- [ ] 1.2 `model: sonnet` — Add failing tests for `hold_visible(thinking_possible, accumulated_content)`:
+      false whenever `thinking_possible` is false; true when thinking is possible and
+      the content has no `</think>`; false once a `</think>` is present; false on
+      empty or `None` content. Watch it FAIL.
+- [ ] 1.3 `model: sonnet` — Write `src/archi/pipelines/agents/utils/thinking_gate.py`
+      to green, walking each config level with an `isinstance` check and never
+      raising, in the style of `utils/context_budget.py:245`.
+
+## 2. Streaming tests (TDD — red first)
+
+- [ ] 2.1 `model: opus` — Add `tests/unit/test_base_react_streaming_think_leak.py` with a
+      `_TestableAgent` harness modelled on `tests/unit/test_react_agent_context_overflow.py:36`
+      that bypasses LLM/LangGraph init and drives `stream()` from a fake
+      `self.agent.stream` yielding message chunks. This harness is the seam the
+      whole group depends on; build it first and prove it emits today's events.
+- [ ] 2.2 `model: sonnet` — `stream()`, thinking enabled, chunks
+      `["some reasoning", " continues", "</think>", "\n\nThe answer"]`: assert no visible
+      `text` event contains the reasoning, no chunk contains a bare `</think>`, and
+      "The answer" is emitted only after the tag. Watch it FAIL against current code.
+- [ ] 2.3 `model: sonnet` — Mirror 2.2 for `astream()`. Watch it FAIL.
+- [ ] 2.4 `model: sonnet` — Orphan-only (reasoning + `</think>`, then the stream ends) for both
+      paths: no visible reasoning is emitted and the final visible answer is empty.
+- [ ] 2.5 `model: sonnet` — Thinking DISABLED, chunks `["The ", "quick ", "answer"]` for both
+      paths: visible `text` events are emitted incrementally. Confirm this PASSES
+      today — it is the over-suppression guard.
+- [ ] 2.6 `model: sonnet` — Thinking ENABLED, no `</think>` anywhere: no incremental `text`
+      event during the stream, and the `final` event still carries the whole answer.
+- [ ] 2.7 `model: opus` — Request-local override: with the deployment default provider
+      thinking-unset, call `adopt_request_local_model()` to bind a thinking-enabled
+      provider and assert the reasoning is suppressed for that request.
+
+## 3. Implement the gate (green)
+
+- [ ] 3.1 `model: opus` — In `stream()` (:453), compute the gate once beside
+      `last_visible_content` (:471) as
+      `thinking_possible = provider_emits_thinking(self.config, self.default_provider)`.
+      Change the emit gate at :619 to also require
+      `not hold_visible(thinking_possible, accumulated_content)`, leaving
+      `last_visible_content` untouched when the text is held.
+- [ ] 3.2 `model: opus` — Apply the identical change at the `astream()` emit gate (:930),
+      with the gate computed once at the top of `astream()` (:778).
+- [ ] 3.3 `model: sonnet` — Confirm `_parse_thinking_content()` (:265), the
+      `reasoning_content` branch (:606), and the stored-answer sanitize at
+      `_build_output_from_messages` (:1766/:1781) are all untouched.
+
+## 4. Verify and finalize
+
+- [ ] 4.1 `model: sonnet` — Run groups 1 and 2 and confirm every test now passes (red → green).
+- [ ] 4.2 `model: sonnet` — Run `bash scripts/gate.sh` and confirm it exits 0 (black/isort,
+      pytest, ≥80% diff coverage vs `origin/dev`).
+- [ ] 4.3 `model: opus` — Run `/codex:adversarial-review --wait` on the branch; verify each
+      finding against the code, fix what holds (TDD), push back with reasons on
+      what does not, then re-run until a round is clean or only nits remain.
+- [ ] 4.4 `model: sonnet` — Open the PR against `dev` referencing issue #122 and PR #121,
+      recording that the July predicate was a no-op and that the operator chose the
+      config-keyed gate on 2026-08-23.
