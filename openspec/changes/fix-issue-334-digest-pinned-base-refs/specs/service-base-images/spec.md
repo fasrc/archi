@@ -44,6 +44,11 @@ digest-pinned line is not in.
 - **WHEN** a tag reference is rewritten to a digest and that result is rewritten back with the original tag
 - **THEN** the final line equals the original line
 
+The reader and the writer have to agree. A round trip that drifted by a stray comment or a
+lost prefix would leave the templates a little different after every pin, which is how a
+diff stops being reviewable. The one exception is trailing whitespace on a line that
+receives an annotation — see the normalization scenario below.
+
 ### Requirement: The rewriter can pin a base image by digest
 
 The script SHALL accept a repeatable `--digest <name>=sha256:<64 hex>` option, and for each named base image SHALL write the reference as `<prefix><image>@<digest>`.
@@ -109,6 +114,20 @@ rewrite.
 - **WHEN** a digest-pinned line also carries a build-stage name, as in `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<hex> AS builder  # dev-4314ac4`
 - **THEN** the rewritten line still carries `AS builder`
 - **AND** it no longer carries the comment
+
+#### Scenario: Trailing whitespace is normalized on a line that gains an annotation
+
+- **WHEN** a line ending in a stray space, as 13 of the 15 service templates do today, is pinned to a digest with a `--tag`
+- **THEN** the annotation is separated from the reference by exactly two spaces
+- **AND** pinning the same line again changes nothing further
+
+An annotation cannot be appended to a line that ends in whitespace and then read back: the
+stray space and the comment's own separator run together, and nothing in the line says
+where one ends and the other begins. The whitespace is therefore normalized at the moment
+an annotation is written — once, on the first pin — and every rewrite after that is
+byte-stable. This is the single exception to the rule that other trailing content survives,
+and it is forced rather than chosen: the alternative is a reference the script cannot read
+back correctly.
 
 #### Scenario: A line whose only change is its comment is still written
 

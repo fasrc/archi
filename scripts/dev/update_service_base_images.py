@@ -153,7 +153,15 @@ def _update_line(line: str, base_name: str, options: UpdateOptions) -> Tuple[str
         # A digest says nothing about which build it is, so the tag goes in a
         # comment beside it. No tag given, no comment.
         updated_spec = _build_image_spec(target_prefix, image, None, target_digest)
-        updated_comment = f"  # {options.tag}" if options.tag else ""
+        if options.tag:
+            # 13 of the 15 service templates end this line with a stray space.
+            # An annotation cannot be appended to such a line and read back —
+            # the split cannot tell the stray space from the comment's own
+            # separator — so the trailing whitespace is normalized here, once.
+            rest = rest.rstrip()
+            updated_comment = f"  # {options.tag}"
+        else:
+            updated_comment = ""
     else:
         updated_spec = _build_image_spec(target_prefix, image, target_tag)
         # The annotation names the build the digest is. Writing a tag in place

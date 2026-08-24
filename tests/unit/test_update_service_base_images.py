@@ -411,3 +411,46 @@ def test_tag_digest_and_back_again_returns_the_original_line(tmp_path, monkeypat
     )
 
     assert target.read_text() == original
+
+
+def test_pinning_a_line_that_ends_in_a_space_is_stable(tmp_path, monkeypatch):
+    """13 of the 15 real templates end their FROM line with a stray space.
+
+    An annotation cannot be appended to such a line and read back: the comment
+    and the stray space run together, and the split cannot tell them apart. So
+    a line receiving an annotation has its trailing whitespace normalized —
+    once, at the first pin — and every rewrite after that is byte-stable.
+    """
+    # The exact shape at src/cli/templates/dockerfiles/Dockerfile-chat:2.
+    original = "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4 \n"
+    module, templates = _write_fixtures(
+        tmp_path, monkeypatch, **{"Dockerfile-chat": original}
+    )
+    target = templates / "Dockerfile-chat"
+
+    pin = [
+        "--digest",
+        f"python={_PY_DIGEST}",
+        "--tag",
+        "dev-4314ac4",
+        "--switch-source",
+        "ghcr",
+        "--orig-tag",
+        "all",
+    ]
+    _run(module, monkeypatch, pin)
+
+    pinned = f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}  # dev-4314ac4\n"
+    assert target.read_text() == pinned
+
+    # Pinning again changes nothing — no whitespace accumulates.
+    _run(module, monkeypatch, pin)
+    assert target.read_text() == pinned
+
+    # And the CI rewrite gets a clean tag line with no stale annotation.
+    _run(
+        module,
+        monkeypatch,
+        ["--tag", "pr-7", "--switch-source", "ghcr", "--orig-tag", "all"],
+    )
+    assert target.read_text() == "FROM ghcr.io/fasrc/a2rchi-python-base:pr-7\n"
