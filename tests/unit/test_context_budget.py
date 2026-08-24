@@ -519,6 +519,50 @@ class TestPerModelWindowsAreRead:
 
         assert s.context_windows == {MODEL_ID: 8192}
 
+    def test_a_pipeline_map_extends_the_service_layer_rather_than_replacing_it(self):
+        """The layers merge per entry, not per map.
+
+        Every other setting here is a scalar, where "the pipeline overrides the
+        service layer" and "the pipeline replaces it" are the same thing. For a
+        map they are not: replacing it would silently delete declarations the
+        pipeline never mentioned, which is the protection-removal this module's
+        whole validation posture forbids.
+        """
+        s = read_settings(
+            {
+                "services": {
+                    "chat_app": {
+                        "context_editing": {
+                            "context_windows": {"a/model": 32768, "b/model": 16384}
+                        }
+                    }
+                }
+            },
+            {"context_editing": {"context_windows": {"b/model": 8192}}},
+        )
+
+        assert s.context_windows == {"a/model": 32768, "b/model": 8192}
+
+    def test_one_bad_pipeline_entry_cannot_cost_a_service_layer_bound(self):
+        """The per-entry guarantee has to hold across layers too.
+
+        Whole-map replacement made a single typo in a pipeline map delete a
+        *different* model's valid bound from the service layer — the exact
+        outcome the per-entry validation promises cannot happen.
+        """
+        s = read_settings(
+            {
+                "services": {
+                    "chat_app": {
+                        "context_editing": {"context_windows": {"a/model": 32768}}
+                    }
+                }
+            },
+            {"context_editing": {"context_windows": {"b/model": "bad"}}},
+        )
+
+        assert s.context_windows == {"a/model": 32768}
+
     def test_a_bad_map_does_not_disable_anything_else(self):
         s = read_settings(
             {

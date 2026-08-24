@@ -341,27 +341,25 @@ class ContextBudgetMiddleware(AgentMiddleware):
 
 
 def _declared_for_model(
-    windows: Mapping[str, int],
-    provider_id: Optional[str],
-    model_id: Optional[str],
+    windows: Mapping[str, int], model_id: Optional[str]
 ) -> Optional[int]:
-    """The declared window for one run's model, most specific first.
+    """The declared window for one run's model, matched on the exact model id.
 
-    A model id alone is not a full identity: two providers can each serve
-    ``llama3.2``, at different real windows, and both can be unable to report
-    one. Handing one provider's declared window to the other is the same
-    borrowed-number defect ``declared_window_applies`` exists to prevent, so a
-    ``provider/model`` key — when the operator wrote one — outranks the bare id.
+    **Known limitation, tracked as #344.** A model id is not a full identity:
+    two providers can each serve ``llama3.2`` at different real windows, and
+    both can be unable to report one, so an entry the operator wrote for one of
+    them also answers for the other. Scoping an entry to a provider needs a key
+    representation that cannot be confused with a model id — model ids may
+    themselves contain ``/`` — which is a config-surface decision, not an
+    implementation detail. Until it is made, a declaration applies to its model
+    id under every provider.
 
-    Falling back to the bare id keeps the simple, documented shape working for
-    the ordinary case where a model id is served by exactly one provider.
+    This is no worse than the behaviour it replaces (an override on a
+    metadata-less provider got no bound at all), and it is exactly right for the
+    deployments in use, where each model id has one provider.
     """
     if not model_id:
         return None
-    if provider_id:
-        qualified = windows.get(f"{provider_id}/{model_id}")
-        if qualified is not None:
-            return qualified
     return windows.get(model_id)
 
 
@@ -375,7 +373,6 @@ def build_context_middleware(
     retrieval_tool_name: str = DEFAULT_RETRIEVAL_TOOL,
     model_label: Optional[str] = None,
     model_id: Optional[str] = None,
-    provider_id: Optional[str] = None,
     declared_window_applies: bool = True,
 ) -> List[AgentMiddleware]:
     """Build the in-loop middleware list for an agent, or an empty list.
@@ -440,17 +437,12 @@ def build_context_middleware(
     meant. The alternative would leave an operator unable to correct the window
     for one model without deleting it for all of them.
 
-    ``model_id`` is the run's effective model and ``provider_id`` the provider
-    serving it, both passed explicitly. They are **not** recovered from
-    ``model_label``: a model id may itself contain ``/`` (the measured case is
-    ``palmfuture/Qwen3.8-27B-GPTQ-Int4``), so splitting the label yields the
-    wrong id on precisely the deployments this map exists for.
-
-    A key may be written as ``provider/model`` to scope it to one provider, and
-    such a key outranks the bare id — see ``_declared_for_model``. Chat requests
-    carry provider and model independently, so two providers can each serve one
-    model id at different real windows; the bare form stays correct for the
-    ordinary case where a model id has exactly one provider.
+    ``model_id`` is the run's effective model, passed explicitly. It is **not**
+    recovered from ``model_label``: a model id may itself contain ``/`` (the
+    measured case is ``palmfuture/Qwen3.8-27B-GPTQ-Int4``), so splitting the
+    label yields the wrong id on precisely the deployments this map exists for.
+    That same fact is why an entry cannot yet be scoped to one provider — see
+    ``_declared_for_model`` and #344.
 
     ``model_label`` names the provider and model in the log line emitted when no
     window can be found. Without it that outcome is invisible, and a deployment
@@ -461,7 +453,7 @@ def build_context_middleware(
     silently removing the protection the other settings configure.
     """
     settings = read_settings(config, pipeline_config)
-    declared = _declared_for_model(settings.context_windows, provider_id, model_id)
+    declared = _declared_for_model(settings.context_windows, model_id)
     if declared is None and declared_window_applies:
         declared = settings.context_window
     window = context_window if declared is None else declared

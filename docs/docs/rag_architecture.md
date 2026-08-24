@@ -177,7 +177,7 @@ Under `services.chat_app.context_editing`, overridable per pipeline via
 |-----|---------|---------|
 | `enabled` | `true` | Install the in-loop bound |
 | `context_window` | _(derived)_ | Declare the model's context window, overriding the provider's. Required for any model the provider cannot resolve |
-| `context_windows` | _(none)_ | Declare windows per model (`{model_id: tokens}`, or `{provider/model_id: tokens}` to scope an entry to one provider — the qualified form wins where both match). An entry beats `context_window` for that model only, and is the sole declaration that survives a request-local model override — which withdraws the single window because it describes a different model. An invalid entry is logged and dropped without affecting the others |
+| `context_windows` | _(none)_ | Declare windows per model id (`{model_id: tokens}`). An entry beats `context_window` for that model only, and is the sole declaration that survives a request-local model override — which withdraws the single window because it describes a different model. Entries merge per key across the layers, and an invalid entry is logged and dropped without affecting the others. An entry applies to its model id under every provider ([#344](https://github.com/fasrc/archi/issues/344)) |
 | `reserve_fraction` | `0.15` | Generation reserve floor, as a share of the window |
 | `margin_fraction` | `0.25` | Counting margin, as a share of the window — see [why 25%](#why-the-counting-margin-is-25) |
 | `keep` | `3` | Most recent tool results preserved unreduced |

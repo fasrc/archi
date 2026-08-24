@@ -1254,53 +1254,27 @@ class TestPerModelDeclaredWindow:
 
         assert built[0].budget.trigger == 4_916
 
-    def test_a_provider_qualified_key_wins_over_a_bare_model_id(self):
-        """A model id alone is not a full identity.
+    def test_a_key_is_matched_on_the_whole_model_id_and_nothing_else(self):
+        """Pins today's contract, including its limitation (#344).
 
-        Two providers can each serve ``llama3.2`` at different real windows, and
-        both can be unable to report one. A bare key would then hand one
-        provider's declared window to the other — the same borrowed-number
-        defect #235 Decision 12 exists to prevent, arriving by a third route.
-        The qualified key is the more specific statement, so it wins.
+        The key is the exact, entire model id. A prefix of it — which is what a
+        provider-qualified key would look like, since model ids may contain
+        ``/`` — must not match, or an entry would silently answer for a model
+        the operator did not name. The declaration therefore applies to its
+        model id under every provider, which is right for deployments where a
+        model id has one provider and is what #344 exists to refine.
         """
+        windows = {"palmfuture": 8_192, f"local/{OVERRIDE_MODEL}": 8_192}
         built = build_context_middleware(
             model=_StubModel(),
             context_window=None,
-            config=_config(
-                context_windows={"vllm/llama3.2": 32_768, "llama3.2": 8_192}
-            ),
-            provider_id="vllm",
-            model_id="llama3.2",
-            declared_window_applies=False,
-        )
-
-        assert built[0].budget.trigger == 19_661
-
-    def test_a_bare_model_id_key_still_applies_when_nothing_qualifies_it(self):
-        """The documented shape keeps working: qualifying a key is optional."""
-        built = build_context_middleware(
-            model=_StubModel(),
-            context_window=None,
-            config=_config(context_windows={OVERRIDE_MODEL: 32_768}),
-            provider_id="local",
+            config=_config(context_windows=windows),
             model_id=OVERRIDE_MODEL,
+            model_label=f"local/{OVERRIDE_MODEL}",
             declared_window_applies=False,
         )
 
-        assert built[0].budget.trigger == 19_661
-
-    def test_one_providers_qualified_window_never_reaches_another(self):
-        """The point of qualifying: it scopes the entry to the provider named."""
-        built = build_context_middleware(
-            model=_StubModel(),
-            context_window=None,
-            config=_config(context_windows={"vllm/llama3.2": 32_768}),
-            provider_id="ollama",
-            model_id="llama3.2",
-            declared_window_applies=False,
-        )
-
-        assert built == [], "another provider's window must not be borrowed"
+        assert built == [], "neither a prefix nor a longer key may match"
 
     def test_the_warning_names_a_remedy_that_survives_the_override(self, caplog):
         """A remedy the reader cannot use is worse than none.

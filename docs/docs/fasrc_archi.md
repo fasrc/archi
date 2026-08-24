@@ -485,10 +485,11 @@ Two settings look mandatory here; only the first actually is.
 >
 > Without that entry a long overridden conversation can still submit an
 > oversized prompt that vLLM rejects, and the absence is logged on every agent
-> build naming the key to set. If two provider slots ever serve the same model
-> id at different `--max-model-len` values, write the key as
-> `local/palmfuture/Qwen3.8-27B-GPTQ-Int4` to scope it to one slot; the
-> qualified form wins where both match.
+> build naming the key to set. The entry is matched on the model id alone, so it
+> applies under every provider slot — fine here, where each id is served by one
+> slot, and tracked as
+> [#344](https://github.com/fasrc/archi/issues/344) for the day that stops being
+> true.
 
 > **Never put a real OpenAI key in this env file** while this slot points at a
 > local endpoint: whatever `OPENAI_API_KEY` holds is exactly what

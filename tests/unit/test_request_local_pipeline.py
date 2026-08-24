@@ -481,19 +481,20 @@ def test_an_override_absent_from_the_per_model_map_still_installs_nothing():
     assert view.agent["middleware"] == []
 
 
-def test_a_window_qualified_to_one_provider_does_not_follow_another():
-    """A model id is not a full identity, and the chat app overrides provider
-    and model independently (``app.py`` builds the view from both request
-    fields). Two providers can each serve one model id at different real
-    windows, so an entry the operator scoped to ``local/`` must not be handed to
-    a view bound to a different provider — that is the borrowed-number defect
-    ``declared_window_applies`` exists to prevent, arriving by a third route."""
+def test_a_declaration_applies_to_its_model_under_every_provider():
+    """Pins today's contract and its known limitation (#344).
+
+    The chat app takes ``provider`` and ``model`` as independent request fields,
+    so a view can be bound to the same model id under a different provider. A
+    declaration is keyed on the model id alone, so it answers for both. That is
+    correct where a model id has one provider — every deployment in use — and
+    is the case #344 exists to let an operator narrow. Pinning it here means
+    the day the key gains a provider scope, this test is what says so.
+    """
     config = {
         "services": {
             "chat_app": {
-                "context_editing": {
-                    "context_windows": {f"local/{OVERRIDE_MODEL}": 32768}
-                }
+                "context_editing": {"context_windows": {OVERRIDE_MODEL: 32768}}
             }
         }
     }
@@ -508,4 +509,4 @@ def test_a_window_qualified_to_one_provider_does_not_follow_another():
     )
 
     assert _compiled_budget(same_provider).context_window == 32768
-    assert other_provider.agent["middleware"] == []
+    assert _compiled_budget(other_provider).context_window == 32768

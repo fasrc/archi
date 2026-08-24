@@ -168,6 +168,7 @@ MIN_PER_RESULT_TOKENS = 16
 DEFAULT_EXEMPTION_FRACTION = 1.0 / 3.0
 
 _CONFIG_KEY = "context_editing"
+_WINDOWS_KEY = "context_windows"
 
 
 @dataclass(frozen=True)
@@ -259,8 +260,22 @@ def read_settings(
     An invalid value is logged and replaced by its own default. It never disables
     the bound, because a typo in one knob should not silently remove the
     protection the other knobs configure.
+
+    ``context_windows`` is the one setting that merges **per entry** rather than
+    per value: a pipeline overrides the entries it names and leaves the rest of
+    the service layer's map standing. Replacing the whole map would let one bad
+    pipeline entry delete a different model's valid bound, which is the same
+    silent protection-removal the paragraph above forbids.
     """
     merged: Dict[str, Any] = {}
+    # Per-model windows merge **per entry**, not per map. Every other setting
+    # here is a scalar, where "the pipeline overrides the service layer" and
+    # "the pipeline replaces it" are the same thing; for a map they are not.
+    # Replacing would delete declarations the higher layer never mentioned, so
+    # one typo in a pipeline map would cost a different model its bound — the
+    # silent protection-removal this module's validation posture forbids.
+    windows: Dict[str, int] = {}
+    layers: List[Dict[str, Any]] = []
     if isinstance(config, dict):
         services = config.get("services")
         if isinstance(services, dict):
@@ -268,11 +283,15 @@ def read_settings(
             if isinstance(chat, dict):
                 block = chat.get(_CONFIG_KEY)
                 if isinstance(block, dict):
-                    merged.update(block)
+                    layers.append(block)
     if isinstance(pipeline_config, dict):
         block = pipeline_config.get(_CONFIG_KEY)
         if isinstance(block, dict):
-            merged.update(block)
+            layers.append(block)
+    for block in layers:
+        merged.update(block)
+        if _WINDOWS_KEY in block:
+            windows.update(_read_declared_windows(block[_WINDOWS_KEY]))
 
     enabled = _read_enabled(merged.get("enabled", True))
     return ContextEditingSettings(
@@ -304,7 +323,7 @@ def read_settings(
             "exemption_fraction",
         ),
         context_window=_read_declared_window(merged.get("context_window")),
-        context_windows=_read_declared_windows(merged.get("context_windows")),
+        context_windows=windows,
     )
 
 
