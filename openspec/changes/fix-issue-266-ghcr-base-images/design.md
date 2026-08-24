@@ -86,6 +86,7 @@ puts pin mechanics out of scope. Worth revisiting separately.
 | Authentication refused (401/403/denied) | Log in with a **classic** PAT carrying `read:packages`; authorize it for SSO if enforced |
 | Manifest or tag unknown | The pin is stale or the tag was deleted — re-run `scripts/dev/update_service_base_images.py` |
 | Registry unreachable | Network or registry outage; nothing to fix in archi |
+| Out of disk | Free space and retry; the message names the reference whose pull ran out |
 | `localhost/` base absent | Build the base image with `scripts/dev/build_docker_images.sh` |
 
 Collapsing these sends operators to `docker login` for a stale pin, which cannot work. The
@@ -106,18 +107,21 @@ Template selection mirrors the compose template: for each enabled service, `Dock
 plus the `-gpu` suffix when `gpu_ids` is set. No reference is exempted from the checked set —
 see D2 step 2 for why `localhost/` in particular is not a safe exemption.
 
-### D5 — The Python floor is checked for every base image
+### D5 — The Python floor is checked for every base image, and an unreadable version refuses
 
 D2 guarantees that any reference reaching this point is present on the host, so the version
 comparison (`run --rm --entrypoint python <ref> -V`) applies uniformly. There is no
 local-only carve-out, and therefore no clean-host blind spot: the case the issue was filed
 about is exactly the case D2 step 3 materializes.
 
-A version that cannot be read or parsed remains an explicit unknown that passes with a
-logged note. The image is present by then, so the build proceeds and any real incompatibility
-surfaces loudly at `pip install .`; refusing on a probe that malfunctioned would block
-deployments that work. This is a deliberately narrow exception — it covers a broken probe,
-never a missing or unreachable image.
+A version that cannot be read or parsed **refuses the deployment**, with its own diagnostic
+naming the reference. An earlier draft passed this case with a logged note, which was wrong:
+it converted an unknown compatibility result into permission to tear down a working
+deployment, in the exact safety property this change exists to provide. There is also no
+false-refusal cost to speak of — the probe runs a container, and `docker build` runs
+containers too, so a host that cannot run the probe cannot complete the build either.
+
+The preflight now has no pass-with-note branch at all. Every outcome is available or refused.
 
 ### D6 — The container tool follows the deployment's own choice
 
@@ -125,18 +129,33 @@ The probe and the remedy text use `podman` when `--podman` is in effect and `doc
 otherwise, matching `DeploymentManager.compose_tool`. Printing a `docker login` instruction
 to a podman operator is a wrong instruction.
 
-### D7 — `--dry` skips the preflight; on a real create an uninvokable runtime refuses
+### D7 — `--dry` runs a non-mutating preflight; a real create requires a runtime
 
-Under `--dry` the preflight does not run at all. D2 step 3 pulls images, and a dry run must
-not change host state or require a runtime (`cli_main.py:155-160`). The cost is a small loss
-of dry-run fidelity, which is the right trade against a dry run that downloads multi-gigabyte
-images.
+An earlier draft skipped the preflight entirely under `--dry`. That broke the pattern the
+existing `cli-create-preflight` spec sets — dry runs mirror the refusals a real run would
+make on the same inputs — and left dry runs silent about the very failure modes this change
+introduces. An operator with no registry login would get a clean dry-run summary and a
+refusal on the real create.
 
-On a real create the opposite rule applies: if the runtime cannot be invoked, the preflight
-refuses rather than skipping. Compose needs that same runtime minutes later, so standing down
-here would only move the failure to the far side of the teardown. `cli_main.py:160-170`
-already enforces this for docker; it does not check podman when `--podman` is given, and the
-preflight closes that gap as a side effect of needing the runtime itself.
+So `--dry` runs the preflight in a **non-mutating mode**: parse the references, check local
+presence, and for an absent reference check registry reachability and authorization
+*without* pulling. A deterministic failure it can establish this way — unauthorized, unknown
+tag, an absent `localhost/` base — refuses the dry run, matching what the real create would
+do. The pull itself never happens under `--dry`, so no host state changes and no
+multi-gigabyte download occurs.
+
+Reachability in this mode uses `manifest inspect`, whose support varies across daemons. Here
+that is acceptable where it was not for the real path: an unsupported probe under `--dry`
+produces a note rather than a refusal, because a dry run destroys nothing and an advisory
+gap costs the operator nothing.
+
+`--dry` still requires no container runtime. `cli_main.py:155-160` makes that an explicit
+decision, and this change does not overturn it: with no runtime, the dry preflight is skipped
+with a note. On a **real** create the opposite rule holds — an uninvokable runtime refuses,
+because compose needs the same runtime minutes later, so standing down would only move the
+failure past the teardown. `cli_main.py:160-170` already enforces this for docker; it does
+not check podman when `--podman` is given, and the preflight closes that gap because it needs
+the runtime itself.
 
 ### D8 — Pure logic in a helper module, thin call site
 
@@ -153,14 +172,22 @@ fail the diff-coverage gate.
   unknown-tag branch gives an actionable error if the tag is ever deleted.
 - **The preflight pulls before the teardown**, so a `--force` create on a clean host waits
   for a multi-gigabyte pytorch base before anything is destroyed. → Accepted, and the reason
-  for the design. Total time is unchanged, because compose would pull the same image
-  moments later; only the ordering moves, and it moves so that a failure is still free.
+  for the design. Total time is unchanged, because compose would pull the same image moments
+  later; only the ordering moves, and it moves so that a failure is still free.
+- **Does pulling first make disk exhaustion more likely?** Reviewed and rejected as a
+  sequencing concern, on the evidence: `remove_existing_deployment` calls
+  `delete_deployment(remove_images=False, remove_volumes=False)`
+  (`src/cli/utils/helpers.py:343-346`), so the teardown reclaims the deployment directory
+  only — no image layers and no volumes. There is no multi-gigabyte reclaim for the pull to
+  have benefited from, so ordering does not change how much space is available. A pull that
+  runs out of space is still classified as its own cause with its own remedy (D3), because
+  the generic failure text would send the operator to `docker login` for a full disk.
 - **A false pass is still possible**: the image pulls and satisfies the floor, but the build
   fails later for an unrelated reason (disk, network, a dependency). → Accepted. The
   preflight is defense in depth against one known failure class, not an oracle for the build.
-- **The version probe can malfunction** on an image that is present, and that outcome passes
-  (D5). → Narrow by construction: it cannot mask a missing or unreachable image, only an
-  unreadable interpreter version on an image the host already holds.
+- **The version probe can malfunction** on an image that is present. → It refuses (D5). The
+  cost is a possible false refusal on a host whose runtime cannot start a container, which is
+  a host that could not have completed the build either.
 - **Operators must log in once**, which the old acceptance criterion said they would not have
   to. → Unavoidable against `internal` packages, and recorded on the issue. The alternative
   the operator rejected was making the packages public.

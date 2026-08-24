@@ -18,27 +18,28 @@
 
 ## 4. Preflight: availability decision
 
-- [ ] 4.1 `model: opus` — RED: `decide_availability()` as a pure function over probe results. Cover, one test each: present locally is available with no pull attempted; absent and pulled successfully is available; absent `localhost/` reference refuses without attempting a pull; absent and unauthorized refuses; absent and tag-unknown refuses; absent and registry-unreachable refuses; runtime uninvokable refuses.
-- [ ] 4.2 `model: opus` — GREEN: implement `decide_availability()` returning a verdict plus a cause, never raising.
-- [ ] 4.3 `model: opus` — RED then GREEN: the Python-floor comparison runs for EVERY reference, including one that had to be pulled. Below the floor refuses and the error names both the reported version and the `requires-python` floor. Unreadable or unparseable output is an explicit unknown that passes with a note — and a test asserts that this unknown branch cannot be reached by a missing or unreachable image.
+- [ ] 4.1 `model: opus` — RED: `decide_availability()` as a pure function over probe results. Cover, one test each: present locally is available with no pull attempted; absent and pulled successfully is available; absent `localhost/` reference refuses without attempting a pull; absent and unauthorized refuses; absent and tag-unknown refuses; absent and registry-unreachable refuses; pull failed for lack of disk refuses with its own cause; runtime uninvokable refuses.
+- [ ] 4.2 `model: opus` — GREEN: implement `decide_availability()` returning a verdict plus a cause, never raising. Assert in a test that the function has no pass-with-note outcome — every result is available or refused.
+- [ ] 4.3 `model: opus` — RED then GREEN: the Python-floor comparison runs for EVERY reference, including one that had to be pulled. Below the floor refuses and the error names both the reported version and the `requires-python` floor. An unreadable or unparseable version ALSO refuses, with its own message — this reversed a first-draft decision to pass it with a note, so make the test assert the refusal explicitly.
 
 ## 5. Preflight: diagnostics
 
-- [ ] 5.1 `model: opus` — RED: message composition per cause (design D3). Unauthorized names the classic-PAT + `read:packages` requirement and mentions SSO; tag-unknown identifies a stale or deleted pin and does NOT say "log in"; unreachable names a network or registry fault; absent `localhost/` names the base-image build script. Each names the image reference.
+- [ ] 5.1 `model: opus` — RED: message composition per cause (design D3). Unauthorized names the classic-PAT + `read:packages` requirement and mentions SSO; tag-unknown identifies a stale or deleted pin and does NOT say "log in"; unreachable names a network or registry fault; absent `localhost/` names the base-image build script; out-of-disk names disk exhaustion and does NOT say "log in"; unreadable version names the reference and the failed determination. Each names the image reference.
 - [ ] 5.2 `model: sonnet` — RED then GREEN: the login command in the message names `podman` under `--podman` and `docker` otherwise.
 - [ ] 5.3 `model: sonnet` — GREEN: implement message composition.
 
 ## 6. Preflight: the probe seam
 
-- [ ] 6.1 `model: sonnet` — implement the container probe behind an injected callable: local-presence check (`image inspect`), pull, and the version read. Every unit test in groups 3–5 injects a fake; no test shells out. Note that `image inspect` and `pull` were chosen over `manifest inspect` precisely because both are uniformly supported (design D2).
-- [ ] 6.2 `model: sonnet` — map real pull exit codes and stderr onto the causes in `decide_availability()`. An unrecognised failure maps to a refusal, not to a pass: availability has no unknown outcome by design.
+- [ ] 6.1 `model: sonnet` — implement the container probe behind an injected callable: local-presence check (`image inspect`), pull, reachability (`manifest inspect`, dry mode only), and the version read. Every unit test in groups 3–5 injects a fake; no test shells out. `image inspect` and `pull` were chosen over `manifest inspect` for the real path precisely because both are uniformly supported (design D2).
+- [ ] 6.2 `model: sonnet` — map real pull exit codes and stderr onto the causes in `decide_availability()`, including the out-of-disk case. An unrecognised failure maps to a refusal, not to a pass: availability has no unknown outcome by design.
 
 ## 7. Wire it into `archi create`
 
 - [ ] 7.1 `model: opus` — RED: a test proving the ordering contract — with an unobtainable base image and `--force` against an existing deployment, `remove_existing_deployment()` is never called and the deployment directory survives. This is the regression test for design D1; the issue's own stated call site fails it.
 - [ ] 7.2 `model: opus` — GREEN: add the call site in `src/cli/cli_main.py` between the port check (`:262-268`) and `remove_existing_deployment` (`:278`). Keep it a thin call — all logic stays in the helper module, because lines added to `cli_main.py` that unit tests do not import fail the diff-coverage gate.
-- [ ] 7.3 `model: sonnet` — RED then GREEN: `archi create --dry` does not run the preflight at all — no pull is attempted and no runtime is required, even on a host with none.
-- [ ] 7.4 `model: sonnet` — RED then GREEN: a real create whose runtime cannot be invoked is refused before the teardown. Covers the `--podman` path, which `cli_main.py:160-170` does not check today.
+- [ ] 7.3 `model: opus` — RED then GREEN: the dry mode. `archi create --dry` pulls nothing, and refuses on a cause it can establish without pulling (unauthorized, unknown tag, absent `localhost/` base). An absent-but-reachable image does not refuse a dry run, and no version comparison runs for it.
+- [ ] 7.4 `model: sonnet` — RED then GREEN: `archi create --dry` on a host with no container runtime completes and prints its summary, with the preflight skipped and noted.
+- [ ] 7.5 `model: sonnet` — RED then GREEN: a real create whose runtime cannot be invoked is refused before the teardown. Covers the `--podman` path, which `cli_main.py:160-170` does not check today.
 
 ## 8. Documentation
 
