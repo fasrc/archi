@@ -463,8 +463,9 @@ def test_the_default_orig_tag_only_reaches_a_latest_pinned_line(tmp_path, monkey
     passes no `--orig-tag`. That step is already a no-op on today's templates —
     they carry `dev-4314ac4`, not `latest`, since `5e168b00` — and a digest pin
     leaves it a no-op for a second reason. Fixing the release workflow is out of
-    scope here (issue #334 forbids touching `.github/workflows/**`); this test
-    exists so the next reader sees the trap instead of rediscovering it.
+    scope here (issue #334 forbids touching `.github/workflows/**`) and is
+    tracked as issue #339; this test exists so the next reader sees the trap
+    instead of rediscovering it.
     """
     module, templates = _write_fixtures(
         tmp_path,
