@@ -19,9 +19,14 @@ Nothing downstream can catch it, because the reference it reads is well-formed �
 names last week's build.
 
 "Carrying no tag" is the load-bearing half of the parse. A digest reference and a tag
-reference are alternatives, not layers: a line pinned to a digest has no tag for
-`--orig-tag` to compare against, and a rewrite that put both on one line would produce a
-reference no runtime accepts.
+reference are alternatives for the rewriter, not layers: a line pinned to a digest has no
+tag for `--orig-tag` to compare against.
+
+A runtime does accept `<image>:<tag>@sha256:<hex>` — the scenario below requires the script
+to read one — but there the digest decides which image is pulled and the tag beside it is
+informational. This rewriter never *emits* the combined form, because carrying a tag
+alongside a digest would give `--orig-tag` something to match on a line whose reference the
+tag does not determine.
 
 #### Scenario: A digest-pinned reference is rewritten to a tag
 
@@ -77,6 +82,18 @@ discovered only at build time in CI, far from the command that caused them.
 - **THEN** the line above the python-base line reads `# base-image-pin: dev-abc1234 (managed by update_service_base_images.py)`
 - **AND** the python-base line reads `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<64 hex>`
 - **AND** the line does not carry a bare tag reference
+
+#### Scenario: An empty --tag is refused
+
+- **WHEN** the script runs with `--tag ""`, with or without `--digest`
+- **THEN** the script exits non-zero
+- **AND** no template file is written
+
+Both workflow call sites pass `--tag "${{ ... }}"` from a job output, so an empty value is
+one unset output away. It is not a tag. Without `--digest` the reference is rebuilt with no
+tag at all, giving a bare `FROM <repo>` that resolves to `latest` at build time — the
+unpinned base this whole capability exists to prevent. With `--digest` the annotation names
+no build, which the script no longer recognises as its own and the repository guard rejects.
 
 #### Scenario: A digest with no --tag is refused
 

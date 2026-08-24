@@ -185,9 +185,10 @@ def _update_line(
         target_digest = current_digest
 
     # The annotation survives exactly when the digest does not move and no new
-    # tag is given to name — whether the caller left the digest unnamed or
-    # named the one already there. A digest that has not moved still points at
-    # the build its annotation names.
+    # tag is given to name. Since `--digest` requires `--tag`, that is the
+    # rewrite which names no new reference at all — a bare `--switch-source` —
+    # and the digest it leaves in place still points at the build the
+    # annotation names.
     keeping_digest = (
         options.tag is None
         and current_digest is not None
@@ -334,6 +335,17 @@ def parse_args() -> UpdateOptions:
     orig_tag = args.orig_tag
     if orig_tag in ("all", ""):
         orig_tag = None
+
+    if args.tag is not None and not args.tag.strip():
+        # Both workflow call sites pass `--tag "${{ ... }}"`, so an empty value
+        # is one unset output away. It is not a tag: without `--digest` the
+        # reference is rebuilt with no tag at all, giving a bare `FROM <repo>`
+        # that resolves to `latest` at build time, and with `--digest` the
+        # annotation names no build.
+        raise SystemExit(
+            "--tag is empty. That is a variable that did not expand, not a tag; "
+            "writing it would leave the base image unpinned."
+        )
     # Refuse what cannot be honoured rather than writing it out: both a bad
     # name and a bad digest produce a reference no runtime can pull, and both
     # would surface at build time in CI, far from the command that caused them.

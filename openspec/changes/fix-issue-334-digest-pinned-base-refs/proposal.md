@@ -26,7 +26,9 @@ assertion at `tests/unit/test_base_image_preflight.py:269`.
   with an error that names the valid keys.
 - When the script writes a digest, it records the human-readable tag from `--tag` in a
   `# base-image-pin: <tag> (managed by update_service_base_images.py)` line directly above
-  the `FROM` line. With no `--tag`, it writes no annotation.
+  the `FROM` line. `--digest` requires `--tag`: a digest names no build, so a pin written
+  without one records nothing about which build the services are on, and the repository
+  guard rejects it.
   The annotation cannot ride on the `FROM` line, which is where this proposal first put it
   and where issue #334 specified it. A Dockerfile recognises `#` as a comment only at the
   start of a line, so a trailing `# <tag>` is read as a second `FROM` argument and both

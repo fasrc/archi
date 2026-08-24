@@ -514,8 +514,8 @@ Four rules decide what the script writes:
 3. A rewrite that names no new reference keeps the digest it finds. A bare
    `--switch-source` moves the registry only; it never unpins an image.
 4. The script refuses an unknown `--digest` name, a malformed digest, a digest for a base
-   image that `--bases` excludes, and `--digest` without `--tag`. Each exits non-zero and
-   writes nothing. The last one matters because a digest names no build: without a tag to
+   image that `--bases` excludes, `--digest` without `--tag`, and an empty `--tag`. Each
+   exits non-zero and writes nothing. The last one matters because a digest names no build: without a tag to
    record above it, the pin says nothing about which build the services are on, and
    `test_service_templates_pin_one_explicit_base_tag` fails.
 

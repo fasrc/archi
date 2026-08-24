@@ -302,6 +302,45 @@ def test_a_digest_without_a_tag_is_refused(tmp_path, monkeypatch):
     assert (templates / "Dockerfile-chat").read_text() == original
 
 
+def test_an_empty_tag_is_refused(tmp_path, monkeypatch):
+    """`--tag ""` is a shell variable that did not expand, not a tag.
+
+    Both call sites pass `--tag "${{ ... }}"` from a workflow output, so an
+    empty value is one unset output away. Accepting it unpins the base: with no
+    `--digest`, `_build_image_spec` sees a falsy tag and writes a bare
+    `FROM <repo>` that resolves to `latest` at build time. With `--digest` it
+    writes an annotation naming no build, which the script no longer recognises
+    as its own and the repository guard rejects.
+    """
+    original = "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+
+    # The bare-tag path, which is `pr-preview.yml:274`'s exact shape.
+    module, templates = _write_fixtures(
+        tmp_path / "tag", monkeypatch, **{"Dockerfile-chat": original}
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            module,
+            monkeypatch,
+            ["--tag", "", "--switch-source", "ghcr", "--orig-tag", "all"],
+        )
+    assert "--tag" in str(excinfo.value)
+    assert (templates / "Dockerfile-chat").read_text() == original
+
+    # And the digest path, where whitespace is just as empty.
+    module, templates = _write_fixtures(
+        tmp_path / "digest", monkeypatch, **{"Dockerfile-chat": original}
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            module,
+            monkeypatch,
+            ["--digest", f"python={_PY_DIGEST}", "--tag", "   ", "--orig-tag", "all"],
+        )
+    assert "--tag" in str(excinfo.value)
+    assert (templates / "Dockerfile-chat").read_text() == original
+
+
 def test_a_base_image_with_no_digest_keeps_its_tag(tmp_path, monkeypatch):
     """Spec: a base image with no `--digest` keeps its tag.
 
