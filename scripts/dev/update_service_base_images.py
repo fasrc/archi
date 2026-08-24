@@ -196,11 +196,12 @@ def _update_line(
 
     if target_digest is not None:
         # A digest says nothing about which build it is, so the tag from
-        # `--tag` is recorded above it. No tag given, no annotation.
+        # `--tag` is recorded above it. `parse_args` requires `--tag` alongside
+        # `--digest`, so a build name is always available here.
         updated_spec = _build_image_spec(target_prefix, image, None, target_digest)
         if keeping_digest:
             updated_annotation = current_annotation
-        elif options.tag:
+        else:
             indent = intro[: len(intro) - len(intro.lstrip())]
             # The FROM line can be the last in a file and carry no line ending.
             # Reusing that would glue the two together as "# ...tagFROM ...",
@@ -212,8 +213,6 @@ def _update_line(
                 f"{indent}{ANNOTATION_PREFIX}{options.tag}"
                 f"{ANNOTATION_SUFFIX}{separator}"
             )
-        else:
-            updated_annotation = None
     else:
         updated_spec = _build_image_spec(target_prefix, image, target_tag)
         # An annotation names the build a digest is. A tag reference names its
@@ -360,6 +359,16 @@ def parse_args() -> UpdateOptions:
                 f"(selected: {', '.join(args.bases)})"
             )
         digests_by_image[BASE_IMAGE_MAP[name]] = digest
+
+    if digests_by_image and args.tag is None:
+        # A digest names no build. Without a tag to record above it, the pin
+        # says nothing about which build the services are on, and
+        # `test_service_templates_pin_one_explicit_base_tag` rejects it — so
+        # the command would leave the repository failing CI. Say so here.
+        raise SystemExit(
+            "--digest needs --tag: the tag names the build the digest is, and "
+            "is recorded above the reference. A digest alone records nothing."
+        )
 
     return UpdateOptions(
         tag=args.tag,

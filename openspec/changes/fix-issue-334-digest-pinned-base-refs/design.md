@@ -89,7 +89,7 @@ The annotation therefore goes on its own line, `# base-image-pin: <tag> (managed
 | Target reference | Source reference | Annotation line |
 |---|---|---|
 | digest | digest unchanged | kept as it is |
-| digest | digest moved, or was a tag | the annotation, from `--tag`, or none if `--tag` was omitted |
+| digest | digest moved, or was a tag | the annotation, from `--tag` (which `--digest` requires) |
 | tag | anything | none — an annotation never sits above a tag reference |
 
 Two consequences follow, and both are simplifications. Nothing is ever appended to the
@@ -117,8 +117,15 @@ floor. The comparison becomes the rebuilt line against the original line.
 ### `--digest` is repeatable and validated in `parse_args`
 
 `--digest NAME=sha256:HEX`, `action="append"`, parsed into a `dict` on `UpdateOptions`.
-Both failure modes raise `SystemExit` with an explicit message — an unrecognised `NAME`
-names the valid keys, a digest that does not match `sha256:[0-9a-f]{64}` is refused.
+Every failure mode raises `SystemExit` with an explicit message — an unrecognised `NAME`
+names the valid keys, a digest that does not match `sha256:[0-9a-f]{64}` is refused, a
+`NAME` that `--bases` excludes is refused, and `--digest` without `--tag` is refused.
+
+That last one was added after the repository guard was taught to read digests. A digest
+names no build, so a pin written without `--tag` records nothing about which build the
+services are on, and the guard rejects it — meaning the command would always leave the tree
+failing CI. The option that cannot be honoured is refused rather than half-applied, which
+is the same rule the other three follow.
 
 `SystemExit` rather than `parser.error` mirrors the existing idiom for a bad `--bases`
 value (`scripts/dev/update_service_base_images.py:121`) and keeps the message assertable

@@ -496,7 +496,7 @@ python scripts/dev/update_service_base_images.py \
 | Option | Effect |
 |---|---|
 | `--tag <tag>` | The tag to write. With `--digest`, the tag is recorded in a `# base-image-pin:` line above the reference instead. |
-| `--digest <name>=sha256:<64 hex>` | Pins that base image by digest. Repeatable. `<name>` is `python` or `pytorch`. |
+| `--digest <name>=sha256:<64 hex>` | Pins that base image by digest. Repeatable. `<name>` is `python` or `pytorch`. Requires `--tag`. |
 | `--orig-tag <tag>` | Only rewrites lines that carry this tag. **The default is `latest`.** Use `all` to match every line, digest-pinned lines included. |
 | `--switch-source <source>` | Moves the registry: `ghcr`, `dockerhub`, or `localhost`. |
 | `--bases <name> …` | Limits the run to these base images. Defaults to both. |
@@ -513,8 +513,11 @@ Four rules decide what the script writes:
    the whole wording matches, so a comment of your own above a `FROM` line is safe.
 3. A rewrite that names no new reference keeps the digest it finds. A bare
    `--switch-source` moves the registry only; it never unpins an image.
-4. The script refuses an unknown `--digest` name, a malformed digest, and a digest for a
-   base image that `--bases` excludes. Each of those exits non-zero and writes nothing.
+4. The script refuses an unknown `--digest` name, a malformed digest, a digest for a base
+   image that `--bases` excludes, and `--digest` without `--tag`. Each exits non-zero and
+   writes nothing. The last one matters because a digest names no build: without a tag to
+   record above it, the pin says nothing about which build the services are on, and
+   `test_service_templates_pin_one_explicit_base_tag` fails.
 
 Two CI jobs call the script: `pr-preview.yml` points the templates at the PR's base-image
 build, and `test-and-build-tag.yml` points them at the release build.

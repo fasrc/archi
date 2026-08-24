@@ -277,12 +277,36 @@ def test_a_digest_is_written_with_the_tag_beside_it(tmp_path, monkeypatch):
     assert ":dev-abc1234" not in target.read_text()
 
 
-def test_a_digest_with_no_tag_is_written_without_a_comment(tmp_path, monkeypatch):
-    """Spec: a digest with no tag is written without a comment.
+def test_a_digest_without_a_tag_is_refused(tmp_path, monkeypatch):
+    """A digest names no build, so `--digest` needs `--tag` to name one.
 
-    Also spec: a base image with no `--digest` keeps its tag. The pytorch line
-    in the same run is named by neither `--digest` nor `--tag`, so it must come
-    through untouched.
+    Without it the script would write a pin that records nothing about which
+    build it is — and `test_service_templates_pin_one_explicit_base_tag`
+    rejects exactly that, so the command would leave the repository failing
+    CI. Refusing at the command says so where the operator can act on it.
+    """
+    original = "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+    module, templates = _write_fixtures(
+        tmp_path, monkeypatch, **{"Dockerfile-chat": original}
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            module,
+            monkeypatch,
+            ["--digest", f"python={_PY_DIGEST}", "--orig-tag", "all"],
+        )
+
+    message = str(excinfo.value)
+    assert "--tag" in message
+    assert (templates / "Dockerfile-chat").read_text() == original
+
+
+def test_a_base_image_with_no_digest_keeps_its_tag(tmp_path, monkeypatch):
+    """Spec: a base image with no `--digest` keeps its tag.
+
+    The pytorch line here is named by `--tag` but by no `--digest`, so it moves
+    to the new tag and gains neither a digest nor an annotation.
     """
     module, templates = _write_fixtures(
         tmp_path,
@@ -294,16 +318,27 @@ def test_a_digest_with_no_tag_is_written_without_a_comment(tmp_path, monkeypatch
     )
 
     _run(
-        module, monkeypatch, ["--digest", f"python={_NEW_DIGEST}", "--orig-tag", "all"]
+        module,
+        monkeypatch,
+        [
+            "--digest",
+            f"python={_NEW_DIGEST}",
+            "--tag",
+            "dev-abc1234",
+            "--orig-tag",
+            "all",
+        ],
     )
 
-    python_line = (templates / "Dockerfile-chat").read_text()
-    assert python_line == f"FROM ghcr.io/fasrc/a2rchi-python-base@{_NEW_DIGEST}\n"
-    assert "#" not in python_line
+    assert (templates / "Dockerfile-chat").read_text() == (
+        f"{_ANN}dev-abc1234{_ANN_END}\n"
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{_NEW_DIGEST}\n"
+    )
 
-    pytorch_line = (templates / "Dockerfile-gpu").read_text()
-    assert pytorch_line == "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4\n"
-    assert "@sha256:" not in pytorch_line
+    pytorch = (templates / "Dockerfile-gpu").read_text()
+    assert pytorch == "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-abc1234\n"
+    assert "@sha256:" not in pytorch
+    assert "base-image-pin" not in pytorch
 
 
 def test_a_comment_only_rewrite_is_still_written(tmp_path, monkeypatch, capsys):
@@ -579,62 +614,53 @@ def test_a_no_op_run_on_a_digest_line_changes_nothing(tmp_path, monkeypatch):
     assert target.read_text() == original
 
 
-def test_repeating_the_same_digest_without_a_tag_keeps_the_annotation(
-    tmp_path, monkeypatch
-):
-    """The annotation survives whenever the digest does not move.
+def test_re_pinning_the_same_digest_and_tag_changes_nothing(tmp_path, monkeypatch):
+    """Running the documented pin command twice is a no-op.
 
-    Naming the digest already on the line is the same situation as naming
-    none: it still points at the build the comment names, so dropping the
-    comment loses the only human-readable digest-to-build mapping for nothing.
+    Nothing moves, so nothing is written and no file is reported. An operator
+    re-running the command after a partial failure should not see the tree
+    churn.
     """
-    original = f"{_ANN}dev-4314ac4{_ANN_END}\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+    original = (
+        f"{_ANN}dev-4314ac4{_ANN_END}\n"
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+    )
     module, templates = _write_fixtures(
         tmp_path, monkeypatch, **{"Dockerfile-chat": original}
     )
     target = templates / "Dockerfile-chat"
 
-    # Same digest, no --tag, no source change: nothing moves at all.
-    _run(
-        module,
-        monkeypatch,
-        ["--digest", f"python={_PY_DIGEST}", "--orig-tag", "all"],
-    )
+    pin = [
+        "--digest",
+        f"python={_PY_DIGEST}",
+        "--tag",
+        "dev-4314ac4",
+        "--switch-source",
+        "ghcr",
+        "--orig-tag",
+        "all",
+    ]
+    _run(module, monkeypatch, pin)
     assert target.read_text() == original
 
-    # Same digest, no --tag, registry moves: the annotation rides along.
-    _run(
-        module,
-        monkeypatch,
-        [
-            "--digest",
-            f"python={_PY_DIGEST}",
-            "--switch-source",
-            "dockerhub",
-            "--orig-tag",
-            "all",
-        ],
-    )
-    assert target.read_text() == (
-        f"{_ANN}dev-4314ac4{_ANN_END}\nFROM docker.io/a2rchi/a2rchi-python-base@{_PY_DIGEST}\n"
-    )
+    _run(module, monkeypatch, pin)
+    assert target.read_text() == original
 
 
-def test_moving_to_a_different_digest_without_a_tag_drops_the_annotation(
-    tmp_path, monkeypatch
-):
-    """The other half of the same rule: a moved digest strips a stale comment.
+def test_moving_the_digest_replaces_the_annotation(tmp_path, monkeypatch):
+    """A moved digest takes the old annotation with it.
 
-    The comment named the old build. With no `--tag` there is no new build
-    name to write, so the line carries the digest alone rather than a comment
-    that now lies.
+    The old annotation named the build the previous digest was. Leaving it
+    would put two disagreeing answers in the file; the new `--tag` names the
+    build the new digest is.
     """
     module, templates = _write_fixtures(
         tmp_path,
         monkeypatch,
         **{
             "Dockerfile-chat": (
-                f"{_ANN}dev-4314ac4{_ANN_END}\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+                f"{_ANN}dev-4314ac4{_ANN_END}\n"
+                f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
             )
         },
     )
@@ -643,10 +669,18 @@ def test_moving_to_a_different_digest_without_a_tag_drops_the_annotation(
     _run(
         module,
         monkeypatch,
-        ["--digest", f"python={_NEW_DIGEST}", "--orig-tag", "all"],
+        [
+            "--digest",
+            f"python={_NEW_DIGEST}",
+            "--tag",
+            "dev-abc1234",
+            "--orig-tag",
+            "all",
+        ],
     )
 
     assert target.read_text() == (
+        f"{_ANN}dev-abc1234{_ANN_END}\n"
         f"FROM ghcr.io/fasrc/a2rchi-python-base@{_NEW_DIGEST}\n"
     )
     assert "dev-4314ac4" not in target.read_text()
@@ -726,7 +760,7 @@ def test_no_rewritten_from_line_ever_carries_an_inline_comment(tmp_path, monkeyp
     }
     runs = [
         ["--digest", f"python={_PY_DIGEST}", "--tag", "dev-abc", "--orig-tag", "all"],
-        ["--digest", f"python={_NEW_DIGEST}", "--orig-tag", "all"],
+        ["--digest", f"python={_NEW_DIGEST}", "--tag", "dev-xyz", "--orig-tag", "all"],
         ["--tag", "pr-7", "--switch-source", "ghcr", "--orig-tag", "all"],
         ["--switch-source", "dockerhub", "--orig-tag", "all"],
     ]

@@ -78,21 +78,29 @@ discovered only at build time in CI, far from the command that caused them.
 - **AND** the python-base line reads `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<64 hex>`
 - **AND** the line does not carry a bare tag reference
 
-#### Scenario: A digest with no tag is written without an annotation
+#### Scenario: A digest with no --tag is refused
 
-- **WHEN** the same command is run with no `--tag`
-- **THEN** the line carries the digest reference and no annotation line above it
+- **WHEN** the script runs with `--digest python=sha256:<64 hex>` and no `--tag`
+- **THEN** the script exits non-zero
+- **AND** the error names `--tag`
+- **AND** no template file is written
 
-#### Scenario: Naming the digest already on the line keeps its annotation
+A digest names no build, so `--tag` is what supplies one for the annotation. Without it the
+script would write a pin recording nothing about which build the services are on — and the
+repository guard `test_service_templates_pin_one_explicit_base_tag` rejects exactly that, so
+the command would leave the tree failing CI. Refusing at the command puts the error where
+the operator can act on it.
 
-- **WHEN** a digest-pinned line is processed with `--digest` naming the digest it already carries, and no `--tag`
-- **THEN** the annotation naming that digest survives, with or without a `--switch-source`
+#### Scenario: Re-running the same pin changes nothing
+
+- **WHEN** a digest-pinned line is processed with `--digest` and `--tag` naming what it already carries
+- **THEN** the file is not rewritten and no update is reported
 
 The annotation survives exactly when the digest does not move and no new tag is given to
-name. Naming the digest already on the line is the same situation as naming none: it still
-points at the build the comment names, so dropping the comment would lose the only
-human-readable mapping from digest to build for no reason. A digest that *does* move takes
-the old comment with it, because that comment now names the wrong build.
+name it — which, since `--digest` requires `--tag`, means a rewrite that names no new
+reference at all, such as a bare `--switch-source`. A digest that *does* move takes the old
+annotation with it and gets the new `--tag` in its place, because the old one names the
+wrong build.
 
 #### Scenario: An unknown --digest name is refused
 
