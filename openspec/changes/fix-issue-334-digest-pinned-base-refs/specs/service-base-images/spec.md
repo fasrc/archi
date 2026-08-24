@@ -57,8 +57,7 @@ digest-pinned line is not in.
 
 The reader and the writer have to agree. A round trip that drifted by a stray comment or a
 lost prefix would leave the templates a little different after every pin, which is how a
-diff stops being reviewable. The one exception is trailing whitespace on a line that
-receives an annotation — see the normalization scenario below.
+diff stops being reviewable.
 
 ### Requirement: The rewriter can pin a base image by digest
 
@@ -75,13 +74,14 @@ discovered only at build time in CI, far from the command that caused them.
 #### Scenario: A digest is written with the tag beside it
 
 - **WHEN** the script runs with `--digest python=sha256:<64 hex> --tag dev-abc1234 --switch-source ghcr --orig-tag all`
-- **THEN** the python-base line reads `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<64 hex>  # dev-abc1234`
+- **THEN** the line above the python-base line reads `# base image: dev-abc1234`
+- **AND** the python-base line reads `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<64 hex>`
 - **AND** the line does not carry a bare tag reference
 
-#### Scenario: A digest with no tag is written without a comment
+#### Scenario: A digest with no tag is written without an annotation
 
 - **WHEN** the same command is run with no `--tag`
-- **THEN** the line carries the digest reference and no trailing comment
+- **THEN** the line carries the digest reference and no annotation line above it
 
 #### Scenario: Naming the digest already on the line keeps its annotation
 
@@ -137,46 +137,58 @@ successful pin.
 - **THEN** the pytorch-base lines carry the tag `dev-abc1234`
 - **AND** they carry no digest
 
-### Requirement: A digest annotation never outlives the digest it names
+### Requirement: The annotation is a line of its own, and never outlives its digest
 
-When the script replaces a digest reference with a tag reference, it SHALL remove the trailing `# <tag>` comment from that line.
+The script SHALL write the annotation as a `# base image: <tag>` line directly above the `FROM` line, and SHALL remove that line when it replaces the digest reference with a tag.
 
-The comment exists only to say in words which build the digest is. Once the digest is gone
-the comment names a build the line no longer references, and the next reader — human or
-script — has two disagreeing answers on one line.
+The annotation cannot ride on the `FROM` line. A Dockerfile recognises `#` as a comment only
+at the start of a line, so a trailing `# <tag>` is read as a second `FROM` argument; docker
+and podman both reject the file with "FROM requires either one or three arguments", and
+every service build fails before an image is pulled. This was measured against both builders
+on 2026-08-24.
 
-Only a trailing comment is removed, and only on a line whose reference carried a digest. Any
-other trailing content on the `FROM` line is not an annotation and SHALL survive the
-rewrite.
+The annotation exists only to say in words which build the digest is. Once the digest is gone
+the annotation names a build the file no longer references, and the next reader — human or
+script — has two disagreeing answers.
+
+The script SHALL remove only an annotation line carrying its own exact wording, so a
+comment the template owns is never deleted for merely sitting above a `FROM` line. Nothing
+on the `FROM` line itself is the script's to touch beyond the reference: a build-stage name
+and a stray trailing space both SHALL survive the rewrite.
 
 #### Scenario: The stale annotation is dropped on the way back to a tag
 
-- **WHEN** a line reading `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<hex>  # dev-4314ac4` is rewritten with `--tag pr-7 --orig-tag all`
+- **WHEN** a `# base image: dev-4314ac4` line above `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<hex>` is rewritten with `--tag pr-7 --orig-tag all`
 - **THEN** the line reads `FROM ghcr.io/fasrc/a2rchi-python-base:pr-7`
-- **AND** `dev-4314ac4` does not appear on the line
+- **AND** `dev-4314ac4` does not appear in the file
 
 #### Scenario: Other trailing content survives the rewrite
 
-- **WHEN** a digest-pinned line also carries a build-stage name, as in `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<hex> AS builder  # dev-4314ac4`
+- **WHEN** a digest-pinned line also carries a build-stage name, as in `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<hex> AS builder`
 - **THEN** the rewritten line still carries `AS builder`
-- **AND** it no longer carries the comment
+- **AND** the annotation line above it is gone
 
-#### Scenario: Trailing whitespace is normalized on a line that gains an annotation
+#### Scenario: No rewrite ever puts a comment on a FROM line
+
+- **WHEN** any combination of `--tag`, `--digest`, and `--switch-source` rewrites a template
+- **THEN** no `FROM` line in the result contains a `#`
+
+#### Scenario: A stray trailing space survives a pin
 
 - **WHEN** a line ending in a stray space, as 13 of the 15 service templates do today, is pinned to a digest with a `--tag`
-- **THEN** the annotation is separated from the reference by exactly two spaces
+- **THEN** the annotation appears on the line above and the stray space is still there
 - **AND** pinning the same line again changes nothing further
 
-An annotation cannot be appended to a line that ends in whitespace and then read back: the
-stray space and the comment's own separator run together, and nothing in the line says
-where one ends and the other begins. The whitespace is therefore normalized at the moment
-an annotation is written — once, on the first pin — and every rewrite after that is
-byte-stable. This is the single exception to the rule that other trailing content survives,
-and it is forced rather than chosen: the alternative is a reference the script cannot read
-back correctly.
+#### Scenario: A comment the script did not write is left alone
+
+- **WHEN** a template's own comment sits directly above a `FROM` line that the script rewrites
+- **THEN** that comment is still there afterwards
+
+The script matches its own annotation wording exactly. Removing a comment for its position
+alone would delete words the template owns.
 
 #### Scenario: A line whose only change is its comment is still written
 
-- **WHEN** a rewrite leaves the image reference identical but removes or replaces the trailing comment
+- **WHEN** a rewrite leaves the image reference identical but removes or replaces the annotation line
 - **THEN** the file is written to disk
 - **AND** the script reports the file as updated

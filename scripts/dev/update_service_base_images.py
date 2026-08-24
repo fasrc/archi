@@ -99,21 +99,15 @@ def _build_image_spec(
 
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
-_TRAILING_COMMENT_RE = re.compile(r"(?P<rest>.*?)(?P<comment>\s+#.*)$")
+# The annotation this script writes ABOVE a digest-pinned FROM line. It cannot
+# go on the FROM line itself: a Dockerfile recognises "#" as a comment only at
+# the start of a line, so a trailing "# tag" becomes a second FROM argument and
+# both docker and podman reject the file with "FROM requires either one or
+# three arguments". The wording is matched exactly, so the script only ever
+# removes a line it wrote and never a comment belonging to the template.
+ANNOTATION_PREFIX = "# base image: "
 
-
-def _split_trailing_comment(suffix: str) -> Tuple[str, str]:
-    """Split a FROM line's trailing text into (rest, comment).
-
-    The comment starts at the first "#" that follows whitespace. The reference
-    itself can never contain it: the `\\S+` image group stops at the space
-    before it. `rest` holds anything else the line carries, such as a build
-    stage name, and always survives a rewrite.
-    """
-    match = _TRAILING_COMMENT_RE.match(suffix)
-    if not match:
-        return suffix, ""
-    return match.group("rest"), match.group("comment")
+_ANNOTATION_RE = re.compile(rf"^\s*{re.escape(ANNOTATION_PREFIX)}\S+\s*$")
 
 
 def _split_line_ending(line: str) -> Tuple[str, str]:
@@ -126,31 +120,49 @@ def _split_line_ending(line: str) -> Tuple[str, str]:
     return line, ""
 
 
-def _update_line(line: str, base_name: str, options: UpdateOptions) -> Tuple[str, bool]:
+def _is_annotation(line: Optional[str]) -> bool:
+    """Report whether a line is an annotation this script wrote."""
+    if line is None:
+        return False
+    core, _ = _split_line_ending(line)
+    return bool(_ANNOTATION_RE.match(core))
+
+
+def _update_line(
+    line: str,
+    base_name: str,
+    options: UpdateOptions,
+    current_annotation: Optional[str] = None,
+) -> Tuple[Optional[str], str, bool]:
+    """Rewrite one FROM line and the annotation line that sits above it.
+
+    Returns (annotation, line, changed). `annotation` is the line to write
+    above this one, or None for no annotation. `changed` covers both, so a
+    rewrite that moves only the annotation still reports as a change.
+    """
     core, newline = _split_line_ending(line)
     stripped = core.lstrip()
     if not stripped.startswith("FROM "):
-        return line, False
+        return current_annotation, line, False
 
     match = re.match(
         r"(?P<intro>\s*FROM\s+(?:--platform=\S+\s+)?)(?P<image>\S+)(?P<suffix>.*)", core
     )
     if not match:
-        return line, False
+        return current_annotation, line, False
 
     intro, image_spec, suffix = (
         match.group("intro"),
         match.group("image"),
         match.group("suffix"),
     )
-    rest, comment = _split_trailing_comment(suffix)
     prefix, image, current_tag, current_digest = _split_image_spec(image_spec)
 
     if image != base_name:
-        return line, False
+        return current_annotation, line, False
 
     if options.orig_tag is not None and current_tag != options.orig_tag:
-        return line, False
+        return current_annotation, line, False
 
     target_tag = options.tag if options.tag is not None else current_tag
     target_prefix = prefix
@@ -169,7 +181,7 @@ def _update_line(line: str, base_name: str, options: UpdateOptions) -> Tuple[str
     # The annotation survives exactly when the digest does not move and no new
     # tag is given to name — whether the caller left the digest unnamed or
     # named the one already there. A digest that has not moved still points at
-    # the build its comment names.
+    # the build its annotation names.
     keeping_digest = (
         options.tag is None
         and current_digest is not None
@@ -177,34 +189,56 @@ def _update_line(line: str, base_name: str, options: UpdateOptions) -> Tuple[str
     )
 
     if target_digest is not None:
-        # A digest says nothing about which build it is, so the tag goes in a
-        # comment beside it. No tag given, no comment.
+        # A digest says nothing about which build it is, so the tag from
+        # `--tag` is recorded above it. No tag given, no annotation.
         updated_spec = _build_image_spec(target_prefix, image, None, target_digest)
         if keeping_digest:
-            # The digest did not move, so its annotation still tells the truth.
-            updated_comment = comment
+            updated_annotation = current_annotation
         elif options.tag:
-            # 13 of the 15 service templates end this line with a stray space.
-            # An annotation cannot be appended to such a line and read back —
-            # the split cannot tell the stray space from the comment's own
-            # separator — so the trailing whitespace is normalized here, once.
-            rest = rest.rstrip()
-            updated_comment = f"  # {options.tag}"
+            indent = intro[: len(intro) - len(intro.lstrip())]
+            updated_annotation = f"{indent}{ANNOTATION_PREFIX}{options.tag}{newline}"
         else:
-            updated_comment = ""
+            updated_annotation = None
     else:
         updated_spec = _build_image_spec(target_prefix, image, target_tag)
         # The annotation names the build the digest is. Writing a tag in place
         # of a digest leaves it naming a build the line no longer references.
-        updated_comment = "" if current_digest is not None else comment
+        updated_annotation = None if current_digest is not None else current_annotation
 
-    # Compare the whole line, not just the reference: re-pinning the same
-    # digest under a new tag changes only the annotation, and that is a change.
-    updated_line = f"{intro}{updated_spec}{rest}{updated_comment}{newline}"
-    if updated_line == line:
-        return line, False
+    # The FROM line's trailing text — a build stage name, a stray space — is
+    # never this script's to touch, because the annotation no longer lives
+    # there.
+    updated_line = f"{intro}{updated_spec}{suffix}{newline}"
+    changed = updated_line != line or updated_annotation != current_annotation
+    return updated_annotation, updated_line, changed
 
-    return updated_line, True
+
+def _rewrite_lines(
+    lines: Iterable[str], base_name: str, options: UpdateOptions
+) -> Tuple[list, bool]:
+    """Rewrite every FROM line for one base, and the annotation above it."""
+    out: list = []
+    changed = False
+
+    for line in lines:
+        # An annotation this script wrote sits directly above its FROM line, so
+        # the last line emitted is the only place it can be.
+        current_annotation = out[-1] if out and _is_annotation(out[-1]) else None
+
+        annotation, new_line, line_changed = _update_line(
+            line, base_name, options, current_annotation
+        )
+
+        if line_changed:
+            if current_annotation is not None:
+                out.pop()
+            if annotation is not None:
+                out.append(annotation)
+            changed = True
+
+        out.append(new_line)
+
+    return out, changed
 
 
 def update_base_tags(options: UpdateOptions) -> None:
@@ -220,12 +254,9 @@ def update_base_tags(options: UpdateOptions) -> None:
 
         for base in bases:
             image_name = BASE_IMAGE_MAP[base]
-            new_lines = []
-            file_changed = False
-            for line in updated.splitlines(keepends=True):
-                new_line, line_changed = _update_line(line, image_name, options)
-                new_lines.append(new_line)
-                file_changed = file_changed or line_changed
+            new_lines, file_changed = _rewrite_lines(
+                updated.splitlines(keepends=True), image_name, options
+            )
             updated = "".join(new_lines)
             changed = changed or file_changed
 

@@ -66,23 +66,37 @@ single split is unambiguous, and a reference with no `@` follows the untouched o
 path. This is a smaller change than a full reference grammar, and it keeps the existing
 prefix/image segmentation code as the one place that logic lives.
 
-### The trailing annotation is parsed out of `suffix`, not out of the reference
+### The annotation is a line of its own, above the `FROM` line
 
-`_update_line` splits `suffix` into a leading part and a trailing comment, at the first `#`
-that follows whitespace. The reference itself can never contain the `#`, because the
-`\S+` group stops at the space before it.
+The issue specified a trailing `  # <tag>` on the `FROM` line, and this design followed it
+until a pre-PR review round tested the result against a real builder. **That form is not a
+valid Dockerfile.** A Dockerfile recognises `#` as a comment only at the start of a line, so
+the trailing text is read as a second `FROM` argument:
 
-The write policy is a four-way table on (what we are writing, what was there):
+```
+$ docker build -f Dockerfile.trailing .
+dockerfile parse error on line 1: FROM requires either one or three arguments
+$ podman build -f Dockerfile.trailing .
+Error: FROM requires either one argument, or three: FROM <source> [AS <name>]
+```
 
-| Target reference | Source reference | Comment written |
+Measured against docker 29.5.1 and podman 5.8.2 on 2026-08-24. Had it shipped, #333's pin
+would have broken every service build at parse time, before any image was pulled.
+
+The annotation therefore goes on its own line, `# base image: <tag>`, directly above the
+`FROM` line. The write policy is a three-way table on (what we are writing, what was there):
+
+| Target reference | Source reference | Annotation line |
 |---|---|---|
-| digest | anything | `  # <tag>` from `--tag`, or none if `--tag` was omitted |
-| tag | had a digest | none — the old annotation is dropped |
-| tag | had a tag | `suffix` is passed through unchanged |
+| digest | digest unchanged | kept as it is |
+| digest | digest moved, or was a tag | `# base image: <tag>` from `--tag`, or none if `--tag` was omitted |
+| tag | anything | none — an annotation never outlives its digest |
 
-The last row is deliberate. Dropping a comment from every rewritten line would be a wider
-behaviour change than the issue asks for, and the annotation is only ever written next to a
-digest, so a comment on a tag line is somebody else's and is left alone.
+Two consequences follow, and both are simplifications. Nothing is ever appended to the
+`FROM` line, so its trailing text — a build-stage name, the stray space 13 of the 15
+templates carry — is passed through untouched with no special case. And the script removes
+an annotation line only when it matches its own exact wording, so a comment the template
+owns is never deleted for merely sitting in that position.
 
 ### Change detection compares the whole line
 
@@ -111,16 +125,20 @@ Dockerfiles. No test reads or writes the real templates.
 
 ## Risks / Trade-offs
 
-- **A tag-to-tag rewrite still carries a stale comment through, if one exists** → Accepted,
-  and pinned by a spec scenario rather than left implicit. No template has such a comment
-  today, and widening the rule would silently delete comments this issue never discussed.
-- **Comment-only rewrites now write files that previously were skipped** → Bounded to lines
-  the script already matched and already intended to update. The printed `Updated <path>`
-  line stays truthful, which is what the CI operator reads.
-- **The comment heuristic could misread a `#` that is not a comment** → A Dockerfile `FROM`
-  line has no other use for a `#` after whitespace, and the reference token is consumed
-  before `suffix` starts. The `AS builder` scenario is the guard against over-eager
-  stripping.
+- **The script could delete a comment the template owns** → It removes an annotation line
+  only when the line matches `# base image: <value>` exactly, so position alone is never
+  enough. Pinned by a scenario using a hand-written comment directly above a rewritten
+  `FROM` line.
+- **Annotation-only rewrites now write files that previously were skipped** → Bounded to
+  lines the script already matched and already intended to update. The printed
+  `Updated <path>` line stays truthful, which is what the CI operator reads.
+- **The annotation could drift from the digest it names** → The two are written and removed
+  together in one place, and change detection covers the pair, so a rewrite that moves only
+  the annotation is still written out.
+- **The output could be an invalid Dockerfile** → This already happened once, with the
+  trailing-comment form the issue specified. A scenario now asserts that no `FROM` line in
+  any rewrite result contains a `#`, across every option combination that writes an
+  annotation. The unit suite cannot run a builder, so that invariant stands in for one.
 - **No coverage signal on this file** → `--cov=src` means `diff-cover` cannot vouch for
   these lines. Mitigated by making the scenario list the acceptance bar: every scenario in
   the spec delta becomes a named test, and the gate still fails on a red test.
