@@ -170,6 +170,26 @@ it, changing no image and no deployment — so skipping it would report a cached
 incompatible base as ready. Only an image the host does not yet hold is beyond a dry run's
 reach, and that is what the unverified marker is for.
 
+The dry-run summary SHALL end in exactly one of three mutually exclusive states — ready,
+refused, or not verified — and SHALL NOT print readiness or deploy-now language in the last
+of them. `src/cli/utils/helpers.py:384-385` currently emits "Configuration and secrets are
+valid. Run without --dry to deploy." unconditionally. Adding an unverified marker beside that
+sentence produces a summary that contradicts itself, and an operator who reads the last line
+is told to proceed on a host the dry run could not check. A marker alone therefore does not
+satisfy this requirement; the readiness claim has to go with it.
+
+#### Scenario: An unverified dry run does not tell the operator to deploy
+
+- **WHEN** `archi create --dry` finishes in the not-verified state for any reason
+- **THEN** the summary does not state that the configuration is valid and ready to deploy
+- **AND** it does not instruct the operator to re-run without `--dry`
+- **AND** the not-verified state and its reason are what the summary reports instead
+
+#### Scenario: A fully verified dry run still reports readiness
+
+- **WHEN** `archi create --dry` verifies every base image and every other check passes
+- **THEN** the summary reports readiness as it does today
+
 #### Scenario: Dry run pulls nothing
 
 - **WHEN** `archi create --dry` is invoked and a required base image is absent locally but reachable

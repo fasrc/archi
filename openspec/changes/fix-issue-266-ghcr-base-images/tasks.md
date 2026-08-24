@@ -43,10 +43,11 @@
 - [ ] 7.6 `model: opus` — RED then GREEN: the unverified marker, no-runtime route. `archi create --dry` on a host with no container runtime exits 0, and the summary marks the base images NOT VERIFIED naming the absent runtime. Assert the marker, not just the exit code — a test that checks only exit 0 passes the very defect this branch exists to fix.
 - [ ] 7.7 `model: opus` — RED then GREEN: the unverified marker, unsupported-probe route. With a runtime present but the reachability probe unsupported, and a base image absent locally, the dry run exits 0 and marks the base images NOT VERIFIED naming the unsupported probe. Separate from 7.6 because the two routes reach the same state by different paths.
 - [ ] 7.8 `model: sonnet` — RED then GREEN: a real create whose runtime cannot be invoked is refused before the teardown. Covers the `--podman` path, which `cli_main.py:160-170` does not check today.
+- [ ] 7.9 `model: opus` — RED then GREEN: an unverified dry run must NOT print readiness language. `src/cli/utils/helpers.py:384-385` emits "Configuration and secrets are valid. Run without --dry to deploy." unconditionally today, so give the summary three mutually exclusive terminal states (ready / refused / not verified) and assert that the not-verified state prints neither that sentence nor any other deploy-now instruction. Adding a marker without removing the readiness claim leaves the contradiction intact and would pass a marker-only test.
 
 ## 8. Documentation
 
-- [ ] 8.1 `model: haiku` — document the one-time `docker login ghcr.io` for a clean host: classic PAT with `read:packages`, SSO authorization if enforced, and the note that fine-grained PATs cannot work. Place it with the existing deployment or install docs; do not add a credential to any config or secrets file.
+- [ ] 8.1 `model: haiku` — document the one-time registry login for a clean host: classic PAT with `read:packages`, SSO authorization if enforced, and the note that fine-grained PATs cannot work. Give the instruction for BOTH supported container tools — `docker login ghcr.io` and `podman login ghcr.io` — since podman does not read docker's credential store, and `--podman` is a supported deployment mode. Place it with the existing deployment or install docs; do not add a credential to any config or secrets file.
 
 ## 9. Gate and review
 
