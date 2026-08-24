@@ -62,7 +62,7 @@ Two standing notes for every task:
       fail — today `_update_line` returns unchanged when the image spec matches. Implement:
       compare the rebuilt line against the original line instead of comparing only the image
       spec. Gate green; commit.
-- [ ] 3.4 `model: sonnet` — RED test, two cases: `--digest java=sha256:<64 hex>` exits non-zero with a message
+- [x] 3.4 `model: sonnet` — RED test, two cases: `--digest java=sha256:<64 hex>` exits non-zero with a message
       naming `python` and `pytorch`, and `--digest python=deadbeef` exits non-zero; in both
       cases the fixture file on disk is unchanged. Watch them fail. Implement both checks in
       `parse_args`, raising `SystemExit` with an explicit message, mirroring the unknown-base

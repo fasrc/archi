@@ -20,6 +20,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 _SCRIPT = (
     Path(__file__).resolve().parents[2]
     / "scripts"
@@ -330,3 +332,42 @@ def test_a_comment_only_rewrite_is_still_written(tmp_path, monkeypatch, capsys):
         f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}  # dev-abc1234\n"
     )
     assert "Updated dockerfiles/Dockerfile-chat" in capsys.readouterr().out
+
+
+def test_an_unknown_digest_name_is_refused(tmp_path, monkeypatch):
+    """Spec: an unknown --digest name is refused.
+
+    The error names the valid keys, because the alternative is a reference no
+    runtime can pull, discovered at build time in CI far from the command that
+    wrote it.
+    """
+    original = "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+    module, templates = _write_fixtures(
+        tmp_path, monkeypatch, **{"Dockerfile-chat": original}
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            module,
+            monkeypatch,
+            ["--digest", f"java={_NEW_DIGEST}", "--orig-tag", "all"],
+        )
+
+    message = str(excinfo.value)
+    assert "java" in message
+    assert "python" in message and "pytorch" in message
+    assert (templates / "Dockerfile-chat").read_text() == original
+
+
+def test_a_malformed_digest_is_refused(tmp_path, monkeypatch):
+    """Spec: a malformed digest is refused."""
+    original = "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+    module, templates = _write_fixtures(
+        tmp_path, monkeypatch, **{"Dockerfile-chat": original}
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(module, monkeypatch, ["--digest", "python=deadbeef", "--orig-tag", "all"])
+
+    assert "deadbeef" in str(excinfo.value)
+    assert (templates / "Dockerfile-chat").read_text() == original

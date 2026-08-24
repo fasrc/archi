@@ -87,6 +87,8 @@ def _build_image_spec(
     return repo
 
 
+_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
+
 _TRAILING_COMMENT_RE = re.compile(r"(?P<rest>.*?)(?P<comment>\s+#.*)$")
 
 
@@ -231,9 +233,22 @@ def parse_args() -> UpdateOptions:
     orig_tag = args.orig_tag
     if orig_tag in ("all", ""):
         orig_tag = None
+    # Refuse what cannot be honoured rather than writing it out: both a bad
+    # name and a bad digest produce a reference no runtime can pull, and both
+    # would surface at build time in CI, far from the command that caused them.
     digests_by_image = {}
     for entry in args.digest:
         name, _, digest = entry.partition("=")
+        if name not in BASE_IMAGE_MAP:
+            raise SystemExit(
+                f"Unknown --digest base name: {name} "
+                f"(valid names: {', '.join(sorted(BASE_IMAGE_MAP))})"
+            )
+        if not _DIGEST_RE.fullmatch(digest):
+            raise SystemExit(
+                f"Malformed --digest value for {name}: {digest} "
+                "(expected sha256:<64 hex characters>)"
+            )
         digests_by_image[BASE_IMAGE_MAP[name]] = digest
 
     return UpdateOptions(
