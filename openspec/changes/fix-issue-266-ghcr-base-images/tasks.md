@@ -4,6 +4,13 @@
 
 ## 2. Pin the templates (RED first)
 
+> **Verified by dry run 2026-08-23** (rewrite applied and reverted on a clean tree): the
+> command in 2.3 changes exactly 15 files, all under `src/cli/templates/dockerfiles/`, and
+> leaves zero `docker.io/a2rchi` references. **Several rewritten `FROM` lines carry a trailing
+> space** (`FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4 `), which the templates already
+> had before the rewrite. Strip the line before comparing the tag — a naive
+> `ref.rsplit(":", 1)[1] == tag` reads `"dev-4314ac4 "` and fails.
+
 - [ ] 2.1 `model: sonnet` — add the failing test to `tests/unit/test_python_version_declaration.py`: every service template whose `FROM` names an `a2rchi-*-base` image must use the `ghcr.io/fasrc/` prefix. Assert the failure message names the offending file. Watch it fail against the current `docker.io/a2rchi/` templates.
 - [ ] 2.2 `model: sonnet` — add the second failing test, separately: the tag must be explicit and not `latest`, and all such references must share one tag. This is a distinct test because a prefix-only check passes a floating `ghcr.io/fasrc/...:latest`.
 - [ ] 2.3 `model: haiku` — run `python scripts/dev/update_service_base_images.py --tag <pin from 1.1> --switch-source ghcr`. Confirm exactly 15 changed files, all under `src/cli/templates/dockerfiles/`, and that `Dockerfile-base`, `Dockerfile-base-gpu`, `Dockerfile-postgres`, `Dockerfile-grafana`, and both `base-*-image/Dockerfile` files are untouched. Both tests from 2.1 and 2.2 go green.
