@@ -168,3 +168,61 @@ def test_stale_annotation_is_dropped_on_the_way_back_to_a_tag(tmp_path, monkeypa
 
     assert target.read_text() == "FROM ghcr.io/fasrc/a2rchi-python-base:pr-7\n"
     assert "dev-4314ac4" not in target.read_text()
+
+
+def test_other_trailing_content_survives_the_rewrite(tmp_path, monkeypatch):
+    """Spec: other trailing content survives the rewrite.
+
+    Only the comment is an annotation. A build stage name is not, and the
+    comment split must not be greedy enough to swallow it.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": (
+                f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}"
+                " AS builder  # dev-4314ac4\n"
+            )
+        },
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        ["--tag", "pr-7", "--switch-source", "ghcr", "--orig-tag", "all"],
+    )
+
+    assert target.read_text() == (
+        "FROM ghcr.io/fasrc/a2rchi-python-base:pr-7 AS builder\n"
+    )
+
+
+def test_a_comment_on_a_tag_line_is_left_alone(tmp_path, monkeypatch):
+    """Design: a tag-to-tag rewrite passes the trailing text through.
+
+    An annotation is only ever written beside a digest, so a comment on a
+    tag-pinned line belongs to somebody else and is not this script's to
+    delete.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": (
+                "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4  # hand-written\n"
+            )
+        },
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        ["--tag", "pr-7", "--switch-source", "ghcr", "--orig-tag", "all"],
+    )
+
+    assert target.read_text() == (
+        "FROM ghcr.io/fasrc/a2rchi-python-base:pr-7  # hand-written\n"
+    )

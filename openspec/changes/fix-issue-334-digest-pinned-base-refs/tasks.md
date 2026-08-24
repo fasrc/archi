@@ -40,7 +40,7 @@ Two standing notes for every task:
       and a trailing comment at the first `#` that follows whitespace, and drop the comment
       when the source reference carried a digest and the target reference is a tag. Gate
       green; commit.
-- [ ] 2.2 `model: sonnet` — RED test: a fixture line reading
+- [x] 2.2 `model: sonnet` — RED test: a fixture line reading
       `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<64 hex> AS builder  # dev-4314ac4`
       rewritten to a tag keeps ` AS builder` and loses the comment. Watch it fail if 2.1's
       split was too greedy; make it green. Gate green; commit.
