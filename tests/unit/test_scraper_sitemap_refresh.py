@@ -863,10 +863,22 @@ class TestMaplessPassStillCrawls:
             f"got {crawled[0]!r}"
         )
 
-    def test_mapless_pass_warns_and_does_not_log_an_error(
+    def test_mapless_pass_warns_and_the_handler_logs_no_error(
         self, refresh_harness, monkeypatch, caplog
     ):
-        """A degraded pass stays visible, but as a warning — the pass succeeded."""
+        """A degraded pass stays visible, but as a warning — the pass completed.
+
+        Scoped deliberately to the records this handler emits. A real below-floor
+        or over-cap expansion also logs its own ERROR ("failing ingest") inside
+        ``expand_sitemap_source`` (``sitemap_source.py``) before it raises, and
+        that call is out of scope here: the same function backs the full ingest,
+        where a below-floor expansion really does fail the run. Asserting "no
+        ERROR anywhere" would therefore be true only because this test stubs
+        ``_expand_sitemaps`` — a claim the production path does not honour.
+
+        The narrow claim is the real one: ``schedule_collect_links`` itself no
+        longer reports an error for a pass that goes on to complete.
+        """
         manager = refresh_harness["manager"]
         persistence = refresh_harness["persistence"]
 
@@ -883,15 +895,24 @@ class TestMaplessPassStillCrawls:
             manager.schedule_collect_links(persistence)
 
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        own_errors = [
+            r
+            for r in caplog.records
+            if r.levelno >= logging.ERROR and r.funcName == "schedule_collect_links"
+        ]
 
         assert len(warnings) == 1, (
             "exactly one warning must record the degraded pass; "
             f"got {[r.getMessage() for r in warnings]!r}"
         )
-        assert errors == [], (
-            "a degraded-but-completed pass is not an error; "
-            f"got {[r.getMessage() for r in errors]!r}"
+        assert warnings[0].funcName == "schedule_collect_links", (
+            "the warning must come from the handler itself — this also proves the "
+            "funcName filter below is not vacuous, since the removed logger.error "
+            f"was emitted from the same function; got {warnings[0].funcName!r}"
+        )
+        assert own_errors == [], (
+            "a degraded-but-completed pass is not an error from this handler; "
+            f"got {[r.getMessage() for r in own_errors]!r}"
         )
         assert "never validated by a complete expansion" in warnings[0].getMessage(), (
             "with no prior map the warning must say the cached entries were never "

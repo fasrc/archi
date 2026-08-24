@@ -332,6 +332,15 @@ class ScraperManager:
                 # should trust the timestamps this pass writes, and that provenance
                 # is invisible from the entry count alone. The flag still gates the
                 # retention branch in _refresh_sitemap_lastmod_map.
+                #
+                # Reading the logs: a below-floor or over-cap expansion has already
+                # logged its own ERROR ("failing ingest") inside
+                # expand_sitemap_source before raising, so an operator sees that
+                # error followed by this warning. The error is accurate for the
+                # SOURCE — that sitemap was rejected — and this warning is accurate
+                # for the PASS, which continues. expand_sitemap_source is shared
+                # with the full ingest, where the same condition genuinely does
+                # fail the run, so its level is deliberately left alone here.
                 logger.warning(
                     "sitemap expansion failed (%s); continuing the scheduled crawl "
                     "with %d cached lastmod entries (%s) — pages absent from that "

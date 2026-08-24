@@ -164,3 +164,30 @@ Two findings. One adopted, one split, one pushed back on.
   method had exactly one `return` — the guard removed here — so every other scheduled
   pass, including every successful one, already ran that race. This change adds one rare
   path to a pre-existing defect rather than creating it. Filed as its own issue.
+
+## Codex GitHub review, round 2 (2026-08-24)
+
+Three inline findings on PR #341. Two adopted, one pushed back on.
+
+- **Adopted (P2) — the no-error assertion overclaimed.** `expand_sitemap_source` logs its
+  own `logger.error(... "failing ingest")` before raising on a below-floor or over-cap
+  expansion (`sitemap_source.py:522` and `:536`), so production emits an ERROR *and* this
+  handler's WARNING. The test asserted "no ERROR anywhere", which held only because it
+  stubs `_expand_sitemaps` and bypasses that path. The assertion is now scoped by
+  `funcName` to records this handler emits, which is the claim that is actually true in
+  production, plus a guard asserting the warning's own `funcName` so the filter cannot pass
+  vacuously. `expand_sitemap_source`'s level is left alone: the same function backs the
+  full ingest, where a below-floor expansion genuinely does fail the run.
+
+- **Adopted (P1) — `docs/docs/data_sources.md` was stale, and worse than reported.** Its
+  note claimed a scheduled `links` refresh does **not** re-read the input lists or
+  re-expand the sitemap. Both halves have been false since #181 / PR #230; only the
+  conclusion (new pages wait for a full ingest) was right, and for the wrong reason — the
+  crawl set is the catalog snapshot, not the expanded list. The note now states what the
+  scheduled pass really does, what a failed expansion now does, and how the resulting
+  ERROR-then-WARNING log pair reads.
+
+- **Pushed back (P1) — "validate against a running deployment".** `AGENTS.md:58-63` asks
+  for an end-to-end check. This repository's pre-merge end-to-end check is the `preview`
+  CI job, which deploys the PR head; it ran green on this PR. Redeploying the shared dev
+  stack to validate unmerged code is not the mechanism used here.
