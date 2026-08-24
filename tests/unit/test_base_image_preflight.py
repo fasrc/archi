@@ -744,3 +744,88 @@ def test_unverified_notes_lists_only_unverified_references():
 
     assert len(notes) == 1
     assert LOCAL_REF in notes[0]
+
+
+# --- Reading the declared floor without depending on a source checkout -------------------
+
+
+def test_declared_floor_prefers_the_source_pyproject_over_installed_metadata():
+    """Installed metadata can be stale, and here it demonstrably is.
+
+    This environment's `archi` distribution advertises `Requires-Python: >=3.7`, left over
+    from before the floor was corrected to `>=3.11`. A preflight that trusted that number
+    would accept the very Python 3.10 base image this whole change exists to reject, and it
+    would do so silently. The source tree is the authority whenever it is available.
+    """
+    floor = preflight.declared_python_floor()
+
+    from packaging.specifiers import SpecifierSet
+    from packaging.version import Version
+
+    assert not SpecifierSet(floor).contains(Version("3.10.20")), (
+        f"declared floor {floor!r} admits Python 3.10, which is the interpreter "
+        f"fasrc/archi#266 is about"
+    )
+
+
+def test_declared_floor_falls_back_to_installed_metadata_off_a_checkout(monkeypatch):
+    """An installed CLI has no pyproject.toml beside it; that must not crash `archi create`.
+
+    `Path(__file__).parents[2].parent` resolves to the site-packages directory for a
+    non-editable install, where no pyproject.toml exists.
+    """
+    monkeypatch.setattr(
+        preflight, "_source_pyproject", lambda: Path("/nonexistent/pyproject.toml")
+    )
+
+    floor = preflight.declared_python_floor()
+
+    assert floor, "no floor recovered without a source checkout"
+
+
+def test_declared_floor_raises_a_named_error_when_nothing_declares_it(monkeypatch):
+    """Better an explicit failure than a silently permissive floor."""
+    monkeypatch.setattr(
+        preflight, "_source_pyproject", lambda: Path("/nonexistent/pyproject.toml")
+    )
+    monkeypatch.setattr(preflight, "_metadata_python_floor", lambda: None)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.declared_python_floor()
+
+    assert "requires-python" in str(excinfo.value).lower()
+
+
+# --- Timeouts are not the same thing as an unsupported command ---------------------------
+
+
+def test_a_reachability_timeout_is_unreachable_not_unsupported(monkeypatch):
+    """A wedged `manifest inspect` is a registry problem, not a missing subcommand.
+
+    Reporting it as "this container tool does not support the probe" sends the operator to
+    look for a tooling fix that does not exist, and hides a degraded registry.
+    """
+    import subprocess
+
+    def _timeout(args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args, timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", _timeout)
+
+    assert (
+        preflight.ContainerProbe("docker").reachable(GHCR_REF)
+        is preflight.Cause.UNREACHABLE
+    )
+
+
+def test_a_pull_timeout_is_unreachable(monkeypatch):
+    import subprocess
+
+    def _timeout(args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args, timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", _timeout)
+
+    assert (
+        preflight.ContainerProbe("docker").pull(GHCR_REF) is preflight.Cause.UNREACHABLE
+    )

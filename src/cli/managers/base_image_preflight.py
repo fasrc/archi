@@ -342,6 +342,13 @@ class ContainerProbe:
         self.timeout = timeout
 
     def _run(self, args: Sequence[str], timeout: Optional[int] = None):
+        """Run one probe command. Returns the result, or a Cause when it could not run.
+
+        A timeout is deliberately distinguished from every other failure. Collapsing the two
+        made a wedged `manifest inspect` report itself as "this container tool does not
+        support the probe", which sends the operator hunting for a tooling problem that does
+        not exist while the real fault -- a slow or unhealthy registry -- goes unnamed.
+        """
         import subprocess
 
         try:
@@ -351,27 +358,34 @@ class ContainerProbe:
                 text=True,
                 timeout=timeout or self.timeout,
             )
-        except (OSError, ValueError):
+        except subprocess.TimeoutExpired:
+            return Cause.UNREACHABLE
+        except Exception:  # noqa: BLE001 - a probe must never raise into `archi create`
             return None
-        except Exception:  # noqa: BLE001 - a probe must never raise into the caller
-            return None
+
+    @staticmethod
+    def _ran(result) -> bool:
+        """True when ``_run`` produced a completed process rather than a Cause."""
+        return result is not None and not isinstance(result, Cause)
 
     def runtime_available(self) -> bool:
         result = self._run(["version", "--format", "{{.Client.Version}}"], timeout=10)
-        if result is not None and result.returncode == 0:
+        if self._ran(result) and result.returncode == 0:
             return True
         # Fall back on a non-zero exit too, not only on an exception: a tool that does not
         # implement `version --format` exits non-zero, and treating that as "no runtime"
         # would refuse a real create on a perfectly usable daemon.
         result = self._run(["--version"], timeout=10)
-        return bool(result and result.returncode == 0)
+        return bool(self._ran(result) and result.returncode == 0)
 
     def image_present(self, reference: str) -> bool:
         result = self._run(["image", "inspect", reference], timeout=30)
-        return bool(result and result.returncode == 0)
+        return bool(self._ran(result) and result.returncode == 0)
 
     def pull(self, reference: str) -> Optional[Cause]:
         result = self._run(["pull", reference])
+        if isinstance(result, Cause):
+            return result
         if result is None:
             return Cause.UNREACHABLE
         if result.returncode == 0:
@@ -380,7 +394,11 @@ class ContainerProbe:
 
     def reachable(self, reference: str) -> Optional[Cause]:
         result = self._run(["manifest", "inspect", reference], timeout=60)
+        if isinstance(result, Cause):
+            return result
         if result is None:
+            # The command could not be launched at all, which for `manifest` most often means
+            # the subcommand does not exist on this tool. A timeout took the branch above.
             return Cause.PROBE_UNSUPPORTED
         if result.returncode == 0:
             return None
@@ -390,7 +408,7 @@ class ContainerProbe:
         result = self._run(
             ["run", "--rm", "--entrypoint", "python", reference, "-V"], timeout=120
         )
-        if result is None or result.returncode != 0:
+        if not self._ran(result) or result.returncode != 0:
             return None
         return (result.stdout or result.stderr or "").strip() or None
 
@@ -500,15 +518,70 @@ def unverified_notes(
     ]
 
 
-def declared_python_floor(pyproject_path: Optional[Path] = None) -> str:
-    """The project's own ``requires-python``, read rather than duplicated as a constant."""
+def _source_pyproject() -> Path:
+    """Where ``pyproject.toml`` sits when archi runs from a source checkout."""
+    return Path(__file__).resolve().parents[2].parent / "pyproject.toml"
+
+
+def _read_pyproject_floor(path: Path) -> Optional[str]:
     import tomllib
 
-    path = pyproject_path or (
-        Path(__file__).resolve().parents[2].parent / "pyproject.toml"
+    try:
+        with open(path, "rb") as handle:
+            return tomllib.load(handle)["project"]["requires-python"]
+    except (OSError, KeyError, ValueError):
+        return None
+
+
+def _metadata_python_floor() -> Optional[str]:
+    """The floor recorded in the installed distribution's metadata, if any."""
+    try:
+        from importlib.metadata import PackageNotFoundError, metadata
+
+        return metadata("archi")["Requires-Python"] or None
+    except Exception:  # noqa: BLE001 - metadata lookup must not break `archi create`
+        return None
+
+
+def declared_python_floor(pyproject_path: Optional[Path] = None) -> str:
+    """The project's own ``requires-python``, read rather than duplicated as a constant.
+
+    Resolution order matters, and is not the obvious one:
+
+    1. An explicitly supplied path, for tests.
+    2. ``pyproject.toml`` from the source checkout, when there is one.
+    3. The installed distribution's metadata.
+
+    The source tree outranks installed metadata because that metadata can be stale, and in
+    practice is: an editable install made before the floor was corrected still advertises
+    ``>=3.7``. Trusting it would let the preflight accept the Python 3.10 base image this
+    module exists to reject, and do so silently.
+
+    Metadata is nonetheless a necessary fallback. A non-editable install puts this file under
+    ``site-packages``, where the computed source path lands on a ``pyproject.toml`` that is
+    not shipped; reading it unguarded would fail every ``archi create`` on an installed CLI,
+    ``--dry`` included.
+    """
+    if pyproject_path is not None:
+        floor = _read_pyproject_floor(Path(pyproject_path))
+        if floor:
+            return floor
+
+    source = _source_pyproject()
+    if source.exists():
+        floor = _read_pyproject_floor(source)
+        if floor:
+            return floor
+
+    floor = _metadata_python_floor()
+    if floor:
+        return floor
+
+    raise BaseImagePreflightError(
+        "Could not determine this project's requires-python floor from either "
+        f"{source} or the installed package metadata, so the base image cannot be "
+        "checked against it."
     )
-    with open(path, "rb") as handle:
-        return tomllib.load(handle)["project"]["requires-python"]
 
 
 def summarize(outcomes: Sequence[Outcome], container_tool: str = "docker") -> str:
