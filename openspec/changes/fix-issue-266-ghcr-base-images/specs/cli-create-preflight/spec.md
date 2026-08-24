@@ -16,12 +16,29 @@ absent locally is therefore pulled here, while refusing is still free, rather th
 compose to pull after the teardown. This is not extra work — compose pulls the same image
 moments later — it is the same work moved to where its failure is recoverable.
 
-The base references are read from the `FROM` lines of the templates the deployment will
-actually use, never inferred from the GPU flag. `Dockerfile-grader` is a non-GPU service
-that builds on the pytorch base, so a rule of the form "GPU implies pytorch, otherwise
-python" checks an image the deployment does not use and skips one it does.
+Which base images a deployment requires SHALL be determined by rule: the python base is
+always required, and the pytorch base is required if and only if a GPU is requested or the
+`grader` service is enabled. The rule SHALL be verified against the templates by a test, not
+merely asserted.
 
-No reference is exempt from the checked set.
+`Dockerfile-grader` is a non-GPU service that builds on the pytorch base, which is why the
+rule names that service rather than reducing to "GPU implies pytorch". A service-to-template
+mapping is deliberately not used: the mapping is not 1:1 (`chatbot` builds `Dockerfile-chat`,
+`benchmarking` builds `Dockerfile-benchmarks`, `config-seed` builds `Dockerfile-chat`
+irrespective of the chatbot), and both ways of recovering it — rendering the compose template
+early, or parsing its guards statically — cost more or are less reliable than the rule.
+
+The pytorch base is the expensive one, so the rule exists to avoid fetching it for a
+deployment that does not use it. No reference is exempt from the checked set.
+
+#### Scenario: The rule matches what the templates actually declare
+
+- **WHEN** the service Dockerfile templates are examined
+- **THEN** every template on the pytorch base is either a `-gpu` variant or `Dockerfile-grader`
+- **AND** no `-gpu` template sits on the python base
+
+This scenario is what keeps the rule honest. A new pytorch-based non-GPU service fails it,
+which forces the rule to be revisited rather than silently checking the wrong image.
 
 #### Scenario: Forced re-create whose base image cannot be obtained
 
@@ -37,11 +54,17 @@ No reference is exempt from the checked set.
 - **THEN** it is pulled before the teardown
 - **AND** the deployment proceeds
 
-#### Scenario: The checked set follows the templates, not the GPU flag
+#### Scenario: Grader without a GPU still requires the pytorch base
 
 - **WHEN** the enabled services include `grader` and no GPU is requested
-- **THEN** the pytorch base image is among those checked, because that is what `Dockerfile-grader` names
-- **AND** an image no enabled service builds on is not checked
+- **THEN** the pytorch base image is among those checked
+- **AND** the python base is also checked
+
+#### Scenario: Neither grader nor a GPU means no pytorch fetch
+
+- **WHEN** no GPU is requested and `grader` is not enabled
+- **THEN** the pytorch base image is not checked and not fetched
+- **AND** the python base is still checked
 
 #### Scenario: A locally built base reference that is not present is refused
 

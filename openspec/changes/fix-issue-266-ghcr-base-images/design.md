@@ -129,19 +129,44 @@ Collapsing these sends operators to `docker login` for a stale pin, which cannot
 authentication case additionally names the classic-PAT requirement, because the natural first
 attempt — a fine-grained PAT — fails with an indistinguishable "denied" and no hint as to why.
 
-### D4 — Base references are parsed from the template `FROM` lines, never inferred
+### D4 — Which base images are needed is decided by a two-image rule, not a service-to-template map
 
-`Dockerfile-grader` is a non-GPU service that nonetheless builds on the **pytorch** base.
-Any rule of the form "GPU implies pytorch, otherwise python" is therefore wrong, and would
-check an image the deployment does not use while skipping one it does.
+The first draft said "for each enabled service, read the `FROM` line of `Dockerfile-<service>`".
+Implementation showed that assumption is false. The service-to-template mapping is not 1:1:
+`chatbot` builds `Dockerfile-chat`, `benchmarking` builds `Dockerfile-benchmarks`,
+`redmine-mailer` covers both `Dockerfile-redmine` and `Dockerfile-mailbox`, and `config-seed`
+builds `Dockerfile-chat` with no GPU variant regardless of whether the chatbot is enabled.
 
-All 15 `FROM` lines are literal — no Jinja — so they are parseable directly from the
-templates. This matters because rendering (`prepare_deployment_files`, `:310`) happens after
-the teardown; a preflight that needed rendered output could not satisfy D1.
+Two ways to recover the real mapping were tried and rejected:
 
-Template selection mirrors the compose template: for each enabled service, `Dockerfile-<service>`
-plus the `-gpu` suffix when `gpu_ids` is set. No reference is exempted from the checked set —
-see D2 step 2 for why `localhost/` in particular is not a safe exemption.
+- **Render the compose template early and read its `dockerfile:` lines.** Exact, but the
+  render needs port configuration, the git version, grader rubrics, and MCP context, and it
+  re-runs the port availability probe (`templates_manager.py:1040-1066`). Reproducing all of
+  that above the teardown is a larger change than the preflight itself.
+- **Parse the `{% if %}` guards out of `base-compose.yaml` statically.** Unreliable, and
+  demonstrably so: a first extractor attributed `host_mode` to `config-seed` and
+  `gpu_ids == "all"` to `mailbox` by picking up inner conditionals instead of block guards.
+
+What the preflight actually needs is narrower than the mapping. There are only two base
+images, and the question is which of them this deployment requires:
+
+> **The python base is always required. The pytorch base is required if and only if
+> `gpu_ids` is set or the `grader` service is enabled.**
+
+Both inputs are available directly on the compose plan, with no template mapping at all. The
+python base is required by the `config-seed` and chatbot paths in effectively every
+deployment and is the smaller image, so including it unconditionally costs little. The
+expensive image is pytorch, and this rule never pulls it for a deployment that does not use
+it — which was the whole reason for not simply checking both.
+
+The rule is not asserted, it is **verified against the templates by a unit test**: every
+template on the pytorch base must be either a `*-gpu` variant or `Dockerfile-grader`, and no
+`*-gpu` template may sit on the python base. Checked against all 15 templates at design time
+with zero violations. A new pytorch-based non-GPU service fails that test and forces the rule
+to be revisited, which is the drift signal a hand-maintained mapping table would not give.
+
+`Dockerfile-grader` remains the reason this cannot be reduced to "GPU implies pytorch": it is
+a non-GPU service on the pytorch base, and it is why the rule names the service explicitly.
 
 ### D5 — The Python floor is checked for every base image, and an unreadable version refuses
 

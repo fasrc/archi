@@ -16,12 +16,18 @@
 - [x] 2.3 `model: haiku` — run `python scripts/dev/update_service_base_images.py --tag <pin from 1.1> --switch-source ghcr`. Confirm exactly 15 changed files, all under `src/cli/templates/dockerfiles/`, and that `Dockerfile-base`, `Dockerfile-base-gpu`, `Dockerfile-postgres`, `Dockerfile-grafana`, and both `base-*-image/Dockerfile` files are untouched. Both tests from 2.1 and 2.2 go green.
 - [x] 2.4 `model: haiku` — confirm zero `docker.io/a2rchi/` references remain under `src/cli/templates/dockerfiles/`.
 
-## 3. Preflight: reference discovery
+## 3. Preflight: which base images are required
 
-- [ ] 3.1 `model: sonnet` — RED: `extract_base_references()` in a new `src/cli/managers/base_image_preflight.py` returns the deduped `FROM` references for a given set of enabled services and GPU flag, reading the template files.
-- [ ] 3.2 `model: opus` — RED: the `grader` case. With `grader` enabled and no GPU, the pytorch base must appear in the result. This is the test that fails any GPU-flag-based inference (design D4), so write it before the implementation and confirm it fails for the right reason.
-- [ ] 3.3 `model: sonnet` — RED: a `localhost/`-prefixed reference IS included in the returned set. It is not exempt — see design D2 step 2. Guard this explicitly, since the first draft of the design exempted it.
-- [ ] 3.4 `model: sonnet` — GREEN: implement `extract_base_references()`.
+> **Plan corrected mid-implementation.** Group 3 originally said "for each enabled service,
+> read `Dockerfile-<service>`". That is wrong — the mapping is not 1:1 (`chatbot` builds
+> `Dockerfile-chat`, `benchmarking` builds `Dockerfile-benchmarks`, `config-seed` builds
+> `Dockerfile-chat` regardless of the chatbot). See design D4 for the two rejected ways of
+> recovering the mapping and the rule that replaced it.
+
+- [ ] 3.1 `model: opus` — RED: `required_base_images(gpu_ids, grader_enabled)` returns the python base always; adds the pytorch base when `gpu_ids` is set; adds it when `grader` is enabled with no GPU; and returns python only when neither holds. Four cases, four assertions.
+- [ ] 3.2 `model: opus` — RED: the rule-versus-templates guard. Every template on the pytorch base must be a `-gpu` variant or `Dockerfile-grader`, and no `-gpu` template may sit on the python base. This is what stops the rule drifting away from the templates it claims to describe; verified clean against all 15 at design time.
+- [ ] 3.3 `model: sonnet` — RED: the returned references carry the pinned `ghcr.io/fasrc/` tag read from the templates, not a hard-coded string, so the pin and the preflight cannot disagree.
+- [ ] 3.4 `model: sonnet` — GREEN: implement both functions.
 
 ## 4. Preflight: availability decision
 
