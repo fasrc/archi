@@ -54,11 +54,14 @@ jobs:
         run: python -m pytest tests/unit/ -v --tb=short
 
   # ── Build base images (only when inputs change) ─────────────────────
+  # SECURITY (#333): this job executes scripts the pull request itself can edit
+  # (scripts/dev/*.sh below), so it must never hold registry write credentials.
+  # The built image travels to the preview job as a workflow artifact; real
+  # publishing happens post-merge in publish-base-images.yml (push to dev/main).
   build-base-images:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
     env:
       ARCHI_DIR: ${{ github.workspace }}/archi-local
 
@@ -123,21 +126,22 @@ jobs:
           # Only build python base for PR preview (pytorch not used in smoke tests)
           scripts/dev/build_docker_images.sh -i a2rchi/a2rchi-python-base "${{ steps.detect.outputs.tag }}"
 
-      - name: Log in to GHCR
-        if: steps.detect.outputs.changed == 'true'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish updated base image
+      # zstd is preinstalled on ubuntu-latest; compression here so the artifact
+      # upload/download round-trip stays in the low minutes.
+      - name: Save base image for the preview job
         if: steps.detect.outputs.changed == 'true'
         env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          PUSH_LATEST: "false"
-        run: scripts/dev/push_docker_images.sh -i a2rchi/a2rchi-python-base "${{ steps.detect.outputs.tag }}"
+          TAG: ${{ steps.detect.outputs.tag }}
+        run: docker save "a2rchi/a2rchi-python-base:${TAG}" | zstd -T0 -o /tmp/base-image.tar.zst
+
+      - name: Upload base image artifact
+        if: steps.detect.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-base-image
+          path: /tmp/base-image.tar.zst
+          retention-days: 1
+          compression-level: 0
 
   # ── Smoke deployment + integration tests ────────────────────────────
   preview:
@@ -187,9 +191,9 @@ jobs:
           echo "Changed files:"; echo "$FILES"
           # Smoke-deploy-relevant (runtime) paths. scripts/dev/ is included because
           # the run-smoke action executes scripts/dev/run_smoke_preview.sh and the
-          # build/publish jobs call build_docker_images.sh / push_docker_images.sh /
-          # update_service_base_images.py — editing any of those changes the smoke
-          # path itself, so a PR touching them must NOT skip the smoke deploy.
+          # build job calls build_docker_images.sh / update_service_base_images.py
+          # — editing any of those changes the smoke path itself, so a PR touching
+          # them must NOT skip the smoke deploy.
           # tests/smoke/ for the same reason, one level down: run_smoke_preview.sh
           # executes tests/smoke/combined_smoke.sh, so a PR editing the smoke suite
           # itself would otherwise skip the very stage it changes.
@@ -263,11 +267,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull updated base image from GHCR
+      - name: Fetch base image built by this run
+        if: needs.build-base-images.outputs.changed == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-base-image
+          path: /tmp
+
+      - name: Load base image and tag it as the ghcr reference
         if: needs.build-base-images.outputs.changed == 'true'
         env:
           TAG: ${{ needs.build-base-images.outputs.tag }}
-        run: docker pull "ghcr.io/fasrc/a2rchi-python-base:${TAG}"
+        run: |
+          zstd -d --stdout /tmp/base-image.tar.zst | docker load
+          # The rewrite step below points the service templates at the ghcr
+          # reference; tag the loaded image with that exact name so the service
+          # builds resolve it locally instead of pulling an unpublished tag.
+          docker tag "a2rchi/a2rchi-python-base:${TAG}" "ghcr.io/fasrc/a2rchi-python-base:${TAG}"
 
       - name: Prepare base image references
         if: needs.build-base-images.outputs.changed == 'true'
