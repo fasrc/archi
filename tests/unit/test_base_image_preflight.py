@@ -759,21 +759,6 @@ def test_declared_floor_prefers_the_source_pyproject_over_installed_metadata():
     )
 
 
-def test_declared_floor_falls_back_to_installed_metadata_off_a_checkout(monkeypatch):
-    """An installed CLI has no pyproject.toml beside it; that must not crash `archi create`.
-
-    `Path(__file__).parents[2].parent` resolves to the site-packages directory for a
-    non-editable install, where no pyproject.toml exists.
-    """
-    monkeypatch.setattr(
-        preflight, "_source_pyproject", lambda: Path("/nonexistent/pyproject.toml")
-    )
-
-    floor = preflight.declared_python_floor()
-
-    assert floor, "no floor recovered without a source checkout"
-
-
 def test_declared_floor_raises_a_named_error_when_nothing_declares_it(monkeypatch):
     """Better an explicit failure than a silently permissive floor."""
     monkeypatch.setattr(
@@ -932,7 +917,14 @@ def test_an_explicitly_supplied_pyproject_that_is_malformed_refuses(tmp_path):
 
 
 def test_metadata_is_used_only_when_there_is_no_source_pyproject(monkeypatch):
-    """The fallback stays available for a genuine installed CLI, which has no checkout."""
+    """The fallback stays available for a genuine installed CLI, which has no checkout.
+
+    Both sides are stubbed on purpose. An earlier version of this test asserted that *some*
+    floor came back without stubbing the metadata lookup, which only held where `archi`
+    happens to be installed as a distribution -- true locally, false on CI, where the gate
+    installs no archi package and pytest runs straight from the checkout. A test that reads
+    ambient environment state is not testing the fallback.
+    """
     monkeypatch.setattr(
         preflight, "_source_pyproject", lambda: Path("/nonexistent/pyproject.toml")
     )
