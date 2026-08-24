@@ -32,7 +32,7 @@ Two standing notes for every task:
 
 ## 2. Drop the stale annotation on the way back to a tag
 
-- [ ] 2.1 `model: sonnet` — RED test: a fixture line reading
+- [x] 2.1 `model: sonnet` — RED test: a fixture line reading
       `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<64 hex>  # dev-4314ac4` run with
       `--tag pr-7 --switch-source ghcr --orig-tag all` must become
       `FROM ghcr.io/fasrc/a2rchi-python-base:pr-7`, with `dev-4314ac4` gone from the line.

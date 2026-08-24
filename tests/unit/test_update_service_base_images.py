@@ -141,3 +141,30 @@ def test_orig_tag_all_still_matches_a_tag_pinned_line(tmp_path, monkeypatch):
     )
 
     assert target.read_text() == "FROM ghcr.io/fasrc/a2rchi-python-base:pr-7\n"
+
+
+def test_stale_annotation_is_dropped_on_the_way_back_to_a_tag(tmp_path, monkeypatch):
+    """Spec: a digest annotation never outlives the digest it names.
+
+    The `# <tag>` comment says in words which build the digest is. Once the
+    digest is gone the comment names a build the line no longer references.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": (
+                f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}  # dev-4314ac4\n"
+            )
+        },
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        ["--tag", "pr-7", "--switch-source", "ghcr", "--orig-tag", "all"],
+    )
+
+    assert target.read_text() == "FROM ghcr.io/fasrc/a2rchi-python-base:pr-7\n"
+    assert "dev-4314ac4" not in target.read_text()

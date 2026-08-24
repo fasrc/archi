@@ -79,6 +79,23 @@ def _build_image_spec(prefix: str, image: str, tag: Optional[str]) -> str:
     return repo
 
 
+_TRAILING_COMMENT_RE = re.compile(r"(?P<rest>.*?)(?P<comment>\s+#.*)$")
+
+
+def _split_trailing_comment(suffix: str) -> Tuple[str, str]:
+    """Split a FROM line's trailing text into (rest, comment).
+
+    The comment starts at the first "#" that follows whitespace. The reference
+    itself can never contain it: the `\\S+` image group stops at the space
+    before it. `rest` holds anything else the line carries, such as a build
+    stage name, and always survives a rewrite.
+    """
+    match = _TRAILING_COMMENT_RE.match(suffix)
+    if not match:
+        return suffix, ""
+    return match.group("rest"), match.group("comment")
+
+
 def _split_line_ending(line: str) -> Tuple[str, str]:
     if line.endswith("\r\n"):
         return line[:-2], "\r\n"
@@ -106,7 +123,8 @@ def _update_line(line: str, base_name: str, options: UpdateOptions) -> Tuple[str
         match.group("image"),
         match.group("suffix"),
     )
-    prefix, image, current_tag, _current_digest = _split_image_spec(image_spec)
+    rest, comment = _split_trailing_comment(suffix)
+    prefix, image, current_tag, current_digest = _split_image_spec(image_spec)
 
     if image != base_name:
         return line, False
@@ -120,10 +138,15 @@ def _update_line(line: str, base_name: str, options: UpdateOptions) -> Tuple[str
         target_prefix = SOURCE_PREFIXES[options.switch_source]
 
     updated_spec = _build_image_spec(target_prefix, image, target_tag)
+
+    # The annotation names the build the digest is. Writing a tag in place of a
+    # digest leaves it naming a build the line no longer references, so it goes.
+    updated_comment = "" if current_digest is not None else comment
+
     if updated_spec == image_spec:
         return line, False
 
-    return f"{intro}{updated_spec}{suffix}{newline}", True
+    return f"{intro}{updated_spec}{rest}{updated_comment}{newline}", True
 
 
 def update_base_tags(options: UpdateOptions) -> None:
