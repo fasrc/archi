@@ -251,8 +251,12 @@ jobs:
           sudo systemctl restart docker
           docker info | grep -i "Storage Driver"
 
+      # Unconditional since fasrc/archi#266: the service templates now build FROM
+      # ghcr.io/fasrc/a2rchi-*-base, and those packages are `internal`, so an anonymous
+      # pull is refused. Gating this on build-base-images.changed would leave every PR
+      # that does not touch a base-image input unable to pull the base it builds on --
+      # which is most of them. The job already holds `packages: read`.
       - name: Log in to GHCR
-        if: needs.build-base-images.outputs.changed == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io

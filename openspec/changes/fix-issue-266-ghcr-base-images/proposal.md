@@ -59,5 +59,7 @@ names neither the base image nor the version conflict.
   `docker login ghcr.io` with a **classic** PAT carrying `read:packages`. Fine-grained PATs
   have no Packages permission and cannot be used (`fasrc/archi#322`). Documented, not
   automated: archi never stores, reads, or writes a registry credential.
-- **Not affected:** CI, which builds its own base image and authenticates with
-  `GITHUB_TOKEN`.
+- **CI:** `.github/workflows/pr-preview.yml` logs in to ghcr unconditionally now. It used to
+  skip the login on any PR that did not change a base-image input, which was fine while the
+  templates named a public Docker Hub image and breaks against an `internal` ghcr one. No new
+  permission is needed; the job already declares `packages: read`.
