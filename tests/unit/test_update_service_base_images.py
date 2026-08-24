@@ -524,3 +524,43 @@ def test_a_digest_for_a_base_excluded_by_bases_is_refused(tmp_path, monkeypatch)
     assert "python" in message
     assert "--bases" in message
     assert (templates / "Dockerfile-chat").read_text() == original
+
+
+def test_a_source_switch_alone_never_unpins_a_digest(tmp_path, monkeypatch):
+    """A rewrite that names no new reference must not remove the old one.
+
+    With no `--tag` and no `--digest` there is nothing to put in the
+    reference's place. Building one from the prefix and image alone yields a
+    bare `FROM ghcr.io/fasrc/a2rchi-python-base`, which resolves to `latest` at
+    build time — an unpinned base, reported as a successful update.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": (
+                f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}  # dev-4314ac4\n"
+            )
+        },
+    )
+    target = templates / "Dockerfile-chat"
+
+    # Move the registry only. The pin, and the annotation naming it, survive.
+    _run(module, monkeypatch, ["--switch-source", "dockerhub", "--orig-tag", "all"])
+
+    assert target.read_text() == (
+        f"FROM docker.io/a2rchi/a2rchi-python-base@{_PY_DIGEST}  # dev-4314ac4\n"
+    )
+
+
+def test_a_no_op_run_on_a_digest_line_changes_nothing(tmp_path, monkeypatch):
+    """The same guard, with nothing to change at all: the line is untouched."""
+    original = f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}  # dev-4314ac4\n"
+    module, templates = _write_fixtures(
+        tmp_path, monkeypatch, **{"Dockerfile-chat": original}
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(module, monkeypatch, ["--switch-source", "ghcr", "--orig-tag", "all"])
+
+    assert target.read_text() == original

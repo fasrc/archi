@@ -149,11 +149,24 @@ def _update_line(line: str, base_name: str, options: UpdateOptions) -> Tuple[str
 
     target_digest = options.digests_by_image.get(image)
 
+    # A rewrite that names no new reference — a bare `--switch-source`, say —
+    # has nothing to put in the old one's place. Without this the reference
+    # would be rebuilt from prefix and image alone, silently unpinning the base
+    # to a bare `FROM <repo>` that resolves to `latest` at build time.
+    keeping_digest = (
+        target_digest is None and options.tag is None and current_digest is not None
+    )
+    if keeping_digest:
+        target_digest = current_digest
+
     if target_digest is not None:
         # A digest says nothing about which build it is, so the tag goes in a
         # comment beside it. No tag given, no comment.
         updated_spec = _build_image_spec(target_prefix, image, None, target_digest)
-        if options.tag:
+        if keeping_digest:
+            # The digest did not move, so its annotation still tells the truth.
+            updated_comment = comment
+        elif options.tag:
             # 13 of the 15 service templates end this line with a stray space.
             # An annotation cannot be appended to such a line and read back —
             # the split cannot tell the stray space from the comment's own

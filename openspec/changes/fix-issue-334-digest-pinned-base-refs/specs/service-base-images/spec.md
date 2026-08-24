@@ -85,6 +85,18 @@ discovered only at build time in CI, far from the command that caused them.
 - **THEN** the script exits non-zero
 - **AND** no template file is written
 
+#### Scenario: A rewrite that names no new reference keeps the digest
+
+- **WHEN** a digest-pinned line is processed with `--switch-source dockerhub --orig-tag all` and no `--tag` and no `--digest`
+- **THEN** the line carries the same digest under the new prefix
+- **AND** the annotation naming that digest survives
+
+With no `--tag` and no `--digest` there is nothing to put in the reference's place.
+Rebuilding it from the prefix and image alone yields a bare `FROM <repo>`, which resolves to
+`latest` at build time — an unpinned base, written out and reported as a successful update.
+A rewrite that names no new reference moves the registry; it does not decide the image is
+no longer pinned.
+
 #### Scenario: A digest for a base excluded by --bases is refused
 
 - **WHEN** the script runs with `--digest python=sha256:<64 hex> --bases pytorch`
