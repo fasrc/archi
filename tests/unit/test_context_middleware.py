@@ -1254,6 +1254,54 @@ class TestPerModelDeclaredWindow:
 
         assert built[0].budget.trigger == 4_916
 
+    def test_a_provider_qualified_key_wins_over_a_bare_model_id(self):
+        """A model id alone is not a full identity.
+
+        Two providers can each serve ``llama3.2`` at different real windows, and
+        both can be unable to report one. A bare key would then hand one
+        provider's declared window to the other — the same borrowed-number
+        defect #235 Decision 12 exists to prevent, arriving by a third route.
+        The qualified key is the more specific statement, so it wins.
+        """
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=None,
+            config=_config(
+                context_windows={"vllm/llama3.2": 32_768, "llama3.2": 8_192}
+            ),
+            provider_id="vllm",
+            model_id="llama3.2",
+            declared_window_applies=False,
+        )
+
+        assert built[0].budget.trigger == 19_661
+
+    def test_a_bare_model_id_key_still_applies_when_nothing_qualifies_it(self):
+        """The documented shape keeps working: qualifying a key is optional."""
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=None,
+            config=_config(context_windows={OVERRIDE_MODEL: 32_768}),
+            provider_id="local",
+            model_id=OVERRIDE_MODEL,
+            declared_window_applies=False,
+        )
+
+        assert built[0].budget.trigger == 19_661
+
+    def test_one_providers_qualified_window_never_reaches_another(self):
+        """The point of qualifying: it scopes the entry to the provider named."""
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=None,
+            config=_config(context_windows={"vllm/llama3.2": 32_768}),
+            provider_id="ollama",
+            model_id="llama3.2",
+            declared_window_applies=False,
+        )
+
+        assert built == [], "another provider's window must not be borrowed"
+
     def test_the_warning_names_a_remedy_that_survives_the_override(self, caplog):
         """A remedy the reader cannot use is worse than none.
 

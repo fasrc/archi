@@ -479,3 +479,33 @@ def test_an_override_absent_from_the_per_model_map_still_installs_nothing():
     )
 
     assert view.agent["middleware"] == []
+
+
+def test_a_window_qualified_to_one_provider_does_not_follow_another():
+    """A model id is not a full identity, and the chat app overrides provider
+    and model independently (``app.py`` builds the view from both request
+    fields). Two providers can each serve one model id at different real
+    windows, so an entry the operator scoped to ``local/`` must not be handed to
+    a view bound to a different provider — that is the borrowed-number defect
+    ``declared_window_applies`` exists to prevent, arriving by a third route."""
+    config = {
+        "services": {
+            "chat_app": {
+                "context_editing": {
+                    "context_windows": {f"local/{OVERRIDE_MODEL}": 32768}
+                }
+            }
+        }
+    }
+    source = _BudgetPipeline(_llm(), provider="local", model="big-model", config=config)
+    source.refresh_agent(force=True)
+
+    same_provider = _build_request_local_pipeline(
+        source, _llm(), provider="local", model=OVERRIDE_MODEL, context_window=None
+    )
+    other_provider = _build_request_local_pipeline(
+        source, _llm(), provider="elsewhere", model=OVERRIDE_MODEL, context_window=None
+    )
+
+    assert _compiled_budget(same_provider).context_window == 32768
+    assert other_provider.agent["middleware"] == []

@@ -1421,6 +1421,7 @@ class BaseReActAgent:
             tool_budgets=self._tool_budgets(),
             model_label=f"{self.default_provider}/{self.default_model}",
             model_id=self.default_model,
+            provider_id=self.default_provider,
             declared_window_applies=not self._is_request_local,
         )
 
