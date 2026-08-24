@@ -38,6 +38,42 @@ step may precede a step that can refuse the deployment. `remove_existing_deploym
 
 ## Decisions
 
+### D0 — The governing invariant: never assert readiness that was not established
+
+Five rounds of adversarial review produced findings that all turned out to be the same defect
+wearing different clothes: a path on which the preflight let the deployment proceed, or told
+the operator it was fine, without having actually established that it was. Reachability
+standing in for compatibility; a `localhost/` prefix standing in for presence; an unknown probe
+result standing in for a pass; a dry run's silence standing in for a clean bill of health; a
+readiness sentence printed next to a not-verified marker.
+
+Enumerating those cases one at a time does not converge — each fix revealed the next instance.
+So the design states the rule instead, and every decision below is an application of it:
+
+> Every path either **establishes** that a base image is usable, **refuses**, or **says out
+> loud that it could not tell**. No path may pass silently on an assumption.
+
+Audit of every path against that invariant:
+
+| Path | Outcome | Established? |
+|---|---|---|
+| Real create, image present | version checked → ready or refuse | yes |
+| Real create, absent, pull succeeds | version checked → ready or refuse | yes |
+| Real create, pull fails (auth, unknown tag, unreachable, disk) | refuse, classified | n/a — refuses |
+| Real create, absent `localhost/` base | refuse | n/a — refuses |
+| Real create, version unreadable | refuse | n/a — refuses |
+| Real create, runtime uninvokable | refuse | n/a — refuses |
+| Dry, image present | version checked → ready or refuse | yes |
+| Dry, absent but reachable | exit 0, marked not verified | says so |
+| Dry, no runtime | exit 0, marked not verified | says so |
+| Dry, unsupported reachability probe | exit 0, marked not verified | says so |
+| Dry, auth refused / unknown tag / absent `localhost/` | refuse | n/a — refuses |
+| Dry, not verified | readiness language suppressed | says so |
+
+The real-create half has no unverified-pass row at all. The dry half has three, and each one
+is visible to the operator by name. A future change that adds a row to this table has to put
+it in one of those three columns.
+
 ### D1 — The preflight runs above the teardown, not above compose
 
 `fasrc/archi#266` says to call the preflight "before `DeploymentManager.start_deployment`"
