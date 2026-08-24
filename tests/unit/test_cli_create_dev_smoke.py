@@ -20,6 +20,39 @@ def fake_repo_root(monkeypatch):
     monkeypatch.setattr(service_builder, "_discover_repo_path", lambda: Path("/REPO"))
 
 
+@pytest.fixture(autouse=True)
+def satisfied_base_images(monkeypatch):
+    """Default every create test to a host that already holds its base images.
+
+    `archi create` now checks base images before the teardown (fasrc/archi#266). Without this,
+    every test in this file would depend on the developer's machine being logged in to ghcr,
+    and would fail for a reason unrelated to what it is testing. The preflight's own tests
+    install their own probe after this one, so they still exercise the real decision paths.
+    """
+    from src.cli.managers import base_image_preflight
+
+    class _SatisfiedProbe:
+        def __init__(self, container_tool="docker", timeout=600):
+            self.container_tool = container_tool
+
+        def runtime_available(self):
+            return True
+
+        def image_present(self, reference):
+            return True
+
+        def pull(self, reference):
+            return None
+
+        def reachable(self, reference):
+            return None
+
+        def python_version(self, reference):
+            return "Python 3.11.9"
+
+    monkeypatch.setattr(base_image_preflight, "ContainerProbe", _SatisfiedProbe)
+
+
 @pytest.fixture
 def archi_home(tmp_path, monkeypatch):
     """Point the CLI at a throwaway ARCHI_DIR.
@@ -1776,3 +1809,258 @@ def test_explicit_missing_env_file_is_reported_verbatim(
         f"the fallback hint must not appear when --env-file was supplied. "
         f"output:\n{result.output}\n"
     )
+
+
+# --- Base-image preflight wiring (fasrc/archi#266) ---------------------------------------
+
+
+def _patch_probe(
+    monkeypatch, *, runtime=True, present=(), fetch_error=None, version="Python 3.11.9"
+):
+    """Install a fake container probe so no test touches a daemon.
+
+    Returns the record of what the preflight asked the probe to do, so a test can assert
+    that a dry run pulled nothing.
+    """
+    from src.cli.managers import base_image_preflight
+
+    record = {"pulled": [], "reachable": [], "versions": []}
+
+    class _Probe:
+        def __init__(self, container_tool="docker", timeout=600):
+            self.container_tool = container_tool
+
+        def runtime_available(self):
+            return runtime
+
+        def image_present(self, reference):
+            return reference in present
+
+        def pull(self, reference):
+            record["pulled"].append(reference)
+            return fetch_error
+
+        def reachable(self, reference):
+            record["reachable"].append(reference)
+            return fetch_error
+
+        def python_version(self, reference):
+            record["versions"].append(reference)
+            return version
+
+    monkeypatch.setattr(base_image_preflight, "ContainerProbe", _Probe)
+    return record
+
+
+def test_force_create_with_unobtainable_base_image_keeps_existing_deployment(
+    archi_home, env_file, monkeypatch
+):
+    """The ordering contract, applied to the base image.
+
+    A create that cannot obtain a base image was always going to fail. If the check runs
+    where fasrc/archi#266 originally said to put it -- just before start_deployment -- it runs
+    *after* remove_existing_deployment and the operator loses a working deployment to a
+    failure that was knowable beforehand.
+    """
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+    from src.cli.managers import base_image_preflight
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    _patch_probe(monkeypatch, fetch_error=base_image_preflight.Cause.UNAUTHORIZED)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-e",
+            str(env_file),
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "--services",
+            "chatbot",
+        ],
+    )
+
+    assert result.exit_code != 0, f"expected refusal. output:\n{result.output}"
+    assert teardowns == [], f"deployment was torn down before the refusal: {teardowns}"
+    assert (existing / "marker.txt").exists(), "existing deployment was destroyed"
+
+
+def test_refusal_names_the_classic_pat_requirement(archi_home, env_file, monkeypatch):
+    """An operator told only "log in" retries with a fine-grained token and fails identically."""
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+    from src.cli.managers import base_image_preflight
+
+    _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    _patch_probe(monkeypatch, fetch_error=base_image_preflight.Cause.UNAUTHORIZED)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "-n",
+            "smoke",
+            "-e",
+            str(env_file),
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "--services",
+            "chatbot",
+        ],
+    )
+
+    combined = result.output + str(result.exception or "")
+    assert "read:packages" in combined, combined
+    assert "classic" in combined.lower(), combined
+
+
+def test_dry_run_pulls_nothing(archi_home, env_file, monkeypatch):
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    record = _patch_probe(monkeypatch, present=())
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    runner = CliRunner()
+    runner.invoke(
+        cli_main.create,
+        [
+            "--dry",
+            "-n",
+            "smoke",
+            "-e",
+            str(env_file),
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "--services",
+            "chatbot",
+        ],
+    )
+
+    assert record["pulled"] == [], f"a dry run pulled: {record['pulled']}"
+
+
+def test_dry_run_without_a_runtime_reports_not_verified_and_drops_the_readiness_claim(
+    archi_home, env_file, monkeypatch
+):
+    """A marker alone is not enough while the summary still says "run without --dry to deploy".
+
+    The two statements contradict each other, and an operator who reads the last line is told
+    to proceed on a host that was never checked.
+    """
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    _patch_probe(monkeypatch, runtime=False)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: False)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--dry",
+            "-n",
+            "smoke",
+            "-e",
+            str(env_file),
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "--services",
+            "chatbot",
+        ],
+    )
+
+    assert (
+        result.exit_code == 0
+    ), f"dry run should still succeed. output:\n{result.output}"
+    assert "NOT VERIFIED" in result.output, result.output
+    assert "Run without --dry to deploy" not in result.output, (
+        "the summary still claims readiness after failing to verify the base images:\n"
+        + result.output
+    )
+
+
+def test_dry_run_with_an_unsupported_probe_reports_not_verified(
+    archi_home, env_file, monkeypatch
+):
+    """A separate route to the same state; an implementation can easily cover one and not the other."""
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+    from src.cli.managers import base_image_preflight
+
+    _patch_probe(monkeypatch, fetch_error=base_image_preflight.Cause.PROBE_UNSUPPORTED)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--dry",
+            "-n",
+            "smoke",
+            "-e",
+            str(env_file),
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "--services",
+            "chatbot",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "NOT VERIFIED" in result.output, result.output
+    assert "Run without --dry to deploy" not in result.output, result.output
+
+
+def test_fully_verified_dry_run_still_reports_readiness(
+    archi_home, env_file, monkeypatch
+):
+    """The marker must not swallow the normal case."""
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+    from src.cli.managers import base_image_preflight
+
+    references = base_image_preflight.required_base_images(
+        gpu_ids=None, grader_enabled=False
+    )
+    _patch_probe(monkeypatch, present=tuple(references))
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--dry",
+            "-n",
+            "smoke",
+            "-e",
+            str(env_file),
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "--services",
+            "chatbot",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "NOT VERIFIED" not in result.output, result.output
