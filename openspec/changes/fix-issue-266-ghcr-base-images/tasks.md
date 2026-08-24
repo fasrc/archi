@@ -1,6 +1,6 @@
 ## 1. Confirm the pin
 
-- [ ] 1.1 `model: haiku` — re-derive the current pin: find the newest commit on `origin/dev` matching the base-input pattern in `.github/workflows/publish-base-images.yml`, and confirm both `ghcr.io/fasrc/a2rchi-python-base` and `ghcr.io/fasrc/a2rchi-pytorch-base` list the resulting `dev-<sha7>` tag. Expected as of 2026-08-23: `dev-4314ac4` from `4314ac4b`. Do not trust that line — re-derive it. If the two images have no tag in common, stop and report.
+- [x] 1.1 `model: haiku` — re-derive the current pin: find the newest commit on `origin/dev` matching the base-input pattern in `.github/workflows/publish-base-images.yml`, and confirm both `ghcr.io/fasrc/a2rchi-python-base` and `ghcr.io/fasrc/a2rchi-pytorch-base` list the resulting `dev-<sha7>` tag. Expected as of 2026-08-23: `dev-4314ac4` from `4314ac4b`. Do not trust that line — re-derive it. If the two images have no tag in common, stop and report.
 
 ## 2. Pin the templates (RED first)
 
@@ -11,10 +11,10 @@
 > had before the rewrite. Strip the line before comparing the tag — a naive
 > `ref.rsplit(":", 1)[1] == tag` reads `"dev-4314ac4 "` and fails.
 
-- [ ] 2.1 `model: sonnet` — add the failing test to `tests/unit/test_python_version_declaration.py`: every service template whose `FROM` names an `a2rchi-*-base` image must use the `ghcr.io/fasrc/` prefix. Assert the failure message names the offending file. Watch it fail against the current `docker.io/a2rchi/` templates.
-- [ ] 2.2 `model: sonnet` — add the second failing test, separately: the tag must be explicit and not `latest`, and all such references must share one tag. This is a distinct test because a prefix-only check passes a floating `ghcr.io/fasrc/...:latest`.
-- [ ] 2.3 `model: haiku` — run `python scripts/dev/update_service_base_images.py --tag <pin from 1.1> --switch-source ghcr`. Confirm exactly 15 changed files, all under `src/cli/templates/dockerfiles/`, and that `Dockerfile-base`, `Dockerfile-base-gpu`, `Dockerfile-postgres`, `Dockerfile-grafana`, and both `base-*-image/Dockerfile` files are untouched. Both tests from 2.1 and 2.2 go green.
-- [ ] 2.4 `model: haiku` — confirm zero `docker.io/a2rchi/` references remain under `src/cli/templates/dockerfiles/`.
+- [x] 2.1 `model: sonnet` — add the failing test to `tests/unit/test_python_version_declaration.py`: every service template whose `FROM` names an `a2rchi-*-base` image must use the `ghcr.io/fasrc/` prefix. Assert the failure message names the offending file. Watch it fail against the current `docker.io/a2rchi/` templates.
+- [x] 2.2 `model: sonnet` — add the second failing test, separately: the tag must be explicit and not `latest`, and all such references must share one tag. This is a distinct test because a prefix-only check passes a floating `ghcr.io/fasrc/...:latest`.
+- [x] 2.3 `model: haiku` — run `python scripts/dev/update_service_base_images.py --tag <pin from 1.1> --switch-source ghcr`. Confirm exactly 15 changed files, all under `src/cli/templates/dockerfiles/`, and that `Dockerfile-base`, `Dockerfile-base-gpu`, `Dockerfile-postgres`, `Dockerfile-grafana`, and both `base-*-image/Dockerfile` files are untouched. Both tests from 2.1 and 2.2 go green.
+- [x] 2.4 `model: haiku` — confirm zero `docker.io/a2rchi/` references remain under `src/cli/templates/dockerfiles/`.
 
 ## 3. Preflight: reference discovery
 

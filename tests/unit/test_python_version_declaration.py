@@ -278,3 +278,86 @@ def test_running_interpreter_satisfies_declared_specifier():
         f"running interpreter {running_version} does not satisfy the declared "
         f"requires-python specifier {requires_python}"
     )
+
+
+# --- Service base-image references (fasrc/archi#266) -----------------------------------
+#
+# The 15 service templates build on an `a2rchi-*-base` image. Upstream owns
+# `docker.io/a2rchi/*` and its `latest` tag floats, so a fork deployment picked up whatever
+# upstream last published -- which is how a Python 3.10 base met a `requires-python >=3.11`
+# project and broke `pip install .` on every clean host.
+#
+# The templates that define the base images themselves, and those building on third-party
+# images, are out of scope: they have no `a2rchi-*-base` reference to check, so the filter
+# below excludes them by construction rather than by name.
+
+_A2RCHI_BASE_RE = re.compile(r"^FROM\s+(?P<ref>\S*a2rchi-\w+-base\S*)", re.MULTILINE)
+
+_EXPECTED_BASE_REGISTRY = "ghcr.io/fasrc/"
+
+
+def _a2rchi_base_references():
+    """Every ``FROM`` reference naming an ``a2rchi-*-base`` image.
+
+    Returns ``(path, ref)``. The pattern captures ``\\S+``, so a template whose ``FROM`` line
+    carries trailing whitespace -- several do -- yields a reference without it.
+    """
+    references = []
+    for dockerfile in sorted(DOCKERFILE_TEMPLATE_DIR.rglob("Dockerfile*")):
+        for match in _A2RCHI_BASE_RE.finditer(dockerfile.read_text()):
+            references.append((dockerfile.relative_to(REPO_ROOT), match.group("ref")))
+    return references
+
+
+def test_service_templates_reference_the_fork_controlled_registry():
+    """An upstream-owned base image is not ours to pin, and upstream moved it under us."""
+    references = _a2rchi_base_references()
+
+    assert references, (
+        f"no `FROM ...a2rchi-*-base...` reference found under {DOCKERFILE_TEMPLATE_DIR} -- "
+        f"the guard would pass vacuously"
+    )
+
+    offenders = [
+        f"{path}: {ref}"
+        for path, ref in references
+        if not ref.startswith(_EXPECTED_BASE_REGISTRY)
+    ]
+    assert not offenders, (
+        f"service template(s) reference a base image outside {_EXPECTED_BASE_REGISTRY!r}: "
+        f"{offenders} -- that registry is not controlled by this fork, so its contents can "
+        f"change without a commit here (fasrc/archi#266)"
+    )
+
+
+def test_service_templates_pin_one_explicit_base_tag():
+    """A `ghcr.io/fasrc/` reference still floats if its tag is `latest`.
+
+    This is deliberately separate from the registry check above: a guard that tested only the
+    registry prefix would pass `ghcr.io/fasrc/a2rchi-python-base:latest` and reintroduce the
+    same defect class from a registry we do own.
+    """
+    references = _a2rchi_base_references()
+    assert references, f"no base reference found under {DOCKERFILE_TEMPLATE_DIR}"
+
+    untagged = [f"{path}: {ref}" for path, ref in references if ":" not in ref]
+    assert not untagged, (
+        f"service template(s) name a base image with no tag, which resolves to `latest`: "
+        f"{untagged}"
+    )
+
+    tags = {}
+    for path, ref in references:
+        tags.setdefault(ref.rpartition(":")[2], []).append(str(path))
+
+    floating = tags.get("latest")
+    assert not floating, (
+        f"service template(s) pin the floating tag `latest`: {sorted(floating)} -- the image "
+        f"behind it can be replaced without a commit here"
+    )
+
+    assert len(tags) == 1, (
+        f"service templates reference more than one base tag: "
+        f"{ {tag: sorted(paths) for tag, paths in tags.items()} } -- a split pin means some "
+        f"services build on a different interpreter than others"
+    )
