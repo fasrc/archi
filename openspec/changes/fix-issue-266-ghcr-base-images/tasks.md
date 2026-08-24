@@ -24,22 +24,22 @@
 > `Dockerfile-chat` regardless of the chatbot). See design D4 for the two rejected ways of
 > recovering the mapping and the rule that replaced it.
 
-- [ ] 3.1 `model: opus` — RED: `required_base_images(gpu_ids, grader_enabled)` returns the python base always; adds the pytorch base when `gpu_ids` is set; adds it when `grader` is enabled with no GPU; and returns python only when neither holds. Four cases, four assertions.
-- [ ] 3.2 `model: opus` — RED: the rule-versus-templates guard. Every template on the pytorch base must be a `-gpu` variant or `Dockerfile-grader`, and no `-gpu` template may sit on the python base. This is what stops the rule drifting away from the templates it claims to describe; verified clean against all 15 at design time.
-- [ ] 3.3 `model: sonnet` — RED: the returned references carry the pinned `ghcr.io/fasrc/` tag read from the templates, not a hard-coded string, so the pin and the preflight cannot disagree.
-- [ ] 3.4 `model: sonnet` — GREEN: implement both functions.
+- [x] 3.1 `model: opus` — RED: `required_base_images(gpu_ids, grader_enabled)` returns the python base always; adds the pytorch base when `gpu_ids` is set; adds it when `grader` is enabled with no GPU; and returns python only when neither holds. Four cases, four assertions.
+- [x] 3.2 `model: opus` — RED: the rule-versus-templates guard. Every template on the pytorch base must be a `-gpu` variant or `Dockerfile-grader`, and no `-gpu` template may sit on the python base. This is what stops the rule drifting away from the templates it claims to describe; verified clean against all 15 at design time.
+- [x] 3.3 `model: sonnet` — RED: the returned references carry the pinned `ghcr.io/fasrc/` tag read from the templates, not a hard-coded string, so the pin and the preflight cannot disagree.
+- [x] 3.4 `model: sonnet` — GREEN: implement both functions.
 
 ## 4. Preflight: availability decision
 
-- [ ] 4.1 `model: opus` — RED: `decide_availability()` as a pure function over probe results. Cover, one test each: present locally is available with no pull attempted; absent and pulled successfully is available; absent `localhost/` reference refuses without attempting a pull; absent and unauthorized refuses; absent and tag-unknown refuses; absent and registry-unreachable refuses; pull failed for lack of disk refuses with its own cause; runtime uninvokable refuses.
-- [ ] 4.2 `model: opus` — GREEN: implement `decide_availability()` returning a verdict plus a cause, never raising. Assert in a test that the function has no pass-with-note outcome — every result is available or refused.
-- [ ] 4.3 `model: opus` — RED then GREEN: the Python-floor comparison runs for EVERY reference, including one that had to be pulled. Below the floor refuses and the error names both the reported version and the `requires-python` floor. An unreadable or unparseable version ALSO refuses, with its own message — this reversed a first-draft decision to pass it with a note, so make the test assert the refusal explicitly.
+- [x] 4.1 `model: opus` — RED: `decide_availability()` as a pure function over probe results. Cover, one test each: present locally is available with no pull attempted; absent and pulled successfully is available; absent `localhost/` reference refuses without attempting a pull; absent and unauthorized refuses; absent and tag-unknown refuses; absent and registry-unreachable refuses; pull failed for lack of disk refuses with its own cause; runtime uninvokable refuses.
+- [x] 4.2 `model: opus` — GREEN: implement `decide_availability()` returning a verdict plus a cause, never raising. Assert in a test that the function has no pass-with-note outcome — every result is available or refused.
+- [x] 4.3 `model: opus` — RED then GREEN: the Python-floor comparison runs for EVERY reference, including one that had to be pulled. Below the floor refuses and the error names both the reported version and the `requires-python` floor. An unreadable or unparseable version ALSO refuses, with its own message — this reversed a first-draft decision to pass it with a note, so make the test assert the refusal explicitly.
 
 ## 5. Preflight: diagnostics
 
-- [ ] 5.1 `model: opus` — RED: message composition per cause (design D3). Unauthorized names the classic-PAT + `read:packages` requirement and mentions SSO; tag-unknown identifies a stale or deleted pin and does NOT say "log in"; unreachable names a network or registry fault; absent `localhost/` names the base-image build script; out-of-disk names disk exhaustion and does NOT say "log in"; unreadable version names the reference and the failed determination. Each names the image reference.
-- [ ] 5.2 `model: sonnet` — RED then GREEN: the login command in the message names `podman` under `--podman` and `docker` otherwise.
-- [ ] 5.3 `model: sonnet` — GREEN: implement message composition.
+- [x] 5.1 `model: opus` — RED: message composition per cause (design D3). Unauthorized names the classic-PAT + `read:packages` requirement and mentions SSO; tag-unknown identifies a stale or deleted pin and does NOT say "log in"; unreachable names a network or registry fault; absent `localhost/` names the base-image build script; out-of-disk names disk exhaustion and does NOT say "log in"; unreadable version names the reference and the failed determination. Each names the image reference.
+- [x] 5.2 `model: sonnet` — RED then GREEN: the login command in the message names `podman` under `--podman` and `docker` otherwise.
+- [x] 5.3 `model: sonnet` — GREEN: implement message composition.
 
 ## 6. Preflight: the probe seam
 
