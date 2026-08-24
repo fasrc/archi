@@ -72,6 +72,17 @@ discovered only at build time in CI, far from the command that caused them.
 - **WHEN** the same command is run with no `--tag`
 - **THEN** the line carries the digest reference and no trailing comment
 
+#### Scenario: Naming the digest already on the line keeps its annotation
+
+- **WHEN** a digest-pinned line is processed with `--digest` naming the digest it already carries, and no `--tag`
+- **THEN** the annotation naming that digest survives, with or without a `--switch-source`
+
+The annotation survives exactly when the digest does not move and no new tag is given to
+name. Naming the digest already on the line is the same situation as naming none: it still
+points at the build the comment names, so dropping the comment would lose the only
+human-readable mapping from digest to build for no reason. A digest that *does* move takes
+the old comment with it, because that comment now names the wrong build.
+
 #### Scenario: An unknown --digest name is refused
 
 - **WHEN** the script runs with `--digest java=sha256:<64 hex>`

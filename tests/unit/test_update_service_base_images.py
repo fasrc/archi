@@ -564,3 +564,76 @@ def test_a_no_op_run_on_a_digest_line_changes_nothing(tmp_path, monkeypatch):
     _run(module, monkeypatch, ["--switch-source", "ghcr", "--orig-tag", "all"])
 
     assert target.read_text() == original
+
+
+def test_repeating_the_same_digest_without_a_tag_keeps_the_annotation(
+    tmp_path, monkeypatch
+):
+    """The annotation survives whenever the digest does not move.
+
+    Naming the digest already on the line is the same situation as naming
+    none: it still points at the build the comment names, so dropping the
+    comment loses the only human-readable digest-to-build mapping for nothing.
+    """
+    original = f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}  # dev-4314ac4\n"
+    module, templates = _write_fixtures(
+        tmp_path, monkeypatch, **{"Dockerfile-chat": original}
+    )
+    target = templates / "Dockerfile-chat"
+
+    # Same digest, no --tag, no source change: nothing moves at all.
+    _run(
+        module,
+        monkeypatch,
+        ["--digest", f"python={_PY_DIGEST}", "--orig-tag", "all"],
+    )
+    assert target.read_text() == original
+
+    # Same digest, no --tag, registry moves: the annotation rides along.
+    _run(
+        module,
+        monkeypatch,
+        [
+            "--digest",
+            f"python={_PY_DIGEST}",
+            "--switch-source",
+            "dockerhub",
+            "--orig-tag",
+            "all",
+        ],
+    )
+    assert target.read_text() == (
+        f"FROM docker.io/a2rchi/a2rchi-python-base@{_PY_DIGEST}  # dev-4314ac4\n"
+    )
+
+
+def test_moving_to_a_different_digest_without_a_tag_drops_the_annotation(
+    tmp_path, monkeypatch
+):
+    """The other half of the same rule: a moved digest strips a stale comment.
+
+    The comment named the old build. With no `--tag` there is no new build
+    name to write, so the line carries the digest alone rather than a comment
+    that now lies.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": (
+                f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}  # dev-4314ac4\n"
+            )
+        },
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        ["--digest", f"python={_NEW_DIGEST}", "--orig-tag", "all"],
+    )
+
+    assert target.read_text() == (
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{_NEW_DIGEST}\n"
+    )
+    assert "dev-4314ac4" not in target.read_text()

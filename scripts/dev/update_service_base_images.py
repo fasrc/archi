@@ -153,11 +153,18 @@ def _update_line(line: str, base_name: str, options: UpdateOptions) -> Tuple[str
     # has nothing to put in the old one's place. Without this the reference
     # would be rebuilt from prefix and image alone, silently unpinning the base
     # to a bare `FROM <repo>` that resolves to `latest` at build time.
-    keeping_digest = (
-        target_digest is None and options.tag is None and current_digest is not None
-    )
-    if keeping_digest:
+    if target_digest is None and options.tag is None:
         target_digest = current_digest
+
+    # The annotation survives exactly when the digest does not move and no new
+    # tag is given to name — whether the caller left the digest unnamed or
+    # named the one already there. A digest that has not moved still points at
+    # the build its comment names.
+    keeping_digest = (
+        options.tag is None
+        and current_digest is not None
+        and target_digest == current_digest
+    )
 
     if target_digest is not None:
         # A digest says nothing about which build it is, so the tag goes in a
