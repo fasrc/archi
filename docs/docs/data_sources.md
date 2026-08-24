@@ -96,10 +96,26 @@ individual document that fails to fetch or parse is skipped with a warning
 slash collapsed) so they cannot create slash-variant duplicates.
 
 > **Note:** a *scheduled* `links` refresh (`data_manager.sources.links.schedule`)
-> re-scrapes the URLs already in the catalog; it does **not** re-read the input
-> lists or re-expand the sitemap. Sitemap pages published *after* the last full
-> ingest are therefore picked up only on the next full ingest/redeploy, not by the
-> scheduled refresh.
+> **does** re-read the input lists and re-expand the sitemap, so a `<lastmod>` that
+> advances between full ingests reaches the catalog. What it re-scrapes is only the
+> set of URLs *already in the catalog*. A page published to the sitemap *after* the
+> last full ingest is therefore still picked up only by the next full
+> ingest/redeploy, not by the scheduled refresh.
+>
+> **If the sitemap cannot be expanded** — unreachable, or its page count falls
+> outside the configured `min_pages`/`max_pages` bounds — the scheduled refresh
+> **still runs**. It crawls the catalog using whatever `<lastmod>` values were
+> cached from the last successful expansion, or none if there has never been one.
+> Timestamps already stored are preserved; the only gap is that a page first seen
+> during such a pass carries no `last_modified` until a later pass with a working
+> sitemap supplies one.
+>
+> In the logs this appears as an `ERROR` naming the rejected sitemap source
+> (`failing ingest`), followed by a `WARNING` from the scheduled pass reporting how
+> many cached `<lastmod>` entries it is using and whether they came from a complete
+> expansion. The error describes the *source*; the warning describes the *pass*,
+> which completes. A suppressed refresh would be the worse outcome: it would leave
+> the catalog stale for a whole cycle while still being recorded as a clean run.
 
 Because the emitted list comes from a live remote document that no human reviews,
 expansion is trust-constrained and bounded per source — configured under
