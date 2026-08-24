@@ -105,16 +105,22 @@ def required_base_images(
     service-to-template map is design D4; `test_two_image_rule_still_matches_every_template`
     is what keeps the rule and the templates from drifting apart.
     """
-    images = [PYTHON_BASE]
-    if gpu_ids or grader_enabled:
-        images.append(PYTORCH_BASE)
-
     references = []
-    for image in images:
+    for image in required_base_image_names(gpu_ids, grader_enabled):
         reference = base_reference(image, template_dir)
         if reference:
             references.append(reference)
     return references
+
+
+def required_base_image_names(
+    gpu_ids: Optional[str], grader_enabled: bool
+) -> List[str]:
+    """The rule itself, with no filesystem in it: which base images this deployment needs."""
+    images = [PYTHON_BASE]
+    if gpu_ids or grader_enabled:
+        images.append(PYTORCH_BASE)
+    return images
 
 
 def decide_availability(
@@ -480,17 +486,40 @@ def enforce_base_images(
     container_tool = "podman" if use_podman else "docker"
     probe = probe or ContainerProbe(container_tool)
 
-    grader_enabled = False
     try:
         grader_enabled = bool(compose_config.get_service("grader").enabled)
-    except Exception:  # noqa: BLE001 - an absent grader is simply not enabled
+    except (ValueError, KeyError):
+        # `ComposeConfig.get_service` raises ValueError for a name it does not know, which is
+        # the one case worth tolerating: a plan with no grader simply has no grader. Anything
+        # else is a real fault and must surface -- swallowing it would silently skip the
+        # pytorch check for a grader deployment and land on teardown-then-fail.
         grader_enabled = False
 
-    references = required_base_images(
-        getattr(compose_config, "gpu_ids", None), grader_enabled, template_dir
+    names = required_base_image_names(
+        getattr(compose_config, "gpu_ids", None), grader_enabled
     )
-    if not references:
-        return []
+
+    references = []
+    unresolved = []
+    for image in names:
+        reference = base_reference(image, template_dir)
+        if reference:
+            references.append(reference)
+        else:
+            unresolved.append(image)
+
+    if unresolved:
+        # Not "nothing to check" -- the rule says these are required and the templates do not
+        # declare them. Returning an empty set here would disable the preflight on a template
+        # rename or a drifted `FROM` pattern, and `--force` would tear down a working
+        # deployment having established nothing.
+        raise BaseImagePreflightError(
+            "Base image check failed:\n"
+            f"  This deployment requires {', '.join(unresolved)}, but no service template "
+            f"under {template_dir or TEMPLATE_DIR} declares a FROM line for it.\n"
+            f"  The preflight cannot verify an image it cannot name, and will not proceed "
+            f"as though there were nothing to check."
+        )
 
     outcomes = run_preflight(
         references,

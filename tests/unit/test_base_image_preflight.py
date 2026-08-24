@@ -723,15 +723,6 @@ def test_enforce_checks_the_pytorch_base_when_the_grader_is_enabled():
     assert any(preflight.PYTORCH_BASE in o.reference for o in outcomes)
 
 
-def test_enforce_returns_empty_when_no_template_declares_a_base(tmp_path):
-    (tmp_path / "Dockerfile-chat").write_text("FROM docker.io/library/python:3.11\n")
-    probe = FakeProbe()
-
-    assert (
-        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path) == []
-    )
-
-
 def test_unverified_notes_lists_only_unverified_references():
     outcomes = [
         preflight.Outcome(GHCR_REF, preflight.Verdict.AVAILABLE),
@@ -829,3 +820,71 @@ def test_a_pull_timeout_is_unreachable(monkeypatch):
     assert (
         preflight.ContainerProbe("docker").pull(GHCR_REF) is preflight.Cause.UNREACHABLE
     )
+
+
+# --- A base the rule requires but no template declares (round 2 finding) ------------------
+
+
+def test_enforce_refuses_when_a_required_base_cannot_be_resolved(tmp_path):
+    """An unresolvable reference must refuse, not quietly shrink the checked set.
+
+    Dropping it was a silent bypass: a template rename, a packaging mistake, or drift in the
+    `FROM` regex would disable the preflight, and `create --force` would then tear down a
+    working deployment having proved nothing at all. That is precisely the assumption-passing
+    this module forbids.
+    """
+    (tmp_path / "Dockerfile-chat").write_text("FROM docker.io/library/python:3.11\n")
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert preflight.PYTHON_BASE in str(excinfo.value)
+
+
+def test_enforce_refuses_when_only_the_pytorch_base_is_missing(tmp_path):
+    """A partially resolvable set is still a bypass for the part that went missing."""
+    (tmp_path / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+    )
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.enforce_base_images(
+            _Plan(grader=True), probe=probe, template_dir=tmp_path
+        )
+
+    assert preflight.PYTORCH_BASE in str(excinfo.value)
+
+
+def test_enforce_refuses_a_missing_reference_on_a_dry_run_too(tmp_path):
+    (tmp_path / "Dockerfile-chat").write_text("FROM docker.io/library/python:3.11\n")
+
+    with pytest.raises(preflight.BaseImagePreflightError):
+        preflight.enforce_base_images(
+            _Plan(), probe=FakeProbe(), template_dir=tmp_path, dry=True
+        )
+
+
+def test_a_grader_lookup_failure_is_not_silently_treated_as_disabled():
+    """Only "no such service" may be tolerated; anything else is a real bug worth surfacing.
+
+    Swallowing every exception here would skip the pytorch check for a grader deployment,
+    landing on exactly the teardown-then-fail behaviour this change removes.
+    """
+
+    class _Exploding:
+        gpu_ids = None
+
+        def get_service(self, name):
+            raise RuntimeError("plan is corrupt")
+
+    with pytest.raises(RuntimeError):
+        preflight.enforce_base_images(_Exploding(), probe=FakeProbe())
+
+
+def test_an_absent_grader_service_is_still_tolerated():
+    """The case the catch actually exists for: a plan that has no grader at all."""
+    outcomes = preflight.enforce_base_images(_Plan(raises=True), probe=FakeProbe())
+
+    assert all(preflight.PYTORCH_BASE not in o.reference for o in outcomes)
