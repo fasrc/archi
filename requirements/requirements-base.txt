@@ -113,3 +113,5 @@ markitdown[pdf,pptx]==0.1.5
 # compatible with the existing `nltk==3.9.1` pin above without a forced bump.
 llama-index-core==0.14.19
 flashrank==0.2.10
+
+# demo(#336): touch a base-image input to force the rebuild+transfer path; do not merge

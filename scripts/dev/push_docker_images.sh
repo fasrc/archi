@@ -156,3 +156,5 @@ if [[ "${PUSH_LATEST,,}" == "true" ]]; then
 else
   echo "All push targets processed for tag $TAG."
 fi
+
+# demo(#336): PR-edited publish script; the workflow must never reach this file with credentials
