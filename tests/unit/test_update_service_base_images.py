@@ -454,3 +454,39 @@ def test_pinning_a_line_that_ends_in_a_space_is_stable(tmp_path, monkeypatch):
         ["--tag", "pr-7", "--switch-source", "ghcr", "--orig-tag", "all"],
     )
     assert target.read_text() == "FROM ghcr.io/fasrc/a2rchi-python-base:pr-7\n"
+
+
+def test_the_default_orig_tag_only_reaches_a_latest_pinned_line(tmp_path, monkeypatch):
+    """`--orig-tag` defaults to `latest`, and only a `latest` line matches it.
+
+    This pins the argv at `.github/workflows/test-and-build-tag.yml:154`, which
+    passes no `--orig-tag`. That step is already a no-op on today's templates —
+    they carry `dev-4314ac4`, not `latest`, since `5e168b00` — and a digest pin
+    leaves it a no-op for a second reason. Fixing the release workflow is out of
+    scope here (issue #334 forbids touching `.github/workflows/**`); this test
+    exists so the next reader sees the trap instead of rediscovering it.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-latest": "FROM ghcr.io/fasrc/a2rchi-python-base:latest\n",
+            "Dockerfile-pinned": "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n",
+            "Dockerfile-digest": (
+                f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}  # dev-4314ac4\n"
+            ),
+        },
+    )
+
+    # The exact argv from the release workflow: no --orig-tag.
+    _run(module, monkeypatch, ["--tag", "v2026.8.0", "--switch-source", "ghcr"])
+
+    assert (templates / "Dockerfile-latest").read_text() == (
+        "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n"
+    )
+    assert (templates / "Dockerfile-pinned").read_text() == (
+        "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+    )
+    assert (templates / "Dockerfile-digest").read_text() == (
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}  # dev-4314ac4\n"
+    )
