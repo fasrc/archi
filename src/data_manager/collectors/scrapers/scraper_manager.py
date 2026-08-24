@@ -325,12 +325,24 @@ class ScraperManager:
                 # bought a stale catalog for a full refresh cycle — and
                 # service_data_manager still recorded the suppressed pass as a clean
                 # success, so nothing surfaced it (#277).
+                #
+                # `_sitemap_map_valid` no longer decides anything here; it only
+                # labels the log. Whether the retained entries came from a complete
+                # expansion or from a truncated one changes how much an operator
+                # should trust the timestamps this pass writes, and that provenance
+                # is invisible from the entry count alone. The flag still gates the
+                # retention branch in _refresh_sitemap_lastmod_map.
                 logger.warning(
                     "sitemap expansion failed (%s); continuing the scheduled crawl "
-                    "with %d cached lastmod entries — pages absent from that map "
-                    "carry no last_modified this pass",
+                    "with %d cached lastmod entries (%s) — pages absent from that "
+                    "map carry no last_modified this pass",
                     exc,
                     len(getattr(self, "_sitemap_lastmod_map", {})),
+                    (
+                        "from the last complete expansion"
+                        if getattr(self, "_sitemap_map_valid", False)
+                        else "never validated by a complete expansion"
+                    ),
                 )
         elif getattr(self, "_input_lists_complete", True):
             # Every sitemap source has been removed or reclassified. Wholesale

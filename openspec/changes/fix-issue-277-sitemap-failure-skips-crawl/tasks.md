@@ -135,3 +135,32 @@ Recorded during implementation on 2026-08-24. The plan was written against
    `logger.warning`, so a message claiming "without a map" would be false there. The
    emitted message states the cached-entry count instead, which is accurate whether
    that count is 0 or N.
+
+## Adversarial review, round 1 (2026-08-24)
+
+Two findings. One adopted, one split, one pushed back on.
+
+- **Adopted — the warning did not name the cache provenance.** The entry count alone
+  cannot separate "0 entries, nothing ever expanded" from "12 entries from a truncated
+  expansion", and the two justify different amounts of trust in the timestamps the pass
+  writes. The warning now labels the map "from the last complete expansion" or "never
+  validated by a complete expansion", read from `_sitemap_map_valid`. That flag decides
+  no control flow here; it still gates the retention branch at
+  `_refresh_sitemap_lastmod_map`. Pinned by
+  `test_degraded_warning_names_the_cache_provenance`.
+
+- **Pushed back — a scheduler-visible partial-failure signal.** The review asked that a
+  degraded pass stop `run_locked` from advancing `last_run`. Issue #277's "Out of scope"
+  records the operator declining exactly that, and `src/bin/service_data_manager.py` is
+  named there as unchanged. The behavior is real — `run_locked` records any normal return
+  as success — and the issue body already documents it. It is a settled scope decision,
+  not a defect in this change.
+
+- **Split out — deleted rows can be resurrected by a scheduled crawl.** The review
+  reported this as introduced here. It is not. `schedule_collect_links` snapshots
+  non-deleted catalog URLs, `delete_resource` soft-deletes
+  (`catalog_postgres.py:372-384`), and the upsert clears `is_deleted`/`deleted_at` on
+  conflict, so an operator delete landing mid-crawl is undone. Before this change the
+  method had exactly one `return` — the guard removed here — so every other scheduled
+  pass, including every successful one, already ran that race. This change adds one rare
+  path to a pre-existing defect rather than creating it. Filed as its own issue.

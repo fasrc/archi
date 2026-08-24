@@ -893,6 +893,56 @@ class TestMaplessPassStillCrawls:
             "a degraded-but-completed pass is not an error; "
             f"got {[r.getMessage() for r in errors]!r}"
         )
+        assert "never validated by a complete expansion" in warnings[0].getMessage(), (
+            "with no prior map the warning must say the cached entries were never "
+            f"validated; got {warnings[0].getMessage()!r}"
+        )
+
+    def test_degraded_warning_names_the_cache_provenance(
+        self, refresh_harness, monkeypatch, caplog
+    ):
+        """A stale map and an empty map are different risks, so the log says which.
+
+        The entry count alone cannot distinguish "0 entries, nothing ever expanded"
+        from "12 entries from a truncated expansion". Both write different amounts
+        of trust into the catalog, so an operator reading the log needs the
+        provenance, not just the size.
+        """
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        # A complete expansion first, so the retained map is a validated one.
+        manager.collect_all_from_config(persistence)
+        assert getattr(manager, "_sitemap_map_valid", False) is True
+
+        def _boom(_sitemap_urls):
+            raise SitemapExpansionError(
+                "sitemap temporarily unreachable", reason="below_floor"
+            )
+
+        monkeypatch.setattr(manager, "_expand_sitemaps", _boom)
+        monkeypatch.setattr(manager, "collect_links", lambda *a, **k: 0)
+
+        with caplog.at_level(
+            logging.WARNING,
+            logger="src.data_manager.collectors.scrapers.scraper_manager",
+        ):
+            manager.schedule_collect_links(persistence)
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+
+        assert len(warnings) == 1, (
+            "one warning covers the degraded pass in both map states; "
+            f"got {[r.getMessage() for r in warnings]!r}"
+        )
+        message = warnings[0].getMessage()
+        assert "from the last complete expansion" in message, (
+            "a retained validated map must be labelled as such, so the operator "
+            f"knows the timestamps it writes are trustworthy; got {message!r}"
+        )
+        assert "2 cached lastmod entries" in message, (
+            f"the warning must report the retained entry count; got {message!r}"
+        )
 
     def test_mapless_scrape_sends_no_last_modified_to_persistence(
         self, refresh_harness, tmp_path
