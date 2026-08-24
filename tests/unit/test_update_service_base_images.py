@@ -99,3 +99,45 @@ def test_digest_pinned_line_rewrites_to_a_tag(tmp_path, monkeypatch):
         "FROM ghcr.io/fasrc/a2rchi-python-base:pr-7\nRUN echo build\n"
     )
     assert _PY_DIGEST not in target.read_text()
+
+
+def test_specific_orig_tag_leaves_a_digest_pinned_line_alone(
+    tmp_path, monkeypatch, capsys
+):
+    """Spec: a specific --orig-tag leaves a digest-pinned line alone.
+
+    A digest reference carries no tag, so no literal `--orig-tag` value can
+    match it. Only `--orig-tag all` reaches it.
+    """
+    original = f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\nRUN echo build\n"
+    module, templates = _write_fixtures(
+        tmp_path, monkeypatch, **{"Dockerfile-chat": original}
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        ["--tag", "pr-7", "--switch-source", "ghcr", "--orig-tag", "dev-4314ac4"],
+    )
+
+    assert target.read_text() == original
+    assert "Updated" not in capsys.readouterr().out
+
+
+def test_orig_tag_all_still_matches_a_tag_pinned_line(tmp_path, monkeypatch):
+    """Guard: teaching the parser about digests did not break the tag path."""
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{"Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"},
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        ["--tag", "pr-7", "--switch-source", "ghcr", "--orig-tag", "all"],
+    )
+
+    assert target.read_text() == "FROM ghcr.io/fasrc/a2rchi-python-base:pr-7\n"

@@ -25,7 +25,7 @@ Two standing notes for every task:
       `_split_image_spec` `rsplit("@", 1)` the digest off before the existing `:` split and
       return it as a fourth component, and update `_update_line` to unpack four values.
       Gate green; commit.
-- [ ] 1.2 `model: sonnet` — Regression guard for the matching rules: `--orig-tag all` rewrites a digest-pinned
+- [x] 1.2 `model: sonnet` — Regression guard for the matching rules: `--orig-tag all` rewrites a digest-pinned
       line, and `--orig-tag dev-4314ac4` leaves that same line byte-identical. **These pass
       once 1.1 lands — that is the point of them. Do not contrive a failure first.** Gate
       green; commit.
