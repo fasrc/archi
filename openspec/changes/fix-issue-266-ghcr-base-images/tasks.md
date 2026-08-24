@@ -13,31 +13,32 @@
 
 - [ ] 3.1 `model: sonnet` — RED: `extract_base_references()` in a new `src/cli/managers/base_image_preflight.py` returns the deduped `FROM` references for a given set of enabled services and GPU flag, reading the template files.
 - [ ] 3.2 `model: opus` — RED: the `grader` case. With `grader` enabled and no GPU, the pytorch base must appear in the result. This is the test that fails any GPU-flag-based inference (design D4), so write it before the implementation and confirm it fails for the right reason.
-- [ ] 3.3 `model: sonnet` — RED: a `localhost/`-prefixed reference is excluded from the returned set.
+- [ ] 3.3 `model: sonnet` — RED: a `localhost/`-prefixed reference IS included in the returned set. It is not exempt — see design D2 step 2. Guard this explicitly, since the first draft of the design exempted it.
 - [ ] 3.4 `model: sonnet` — GREEN: implement `extract_base_references()`.
 
 ## 4. Preflight: availability decision
 
-- [ ] 4.1 `model: opus` — RED: `decide_availability()` as a pure function over probe results. Cover, one test each: present locally passes without a registry result; absent locally but manifest reachable passes; absent and unauthorized refuses; absent and manifest-unknown refuses; absent and unreachable refuses; no runtime passes as skipped; unrecognised probe result passes as unknown.
+- [ ] 4.1 `model: opus` — RED: `decide_availability()` as a pure function over probe results. Cover, one test each: present locally is available with no pull attempted; absent and pulled successfully is available; absent `localhost/` reference refuses without attempting a pull; absent and unauthorized refuses; absent and tag-unknown refuses; absent and registry-unreachable refuses; runtime uninvokable refuses.
 - [ ] 4.2 `model: opus` — GREEN: implement `decide_availability()` returning a verdict plus a cause, never raising.
-- [ ] 4.3 `model: sonnet` — RED then GREEN: the Python-floor comparison runs only for locally present images. Below the floor refuses and the error names both the reported version and the `requires-python` floor; unreadable or unparseable output is an explicit unknown that passes.
+- [ ] 4.3 `model: opus` — RED then GREEN: the Python-floor comparison runs for EVERY reference, including one that had to be pulled. Below the floor refuses and the error names both the reported version and the `requires-python` floor. Unreadable or unparseable output is an explicit unknown that passes with a note — and a test asserts that this unknown branch cannot be reached by a missing or unreachable image.
 
 ## 5. Preflight: diagnostics
 
-- [ ] 5.1 `model: opus` — RED: message composition per cause (design D3). Unauthorized names the classic-PAT + `read:packages` requirement and mentions SSO; manifest-unknown identifies a stale or deleted pin and does NOT say "log in"; unreachable names a network or registry fault. Each names the image reference.
+- [ ] 5.1 `model: opus` — RED: message composition per cause (design D3). Unauthorized names the classic-PAT + `read:packages` requirement and mentions SSO; tag-unknown identifies a stale or deleted pin and does NOT say "log in"; unreachable names a network or registry fault; absent `localhost/` names the base-image build script. Each names the image reference.
 - [ ] 5.2 `model: sonnet` — RED then GREEN: the login command in the message names `podman` under `--podman` and `docker` otherwise.
 - [ ] 5.3 `model: sonnet` — GREEN: implement message composition.
 
 ## 6. Preflight: the probe seam
 
-- [ ] 6.1 `model: sonnet` — implement the container probe behind an injected callable: image-present check, manifest-reachability check, and the version read. Every unit test in groups 3–5 injects a fake; no test shells out.
-- [ ] 6.2 `model: sonnet` — map real probe exit codes and stderr onto the causes in `decide_availability()`, with unrecognised output falling through to unknown rather than to a refusal.
+- [ ] 6.1 `model: sonnet` — implement the container probe behind an injected callable: local-presence check (`image inspect`), pull, and the version read. Every unit test in groups 3–5 injects a fake; no test shells out. Note that `image inspect` and `pull` were chosen over `manifest inspect` precisely because both are uniformly supported (design D2).
+- [ ] 6.2 `model: sonnet` — map real pull exit codes and stderr onto the causes in `decide_availability()`. An unrecognised failure maps to a refusal, not to a pass: availability has no unknown outcome by design.
 
 ## 7. Wire it into `archi create`
 
 - [ ] 7.1 `model: opus` — RED: a test proving the ordering contract — with an unobtainable base image and `--force` against an existing deployment, `remove_existing_deployment()` is never called and the deployment directory survives. This is the regression test for design D1; the issue's own stated call site fails it.
 - [ ] 7.2 `model: opus` — GREEN: add the call site in `src/cli/cli_main.py` between the port check (`:262-268`) and `remove_existing_deployment` (`:278`). Keep it a thin call — all logic stays in the helper module, because lines added to `cli_main.py` that unit tests do not import fail the diff-coverage gate.
-- [ ] 7.3 `model: sonnet` — RED then GREEN: `archi create --dry` on a host with no container runtime completes and prints its summary, with no preflight failure.
+- [ ] 7.3 `model: sonnet` — RED then GREEN: `archi create --dry` does not run the preflight at all — no pull is attempted and no runtime is required, even on a host with none.
+- [ ] 7.4 `model: sonnet` — RED then GREEN: a real create whose runtime cannot be invoked is refused before the teardown. Covers the `--podman` path, which `cli_main.py:160-170` does not check today.
 
 ## 8. Documentation
 

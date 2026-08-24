@@ -19,9 +19,11 @@ names neither the base image nor the version conflict.
   performed by the existing `scripts/dev/update_service_base_images.py`.
 - Guard the pin with a unit test, so a regression to `docker.io/a2rchi/` or to a floating
   `latest` a2rchi tag fails the gate and names the offending file.
-- Add a base-image preflight to `archi create` that refuses the deployment, with a
-  diagnostic that names the image and the remedy, when a required base image is neither
-  present locally nor reachable from the registry.
+- Add a base-image preflight to `archi create` that establishes every required base image is
+  present on the host — pulling it if absent — and refuses the deployment with a diagnostic
+  naming the image and the matching remedy when it cannot. Each image is then checked against
+  the `requires-python` floor, so the interpreter mismatch is caught on a clean host and not
+  only on one that happens to hold a cached image.
 - **The preflight runs above the `--force` teardown**, not merely before compose. The
   existing `cli-create-preflight` contract states that no destructive step may precede a
   step that can refuse the deployment. A preflight is by definition such a step, so placing

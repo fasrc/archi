@@ -50,33 +50,47 @@ the block the existing code comments describe as "everything above this line can
 the deployment". Rejected: the issue's stated location, because a `--force` create that was
 always going to fail would first destroy a working deployment.
 
-### D2 — Availability is decided local-first, and a reachable-but-unpulled image passes
+### D2 — Availability is decided by materializing the image, not by probing a manifest
 
-The check is, per distinct base reference, in order:
+Per distinct base reference, in order:
 
-1. The image is present locally (`image inspect`) → **pass**, with no network access. A host
-   that already pulled or built the base needs no login, and the preflight must never demand
-   one from it.
-2. Otherwise its manifest is reachable with the host's existing credentials
-   (`manifest inspect`) → **pass**. Compose will pull it.
-3. Otherwise → **refuse**, classified by cause (D3).
+1. Present locally (`image inspect`) → **available**, no network access.
+2. Otherwise, if the reference carries a `localhost/` prefix → **refuse**. A `localhost/`
+   reference is what `scripts/dev/build_docker_images.sh:109` tags a locally built base as.
+   It is a registry-style reference, not evidence of presence: a fresh or pruned daemon
+   resolves it to nothing, and there is no registry to pull it from. The remedy is to build
+   the base image, so the message names the build script.
+3. Otherwise → **pull it**. Success makes it available *and local*. Failure refuses,
+   classified by cause (D3).
 
-Rejected: probing the registry first. It would put a network round trip and a possible
-false refusal in front of hosts that are already fully provisioned, including every
-air-gapped or offline rebuild.
+Rejected: checking manifest reachability and letting compose do the pull. Reachability is
+not compatibility — it proves a tag resolves, not that the image behind it satisfies the
+Python floor — so a clean host would pass the preflight, lose its existing deployment to the
+`--force` teardown, and only then meet the interpreter mismatch this whole change exists to
+prevent. Pulling is not extra work: compose pulls the same image moments later. The only
+thing that changes is that it now happens while refusing is still free.
 
-### D3 — The diagnostic is classified by cause, because the remedies differ
+Pulling also removes a portability problem. `manifest inspect` is not uniformly supported
+across daemon versions and podman, whereas `image inspect` and `pull` are. The design no
+longer needs an "unsupported probe" outcome for availability at all.
+
+Rejected: pinning by digest instead. A digest proves identity, not compatibility, so it does
+not close this hole; it would also mean changing `update_service_base_images.py` and the
+release rewrite at `test-and-build-tag.yml:154`, both of which are tag-based, and the issue
+puts pin mechanics out of scope. Worth revisiting separately.
+
+### D3 — Pull failures are classified by cause, because the remedies differ
 
 | Cause | What the operator must do |
 |---|---|
-| Authentication refused (401/403/denied) | `docker login ghcr.io` with a **classic** PAT carrying `read:packages`; authorize it for SSO if enforced |
-| Manifest unknown / tag absent | The pin is stale or the tag was deleted — re-run `scripts/dev/update_service_base_images.py` |
+| Authentication refused (401/403/denied) | Log in with a **classic** PAT carrying `read:packages`; authorize it for SSO if enforced |
+| Manifest or tag unknown | The pin is stale or the tag was deleted — re-run `scripts/dev/update_service_base_images.py` |
 | Registry unreachable | Network or registry outage; nothing to fix in archi |
+| `localhost/` base absent | Build the base image with `scripts/dev/build_docker_images.sh` |
 
-Collapsing these into one message sends operators to `docker login` for a stale pin, which
-cannot work. The authentication case additionally names the classic-PAT requirement,
-because the natural first attempt — a fine-grained PAT — fails with an
-indistinguishable "denied" and no hint as to why.
+Collapsing these sends operators to `docker login` for a stale pin, which cannot work. The
+authentication case additionally names the classic-PAT requirement, because the natural first
+attempt — a fine-grained PAT — fails with an indistinguishable "denied" and no hint as to why.
 
 ### D4 — Base references are parsed from the template `FROM` lines, never inferred
 
@@ -89,20 +103,21 @@ templates. This matters because rendering (`prepare_deployment_files`, `:310`) h
 the teardown; a preflight that needed rendered output could not satisfy D1.
 
 Template selection mirrors the compose template: for each enabled service, `Dockerfile-<service>`
-plus the `-gpu` suffix when `gpu_ids` is set. References with a `localhost/` prefix are
-skipped — a locally built base is the "present locally" case by construction.
+plus the `-gpu` suffix when `gpu_ids` is set. No reference is exempted from the checked set —
+see D2 step 2 for why `localhost/` in particular is not a safe exemption.
 
-### D5 — The Python floor is checked only when the image is already local
+### D5 — The Python floor is checked for every base image
 
-Reading an image's Python version means running it (`run --rm --entrypoint python <ref> -V`),
-which requires the image on the host. Forcing a pull to satisfy a preflight would make the
-preflight more expensive than the build step it guards.
+D2 guarantees that any reference reaching this point is present on the host, so the version
+comparison (`run --rm --entrypoint python <ref> -V`) applies uniformly. There is no
+local-only carve-out, and therefore no clean-host blind spot: the case the issue was filed
+about is exactly the case D2 step 3 materializes.
 
-So the version comparison runs only in D2 case 1, where the image is already present and the
-check is nearly free. In case 2 the reachability result stands alone. An unreadable or
-unparseable version is an explicit `UNKNOWN` outcome that passes with a logged note — never
-a crash, and never a refusal, because failing a deployment over a probe that did not work is
-worse than the mismatch it was looking for.
+A version that cannot be read or parsed remains an explicit unknown that passes with a
+logged note. The image is present by then, so the build proceeds and any real incompatibility
+surfaces loudly at `pip install .`; refusing on a probe that malfunctioned would block
+deployments that work. This is a deliberately narrow exception — it covers a broken probe,
+never a missing or unreachable image.
 
 ### D6 — The container tool follows the deployment's own choice
 
@@ -110,12 +125,18 @@ The probe and the remedy text use `podman` when `--podman` is in effect and `doc
 otherwise, matching `DeploymentManager.compose_tool`. Printing a `docker login` instruction
 to a podman operator is a wrong instruction.
 
-### D7 — No runtime, no preflight
+### D7 — `--dry` skips the preflight; on a real create an uninvokable runtime refuses
 
-When no container runtime is available the preflight is skipped with a logged note rather
-than failing. `--dry` deliberately requires no runtime (`cli_main.py:155-160`), and a dry run
-must not start requiring one. Where a runtime does exist, the preflight runs even under
-`--dry`, since it is read-only and improves the dry run's fidelity for free.
+Under `--dry` the preflight does not run at all. D2 step 3 pulls images, and a dry run must
+not change host state or require a runtime (`cli_main.py:155-160`). The cost is a small loss
+of dry-run fidelity, which is the right trade against a dry run that downloads multi-gigabyte
+images.
+
+On a real create the opposite rule applies: if the runtime cannot be invoked, the preflight
+refuses rather than skipping. Compose needs that same runtime minutes later, so standing down
+here would only move the failure to the far side of the teardown. `cli_main.py:160-170`
+already enforces this for docker; it does not check podman when `--podman` is given, and the
+preflight closes that gap as a side effect of needing the runtime itself.
 
 ### D8 — Pure logic in a helper module, thin call site
 
@@ -129,17 +150,17 @@ fail the diff-coverage gate.
 - **The pin goes stale.** A later base-input commit publishes a new `dev-<sha7>` and the
   templates keep pointing at `dev-4314ac4`. → Accepted and out of scope per the issue. The
   build stays correct because the pinned image still exists; only "newest" is lost. D3's
-  manifest-unknown branch gives an actionable error if the tag is ever deleted.
-- **The preflight adds a network round trip** for hosts without the image locally. → Bounded
-  to one manifest request per distinct base reference, at most two, and only for references
-  not already present locally.
-- **A false pass is possible**: the manifest is reachable but the pull later fails (rate
-  limit, disk, a race with tag deletion). → Accepted. The preflight is defense in depth; it
-  narrows the common failure, and compose still reports the rest.
-- **`manifest inspect` is not universally supported** across daemon versions and podman. →
-  An unsupported or unrecognised probe result is `UNKNOWN` and passes with a note (D5's rule
-  applied to reachability). The preflight must never block a deployment that would otherwise
-  have worked.
+  unknown-tag branch gives an actionable error if the tag is ever deleted.
+- **The preflight pulls before the teardown**, so a `--force` create on a clean host waits
+  for a multi-gigabyte pytorch base before anything is destroyed. → Accepted, and the reason
+  for the design. Total time is unchanged, because compose would pull the same image
+  moments later; only the ordering moves, and it moves so that a failure is still free.
+- **A false pass is still possible**: the image pulls and satisfies the floor, but the build
+  fails later for an unrelated reason (disk, network, a dependency). → Accepted. The
+  preflight is defense in depth against one known failure class, not an oracle for the build.
+- **The version probe can malfunction** on an image that is present, and that outcome passes
+  (D5). → Narrow by construction: it cannot mask a missing or unreachable image, only an
+  unreadable interpreter version on an image the host already holds.
 - **Operators must log in once**, which the old acceptance criterion said they would not have
   to. → Unavoidable against `internal` packages, and recorded on the issue. The alternative
   the operator rejected was making the packages public.
