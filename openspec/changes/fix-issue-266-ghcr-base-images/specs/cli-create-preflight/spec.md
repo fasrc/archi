@@ -164,7 +164,11 @@ A dry run continues to require no container runtime (`src/cli/cli_main.py:155-16
 because it cannot look would make `--dry` unusable on exactly those hosts, so the exit status
 stays 0 and the summary carries the unverified marker instead.
 
-The version comparison requires the image on the host, so it never runs under `--dry`.
+The Python-floor comparison runs under `--dry` for any image already present on the host. It
+needs no pull — reading a present image's version starts an ephemeral container and removes
+it, changing no image and no deployment — so skipping it would report a cached but
+incompatible base as ready. Only an image the host does not yet hold is beyond a dry run's
+reach, and that is what the unverified marker is for.
 
 #### Scenario: Dry run pulls nothing
 
@@ -196,6 +200,26 @@ The version comparison requires the image on the host, so it never runs under `-
 This scenario is separate from the one above because the two reasons reach the unverified
 state by different routes, and an implementation can easily handle one and silently succeed on
 the other.
+
+#### Scenario: Dry run refuses a present base image below the floor
+
+- **WHEN** `archi create --dry --force` is invoked and a required base image is present locally with a Python version below `requires-python`
+- **THEN** the command exits non-zero with the same cause the real create would report
+- **AND** the existing deployment directory is left intact
+- **AND** the base images are not reported as ready
+
+#### Scenario: Dry run refuses a present base image whose version cannot be read
+
+- **WHEN** `archi create --dry` is invoked and the version probe against a locally present base image fails or returns output that cannot be parsed
+- **THEN** the command exits non-zero, matching the real create
+- **AND** the error names the image reference
+
+#### Scenario: Dry run marks a reachable but absent image unverified
+
+- **WHEN** `archi create --dry` is invoked and a required base image is absent locally but reachable
+- **THEN** the command exits 0
+- **AND** the dry-run summary marks that image as not verified
+- **AND** the summary states that its version cannot be read without pulling
 
 #### Scenario: Dry run cannot judge what it did not fetch
 

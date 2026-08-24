@@ -147,16 +147,28 @@ That resolves into three cases:
 
 | Under `--dry` | Result |
 |---|---|
+| Present locally, and its Python satisfies the floor | Report ready — fully verified |
+| Present locally, and its Python is below the floor or unreadable | Refuse, exactly as the real create would |
 | A cause it can establish without pulling (unauthorized, unknown tag, absent `localhost/` base) | Refuse, exactly as the real create would |
-| Verified reachable, or already present locally | Report ready |
-| Cannot determine — no runtime, or an unsupported reachability probe | Exit 0, and the dry-run summary marks the base images **not verified**, naming the reason |
+| Absent but reachable | Exit 0, marked **not verified**: its version cannot be read without pulling |
+| Cannot determine — no runtime, or an unsupported reachability probe | Exit 0, marked **not verified**, naming the reason |
 
-The third row is the one that matters. The exit code stays 0 because a dry run that refuses
-on its own inability to look would be useless on any host without a runtime — and `--dry`
-requiring no runtime is an explicit existing decision (`cli_main.py:155-160`) this change has
-no mandate to overturn. What changes is that the summary stops implying a verification that
-never happened. An operator reading "base images: NOT VERIFIED (no container runtime)" has
-been told the truth and can act on it; an operator reading a clean summary has not.
+The first two rows correct a mistake in the previous draft, which disabled the Python-floor
+check for every dry run on the grounds that "the version comparison requires the image on the
+host". That reasoning holds only for an image that is absent. An image already present needs
+no pull to be read, so skipping it left the dry run reporting a cached-but-incompatible base
+as ready — the same false-confidence class this contract exists to remove, merely relocated
+from the remote case to the local one. Reading the version of a present image starts an
+ephemeral container and removes it; it pulls nothing and touches no deployment, which is the
+boundary `--dry` actually has to respect.
+
+The last two rows are what "not verified" is for, and the exit code stays 0 in both. A dry run
+that refused on its own inability to look would be useless on any host without a runtime, and
+`--dry` requiring no runtime is an explicit existing decision (`cli_main.py:155-160`) this
+change has no mandate to overturn. What changes is that the summary stops implying a
+verification that never happened. An operator reading "base images: NOT VERIFIED (no container
+runtime)" has been told the truth and can act on it; an operator reading a clean summary has
+not.
 
 Rejected: making `--dry` require a runnable container tool and a supported probe. It would
 mirror real refusals perfectly, but only by overturning an existing decision and breaking
@@ -165,8 +177,9 @@ every dry run on a host without a runtime — a strictly larger change than this
 Rejected: dropping the dry preflight back to advisory-only. That is the second draft, and it
 fails for the reason above.
 
-Nothing about `--dry` pulls. The pull, and therefore the Python-floor comparison that depends
-on it, belongs to the real create alone.
+Nothing about `--dry` pulls. The pull belongs to the real create alone — and with it the only
+part of the Python-floor comparison a dry run genuinely cannot perform, namely the check on an
+image the host does not yet hold.
 
 On a **real** create the opposite rule holds throughout: an uninvokable runtime refuses,
 because compose needs the same runtime minutes later, so standing down would only move the
