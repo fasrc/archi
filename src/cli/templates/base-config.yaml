@@ -98,8 +98,10 @@ services:
     {% if services.chat_app.context_editing is defined %}
     # Emitted only when declared: the in-loop bound's defaults live in
     # context_budget.py, and re-stating them here would fork them. `context_window`
-    # is the only way to declare a window for a model named in this config, so
-    # dropping the block leaves self-hosted deployments with no bound at all.
+    # and `context_windows` are the only ways to declare a window for a model named
+    # in this config, so dropping the block leaves self-hosted deployments with no
+    # bound at all. The whole block passes through verbatim, so a new key inside it
+    # needs no change here.
     context_editing: {{ services.chat_app.context_editing | tojson }}
     {% endif %}
     default_provider: {{ services.chat_app.default_provider | default("local", true) }}

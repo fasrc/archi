@@ -413,3 +413,69 @@ def test_selecting_the_deployments_own_model_keeps_its_declared_window():
     )
 
     assert _compiled_budget(view).context_window == 32768
+
+
+OVERRIDE_MODEL = "palmfuture/Qwen3.8-27B-GPTQ-Int4"
+
+
+def test_an_override_named_in_the_per_model_map_gets_a_bound():
+    """Issue #262: the defect this closes, through the real builder.
+
+    The override is a model the provider cannot resolve — the self-hosted case —
+    and the deployment-wide ``context_window`` is correctly withdrawn because it
+    describes a different model. Before ``context_windows`` existed there was no
+    way to declare the override's own window, so the view ran with no bound at
+    all. An entry keyed by the override's own id supplies it.
+    """
+    config = {
+        "services": {
+            "chat_app": {
+                "context_editing": {
+                    "context_window": 200000,
+                    "context_windows": {OVERRIDE_MODEL: 32768},
+                }
+            }
+        }
+    }
+    source = _BudgetPipeline(_llm(), provider="local", model="big-model", config=config)
+    source.refresh_agent(force=True)
+    # The override is unresolvable by name: exactly why a declaration is needed.
+    assert _BudgetPipeline.WINDOWS.get(OVERRIDE_MODEL) is None
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(),
+        provider="local",
+        model=OVERRIDE_MODEL,
+        context_window=None,
+    )
+
+    assert _compiled_budget(view).context_window == 32768
+    assert _compiled_budget(source).context_window == 200000, "source untouched"
+
+
+def test_an_override_absent_from_the_per_model_map_still_installs_nothing():
+    """The fail-open path stays exactly as it is: the map narrows nothing it
+    does not name, and a window describing another model is never borrowed."""
+    config = {
+        "services": {
+            "chat_app": {
+                "context_editing": {
+                    "context_window": 200000,
+                    "context_windows": {"some/other-model": 32768},
+                }
+            }
+        }
+    }
+    source = _BudgetPipeline(_llm(), provider="local", model="big-model", config=config)
+    source.refresh_agent(force=True)
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(),
+        provider="local",
+        model=OVERRIDE_MODEL,
+        context_window=None,
+    )
+
+    assert view.agent["middleware"] == []

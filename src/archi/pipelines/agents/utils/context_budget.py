@@ -95,8 +95,8 @@ source clamps in ``tools/result_limits.py`` are unconditional, so it is not a
 full rollback of issue #235's changes.
 """
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Set
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set
 
 from src.utils.logging import get_logger
 
@@ -184,6 +184,12 @@ class ContextEditingSettings:
     # reports. ``None`` means "use the provider's". Defaulted so the other
     # construction sites keep working unchanged.
     context_window: Optional[int] = None
+    # Operator-declared windows keyed by model id (issue #262). Unlike the
+    # single window above, an entry here names the model it describes, so it is
+    # the only declaration that can survive a request-local model override.
+    # ``Mapping`` rather than ``Dict`` states read-only intent: the parser
+    # builds a fresh dict per call and hands out no other reference.
+    context_windows: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -298,6 +304,7 @@ def read_settings(
             "exemption_fraction",
         ),
         context_window=_read_declared_window(merged.get("context_window")),
+        context_windows=_read_declared_windows(merged.get("context_windows")),
     )
 
 
@@ -344,6 +351,53 @@ def _read_declared_window(value: Any) -> Optional[int]:
             value,
         )
     return window
+
+
+def _read_declared_windows(value: Any) -> Dict[str, int]:
+    """Validate operator-declared windows keyed by model id (issue #262).
+
+    The single ``context_window`` describes the model *this deployment serves*,
+    so a request-local view onto a different model withdraws it. An entry here
+    names its own model, which is what makes it safe to keep across that
+    override — and on a provider whose metadata reports nothing, it is the only
+    window such a run can get.
+
+    Validation is **per entry**: one typo in a five-model map must not cost the
+    operator the other four bounds. A bad entry is logged and dropped, never
+    replaced by a guess, and it never disables what the other settings
+    configure. ``positive_int`` rejects ``True`` along with the other
+    non-integers — a one-token window would clear every message on every call.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        logger.warning(
+            "Invalid context_editing.context_windows=%r; expected a mapping of "
+            "model id to context window, so no per-model window is declared",
+            value,
+        )
+        return {}
+
+    windows: Dict[str, int] = {}
+    for model, declared in value.items():
+        if not isinstance(model, str):
+            logger.warning(
+                "Ignoring context_editing.context_windows entry with "
+                "non-string model id %r",
+                model,
+            )
+            continue
+        window = positive_int(declared)
+        if window is None:
+            logger.warning(
+                "Ignoring context_editing.context_windows[%r]=%r; expected a "
+                "positive integer number of tokens",
+                model,
+                declared,
+            )
+            continue
+        windows[model] = window
+    return windows
 
 
 def resolve_model_window(provider: Any, model: Any) -> Optional[int]:

@@ -34,6 +34,7 @@ from src.archi.pipelines.agents.utils.context_budget import (
     DEFAULT_GENERATION_RESERVE_FRACTION,
     DEFAULT_KEEP,
     ContextEditingSettings,
+    _read_declared_windows,
     read_settings,
     resolve_budget,
     resolve_configured_model_window,
@@ -424,6 +425,121 @@ class TestDeclaredContextWindow:
 
         assert s.context_window is None
         assert s.enabled is True, "a bad value must not disable the limit"
+
+
+MODEL_ID = "palmfuture/Qwen3.8-27B-GPTQ-Int4"
+
+
+class TestPerModelDeclaredWindows:
+    """Issue #262: the operator declares a window *per model id*.
+
+    The single ``context_window`` above describes the model the deployment
+    serves, so a request-local view onto a different model withdraws it (#235
+    Decision 12). That leaves an override on a metadata-less provider with no
+    window at all and therefore no bound. A map keyed by model id is the only
+    declaration that can survive the override, because its key names the model
+    it describes.
+
+    One typo must not cost the operator the other entries, so validation is
+    per-entry: a bad value drops that key and keeps the rest.
+    """
+
+    def test_absent_and_empty_both_yield_an_empty_map(self):
+        assert _read_declared_windows(None) == {}
+        assert _read_declared_windows({}) == {}
+
+    def test_a_well_formed_entry_is_read(self):
+        assert _read_declared_windows({MODEL_ID: 32768}) == {MODEL_ID: 32768}
+
+    @pytest.mark.parametrize("bad", [[], "32768", 32768, 1.5, True])
+    def test_a_non_mapping_warns_once_and_yields_empty(self, bad, caplog):
+        with caplog.at_level("WARNING"):
+            assert _read_declared_windows(bad) == {}
+
+        assert len(caplog.records) == 1
+        assert "context_windows" in caplog.text
+
+    @pytest.mark.parametrize("bad", ["big", 0, -5, None, True, 1.5])
+    def test_a_bad_value_drops_only_its_own_entry(self, bad, caplog):
+        """``True`` is rejected with the rest: a 1-token window clears every
+        message on every call, which is worse than having no bound at all."""
+        with caplog.at_level("WARNING"):
+            parsed = _read_declared_windows({MODEL_ID: bad, "good/model": 8192})
+
+        assert parsed == {"good/model": 8192}
+        assert MODEL_ID in caplog.text
+
+    def test_a_non_string_key_drops_only_its_own_entry(self, caplog):
+        with caplog.at_level("WARNING"):
+            parsed = _read_declared_windows({7: 32768, "good/model": 8192})
+
+        assert parsed == {"good/model": 8192}
+        assert len(caplog.records) == 1
+
+
+class TestPerModelWindowsAreRead:
+    """The parsed map reaches ``ContextEditingSettings`` through both layers."""
+
+    def test_no_map_is_declared_by_default(self):
+        assert read_settings({}, {}).context_windows == {}
+
+    def test_the_default_map_is_not_shared_between_calls(self):
+        """A mutable default shared across calls would let one deployment's
+        map leak into another's settings."""
+        first = read_settings({}, {}).context_windows
+        second = read_settings({}, {}).context_windows
+
+        assert first is not second
+
+    def test_a_declared_map_is_read(self):
+        s = read_settings(
+            {
+                "services": {
+                    "chat_app": {
+                        "context_editing": {"context_windows": {MODEL_ID: 32768}}
+                    }
+                }
+            },
+            {},
+        )
+
+        assert s.context_windows == {MODEL_ID: 32768}
+
+    def test_a_pipeline_map_overrides_the_service_layer(self):
+        s = read_settings(
+            {
+                "services": {
+                    "chat_app": {
+                        "context_editing": {"context_windows": {MODEL_ID: 32768}}
+                    }
+                }
+            },
+            {"context_editing": {"context_windows": {MODEL_ID: 8192}}},
+        )
+
+        assert s.context_windows == {MODEL_ID: 8192}
+
+    def test_a_bad_map_does_not_disable_anything_else(self):
+        s = read_settings(
+            {
+                "services": {
+                    "chat_app": {
+                        "context_editing": {
+                            "context_windows": "nope",
+                            "context_window": 32768,
+                        }
+                    }
+                }
+            },
+            {},
+        )
+
+        assert s.context_windows == {}
+        assert s.context_window == 32768, "the single window is untouched"
+        assert s.enabled is True, "a bad value must not disable the limit"
+
+    def test_the_settings_constructor_still_works_without_the_new_field(self):
+        assert _settings().context_windows == {}
 
 
 class TestProviderReportedWindow:
