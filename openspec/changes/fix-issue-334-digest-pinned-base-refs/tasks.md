@@ -74,7 +74,7 @@ Two standing notes for every task:
       `--digest python=sha256:<64 hex> --tag dev-4314ac4`, then rewrite that result back with
       `--tag dev-4314ac4 --switch-source ghcr --orig-tag all`, and assert the final line
       equals the original line exactly. Gate green; commit.
-- [ ] 4.2 `model: haiku` — Run `bash scripts/gate.sh` once more on the finished change and confirm it exits 0.
+- [x] 4.2 `model: haiku` — Run `bash scripts/gate.sh` once more on the finished change and confirm it exits 0.
       Confirm `git status` is empty after the last commit. Push with
       `git push -u origin fix/issue-334-digest-pinned-base-refs` — the branch currently
       tracks `origin/dev`, so `-u` is required. Open the PR with
