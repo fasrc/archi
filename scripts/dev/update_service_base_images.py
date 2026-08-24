@@ -40,24 +40,35 @@ def _normalize_prefix(prefix: str) -> str:
     return ""
 
 
-def _split_image_spec(image_spec: str) -> Tuple[str, str, Optional[str]]:
-    """Split "<prefix><image>:<tag>" into (prefix, image, tag)."""
-    if ":" in image_spec:
-        repo_part, tag = image_spec.rsplit(":", 1)
+def _split_image_spec(image_spec: str) -> Tuple[str, str, Optional[str], Optional[str]]:
+    """Split a base reference into (prefix, image, tag, digest).
+
+    Handles both reference forms: "<prefix><image>:<tag>" and
+    "<prefix><image>@sha256:<hex>". They are alternatives, not layers, so at
+    most one of `tag` and `digest` is set. The digest is cut off first because
+    it contains a ":" that the tag split would otherwise claim.
+    """
+    if "@" in image_spec:
+        repo_part, digest = image_spec.rsplit("@", 1)
+        tag: Optional[str] = None
     else:
-        repo_part, tag = image_spec, None
+        digest = None
+        if ":" in image_spec:
+            repo_part, tag = image_spec.rsplit(":", 1)
+        else:
+            repo_part, tag = image_spec, None
 
     repo_part = repo_part.replace("//", "/")
     segments = [seg for seg in repo_part.split("/") if seg]
     if not segments:
-        return "", repo_part, tag
+        return "", repo_part, tag, digest
 
     image = segments[-1]
     prefix = "/".join(segments[:-1])
     if prefix:
         prefix += "/"
 
-    return prefix, image, tag
+    return prefix, image, tag, digest
 
 
 def _build_image_spec(prefix: str, image: str, tag: Optional[str]) -> str:
@@ -95,7 +106,7 @@ def _update_line(line: str, base_name: str, options: UpdateOptions) -> Tuple[str
         match.group("image"),
         match.group("suffix"),
     )
-    prefix, image, current_tag = _split_image_spec(image_spec)
+    prefix, image, current_tag, _current_digest = _split_image_spec(image_spec)
 
     if image != base_name:
         return line, False
