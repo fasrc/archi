@@ -491,3 +491,36 @@ def test_the_default_orig_tag_only_reaches_a_latest_pinned_line(tmp_path, monkey
     assert (templates / "Dockerfile-digest").read_text() == (
         f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}  # dev-4314ac4\n"
     )
+
+
+def test_a_digest_for_a_base_excluded_by_bases_is_refused(tmp_path, monkeypatch):
+    """Spec: a digest for a base the run excludes is refused.
+
+    `update_base_tags` only walks the bases in `--bases`, so a digest for any
+    other base can never be applied. Accepting it would exit zero having
+    written nothing — the same silent partial failure this change exists to
+    remove.
+    """
+    original = "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+    module, templates = _write_fixtures(
+        tmp_path, monkeypatch, **{"Dockerfile-chat": original}
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            module,
+            monkeypatch,
+            [
+                "--digest",
+                f"python={_PY_DIGEST}",
+                "--bases",
+                "pytorch",
+                "--orig-tag",
+                "all",
+            ],
+        )
+
+    message = str(excinfo.value)
+    assert "python" in message
+    assert "--bases" in message
+    assert (templates / "Dockerfile-chat").read_text() == original

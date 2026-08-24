@@ -85,6 +85,18 @@ discovered only at build time in CI, far from the command that caused them.
 - **THEN** the script exits non-zero
 - **AND** no template file is written
 
+#### Scenario: A digest for a base excluded by --bases is refused
+
+- **WHEN** the script runs with `--digest python=sha256:<64 hex> --bases pytorch`
+- **THEN** the script exits non-zero
+- **AND** the error names `python` and the bases the run selected
+- **AND** no template file is written
+
+The rewriter only walks the bases named by `--bases`, so a digest for any other base can
+never be applied. Accepting it would exit zero having written nothing, which is the silent
+partial failure this option exists to end — an operator would read a clean exit as a
+successful pin.
+
 #### Scenario: A base image with no --digest keeps its tag
 
 - **WHEN** the script runs with `--digest python=sha256:<64 hex> --tag dev-abc1234 --orig-tag all`

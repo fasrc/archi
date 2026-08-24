@@ -257,6 +257,14 @@ def parse_args() -> UpdateOptions:
                 f"Malformed --digest value for {name}: {digest} "
                 "(expected sha256:<64 hex characters>)"
             )
+        if name not in args.bases:
+            # `update_base_tags` only walks the bases in `--bases`, so this
+            # digest could never be applied. Exiting zero having written
+            # nothing is the silent partial failure this option exists to end.
+            raise SystemExit(
+                f"--digest names {name}, which --bases excludes "
+                f"(selected: {', '.join(args.bases)})"
+            )
         digests_by_image[BASE_IMAGE_MAP[name]] = digest
 
     return UpdateOptions(
