@@ -940,9 +940,9 @@ class TestMaplessPassStillCrawls:
             "a retained validated map must be labelled as such, so the operator "
             f"knows the timestamps it writes are trustworthy; got {message!r}"
         )
-        assert "2 cached lastmod entries" in message, (
-            f"the warning must report the retained entry count; got {message!r}"
-        )
+        assert (
+            "2 cached lastmod entries" in message
+        ), f"the warning must report the retained entry count; got {message!r}"
 
     def test_mapless_scrape_sends_no_last_modified_to_persistence(
         self, refresh_harness, tmp_path
