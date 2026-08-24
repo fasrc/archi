@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import argparse
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Optional, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILES_DIR = PROJECT_ROOT / "src" / "cli" / "templates" / "dockerfiles"
@@ -30,6 +30,9 @@ class UpdateOptions:
     orig_tag: Optional[str]
     switch_source: Optional[str]
     bases: Iterable[str]
+    # Keyed by image name, not by the `--digest` name, so `_update_line` can
+    # look a digest up with the base name it already holds.
+    digests_by_image: Dict[str, str] = field(default_factory=dict)
 
 
 def _normalize_prefix(prefix: str) -> str:
@@ -71,9 +74,14 @@ def _split_image_spec(image_spec: str) -> Tuple[str, str, Optional[str], Optiona
     return prefix, image, tag, digest
 
 
-def _build_image_spec(prefix: str, image: str, tag: Optional[str]) -> str:
+def _build_image_spec(
+    prefix: str, image: str, tag: Optional[str], digest: Optional[str] = None
+) -> str:
+    """Build a base reference. A digest wins over a tag — they never combine."""
     prefix = _normalize_prefix(prefix)
     repo = f"{prefix}{image}" if prefix else image
+    if digest:
+        return f"{repo}@{digest}"
     if tag:
         return f"{repo}:{tag}"
     return repo
@@ -137,11 +145,18 @@ def _update_line(line: str, base_name: str, options: UpdateOptions) -> Tuple[str
     if options.switch_source:
         target_prefix = SOURCE_PREFIXES[options.switch_source]
 
-    updated_spec = _build_image_spec(target_prefix, image, target_tag)
+    target_digest = options.digests_by_image.get(image)
 
-    # The annotation names the build the digest is. Writing a tag in place of a
-    # digest leaves it naming a build the line no longer references, so it goes.
-    updated_comment = "" if current_digest is not None else comment
+    if target_digest is not None:
+        # A digest says nothing about which build it is, so the tag goes in a
+        # comment beside it. No tag given, no comment.
+        updated_spec = _build_image_spec(target_prefix, image, None, target_digest)
+        updated_comment = f"  # {options.tag}" if options.tag else ""
+    else:
+        updated_spec = _build_image_spec(target_prefix, image, target_tag)
+        # The annotation names the build the digest is. Writing a tag in place
+        # of a digest leaves it naming a build the line no longer references.
+        updated_comment = "" if current_digest is not None else comment
 
     if updated_spec == image_spec:
         return line, False
@@ -193,6 +208,16 @@ def parse_args() -> UpdateOptions:
         help="Switch base image registry/source",
     )
     parser.add_argument(
+        "--digest",
+        action="append",
+        metavar="NAME=sha256:HEX",
+        default=[],
+        help=(
+            "Pin a base image by digest instead of by tag, e.g. "
+            "python=sha256:<64 hex>. Repeatable."
+        ),
+    )
+    parser.add_argument(
         "--bases",
         choices=sorted(BASE_IMAGE_MAP),
         nargs="+",
@@ -203,11 +228,17 @@ def parse_args() -> UpdateOptions:
     orig_tag = args.orig_tag
     if orig_tag in ("all", ""):
         orig_tag = None
+    digests_by_image = {}
+    for entry in args.digest:
+        name, _, digest = entry.partition("=")
+        digests_by_image[BASE_IMAGE_MAP[name]] = digest
+
     return UpdateOptions(
         tag=args.tag,
         orig_tag=orig_tag,
         switch_source=args.switch_source,
         bases=args.bases,
+        digests_by_image=digests_by_image,
     )
 
 

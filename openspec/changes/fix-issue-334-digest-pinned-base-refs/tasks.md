@@ -47,7 +47,7 @@ Two standing notes for every task:
 
 ## 3. Write digest references
 
-- [ ] 3.1 `model: opus` — RED test: `--digest python=sha256:<64 hex> --tag dev-abc1234 --switch-source ghcr
+- [x] 3.1 `model: opus` — RED test: `--digest python=sha256:<64 hex> --tag dev-abc1234 --switch-source ghcr
       --orig-tag all` against a tag-pinned python-base fixture must produce
       `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<64 hex>  # dev-abc1234`. Watch it fail.
       Implement: a repeatable `--digest NAME=sha256:HEX` argparse option parsed into a

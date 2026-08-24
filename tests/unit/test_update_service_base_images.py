@@ -29,6 +29,8 @@ _SCRIPT = (
 
 # Real digest of the pinned python base, from issue #334.
 _PY_DIGEST = "sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8"
+# A second well-formed digest, for "pin to a different build" cases.
+_NEW_DIGEST = "sha256:" + "a1" * 32
 
 
 def _load_script():
@@ -226,3 +228,37 @@ def test_a_comment_on_a_tag_line_is_left_alone(tmp_path, monkeypatch):
     assert target.read_text() == (
         "FROM ghcr.io/fasrc/a2rchi-python-base:pr-7  # hand-written\n"
     )
+
+
+def test_a_digest_is_written_with_the_tag_beside_it(tmp_path, monkeypatch):
+    """Spec: a digest is written with the tag beside it.
+
+    This is the maintenance path for the pin issue #333 puts in the templates.
+    Without it an operator moves that pin by hand across 15 files.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{"Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"},
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        [
+            "--digest",
+            f"python={_NEW_DIGEST}",
+            "--tag",
+            "dev-abc1234",
+            "--switch-source",
+            "ghcr",
+            "--orig-tag",
+            "all",
+        ],
+    )
+
+    assert target.read_text() == (
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{_NEW_DIGEST}  # dev-abc1234\n"
+    )
+    assert ":dev-abc1234" not in target.read_text()
