@@ -488,11 +488,15 @@ def enforce_base_images(
 
     try:
         grader_enabled = bool(compose_config.get_service("grader").enabled)
-    except (ValueError, KeyError):
-        # `ComposeConfig.get_service` raises ValueError for a name it does not know, which is
-        # the one case worth tolerating: a plan with no grader simply has no grader. Anything
-        # else is a real fault and must surface -- swallowing it would silently skip the
-        # pytorch check for a grader deployment and land on teardown-then-fail.
+    except ValueError:
+        # `ComposeConfig.get_service` raises ValueError for a name it does not know
+        # (`service_registry.py:213`, `service_builder.py:110`), which is the one case worth
+        # tolerating: a plan with no grader simply has no grader. Anything else is a real
+        # fault and must surface -- swallowing it would silently skip the pytorch check for a
+        # grader deployment and land on teardown-then-fail. `KeyError` is deliberately NOT
+        # tolerated: nothing on the "no such service" path raises it, so a KeyError here is a
+        # dict-backed plan that lost a key, and reading that as "grader disabled" is the
+        # fail-open this whole module exists to remove.
         grader_enabled = False
 
     names = required_base_image_names(

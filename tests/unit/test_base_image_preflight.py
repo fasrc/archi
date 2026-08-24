@@ -868,6 +868,27 @@ def test_a_grader_lookup_failure_is_not_silently_treated_as_disabled():
         preflight.enforce_base_images(_Exploding(), probe=FakeProbe())
 
 
+def test_a_grader_lookup_keyerror_is_not_silently_treated_as_disabled():
+    """A `KeyError` is plan corruption, not evidence that the grader is absent.
+
+    Both `ComposeConfig.get_service` implementations signal an unknown name with
+    `ValueError` (`service_registry.py:213`, `service_builder.py:110`), so nothing on the
+    tolerated path raises `KeyError`. A `KeyError` reaching here means a dict-backed plan
+    lost a key -- and turning that into `grader_enabled = False` drops the pytorch base
+    from the checked set, so a `--force` create tears the deployment down and only then
+    fails building the grader.
+    """
+
+    class _MissingKey:
+        gpu_ids = None
+
+        def get_service(self, name):
+            raise KeyError(name)
+
+    with pytest.raises(KeyError):
+        preflight.enforce_base_images(_MissingKey(), probe=FakeProbe())
+
+
 def test_an_absent_grader_service_is_still_tolerated():
     """The case the catch actually exists for: a plan that has no grader at all."""
     outcomes = preflight.enforce_base_images(_Plan(raises=True), probe=FakeProbe())
