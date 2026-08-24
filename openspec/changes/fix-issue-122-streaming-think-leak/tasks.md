@@ -1,4 +1,5 @@
-All anchors are verified against `origin/dev` @ `4fb0050c` (2026-08-23).
+All anchors are verified against `origin/dev` @ `4fb0050c` (2026-08-23), and
+re-verified unchanged at `f9a14523` (2026-08-24).
 
 ## 1. Helper: the thinking gate (TDD — red first)
 
@@ -77,20 +78,26 @@ All anchors are verified against `origin/dev` @ `4fb0050c` (2026-08-23).
       text is discarded, never flushed, because undecided text cannot be shown to be
       an answer rather than reasoning.
 
-## 5. Deployment validation (AGENTS.md:58-63)
+## 5. Deployment validation — DESCOPED to #340 (do NOT run)
 
-- [ ] 5.1 `model: opus` — Name the runtime path before validating, per `AGENTS.md:59`:
+This group is operator-only live-deploy work and is tracked in #340. It carries no
+checkboxes on purpose: the executor must not attempt it, and this change lands on
+unit coverage alone. State on the PR that unit coverage is complete and that runtime
+validation is outstanding in #340. The original text is kept below as the handover
+record for whoever runs #340.
+
+- (#340) 5.1 `model: opus` — Name the runtime path before validating, per `AGENTS.md:59`:
       confirm whether the service under test imports the workspace source or the
       baked `site-packages` copy, and record which. A code change is invisible to a
       container running baked code until it is rebuilt.
-- [ ] 5.2 `model: opus` — PRECONDITION, state it before running anything: the validating
+- (#340) 5.2 `model: opus` — PRECONDITION, state it before running anything: the validating
       deployment MUST have a provider with `enable_thinking: true` against an
       OpenAI-compatible reasoning endpoint. The PR preview stack runs Ollama
       (`.github/workflows/pr-preview.yml:228`), which reports reasoning through
       `reasoning_content` and never reaches the leaking branch; fasrc-dev sets
       `enable_thinking: false`. A green run on either stack as configured proves
       nothing about this change and MUST NOT be recorded as validation.
-- [ ] 5.3 `model: opus` — The concrete target, which needs operator authorization before it
+- (#340) 5.3 `model: opus` — The concrete target, which needs operator authorization before it
       is touched: fasrc-dev's `local` provider already runs `mode: openai_compat`
       against the Qwen vLLM server, so it is one config key away from being a valid
       environment. Set
@@ -106,17 +113,17 @@ All anchors are verified against `origin/dev` @ `4fb0050c` (2026-08-23).
       with this leak's standing workaround switched off. Treat the validation as
       unfinished until the second redeploy lands and the effective config is
       confirmed back at `false`.
-- [ ] 5.4 `model: opus` — Know the standing blocker before scheduling 5.3: `dev` now carries
+- (#340) 5.4 `model: opus` — Know the standing blocker before scheduling 5.3: `dev` now carries
       the #305 evaluation stack, which adds `mcp` and `ijson` to the base-image
       requirements, and per issue #266 `archi create` pulls the upstream base image
       rather than building the fork's own. Confirm the redeployed image actually
       contains both packages, or resolve #266 first; otherwise the chatbot fails to
       import its own code and the validation cannot run at all.
-- [ ] 5.5 `model: opus` — Drive one chat turn that provokes orphan reasoning against the
+- (#340) 5.5 `model: opus` — Drive one chat turn that provokes orphan reasoning against the
       named service and confirm from the streamed events that no `text` event
       carries pre-`</think>` reasoning and no chunk carries a bare `</think>`.
       Record the service name and the observed events on the PR.
-- [ ] 5.6 `model: opus` — If the operator declines the 5.3 config change, or #266 blocks the
+- (#340) 5.6 `model: opus` — If the operator declines the 5.3 config change, or #266 blocks the
       redeploy, do NOT record the change as runtime-validated. State on the PR that
       unit coverage is complete and runtime validation is outstanding, and name the
       reason. Groups 1-4 and 6 do not depend on this group and can land on their
@@ -130,6 +137,8 @@ All anchors are verified against `origin/dev` @ `4fb0050c` (2026-08-23).
 - [ ] 6.3 `model: opus` — Run `/codex:adversarial-review --wait` on the branch; verify each
       finding against the code, fix what holds (TDD), push back with reasons on
       what does not, then re-run until a round is clean or only nits remain.
-- [ ] 6.4 `model: sonnet` — Open the PR against `dev` referencing issue #122 and PR #121,
+- [ ] 6.4 `model: sonnet` — Open the PR against `dev` with `closes #122` in the BODY (a
+      closing keyword in the title does not link), referencing PR #121 and plan PR #324,
       recording that the July predicate was a no-op and that the operator chose the
-      config-keyed gate on 2026-08-23.
+      config-keyed gate on 2026-08-23. State that unit coverage is complete and that
+      runtime validation is outstanding in #340 (task group 5 is descoped).
