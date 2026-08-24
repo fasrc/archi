@@ -291,3 +291,42 @@ def test_a_digest_with_no_tag_is_written_without_a_comment(tmp_path, monkeypatch
     pytorch_line = (templates / "Dockerfile-gpu").read_text()
     assert pytorch_line == "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4\n"
     assert "@sha256:" not in pytorch_line
+
+
+def test_a_comment_only_rewrite_is_still_written(tmp_path, monkeypatch, capsys):
+    """Spec: a line whose only change is its comment is still written.
+
+    Re-pinning the same digest under a new tag changes nothing but the
+    annotation. Comparing only the image reference called that "unchanged" and
+    dropped it, leaving the comment naming the build before last.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": (
+                f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}  # dev-4314ac4\n"
+            )
+        },
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        [
+            "--digest",
+            f"python={_PY_DIGEST}",
+            "--tag",
+            "dev-abc1234",
+            "--switch-source",
+            "ghcr",
+            "--orig-tag",
+            "all",
+        ],
+    )
+
+    assert target.read_text() == (
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}  # dev-abc1234\n"
+    )
+    assert "Updated dockerfiles/Dockerfile-chat" in capsys.readouterr().out

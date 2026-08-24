@@ -158,10 +158,13 @@ def _update_line(line: str, base_name: str, options: UpdateOptions) -> Tuple[str
         # of a digest leaves it naming a build the line no longer references.
         updated_comment = "" if current_digest is not None else comment
 
-    if updated_spec == image_spec:
+    # Compare the whole line, not just the reference: re-pinning the same
+    # digest under a new tag changes only the annotation, and that is a change.
+    updated_line = f"{intro}{updated_spec}{rest}{updated_comment}{newline}"
+    if updated_line == line:
         return line, False
 
-    return f"{intro}{updated_spec}{rest}{updated_comment}{newline}", True
+    return updated_line, True
 
 
 def update_base_tags(options: UpdateOptions) -> None:

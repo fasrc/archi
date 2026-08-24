@@ -57,7 +57,7 @@ Two standing notes for every task:
       the python-base line carries the digest and **no** trailing comment; in the same run a
       pytorch-base fixture line, which has no `--digest` entry, keeps its tag and gains no
       digest. Gate green; commit.
-- [ ] 3.3 `model: sonnet` — RED test: re-pinning a line that already carries that exact digest, with a
+- [x] 3.3 `model: sonnet` — RED test: re-pinning a line that already carries that exact digest, with a
       different `--tag`, still rewrites the file and still prints `Updated <path>`. Watch it
       fail — today `_update_line` returns unchanged when the image spec matches. Implement:
       compare the rebuilt line against the original line instead of comparing only the image
