@@ -262,3 +262,32 @@ def test_a_digest_is_written_with_the_tag_beside_it(tmp_path, monkeypatch):
         f"FROM ghcr.io/fasrc/a2rchi-python-base@{_NEW_DIGEST}  # dev-abc1234\n"
     )
     assert ":dev-abc1234" not in target.read_text()
+
+
+def test_a_digest_with_no_tag_is_written_without_a_comment(tmp_path, monkeypatch):
+    """Spec: a digest with no tag is written without a comment.
+
+    Also spec: a base image with no `--digest` keeps its tag. The pytorch line
+    in the same run is named by neither `--digest` nor `--tag`, so it must come
+    through untouched.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n",
+            "Dockerfile-gpu": "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4\n",
+        },
+    )
+
+    _run(
+        module, monkeypatch, ["--digest", f"python={_NEW_DIGEST}", "--orig-tag", "all"]
+    )
+
+    python_line = (templates / "Dockerfile-chat").read_text()
+    assert python_line == f"FROM ghcr.io/fasrc/a2rchi-python-base@{_NEW_DIGEST}\n"
+    assert "#" not in python_line
+
+    pytorch_line = (templates / "Dockerfile-gpu").read_text()
+    assert pytorch_line == "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4\n"
+    assert "@sha256:" not in pytorch_line

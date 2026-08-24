@@ -53,7 +53,7 @@ Two standing notes for every task:
       Implement: a repeatable `--digest NAME=sha256:HEX` argparse option parsed into a
       `dict`, a `digests` field on `UpdateOptions` defaulting to empty, a digest output form
       in `_build_image_spec`, and the comment write in `_update_line`. Gate green; commit.
-- [ ] 3.2 `model: sonnet` — RED test, two assertions: with `--digest python=sha256:<64 hex>` and no `--tag`,
+- [x] 3.2 `model: sonnet` — RED test, two assertions: with `--digest python=sha256:<64 hex>` and no `--tag`,
       the python-base line carries the digest and **no** trailing comment; in the same run a
       pytorch-base fixture line, which has no `--digest` entry, keeps its tag and gains no
       digest. Gate green; commit.
