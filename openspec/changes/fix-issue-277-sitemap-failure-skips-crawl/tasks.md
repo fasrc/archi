@@ -1,6 +1,6 @@
 ## 1. Let a mapless scheduled pass crawl (TDD, red then green in this one task)
 
-- [ ] 1.1 Flip the pinned assertion, then remove the guard — **in this one task**, because
+- [x] 1.1 Flip the pinned assertion, then remove the guard — **in this one task**, because
       `bash scripts/gate.sh` runs before every commit and a task that ends with the suite red can never be
       committed. In `tests/unit/test_scraper_sitemap_refresh.py`, rewrite
       `class TestNoDegradeWithoutAPriorMap` (line 812) as
@@ -17,7 +17,7 @@
       `python -m pytest tests/unit/test_scraper_sitemap_refresh.py -q` and confirm the new
       test fails **on its own assertion** (`collect_links` never called), not on an import
       or fixture error — that is the red step and it proves the test reaches the guard.
-- [ ] 1.2 Green: in `src/data_manager/collectors/scrapers/scraper_manager.py`, inside the
+- [x] 1.2 Green: in `src/data_manager/collectors/scrapers/scraper_manager.py`, inside the
       `except SitemapExpansionError` handler of `schedule_collect_links`, delete the
       `if not getattr(self, "_sitemap_map_valid", False):` branch together with its
       `logger.error(...)` call and its `return`. The handler must fall through to the
@@ -27,7 +27,7 @@
       carry no `last_modified` — and no error-level log (design D3). Re-run the file:
       green. Change nothing in the `elif` / `else` branches that clear or retain the map
       (they are out of scope, issue #277 "Out of scope").
-- [ ] 1.3 Rewrite the comment block above the deleted branch. It currently claims the
+- [x] 1.3 Rewrite the comment block above the deleted branch. It currently claims the
       upsert does an unconditional `last_modified = EXCLUDED.last_modified`; that claim is
       false on `dev`. State the real invariant: the catalog upsert preserves a stored
       `last_modified` through
@@ -37,20 +37,20 @@
       (design D4). Keep the second paragraph's `_sitemap_map_valid` rationale only if the
       flag is still read after 1.2; if nothing reads it in this handler any more, drop that
       paragraph rather than leaving a comment about a dead condition.
-- [ ] 1.4 Confirm no other test pins the skip:
+- [x] 1.4 Confirm no other test pins the skip:
       `grep -rn "skips_the_crawl\|skipping this scheduled crawl" tests/ src/` must return
       nothing.
 
 ## 2. Pin that a mapless pass destroys no stored timestamp (both layers)
 
-- [ ] 2.1 Scraper layer — in `tests/unit/test_scraper_sitemap_refresh.py`, add a test that
+- [x] 2.1 Scraper layer — in `tests/unit/test_scraper_sitemap_refresh.py`, add a test that
       a page scraped while `_sitemap_lastmod_map` is empty is persisted with **no**
       `last_modified` key in `resource.metadata`. Drive it through
       `_scrape_and_persist_url` with a stub scraper whose `crawl_iter` yields one resource
       and a stub persistence that captures what it receives, so the assertion covers the
       real `if lastmod_map:` gate at `scraper_manager.py:823` rather than a reimplementation
       of it. This is the first half of the chain in design D2.
-- [ ] 2.2 Persistence layer — in
+- [x] 2.2 Persistence layer — in
       `tests/unit/test_catalog_postgres_upsert_last_modified.py`, add a case named for this
       scenario (a mapless scheduled re-crawl of a page whose row already holds a
       timestamp): call `upsert_resource` with metadata that has no `last_modified`, then
@@ -59,19 +59,19 @@
       `_param_for_column` finds `None` bound in the `last_modified` slot. Reuse that
       existing helper — its column/VALUES pairing is what keeps the assertion from being
       positionally blind. Do not modify `catalog_postgres.py` (issue #277 "Out of scope").
-- [ ] 2.3 Confirm the existing map-branch tests in
+- [x] 2.3 Confirm the existing map-branch tests in
       `tests/unit/test_scraper_sitemap_refresh.py` are still green and unedited —
       `TestExpansionCompletenessSignal` and the clear-on-complete / retain-on-incomplete
       cases cover lines this change must not affect.
 
 ## 3. Verify against issue #277's acceptance criteria
 
-- [ ] 3.1 Run `bash scripts/gate.sh` **bare — no pipe, no redirect** (it refuses to run when its output is
+- [x] 3.1 Run `bash scripts/gate.sh` **bare — no pipe, no redirect** (it refuses to run when its output is
       piped or redirected). Format, lint, unit tests, and >= 80% diff coverage on changed
       lines must all pass. Never `--no-verify`.
-- [ ] 3.2 Run `openspec validate fix-issue-277-sitemap-failure-skips-crawl --strict` and
+- [x] 3.2 Run `openspec validate fix-issue-277-sitemap-failure-skips-crawl --strict` and
       confirm it passes.
-- [ ] 3.3 Walk issue #277's six acceptance-criteria boxes and confirm each maps to a real
+- [x] 3.3 Walk issue #277's six acceptance-criteria boxes and confirm each maps to a real
       test or a real diff hunk: crawl proceeds with the full list (1.1), stored timestamps
       survive through the production upsert path (2.2), the pinned class is replaced by
       something strictly stronger (1.1 + 2.x), the false comment is gone and names the
@@ -88,3 +88,50 @@
       name the accepted cost: pages first seen during a mapless pass carry no
       `last_modified` until a later pass with a working map supplies one. **Never merge** —
       a human merges in daylight.
+
+## Deviations from this plan, and why
+
+Recorded during implementation on 2026-08-24. The plan was written against
+`origin/dev` @ `4fb0050c`; implementation ran against `f9a14523`.
+
+1. **Task 1.4's grep was too narrow and missed a second pin.**
+   `grep -rn "skips_the_crawl\|skipping this scheduled crawl"` returns nothing, yet
+   `TestIncompleteExpansionIsNotAValidMap::test_truncated_initial_expansion_does_not_authorize_a_later_degrade`
+   also asserted `crawled == []`. Its name says "degrade", not "skip", so neither
+   pattern reached it. It was found by running the whole file, not by the grep. That
+   test is now `test_truncated_initial_expansion_still_crawls_on_a_later_failure`, and
+   it additionally asserts `_sitemap_map_valid` stays `False` — the latch still gates
+   the retention branch at `scraper_manager.py:718`, so it must not be blessed by the
+   crawl proceeding. Its class docstring, which recited the NULL hazard as current
+   fact and named the deleted class, was rewritten.
+
+2. **Task 1.3's conditional paragraph is kept, because the flag is not dead.**
+   The plan allowed dropping the `_sitemap_map_valid` rationale "if nothing reads it
+   in this handler any more". Nothing in the handler does — but
+   `_refresh_sitemap_lastmod_map` still reads it at `scraper_manager.py:718` for the
+   retention decision. The flag stays; only the handler's reference to it is gone.
+
+3. **Task 2.1 names a method that does not exist.** The plan says
+   `_scrape_and_persist_url`; the real method is `ScraperManager._handle_standard_url`,
+   and the `if lastmod_map:` gate is at line 827, not 823. The new test drives the
+   real method. It asserts **both** directions — no stamp with an empty map, and a
+   stamp with a populated one — because a negative-only test stays green if the
+   stamping gate is deleted outright. No existing test exercised this method; every
+   other test in the suite monkeypatches it away.
+
+4. **Task 2.2 as written would have produced a duplicate.** It asks for a test
+   asserting the COALESCE clause plus a `None` binding, but
+   `test_upsert_resource_without_last_modified_uses_coalesce_and_passes_none`
+   (`tests/unit/test_catalog_postgres_upsert_last_modified.py:148`) already asserts
+   exactly both halves. Instead the new test
+   `test_upsert_conflict_never_uses_the_unconditional_last_modified_form` asserts what
+   no existing test does: the destructive `last_modified = EXCLUDED.last_modified`
+   form is absent from the conflict clause. That is the assertion that fails if the
+   hazard is ever reintroduced — nothing in the scraper would catch it, because the
+   scraper's own behavior would still be correct.
+
+5. **One warning covers both degrade paths.** The plan describes the message for the
+   mapless case. With the guard gone, the valid-map case falls through the same
+   `logger.warning`, so a message claiming "without a map" would be false there. The
+   emitted message states the cached-entry count instead, which is accurate whether
+   that count is 0 or N.
