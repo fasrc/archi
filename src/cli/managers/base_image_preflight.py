@@ -552,14 +552,32 @@ def _source_pyproject() -> Path:
     return Path(__file__).resolve().parents[2].parent / "pyproject.toml"
 
 
-def _read_pyproject_floor(path: Path) -> Optional[str]:
+def _read_pyproject_floor(path: Path) -> str:
+    """The ``requires-python`` declared in one pyproject file.
+
+    Raises rather than returning ``None``. A file that exists but cannot be read or parsed is
+    not the same thing as a file that is not there, and the caller has to tell them apart:
+    conflating them turns a broken checkout into a silent fallback onto possibly stale
+    metadata, which is a fail-open on the very check this module performs.
+    """
     import tomllib
 
     try:
         with open(path, "rb") as handle:
-            return tomllib.load(handle)["project"]["requires-python"]
-    except (OSError, KeyError, ValueError):
-        return None
+            data = tomllib.load(handle)
+    except (OSError, ValueError) as error:
+        raise BaseImagePreflightError(
+            f"Could not read the project's requires-python floor from {path}: {error}. "
+            f"Refusing rather than falling back to a floor that may be out of date."
+        ) from error
+
+    try:
+        return data["project"]["requires-python"]
+    except (KeyError, TypeError) as error:
+        raise BaseImagePreflightError(
+            f"{path} declares no [project] requires-python, so the base image cannot be "
+            f"checked against a floor."
+        ) from error
 
 
 def _metadata_python_floor() -> Optional[str]:
@@ -592,15 +610,12 @@ def declared_python_floor(pyproject_path: Optional[Path] = None) -> str:
     ``--dry`` included.
     """
     if pyproject_path is not None:
-        floor = _read_pyproject_floor(Path(pyproject_path))
-        if floor:
-            return floor
+        return _read_pyproject_floor(Path(pyproject_path))
 
     source = _source_pyproject()
     if source.exists():
-        floor = _read_pyproject_floor(source)
-        if floor:
-            return floor
+        # Present but broken fails closed, on purpose. See _read_pyproject_floor.
+        return _read_pyproject_floor(source)
 
     floor = _metadata_python_floor()
     if floor:

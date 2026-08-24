@@ -888,3 +888,54 @@ def test_an_absent_grader_service_is_still_tolerated():
     outcomes = preflight.enforce_base_images(_Plan(raises=True), probe=FakeProbe())
 
     assert all(preflight.PYTORCH_BASE not in o.reference for o in outcomes)
+
+
+# --- A present but unreadable pyproject must fail closed (round 3 finding) ---------------
+
+
+def test_a_malformed_source_pyproject_refuses_rather_than_using_stale_metadata(
+    tmp_path, monkeypatch
+):
+    """Falling back here would re-authorize the very interpreter this module rejects.
+
+    Installed metadata in this environment still says `>=3.7`. If a truncated file, a merge
+    artifact, or a permissions problem made the checkout's pyproject unreadable, silently
+    reaching for that stale number would approve a Python 3.10 base image -- the precise
+    failure fasrc/archi#266 exists to prevent, arrived at by a different route.
+    """
+    broken = tmp_path / "pyproject.toml"
+    broken.write_text("[project\nrequires-python = ")
+    monkeypatch.setattr(preflight, "_source_pyproject", lambda: broken)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.declared_python_floor()
+
+    assert str(broken) in str(excinfo.value)
+
+
+def test_a_source_pyproject_without_a_declared_floor_refuses(tmp_path, monkeypatch):
+    valid_but_silent = tmp_path / "pyproject.toml"
+    valid_but_silent.write_text('[project]\nname = "archi"\n')
+    monkeypatch.setattr(preflight, "_source_pyproject", lambda: valid_but_silent)
+
+    with pytest.raises(preflight.BaseImagePreflightError):
+        preflight.declared_python_floor()
+
+
+def test_an_explicitly_supplied_pyproject_that_is_malformed_refuses(tmp_path):
+    """An explicit path is a caller's assertion about where the floor lives. Honour it."""
+    broken = tmp_path / "pyproject.toml"
+    broken.write_text("nonsense {{{")
+
+    with pytest.raises(preflight.BaseImagePreflightError):
+        preflight.declared_python_floor(broken)
+
+
+def test_metadata_is_used_only_when_there_is_no_source_pyproject(monkeypatch):
+    """The fallback stays available for a genuine installed CLI, which has no checkout."""
+    monkeypatch.setattr(
+        preflight, "_source_pyproject", lambda: Path("/nonexistent/pyproject.toml")
+    )
+    monkeypatch.setattr(preflight, "_metadata_python_floor", lambda: ">=3.11")
+
+    assert preflight.declared_python_floor() == ">=3.11"
