@@ -50,6 +50,12 @@ def _split_image_spec(image_spec: str) -> Tuple[str, str, Optional[str], Optiona
     "<prefix><image>@sha256:<hex>". They are alternatives, not layers, so at
     most one of `tag` and `digest` is set. The digest is cut off first because
     it contains a ":" that the tag split would otherwise claim.
+
+    A reference may carry both, as in "<image>:<tag>@sha256:<hex>". The digest
+    decides which image is pulled and the tag beside it is informational, so
+    the reference is reported as digest-pinned and that tag is dropped. Leaving
+    it glued to the image name would make the name fail every caller's
+    comparison and the line would be skipped in silence.
     """
     if "@" in image_spec:
         repo_part, digest = image_spec.rsplit("@", 1)
@@ -67,6 +73,10 @@ def _split_image_spec(image_spec: str) -> Tuple[str, str, Optional[str], Optiona
         return "", repo_part, tag, digest
 
     image = segments[-1]
+    if digest is not None and ":" in image:
+        # A tag rode along with the digest. Only the last segment can carry
+        # one, so a registry port earlier in the reference is left alone.
+        image = image.split(":", 1)[0]
     prefix = "/".join(segments[:-1])
     if prefix:
         prefix += "/"

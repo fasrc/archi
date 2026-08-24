@@ -637,3 +637,55 @@ def test_moving_to_a_different_digest_without_a_tag_drops_the_annotation(
         f"FROM ghcr.io/fasrc/a2rchi-python-base@{_NEW_DIGEST}\n"
     )
     assert "dev-4314ac4" not in target.read_text()
+
+
+def test_a_tag_and_digest_reference_is_read_as_digest_pinned(tmp_path, monkeypatch):
+    """`<image>:<tag>@sha256:<hex>` is a valid reference and must not be skipped.
+
+    Docker accepts a tag and a digest on one reference; the digest decides
+    which image is pulled and the tag beside it is informational. Read naively
+    the tag stays glued to the image name, the name guard rejects it, and the
+    line is passed over in silence — the same failure this change exists to
+    end. The tag is dropped rather than carried, because a tag and a digest are
+    alternatives everywhere else in this script.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": (
+                f"FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4@{_PY_DIGEST}\n"
+            )
+        },
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        ["--tag", "pr-7", "--switch-source", "ghcr", "--orig-tag", "all"],
+    )
+
+    assert target.read_text() == "FROM ghcr.io/fasrc/a2rchi-python-base:pr-7\n"
+
+
+def test_a_tag_and_digest_reference_has_no_tag_to_match(tmp_path, monkeypatch):
+    """The other half: it is digest-pinned, so a literal --orig-tag misses it.
+
+    The tag is present in the text but is not the reference's tag — the digest
+    is what the line resolves to. Letting `--orig-tag dev-4314ac4` match here
+    would contradict the rule that a digest-pinned line carries no tag.
+    """
+    original = f"FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4@{_PY_DIGEST}\n"
+    module, templates = _write_fixtures(
+        tmp_path, monkeypatch, **{"Dockerfile-chat": original}
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        ["--tag", "pr-7", "--switch-source", "ghcr", "--orig-tag", "dev-4314ac4"],
+    )
+
+    assert target.read_text() == original

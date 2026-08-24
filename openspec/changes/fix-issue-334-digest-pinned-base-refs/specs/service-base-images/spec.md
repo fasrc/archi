@@ -29,6 +29,17 @@ reference no runtime accepts.
 - **THEN** the line reads `FROM ghcr.io/fasrc/a2rchi-python-base:pr-7`
 - **AND** the digest no longer appears on the line
 
+#### Scenario: A reference carrying both a tag and a digest is digest-pinned
+
+- **WHEN** a template line reads `FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4@sha256:<hex>` and the script runs with `--tag pr-7 --switch-source ghcr --orig-tag all`
+- **THEN** the line reads `FROM ghcr.io/fasrc/a2rchi-python-base:pr-7`
+- **AND** processing that same line with `--orig-tag dev-4314ac4` leaves it unchanged
+
+A reference may carry both. The digest decides which image is pulled and the tag beside it
+is informational, so the reference is read as digest-pinned and that tag is dropped on
+rewrite. Read naively the tag stays glued to the image name, the name comparison fails, and
+the line is passed over in silence — the same failure the first requirement exists to end.
+
 #### Scenario: A specific --orig-tag leaves a digest-pinned line alone
 
 - **WHEN** the same digest-pinned line is processed with `--orig-tag dev-4314ac4`
