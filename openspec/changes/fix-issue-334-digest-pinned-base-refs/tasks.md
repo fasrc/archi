@@ -70,7 +70,7 @@ Two standing notes for every task:
 
 ## 4. Round trip and close-out
 
-- [ ] 4.1 `model: sonnet` — RED-or-guard test: take a tag-pinned fixture line, rewrite it to a digest with
+- [x] 4.1 `model: sonnet` — RED-or-guard test: take a tag-pinned fixture line, rewrite it to a digest with
       `--digest python=sha256:<64 hex> --tag dev-4314ac4`, then rewrite that result back with
       `--tag dev-4314ac4 --switch-source ghcr --orig-tag all`, and assert the final line
       equals the original line exactly. Gate green; commit.

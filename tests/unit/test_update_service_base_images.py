@@ -371,3 +371,43 @@ def test_a_malformed_digest_is_refused(tmp_path, monkeypatch):
 
     assert "deadbeef" in str(excinfo.value)
     assert (templates / "Dockerfile-chat").read_text() == original
+
+
+def test_tag_digest_and_back_again_returns_the_original_line(tmp_path, monkeypatch):
+    """Spec: tag, digest, and back again returns the original line.
+
+    The reader and the writer have to agree. A round trip that drifted by a
+    stray comment or a lost prefix would leave the templates a little
+    different after every pin, which is how a diff stops being reviewable.
+    """
+    original = "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+    module, templates = _write_fixtures(
+        tmp_path, monkeypatch, **{"Dockerfile-chat": original}
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        [
+            "--digest",
+            f"python={_PY_DIGEST}",
+            "--tag",
+            "dev-4314ac4",
+            "--switch-source",
+            "ghcr",
+            "--orig-tag",
+            "all",
+        ],
+    )
+    assert target.read_text() == (
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}  # dev-4314ac4\n"
+    )
+
+    _run(
+        module,
+        monkeypatch,
+        ["--tag", "dev-4314ac4", "--switch-source", "ghcr", "--orig-tag", "all"],
+    )
+
+    assert target.read_text() == original
