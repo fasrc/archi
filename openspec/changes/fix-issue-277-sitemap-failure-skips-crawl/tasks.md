@@ -80,7 +80,7 @@
 
 ## 4. Ship it (no merge)
 
-- [ ] 4.1 Open one PR against `dev`:
+- [x] 4.1 Open one PR against `dev` — https://github.com/fasrc/archi/pull/341:
       `gh pr create --repo fasrc/archi --base dev`. The body MUST contain `closes #277` —
       a closing keyword in the *title* does not link the issue. State in the body that the
       change needs **no migration and no deploy ordering**, that the data-loss hazard the
