@@ -1,5 +1,19 @@
 # Tasks — digest-aware base-reference rewriting
 
+> **CAUTION — the annotation form below is superseded. Do not copy it.**
+>
+> Tasks 2.1, 2.2, 3.1, and 3.2 describe the tag annotation as a trailing `# <tag>` comment
+> on the `FROM` line, as issue #334 specified. **That is not a valid Dockerfile.** A
+> Dockerfile recognises `#` as a comment only at the start of a line, so the text is read as
+> a second `FROM` argument and both docker and podman reject the file with "FROM requires
+> either one or three arguments" — every service build fails at parse time. Review of PR
+> #342 caught it after these tasks were written and worked.
+>
+> The annotation is a `# base-image-pin: <tag> (managed by update_service_base_images.py)`
+> line directly above the `FROM` line. The tasks are left as they were written, because they
+> record what was planned and done; the **spec delta is the current statement of behaviour**
+> and the tests match it, not the task text.
+
 Every checkbox below is one loop turn and ends **green and committed**. Write the failing
 test, watch it fail, write the smallest fix, run `bash scripts/gate.sh`, commit. Never end a
 task with the suite red, and never use `--no-verify`.

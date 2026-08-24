@@ -204,7 +204,9 @@ def _update_line(
             indent = intro[: len(intro) - len(intro.lstrip())]
             # The FROM line can be the last in a file and carry no line ending.
             # Reusing that would glue the two together as "# ...tagFROM ...",
-            # commenting the base instruction out.
+            # commenting the base instruction out. "\n" is always right here:
+            # `update_base_tags` reads with `Path.read_text()`, whose universal
+            # newlines leave no "\r" for any line to carry.
             separator = newline or "\n"
             updated_annotation = (
                 f"{indent}{ANNOTATION_PREFIX}{options.tag}"

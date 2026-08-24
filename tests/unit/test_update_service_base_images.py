@@ -874,6 +874,48 @@ def test_a_final_from_line_with_no_newline_still_gets_a_separator(
     )
 
 
+def test_a_crlf_file_is_rewritten_whole_with_lf_endings(tmp_path, monkeypatch):
+    """A rewritten CRLF file comes out entirely LF, annotation included.
+
+    `update_base_tags` reads with `Path.read_text()`, whose universal newlines
+    turn every `\\r\\n` into `\\n` before any line is examined. The conversion
+    is therefore whole-file and predates this change; what matters here is that
+    the result is never *mixed*, which would be a trap for tooling expecting
+    one convention. The templates are all LF, so no file is affected today.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": (
+                "RUN echo build\r\nFROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\r\n"
+            )
+        },
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        [
+            "--digest",
+            f"python={_PY_DIGEST}",
+            "--tag",
+            "dev-abc1234",
+            "--orig-tag",
+            "all",
+        ],
+    )
+
+    raw = target.read_bytes()
+    assert b"\r" not in raw
+    assert raw.decode() == (
+        "RUN echo build\n"
+        f"{_ANN}dev-abc1234{_ANN_END}\n"
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+    )
+
+
 def test_an_annotation_never_survives_above_a_tag_reference(tmp_path, monkeypatch):
     """An annotation names a digest, so a tag line must never carry one.
 

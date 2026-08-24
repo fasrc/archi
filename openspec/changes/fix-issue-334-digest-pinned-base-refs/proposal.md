@@ -24,11 +24,18 @@ assertion at `tests/unit/test_base_image_preflight.py:269`.
 - A new repeatable `--digest <name>=sha256:<64 hex>` option pins one base image by digest.
   `<name>` is a `BASE_IMAGE_MAP` key (`python`, `pytorch`); an unknown name exits non-zero
   with an error that names the valid keys.
-- When the script writes a digest, it writes the human-readable tag beside it as a trailing
-  `# <tag>` comment, taken from `--tag`. With no `--tag`, it writes no comment.
-- When the script rewrites a digest reference back to a tag, it drops that trailing comment,
-  which now names the wrong build. Any other trailing content on the line (for example
-  `AS builder`) survives.
+- When the script writes a digest, it records the human-readable tag from `--tag` in a
+  `# base-image-pin: <tag> (managed by update_service_base_images.py)` line directly above
+  the `FROM` line. With no `--tag`, it writes no annotation.
+  The annotation cannot ride on the `FROM` line, which is where this proposal first put it
+  and where issue #334 specified it. A Dockerfile recognises `#` as a comment only at the
+  start of a line, so a trailing `# <tag>` is read as a second `FROM` argument and both
+  docker and podman reject the file with "FROM requires either one or three arguments".
+  Measured against docker 29.5.1 and podman 5.8.2 on 2026-08-24.
+- When the script writes a tag reference, it removes that annotation line, which has no
+  digest left to name. It removes such a line only when the whole wording matches, so a
+  comment belonging to the template is never deleted. Nothing on the `FROM` line itself is
+  touched beyond the reference, so `AS builder` and a stray trailing space both survive.
 - `--orig-tag all` keeps matching every current reference, digest-pinned included. A
   specific `--orig-tag` still matches only that literal tag, so it never matches a digest.
 - A new `tests/unit/test_update_service_base_images.py` covers all of the above against
