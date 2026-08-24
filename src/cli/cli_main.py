@@ -8,6 +8,10 @@ import click
 import yaml
 from jinja2 import ChainableUndefined, Environment, PackageLoader, select_autoescape
 
+from src.cli.managers.base_image_preflight import (
+    enforce_base_images,
+    unverified_notes,
+)
 from src.cli.managers.config_manager import ConfigurationManager
 from src.cli.managers.deployment_manager import DeploymentManager
 from src.cli.managers.secrets_manager import SecretsManager
@@ -267,9 +271,21 @@ def create(
         if port_errors:
             raise ValueError("Port check failed:\n" + "\n".join(port_errors))
 
+        # Base images must be in hand before anything is destroyed. This is the
+        # same rule as the port checks above, applied to the one dependency the
+        # build cannot proceed without: a create that cannot obtain its base
+        # image was always going to fail, so it must not cost the operator a
+        # running deployment first (fasrc/archi#266).
+        #
+        # It cannot move down next to start_deployment, which is where #266
+        # originally specified it — that is below the teardown.
+        base_image_outcomes = enforce_base_images(
+            compose_config, use_podman=other_flags.get("podman", False), dry=dry
+        )
+
         # Everything above this line can still refuse the deployment — service
         # selection, config validation, secret validation, the compose plan,
-        # and the pure port checks.  So the --force teardown goes here and
+        # the pure port checks, and the base images.  So the --force teardown goes here and
         # nowhere earlier: a create that was always going to fail must not cost
         # the operator a running deployment first (fasrc/archi#287).
         #
@@ -295,6 +311,10 @@ def create(
                 compose_config,
                 other_flags,
                 base_dir,
+                base_image_notes=unverified_notes(
+                    base_image_outcomes,
+                    "podman" if other_flags.get("podman", False) else "docker",
+                ),
             )
             return
 

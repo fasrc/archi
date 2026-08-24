@@ -172,7 +172,7 @@ def check_python_floor(reference: str, reported: Optional[str], floor: str) -> O
     cannot run the probe could not have completed the build either (design D5).
     """
     from packaging.specifiers import SpecifierSet
-    from packaging.version import InvalidVersion, Version
+    from packaging.version import Version
 
     version_text = _parse_version(reported)
     if version_text is None:
@@ -183,12 +183,9 @@ def check_python_floor(reference: str, reported: Optional[str], floor: str) -> O
             detail=(reported or "").strip(),
         )
 
-    try:
-        version = Version(version_text)
-    except InvalidVersion:
-        return Outcome(
-            reference, Verdict.REFUSED, Cause.VERSION_UNREADABLE, detail=version_text
-        )
+    # `_parse_version` yields only digits and dots, which is always a valid PEP 440 version,
+    # so there is no parse failure left to guard against here.
+    version = Version(version_text)
 
     if not SpecifierSet(floor).contains(version):
         return Outcome(
@@ -278,6 +275,240 @@ def compose_message(outcome: Outcome, container_tool: str = "docker") -> str:
             f"read without pulling it, which a dry run does not do."
         )
     return f"{reference}: {outcome.verdict.value}"
+
+
+# Ordered because the patterns overlap: a 403 that also mentions a manifest is still an
+# authorization failure, and "no space left on device" arrives wrapped in a write error.
+_ERROR_PATTERNS = (
+    (
+        Cause.PROBE_UNSUPPORTED,
+        ("is not a docker command", "unknown command", "unrecognized command"),
+    ),
+    (
+        Cause.UNAUTHORIZED,
+        (
+            "unauthorized",
+            "authentication required",
+            "denied",
+            "403",
+            "forbidden",
+            "login",
+        ),
+    ),
+    (Cause.NO_DISK, ("no space left on device", "disk quota exceeded")),
+    (
+        Cause.UNKNOWN_TAG,
+        ("manifest unknown", "not found", "manifest for", "does not exist"),
+    ),
+    (
+        Cause.UNREACHABLE,
+        (
+            "no such host",
+            "connection refused",
+            "i/o timeout",
+            "timeout",
+            "network",
+            "temporary failure",
+        ),
+    ),
+)
+
+
+def classify_fetch_error(stderr: str) -> Cause:
+    """Map a container tool's failure output onto the cause that names the right remedy.
+
+    An unrecognised failure returns ``UNREACHABLE``, never success. Availability has no
+    unknown outcome: a failure nobody has catalogued is still a failure, and guessing that it
+    is benign would let the teardown proceed on an assumption.
+    """
+    text = (stderr or "").lower()
+    for cause, needles in _ERROR_PATTERNS:
+        if any(needle in text for needle in needles):
+            return cause
+    return Cause.UNREACHABLE
+
+
+class ContainerProbe:
+    """The only part of this module that touches the container tool.
+
+    Everything else takes probe results as data, so the whole decision surface is unit-tested
+    without a daemon. ``manifest inspect`` appears here only for the dry path -- the real path
+    pulls, because ``pull`` and ``image inspect`` are uniformly supported where
+    ``manifest inspect`` is not (design D2).
+    """
+
+    def __init__(self, container_tool: str = "docker", timeout: int = 600):
+        self.container_tool = container_tool
+        self.timeout = timeout
+
+    def _run(self, args: Sequence[str], timeout: Optional[int] = None):
+        import subprocess
+
+        try:
+            return subprocess.run(
+                [self.container_tool, *args],
+                capture_output=True,
+                text=True,
+                timeout=timeout or self.timeout,
+            )
+        except (OSError, ValueError):
+            return None
+        except Exception:  # noqa: BLE001 - a probe must never raise into the caller
+            return None
+
+    def runtime_available(self) -> bool:
+        result = self._run(["version", "--format", "{{.Client.Version}}"], timeout=10)
+        if result is not None and result.returncode == 0:
+            return True
+        # Fall back on a non-zero exit too, not only on an exception: a tool that does not
+        # implement `version --format` exits non-zero, and treating that as "no runtime"
+        # would refuse a real create on a perfectly usable daemon.
+        result = self._run(["--version"], timeout=10)
+        return bool(result and result.returncode == 0)
+
+    def image_present(self, reference: str) -> bool:
+        result = self._run(["image", "inspect", reference], timeout=30)
+        return bool(result and result.returncode == 0)
+
+    def pull(self, reference: str) -> Optional[Cause]:
+        result = self._run(["pull", reference])
+        if result is None:
+            return Cause.UNREACHABLE
+        if result.returncode == 0:
+            return None
+        return classify_fetch_error(result.stderr or result.stdout)
+
+    def reachable(self, reference: str) -> Optional[Cause]:
+        result = self._run(["manifest", "inspect", reference], timeout=60)
+        if result is None:
+            return Cause.PROBE_UNSUPPORTED
+        if result.returncode == 0:
+            return None
+        return classify_fetch_error(result.stderr or result.stdout)
+
+    def python_version(self, reference: str) -> Optional[str]:
+        result = self._run(
+            ["run", "--rm", "--entrypoint", "python", reference, "-V"], timeout=120
+        )
+        if result is None or result.returncode != 0:
+            return None
+        return (result.stdout or result.stderr or "").strip() or None
+
+
+def run_preflight(
+    references: Sequence[str],
+    *,
+    probe,
+    floor: str,
+    dry: bool = False,
+) -> List[Outcome]:
+    """Decide every reference, in the order the invariant requires.
+
+    Availability first, because a version cannot be read from an image that is not there --
+    attempting it would report an unreadable version where the real cause is a failed pull.
+    The floor check then runs for every image that ended up present, on a real create and on
+    a dry run alike (design D5).
+    """
+    runtime = probe.runtime_available()
+    outcomes: List[Outcome] = []
+
+    for reference in references:
+        present = runtime and probe.image_present(reference)
+        fetch_cause = None
+        if runtime and not present and not reference.startswith(LOCAL_PREFIX):
+            fetch_cause = probe.reachable(reference) if dry else probe.pull(reference)
+            if not dry and fetch_cause is None:
+                present = True
+
+        outcome = decide_availability(
+            reference,
+            runtime_available=runtime,
+            present_locally=present,
+            fetch_cause=fetch_cause,
+            dry=dry,
+        )
+
+        if outcome.verdict is Verdict.AVAILABLE and present:
+            outcome = check_python_floor(
+                reference, probe.python_version(reference), floor
+            )
+
+        outcomes.append(outcome)
+
+    return outcomes
+
+
+class BaseImagePreflightError(Exception):
+    """Raised when a base image cannot be established, before anything is destroyed."""
+
+
+def enforce_base_images(
+    compose_config,
+    *,
+    use_podman: bool = False,
+    dry: bool = False,
+    probe=None,
+    template_dir: Optional[Path] = None,
+    pyproject_path: Optional[Path] = None,
+) -> List[Outcome]:
+    """The single entry point `archi create` calls. Raises rather than returning a failure.
+
+    Kept here, not in ``cli_main``, for two reasons: the decision logic stays unit-testable
+    without invoking the CLI, and lines added to ``cli_main`` are not imported by the unit
+    suite, so they would fail the diff-coverage gate (design D8).
+
+    Returns the outcomes so a dry run can report what it could not verify.
+    """
+    container_tool = "podman" if use_podman else "docker"
+    probe = probe or ContainerProbe(container_tool)
+
+    grader_enabled = False
+    try:
+        grader_enabled = bool(compose_config.get_service("grader").enabled)
+    except Exception:  # noqa: BLE001 - an absent grader is simply not enabled
+        grader_enabled = False
+
+    references = required_base_images(
+        getattr(compose_config, "gpu_ids", None), grader_enabled, template_dir
+    )
+    if not references:
+        return []
+
+    outcomes = run_preflight(
+        references,
+        probe=probe,
+        floor=declared_python_floor(pyproject_path),
+        dry=dry,
+    )
+
+    refused = [outcome for outcome in outcomes if outcome.refused]
+    if refused:
+        raise BaseImagePreflightError(
+            "Base image check failed:\n" + summarize(refused, container_tool)
+        )
+    return outcomes
+
+
+def unverified_notes(
+    outcomes: Sequence[Outcome], container_tool: str = "docker"
+) -> List[str]:
+    """The NOT VERIFIED lines a dry run must show instead of claiming readiness."""
+    return [
+        compose_message(outcome, container_tool)
+        for outcome in outcomes
+        if outcome.unverified
+    ]
+
+
+def declared_python_floor(pyproject_path: Optional[Path] = None) -> str:
+    """The project's own ``requires-python``, read rather than duplicated as a constant."""
+    import tomllib
+
+    path = pyproject_path or (
+        Path(__file__).resolve().parents[2].parent / "pyproject.toml"
+    )
+    with open(path, "rb") as handle:
+        return tomllib.load(handle)["project"]["requires-python"]
 
 
 def summarize(outcomes: Sequence[Outcome], container_tool: str = "docker") -> str:

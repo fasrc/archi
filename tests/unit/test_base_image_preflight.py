@@ -316,3 +316,431 @@ def test_summary_omits_available_references():
 
     assert GHCR_REF not in summary
     assert LOCAL_REF in summary
+
+
+# --- Mapping real container-tool failures onto causes (design D3) ------------------------
+
+
+@pytest.mark.parametrize(
+    "stderr, expected",
+    [
+        ("unauthorized: authentication required", preflight.Cause.UNAUTHORIZED),
+        ("denied: permission_denied: read_package", preflight.Cause.UNAUTHORIZED),
+        (
+            "Error response from daemon: Head ...: 403 Forbidden",
+            preflight.Cause.UNAUTHORIZED,
+        ),
+        ("manifest unknown", preflight.Cause.UNKNOWN_TAG),
+        ("manifest for ghcr.io/x:y not found", preflight.Cause.UNKNOWN_TAG),
+        ("no space left on device", preflight.Cause.NO_DISK),
+        ("write /var/lib/docker: no space left on device", preflight.Cause.NO_DISK),
+        ("dial tcp: lookup ghcr.io: no such host", preflight.Cause.UNREACHABLE),
+        ("connection refused", preflight.Cause.UNREACHABLE),
+        ("i/o timeout", preflight.Cause.UNREACHABLE),
+        (
+            "docker: 'manifest' is not a docker command",
+            preflight.Cause.PROBE_UNSUPPORTED,
+        ),
+        ('unknown command "manifest" for "podman"', preflight.Cause.PROBE_UNSUPPORTED),
+    ],
+)
+def test_pull_errors_map_to_the_cause_that_names_the_right_remedy(stderr, expected):
+    assert preflight.classify_fetch_error(stderr) is expected
+
+
+def test_an_unrecognised_failure_is_unreachable_not_a_pass():
+    """Availability has no unknown outcome. An unfamiliar error must not become success."""
+    cause = preflight.classify_fetch_error("something nobody has seen before")
+
+    assert cause is not None
+    assert cause is preflight.Cause.UNREACHABLE
+
+
+# --- The orchestrator (design D1, D5, D7) ------------------------------------------------
+
+
+class FakeProbe:
+    """Stands in for the container tool. Every test injects one; none shells out."""
+
+    def __init__(
+        self,
+        runtime=True,
+        present=(),
+        fetch_error=None,
+        version="Python 3.11.9",
+        tool="docker",
+    ):
+        self.runtime = runtime
+        self.present = set(present)
+        self.fetch_error = fetch_error
+        self.version = version
+        self.container_tool = tool
+        self.pulled = []
+        self.reachability_checked = []
+        self.versions_read = []
+
+    def runtime_available(self):
+        return self.runtime
+
+    def image_present(self, reference):
+        return reference in self.present
+
+    def pull(self, reference):
+        self.pulled.append(reference)
+        if self.fetch_error is None:
+            self.present.add(reference)
+        return self.fetch_error
+
+    def reachable(self, reference):
+        self.reachability_checked.append(reference)
+        return self.fetch_error
+
+    def python_version(self, reference):
+        self.versions_read.append(reference)
+        return self.version
+
+
+def test_a_real_create_pulls_an_absent_image_and_checks_its_version():
+    probe = FakeProbe(present=())
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=False
+    )
+
+    assert probe.pulled == [GHCR_REF]
+    assert probe.versions_read == [GHCR_REF]
+    assert all(o.verdict is preflight.Verdict.AVAILABLE for o in outcomes)
+
+
+def test_a_present_image_is_not_pulled_but_is_still_version_checked():
+    probe = FakeProbe(present=(GHCR_REF,))
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=False
+    )
+
+    assert probe.pulled == []
+    assert probe.versions_read == [GHCR_REF]
+    assert outcomes[0].verdict is preflight.Verdict.AVAILABLE
+
+
+def test_a_freshly_pulled_image_below_the_floor_refuses():
+    """The clean-host case #266 was filed about: nothing cached, image incompatible."""
+    probe = FakeProbe(present=(), version="Python 3.10.20")
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=False
+    )
+
+    assert outcomes[0].verdict is preflight.Verdict.REFUSED
+    assert outcomes[0].cause is preflight.Cause.VERSION_BELOW_FLOOR
+
+
+def test_a_dry_run_never_pulls():
+    probe = FakeProbe(present=())
+    preflight.run_preflight([GHCR_REF], probe=probe, floor=">=3.11", dry=True)
+
+    assert probe.pulled == []
+    assert probe.reachability_checked == [GHCR_REF]
+
+
+def test_a_dry_run_checks_the_floor_for_an_image_already_present():
+    """A cached-but-incompatible base must not be reported as ready.
+
+    Reading a present image's version needs no pull, so declining to check it here was a
+    real false-confidence hole, not an unavoidable limit of dry runs.
+    """
+    probe = FakeProbe(present=(GHCR_REF,), version="Python 3.10.20")
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=True
+    )
+
+    assert probe.pulled == []
+    assert outcomes[0].verdict is preflight.Verdict.REFUSED
+    assert outcomes[0].cause is preflight.Cause.VERSION_BELOW_FLOOR
+
+
+def test_a_dry_run_refuses_what_the_real_create_would_refuse():
+    probe = FakeProbe(present=(), fetch_error=preflight.Cause.UNAUTHORIZED)
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=True
+    )
+
+    assert outcomes[0].verdict is preflight.Verdict.REFUSED
+    assert outcomes[0].cause is preflight.Cause.UNAUTHORIZED
+
+
+def test_a_dry_run_with_no_runtime_is_unverified_and_reads_no_version():
+    probe = FakeProbe(runtime=False)
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=True
+    )
+
+    assert outcomes[0].verdict is preflight.Verdict.UNVERIFIED
+    assert outcomes[0].cause is preflight.Cause.NO_RUNTIME
+    assert probe.versions_read == []
+
+
+def test_a_real_create_with_no_runtime_refuses():
+    probe = FakeProbe(runtime=False)
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=False
+    )
+
+    assert outcomes[0].verdict is preflight.Verdict.REFUSED
+    assert outcomes[0].cause is preflight.Cause.NO_RUNTIME
+
+
+def test_the_version_probe_is_never_run_on_an_image_that_is_not_present():
+    """Reading a version requires the image. Attempting it otherwise would mask the real cause."""
+    probe = FakeProbe(present=(), fetch_error=preflight.Cause.UNKNOWN_TAG)
+    preflight.run_preflight([GHCR_REF], probe=probe, floor=">=3.11", dry=False)
+
+    assert probe.versions_read == []
+
+
+# --- The probe seam itself (design D2, D6) -----------------------------------------------
+
+
+class _FakeCompleted:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _stub_subprocess(monkeypatch, handler):
+    """Replace subprocess.run so the probe's own command construction is what gets tested."""
+    import subprocess
+
+    calls = []
+
+    def _run(args, **kwargs):
+        calls.append(list(args))
+        return handler(list(args))
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    return calls
+
+
+def test_probe_uses_the_configured_container_tool(monkeypatch):
+    """A podman deployment must not shell out to docker."""
+    calls = _stub_subprocess(monkeypatch, lambda args: _FakeCompleted(0))
+    probe = preflight.ContainerProbe("podman")
+
+    probe.image_present(GHCR_REF)
+
+    assert calls[0][0] == "podman", calls
+
+
+def test_probe_image_present_follows_the_exit_status(monkeypatch):
+    _stub_subprocess(monkeypatch, lambda args: _FakeCompleted(0))
+    assert preflight.ContainerProbe("docker").image_present(GHCR_REF) is True
+
+    _stub_subprocess(
+        monkeypatch, lambda args: _FakeCompleted(1, stderr="No such image")
+    )
+    assert preflight.ContainerProbe("docker").image_present(GHCR_REF) is False
+
+
+def test_probe_pull_returns_none_on_success_and_a_cause_on_failure(monkeypatch):
+    _stub_subprocess(monkeypatch, lambda args: _FakeCompleted(0))
+    assert preflight.ContainerProbe("docker").pull(GHCR_REF) is None
+
+    _stub_subprocess(
+        monkeypatch,
+        lambda args: _FakeCompleted(1, stderr="unauthorized: authentication required"),
+    )
+    assert (
+        preflight.ContainerProbe("docker").pull(GHCR_REF)
+        is preflight.Cause.UNAUTHORIZED
+    )
+
+
+def test_probe_reachability_reports_an_unsupported_subcommand(monkeypatch):
+    _stub_subprocess(
+        monkeypatch,
+        lambda args: _FakeCompleted(
+            1, stderr="docker: 'manifest' is not a docker command"
+        ),
+    )
+
+    assert (
+        preflight.ContainerProbe("docker").reachable(GHCR_REF)
+        is preflight.Cause.PROBE_UNSUPPORTED
+    )
+
+
+def test_probe_reads_the_python_version_from_either_stream(monkeypatch):
+    _stub_subprocess(
+        monkeypatch, lambda args: _FakeCompleted(0, stdout="Python 3.11.9\n")
+    )
+    assert (
+        preflight.ContainerProbe("docker").python_version(GHCR_REF) == "Python 3.11.9"
+    )
+
+    # Older CPython builds print the banner on stderr.
+    _stub_subprocess(
+        monkeypatch, lambda args: _FakeCompleted(0, stderr="Python 3.11.9\n")
+    )
+    assert (
+        preflight.ContainerProbe("docker").python_version(GHCR_REF) == "Python 3.11.9"
+    )
+
+
+def test_probe_version_read_returns_none_when_the_command_fails(monkeypatch):
+    _stub_subprocess(monkeypatch, lambda args: _FakeCompleted(127, stderr="not found"))
+
+    assert preflight.ContainerProbe("docker").python_version(GHCR_REF) is None
+
+
+def test_probe_never_raises_when_the_tool_is_absent(monkeypatch):
+    """A missing binary must surface as "no runtime", not as a traceback out of `create`."""
+
+    def _explode(args, **kwargs):
+        raise OSError("no such executable")
+
+    import subprocess
+
+    monkeypatch.setattr(subprocess, "run", _explode)
+    probe = preflight.ContainerProbe("docker")
+
+    assert probe.runtime_available() is False
+    assert probe.image_present(GHCR_REF) is False
+    assert probe.pull(GHCR_REF) is preflight.Cause.UNREACHABLE
+    assert probe.reachable(GHCR_REF) is preflight.Cause.PROBE_UNSUPPORTED
+    assert probe.python_version(GHCR_REF) is None
+
+
+def test_probe_runtime_available_falls_back_to_version_flag(monkeypatch):
+    """Some tools do not implement `version --format`; the fallback keeps them usable."""
+
+    def _handler(args):
+        if "--format" in args:
+            return _FakeCompleted(1, stderr="unknown flag")
+        return _FakeCompleted(0, stdout="podman version 5.4.0")
+
+    _stub_subprocess(monkeypatch, _handler)
+
+    assert preflight.ContainerProbe("podman").runtime_available() is True
+
+
+# --- Remaining diagnostics and the entry point ------------------------------------------
+
+
+def test_unreachable_and_no_runtime_messages_name_their_own_causes():
+    unreachable = preflight.Outcome(
+        GHCR_REF, preflight.Verdict.REFUSED, preflight.Cause.UNREACHABLE
+    )
+    assert "network" in preflight.compose_message(unreachable).lower()
+
+    no_runtime = preflight.Outcome(
+        GHCR_REF, preflight.Verdict.REFUSED, preflight.Cause.NO_RUNTIME
+    )
+    assert "podman" in preflight.compose_message(no_runtime, "podman")
+
+
+def test_unreadable_version_message_quotes_what_it_actually_got():
+    outcome = preflight.Outcome(
+        GHCR_REF,
+        preflight.Verdict.REFUSED,
+        preflight.Cause.VERSION_UNREADABLE,
+        detail="Pythonn 3",
+    )
+
+    assert "Pythonn 3" in preflight.compose_message(outcome)
+
+
+def test_a_causeless_outcome_still_renders():
+    """Defensive: a message is never allowed to crash the refusal it is explaining."""
+    outcome = preflight.Outcome(GHCR_REF, preflight.Verdict.AVAILABLE)
+
+    assert GHCR_REF in preflight.compose_message(outcome)
+
+
+def test_base_reference_returns_none_for_an_image_no_template_names(tmp_path):
+    (tmp_path / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base:x\n"
+    )
+
+    assert preflight.base_reference("a2rchi-nonesuch-base", tmp_path) is None
+
+
+def test_required_base_images_is_empty_when_no_template_declares_one(tmp_path):
+    (tmp_path / "Dockerfile-chat").write_text("FROM docker.io/library/python:3.11\n")
+
+    assert preflight.required_base_images(None, False, tmp_path) == []
+
+
+def test_declared_python_floor_reads_the_projects_own_pyproject(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nrequires-python = ">=3.12"\n')
+
+    assert preflight.declared_python_floor(pyproject) == ">=3.12"
+
+
+class _Plan:
+    def __init__(self, gpu_ids=None, grader=False, raises=False):
+        self.gpu_ids = gpu_ids
+        self._grader = grader
+        self._raises = raises
+
+    def get_service(self, name):
+        if self._raises:
+            raise ValueError(f"Unknown service: {name}")
+        return type("S", (), {"enabled": self._grader})()
+
+
+def test_enforce_raises_with_the_operator_message_when_a_reference_is_refused():
+    probe = FakeProbe(present=(), fetch_error=preflight.Cause.UNAUTHORIZED)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.enforce_base_images(_Plan(), probe=probe)
+
+    assert "read:packages" in str(excinfo.value)
+
+
+def test_enforce_names_podman_in_the_remedy_for_a_podman_deployment():
+    probe = FakeProbe(present=(), fetch_error=preflight.Cause.UNAUTHORIZED)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.enforce_base_images(_Plan(), probe=probe, use_podman=True)
+
+    assert "podman login" in str(excinfo.value)
+
+
+def test_enforce_treats_an_unknown_grader_service_as_disabled():
+    """A plan without a grader must not crash the preflight looking for one."""
+    probe = FakeProbe(present=())
+
+    outcomes = preflight.enforce_base_images(_Plan(raises=True), probe=probe)
+
+    assert all(preflight.PYTORCH_BASE not in o.reference for o in outcomes)
+
+
+def test_enforce_checks_the_pytorch_base_when_the_grader_is_enabled():
+    probe = FakeProbe(present=())
+
+    outcomes = preflight.enforce_base_images(_Plan(grader=True), probe=probe)
+
+    assert any(preflight.PYTORCH_BASE in o.reference for o in outcomes)
+
+
+def test_enforce_returns_empty_when_no_template_declares_a_base(tmp_path):
+    (tmp_path / "Dockerfile-chat").write_text("FROM docker.io/library/python:3.11\n")
+    probe = FakeProbe()
+
+    assert (
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path) == []
+    )
+
+
+def test_unverified_notes_lists_only_unverified_references():
+    outcomes = [
+        preflight.Outcome(GHCR_REF, preflight.Verdict.AVAILABLE),
+        preflight.Outcome(
+            LOCAL_REF, preflight.Verdict.UNVERIFIED, preflight.Cause.NO_RUNTIME
+        ),
+    ]
+
+    notes = preflight.unverified_notes(outcomes)
+
+    assert len(notes) == 1
+    assert LOCAL_REF in notes[0]
