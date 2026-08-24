@@ -83,17 +83,23 @@ discovered only at build time in CI, far from the command that caused them.
 - **AND** the python-base line reads `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<64 hex>`
 - **AND** the line does not carry a bare tag reference
 
-#### Scenario: An empty --tag is refused
+#### Scenario: A --tag that is not a valid image tag is refused
 
-- **WHEN** the script runs with `--tag ""`, with or without `--digest`
+- **WHEN** the script runs with a `--tag` that does not match `[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}` — empty, containing a space, or over-long — with or without `--digest`
 - **THEN** the script exits non-zero
 - **AND** no template file is written
 
-Both workflow call sites pass `--tag "${{ ... }}"` from a job output, so an empty value is
-one unset output away. It is not a tag. Without `--digest` the reference is rebuilt with no
-tag at all, giving a bare `FROM <repo>` that resolves to `latest` at build time — the
-unpinned base this whole capability exists to prevent. With `--digest` the annotation names
-no build, which the script no longer recognises as its own and the repository guard rejects.
+Both workflow call sites pass `--tag "${{ ... }}"` from a job output, so an unexpanded or
+malformed value is one bad output away, and neither output form survives one.
+
+Without `--digest`, an empty value rebuilds the reference with no tag at all — a bare
+`FROM <repo>` that resolves to `latest` at build time, the unpinned base this capability
+exists to prevent — and a value containing a space gives `FROM <repo>:dev bad`, which is
+two `FROM` arguments and the same parse error an inline comment causes.
+
+With `--digest`, the annotation stops matching the script's own wording, so the script no
+longer recognises the line as its own: no later run can remove it, and the repository guard
+reports the digest as unnamed.
 
 #### Scenario: A digest with no --tag is refused
 

@@ -341,6 +341,50 @@ def test_an_empty_tag_is_refused(tmp_path, monkeypatch):
     assert (templates / "Dockerfile-chat").read_text() == original
 
 
+def test_a_tag_that_is_not_a_tag_is_refused(tmp_path, monkeypatch):
+    """A value that is not a valid Docker tag breaks both output forms.
+
+    Docker tags match `[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}`, so a space is not a
+    tag. Writing one produces `FROM <repo>:dev bad` — two `FROM` arguments and
+    the same parse error as an inline comment — and on the digest path an
+    annotation the script's own pattern no longer matches, which orphans it.
+    """
+    original = "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+
+    # A leading "-" is not in this list: argparse claims it as an option name
+    # and rejects it before this validation ever sees it.
+    for index, bad in enumerate(["dev bad", "dev-4314ac4 ", ".dot-start", "a" * 200]):
+        module, templates = _write_fixtures(
+            tmp_path / str(index), monkeypatch, **{"Dockerfile-chat": original}
+        )
+        with pytest.raises(SystemExit) as excinfo:
+            _run(
+                module,
+                monkeypatch,
+                ["--tag", bad, "--switch-source", "ghcr", "--orig-tag", "all"],
+            )
+        assert "--tag" in str(excinfo.value), bad
+        assert (templates / "Dockerfile-chat").read_text() == original, bad
+
+
+def test_the_tags_the_call_sites_use_are_accepted(tmp_path, monkeypatch):
+    """The validation must not reject what CI and releases actually pass."""
+    for index, good in enumerate(["pr-7", "dev-4314ac4", "v2026.8.0", "latest", "a"]):
+        module, templates = _write_fixtures(
+            tmp_path / str(index),
+            monkeypatch,
+            **{"Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:old\n"},
+        )
+        _run(
+            module,
+            monkeypatch,
+            ["--tag", good, "--switch-source", "ghcr", "--orig-tag", "all"],
+        )
+        assert (templates / "Dockerfile-chat").read_text() == (
+            f"FROM ghcr.io/fasrc/a2rchi-python-base:{good}\n"
+        ), good
+
+
 def test_a_base_image_with_no_digest_keeps_its_tag(tmp_path, monkeypatch):
     """Spec: a base image with no `--digest` keeps its tag.
 

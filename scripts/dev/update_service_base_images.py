@@ -99,6 +99,9 @@ def _build_image_spec(
 
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
+# An OCI image tag, per the distribution spec's grammar.
+_TAG_RE = re.compile(r"[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}")
+
 # The annotation this script writes ABOVE a digest-pinned FROM line. It cannot
 # go on the FROM line itself: a Dockerfile recognises "#" as a comment only at
 # the start of a line, so a trailing "# tag" becomes a second FROM argument and
@@ -336,15 +339,18 @@ def parse_args() -> UpdateOptions:
     if orig_tag in ("all", ""):
         orig_tag = None
 
-    if args.tag is not None and not args.tag.strip():
-        # Both workflow call sites pass `--tag "${{ ... }}"`, so an empty value
-        # is one unset output away. It is not a tag: without `--digest` the
-        # reference is rebuilt with no tag at all, giving a bare `FROM <repo>`
-        # that resolves to `latest` at build time, and with `--digest` the
-        # annotation names no build.
+    if args.tag is not None and not _TAG_RE.fullmatch(args.tag):
+        # Both workflow call sites pass `--tag "${{ ... }}"`, so an unexpanded
+        # or malformed value is one bad job output away. Neither output form
+        # survives one. Without `--digest` the reference becomes
+        # `FROM <repo>:dev bad`, which is two FROM arguments and a parse error,
+        # or for an empty value a bare `FROM <repo>` that resolves to `latest`.
+        # With `--digest` the annotation stops matching this script's own
+        # pattern, so it is orphaned and no later run can remove it.
         raise SystemExit(
-            "--tag is empty. That is a variable that did not expand, not a tag; "
-            "writing it would leave the base image unpinned."
+            f"--tag is not a valid image tag: {args.tag!r}. A tag matches "
+            "[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}; writing anything else leaves "
+            "the templates unbuildable or the base image unpinned."
         )
     # Refuse what cannot be honoured rather than writing it out: both a bad
     # name and a bad digest produce a reference no runtime can pull, and both
