@@ -149,28 +149,22 @@ The login command named MUST match the container tool the deployment itself uses
 - **WHEN** the deployment runs under `--podman` and authentication is refused
 - **THEN** the login command in the error names `podman`, not `docker`
 
-### Requirement: Dry runs run a non-mutating preflight; a real create requires a runtime
+### Requirement: A dry run never reports readiness it did not verify
 
-`archi create --dry` SHALL run the base-image preflight without pulling any image, and SHALL refuse when it can establish a failure that would also refuse the real create. A real create whose container runtime cannot be invoked SHALL be refused.
+`archi create --dry` SHALL NOT pull any image, SHALL refuse on any preflight cause it can establish without pulling, and SHALL mark the base images as not verified — naming the reason — whenever it cannot determine their state. A real create whose container runtime cannot be invoked SHALL be refused.
 
-Dry runs mirror the refusals a real run would make on the same inputs — the behaviour the
-rest of this capability already specifies. A dry run that skipped these checks would print a
-success summary to an operator with no registry login, or a stale pin, and the real create
-would then refuse. That is worse than no dry run at all, because it reports readiness the
-host does not have.
+Dry runs mirror the refusals a real run would make on the same inputs, which is what the rest
+of this capability already specifies. The failure mode this requirement closes is subtler than
+a missing check: a dry run that silently succeeds because it *could not look* reports a ready
+host to an operator whose real create will refuse moments later. Silence and a logged note are
+the same defect. The contract is therefore about what the dry run asserts, not only about what
+it inspects.
 
-Under `--dry` the preflight therefore parses the references, checks local presence, and for
-an absent reference checks registry reachability and authorization without pulling. What it
-cannot establish without changing host state it does not assert: an image that is absent but
-reachable is reported as such, and the version comparison, which requires the image, does not
-run. An unsupported reachability probe produces a note rather than a refusal, because a dry
-run destroys nothing.
+A dry run continues to require no container runtime (`src/cli/cli_main.py:155-160`). Refusing
+because it cannot look would make `--dry` unusable on exactly those hosts, so the exit status
+stays 0 and the summary carries the unverified marker instead.
 
-`--dry` continues to require no container runtime (`src/cli/cli_main.py:155-160`); with none
-available the dry preflight is skipped with a note. On a real create the opposite holds:
-compose needs the same runtime minutes later, so an uninvokable runtime is refused rather
-than skipped. `cli_main.py:160-170` already refuses this for docker but does not check podman
-when `--podman` is given; the preflight closes that gap because it needs the runtime itself.
+The version comparison requires the image on the host, so it never runs under `--dry`.
 
 #### Scenario: Dry run pulls nothing
 
@@ -188,14 +182,26 @@ when `--podman` is given; the preflight closes that gap because it needs the run
 #### Scenario: Dry run on a host with no runtime
 
 - **WHEN** `archi create --dry` is invoked on a host with no container runtime
-- **THEN** the command completes and prints its dry-run summary
-- **AND** the preflight is skipped with a note
+- **THEN** the command completes and exits 0
+- **AND** the dry-run summary marks the base images as not verified
+- **AND** the summary names the absent container runtime as the reason
+
+#### Scenario: Dry run whose reachability probe is unsupported
+
+- **WHEN** `archi create --dry` is invoked on a host whose container tool does not support the reachability probe, and a required base image is absent locally
+- **THEN** the command exits 0
+- **AND** the dry-run summary marks the base images as not verified
+- **AND** the summary names the unsupported probe as the reason
+
+This scenario is separate from the one above because the two reasons reach the unverified
+state by different routes, and an implementation can easily handle one and silently succeed on
+the other.
 
 #### Scenario: Dry run cannot judge what it did not fetch
 
-- **WHEN** `archi create --dry` is invoked and a required base image is absent locally
+- **WHEN** `archi create --dry` is invoked and a required base image is absent locally but reachable
 - **THEN** no Python-version comparison is made for that image
-- **AND** the absence alone does not refuse the dry run when the image is reachable
+- **AND** the absence alone does not refuse the dry run
 
 #### Scenario: Real create whose runtime cannot be invoked
 

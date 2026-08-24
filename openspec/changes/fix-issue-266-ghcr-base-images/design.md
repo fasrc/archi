@@ -129,29 +129,46 @@ The probe and the remedy text use `podman` when `--podman` is in effect and `doc
 otherwise, matching `DeploymentManager.compose_tool`. Printing a `docker login` instruction
 to a podman operator is a wrong instruction.
 
-### D7 — `--dry` runs a non-mutating preflight; a real create requires a runtime
+### D7 — A dry run never claims readiness it did not verify
 
-An earlier draft skipped the preflight entirely under `--dry`. That broke the pattern the
-existing `cli-create-preflight` spec sets — dry runs mirror the refusals a real run would
-make on the same inputs — and left dry runs silent about the very failure modes this change
-introduces. An operator with no registry login would get a clean dry-run summary and a
-refusal on the real create.
+Two earlier drafts were both wrong. The first skipped the preflight under `--dry`, so a dry
+run stayed silent about the failures this change introduces. The second ran a non-mutating
+check but degraded to a logged note when it could not run — no container runtime, or an
+unsupported reachability probe — which meant the same broken host could get exit 0 from
+`archi create --dry` and an immediate refusal from the real create. Silence and a note are
+the same defect: both present an unverified host as a ready one.
 
-So `--dry` runs the preflight in a **non-mutating mode**: parse the references, check local
-presence, and for an absent reference check registry reachability and authorization
-*without* pulling. A deterministic failure it can establish this way — unauthorized, unknown
-tag, an absent `localhost/` base — refuses the dry run, matching what the real create would
-do. The pull itself never happens under `--dry`, so no host state changes and no
-multi-gigabyte download occurs.
+The contract is therefore stated on what the dry run *asserts*, not on what it checks:
 
-Reachability in this mode uses `manifest inspect`, whose support varies across daemons. Here
-that is acceptable where it was not for the real path: an unsupported probe under `--dry`
-produces a note rather than a refusal, because a dry run destroys nothing and an advisory
-gap costs the operator nothing.
+**`archi create --dry` SHALL NOT report the base images as ready unless it verified them, and
+SHALL name any it could not verify, and why.**
 
-`--dry` still requires no container runtime. `cli_main.py:155-160` makes that an explicit
-decision, and this change does not overturn it: with no runtime, the dry preflight is skipped
-with a note. On a **real** create the opposite rule holds — an uninvokable runtime refuses,
+That resolves into three cases:
+
+| Under `--dry` | Result |
+|---|---|
+| A cause it can establish without pulling (unauthorized, unknown tag, absent `localhost/` base) | Refuse, exactly as the real create would |
+| Verified reachable, or already present locally | Report ready |
+| Cannot determine — no runtime, or an unsupported reachability probe | Exit 0, and the dry-run summary marks the base images **not verified**, naming the reason |
+
+The third row is the one that matters. The exit code stays 0 because a dry run that refuses
+on its own inability to look would be useless on any host without a runtime — and `--dry`
+requiring no runtime is an explicit existing decision (`cli_main.py:155-160`) this change has
+no mandate to overturn. What changes is that the summary stops implying a verification that
+never happened. An operator reading "base images: NOT VERIFIED (no container runtime)" has
+been told the truth and can act on it; an operator reading a clean summary has not.
+
+Rejected: making `--dry` require a runnable container tool and a supported probe. It would
+mirror real refusals perfectly, but only by overturning an existing decision and breaking
+every dry run on a host without a runtime — a strictly larger change than this issue carries.
+
+Rejected: dropping the dry preflight back to advisory-only. That is the second draft, and it
+fails for the reason above.
+
+Nothing about `--dry` pulls. The pull, and therefore the Python-floor comparison that depends
+on it, belongs to the real create alone.
+
+On a **real** create the opposite rule holds throughout: an uninvokable runtime refuses,
 because compose needs the same runtime minutes later, so standing down would only move the
 failure past the teardown. `cli_main.py:160-170` already enforces this for docker; it does
 not check podman when `--podman` is given, and the preflight closes that gap because it needs

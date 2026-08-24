@@ -37,9 +37,10 @@
 
 - [ ] 7.1 `model: opus` — RED: a test proving the ordering contract — with an unobtainable base image and `--force` against an existing deployment, `remove_existing_deployment()` is never called and the deployment directory survives. This is the regression test for design D1; the issue's own stated call site fails it.
 - [ ] 7.2 `model: opus` — GREEN: add the call site in `src/cli/cli_main.py` between the port check (`:262-268`) and `remove_existing_deployment` (`:278`). Keep it a thin call — all logic stays in the helper module, because lines added to `cli_main.py` that unit tests do not import fail the diff-coverage gate.
-- [ ] 7.3 `model: opus` — RED then GREEN: the dry mode. `archi create --dry` pulls nothing, and refuses on a cause it can establish without pulling (unauthorized, unknown tag, absent `localhost/` base). An absent-but-reachable image does not refuse a dry run, and no version comparison runs for it.
-- [ ] 7.4 `model: sonnet` — RED then GREEN: `archi create --dry` on a host with no container runtime completes and prints its summary, with the preflight skipped and noted.
-- [ ] 7.5 `model: sonnet` — RED then GREEN: a real create whose runtime cannot be invoked is refused before the teardown. Covers the `--podman` path, which `cli_main.py:160-170` does not check today.
+- [ ] 7.3 `model: opus` — RED then GREEN: the dry mode refuses what the real create would refuse. `archi create --dry` pulls nothing, and refuses on a cause it can establish without pulling (unauthorized, unknown tag, absent `localhost/` base). An absent-but-reachable image does not refuse a dry run, and no version comparison runs for it.
+- [ ] 7.4 `model: opus` — RED then GREEN: the unverified marker, no-runtime route. `archi create --dry` on a host with no container runtime exits 0, and the summary marks the base images NOT VERIFIED and names the absent runtime. Assert the marker, not just the exit code — a test that checks only exit 0 passes the very defect this branch exists to fix.
+- [ ] 7.5 `model: opus` — RED then GREEN: the unverified marker, unsupported-probe route. With a runtime present but the reachability probe unsupported, and a base image absent locally, the dry run exits 0 and the summary marks the base images NOT VERIFIED naming the unsupported probe. This is a separate test from 7.4 because the two routes reach the same state by different paths and an implementation can handle one and silently succeed on the other.
+- [ ] 7.6 `model: sonnet` — RED then GREEN: a real create whose runtime cannot be invoked is refused before the teardown. Covers the `--podman` path, which `cli_main.py:160-170` does not check today.
 
 ## 8. Documentation
 
