@@ -74,7 +74,7 @@ discovered only at build time in CI, far from the command that caused them.
 #### Scenario: A digest is written with the tag beside it
 
 - **WHEN** the script runs with `--digest python=sha256:<64 hex> --tag dev-abc1234 --switch-source ghcr --orig-tag all`
-- **THEN** the line above the python-base line reads `# base image: dev-abc1234`
+- **THEN** the line above the python-base line reads `# base-image-pin: dev-abc1234 (managed by update_service_base_images.py)`
 - **AND** the python-base line reads `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<64 hex>`
 - **AND** the line does not carry a bare tag reference
 
@@ -139,7 +139,7 @@ successful pin.
 
 ### Requirement: The annotation is a line of its own, and never outlives its digest
 
-The script SHALL write the annotation as a `# base image: <tag>` line directly above the `FROM` line, and SHALL remove that line when it replaces the digest reference with a tag.
+The script SHALL write the annotation as a `# base-image-pin: <tag> (managed by update_service_base_images.py)` line directly above the `FROM` line, and SHALL remove that line whenever the reference it writes is a tag.
 
 The annotation cannot ride on the `FROM` line. A Dockerfile recognises `#` as a comment only
 at the start of a line, so a trailing `# <tag>` is read as a second `FROM` argument; docker
@@ -151,14 +151,40 @@ The annotation exists only to say in words which build the digest is. Once the d
 the annotation names a build the file no longer references, and the next reader — human or
 script — has two disagreeing answers.
 
-The script SHALL remove only an annotation line carrying its own exact wording, so a
-comment the template owns is never deleted for merely sitting above a `FROM` line. Nothing
-on the `FROM` line itself is the script's to touch beyond the reference: a build-stage name
-and a stray trailing space both SHALL survive the rewrite.
+An annotation names the build a digest is. A tag reference names its own build, so the
+annotation goes whenever a tag is written — whatever the reference it replaced. Leaving one
+above a tag line would label a reference that has no digest for it to name.
+
+The wording includes the name of the script that owns the line, and the script SHALL treat a
+line as its own only when the whole wording matches. A template's own comment is therefore
+never deleted for merely sitting above a `FROM` line. Nothing on the `FROM` line itself is
+the script's to touch beyond the reference: a build-stage name and a stray trailing space
+both SHALL survive the rewrite.
+
+The annotation SHALL end up directly above its `FROM` line, and the script SHALL find an
+existing one even when a blank line separates the two. It SHALL also write a line ending
+after the annotation when the `FROM` line is the last in a file and carries none, rather
+than running the two together into a single commented-out line.
+
+#### Scenario: A blank line does not hide an annotation from the rewrite
+
+- **WHEN** an annotation, a blank line, and a digest-pinned `FROM` line appear in that order, and the reference is rewritten
+- **THEN** the old annotation is gone
+- **AND** a rewrite that writes a new annotation leaves exactly one, directly above the `FROM` line
+
+#### Scenario: An annotation never survives above a tag reference
+
+- **WHEN** an annotation sits above a tag-pinned line and that line is rewritten to another tag
+- **THEN** the annotation is gone
+
+#### Scenario: A final FROM line with no line ending still gets a separator
+
+- **WHEN** the matching `FROM` line is the last in the file and has no trailing newline, and the script writes an annotation
+- **THEN** a line ending separates the annotation from the `FROM` line
 
 #### Scenario: The stale annotation is dropped on the way back to a tag
 
-- **WHEN** a `# base image: dev-4314ac4` line above `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<hex>` is rewritten with `--tag pr-7 --orig-tag all`
+- **WHEN** an annotation line above `FROM ghcr.io/fasrc/a2rchi-python-base@sha256:<hex>` is rewritten with `--tag pr-7 --orig-tag all`
 - **THEN** the line reads `FROM ghcr.io/fasrc/a2rchi-python-base:pr-7`
 - **AND** `dev-4314ac4` does not appear in the file
 
@@ -181,11 +207,11 @@ and a stray trailing space both SHALL survive the rewrite.
 
 #### Scenario: A comment the script did not write is left alone
 
-- **WHEN** a template's own comment sits directly above a `FROM` line that the script rewrites
+- **WHEN** a template's own comment sits directly above a `FROM` line that the script rewrites, including one shaped like `# base image: DO-NOT-EDIT`
 - **THEN** that comment is still there afterwards
 
-The script matches its own annotation wording exactly. Removing a comment for its position
-alone would delete words the template owns.
+The script matches its whole annotation wording, script name included. Removing a comment
+for its position, or for a loose resemblance, would delete words the template owns.
 
 #### Scenario: A line whose only change is its comment is still written
 

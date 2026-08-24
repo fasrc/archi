@@ -15,9 +15,9 @@ reference — digest included — lands in one group, and everything after it la
 `FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4` and several carry a trailing space, so
 `suffix` is already non-empty in the tree.
 
-Issue #333 will replace those tags with `@sha256:` digests plus a `  # dev-4314ac4`
-annotation. This change makes the writer ready for that; it does not make the change to
-the templates.
+Issue #333 will replace those tags with `@sha256:` digests plus an annotation naming the
+build. This change makes the writer ready for that; it does not make the change to the
+templates. The annotation's position is settled below, and is not where the issue put it.
 
 Constraint that shapes the whole design: `scripts/gate.sh:146` runs coverage with
 `--cov=src`, so nothing in `scripts/` reports coverage to `diff-cover`. The unit tests are
@@ -30,7 +30,7 @@ the only evidence this change works. Black and isort, by contrast, do enforce `s
 
 - Read a digest reference correctly, so the `image != base_name` guard stops rejecting it.
 - Write a digest reference, so the pin in #333 has a maintenance path.
-- Keep the annotation comment and the reference on a line telling the same story.
+- Keep the annotation and the reference telling the same story, in a form a Dockerfile accepts.
 - Leave the CI call site working unchanged:
   `--tag "pr-<N>" --switch-source ghcr --orig-tag all`.
 
@@ -83,20 +83,29 @@ Error: FROM requires either one argument, or three: FROM <source> [AS <name>]
 Measured against docker 29.5.1 and podman 5.8.2 on 2026-08-24. Had it shipped, #333's pin
 would have broken every service build at parse time, before any image was pulled.
 
-The annotation therefore goes on its own line, `# base image: <tag>`, directly above the
+The annotation therefore goes on its own line, `# base-image-pin: <tag> (managed by update_service_base_images.py)`, directly above the
 `FROM` line. The write policy is a three-way table on (what we are writing, what was there):
 
 | Target reference | Source reference | Annotation line |
 |---|---|---|
 | digest | digest unchanged | kept as it is |
-| digest | digest moved, or was a tag | `# base image: <tag>` from `--tag`, or none if `--tag` was omitted |
-| tag | anything | none — an annotation never outlives its digest |
+| digest | digest moved, or was a tag | the annotation, from `--tag`, or none if `--tag` was omitted |
+| tag | anything | none — an annotation never sits above a tag reference |
 
 Two consequences follow, and both are simplifications. Nothing is ever appended to the
 `FROM` line, so its trailing text — a build-stage name, the stray space 13 of the 15
 templates carry — is passed through untouched with no special case. And the script removes
-an annotation line only when it matches its own exact wording, so a comment the template
-owns is never deleted for merely sitting in that position.
+an annotation line only when its whole wording matches, script name included, so a comment
+the template owns is never deleted for merely sitting in that position.
+
+Three edges came out of a later review round and are handled where the annotation is
+written and found, not at the call sites. A blank line may separate an existing annotation
+from its `FROM` line, so the search for one looks past blanks rather than at the previous
+line only. A `FROM` line may be the last in a file with no trailing newline, so the
+annotation supplies its own line ending rather than reusing an empty one and running the
+two together. And an annotation above a line being rewritten to a *tag* goes whatever the
+old reference was, because a tag names its own build and leaves the annotation labelling
+nothing.
 
 ### Change detection compares the whole line
 
@@ -126,9 +135,10 @@ Dockerfiles. No test reads or writes the real templates.
 ## Risks / Trade-offs
 
 - **The script could delete a comment the template owns** → It removes an annotation line
-  only when the line matches `# base image: <value>` exactly, so position alone is never
-  enough. Pinned by a scenario using a hand-written comment directly above a rewritten
-  `FROM` line.
+  only when the whole wording matches, script name included, so neither position nor a
+  loose resemblance is enough. A review round showed the first attempt at this — a bare
+  `# base image: ` prefix — deleting a hand-written `# base image: DO-NOT-EDIT`. Pinned by a
+  scenario using exactly that line.
 - **Annotation-only rewrites now write files that previously were skipped** → Bounded to
   lines the script already matched and already intended to update. The printed
   `Updated <path>` line stays truthful, which is what the CI operator reads.

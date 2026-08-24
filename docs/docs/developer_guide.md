@@ -495,7 +495,7 @@ python scripts/dev/update_service_base_images.py \
 
 | Option | Effect |
 |---|---|
-| `--tag <tag>` | The tag to write. With `--digest`, the tag is recorded in a `# base image: <tag>` line above the reference instead. |
+| `--tag <tag>` | The tag to write. With `--digest`, the tag is recorded in a `# base-image-pin:` line above the reference instead. |
 | `--digest <name>=sha256:<64 hex>` | Pins that base image by digest. Repeatable. `<name>` is `python` or `pytorch`. |
 | `--orig-tag <tag>` | Only rewrites lines that carry this tag. **The default is `latest`.** Use `all` to match every line, digest-pinned lines included. |
 | `--switch-source <source>` | Moves the registry: `ghcr`, `dockerhub`, or `localhost`. |
@@ -506,10 +506,11 @@ Four rules decide what the script writes:
 1. A tag and a digest are alternatives. A digest-pinned line carries no tag, so only
    `--orig-tag all` reaches it.
 2. A digest says nothing about which build it is. The tag from `--tag` therefore goes in a
-   `# base image: <tag>` line directly above the `FROM` line. That line survives while the
-   digest holds, and the script removes it when the digest changes or becomes a tag. It
-   cannot go on the `FROM` line itself: a Dockerfile reads `#` as a comment only at the
-   start of a line, so a trailing comment there makes the build fail to parse.
+   `# base-image-pin: <tag> (managed by update_service_base_images.py)` line directly above the `FROM` line. That line survives while the digest holds,
+   and the script removes it whenever it writes a tag. It cannot go on the `FROM` line
+   itself: a Dockerfile reads `#` as a comment only at the start of a line, so a trailing
+   comment there makes the build fail to parse. The script removes such a line only when
+   the whole wording matches, so a comment of your own above a `FROM` line is safe.
 3. A rewrite that names no new reference keeps the digest it finds. A bare
    `--switch-source` moves the registry only; it never unpins an image.
 4. The script refuses an unknown `--digest` name, a malformed digest, and a digest for a

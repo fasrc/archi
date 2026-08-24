@@ -103,11 +103,17 @@ _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 # go on the FROM line itself: a Dockerfile recognises "#" as a comment only at
 # the start of a line, so a trailing "# tag" becomes a second FROM argument and
 # both docker and podman reject the file with "FROM requires either one or
-# three arguments". The wording is matched exactly, so the script only ever
-# removes a line it wrote and never a comment belonging to the template.
-ANNOTATION_PREFIX = "# base image: "
+# three arguments".
+#
+# The wording names the script that owns the line, so a template's own comment
+# cannot be mistaken for one of these and deleted. Both halves must match for
+# the script to treat a line as its own.
+ANNOTATION_PREFIX = "# base-image-pin: "
+ANNOTATION_SUFFIX = " (managed by update_service_base_images.py)"
 
-_ANNOTATION_RE = re.compile(rf"^\s*{re.escape(ANNOTATION_PREFIX)}\S+\s*$")
+_ANNOTATION_RE = re.compile(
+    rf"^\s*{re.escape(ANNOTATION_PREFIX)}\S+{re.escape(ANNOTATION_SUFFIX)}\s*$"
+)
 
 
 def _split_line_ending(line: str) -> Tuple[str, str]:
@@ -196,14 +202,22 @@ def _update_line(
             updated_annotation = current_annotation
         elif options.tag:
             indent = intro[: len(intro) - len(intro.lstrip())]
-            updated_annotation = f"{indent}{ANNOTATION_PREFIX}{options.tag}{newline}"
+            # The FROM line can be the last in a file and carry no line ending.
+            # Reusing that would glue the two together as "# ...tagFROM ...",
+            # commenting the base instruction out.
+            separator = newline or "\n"
+            updated_annotation = (
+                f"{indent}{ANNOTATION_PREFIX}{options.tag}"
+                f"{ANNOTATION_SUFFIX}{separator}"
+            )
         else:
             updated_annotation = None
     else:
         updated_spec = _build_image_spec(target_prefix, image, target_tag)
-        # The annotation names the build the digest is. Writing a tag in place
-        # of a digest leaves it naming a build the line no longer references.
-        updated_annotation = None if current_digest is not None else current_annotation
+        # An annotation names the build a digest is. A tag reference names its
+        # own build, so an annotation above one labels nothing and goes —
+        # whatever the reference it replaced.
+        updated_annotation = None
 
     # The FROM line's trailing text — a build stage name, a stray space — is
     # never this script's to touch, because the annotation no longer lives
@@ -211,6 +225,22 @@ def _update_line(
     updated_line = f"{intro}{updated_spec}{suffix}{newline}"
     changed = updated_line != line or updated_annotation != current_annotation
     return updated_annotation, updated_line, changed
+
+
+def _annotation_index(out: list) -> Optional[int]:
+    """Find the annotation belonging to the line about to be emitted.
+
+    It is normally the line just written, but a blank line can sit between the
+    annotation and its FROM line. Stopping at the blank would hide the
+    annotation from the rewrite and leave it naming a build the file no longer
+    references.
+    """
+    index = len(out) - 1
+    while index >= 0 and not out[index].strip():
+        index -= 1
+    if index >= 0 and _is_annotation(out[index]):
+        return index
+    return None
 
 
 def _rewrite_lines(
@@ -221,18 +251,19 @@ def _rewrite_lines(
     changed = False
 
     for line in lines:
-        # An annotation this script wrote sits directly above its FROM line, so
-        # the last line emitted is the only place it can be.
-        current_annotation = out[-1] if out and _is_annotation(out[-1]) else None
+        index = _annotation_index(out)
+        current_annotation = out[index] if index is not None else None
 
         annotation, new_line, line_changed = _update_line(
             line, base_name, options, current_annotation
         )
 
         if line_changed:
-            if current_annotation is not None:
-                out.pop()
+            if index is not None:
+                out.pop(index)
             if annotation is not None:
+                # Always directly above the FROM line, whatever sat between
+                # them before.
                 out.append(annotation)
             changed = True
 

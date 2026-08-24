@@ -4,7 +4,7 @@
 The script rewrites the `FROM` line of every service template under
 `DOCKERFILES_DIR`. Issue #333 pins those templates to `@sha256:` digest
 references, so the script has to read a digest, write a digest, and keep the
-`# base image: <tag>` annotation above it honest.
+`# base-image-pin:` annotation above it honest.
 
 The annotation sits on its own line because a Dockerfile recognises `#` as a
 comment only at the start of a line. A trailing `# tag` on a `FROM` line
@@ -38,6 +38,10 @@ _SCRIPT = (
 _PY_DIGEST = "sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8"
 # A second well-formed digest, for "pin to a different build" cases.
 _NEW_DIGEST = "sha256:" + "a1" * 32
+
+# The managed annotation wording, from the script's own constants.
+_ANN = "# base-image-pin: "
+_ANN_END = " (managed by update_service_base_images.py)"
 
 
 def _load_script():
@@ -163,7 +167,7 @@ def test_stale_annotation_is_dropped_on_the_way_back_to_a_tag(tmp_path, monkeypa
         monkeypatch,
         **{
             "Dockerfile-chat": (
-                f"# base image: dev-4314ac4\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+                f"{_ANN}dev-4314ac4{_ANN_END}\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
             )
         },
     )
@@ -191,7 +195,7 @@ def test_other_trailing_content_survives_the_rewrite(tmp_path, monkeypatch):
         monkeypatch,
         **{
             "Dockerfile-chat": (
-                f"# base image: dev-4314ac4\n"
+                f"{_ANN}dev-4314ac4{_ANN_END}\n"
                 f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST} AS builder\n"
             )
         },
@@ -268,7 +272,7 @@ def test_a_digest_is_written_with_the_tag_beside_it(tmp_path, monkeypatch):
     )
 
     assert target.read_text() == (
-        f"# base image: dev-abc1234\nFROM ghcr.io/fasrc/a2rchi-python-base@{_NEW_DIGEST}\n"
+        f"{_ANN}dev-abc1234{_ANN_END}\nFROM ghcr.io/fasrc/a2rchi-python-base@{_NEW_DIGEST}\n"
     )
     assert ":dev-abc1234" not in target.read_text()
 
@@ -314,7 +318,7 @@ def test_a_comment_only_rewrite_is_still_written(tmp_path, monkeypatch, capsys):
         monkeypatch,
         **{
             "Dockerfile-chat": (
-                f"# base image: dev-4314ac4\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+                f"{_ANN}dev-4314ac4{_ANN_END}\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
             )
         },
     )
@@ -336,7 +340,7 @@ def test_a_comment_only_rewrite_is_still_written(tmp_path, monkeypatch, capsys):
     )
 
     assert target.read_text() == (
-        f"# base image: dev-abc1234\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+        f"{_ANN}dev-abc1234{_ANN_END}\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
     )
     assert "Updated dockerfiles/Dockerfile-chat" in capsys.readouterr().out
 
@@ -408,7 +412,7 @@ def test_tag_digest_and_back_again_returns_the_original_line(tmp_path, monkeypat
         ],
     )
     assert target.read_text() == (
-        f"# base image: dev-4314ac4\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+        f"{_ANN}dev-4314ac4{_ANN_END}\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
     )
 
     _run(
@@ -447,7 +451,7 @@ def test_pinning_a_line_that_ends_in_a_space_is_stable(tmp_path, monkeypatch):
     _run(module, monkeypatch, pin)
 
     pinned = (
-        f"# base image: dev-4314ac4\n"
+        f"{_ANN}dev-4314ac4{_ANN_END}\n"
         f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST} \n"
     )
     assert target.read_text() == pinned
@@ -483,7 +487,7 @@ def test_the_default_orig_tag_only_reaches_a_latest_pinned_line(tmp_path, monkey
             "Dockerfile-latest": "FROM ghcr.io/fasrc/a2rchi-python-base:latest\n",
             "Dockerfile-pinned": "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n",
             "Dockerfile-digest": (
-                f"# base image: dev-4314ac4\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+                f"{_ANN}dev-4314ac4{_ANN_END}\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
             ),
         },
     )
@@ -498,7 +502,7 @@ def test_the_default_orig_tag_only_reaches_a_latest_pinned_line(tmp_path, monkey
         "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
     )
     assert (templates / "Dockerfile-digest").read_text() == (
-        f"# base image: dev-4314ac4\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+        f"{_ANN}dev-4314ac4{_ANN_END}\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
     )
 
 
@@ -548,7 +552,7 @@ def test_a_source_switch_alone_never_unpins_a_digest(tmp_path, monkeypatch):
         monkeypatch,
         **{
             "Dockerfile-chat": (
-                f"# base image: dev-4314ac4\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+                f"{_ANN}dev-4314ac4{_ANN_END}\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
             )
         },
     )
@@ -558,13 +562,13 @@ def test_a_source_switch_alone_never_unpins_a_digest(tmp_path, monkeypatch):
     _run(module, monkeypatch, ["--switch-source", "dockerhub", "--orig-tag", "all"])
 
     assert target.read_text() == (
-        f"# base image: dev-4314ac4\nFROM docker.io/a2rchi/a2rchi-python-base@{_PY_DIGEST}\n"
+        f"{_ANN}dev-4314ac4{_ANN_END}\nFROM docker.io/a2rchi/a2rchi-python-base@{_PY_DIGEST}\n"
     )
 
 
 def test_a_no_op_run_on_a_digest_line_changes_nothing(tmp_path, monkeypatch):
     """The same guard, with nothing to change at all: the line is untouched."""
-    original = f"# base image: dev-4314ac4\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+    original = f"{_ANN}dev-4314ac4{_ANN_END}\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
     module, templates = _write_fixtures(
         tmp_path, monkeypatch, **{"Dockerfile-chat": original}
     )
@@ -584,7 +588,7 @@ def test_repeating_the_same_digest_without_a_tag_keeps_the_annotation(
     none: it still points at the build the comment names, so dropping the
     comment loses the only human-readable digest-to-build mapping for nothing.
     """
-    original = f"# base image: dev-4314ac4\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+    original = f"{_ANN}dev-4314ac4{_ANN_END}\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
     module, templates = _write_fixtures(
         tmp_path, monkeypatch, **{"Dockerfile-chat": original}
     )
@@ -612,7 +616,7 @@ def test_repeating_the_same_digest_without_a_tag_keeps_the_annotation(
         ],
     )
     assert target.read_text() == (
-        f"# base image: dev-4314ac4\nFROM docker.io/a2rchi/a2rchi-python-base@{_PY_DIGEST}\n"
+        f"{_ANN}dev-4314ac4{_ANN_END}\nFROM docker.io/a2rchi/a2rchi-python-base@{_PY_DIGEST}\n"
     )
 
 
@@ -630,7 +634,7 @@ def test_moving_to_a_different_digest_without_a_tag_drops_the_annotation(
         monkeypatch,
         **{
             "Dockerfile-chat": (
-                f"# base image: dev-4314ac4\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+                f"{_ANN}dev-4314ac4{_ANN_END}\nFROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
             )
         },
     )
@@ -716,7 +720,7 @@ def test_no_rewritten_from_line_ever_carries_an_inline_comment(tmp_path, monkeyp
             "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4 AS builder\n"
         ),
         "Dockerfile-digest": (
-            f"# base image: dev-4314ac4\n"
+            f"{_ANN}dev-4314ac4{_ANN_END}\n"
             f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
         ),
     }
@@ -737,3 +741,199 @@ def test_no_rewritten_from_line_ever_carries_an_inline_comment(tmp_path, monkeyp
             for line in path.read_text().splitlines():
                 if line.lstrip().startswith("FROM "):
                     assert "#" not in line, f"{argv} produced {line!r}"
+
+
+def test_a_blank_line_between_annotation_and_from_does_not_orphan_it(
+    tmp_path, monkeypatch
+):
+    """The annotation belongs to the next FROM line, not to the gap above it.
+
+    A blank line between the two is the template's, but it must not hide the
+    annotation from the rewrite. Missing it leaves a comment naming a build the
+    file no longer references.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": (
+                f"{_ANN}dev-4314ac4{_ANN_END}\n"
+                "\n"
+                f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+            )
+        },
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        ["--tag", "pr-7", "--switch-source", "ghcr", "--orig-tag", "all"],
+    )
+
+    assert target.read_text() == "\nFROM ghcr.io/fasrc/a2rchi-python-base:pr-7\n"
+    assert "dev-4314ac4" not in target.read_text()
+
+
+def test_a_blank_line_does_not_produce_two_annotations(tmp_path, monkeypatch):
+    """The same gap, re-pinned: one annotation, directly above its FROM."""
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": (
+                f"{_ANN}dev-4314ac4{_ANN_END}\n"
+                "\n"
+                f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+            )
+        },
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        [
+            "--digest",
+            f"python={_NEW_DIGEST}",
+            "--tag",
+            "dev-abc1234",
+            "--orig-tag",
+            "all",
+        ],
+    )
+
+    assert target.read_text() == (
+        "\n"
+        f"{_ANN}dev-abc1234{_ANN_END}\n"
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{_NEW_DIGEST}\n"
+    )
+    assert target.read_text().count("base-image-pin") == 1
+
+
+def test_a_hand_written_comment_of_similar_shape_survives(tmp_path, monkeypatch):
+    """Ownership is the full managed wording, not a loose prefix.
+
+    A template may carry its own note above a FROM line. Deleting it because it
+    looked roughly like an annotation would be data loss in the template.
+    """
+    note = "# base image: DO-NOT-EDIT\n"
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": (
+                note + f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+            )
+        },
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        ["--tag", "pr-7", "--switch-source", "ghcr", "--orig-tag", "all"],
+    )
+
+    assert target.read_text() == (note + "FROM ghcr.io/fasrc/a2rchi-python-base:pr-7\n")
+
+
+def test_a_final_from_line_with_no_newline_still_gets_a_separator(
+    tmp_path, monkeypatch
+):
+    """A file can end without a trailing newline on its FROM line.
+
+    Reusing that empty line ending for the annotation glues the two together as
+    `# ...tagFROM ...`, which comments the base instruction out and leaves a
+    Dockerfile that cannot build.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        # Deliberately no trailing newline.
+        **{"Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4"},
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        [
+            "--digest",
+            f"python={_PY_DIGEST}",
+            "--tag",
+            "dev-abc1234",
+            "--orig-tag",
+            "all",
+        ],
+    )
+
+    assert target.read_text() == (
+        f"{_ANN}dev-abc1234{_ANN_END}\n"
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}"
+    )
+
+
+def test_an_annotation_never_survives_above_a_tag_reference(tmp_path, monkeypatch):
+    """An annotation names a digest, so a tag line must never carry one.
+
+    The source here is already a tag, so the digest-to-tag rule never fires.
+    The annotation still has to go: it labels a reference that has no digest
+    for it to name.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": (
+                f"{_ANN}dev-4314ac4{_ANN_END}\n"
+                "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+            )
+        },
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        ["--tag", "pr-7", "--switch-source", "ghcr", "--orig-tag", "all"],
+    )
+
+    assert target.read_text() == "FROM ghcr.io/fasrc/a2rchi-python-base:pr-7\n"
+
+
+def test_two_from_lines_each_get_their_own_annotation(tmp_path, monkeypatch):
+    """A multi-stage template has more than one managed FROM line."""
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": (
+                "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4 AS builder\n"
+                "RUN echo build\n"
+                "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+            )
+        },
+    )
+    target = templates / "Dockerfile-chat"
+
+    _run(
+        module,
+        monkeypatch,
+        [
+            "--digest",
+            f"python={_PY_DIGEST}",
+            "--tag",
+            "dev-abc1234",
+            "--orig-tag",
+            "all",
+        ],
+    )
+
+    assert target.read_text() == (
+        f"{_ANN}dev-abc1234{_ANN_END}\n"
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST} AS builder\n"
+        "RUN echo build\n"
+        f"{_ANN}dev-abc1234{_ANN_END}\n"
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+    )
