@@ -64,6 +64,6 @@
 
 ## 9. Gate and review
 
-- [ ] 9.1 `model: sonnet` — `bash scripts/gate.sh` green, patch coverage >= 80%. Check `git status` immediately after each commit: the pre-commit black writer rewrites the tree after staging.
-- [ ] 9.2 `model: opus` — run `/codex:adversarial-review --wait` on the branch; verify each finding against the code, fix what holds test-first, push back with reasons on what does not. Re-run until a round returns zero findings or only nits, then file the nits as issues.
+- [x] 9.1 `model: sonnet` — `bash scripts/gate.sh` green, patch coverage >= 80%. Check `git status` immediately after each commit: the pre-commit black writer rewrites the tree after staging.
+- [x] 9.2 `model: opus` — run `/codex:adversarial-review --wait` on the branch; verify each finding against the code, fix what holds test-first, push back with reasons on what does not. Re-run until a round returns zero findings or only nits, then file the nits as issues.
 - [ ] 9.3 `model: sonnet` — open the PR against `dev` with a body per `info-pr-overview`, carrying the surviving review findings and the readiness verdict. Confirm the pr-preview smoke job is green.
