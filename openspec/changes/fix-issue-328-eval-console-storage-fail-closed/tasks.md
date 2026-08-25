@@ -56,7 +56,7 @@ Three standing notes for every task:
       log one `logger.error` naming the configured root and `exc`, and `return None`. Catch
       `OSError` only — not `Exception`. Gate, commit.
 
-- [ ] 1.2 Add `test_evaluation_service_disables_when_the_stale_job_sweep_cannot_write`. No
+- [x] 1.2 Add `test_evaluation_service_disables_when_the_stale_job_sweep_cannot_write`. No
       production change: this proves the guard from 1.1 covers the *whole* construction, not
       just the first mkdir. Use a writable `evaluations.root` under `tmp_path`, then
       monkeypatch `write_json` in `src.evaluation.qa.jobs` to raise
