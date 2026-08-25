@@ -131,10 +131,10 @@ record for whoever runs #340.
 
 ## 6. Verify and finalize
 
-- [ ] 6.1 `model: sonnet` — Run groups 1, 2, and 4 and confirm every test now passes (red → green).
-- [ ] 6.2 `model: sonnet` — Run `bash scripts/gate.sh` and confirm it exits 0 (black/isort,
+- [x] 6.1 `model: sonnet` — Run groups 1, 2, and 4 and confirm every test now passes (red → green).
+- [x] 6.2 `model: sonnet` — Run `bash scripts/gate.sh` and confirm it exits 0 (black/isort,
       pytest, ≥80% diff coverage vs `origin/dev`).
-- [ ] 6.3 `model: opus` — Run `/codex:adversarial-review --wait` on the branch; verify each
+- [x] 6.3 `model: opus` — Run `/codex:adversarial-review --wait` on the branch; verify each
       finding against the code, fix what holds (TDD), push back with reasons on
       what does not, then re-run until a round is clean or only nits remain.
 - [ ] 6.4 `model: sonnet` — Open the PR against `dev` with `closes #122` in the BODY (a
