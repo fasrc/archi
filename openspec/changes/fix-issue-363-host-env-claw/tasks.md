@@ -108,3 +108,13 @@ findings become the PR body's Findings block.
       `[medium]` duplicate keys were silently first-wins, so an appended correction never
       took effect. Fixed: a duplicate key aborts. RED case 15 reproduced the stale
       `--name dev`, GREEN after. Self-test now 15 cases.
+- [x] 3.5 Round 5 (terminal) — one finding, **refuted**. It asked that an empty ambient
+      `DEPLOYMENT=`/`CONFIG=` abort on a host with NO host.env (the GPU-host path) instead
+      of resolving to the tracked defaults. But that resolution is byte-identical to the
+      pre-change hardwired behavior and to a plain invocation on the same host: on a host
+      with no pin file, `dev` IS that host's identity, so there is no wrong-target hop —
+      the wrong-target class (a PINNED host bypassing its pin) was closed in round 3, and
+      empty-counts-as-unset is the recorded design. Aborting here would add a third
+      behavior for a case whose outcome already equals the default invocation.
+      Terminal condition: rounds bounded, remaining finding refuted with reasons; carried
+      into the PR body's Findings block.
