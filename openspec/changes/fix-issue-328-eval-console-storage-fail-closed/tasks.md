@@ -78,7 +78,7 @@ Three standing notes for every task:
       `<root>/jobs/<uuid4>.json`, and assert `build_evaluation_service(...)` returns a
       service (not `None`) and logs no `ERROR`. No production change. Gate, commit.
 
-- [ ] 2.2 Add `test_evaluation_service_does_not_swallow_a_non_storage_error`. Patch
+- [x] 2.2 Add `test_evaluation_service_does_not_swallow_a_non_storage_error`. Patch
       `evaluation_console.EvaluationConsoleService` to raise
       `TypeError("unexpected keyword argument")`, copying the `patch.object` shape at
       `tests/unit/test_evaluation_console.py:42`, and assert `pytest.raises(TypeError)`
