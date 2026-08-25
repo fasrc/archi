@@ -11,9 +11,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
+# Optional per-host overrides (git-excluded; see host.env.example). Sourced
+# before the defaults below so a host can pin its own identity without editing
+# this tracked file. Use `: "${VAR:=value}"` inside it so an explicit
+# environment variable on the command line still wins — a plain VAR=value
+# assignment beats the command line (contract pinned by test_host_env.sh).
+[ -f "$SCRIPT_DIR/host.env" ] && . "$SCRIPT_DIR/host.env"
+
 # --- deployment identity (single source of truth) ---------------------------
-DEPLOYMENT="dev"                              # archi deployment name -> archi-dev
-CONFIG="deploy/fasrc-dev/config.yaml"         # repo-relative (git-excluded; copy from config.example.yaml)
+# `dev` is reserved for the GPU host; the no-GPU workstation deploys as `claw`
+# via its host.env (issue #363).
+DEPLOYMENT="${DEPLOYMENT:-dev}"               # archi deployment name -> archi-<name>
+CONFIG="${CONFIG:-deploy/fasrc-dev/config.yaml}"  # repo-relative (git-excluded; copy from config.example.yaml)
 # Secrets env (PG_PASSWORD, HUIT_API_KEY, ...). Override with ARCHI_ENV_FILE;
 # defaults to ~/.secrets/archi-secrets.env so the scripts aren't tied to one user.
 ENV_FILE="${ARCHI_ENV_FILE:-$HOME/.secrets/archi-secrets.env}"
