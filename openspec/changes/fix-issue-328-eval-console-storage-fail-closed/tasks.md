@@ -100,7 +100,7 @@ Three standing notes for every task:
 
 ## 4. Wrap up
 
-- [ ] 4.1 Confirm the acceptance criteria of issue #328 in order. Run the focused file, then
+- [x] 4.1 Confirm the acceptance criteria of issue #328 in order. Run the focused file, then
       the full gate. Record in the commit message: the new test count (4), that the 14
       existing tests are unmodified (`git diff origin/dev -- tests/unit/test_evaluation_console.py`
       shows additions only), and the gate's patch-coverage number. Then push the branch with
