@@ -1969,3 +1969,14 @@ def test_listing_skips_hidden_result_envelope(tmp_path):
 
     service.job_manager.close()
     manager.close()
+
+
+def test_job_manager_sweeps_orphan_result_envelope_at_startup(tmp_path):
+    orphan_id = "7a3f1b2c-4d5e-6f78-90ab-cdef01234567"
+    envelope_path = tmp_path / f".{orphan_id}.result.json"
+    write_json(envelope_path, {"result": {"draft_id": "d"}})
+
+    manager = EvaluationJobManager(tmp_path)
+
+    assert not envelope_path.exists()
+    manager.close()

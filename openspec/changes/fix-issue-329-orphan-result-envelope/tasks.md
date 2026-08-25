@@ -49,7 +49,7 @@ manager is alive. Section 2's tests do the opposite, deliberately.
 
 ## 2. Sweep the orphans at startup
 
-- [ ] 2.1 `model: opus` — RED test: write `.{orphan_id}.result.json` into `tmp_path` for a literal UUID
+- [x] 2.1 `model: opus` — RED test: write `.{orphan_id}.result.json` into `tmp_path` for a literal UUID
       `orphan_id`, construct `EvaluationJobManager(tmp_path)`, and assert the file no longer
       exists. Watch it fail. Implement: a private `_sweep_orphan_results()` that iterates
       `self.jobs_dir.glob(".*.result.json")`, parses the middle segment
