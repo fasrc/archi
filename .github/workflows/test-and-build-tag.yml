@@ -158,6 +158,15 @@ jobs:
       - name: Point Dockerfiles to versioned base images
         run: python scripts/dev/update_service_base_images.py --tag "${{ needs.build-images.outputs.tag }}" --switch-source ghcr --orig-tag all
 
+      # The step above wrote nothing for a full release cycle and still exited 0, so the
+      # release smoke-tested a base image it did not ship (fasrc/archi#339). This reads the
+      # reference each template declares and fails the run when any of them is not the base
+      # this release built. It checks the reference rather than the diff on purpose: a
+      # re-dispatch of a tag whose earlier run already pushed the Dockerfile commit leaves
+      # nothing to change, and there the templates are right, not stale.
+      - name: Verify the service templates point at this release's base images
+        run: python scripts/dev/update_service_base_images.py --verify --tag "${{ needs.build-images.outputs.tag }}" --switch-source ghcr
+
       - name: Run smoke deployment
         uses: ./.github/actions/run-smoke
         with:
@@ -184,7 +193,13 @@ jobs:
           set -euo pipefail
           CHANGED_FILES="$(git diff --name-only | grep -E '(^|/)Dockerfile' || true)"
           if [ -z "$CHANGED_FILES" ]; then
-            echo "No Dockerfile updates to commit"
+            # Not a failure, and deliberately not one. The verification step above already
+            # proved every service template names this release's base images, so an empty
+            # diff here means they named them before the retarget ran. That is what a
+            # re-dispatch of this tag looks like once an earlier run pushed this commit.
+            # Failing here instead would turn that re-run into a release failure, after the
+            # images are published and before the tag exists.
+            echo "Service templates already reference ${VERSION_TAG}; nothing to commit."
           else
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git config user.name "github-actions[bot]"
