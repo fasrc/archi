@@ -66,7 +66,7 @@ manager is alive. Section 2's tests do the opposite, deliberately.
       2.1's match was written as a bare dot-file or bare `*.result.json` sweep; make it green.
       `jobs_dir` is host-mounted, so this is the test that bounds a startup delete to the
       files this class wrote. Gate green; commit.
-- [ ] 2.3 `model: sonnet` — RED-or-guard test for the ordering: write a record
+- [x] 2.3 `model: sonnet` — RED-or-guard test for the ordering: write a record
       `{"id": job_id, "kind": "evaluation", "status": "running"}` **and** that job's own
       `.{job_id}.result.json`, construct the manager, then assert `manager.get(job_id)["status"]`
       is `"interrupted"` and the envelope is gone. Both halves must hold in the same

@@ -2003,3 +2003,19 @@ def test_job_manager_sweep_only_deletes_uuid_shaped_envelopes(tmp_path):
     assert not envelope_path.exists()
 
     manager.close()
+
+
+def test_job_manager_interrupts_stale_then_sweeps_its_envelope(tmp_path):
+    job_id = "5e6f7a8b-9c0d-1e2f-3a4b-5c6d7e8f9a0b"
+    write_json(
+        tmp_path / f"{job_id}.json",
+        {"id": job_id, "kind": "evaluation", "status": "running"},
+    )
+    envelope_path = tmp_path / f".{job_id}.result.json"
+    write_json(envelope_path, {"result": {"draft_id": "d"}})
+
+    manager = EvaluationJobManager(tmp_path)
+
+    assert manager.get(job_id)["status"] == "interrupted"
+    assert not envelope_path.exists()
+    manager.close()
