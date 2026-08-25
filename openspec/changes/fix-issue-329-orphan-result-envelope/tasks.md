@@ -30,7 +30,7 @@ construction, so a test that drops one in first would stop testing the glob and 
 the sweep. Writing it afterwards also matches how the file really appears: mid-run, while the
 manager is alive. Section 2's tests do the opposite, deliberately.
 
-- [ ] 1.1 `model: opus` — RED test: construct `EvaluationJobManager(tmp_path)`, then write a valid job
+- [x] 1.1 `model: opus` — RED test: construct `EvaluationJobManager(tmp_path)`, then write a valid job
       record to `tmp_path / f"{job_id}.json"` and an envelope to
       `tmp_path / f".{uuid4()}.result.json"` holding `{"result": {"draft_id": "d"}}`. Assert
       `list()` returns exactly one record and that record's `"id"` is `job_id`. Then construct
@@ -40,7 +40,7 @@ manager is alive. Section 2's tests do the opposite, deliberately.
       `self.jobs_dir.glob("[!.]*.json")`, and call it from all three current glob sites
       (`src/evaluation/qa/jobs.py:60`, `:76`, `:387`). Do not change any other behaviour in
       those three methods. Gate green; commit.
-- [ ] 1.2 `model: sonnet` — Regression guard for `_active` (`src/evaluation/qa/jobs.py:76`), the site
+- [x] 1.2 `model: sonnet` — Regression guard for `_active` (`src/evaluation/qa/jobs.py:76`), the site
       that decides single-flight. Construct the manager, write an envelope into `tmp_path`
       afterwards, and assert `manager.start(...)` succeeds rather than raising
       `JobConflictError`. **This passes once 1.1 lands — that is the point of it. Do not
