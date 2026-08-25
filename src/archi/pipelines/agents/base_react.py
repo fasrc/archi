@@ -101,11 +101,6 @@ class BaseReActAgent:
     # raise on a view whose class never ran ``__init__``.
     default_provider: Optional[str] = None
     default_model: Optional[str] = None
-    # Defaulted for that same reason, one step removed: the comparison now runs
-    # through `_effective_provider_model()`, which reads the pipeline map when
-    # the two attributes above are unset. Never mutated in place — `__init__`
-    # rebinds it — so one empty mapping is safe to share.
-    pipeline_config: Dict[str, Any] = {}
 
     def __init__(
         self,
@@ -481,9 +476,15 @@ class BaseReActAgent:
         """
         if self.default_provider:
             return self.default_provider, self.default_model
+        # Read through `getattr`, and deliberately not from a class-level
+        # default: `adopt_request_local_model` reaches this on shallow-copied
+        # views and on instances that never ran `__init__`, and one mutable
+        # mapping shared by all of them would let an in-place write on any
+        # instance answer for every later request.
+        pipeline_config = getattr(self, "pipeline_config", None)
         models_config = (
-            self.pipeline_config.get("models", {})
-            if isinstance(self.pipeline_config, dict)
+            pipeline_config.get("models", {})
+            if isinstance(pipeline_config, dict)
             else {}
         )
         if not isinstance(models_config, dict):
@@ -1349,6 +1350,20 @@ class BaseReActAgent:
         }
 
     @staticmethod
+    def _provider_key(value: Any) -> Any:
+        """The form the provider layer resolves a provider name by.
+
+        ``get_model()`` builds ``ProviderType(value.lower())`` and
+        ``_build_provider_config()`` lowercases its lookup key, so two spellings
+        differing only in case name one runtime provider. An identity comparison
+        has to agree with that, or it reports a model change where none happened
+        — and a reported change withdraws the operator's declared window. The
+        model id is compared as written: a model id is case-sensitive to the
+        provider serving it, and ``context_windows`` matches it exactly.
+        """
+        return value.lower() if isinstance(value, str) else value
+
+    @staticmethod
     def _parse_provider_model(model_ref: str) -> Tuple[str, str]:
         """Expect model_ref as 'provider/model'. Raise if malformed."""
         if not isinstance(model_ref, str) or "/" not in model_ref:
@@ -1846,7 +1861,11 @@ class BaseReActAgent:
         # agent leaves both at None while serving a real model, so comparing
         # them read every ordinary turn as a switch onto a different model and
         # withdrew the operator's declared window on the normal chat path.
-        same_model = (provider, model) == self._effective_provider_model()
+        effective_provider, effective_model = self._effective_provider_model()
+        same_model = (self._provider_key(provider), model) == (
+            self._provider_key(effective_provider),
+            effective_model,
+        )
         self.default_provider = provider
         self.default_model = model
         self._request_local_window = positive_int(context_window)

@@ -578,6 +578,59 @@ def test_a_pipeline_map_agent_still_treats_a_real_switch_as_an_override():
     assert view.agent["middleware"] == [], "no window describes the override"
 
 
+def test_a_mixed_case_pipeline_provider_is_still_the_same_model():
+    """Provider identity is resolved case-insensitively, as the provider layer does.
+
+    `get_model()` builds from `ProviderType(provider.lower())` and
+    `_build_provider_config()` lowercases its lookup key, so `Local/m` and
+    `local/m` name one runtime model. Comparing the two spellings as raw strings
+    read an ordinary resend as a switch onto a different model and withdrew the
+    declared window again — the same failure as an unresolved identity, arriving
+    through the letter case.
+    """
+    config = {
+        "services": {
+            "chat_app": {"context_editing": {"context_window": 32768}},
+        }
+    }
+    source = _BudgetPipeline(_llm(), provider=None, model=None, config=config)
+    source.pipeline_config = {
+        "models": {"required": {"chat_model": "Local/a-self-hosted-model"}}
+    }
+    source.refresh_agent(force=True)
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(),
+        provider="local",
+        model="a-self-hosted-model",
+        context_window=None,
+    )
+
+    assert view._is_request_local is False
+    assert _compiled_budget(view).context_window == 32768
+
+
+def test_the_identity_resolver_never_shares_state_between_instances():
+    """No mutable class-level fallback stands in for a bypassed `__init__`.
+
+    Views are shallow copies and several agents in this suite bypass
+    `__init__`, so a class-level dict would be one object shared by all of them:
+    an in-place write on any instance would then answer for every later request.
+    """
+    one = BaseReActAgent.__new__(BaseReActAgent)
+    another = BaseReActAgent.__new__(BaseReActAgent)
+
+    assert one._effective_provider_model() == (None, None), "must not raise"
+
+    one.pipeline_config = getattr(
+        BaseReActAgent, "pipeline_config", one.__dict__.get("pipeline_config", {})
+    )
+    one.pipeline_config["models"] = {"required": {"chat_model": "local/leaked-model"}}
+
+    assert another._effective_provider_model() == (None, None)
+
+
 # --- the streamed-reasoning gate follows the view's provider (issue #122) ---
 
 
