@@ -42,7 +42,7 @@ Standing notes for every task:
 - [x] 2.1 `model: sonnet` — Run all four shell self-tests and the issue's no-deploy verify
       snippet (fake `archi`, `DEPLOYMENT=claw`); record the observed output here.
 
-      **Measured** (after the review-round fixes below): `test_host_env` 15 passed,
+      **Measured** (after the review-round fixes below): `test_host_env` 17 passed,
       0 failed;
       `test_gpu_flag` 3 passed; `test_ensure_config` 10 passed; `test_firewall` 8 passed.
       Verify snippet with a fake `archi` on `PATH`: `DEPLOYMENT=claw bash -c 'source
@@ -151,3 +151,8 @@ findings become the PR body's Findings block.
       wrapper aborts before `archi` runs. RED cases 16/17 showed `--name dev/../..` and
       `--name ../evil` reaching the fake archi with `--force`; GREEN after. Self-test
       now 17 cases; README, example, and spec state the name rule.
+- [x] 4.3 Round 3 (Codex on `fa95c7ef`) — one finding, `[P3]`, **held**: the README's
+      self-test count still said 15 after cases 16/17 landed. Fixed (17), and a sweep
+      found no other stale count. **Terminal condition reached: the round returned only
+      a P3 nit.** The loop ends here; the deferred e2e-validation item (4.1) is owned by
+      the post-merge claw cutover, and the PR waits for the human merge.

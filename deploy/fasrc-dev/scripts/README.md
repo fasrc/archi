@@ -55,7 +55,7 @@ Two hosts deploy from this repository, and they must not share one identity.
   `CONFIG=deploy/fasrc-dev/config.yaml`). The GPU host needs no file.
 - **Reserved names (issue #363):** `dev` is the GPU host (`holygpu7c0717`, the
   production deployment); `claw` is the no-GPU / no-local-vLLM workstation.
-- **Self-test:** `bash deploy/fasrc-dev/scripts/test_host_env.sh` — 15 cases
+- **Self-test:** `bash deploy/fasrc-dev/scripts/test_host_env.sh` — 17 cases
   against a fake `archi` and a fixture tree; renders nothing, deploys nothing.
 
 ## Config provisioning (`ensure_config`)
