@@ -105,3 +105,12 @@ are the PR body's Findings block.
       `AGENTS.md:53` requires it — **held**, documented. `[P2]` the task checkboxes were
       unticked — **already fixed** in `ae72349d`, which was held back unpushed so it could ride
       with these fixes.
+- [x] 5.2 Post-PR round 2 on `f6bad9ea` — two findings, both **held**. `[P2]` the new developer-guide
+      example passed `--tag v2026.8.0`, but this repository's release tags are zero-padded
+      (`v2026.08.0`, confirmed against the four open milestones) and `--verify` compares the tag
+      exactly, so an operator copying that line would have seen every reference reported wrong.
+      Fixed, with the contrast spelled out in the example. `[P3]` the proposal's Impact section
+      still read "`scripts/dev/update_service_base_images.py` — **not** edited", which its own
+      "What Changes" section had already contradicted, and still counted one verification step
+      and one test. Rewritten to the delivered scope. A local adversarial pass over the same tip
+      returned only the #360 drift, which its own recommendation calls a known remaining hole.

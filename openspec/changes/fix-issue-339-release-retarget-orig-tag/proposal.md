@@ -97,14 +97,23 @@ None.
 
 ## Impact
 
-- `.github/workflows/test-and-build-tag.yml` — the retarget call, one new verification step,
-  and the commit step's empty-diff message. This is a release-run behavior change: a release
-  whose templates do not carry the release tag now fails at the verification step.
-- `tests/unit/test_update_service_base_images.py` — one new test that drives the release
-  workflow's argv against a `dev-4314ac4`-pinned fixture, plus a docstring correction on
-  `test_the_default_orig_tag_only_reaches_a_latest_pinned_line`, which describes the release
+- `.github/workflows/test-and-build-tag.yml` — the retarget call, three new verification steps
+  (before the smoke deployment, on the `release` job's checkout, and before the tag), and the
+  commit step's empty-diff message. This is a release-run behavior change, in two ways. A
+  release whose templates do not carry the release tag now fails at a verification step. And
+  the retarget now produces a real diff, so the commit-and-push at the end of `smoke-test` runs
+  for the first time since `5e168b00` — the dispatched ref has to permit that bot push, which
+  `CLAUDE.md` already requires.
+- `tests/unit/test_update_service_base_images.py` — tests for the `--verify` mode, and tests
+  that read the release argv and the step order out of the workflow YAML rather than restating
+  them, so a call site that drifts again turns the suite red. Plus a docstring correction on
+  `test_the_default_orig_tag_only_reaches_a_latest_pinned_line`, which described the release
   call as one that passes no `--orig-tag`.
-- `scripts/dev/update_service_base_images.py` — **not** edited. The defect is in the call site.
+- `scripts/dev/update_service_base_images.py` — the `--verify` mode and its argument checks.
+  The rewriting path is untouched, and the `--orig-tag` **default is unchanged**: the defect
+  this change repairs is at the call site, and that is where it is repaired.
+- `docs/docs/developer_guide.md` — documents `--verify` in the section that already documents
+  the script's other flags, per `AGENTS.md`.
 - `.github/workflows/pr-preview.yml` — **not** edited. Its call is already correct.
 - The Dockerfile templates — **not** edited. They keep the `dev-4314ac4` pin, and the release
   run rewrites them in its own checkout.

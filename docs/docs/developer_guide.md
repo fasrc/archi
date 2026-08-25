@@ -493,7 +493,9 @@ python scripts/dev/update_service_base_images.py \
   --tag dev-abc1234 --switch-source ghcr --orig-tag all
 
 # Check instead of write: fail unless every template already names this reference.
-python scripts/dev/update_service_base_images.py --verify --tag v2026.8.0 --switch-source ghcr
+# The tag is the release tag, zero-padded as the CalVer tags are: v2026.08.0, not v2026.8.0.
+# --verify compares it exactly, so the unpadded form reports every reference as wrong.
+python scripts/dev/update_service_base_images.py --verify --tag v2026.08.0 --switch-source ghcr
 ```
 
 | Option | Effect |
