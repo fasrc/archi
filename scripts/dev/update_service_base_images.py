@@ -33,6 +33,8 @@ class UpdateOptions:
     # Keyed by image name, not by the `--digest` name, so `_update_line` can
     # look a digest up with the base name it already holds.
     digests_by_image: Dict[str, str] = field(default_factory=dict)
+    # Check the references instead of writing them. See `verify_base_tags`.
+    verify: bool = False
 
 
 def _normalize_prefix(prefix: str) -> str:
@@ -97,6 +99,14 @@ def _build_image_spec(
     return repo
 
 
+# One matcher for both the rewrite and the verification. A verification that
+# disagreed with the rewriter about what counts as a base line would pass a
+# line the rewriter never touched, which is the failure `--verify` exists to
+# catch.
+_FROM_RE = re.compile(
+    r"(?P<intro>\s*FROM\s+(?:--platform=\S+\s+)?)(?P<image>\S+)(?P<suffix>.*)"
+)
+
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 # An OCI image tag, per the distribution spec's grammar.
@@ -154,9 +164,7 @@ def _update_line(
     if not stripped.startswith("FROM "):
         return current_annotation, line, False
 
-    match = re.match(
-        r"(?P<intro>\s*FROM\s+(?:--platform=\S+\s+)?)(?P<image>\S+)(?P<suffix>.*)", core
-    )
+    match = _FROM_RE.match(core)
     if not match:
         return current_annotation, line, False
 
@@ -277,11 +285,95 @@ def _rewrite_lines(
     return out, changed
 
 
-def update_base_tags(options: UpdateOptions) -> None:
-    bases = list(options.bases)
-    invalid = set(bases) - set(BASE_IMAGE_MAP)
+def _validated_bases(bases: Iterable[str]) -> list:
+    """The requested base types, or an error naming the ones that do not exist."""
+    requested = list(bases)
+    invalid = set(requested) - set(BASE_IMAGE_MAP)
     if invalid:
         raise SystemExit(f"Unknown base types requested: {', '.join(sorted(invalid))}")
+    return requested
+
+
+def verify_base_tags(options: UpdateOptions) -> None:
+    """Fail unless every service base reference already names the target.
+
+    The release workflow calls this straight after the rewrite. It reads the
+    reference each template declares rather than whether the file changed. The
+    two tests disagree on exactly one input — a template that already carries
+    the target reference — and there the reference is right and the diff is
+    empty. That is what a re-dispatch of a release tag produces once an earlier
+    run of the same tag pushed its Dockerfile commit.
+    """
+    image_names = {BASE_IMAGE_MAP[base] for base in _validated_bases(options.bases)}
+    source_prefix = (
+        SOURCE_PREFIXES[options.switch_source] if options.switch_source else None
+    )
+
+    # Every image the script knows how to rewrite, not just the ones this run
+    # compares. `--bases python` narrows the comparison to the python
+    # templates; it does not make a pytorch base unrecognisable.
+    known_images = set(BASE_IMAGE_MAP.values())
+
+    wrong = []
+    unknown = []
+    checked = 0
+    for path in sorted(DOCKERFILES_DIR.glob("Dockerfile*")):
+        for line in path.read_text().splitlines():
+            match = _FROM_RE.match(line)
+            if not match:
+                continue
+            image_spec = match.group("image")
+            prefix, image = _split_image_spec(image_spec)[:2]
+            if image not in image_names:
+                # A base this script cannot place is skipped by the rewriter
+                # too, so the retarget left it on whatever it named and the
+                # comparison below would never see it. Passing over it in
+                # silence is the failure this whole mode exists to end.
+                if "a2rchi" in image and image not in known_images:
+                    unknown.append(f"  {path.relative_to(PROJECT_ROOT)}: {image_spec}")
+                continue
+            checked += 1
+            # With no --switch-source the run names no registry, so the prefix
+            # already on the line is the expected one and only the tag is checked.
+            expected = _build_image_spec(
+                source_prefix if source_prefix is not None else prefix,
+                image,
+                options.tag,
+            )
+            if image_spec != expected:
+                rel_path = path.relative_to(PROJECT_ROOT)
+                wrong.append(f"  {rel_path}: {image_spec} (expected {expected})")
+
+    if unknown:
+        listed = "\n".join(unknown)
+        raise SystemExit(
+            "These service templates name a base image this script cannot place, "
+            f"so the retarget skipped them and this check cannot vouch for "
+            f"them:\n{listed}\n"
+            f"Add the image to BASE_IMAGE_MAP, or point the template at "
+            f"{' or '.join(sorted(known_images))}."
+        )
+
+    if not checked:
+        raise SystemExit(
+            f"--verify found no service template under {DOCKERFILES_DIR} that "
+            f"references {' or '.join(sorted(image_names))}. A check that reads "
+            "nothing passes without reading anything, so this is a failure."
+        )
+
+    if wrong:
+        listed = "\n".join(wrong)
+        raise SystemExit(
+            "These service templates do not reference the base images this run "
+            f"names:\n{listed}"
+        )
+
+    plural = "" if checked == 1 else "s"
+    print(f"Verified {checked} base reference{plural} at {options.tag}.")
+
+
+def update_base_tags(options: UpdateOptions) -> None:
+    bases = _validated_bases(options.bases)
 
     for path in sorted(DOCKERFILES_DIR.glob("Dockerfile*")):
         original = path.read_text()
@@ -316,6 +408,15 @@ def parse_args() -> UpdateOptions:
         "--switch-source",
         choices=sorted(SOURCE_PREFIXES),
         help="Switch base image registry/source",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help=(
+            "Check the references instead of writing them: exit non-zero unless "
+            "every service base reference already names --tag (and --switch-source, "
+            "when given)"
+        ),
     )
     parser.add_argument(
         "--digest",
@@ -388,17 +489,34 @@ def parse_args() -> UpdateOptions:
             "is recorded above the reference. A digest alone records nothing."
         )
 
+    if args.verify:
+        if args.tag is None:
+            raise SystemExit(
+                "--verify needs --tag: without one there is no expected "
+                "reference to check the templates against."
+            )
+        if digests_by_image:
+            raise SystemExit(
+                "--verify cannot take --digest. The release retarget writes a "
+                "tag reference and drops any digest, so verifying a digest "
+                "would check a reference the release never writes."
+            )
+
     return UpdateOptions(
         tag=args.tag,
         orig_tag=orig_tag,
         switch_source=args.switch_source,
         bases=args.bases,
         digests_by_image=digests_by_image,
+        verify=args.verify,
     )
 
 
 def main() -> None:
     options = parse_args()
+    if options.verify:
+        verify_base_tags(options)
+        return
     update_base_tags(options)
 
 

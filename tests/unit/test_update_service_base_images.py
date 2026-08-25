@@ -22,10 +22,13 @@ into `tmp_path` and repoints the module-level `DOCKERFILES_DIR` at it.
 from __future__ import annotations
 
 import importlib.util
+import re
+import shlex
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 _SCRIPT = (
     Path(__file__).resolve().parents[2]
@@ -590,13 +593,17 @@ def test_pinning_a_line_that_ends_in_a_space_is_stable(tmp_path, monkeypatch):
 def test_the_default_orig_tag_only_reaches_a_latest_pinned_line(tmp_path, monkeypatch):
     """`--orig-tag` defaults to `latest`, and only a `latest` line matches it.
 
-    This pins the argv at `.github/workflows/test-and-build-tag.yml:154`, which
-    passes no `--orig-tag`. That step is already a no-op on today's templates —
-    they carry `dev-4314ac4`, not `latest`, since `5e168b00` — and a digest pin
-    leaves it a no-op for a second reason. Fixing the release workflow is out of
-    scope here (issue #334 forbids touching `.github/workflows/**`) and is
-    tracked as issue #339; this test exists so the next reader sees the trap
-    instead of rediscovering it.
+    This pins the **script's** default, which issue #339 deliberately left
+    alone. That default is a trap for any caller that omits `--orig-tag`: the
+    templates carry `dev-4314ac4`, not `latest`, since `5e168b00`, and a digest
+    pin carries no tag at all, so such a caller silently matches nothing. The
+    release workflow was that caller until #339 gave it `--orig-tag all`.
+
+    The fix stayed at the call site. Changing this default to suit one caller
+    repairs that caller and hides the next one, and both current call sites
+    pass `--orig-tag all` explicitly. See
+    `test_the_release_workflow_argv_rewrites_the_pin_the_templates_carry`,
+    which reads the release argv out of the workflow file.
     """
     module, templates = _write_fixtures(
         tmp_path,
@@ -1095,4 +1102,399 @@ def test_two_from_lines_each_get_their_own_annotation(tmp_path, monkeypatch):
         "RUN echo build\n"
         f"{_ANN}dev-abc1234{_ANN_END}\n"
         f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+    )
+
+
+# --- Verification ------------------------------------------------------------
+#
+# `--verify` is the proof that a rewrite happened. It reads the reference on
+# the line rather than whether the line moved, because those two tests disagree
+# on exactly one input: a template that already carries the target reference,
+# which is what a re-dispatch of the same release tag produces.
+
+
+def test_verify_passes_when_every_base_reference_names_the_target(
+    tmp_path, monkeypatch, capsys
+):
+    """A tree already on the target reference verifies, and is left alone."""
+    python_ref = "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n"
+    pytorch_ref = "FROM ghcr.io/fasrc/a2rchi-pytorch-base:v2026.8.0 \n"
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{"Dockerfile-chat": python_ref, "Dockerfile-chat-gpu": pytorch_ref},
+    )
+
+    _run(
+        module,
+        monkeypatch,
+        ["--verify", "--tag", "v2026.8.0", "--switch-source", "ghcr"],
+    )
+
+    assert (templates / "Dockerfile-chat").read_text() == python_ref
+    assert (templates / "Dockerfile-chat-gpu").read_text() == pytorch_ref
+    assert "v2026.8.0" in capsys.readouterr().out
+
+
+def test_verify_names_every_template_left_on_the_wrong_reference(tmp_path, monkeypatch):
+    """Both halves of a reference are checked, and both name their file.
+
+    A wrong tag is the failure this change exists to catch. A wrong prefix is
+    the other half: `localhost/a2rchi/...` at the right tag is an image the
+    release runner never pulled, and a check that reads only the tag passes it.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n",
+            "Dockerfile-chat-gpu": (
+                "FROM localhost/a2rchi/a2rchi-pytorch-base:v2026.8.0\n"
+            ),
+            "Dockerfile-mailbox": "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n",
+        },
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            module,
+            monkeypatch,
+            ["--verify", "--tag", "v2026.8.0", "--switch-source", "ghcr"],
+        )
+
+    message = str(excinfo.value)
+    assert "Dockerfile-chat" in message
+    assert "Dockerfile-chat-gpu" in message
+    assert "Dockerfile-mailbox" not in message
+    assert (templates / "Dockerfile-chat").read_text() == (
+        "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+    )
+
+
+def test_verify_fails_when_no_template_names_a_base_image(tmp_path, monkeypatch):
+    """A check that examines nothing must not pass.
+
+    A renamed directory, a renamed base image, or a wrong path all produce an
+    empty set, and an empty set satisfies "every reference carries the release
+    tag" without reading a single line.
+    """
+    module, _ = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{"Dockerfile-postgres": "FROM docker.io/pgvector/pgvector:pg17\n"},
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            module,
+            monkeypatch,
+            ["--verify", "--tag", "v2026.8.0", "--switch-source", "ghcr"],
+        )
+
+    assert "no service template" in str(excinfo.value).lower()
+
+
+def test_verify_fails_on_a_base_image_it_does_not_know(tmp_path, monkeypatch):
+    """A renamed base must not pass by being invisible to the check.
+
+    Both the rewriter and the check read `BASE_IMAGE_MAP`, so a template moved
+    onto `a2rchi-python-base-v2` is skipped by both: the retarget leaves it
+    alone and the check never looks at it. As long as one other template
+    matches, the run would go green on a service that ships the base image the
+    release replaced.
+
+    The check therefore refuses any `a2rchi` base it cannot place, rather than
+    passing over it. `--bases` still narrows which known bases are compared, so
+    a run limited to `python` does not fail on the pytorch templates.
+    """
+    module, _ = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n",
+            "Dockerfile-mailbox": (
+                "FROM ghcr.io/fasrc/a2rchi-python-base-v2:v2026.8.0\n"
+            ),
+        },
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            module,
+            monkeypatch,
+            ["--verify", "--tag", "v2026.8.0", "--switch-source", "ghcr"],
+        )
+
+    message = str(excinfo.value)
+    assert "Dockerfile-mailbox" in message
+    assert "a2rchi-python-base-v2" in message
+
+
+def test_verify_narrowed_to_one_base_ignores_the_other(tmp_path, monkeypatch):
+    """`--bases python` compares the python templates and skips the pytorch ones.
+
+    The refusal above is about a base the script cannot place at all, not about
+    a known base this run was told to leave alone.
+    """
+    module, _ = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n",
+            "Dockerfile-chat-gpu": (
+                "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4\n"
+            ),
+        },
+    )
+
+    _run(
+        module,
+        monkeypatch,
+        [
+            "--verify",
+            "--tag",
+            "v2026.8.0",
+            "--switch-source",
+            "ghcr",
+            "--bases",
+            "python",
+        ],
+    )
+
+
+def test_verify_requires_a_tag(tmp_path, monkeypatch):
+    """A verification with no expected tag has nothing to check."""
+    module, _ = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{"Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n"},
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(module, monkeypatch, ["--verify", "--switch-source", "ghcr"])
+
+    assert "--tag" in str(excinfo.value)
+
+
+def test_verify_refuses_a_digest(tmp_path, monkeypatch):
+    """`--verify` checks a tag reference, so a digest has no meaning here.
+
+    The release retarget writes a tag: `--tag … --switch-source ghcr
+    --orig-tag all` drops any digest the template carried. Accepting
+    `--digest` here would check a reference the release never writes, which is
+    the silent-wrong-answer failure this mode exists to end.
+    """
+    module, _ = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{"Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n"},
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            module,
+            monkeypatch,
+            ["--verify", "--tag", "v2026.8.0", "--digest", f"python={_PY_DIGEST}"],
+        )
+
+    assert "--digest" in str(excinfo.value)
+
+
+# --- The CI call sites -------------------------------------------------------
+#
+# These tests read the argv out of the workflow file instead of restating it.
+# Issue #339 is a call site that drifted from what the script needs, and a test
+# that restates the argv stays green through exactly that drift.
+
+_WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
+_RELEASE_WORKFLOW = _WORKFLOWS / "test-and-build-tag.yml"
+_RETARGET_STEP = "Point Dockerfiles to versioned base images"
+_VERIFY_STEP = "Verify the service templates point at this release's base images"
+_SMOKE_STEP = "Run smoke deployment"
+_CHECKOUT_VERIFY_STEP = (
+    "Verify the checked-out tree points at this release's base images"
+)
+_PROMOTE_STEP = "Promote base images to latest"
+_TAG_VERIFY_STEP = "Verify the tree being tagged points at this release's base images"
+_TAG_STEP = "Create Git tag"
+
+# A GitHub Actions expression, e.g. `${{ needs.build-images.outputs.tag }}`.
+_EXPRESSION_RE = re.compile(r"\$\{\{[^}]*\}\}")
+
+_INVOCATION = ["python", "scripts/dev/update_service_base_images.py"]
+
+
+def _workflow_step(workflow_path, step_name, job_name=None):
+    """The step named `step_name`, from one job or from any job."""
+    document = yaml.safe_load(workflow_path.read_text())
+    jobs = [document["jobs"][job_name]] if job_name else list(document["jobs"].values())
+    for job in jobs:
+        for step in job.get("steps", []):
+            if step.get("name") == step_name:
+                return step
+    raise AssertionError(f"{workflow_path.name} has no step named {step_name!r}")
+
+
+def _script_argv(step, tag):
+    """The script arguments the step passes, with every CI expression resolved.
+
+    Every `${{ ... }}` in the step becomes `tag`. The release steps interpolate
+    exactly one expression, the release tag, so one substitution value is
+    enough. `re.sub` takes a function, not the string itself, because a
+    replacement string reads a backslash as an escape.
+    """
+    command = _EXPRESSION_RE.sub(lambda _: tag, step["run"]).strip()
+    argv = shlex.split(command)
+    assert argv[: len(_INVOCATION)] == _INVOCATION, f"unexpected command: {command}"
+    return argv[len(_INVOCATION) :]
+
+
+def test_the_release_workflow_argv_rewrites_the_pin_the_templates_carry(
+    tmp_path, monkeypatch
+):
+    """Issue #339: the release retarget must reach the templates' current tag.
+
+    The step passed no `--orig-tag`, so it took the script's `latest` default
+    and matched none of the 15 service templates -- they carry `dev-4314ac4`,
+    not `latest`, since `5e168b00`. Measured against a copy of the real
+    templates on `5a26b5a3`: the old release argv rewrote 0 of 15, and the
+    PR-preview argv rewrote 15 of 15.
+
+    Both fixtures below end as the real templates do. Several carry a trailing
+    space after the reference, and that space has to survive the rewrite.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n",
+            "Dockerfile-chat-gpu": (
+                "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4 \n"
+            ),
+        },
+    )
+    argv = _script_argv(_workflow_step(_RELEASE_WORKFLOW, _RETARGET_STEP), "v2026.8.0")
+
+    _run(module, monkeypatch, argv)
+
+    assert (templates / "Dockerfile-chat").read_text() == (
+        "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n"
+    )
+    assert (templates / "Dockerfile-chat-gpu").read_text() == (
+        "FROM ghcr.io/fasrc/a2rchi-pytorch-base:v2026.8.0 \n"
+    )
+
+
+def _job_step_names(workflow_path, job_name):
+    """Every step name in one job, in file order."""
+    document = yaml.safe_load(workflow_path.read_text())
+    return [step.get("name") for step in document["jobs"][job_name]["steps"]]
+
+
+def _flag_value(argv, flag):
+    """The value that follows `flag` in `argv`."""
+    assert flag in argv, f"{flag} missing from {argv}"
+    return argv[argv.index(flag) + 1]
+
+
+def test_the_release_run_verifies_the_retarget_before_it_smoke_tests():
+    """The proof runs between the rewrite and the thing that depends on it.
+
+    A smoke test against the wrong base proves nothing, so the run has to stop
+    before it rather than after. The verification also has to name the same
+    reference the retarget writes; a check on a different tag or a different
+    registry passes a tree the release cannot ship.
+    """
+    names = _job_step_names(_RELEASE_WORKFLOW, "smoke-test")
+    assert names.index(_RETARGET_STEP) < names.index(_VERIFY_STEP)
+    assert names.index(_VERIFY_STEP) < names.index(_SMOKE_STEP)
+
+    retarget = _script_argv(
+        _workflow_step(_RELEASE_WORKFLOW, _RETARGET_STEP), "v2026.8.0"
+    )
+    verify = _script_argv(_workflow_step(_RELEASE_WORKFLOW, _VERIFY_STEP), "v2026.8.0")
+
+    assert "--verify" in verify
+    assert _flag_value(verify, "--tag") == _flag_value(retarget, "--tag")
+    assert _flag_value(verify, "--switch-source") == _flag_value(
+        retarget, "--switch-source"
+    )
+
+
+def test_the_release_job_verifies_the_tree_it_is_about_to_tag():
+    """The smoke test proves one checkout. The tag is cut from another.
+
+    `build-images`, `smoke-test`, and `release` each check out
+    `inputs.ref` by branch name, so the tree the tag is cut from is fetched
+    after the tree the smoke test proved. A branch that advances in between —
+    or a lost push from `smoke-test` — leaves the tag naming templates that
+    never carried this release's base images.
+
+    This step does not close that gap in general; source can still drift, and
+    doing better means resolving one commit for every job, which the release
+    mechanics in `CLAUDE.md` deliberately trade away so the workflow can push
+    to the dispatched ref by name. It closes the half this change owns: the
+    tagged tree names this release's base images, or no tag is created.
+    """
+    names = _job_step_names(_RELEASE_WORKFLOW, "release")
+
+    # Before anything this job publishes or pushes. `Promote base images to
+    # latest` moves the `latest` tag on ghcr, and on docker.io when those
+    # credentials are set; `Commit version bump` pushes to the dispatched ref.
+    # A check that runs only after those has already let the run publish part
+    # of a release it is about to refuse to finish.
+    assert names.index(_CHECKOUT_VERIFY_STEP) < names.index(_PROMOTE_STEP)
+
+    # And again on the tree the tag is actually cut from.
+    assert names.index(_CHECKOUT_VERIFY_STEP) < names.index(_TAG_VERIFY_STEP)
+    assert names.index(_TAG_VERIFY_STEP) < names.index(_TAG_STEP)
+
+    smoke = _script_argv(
+        _workflow_step(_RELEASE_WORKFLOW, _VERIFY_STEP, "smoke-test"), "v2026.8.0"
+    )
+    for step_name in (_CHECKOUT_VERIFY_STEP, _TAG_VERIFY_STEP):
+        argv = _script_argv(
+            _workflow_step(_RELEASE_WORKFLOW, step_name, "release"), "v2026.8.0"
+        )
+        assert "--verify" in argv
+        assert _flag_value(argv, "--tag") == _flag_value(smoke, "--tag")
+        assert _flag_value(argv, "--switch-source") == _flag_value(
+            smoke, "--switch-source"
+        )
+
+
+def test_the_release_steps_compose_on_the_pin_the_templates_carry(
+    tmp_path, monkeypatch
+):
+    """The whole of issue #339, driven by the argv the workflow really passes.
+
+    Verification fails on the templates as they sit in the tree, passes after
+    the retarget step runs, and both argvs are read from the workflow file. A
+    release that reintroduces the defect — by losing `--orig-tag all`, by
+    verifying a different tag, or by dropping either step — turns this red.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n",
+            "Dockerfile-chat-gpu": (
+                "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4 \n"
+            ),
+        },
+    )
+    retarget = _script_argv(
+        _workflow_step(_RELEASE_WORKFLOW, _RETARGET_STEP), "v2026.8.0"
+    )
+    verify = _script_argv(_workflow_step(_RELEASE_WORKFLOW, _VERIFY_STEP), "v2026.8.0")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(module, monkeypatch, verify)
+    assert "dev-4314ac4" in str(excinfo.value)
+
+    _run(module, monkeypatch, retarget)
+    _run(module, monkeypatch, verify)
+
+    assert (templates / "Dockerfile-chat").read_text() == (
+        "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n"
     )

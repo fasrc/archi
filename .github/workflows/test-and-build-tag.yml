@@ -150,8 +150,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # `--orig-tag all` is load-bearing (fasrc/archi#339). Without it the script takes its
+      # `latest` default and skips every template whose tag is not `latest` -- which is all 15
+      # of them since #266 pinned them to a `dev-` build. The step then rewrote nothing, exited
+      # 0, and the smoke test below built against the in-tree pin instead of the base images
+      # this release just pushed. Match `pr-preview.yml`, which has always passed it.
       - name: Point Dockerfiles to versioned base images
-        run: python scripts/dev/update_service_base_images.py --tag "${{ needs.build-images.outputs.tag }}" --switch-source ghcr
+        run: python scripts/dev/update_service_base_images.py --tag "${{ needs.build-images.outputs.tag }}" --switch-source ghcr --orig-tag all
+
+      # The step above wrote nothing for a full release cycle and still exited 0, so the
+      # release smoke-tested a base image it did not ship (fasrc/archi#339). This reads the
+      # reference each template declares and fails the run when any of them is not the base
+      # this release built. It checks the reference rather than the diff on purpose: a
+      # re-dispatch of a tag whose earlier run already pushed the Dockerfile commit leaves
+      # nothing to change, and there the templates are right, not stale.
+      - name: Verify the service templates point at this release's base images
+        run: python scripts/dev/update_service_base_images.py --verify --tag "${{ needs.build-images.outputs.tag }}" --switch-source ghcr
 
       - name: Run smoke deployment
         uses: ./.github/actions/run-smoke
@@ -179,7 +193,13 @@ jobs:
           set -euo pipefail
           CHANGED_FILES="$(git diff --name-only | grep -E '(^|/)Dockerfile' || true)"
           if [ -z "$CHANGED_FILES" ]; then
-            echo "No Dockerfile updates to commit"
+            # Not a failure, and deliberately not one. The verification step above already
+            # proved every service template names this release's base images, so an empty
+            # diff here means they named them before the retarget ran. That is what a
+            # re-dispatch of this tag looks like once an earlier run pushed this commit.
+            # Failing here instead would turn that re-run into a release failure, after the
+            # images are published and before the tag exists.
+            echo "Service templates already reference ${VERSION_TAG}; nothing to commit."
           else
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git config user.name "github-actions[bot]"
@@ -208,6 +228,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      # First, before this job publishes or pushes anything. The steps below move the
+      # `latest` tag on ghcr (and on docker.io when those credentials are set) and push the
+      # version bump to the dispatched ref, and none of that is undone by a later failure.
+      # Checking here means a stale checkout costs the run nothing; the second check, below,
+      # covers the tree as it stands after those steps have mutated it.
+      - name: Verify the checked-out tree points at this release's base images
+        run: python scripts/dev/update_service_base_images.py --verify --tag "${{ needs.build-images.outputs.tag }}" --switch-source ghcr
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -267,6 +295,16 @@ jobs:
             git commit -m "chore: bump version to ${VERSION_CLEAN}"
             git push origin HEAD:"${TARGET_REF}"
           fi
+
+      # This job checked out `inputs.ref` by name, after `smoke-test` checked out the same
+      # name, so the tree about to be tagged is not provably the tree the smoke test proved.
+      # A branch that advanced in between, or a lost push from `smoke-test`, would tag
+      # templates that never carried this release's base images. Resolving one commit for
+      # every job would close that gap in general, but the release mechanics push to the
+      # dispatched ref by name (see CLAUDE.md), so that is a larger change than this one.
+      # Check the half this can check: no tag is created over a tree on the wrong base.
+      - name: Verify the tree being tagged points at this release's base images
+        run: python scripts/dev/update_service_base_images.py --verify --tag "${{ needs.build-images.outputs.tag }}" --switch-source ghcr
 
       - name: Create Git tag
         env:
