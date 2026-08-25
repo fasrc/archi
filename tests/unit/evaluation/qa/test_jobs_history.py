@@ -1980,3 +1980,26 @@ def test_job_manager_sweeps_orphan_result_envelope_at_startup(tmp_path):
 
     assert not envelope_path.exists()
     manager.close()
+
+
+def test_job_manager_sweep_only_deletes_uuid_shaped_envelopes(tmp_path):
+    # Files that must survive: non-UUID dot-result, hidden non-result, plain json.
+    dot_notes_result = tmp_path / ".notes.result.json"
+    dot_notes = tmp_path / ".notes.json"
+    plain_notes = tmp_path / "notes.json"
+    for path in (dot_notes_result, dot_notes, plain_notes):
+        write_json(path, {"other": "data"})
+
+    # The one file that must be deleted: a valid UUID envelope.
+    orphan_id = "7a3f1b2c-4d5e-6f78-90ab-cdef01234567"
+    envelope_path = tmp_path / f".{orphan_id}.result.json"
+    write_json(envelope_path, {"result": {"draft_id": "d"}})
+
+    manager = EvaluationJobManager(tmp_path)
+
+    assert dot_notes_result.exists()
+    assert dot_notes.exists()
+    assert plain_notes.exists()
+    assert not envelope_path.exists()
+
+    manager.close()
