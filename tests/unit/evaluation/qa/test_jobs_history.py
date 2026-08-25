@@ -1921,6 +1921,21 @@ def test_continue_re_runs_the_frozen_agent_inputs_of_the_paused_run(
     service.job_manager.close()
 
 
+def test_active_ignores_hidden_result_envelope(tmp_path):
+    manager = EvaluationJobManager(tmp_path)
+
+    # Envelope written after construction — section 2's startup sweep won't touch it.
+    write_json(
+        tmp_path / f".{uuid.uuid4()}.result.json",
+        {"result": {"draft_id": "d"}},
+    )
+
+    # _active() must not see the envelope, so start() must not raise JobConflictError.
+    job = manager.start("generate_atoms", lambda: {"draft_id": "d"})
+    manager.wait(job["id"], timeout=2)
+    manager.close()
+
+
 def test_listing_skips_hidden_result_envelope(tmp_path):
     job_id = "040bb55f-739c-46a8-a297-f49f54d1e759"
     # Use tmp_path/jobs so EvaluationConsoleService(tmp_path) shares the same dir.
