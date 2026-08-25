@@ -1,5 +1,7 @@
+import json
 import logging
 import os
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -264,6 +266,53 @@ def test_evaluation_service_disables_on_an_unwritable_root(
     assert service is None
     assert [record.levelname for record in caplog.records] == ["ERROR"]
     assert str(root) in caplog.text
+
+
+def test_evaluation_service_disables_when_the_stale_job_sweep_cannot_write(
+    monkeypatch, tmp_path, caplog
+):
+    """The storage guard covers the whole construction, not just the first mkdir.
+
+    The root itself is writable here, so ``EvaluationCatalog`` and the jobs-dir
+    mkdir both succeed. The failure comes from ``EvaluationJobManager``'s stale-job
+    sweep (``_interrupt_stale_jobs``), which only writes when it finds a job file to
+    interrupt, so one queued job is seeded first.
+    """
+    live = tmp_path / "config.yaml"
+    live.write_text("live: true\n", encoding="utf-8")
+    monkeypatch.setattr(evaluation_console, "LIVE_AGENT_CONFIG_PATH", str(live))
+
+    root = tmp_path / "evaluations"
+    jobs_dir = root / "jobs"
+    jobs_dir.mkdir(parents=True)
+    job_path = jobs_dir / f"{uuid.uuid4()}.json"
+    job_path.write_text(
+        json.dumps({"id": job_path.stem, "status": "queued"}), encoding="utf-8"
+    )
+
+    agent_config_path = tmp_path / "evaluation.yaml"
+    agent_config_path.write_text("redacted: true\n", encoding="utf-8")
+
+    def _raise(*_args, **_kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr("src.evaluation.qa.jobs.write_json", _raise)
+
+    with caplog.at_level(
+        logging.ERROR, logger="src.interfaces.chat_app.evaluation_console"
+    ):
+        service = build_evaluation_service(
+            {
+                "evaluations": {
+                    "enabled": True,
+                    "root": str(root),
+                    "agent_config_path": str(agent_config_path),
+                }
+            }
+        )
+
+    assert service is None
+    assert [record.levelname for record in caplog.records] == ["ERROR"]
 
 
 def test_authorize_request_allows_every_permission_when_auth_is_off():
