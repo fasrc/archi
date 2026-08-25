@@ -125,10 +125,41 @@ def test_provider_name_matches_case_insensitively(named):
     assert provider_emits_thinking(config, named) is True
 
 
-def test_an_upper_case_provider_block_is_found_too():
-    """The match works in both directions, so neither casing is privileged."""
+def test_an_upper_case_block_is_invisible_to_the_gate_and_to_the_backend():
+    """Agreement with model construction is the invariant, not permissiveness.
+
+    `_build_provider_config()` looks the block up by the lowercased name, so a
+    block keyed `LOCAL` sends no `enable_thinking` to the backend at all. The
+    gate reports false for the same reason, and the two stay in step.
+    """
     config = _config_with_thinking("LOCAL", True)
-    assert provider_emits_thinking(config, "local") is True
+    assert provider_emits_thinking(config, "local") is False
+
+
+def test_the_gate_resolves_the_same_block_model_construction_does():
+    """Any divergence from `_build_provider_config()` is a latent fail-open.
+
+    With both casings present, that method still resolves `provider.lower()`, so
+    the backend is built from the `local` block. A gate preferring an exact-case
+    match would read `LOCAL` instead and could sit off while the model thinks.
+    """
+    config = {
+        "services": {
+            "chat_app": {
+                "providers": {
+                    "local": {
+                        "extra_kwargs": {
+                            "extra_body": {
+                                "chat_template_kwargs": {"enable_thinking": True}
+                            }
+                        }
+                    },
+                    "LOCAL": {"extra_kwargs": {}},
+                }
+            }
+        }
+    }
+    assert provider_emits_thinking(config, "LOCAL") is True
 
 
 def test_gate_is_provider_granular():

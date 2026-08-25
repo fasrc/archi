@@ -39,12 +39,16 @@ _THINKING_PATH = (
 
 
 def _provider_block(config: Any, provider: str) -> Any:
-    """The named provider's config block, matched without regard to case.
+    """The named provider's config block, resolved by its lowercased name.
 
-    ``BaseReActAgent._build_provider_config()`` resolves a provider block by its
-    lowercased name, so a deployment that writes ``default_provider: LOCAL``
-    against a ``local`` block still builds a thinking-enabled model. Matching
-    exactly here would leave the gate off for precisely that deployment.
+    This deliberately mirrors ``BaseReActAgent._build_provider_config()``, which
+    resolves the block by ``provider.lower()``. That method decides what
+    ``extra_kwargs`` actually reach the backend, so the gate has to read the same
+    block it does. Any other rule — an exact-case match, or a search across
+    casings — can resolve a *different* block than the one the model was built
+    from, and a config carrying both casings would then leave the gate off while
+    the backend is thinking. Agreeing with model construction matters more than
+    being forgiving about case.
     """
     node: Any = config
     for key in ("services", "chat_app", "providers"):
@@ -53,13 +57,7 @@ def _provider_block(config: Any, provider: str) -> Any:
         node = node.get(key)
     if not isinstance(node, dict):
         return None
-    if provider in node:
-        return node[provider]
-    lowered = provider.lower()
-    for name, block in node.items():
-        if isinstance(name, str) and name.lower() == lowered:
-            return block
-    return None
+    return node.get(provider.lower())
 
 
 def provider_emits_thinking(config: Any, provider: Optional[str]) -> bool:

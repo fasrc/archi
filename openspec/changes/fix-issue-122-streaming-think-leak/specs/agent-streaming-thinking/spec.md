@@ -23,6 +23,7 @@ cannot be shown to be an answer rather than reasoning.
 - **WHEN** the agent calls a tool and the next model call streams fresh reasoning before its own `</think>`
 - **THEN** that later reasoning is held exactly as the first phase's was
 - **AND** no visible `text` event contains it
+- **AND** this holds whether the later phase arrives as streamed chunks or as one full message, which replaces the accumulated content rather than extending it
 
 #### Scenario: Orphan reasoning precedes the closing tag
 

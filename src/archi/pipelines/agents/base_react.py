@@ -622,6 +622,10 @@ class BaseReActAgent:
                                 else:
                                     # Full message - use its content directly
                                     accumulated_content = content
+                                    # The buffer was replaced, so an offset into
+                                    # the old one means nothing: this message is
+                                    # the whole current phase (issue #122).
+                                    phase_start = 0
 
                             if reasoning_content:
                                 # Ollama sends thinking as deltas, so accumulate
@@ -960,6 +964,10 @@ class BaseReActAgent:
                                     accumulated_content += content
                                 else:
                                     accumulated_content = content
+                                    # The buffer was replaced, so an offset into
+                                    # the old one means nothing: this message is
+                                    # the whole current phase (issue #122).
+                                    phase_start = 0
 
                             if reasoning_content:
                                 # Ollama sends thinking as deltas, so accumulate

@@ -393,6 +393,35 @@ def test_reasoning_after_a_tool_call_is_suppressed_too(run):
     assert _final(outputs).answer == "The final answer"
 
 
+@both_paths
+def test_a_full_message_after_a_tool_call_is_still_gated(run):
+    """A full AI message REPLACES the buffer, so an old offset into it is stale.
+
+    Both stream paths support non-chunk messages, and one can arrive after a tool
+    round carrying a fresh reasoning block. If the phase marker still pointed into
+    the longer pre-tool buffer, the slice would be empty, the gate would read
+    "nothing is being held", and the new phase would stream to the user.
+
+    This phase never closes its block, so per decision 5 the held text is still
+    delivered by the `final` event — one event at the end rather than incremental.
+    What must not happen is it appearing as a visible `text` event mid-stream.
+    """
+    agent = _TestableAgent(THINKING_ON)
+    outputs = run(
+        agent,
+        [
+            *_deltas("first reasoning", "</think>", "an interim answer"),
+            _tool_call_message(),
+            ToolMessage(content="tool result", tool_call_id="call_1"),
+            AIMessage(content="second reasoning"),
+        ],
+    )
+
+    _assert_no_reasoning_visible(outputs)
+    assert _texts(outputs) == ["an interim answer"]
+    assert _final(outputs).answer == "second reasoning"
+
+
 # --- a provider using the structured reasoning channel is not gated ---------
 
 
