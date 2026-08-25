@@ -76,6 +76,22 @@ A check that examines nothing passes. This scenario is separate because a wrong 
 renamed directory, or a renamed base image all produce an empty set, and an empty set satisfies
 "every reference carries the release tag" without reading a single file.
 
+#### Scenario: No tag is created over a tree on the wrong base
+
+- **WHEN** the tree the release job is about to tag does not reference this release's base images
+- **THEN** the release run fails before the tag is created
+- **AND** no tag is pushed
+
+The smoke test proves one checkout and the tag is cut from another. Each job checks out the
+dispatched ref **by name**, so the tree the tag names is fetched after the tree the smoke test
+proved, and a branch that advances in between — or a lost push from the smoke-test job — leaves
+the tag naming templates that never carried this release's base images.
+
+Resolving one commit and using it for every job would close that gap in general. That is a
+larger change than this one, and it trades against the release mechanics in `CLAUDE.md`, which
+push to the dispatched ref by name and fail on a SHA dispatch. This requirement closes the half
+it owns: the base references on the tagged tree, checked as late as the run can check them.
+
 #### Scenario: A re-dispatch of the same release tag passes with nothing to commit
 
 - **WHEN** a release run retargets templates that already carry the release tag

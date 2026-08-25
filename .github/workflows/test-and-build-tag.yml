@@ -288,6 +288,16 @@ jobs:
             git push origin HEAD:"${TARGET_REF}"
           fi
 
+      # This job checked out `inputs.ref` by name, after `smoke-test` checked out the same
+      # name, so the tree about to be tagged is not provably the tree the smoke test proved.
+      # A branch that advanced in between, or a lost push from `smoke-test`, would tag
+      # templates that never carried this release's base images. Resolving one commit for
+      # every job would close that gap in general, but the release mechanics push to the
+      # dispatched ref by name (see CLAUDE.md), so that is a larger change than this one.
+      # Check the half this can check: no tag is created over a tree on the wrong base.
+      - name: Verify the tree being tagged points at this release's base images
+        run: python scripts/dev/update_service_base_images.py --verify --tag "${{ needs.build-images.outputs.tag }}" --switch-source ghcr
+
       - name: Create Git tag
         env:
           TAG_NAME: ${{ needs.build-images.outputs.tag }}

@@ -1311,6 +1311,8 @@ _RELEASE_WORKFLOW = _WORKFLOWS / "test-and-build-tag.yml"
 _RETARGET_STEP = "Point Dockerfiles to versioned base images"
 _VERIFY_STEP = "Verify the service templates point at this release's base images"
 _SMOKE_STEP = "Run smoke deployment"
+_TAG_VERIFY_STEP = "Verify the tree being tagged points at this release's base images"
+_TAG_STEP = "Create Git tag"
 
 # A GitHub Actions expression, e.g. `${{ needs.build-images.outputs.tag }}`.
 _EXPRESSION_RE = re.compile(r"\$\{\{[^}]*\}\}")
@@ -1318,10 +1320,11 @@ _EXPRESSION_RE = re.compile(r"\$\{\{[^}]*\}\}")
 _INVOCATION = ["python", "scripts/dev/update_service_base_images.py"]
 
 
-def _workflow_step(workflow_path, step_name):
-    """The step named `step_name`, from any job of the workflow."""
+def _workflow_step(workflow_path, step_name, job_name=None):
+    """The step named `step_name`, from one job or from any job."""
     document = yaml.safe_load(workflow_path.read_text())
-    for job in document["jobs"].values():
+    jobs = [document["jobs"][job_name]] if job_name else list(document["jobs"].values())
+    for job in jobs:
         for step in job.get("steps", []):
             if step.get("name") == step_name:
                 return step
@@ -1411,6 +1414,38 @@ def test_the_release_run_verifies_the_retarget_before_it_smoke_tests():
     assert _flag_value(verify, "--tag") == _flag_value(retarget, "--tag")
     assert _flag_value(verify, "--switch-source") == _flag_value(
         retarget, "--switch-source"
+    )
+
+
+def test_the_release_job_verifies_the_tree_it_is_about_to_tag():
+    """The smoke test proves one checkout. The tag is cut from another.
+
+    `build-images`, `smoke-test`, and `release` each check out
+    `inputs.ref` by branch name, so the tree the tag is cut from is fetched
+    after the tree the smoke test proved. A branch that advances in between —
+    or a lost push from `smoke-test` — leaves the tag naming templates that
+    never carried this release's base images.
+
+    This step does not close that gap in general; source can still drift, and
+    doing better means resolving one commit for every job, which the release
+    mechanics in `CLAUDE.md` deliberately trade away so the workflow can push
+    to the dispatched ref by name. It closes the half this change owns: the
+    tagged tree names this release's base images, or no tag is created.
+    """
+    names = _job_step_names(_RELEASE_WORKFLOW, "release")
+    assert names.index(_TAG_VERIFY_STEP) < names.index(_TAG_STEP)
+
+    smoke = _script_argv(
+        _workflow_step(_RELEASE_WORKFLOW, _VERIFY_STEP, "smoke-test"), "v2026.8.0"
+    )
+    tagged = _script_argv(
+        _workflow_step(_RELEASE_WORKFLOW, _TAG_VERIFY_STEP, "release"), "v2026.8.0"
+    )
+
+    assert "--verify" in tagged
+    assert _flag_value(tagged, "--tag") == _flag_value(smoke, "--tag")
+    assert _flag_value(tagged, "--switch-source") == _flag_value(
+        smoke, "--switch-source"
     )
 
 

@@ -49,6 +49,12 @@ value matches it. `--orig-tag all` covers both causes.
 - A new step, "Verify the service templates point at this release's base images", runs
   directly after the retarget step and before the smoke deployment, and calls that mode with
   the tag and registry the retarget step just wrote.
+- A second call, "Verify the tree being tagged points at this release's base images", runs in
+  the `release` job immediately before the tag is created. Each job checks out the dispatched
+  ref by name, so the tree the tag is cut from is fetched after the tree the smoke test proved.
+  This does not make the two provably identical — that needs one resolved commit for every job,
+  which the release mechanics trade away to push to the dispatched ref by name — but it does
+  stop a tag being created over templates on the wrong base.
 - The commit step keeps its non-fatal empty-diff branch, and says why the tree is clean
   instead of only that it is.
 
