@@ -137,7 +137,7 @@ record for whoever runs #340.
 - [x] 6.3 `model: opus` — Run `/codex:adversarial-review --wait` on the branch; verify each
       finding against the code, fix what holds (TDD), push back with reasons on
       what does not, then re-run until a round is clean or only nits remain.
-- [ ] 6.4 `model: sonnet` — Open the PR against `dev` with `closes #122` in the BODY (a
+- [x] 6.4 `model: sonnet` — Open the PR against `dev` with `closes #122` in the BODY (a
       closing keyword in the title does not link), referencing PR #121 and plan PR #324,
       recording that the July predicate was a no-op and that the operator chose the
       config-keyed gate on 2026-08-23. State that unit coverage is complete and that
