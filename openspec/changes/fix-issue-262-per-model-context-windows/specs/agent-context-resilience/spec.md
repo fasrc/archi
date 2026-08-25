@@ -16,7 +16,7 @@ The declarations SHALL be validated with the same posture as every other setting
 
 The model id SHALL be supplied to the precedence decision directly. It MUST NOT be recovered by parsing the combined provider-and-model label used for logging, because a model id may itself contain the separator that label is built with, and parsing it would resolve the wrong id on exactly the self-hosted deployments this requirement exists to protect.
 
-The effective model SHALL be resolved from whichever initialisation path built the model the run will call. An agent configured through the pipeline map's model references leaves the deployment-default attributes unset, so a lookup that reads only those attributes MUST NOT be the source of the id: it would miss every declaration on that path, and the warning that reports an absent bound would name no model at all.
+The effective model SHALL be resolved from whichever initialisation path built the model the run will call, and the decision that a request selected a **different** model SHALL be made against that same resolved identity. An agent configured through the pipeline map's model references leaves the deployment-default attributes unset, so a lookup that reads only those attributes MUST NOT be the source of the id: it would miss every declaration on that path, the warning that reports an absent bound would name no model at all, and an ordinary turn re-sending the deployment's own model would be classified as an override — withdrawing the deployment-wide window on the normal request path rather than on a real model change.
 
 A deployment that declares no per-model windows SHALL behave exactly as it does without this capability.
 

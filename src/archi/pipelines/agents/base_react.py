@@ -101,6 +101,11 @@ class BaseReActAgent:
     # raise on a view whose class never ran ``__init__``.
     default_provider: Optional[str] = None
     default_model: Optional[str] = None
+    # Defaulted for that same reason, one step removed: the comparison now runs
+    # through `_effective_provider_model()`, which reads the pipeline map when
+    # the two attributes above are unset. Never mutated in place — `__init__`
+    # rebinds it — so one empty mapping is safe to share.
+    pipeline_config: Dict[str, Any] = {}
 
     def __init__(
         self,
@@ -1837,7 +1842,11 @@ class BaseReActAgent:
         window by name, discarding the declaration here would install no bound
         at all on precisely the deployment the declaration exists for.
         """
-        same_model = (provider, model) == (self.default_provider, self.default_model)
+        # Against the *effective* pair, not the raw attributes: a pipeline-map
+        # agent leaves both at None while serving a real model, so comparing
+        # them read every ordinary turn as a switch onto a different model and
+        # withdrew the operator's declared window on the normal chat path.
+        same_model = (provider, model) == self._effective_provider_model()
         self.default_provider = provider
         self.default_model = model
         self._request_local_window = positive_int(context_window)

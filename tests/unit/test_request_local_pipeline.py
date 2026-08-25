@@ -513,6 +513,71 @@ def test_a_declaration_applies_to_its_model_under_every_provider():
     assert _compiled_budget(other_provider).context_window == 32768
 
 
+def test_a_pipeline_map_agent_keeps_its_window_when_the_ui_resends_its_model():
+    """A pipeline-map agent must recognise its own deployed model.
+
+    The chat app posts `provider` and `model` with **every** message, not only
+    when the user switches, so `adopt_request_local_model()` decides on each
+    turn whether this is a real model change. It compared against
+    `default_provider`/`default_model`, which the pipeline-map initialisation
+    path leaves at `None` — so an agent built that way read every ordinary turn
+    as an override onto a different model, and the deployment-wide declared
+    window was withdrawn by design. On a self-hosted model no provider can
+    resolve by name, that leaves the normal chat path with no bound at all.
+    """
+    config = {
+        "services": {
+            "chat_app": {"context_editing": {"context_window": 32768}},
+        }
+    }
+    source = _BudgetPipeline(_llm(), provider=None, model=None, config=config)
+    source.pipeline_config = {
+        "models": {"required": {"chat_model": "local/a-self-hosted-model"}}
+    }
+    source.refresh_agent(force=True)
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(),
+        provider="local",
+        model="a-self-hosted-model",
+        context_window=None,
+    )
+
+    assert view._is_request_local is False, "the UI re-sent the configured model"
+    assert _compiled_budget(view).context_window == 32768
+
+
+def test_a_pipeline_map_agent_still_treats_a_real_switch_as_an_override():
+    """The other half of the contract: a different model is still an override.
+
+    Recognising the configured model must not blunt the rule it exists beside —
+    a window describing the deployment's own model is never lent to a model the
+    request switched to.
+    """
+    config = {
+        "services": {
+            "chat_app": {"context_editing": {"context_window": 32768}},
+        }
+    }
+    source = _BudgetPipeline(_llm(), provider=None, model=None, config=config)
+    source.pipeline_config = {
+        "models": {"required": {"chat_model": "local/a-self-hosted-model"}}
+    }
+    source.refresh_agent(force=True)
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(),
+        provider="local",
+        model=OVERRIDE_MODEL,
+        context_window=None,
+    )
+
+    assert view._is_request_local is True
+    assert view.agent["middleware"] == [], "no window describes the override"
+
+
 # --- the streamed-reasoning gate follows the view's provider (issue #122) ---
 
 
