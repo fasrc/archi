@@ -88,7 +88,7 @@ Three standing notes for every task:
 
 ## 3. Make the promise match the code
 
-- [ ] 3.1 Update the two docstrings in `src/interfaces/chat_app/evaluation_console.py` so the
+- [x] 3.1 Update the two docstrings in `src/interfaces/chat_app/evaluation_console.py` so the
       recorded promise covers three refusals rather than two. In the module docstring
       (lines 8-11), the sentence listing what `build_evaluation_service` refuses gains the
       storage case. In the function docstring, the paragraph ending "Each refusal logs an
