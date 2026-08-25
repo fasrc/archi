@@ -60,7 +60,7 @@ manager is alive. Section 2's tests do the opposite, deliberately.
       `__init__` on the line **after** `self._interrupt_stale_jobs()`
       (`src/evaluation/qa/jobs.py:48`); the ordering is a spec requirement, not a preference.
       Gate green; commit.
-- [ ] 2.2 `model: sonnet` — RED test for the shape check: put `.notes.result.json`, `.notes.json`, and
+- [x] 2.2 `model: sonnet` — RED test for the shape check: put `.notes.result.json`, `.notes.json`, and
       `notes.json` in `tmp_path` alongside one `.{orphan_id}.result.json`, construct the
       manager, and assert the first three still exist and the fourth is gone. Watch it fail if
       2.1's match was written as a bare dot-file or bare `*.result.json` sweep; make it green.
