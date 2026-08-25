@@ -12,6 +12,9 @@ that tells the diff story visually:
   member gets a leading ``➕``, a removed member a leading ``➖`` (leading,
   because Mermaid renders text after ``method()`` as a return type)
 * grey name-only class (``:::unchanged``) — context, members hidden
+* relation arrow — an edge label of ``➕`` or ``➖`` marks an arrow the PR
+  added or removed; an unchanged arrow carries no label. Mermaid gives an
+  edge no fill of its own, so the label is the only room for the state.
 
 Noise filters: unchanged dunder members are hidden (``__init__`` stays),
 and stdlib classes never appear because pyreverse omits them by default.
@@ -43,7 +46,7 @@ CLASSDEFS = (
 
 LEGEND = (
     "🟩 added · 🟥 removed · 🟨 modified · ⬜ unchanged context — "
-    "➕ new member · ➖ removed member"
+    "➕ new member or arrow · ➖ removed member or arrow"
 )
 
 _CLASS_OPEN = re.compile(r"^\s*class\s+([^\s{]+)\s*\{\s*$")
@@ -193,11 +196,22 @@ def _mermaid_block(diff: Diff, include_context: bool) -> str:
     if include_context:
         rendered |= set(diff.unchanged)
     relations = diff.added_relations | diff.removed_relations | diff.kept_relations
-    for left, arrow, right in sorted(relations):
+    for relation in sorted(relations):
+        left, arrow, right = relation
         # An arrow to an undeclared name makes Mermaid invent an unstyled
         # node, so arrows into dropped context are dropped with it.
-        if left in rendered and right in rendered:
-            lines.append(f"  {left} {arrow} {right}")
+        if left not in rendered or right not in rendered:
+            continue
+        # Mermaid gives an edge no fill of its own, so a changed arrow carries
+        # its state in the edge label. Without it a dropped inheritance draws
+        # exactly like a kept one, and a relation-only PR shows no change.
+        if relation in diff.added_relations:
+            label = " : ➕"
+        elif relation in diff.removed_relations:
+            label = " : ➖"
+        else:
+            label = ""
+        lines.append(f"  {left} {arrow} {right}{label}")
     lines.extend(f"  {classdef}" for classdef in CLASSDEFS)
     return "\n".join(lines)
 

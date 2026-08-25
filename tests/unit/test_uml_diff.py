@@ -155,6 +155,25 @@ class TestRender:
         assert "classDef modified fill:#fff8c5,stroke:#9a6700" in md
         assert "classDef unchanged fill:#f6f8fa,stroke:#d0d7de" in md
 
+    def test_added_relation_carries_the_added_marker(self):
+        assert "  Cat --|> Animal : ➕\n" in self._md()
+
+    def test_kept_relation_carries_no_marker(self):
+        assert "  Dog --|> Animal\n" in self._md()
+
+    def test_removed_relation_carries_the_removed_marker(self):
+        base = "classDiagram\n  class A {\n  }\n  class B {\n    b()\n  }\n  B --|> A\n"
+        head = "classDiagram\n  class A {\n  }\n"
+        md = uml_diff.render_markdown(_diff(base, head))
+        assert "  B --|> A : ➖\n" in md
+
+    def test_relation_only_change_is_visible_between_context_classes(self):
+        # Both classes are unchanged, so the arrow marker is the only signal
+        # that this PR changed anything at all.
+        base = "classDiagram\n  class A {\n    a()\n  }\n  class B {\n    b()\n  }\n"
+        md = uml_diff.render_markdown(_diff(base, base + "  B --|> A\n"))
+        assert "  B --|> A : ➕\n" in md
+
     def test_removed_member_marked_in_modified_class(self):
         base = "classDiagram\n  class A {\n    run()\n    walk()\n  }\n"
         head = "classDiagram\n  class A {\n    run()\n  }\n"
