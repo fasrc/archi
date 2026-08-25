@@ -1919,3 +1919,38 @@ def test_continue_re_runs_the_frozen_agent_inputs_of_the_paused_run(
         == "frozen spec in run\n"
     )
     service.job_manager.close()
+
+
+def test_listing_skips_hidden_result_envelope(tmp_path):
+    job_id = "040bb55f-739c-46a8-a297-f49f54d1e759"
+    # Use tmp_path/jobs so EvaluationConsoleService(tmp_path) shares the same dir.
+    jobs_dir = tmp_path / "jobs"
+    manager = EvaluationJobManager(jobs_dir)
+
+    write_json(
+        jobs_dir / f"{job_id}.json",
+        {
+            "id": job_id,
+            "kind": "evaluation",
+            "status": "completed",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+    )
+    write_json(
+        jobs_dir / f".{uuid.uuid4()}.result.json",
+        {"result": {"draft_id": "d"}},
+    )
+
+    jobs = manager.list()
+    assert len(jobs) == 1
+    assert jobs[0]["id"] == job_id
+
+    service = EvaluationConsoleService(
+        tmp_path,
+        agent_config_path=tmp_path / "config.yaml",
+        agents_dir=tmp_path,
+    )
+    service.list_jobs()  # must not raise KeyError: 'id'
+
+    service.job_manager.close()
+    manager.close()

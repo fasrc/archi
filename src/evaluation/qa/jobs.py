@@ -56,8 +56,11 @@ class EvaluationJobManager:
             raise LookupError("evaluation job not found") from exc
         return self.jobs_dir / f"{job_id}.json"
 
+    def _job_files(self):
+        return self.jobs_dir.glob("[!.]*.json")
+
     def _interrupt_stale_jobs(self) -> None:
-        for path in self.jobs_dir.glob("*.json"):
+        for path in self._job_files():
             try:
                 job = read_json(path)
             except ValueError:
@@ -73,7 +76,7 @@ class EvaluationJobManager:
                 write_json(path, job)
 
     def _active(self) -> Optional[Dict[str, Any]]:
-        for path in self.jobs_dir.glob("*.json"):
+        for path in self._job_files():
             try:
                 job = read_json(path)
             except ValueError:
@@ -384,7 +387,7 @@ class EvaluationJobManager:
 
     def list(self) -> List[Dict[str, Any]]:
         jobs = []
-        for path in self.jobs_dir.glob("*.json"):
+        for path in self._job_files():
             try:
                 jobs.append(read_json(path))
             except ValueError:
