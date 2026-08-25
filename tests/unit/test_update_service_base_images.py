@@ -593,13 +593,17 @@ def test_pinning_a_line_that_ends_in_a_space_is_stable(tmp_path, monkeypatch):
 def test_the_default_orig_tag_only_reaches_a_latest_pinned_line(tmp_path, monkeypatch):
     """`--orig-tag` defaults to `latest`, and only a `latest` line matches it.
 
-    This pins the argv at `.github/workflows/test-and-build-tag.yml:154`, which
-    passes no `--orig-tag`. That step is already a no-op on today's templates —
-    they carry `dev-4314ac4`, not `latest`, since `5e168b00` — and a digest pin
-    leaves it a no-op for a second reason. Fixing the release workflow is out of
-    scope here (issue #334 forbids touching `.github/workflows/**`) and is
-    tracked as issue #339; this test exists so the next reader sees the trap
-    instead of rediscovering it.
+    This pins the **script's** default, which issue #339 deliberately left
+    alone. That default is a trap for any caller that omits `--orig-tag`: the
+    templates carry `dev-4314ac4`, not `latest`, since `5e168b00`, and a digest
+    pin carries no tag at all, so such a caller silently matches nothing. The
+    release workflow was that caller until #339 gave it `--orig-tag all`.
+
+    The fix stayed at the call site. Changing this default to suit one caller
+    repairs that caller and hides the next one, and both current call sites
+    pass `--orig-tag all` explicitly. See
+    `test_the_release_workflow_argv_rewrites_the_pin_the_templates_carry`,
+    which reads the release argv out of the workflow file.
     """
     module, templates = _write_fixtures(
         tmp_path,
@@ -1099,6 +1103,133 @@ def test_two_from_lines_each_get_their_own_annotation(tmp_path, monkeypatch):
         f"{_ANN}dev-abc1234{_ANN_END}\n"
         f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
     )
+
+
+# --- Verification ------------------------------------------------------------
+#
+# `--verify` is the proof that a rewrite happened. It reads the reference on
+# the line rather than whether the line moved, because those two tests disagree
+# on exactly one input: a template that already carries the target reference,
+# which is what a re-dispatch of the same release tag produces.
+
+
+def test_verify_passes_when_every_base_reference_names_the_target(
+    tmp_path, monkeypatch, capsys
+):
+    """A tree already on the target reference verifies, and is left alone."""
+    python_ref = "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n"
+    pytorch_ref = "FROM ghcr.io/fasrc/a2rchi-pytorch-base:v2026.8.0 \n"
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{"Dockerfile-chat": python_ref, "Dockerfile-chat-gpu": pytorch_ref},
+    )
+
+    _run(
+        module,
+        monkeypatch,
+        ["--verify", "--tag", "v2026.8.0", "--switch-source", "ghcr"],
+    )
+
+    assert (templates / "Dockerfile-chat").read_text() == python_ref
+    assert (templates / "Dockerfile-chat-gpu").read_text() == pytorch_ref
+    assert "v2026.8.0" in capsys.readouterr().out
+
+
+def test_verify_names_every_template_left_on_the_wrong_reference(tmp_path, monkeypatch):
+    """Both halves of a reference are checked, and both name their file.
+
+    A wrong tag is the failure this change exists to catch. A wrong prefix is
+    the other half: `localhost/a2rchi/...` at the right tag is an image the
+    release runner never pulled, and a check that reads only the tag passes it.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n",
+            "Dockerfile-chat-gpu": (
+                "FROM localhost/a2rchi/a2rchi-pytorch-base:v2026.8.0\n"
+            ),
+            "Dockerfile-mailbox": "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n",
+        },
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            module,
+            monkeypatch,
+            ["--verify", "--tag", "v2026.8.0", "--switch-source", "ghcr"],
+        )
+
+    message = str(excinfo.value)
+    assert "Dockerfile-chat" in message
+    assert "Dockerfile-chat-gpu" in message
+    assert "Dockerfile-mailbox" not in message
+    assert (templates / "Dockerfile-chat").read_text() == (
+        "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+    )
+
+
+def test_verify_fails_when_no_template_names_a_base_image(tmp_path, monkeypatch):
+    """A check that examines nothing must not pass.
+
+    A renamed directory, a renamed base image, or a wrong path all produce an
+    empty set, and an empty set satisfies "every reference carries the release
+    tag" without reading a single line.
+    """
+    module, _ = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{"Dockerfile-postgres": "FROM docker.io/pgvector/pgvector:pg17\n"},
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            module,
+            monkeypatch,
+            ["--verify", "--tag", "v2026.8.0", "--switch-source", "ghcr"],
+        )
+
+    assert "no service template" in str(excinfo.value).lower()
+
+
+def test_verify_requires_a_tag(tmp_path, monkeypatch):
+    """A verification with no expected tag has nothing to check."""
+    module, _ = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{"Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n"},
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(module, monkeypatch, ["--verify", "--switch-source", "ghcr"])
+
+    assert "--tag" in str(excinfo.value)
+
+
+def test_verify_refuses_a_digest(tmp_path, monkeypatch):
+    """`--verify` checks a tag reference, so a digest has no meaning here.
+
+    The release retarget writes a tag: `--tag … --switch-source ghcr
+    --orig-tag all` drops any digest the template carried. Accepting
+    `--digest` here would check a reference the release never writes, which is
+    the silent-wrong-answer failure this mode exists to end.
+    """
+    module, _ = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{"Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n"},
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            module,
+            monkeypatch,
+            ["--verify", "--tag", "v2026.8.0", "--digest", f"python={_PY_DIGEST}"],
+        )
+
+    assert "--digest" in str(excinfo.value)
 
 
 # --- The CI call sites -------------------------------------------------------
