@@ -86,7 +86,7 @@ manager is alive. Section 2's tests do the opposite, deliberately.
 
 ## 4. Close-out
 
-- [ ] 4.1 `model: haiku` — Run `bash scripts/gate.sh` once more on the finished change and confirm it
+- [x] 4.1 `model: haiku` — Run `bash scripts/gate.sh` once more on the finished change and confirm it
       exits 0. Confirm `git status` is empty after the last commit. Push with
       `git push -u origin fix/issue-329-orphan-result-envelope` — the branch currently tracks
       `origin/dev`, so `-u` is required or the push retargets the trunk. Open the PR with
