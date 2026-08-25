@@ -5,12 +5,13 @@
 #    2. GPU_IDS=<n> still passes it through
 #    3. GPU_IDS="" passes nothing (the documented disable)
 #
-# Why 1 matters: this deployment runs no models and has no GPUs. The models live
-# on a remote vLLM endpoint, the embedding pass is configured `device: cpu`, and
-# the host has neither the nvidia container runtime nor nvidia-smi. A default of
-# GPU_IDS=0 renders `driver: nvidia, count: all` into the compose file, and the
-# deploy dies with "could not select device driver nvidia" *after* recreating
-# chatbot — taking the deployment down rather than failing before it touches it.
+# Why 1 matters: both containers are deliberately configured `device: cpu` and
+# the models are served by a remote vLLM endpoint — on the GPU host the GPUs
+# are owned by the vLLM servers, and the no-GPU host has no nvidia runtime at
+# all. On such a host a default of GPU_IDS=0 renders `driver: nvidia, count:
+# all` into the compose file, and the deploy dies with "could not select device
+# driver nvidia" *after* recreating chatbot — taking the deployment down rather
+# than failing before it touches it. OFF is the safe default on both hosts.
 #
 # Run: bash deploy/fasrc-dev/scripts/test_gpu_flag.sh
 set -euo pipefail

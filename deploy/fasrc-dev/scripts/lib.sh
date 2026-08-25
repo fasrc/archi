@@ -27,15 +27,19 @@ CONFIG="${CONFIG:-deploy/fasrc-dev/config.yaml}"  # repo-relative (git-excluded;
 # defaults to ~/.secrets/archi-secrets.env so the scripts aren't tied to one user.
 ENV_FILE="${ARCHI_ENV_FILE:-$HOME/.secrets/archi-secrets.env}"
 SERVICES="chatbot"                            # auto-pulls postgres + data-manager
-# GPU(s) to reserve for the data-manager embedding pass. Default OFF: this
-# deployment runs no models locally (they are served by a remote vLLM endpoint),
-# the embedding pass is configured `device: cpu`, and the host has neither the
-# nvidia container runtime nor nvidia-smi. A non-empty value renders
-# `driver: nvidia, count: all` into the compose file, and the deploy then fails
-# with "could not select device driver nvidia" *after* recreating chatbot —
-# taking the deployment down instead of failing before it touches anything.
-# Set GPU_IDS=0 (or a list) only on a host that actually has GPUs and the
-# nvidia runtime installed. Contract pinned by test_gpu_flag.sh.
+# GPU(s) to reserve for the data-manager embedding pass. Default OFF — and the
+# reason is the containers, not the host: both are deliberately configured
+# `device: cpu` (the chatbot ships CPU-only torch and would crash-loop on
+# `cuda:0`), and the models are served by a remote vLLM endpoint. On the GPU
+# host the GPUs exist but are owned by the vLLM servers, which pre-reserve
+# their KV pool at startup. On a host WITHOUT the nvidia container runtime a
+# non-empty value is worse than useless: it renders `driver: nvidia, count: all`
+# into the compose file, and the deploy fails with "could not select device
+# driver nvidia" *after* recreating chatbot — taking the deployment down
+# instead of failing before it touches anything. That is why OFF is the safe
+# shared default. Set GPU_IDS=0 (or a list) only on a host that has GPUs, the
+# nvidia runtime, and containers configured to use them. Contract pinned by
+# test_gpu_flag.sh.
 GPU_IDS="${GPU_IDS-}"
 
 # --- config repo pin (fasrc/archi-config) ------------------------------------
