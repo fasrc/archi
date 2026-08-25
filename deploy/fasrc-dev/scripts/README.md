@@ -34,8 +34,9 @@ Two hosts deploy from this repository, and they must not share one identity.
 
 - **Data, not code.** `host.env` is parsed, never sourced — nothing in it can
   execute. Only `KEY=VALUE` lines for `DEPLOYMENT`, `CONFIG`, and `GPU_IDS`
-  are accepted (plus comments and blank lines; edge whitespace and CRLF are
-  stripped); any other line **aborts every script that reads `lib.sh`** —
+  are accepted — each key at most once, and the identity keys need a
+  non-empty value (plus comments and blank lines; edge whitespace and CRLF
+  are stripped); any other line **aborts every script that reads `lib.sh`** —
   `status.sh` and `nuke.sh` included, because an unparsable `host.env` makes
   the deployment identity ambiguous, and failing closed beats tearing down
   the wrong deployment. The error names the offending line. The config pin
@@ -51,7 +52,7 @@ Two hosts deploy from this repository, and they must not share one identity.
   `CONFIG=deploy/fasrc-dev/config.yaml`). The GPU host needs no file.
 - **Reserved names (issue #363):** `dev` is the GPU host (`holygpu7c0717`, the
   production deployment); `claw` is the no-GPU / no-local-vLLM workstation.
-- **Self-test:** `bash deploy/fasrc-dev/scripts/test_host_env.sh` — 13 cases
+- **Self-test:** `bash deploy/fasrc-dev/scripts/test_host_env.sh` — 15 cases
   against a fake `archi` and a fixture tree; renders nothing, deploys nothing.
 
 ## Config provisioning (`ensure_config`)

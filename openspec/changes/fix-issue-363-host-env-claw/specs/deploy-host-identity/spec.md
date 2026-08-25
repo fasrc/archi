@@ -15,7 +15,11 @@ content of the file can execute, and SHALL accept only `KEY=VALUE` lines for an
 explicit allowlist — `DEPLOYMENT`, `CONFIG`, `GPU_IDS` — plus comments and blank
 lines; leading and trailing whitespace and a trailing carriage return SHALL be
 stripped from each line before it is classified, so an indented comment or a
-CRLF-edited file neither aborts nor poisons a value. Any other line SHALL abort
+CRLF-edited file neither aborts nor poisons a value. A duplicate key SHALL abort
+(first-wins would let a stale line silently shadow an appended correction), and an
+empty `DEPLOYMENT` or `CONFIG` value SHALL abort (it would fall through to the
+reserved default and silently retarget; `GPU_IDS=` stays valid as the documented
+explicit disable). Any other line SHALL abort
 every consumer of `lib.sh` — `status.sh` and `nuke.sh` included — naming the
 offending line: an unparsable `host.env` makes the deployment identity ambiguous,
 and a teardown on an ambiguous identity is how the wrong deployment dies. A typo
@@ -71,6 +75,18 @@ in code — the mechanism itself is name-agnostic.
 - **WHEN** `host.env` contains `CONFIG_SHA=deadbeef` (or any key other than
   `DEPLOYMENT`, `CONFIG`, `GPU_IDS`) and any wrapper script runs
 - **THEN** the script aborts before `archi` is invoked, naming the offending line
+
+#### Scenario: An empty identity value in host.env fails closed
+
+- **WHEN** `host.env` contains the line `DEPLOYMENT=` (empty value)
+- **THEN** every wrapper aborts before `archi` is invoked, instead of falling
+  through to the reserved default `dev`
+
+#### Scenario: A duplicate identity key fails closed
+
+- **WHEN** `host.env` contains `DEPLOYMENT=dev` followed by `DEPLOYMENT=claw`
+- **THEN** every wrapper aborts before `archi` is invoked, instead of silently
+  acting on the first (stale) value
 
 #### Scenario: Edge whitespace and CRLF are tolerated, not poisonous
 

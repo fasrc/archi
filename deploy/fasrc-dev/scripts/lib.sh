@@ -31,20 +31,41 @@ if [ -f "$_host_env_file" ]; then
     _he_line="${_he_line%"${_he_line##*[![:space:]]}"}"       # trim trailing ws
     case "$_he_line" in
       ''|\#*) continue ;;
-      # Identity keys: EMPTY counts as unset on both sides (an empty name or
-      # config path is never a valid value), so an ambient DEPLOYMENT='' can
-      # not bypass the host pin and silently retarget the reserved `dev`.
-      DEPLOYMENT=*) [ -n "${DEPLOYMENT:-}" ] || DEPLOYMENT="${_he_line#*=}" ;;
-      CONFIG=*)     [ -n "${CONFIG:-}" ]     || CONFIG="${_he_line#*=}" ;;
-      # GPU_IDS: set-but-empty IS meaningful (explicit disable), so set wins.
-      GPU_IDS=*)    [ "${GPU_IDS+x}" ]       || GPU_IDS="${_he_line#*=}" ;;
+      DEPLOYMENT=*|CONFIG=*|GPU_IDS=*)
+        _he_key="${_he_line%%=*}"
+        _he_val="${_he_line#*=}"
+        # A duplicate key makes the identity ambiguous (first-wins would let a
+        # stale line silently shadow an appended correction) — fail closed.
+        case " ${_he_seen:-} " in
+          *" $_he_key "*)
+            printf 'host.env: duplicate %s line — ambiguous, refusing: %s\n' \
+              "$_he_key" "$_he_line" >&2
+            exit 1 ;;
+        esac
+        _he_seen="${_he_seen:-} $_he_key"
+        # An empty identity value is never valid — it would fall through to the
+        # reserved default and silently retarget. (GPU_IDS= empty is the
+        # documented explicit disable, so it is allowed.)
+        if [ "$_he_key" != "GPU_IDS" ] && [ -z "$_he_val" ]; then
+          printf 'host.env: empty %s is not a valid identity — set a value or remove the line\n' \
+            "$_he_key" >&2
+          exit 1
+        fi
+        # Identity keys: an EMPTY environment value counts as unset (an empty
+        # name or path is never valid), so an ambient DEPLOYMENT='' cannot
+        # bypass the host pin. GPU_IDS: set-but-empty IS meaningful, set wins.
+        case "$_he_key" in
+          DEPLOYMENT) [ -n "${DEPLOYMENT:-}" ] || DEPLOYMENT="$_he_val" ;;
+          CONFIG)     [ -n "${CONFIG:-}" ]     || CONFIG="$_he_val" ;;
+          GPU_IDS)    [ "${GPU_IDS+x}" ]       || GPU_IDS="$_he_val" ;;
+        esac ;;
       *) printf 'host.env: unsupported line (allowed: DEPLOYMENT=, CONFIG=, GPU_IDS=, comments): %s\n' \
            "$_he_line" >&2
          exit 1 ;;
     esac
   done < "$_host_env_file"
 fi
-unset _host_env_file _he_line
+unset _host_env_file _he_line _he_key _he_val _he_seen
 
 # --- deployment identity (single source of truth) ---------------------------
 # `dev` is reserved for the GPU host; the no-GPU workstation deploys as `claw`

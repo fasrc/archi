@@ -42,7 +42,7 @@ Standing notes for every task:
 - [x] 2.1 `model: sonnet` — Run all four shell self-tests and the issue's no-deploy verify
       snippet (fake `archi`, `DEPLOYMENT=claw`); record the observed output here.
 
-      **Measured** (after the round-1 and round-2 fixes below): `test_host_env` 13 passed,
+      **Measured** (after the review-round fixes below): `test_host_env` 15 passed,
       0 failed;
       `test_gpu_flag` 3 passed; `test_ensure_config` 10 passed; `test_firewall` 8 passed.
       Verify snippet with a fake `archi` on `PATH`: `DEPLOYMENT=claw bash -c 'source
@@ -99,3 +99,12 @@ findings become the PR body's Findings block.
       `GPU_IDS` keeps set-wins semantics because there empty is the documented explicit
       disable. RED cases 12/13 reproduced `--name dev` on a claw-pinned fixture, GREEN
       after. Self-test now 13 cases.
+- [x] 3.4 Round 4 — two findings, both **held**.
+      `[high]` an empty identity value IN host.env (`DEPLOYMENT=`) was accepted, assigned
+      empty, and re-defaulted by `:-` to the reserved `dev` — the same wrong-target
+      failure one hop over. Fixed: an empty `DEPLOYMENT`/`CONFIG` value in the file aborts
+      (`GPU_IDS=` stays valid as the documented disable). RED case 14 reproduced
+      `--name dev`, GREEN after.
+      `[medium]` duplicate keys were silently first-wins, so an appended correction never
+      took effect. Fixed: a duplicate key aborts. RED case 15 reproduced the stale
+      `--name dev`, GREEN after. Self-test now 15 cases.

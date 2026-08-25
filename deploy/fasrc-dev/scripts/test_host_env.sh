@@ -24,6 +24,10 @@
 #   12. an EMPTY command-line DEPLOYMENT does not bypass host.env (empty
 #       counts as unset for the identity keys — an empty name is never valid)
 #   13. same for CONFIG
+#   14. an empty identity value IN host.env (DEPLOYMENT=) aborts — it must not
+#       fall through to the reserved default
+#   15. a duplicate identity key in host.env aborts — first-wins would let a
+#       stale line silently shadow an appended correction
 #
 # Run: bash deploy/fasrc-dev/scripts/test_host_env.sh
 set -euo pipefail
@@ -191,6 +195,30 @@ if [[ "$argv" == *"--config deploy/fasrc-dev/claw.yaml"* ]]; then
   ok "13 empty command-line CONFIG does not bypass host.env"
 else
   notok "13 empty CONFIG must not silently retarget, got: $argv"
+fi
+
+# --- 14: an empty identity value in host.env aborts ----------------------------
+printf 'DEPLOYMENT=\n' > "$FIXSCRIPTS/host.env"
+if run_deploy HOST_ENV_SET=1 2>/dev/null; then
+  notok "14 DEPLOYMENT= (empty value) in host.env must abort, got: $(cat "$TESTROOT/argv")"
+else
+  if [ -s "$TESTROOT/argv" ]; then
+    notok "14 abort must land before archi is invoked, got: $(cat "$TESTROOT/argv")"
+  else
+    ok "14 empty identity value in host.env aborts before archi is invoked"
+  fi
+fi
+
+# --- 15: a duplicate identity key in host.env aborts ---------------------------
+printf 'DEPLOYMENT=dev\nDEPLOYMENT=claw\n' > "$FIXSCRIPTS/host.env"
+if run_deploy HOST_ENV_SET=1 2>/dev/null; then
+  notok "15 duplicate DEPLOYMENT lines must abort, got: $(cat "$TESTROOT/argv")"
+else
+  if [ -s "$TESTROOT/argv" ]; then
+    notok "15 abort must land before archi is invoked, got: $(cat "$TESTROOT/argv")"
+  else
+    ok "15 duplicate identity key in host.env aborts before archi is invoked"
+  fi
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
