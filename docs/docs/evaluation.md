@@ -1170,10 +1170,12 @@ original artifact from a trusted copy, or rerun the appropriate phase with
 The chat app disables the console rather than crash when it cannot use its own
 storage, so an enabled deployment whose `/evaluations` link is missing points at
 `services.chat_app.evaluations.root`. At start-up the chat app creates the
-catalog tree under that root and then writes one short-lived probe file to prove
-the root accepts writes — a root that is read-only, owned by another user, or
-already holding the five catalog directories on a read-only volume fails that
-check. Chat keeps serving; only the console turns itself off.
+catalog tree under that root and then writes one short-lived probe file into each
+of `datasets`, `profiles`, `drafts`, `runs`, and `jobs` to prove they accept
+writes — a tree that is read-only, owned by another user, or already present on a
+read-only volume fails that check. The root itself is only a container and is
+never written to, so a read-only root holding writable catalog directories is
+fine. Chat keeps serving; only the console turns itself off.
 
 Read the chat-app start-up log and look for the error line naming the root. Fix
 the mount or the ownership, or correct the setting, then redeploy. The same

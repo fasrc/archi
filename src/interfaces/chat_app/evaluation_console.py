@@ -117,16 +117,32 @@ def build_evaluation_service(
             agents_dir=Path(chat_app_config.get("agents_dir") or DEFAULT_AGENTS_DIR),
             mcp_config_path=Path(mcp_config_path) if mcp_config_path else None,
         )
-        # Construction alone does not prove the root is usable. It only calls
-        # `mkdir(parents=True, exist_ok=True)` five times and sweeps stale jobs,
+        # Construction alone does not prove the storage is usable. It only calls
+        # `mkdir(parents=True, exist_ok=True)` seven times and sweeps stale jobs,
         # which writes solely when it finds a job to interrupt — so a read-only
         # mount already holding the five directories, the shape an operator gets
         # restoring a snapshot onto a read-only volume, raises nothing at all.
         # The console would register and the first dataset import would 500.
-        # A probe write is the cheapest statement that the root accepts writes;
-        # it is deleted on close, so it leaves the catalog tree untouched.
-        with tempfile.NamedTemporaryFile(dir=root, prefix=".archi-write-probe-"):
-            pass
+        #
+        # Probe the five directories the console writes into, not the root: the
+        # root itself is never written: imports and drafts stage through
+        # `TemporaryDirectory(dir=...)` inside `datasets`, `profiles` and
+        # `drafts`, runs are workspaces under `runs`, and job records live in
+        # `jobs`. A writable root with one tighter-permissioned or separately
+        # mounted child passes a root-only probe and fails on first use. Each
+        # probe file is deleted on close, so the tree is left as found, and the
+        # `OSError` carries the offending path into the message below.
+        for directory in (
+            service.catalog.datasets_dir,
+            service.catalog.profiles_dir,
+            service.catalog.drafts_dir,
+            service.catalog.runs_dir,
+            service.catalog.jobs_dir,
+        ):
+            with tempfile.NamedTemporaryFile(
+                dir=directory, prefix=".archi-write-probe-"
+            ):
+                pass
         return service
     except OSError as exc:
         logger.error(

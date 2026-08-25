@@ -366,24 +366,36 @@ def test_evaluation_service_disables_on_a_prepopulated_read_only_root(
     assert str(root) in caplog.text
 
 
+CATALOG_DIRECTORIES = ("datasets", "profiles", "drafts", "runs", "jobs")
+
+
 @pytest.mark.skipif(
-    os.geteuid() == 0, reason="root ignores the directory mode this test relies on"
+    os.geteuid() == 0, reason="root ignores the directory modes this test relies on"
 )
-def test_evaluation_service_disables_on_a_real_read_only_directory(
+def test_evaluation_service_disables_on_a_real_read_only_tree(
     monkeypatch, tmp_path, caplog
 ):
-    """The same case without a patched probe: a genuinely unwritable mode."""
+    """The same case without a patched probe: a genuinely unwritable mode.
+
+    A read-only mount is read-only throughout, so the modes are set on the
+    catalog directories as well as the root. The root alone is not the surface
+    under test: nothing is written directly there once the tree exists, so a
+    read-only root whose catalog directories are writable — separate mounts
+    inside it — is serviceable and must not be refused.
+    """
     live = tmp_path / "config.yaml"
     live.write_text("live: true\n", encoding="utf-8")
     monkeypatch.setattr(evaluation_console, "LIVE_AGENT_CONFIG_PATH", str(live))
 
     root = tmp_path / "evaluations"
-    for name in ("datasets", "profiles", "drafts", "runs", "jobs"):
+    for name in CATALOG_DIRECTORIES:
         (root / name).mkdir(parents=True)
 
     agent_config_path = tmp_path / "evaluation.yaml"
     agent_config_path.write_text("redacted: true\n", encoding="utf-8")
 
+    for name in CATALOG_DIRECTORIES:
+        (root / name).chmod(0o555)
     root.chmod(0o555)
     try:
         with caplog.at_level(
@@ -400,9 +412,97 @@ def test_evaluation_service_disables_on_a_real_read_only_directory(
             )
     finally:
         root.chmod(0o755)
+        for name in CATALOG_DIRECTORIES:
+            (root / name).chmod(0o755)
 
     assert service is None
     assert str(root) in caplog.text
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root ignores the directory mode this test relies on"
+)
+def test_evaluation_service_builds_when_only_the_root_itself_is_read_only(
+    monkeypatch, tmp_path
+):
+    """The other side of the same contract: the root is not a write surface.
+
+    Refusing this deployment would disable a console that works — the catalog
+    directories are where every write lands.
+    """
+    live = tmp_path / "config.yaml"
+    live.write_text("live: true\n", encoding="utf-8")
+    monkeypatch.setattr(evaluation_console, "LIVE_AGENT_CONFIG_PATH", str(live))
+
+    root = tmp_path / "evaluations"
+    for name in CATALOG_DIRECTORIES:
+        (root / name).mkdir(parents=True)
+
+    agent_config_path = tmp_path / "evaluation.yaml"
+    agent_config_path.write_text("redacted: true\n", encoding="utf-8")
+
+    root.chmod(0o555)
+    try:
+        service = build_evaluation_service(
+            {
+                "evaluations": {
+                    "enabled": True,
+                    "root": str(root),
+                    "agent_config_path": str(agent_config_path),
+                }
+            }
+        )
+    finally:
+        root.chmod(0o755)
+
+    assert service is not None
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root ignores the directory mode this test relies on"
+)
+def test_evaluation_service_disables_when_one_catalog_directory_is_unwritable(
+    monkeypatch, tmp_path, caplog
+):
+    """The probe has to cover the directories the console actually writes to.
+
+    Nothing is written at the root: dataset, profile and draft creation stage
+    into `tempfile.TemporaryDirectory(dir=...)` under `datasets/`, `profiles/`
+    and `drafts/` (`src/evaluation/qa/catalog.py:468-472`, `:532-536`,
+    `:775-779`), runs are workspaces under `runs/`, and job records are written
+    under `jobs/`. A writable root with one tighter-permissioned or separately
+    mounted child therefore passes a root-only probe and fails on first use.
+    """
+    live = tmp_path / "config.yaml"
+    live.write_text("live: true\n", encoding="utf-8")
+    monkeypatch.setattr(evaluation_console, "LIVE_AGENT_CONFIG_PATH", str(live))
+
+    root = tmp_path / "evaluations"
+    for name in ("datasets", "profiles", "drafts", "runs", "jobs"):
+        (root / name).mkdir(parents=True)
+
+    agent_config_path = tmp_path / "evaluation.yaml"
+    agent_config_path.write_text("redacted: true\n", encoding="utf-8")
+
+    (root / "datasets").chmod(0o555)
+    try:
+        with caplog.at_level(
+            logging.ERROR, logger="src.interfaces.chat_app.evaluation_console"
+        ):
+            service = build_evaluation_service(
+                {
+                    "evaluations": {
+                        "enabled": True,
+                        "root": str(root),
+                        "agent_config_path": str(agent_config_path),
+                    }
+                }
+            )
+    finally:
+        (root / "datasets").chmod(0o755)
+
+    assert service is None
+    assert "datasets" in caplog.text, "name the directory the operator must fix"
 
 
 def test_evaluation_service_leaves_no_probe_file_behind(tmp_path):

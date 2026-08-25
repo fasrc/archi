@@ -16,7 +16,7 @@ override.
 app crash-loops for the sake of a console that is off by default, and the operator reads a
 traceback about `mkdir` rather than a sentence about their config.
 
-Construction raising nothing is not proof that the root is usable, so the seam SHALL also establish that the root accepts a write before it registers the console. Every disk touch during construction is a `mkdir(..., exist_ok=True)` or a sweep that writes only when it finds a stale job, so a read-only root that already holds the five catalog directories and no active job raises nothing at all — the shape an operator gets restoring a snapshot onto a read-only volume. Without that statement the console registers and the first dataset import answers 500, which is the failure this requirement exists to convert into a refusal. The probe SHALL leave the catalog tree as it found it.
+Construction raising nothing is not proof that the storage is usable, so the seam SHALL also establish that each directory the console writes into accepts a write before it registers the console. Those directories are the catalog's five — imports and drafts stage through a temporary directory inside `datasets`, `profiles` and `drafts`, runs are workspaces under `runs`, and job records live in `jobs` — and the root itself is not among them, so a read-only root whose catalog directories are writable MUST NOT be refused. Every disk touch during construction is a `mkdir(..., exist_ok=True)` or a sweep that writes only when it finds a stale job, so a read-only root that already holds the five catalog directories and no active job raises nothing at all — the shape an operator gets restoring a snapshot onto a read-only volume. Without that statement the console registers and the first dataset import answers 500, which is the failure this requirement exists to convert into a refusal. The probe SHALL leave the catalog tree as it found it.
 
 The net is `OSError` and nothing wider, which is a requirement and not an implementation
 note. A wider net would catch a programming error — a constructor called with a wrong
@@ -64,8 +64,8 @@ which is the whole reason the guard covers the construction rather than a first 
 
 #### Scenario: A pre-populated read-only root disables the console
 
-- **WHEN** `evaluations.root` is read-only but already holds the five catalog directories and no stale job to sweep, so construction completes without raising
-- **THEN** the service does not build, one error log names the configured root, and the catalog tree is left exactly as it was found
+- **WHEN** the catalog directories under `evaluations.root` are read-only but already exist, with no stale job to sweep, so construction completes without raising
+- **THEN** the service does not build, one error log names the configured root and the directory that refused the write, and the catalog tree is left exactly as it was found
 
 This is the read-only case construction cannot detect: every `mkdir` is satisfied by a
 directory that already exists, and the sweep writes nothing because it finds nothing. An
