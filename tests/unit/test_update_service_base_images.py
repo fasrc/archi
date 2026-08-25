@@ -22,10 +22,13 @@ into `tmp_path` and repoints the module-level `DOCKERFILES_DIR` at it.
 from __future__ import annotations
 
 import importlib.util
+import re
+import shlex
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 _SCRIPT = (
     Path(__file__).resolve().parents[2]
@@ -1095,4 +1098,80 @@ def test_two_from_lines_each_get_their_own_annotation(tmp_path, monkeypatch):
         "RUN echo build\n"
         f"{_ANN}dev-abc1234{_ANN_END}\n"
         f"FROM ghcr.io/fasrc/a2rchi-python-base@{_PY_DIGEST}\n"
+    )
+
+
+# --- The CI call sites -------------------------------------------------------
+#
+# These tests read the argv out of the workflow file instead of restating it.
+# Issue #339 is a call site that drifted from what the script needs, and a test
+# that restates the argv stays green through exactly that drift.
+
+_WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
+_RELEASE_WORKFLOW = _WORKFLOWS / "test-and-build-tag.yml"
+_RETARGET_STEP = "Point Dockerfiles to versioned base images"
+
+# A GitHub Actions expression, e.g. `${{ needs.build-images.outputs.tag }}`.
+_EXPRESSION_RE = re.compile(r"\$\{\{[^}]*\}\}")
+
+_INVOCATION = ["python", "scripts/dev/update_service_base_images.py"]
+
+
+def _workflow_step(workflow_path, step_name):
+    """The step named `step_name`, from any job of the workflow."""
+    document = yaml.safe_load(workflow_path.read_text())
+    for job in document["jobs"].values():
+        for step in job.get("steps", []):
+            if step.get("name") == step_name:
+                return step
+    raise AssertionError(f"{workflow_path.name} has no step named {step_name!r}")
+
+
+def _script_argv(step, tag):
+    """The script arguments the step passes, with every CI expression resolved.
+
+    Every `${{ ... }}` in the step becomes `tag`. The release steps interpolate
+    exactly one expression, the release tag, so one substitution value is
+    enough. `re.sub` takes a function, not the string itself, because a
+    replacement string reads a backslash as an escape.
+    """
+    command = _EXPRESSION_RE.sub(lambda _: tag, step["run"]).strip()
+    argv = shlex.split(command)
+    assert argv[: len(_INVOCATION)] == _INVOCATION, f"unexpected command: {command}"
+    return argv[len(_INVOCATION) :]
+
+
+def test_the_release_workflow_argv_rewrites_the_pin_the_templates_carry(
+    tmp_path, monkeypatch
+):
+    """Issue #339: the release retarget must reach the templates' current tag.
+
+    The step passed no `--orig-tag`, so it took the script's `latest` default
+    and matched none of the 15 service templates -- they carry `dev-4314ac4`,
+    not `latest`, since `5e168b00`. Measured against a copy of the real
+    templates on `5a26b5a3`: the old release argv rewrote 0 of 15, and the
+    PR-preview argv rewrote 15 of 15.
+
+    Both fixtures below end as the real templates do. Several carry a trailing
+    space after the reference, and that space has to survive the rewrite.
+    """
+    module, templates = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n",
+            "Dockerfile-chat-gpu": (
+                "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4 \n"
+            ),
+        },
+    )
+    argv = _script_argv(_workflow_step(_RELEASE_WORKFLOW, _RETARGET_STEP), "v2026.8.0")
+
+    _run(module, monkeypatch, argv)
+
+    assert (templates / "Dockerfile-chat").read_text() == (
+        "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n"
+    )
+    assert (templates / "Dockerfile-chat-gpu").read_text() == (
+        "FROM ghcr.io/fasrc/a2rchi-pytorch-base:v2026.8.0 \n"
     )

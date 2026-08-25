@@ -150,8 +150,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # `--orig-tag all` is load-bearing (fasrc/archi#339). Without it the script takes its
+      # `latest` default and skips every template whose tag is not `latest` -- which is all 15
+      # of them since #266 pinned them to a `dev-` build. The step then rewrote nothing, exited
+      # 0, and the smoke test below built against the in-tree pin instead of the base images
+      # this release just pushed. Match `pr-preview.yml`, which has always passed it.
       - name: Point Dockerfiles to versioned base images
-        run: python scripts/dev/update_service_base_images.py --tag "${{ needs.build-images.outputs.tag }}" --switch-source ghcr
+        run: python scripts/dev/update_service_base_images.py --tag "${{ needs.build-images.outputs.tag }}" --switch-source ghcr --orig-tag all
 
       - name: Run smoke deployment
         uses: ./.github/actions/run-smoke
