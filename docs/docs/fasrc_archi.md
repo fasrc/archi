@@ -232,6 +232,27 @@ with no `<think>` trace.
 > `local:` does nothing for the `openai:` slot serving 3.8. To run 3.8 without
 > thinking as well, repeat the same `extra_kwargs` block under `openai:`.
 
+### What turning thinking back on does to streaming
+
+This same key also controls whether the chat app suppresses streamed reasoning
+(issue #122). With `enable_thinking: true`, the chat template pre-fills the
+`<think>` opener, so the model starts inside its reasoning block and closes it
+with a `</think>` that has no opener. Before that tag arrives the reasoning is
+byte-identical to a plain answer, so the app used to display it as the answer.
+
+The app now holds visible text until that closing tag arrives, per reasoning
+phase. Three consequences are worth knowing before you turn the key on:
+
+- The answer still streams incrementally, but only after the model closes its
+  reasoning block. The reasoning itself appears in the thinking-step panel.
+- If the model never emits a `</think>`, the whole answer arrives in one piece at
+  the end of the stream instead of growing word by word. Nothing is lost.
+- The gate is read per provider slot, not per model. A slot that lists a
+  reasoning model and a plain model gates both, so the plain model's answers also
+  arrive in one piece. Declare the two models as two slots to avoid that.
+
+With `enable_thinking: false` or the key absent, streaming is unchanged.
+
 **Critical: the launch must NOT pass `--reasoning-parser qwen3`.** This image's
 custom qwen3 parser fixes `prompt_has_open_think=True` at startup, so when a
 no-think reply contains no `</think>` it routes the entire answer into the
