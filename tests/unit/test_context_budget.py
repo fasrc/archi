@@ -585,6 +585,54 @@ class TestPerModelWindowsAreRead:
     def test_the_settings_constructor_still_works_without_the_new_field(self):
         assert _settings().context_windows == {}
 
+    def test_an_unset_key_declares_nothing_without_reporting_a_bad_value(self, caplog):
+        """`context_windows:` with no value is an omitted key, not a bad one.
+
+        That is the YAML spelling of a key left unset — including one holding
+        only a commented-out example — so it declares no entry and reports
+        nothing, the same way the singular `context_window` treats `None`.
+        Reporting it would put a warning in front of an operator whose config is
+        fine, which is what this module refuses to do everywhere else.
+        """
+        with caplog.at_level("WARNING"):
+            s = read_settings(
+                {
+                    "services": {
+                        "chat_app": {
+                            "context_editing": {
+                                "context_windows": None,
+                                "context_window": 32768,
+                            }
+                        }
+                    }
+                },
+                {},
+            )
+
+        assert s.context_windows == {}
+        assert s.context_window == 32768
+        assert "context_windows" not in caplog.text
+
+    def test_an_unset_pipeline_key_leaves_the_service_layer_map_standing(self):
+        """The per-entry merge is what makes the silence safe.
+
+        An unset key at the higher layer adds no entry, so it cannot discard a
+        declaration the lower layer made — there is no protection to be unaware
+        of losing.
+        """
+        s = read_settings(
+            {
+                "services": {
+                    "chat_app": {
+                        "context_editing": {"context_windows": {"a/model": 32768}}
+                    }
+                }
+            },
+            {"context_editing": {"context_windows": None}},
+        )
+
+        assert s.context_windows == {"a/model": 32768}
+
 
 class TestProviderReportedWindow:
     """`resolve_model_window` reads the window off an already-built provider."""

@@ -386,6 +386,15 @@ def _read_declared_windows(value: Any) -> Dict[str, int]:
     replaced by a guess, and it never disables what the other settings
     configure. ``positive_int`` rejects ``True`` along with the other
     non-integers — a one-token window would clear every message on every call.
+
+    ``None`` is not a malformed mapping and is not reported as one. It is how
+    YAML spells a key whose value is unset — including a key left holding only a
+    commented-out example — so it declares no entry, exactly as an omitted key
+    does, and ``_read_declared_window`` treats the singular setting the same way.
+    Nothing is discarded either: the merge in ``read_settings`` adds no entry and
+    leaves a lower layer's declarations standing. Warning here would fire on a
+    config where nothing is wrong, and the absence that does matter is already
+    reported per agent build, naming the model id to declare.
     """
     if value is None:
         return {}
