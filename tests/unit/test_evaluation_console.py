@@ -229,6 +229,43 @@ def test_evaluation_service_creates_the_catalog_tree(tmp_path):
     assert (root / "jobs").is_dir()
 
 
+def test_evaluation_service_disables_on_an_unwritable_root(
+    monkeypatch, tmp_path, caplog
+):
+    """A root whose parent is a regular file cannot be mkdir'd, and must not crash chat.
+
+    The live-config refusal is neutralized via ``LIVE_AGENT_CONFIG_PATH`` so this
+    test proves the storage guard, not the earlier config guard.
+    """
+    live = tmp_path / "config.yaml"
+    live.write_text("live: true\n", encoding="utf-8")
+    monkeypatch.setattr(evaluation_console, "LIVE_AGENT_CONFIG_PATH", str(live))
+
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory\n", encoding="utf-8")
+    root = blocker / "evaluations"
+
+    agent_config_path = tmp_path / "evaluation.yaml"
+    agent_config_path.write_text("redacted: true\n", encoding="utf-8")
+
+    with caplog.at_level(
+        logging.ERROR, logger="src.interfaces.chat_app.evaluation_console"
+    ):
+        service = build_evaluation_service(
+            {
+                "evaluations": {
+                    "enabled": True,
+                    "root": str(root),
+                    "agent_config_path": str(agent_config_path),
+                }
+            }
+        )
+
+    assert service is None
+    assert [record.levelname for record in caplog.records] == ["ERROR"]
+    assert str(root) in caplog.text
+
+
 def test_authorize_request_allows_every_permission_when_auth_is_off():
     authorize_request = build_authorize_request(False)
 

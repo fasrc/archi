@@ -100,12 +100,21 @@ def build_evaluation_service(
         return None
 
     mcp_config_path = evaluations_config.get("mcp_config_path")
-    return EvaluationConsoleService(
-        Path(evaluations_config.get("root", DEFAULT_EVALUATION_ROOT)),
-        agent_config_path=Path(agent_config_path),
-        agents_dir=Path(chat_app_config.get("agents_dir") or DEFAULT_AGENTS_DIR),
-        mcp_config_path=Path(mcp_config_path) if mcp_config_path else None,
-    )
+    root = evaluations_config.get("root", DEFAULT_EVALUATION_ROOT)
+    try:
+        return EvaluationConsoleService(
+            Path(root),
+            agent_config_path=Path(agent_config_path),
+            agents_dir=Path(chat_app_config.get("agents_dir") or DEFAULT_AGENTS_DIR),
+            mcp_config_path=Path(mcp_config_path) if mcp_config_path else None,
+        )
+    except OSError as exc:
+        logger.error(
+            "Evaluation console disabled: evaluations.root %s is not usable: %s",
+            root,
+            exc,
+        )
+        return None
 
 
 def build_authorize_request(auth_enabled: bool) -> Callable[[str], Optional[Any]]:
