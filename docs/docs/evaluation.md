@@ -1167,8 +1167,15 @@ original artifact from a trusted copy, or rerun the appropriate phase with
 
 ### The console is not there at all
 
-The chat app disables the console rather than crash when it cannot use its own
-storage, so an enabled deployment whose `/evaluations` link is missing points at
+On an authenticated deployment, check the signed-in user's roles first. The
+header link is hidden from any session without the `evaluations:view`
+permission, so a missing link there is ordinary access control and not a fault —
+the routes are registered and another user sees them. A console that is switched
+off, by contrast, is missing for everyone and its URL answers 404.
+
+For a console missing for everyone, the storage root is the usual cause. The
+chat app disables the console rather than crash when it cannot use its own
+storage, so an enabled deployment with no `/evaluations` at all points at
 `services.chat_app.evaluations.root`. At start-up the chat app creates the
 catalog tree under that root and then writes one short-lived probe file into each
 of `datasets`, `profiles`, `drafts`, `runs`, and `jobs` to prove they accept
