@@ -334,6 +334,24 @@ def test_a_full_message_of_pure_reasoning_yields_the_placeholder(run):
     assert _final(outputs).answer == PLACEHOLDER
 
 
+@both_paths
+def test_a_literal_closing_tag_in_an_answer_truncates_as_it_did_before(run):
+    """A pre-existing limit of ``_parse_thinking_content()``, pinned here.
+
+    That parser moves everything up to the LAST ``</think>`` into thinking, on
+    every provider, with or without this gate. An answer that quotes the literal
+    tag is therefore truncated to whatever follows it. The gate changes only
+    whether the doomed prefix flashes on screen before the parser discards it; the
+    delivered answer is the same either way. Changing the parser is a Non-Goal of
+    this change, so the limit is recorded rather than fixed.
+    """
+    agent = _TestableAgent(THINKING_ON)
+    outputs = run(agent, _deltas("prefix ", "</think>", " suffix"))
+
+    assert _final(outputs).answer == "suffix"
+    assert all("</think>" not in text for text in _texts(outputs))
+
+
 # --- error exits discard held text rather than flushing it (4.1, 4.2) -------
 
 
