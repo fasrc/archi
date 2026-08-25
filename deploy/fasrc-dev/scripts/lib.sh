@@ -73,6 +73,17 @@ unset _host_env_file _he_line _he_key _he_val _he_seen
 # via its host.env (issue #363).
 DEPLOYMENT="${DEPLOYMENT:-dev}"               # archi deployment name -> archi-<name>
 CONFIG="${CONFIG:-deploy/fasrc-dev/config.yaml}"  # repo-relative (git-excluded; copy from config.example.yaml)
+# The name becomes ~/.archi/archi-<name>, and `archi create --force` (which
+# every deploy here passes) rmtree's that directory — so a name carrying a
+# path separator must never get that far: DEPLOYMENT=dev/../.. resolves the
+# deployment dir to $HOME. One safe token, wherever the name came from
+# (tracked default, host.env, or the environment). Pinned by test_host_env.sh.
+case "$DEPLOYMENT" in
+  *[!A-Za-z0-9_-]*)
+    printf 'DEPLOYMENT %s is not a valid deployment name (allowed: letters, digits, - and _)\n' \
+      "'$DEPLOYMENT'" >&2
+    exit 1 ;;
+esac
 # Secrets env (PG_PASSWORD, HUIT_API_KEY, ...). Override with ARCHI_ENV_FILE;
 # defaults to ~/.secrets/archi-secrets.env so the scripts aren't tied to one user.
 ENV_FILE="${ARCHI_ENV_FILE:-$HOME/.secrets/archi-secrets.env}"

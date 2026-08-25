@@ -28,6 +28,10 @@
 #       fall through to the reserved default
 #   15. a duplicate identity key in host.env aborts — first-wins would let a
 #       stale line silently shadow an appended correction
+#   16. a DEPLOYMENT with a path separator aborts, from host.env — the name
+#       becomes ~/.archi/archi-<name>, and `archi create --force` rmtree's
+#       that directory, so `dev/../..` would resolve it to $HOME
+#   17. same guard for an ambient environment DEPLOYMENT (no host.env)
 #
 # Run: bash deploy/fasrc-dev/scripts/test_host_env.sh
 set -euo pipefail
@@ -220,6 +224,29 @@ else
     notok "15 abort must land before archi is invoked, got: $(cat "$TESTROOT/argv")"
   else
     ok "15 duplicate identity key in host.env aborts before archi is invoked"
+  fi
+fi
+
+# --- 16 + 17: a path-separator DEPLOYMENT aborts, from either source -----------
+printf 'DEPLOYMENT=dev/../..\n' > "$FIXSCRIPTS/host.env"
+if run_deploy HOST_ENV_SET=1 2>/dev/null; then
+  notok "16 DEPLOYMENT=dev/../.. from host.env must abort, got: $(cat "$TESTROOT/argv")"
+else
+  if [ -s "$TESTROOT/argv" ]; then
+    notok "16 abort must land before archi is invoked, got: $(cat "$TESTROOT/argv")"
+  else
+    ok "16 path-separator DEPLOYMENT from host.env aborts before archi"
+  fi
+fi
+
+rm -f "$FIXSCRIPTS/host.env"
+if run_deploy DEPLOYMENT=../evil 2>/dev/null; then
+  notok "17 ambient DEPLOYMENT=../evil must abort, got: $(cat "$TESTROOT/argv")"
+else
+  if [ -s "$TESTROOT/argv" ]; then
+    notok "17 abort must land before archi is invoked, got: $(cat "$TESTROOT/argv")"
+  else
+    ok "17 path-separator DEPLOYMENT from the environment aborts before archi"
   fi
 fi
 

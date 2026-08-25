@@ -142,3 +142,12 @@ findings become the PR body's Findings block.
       that no container or volume was touched. The end-to-end validation is the planned
       post-merge `claw` cutover on the workstation (an explicitly named non-production
       deployment), whose logs will be recorded on the issue.
+- [x] 4.2 Round 2 (Codex on `905ac981`) — one finding, `[P1]`, **held**, verified against
+      the CLI source: `deployment_manager.py:170` builds `~/.archi/archi-{name}` and
+      line 201 `shutil.rmtree`s it on the force path, which every wrapper passes — so
+      `DEPLOYMENT=dev/../..` (from host.env or the environment, both writable once this
+      PR makes the name overridable) resolves the deployment dir to `$HOME`. Fixed: the
+      resolved `DEPLOYMENT` must match `[A-Za-z0-9_-]+` from any source, or every
+      wrapper aborts before `archi` runs. RED cases 16/17 showed `--name dev/../..` and
+      `--name ../evil` reaching the fake archi with `--force`; GREEN after. Self-test
+      now 17 cases; README, example, and spec state the name rule.

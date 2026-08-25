@@ -29,6 +29,12 @@ path are deliberately outside the allowlist — they stay overridable per-invoca
 only, never from a persistent git-excluded file, so the tracked-pin safety story
 (bumped by PR, verified by `ensure_config`) is not weakened.
 
+The resolved `DEPLOYMENT` SHALL match `[A-Za-z0-9_-]+` whatever its source — the
+tracked default, `host.env`, or the environment — and any other name SHALL abort
+before `archi` is invoked: the name becomes `~/.archi/archi-<name>`, and the
+`--force` path every deploy here passes removes that directory, so a name carrying
+a path separator (`dev/../..`) would resolve the deployment directory to `$HOME`.
+
 The effective precedence SHALL be: command-line environment, then `host.env`, then the
 checked-in default — a `host.env` value applies only when the variable is not already
 set, so an explicit command-line variable always wins. For the identity keys
@@ -75,6 +81,13 @@ in code — the mechanism itself is name-agnostic.
 - **WHEN** `host.env` contains `CONFIG_SHA=deadbeef` (or any key other than
   `DEPLOYMENT`, `CONFIG`, `GPU_IDS`) and any wrapper script runs
 - **THEN** the script aborts before `archi` is invoked, naming the offending line
+
+#### Scenario: A path-separator deployment name fails closed from any source
+
+- **WHEN** `DEPLOYMENT` resolves to a value outside `[A-Za-z0-9_-]+` — such as
+  `dev/../..` from `host.env`, or `../evil` from the environment
+- **THEN** every wrapper aborts before `archi` is invoked, so the CLI's
+  force-replacement path can never remove a directory outside `~/.archi`
 
 #### Scenario: An empty identity value in host.env fails closed
 

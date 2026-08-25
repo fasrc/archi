@@ -34,9 +34,12 @@ Two hosts deploy from this repository, and they must not share one identity.
 
 - **Data, not code.** `host.env` is parsed, never sourced — nothing in it can
   execute. Only `KEY=VALUE` lines for `DEPLOYMENT`, `CONFIG`, and `GPU_IDS`
-  are accepted — each key at most once, and the identity keys need a
-  non-empty value (plus comments and blank lines; edge whitespace and CRLF
-  are stripped); any other line **aborts every script that reads `lib.sh`** —
+  are accepted — each key at most once, the identity keys need a non-empty
+  value, and `DEPLOYMENT` must be one `[A-Za-z0-9_-]+` token from any source
+  (the name becomes `~/.archi/archi-<name>`, which the deploy's `--force`
+  path removes — a path separator in it is refused) (plus comments and blank
+  lines; edge whitespace and CRLF are stripped); any other line **aborts
+  every script that reads `lib.sh`** —
   `status.sh` and `nuke.sh` included, because an unparsable `host.env` makes
   the deployment identity ambiguous, and failing closed beats tearing down
   the wrong deployment. The error names the offending line. The config pin
