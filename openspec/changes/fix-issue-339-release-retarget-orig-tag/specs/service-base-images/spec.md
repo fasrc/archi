@@ -82,6 +82,17 @@ renamed directory, or a renamed base image all produce an empty set, and an empt
 - **THEN** the release run fails before the tag is created
 - **AND** no tag is pushed
 
+#### Scenario: A release job on a stale checkout publishes nothing before it fails
+
+- **WHEN** the release job's fresh checkout does not reference this release's base images
+- **THEN** the release run fails before the `latest` tags are promoted and before the version bump is pushed
+
+The check on the tagged tree is not enough by itself, because the steps between the checkout
+and the tag are not undone by a later failure: promoting `latest` moves a published tag on
+ghcr and on docker.io, and the version bump is pushed to the dispatched ref. A run that is
+going to refuse to finish must refuse before it publishes part of a release. The later check
+stays: it covers the tree as those steps leave it, which is not the tree that was checked out.
+
 The smoke test proves one checkout and the tag is cut from another. Each job checks out the
 dispatched ref **by name**, so the tree the tag names is fetched after the tree the smoke test
 proved, and a branch that advances in between — or a lost push from the smoke-test job — leaves

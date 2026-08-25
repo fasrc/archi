@@ -49,12 +49,16 @@ value matches it. `--orig-tag all` covers both causes.
 - A new step, "Verify the service templates point at this release's base images", runs
   directly after the retarget step and before the smoke deployment, and calls that mode with
   the tag and registry the retarget step just wrote.
-- A second call, "Verify the tree being tagged points at this release's base images", runs in
-  the `release` job immediately before the tag is created. Each job checks out the dispatched
-  ref by name, so the tree the tag is cut from is fetched after the tree the smoke test proved.
-  This does not make the two provably identical — that needs one resolved commit for every job,
-  which the release mechanics trade away to push to the dispatched ref by name — but it does
-  stop a tag being created over templates on the wrong base.
+- Two more calls guard the `release` job, which checks out the dispatched ref by name a second
+  time and so does not provably hold the tree the smoke test proved. The first runs on that
+  fresh checkout **before the job publishes anything** — `Promote base images to latest` moves
+  the `latest` tag on ghcr and on docker.io, and `Commit version bump` pushes to the dispatched
+  ref, and neither is undone by a later failure. The second runs immediately before the tag is
+  created, over the tree those steps left behind. Neither makes the tagged tree provably
+  identical to the smoke-tested one — that needs one resolved commit for every job, which the
+  release mechanics trade away to push to the dispatched ref by name — but together they stop a
+  tag being created over templates on the wrong base, and stop a doomed run from publishing
+  half a release first.
 - The commit step keeps its non-fatal empty-diff branch, and says why the tree is clean
   instead of only that it is.
 

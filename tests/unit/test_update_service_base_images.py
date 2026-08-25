@@ -1311,6 +1311,10 @@ _RELEASE_WORKFLOW = _WORKFLOWS / "test-and-build-tag.yml"
 _RETARGET_STEP = "Point Dockerfiles to versioned base images"
 _VERIFY_STEP = "Verify the service templates point at this release's base images"
 _SMOKE_STEP = "Run smoke deployment"
+_CHECKOUT_VERIFY_STEP = (
+    "Verify the checked-out tree points at this release's base images"
+)
+_PROMOTE_STEP = "Promote base images to latest"
 _TAG_VERIFY_STEP = "Verify the tree being tagged points at this release's base images"
 _TAG_STEP = "Create Git tag"
 
@@ -1433,20 +1437,30 @@ def test_the_release_job_verifies_the_tree_it_is_about_to_tag():
     tagged tree names this release's base images, or no tag is created.
     """
     names = _job_step_names(_RELEASE_WORKFLOW, "release")
+
+    # Before anything this job publishes or pushes. `Promote base images to
+    # latest` moves the `latest` tag on ghcr, and on docker.io when those
+    # credentials are set; `Commit version bump` pushes to the dispatched ref.
+    # A check that runs only after those has already let the run publish part
+    # of a release it is about to refuse to finish.
+    assert names.index(_CHECKOUT_VERIFY_STEP) < names.index(_PROMOTE_STEP)
+
+    # And again on the tree the tag is actually cut from.
+    assert names.index(_CHECKOUT_VERIFY_STEP) < names.index(_TAG_VERIFY_STEP)
     assert names.index(_TAG_VERIFY_STEP) < names.index(_TAG_STEP)
 
     smoke = _script_argv(
         _workflow_step(_RELEASE_WORKFLOW, _VERIFY_STEP, "smoke-test"), "v2026.8.0"
     )
-    tagged = _script_argv(
-        _workflow_step(_RELEASE_WORKFLOW, _TAG_VERIFY_STEP, "release"), "v2026.8.0"
-    )
-
-    assert "--verify" in tagged
-    assert _flag_value(tagged, "--tag") == _flag_value(smoke, "--tag")
-    assert _flag_value(tagged, "--switch-source") == _flag_value(
-        smoke, "--switch-source"
-    )
+    for step_name in (_CHECKOUT_VERIFY_STEP, _TAG_VERIFY_STEP):
+        argv = _script_argv(
+            _workflow_step(_RELEASE_WORKFLOW, step_name, "release"), "v2026.8.0"
+        )
+        assert "--verify" in argv
+        assert _flag_value(argv, "--tag") == _flag_value(smoke, "--tag")
+        assert _flag_value(argv, "--switch-source") == _flag_value(
+            smoke, "--switch-source"
+        )
 
 
 def test_the_release_steps_compose_on_the_pin_the_templates_carry(

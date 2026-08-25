@@ -93,3 +93,15 @@ are the PR body's Findings block.
       `src/archi/pipelines/agents/utils/context_middleware.py`, which is not in this diff and
       is already documented in its own docstring as a known limitation tracked by **#344**.
       Terminal condition: only deferred findings remain.
+
+## 5. Post-PR review (PR #362)
+
+- [x] 5.1 Post-PR round 1 on #362 — Greptile 5/5, no blocking issue. Codex raised three, all
+      verified against the code before acting. `[P1]` the release job's verification ran after
+      `Promote base images to latest` and `Commit version bump`, so a failure left the `latest`
+      tags moved and the bump pushed — **held**, fixed by checking the fresh checkout first and
+      keeping the late check for the tree those steps leave behind. `[P1]` `--verify` was
+      undocumented while `docs/docs/developer_guide.md:479` documents every other flag and
+      `AGENTS.md:53` requires it — **held**, documented. `[P2]` the task checkboxes were
+      unticked — **already fixed** in `ae72349d`, which was held back unpushed so it could ride
+      with these fixes.

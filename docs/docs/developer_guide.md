@@ -491,6 +491,9 @@ python scripts/dev/update_service_base_images.py \
   --digest python=sha256:<64 hex> \
   --digest pytorch=sha256:<64 hex> \
   --tag dev-abc1234 --switch-source ghcr --orig-tag all
+
+# Check instead of write: fail unless every template already names this reference.
+python scripts/dev/update_service_base_images.py --verify --tag v2026.8.0 --switch-source ghcr
 ```
 
 | Option | Effect |
@@ -500,6 +503,7 @@ python scripts/dev/update_service_base_images.py \
 | `--orig-tag <tag>` | Only rewrites lines that carry this tag. **The default is `latest`.** Use `all` to match every line, digest-pinned lines included. |
 | `--switch-source <source>` | Moves the registry: `ghcr`, `dockerhub`, or `localhost`. |
 | `--bases <name> …` | Limits the run to these base images. Defaults to both. |
+| `--verify` | Checks instead of writing. Exits non-zero unless every base reference already names `--tag`, at the registry `--switch-source` names when it is given. Requires `--tag`; refuses `--digest`. |
 
 Four rules decide what the script writes:
 
@@ -521,8 +525,26 @@ Four rules decide what the script writes:
    record above it, the pin says nothing about which build the services are on, and
    `test_service_templates_pin_one_explicit_base_tag` fails.
 
+`--verify` is the proof that a rewrite landed. It reads the reference each template
+declares, not whether the file changed, because those two tests disagree on exactly one
+input: a template that already carries the target reference, which is what a re-dispatch of
+the same release tag produces. It fails on a reference at another tag or another registry,
+on an `a2rchi` base image the script cannot place — a rename the rewriter would skip in
+silence — and on a run that matched no reference at all, since a check that reads nothing
+would otherwise pass without reading anything. It shares the rewriter's `FROM` matcher and
+base image map, so it cannot disagree with the rewriter about what a base line is.
+
+Its bound is worth knowing: it reads the references templates **declare**. A template that
+declares no base image at all is invisible to it, as it is to the rewriter, to
+`required_base_images`, and to `test_service_templates_pin_one_explicit_base_tag`. Closing
+that needs a declared set of service templates, tracked as issue #361.
+
 Two CI jobs call the script: `pr-preview.yml` points the templates at the PR's base-image
-build, and `test-and-build-tag.yml` points them at the release build.
+build, and `test-and-build-tag.yml` points them at the release build. The release workflow
+passes `--orig-tag all` — without it the script takes its `latest` default and matches none
+of the templates, which is issue #339 — and calls `--verify` three times: after the retarget
+and before the smoke deployment, on the release job's fresh checkout before anything is
+published, and once more on the tree the tag is cut from.
 
 ## Data Ingestion Architecture
 
