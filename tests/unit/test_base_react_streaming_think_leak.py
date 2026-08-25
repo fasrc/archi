@@ -97,7 +97,9 @@ class _TestableAgent(BaseReActAgent):
     """
 
     def __init__(
-        self, config: Optional[Dict[str, Any]] = None, provider: str = "local"
+        self,
+        config: Optional[Dict[str, Any]] = None,
+        provider: Optional[str] = "local",
     ) -> None:
         self.config = config or {}
         self.archi_config = {}
@@ -517,6 +519,31 @@ def test_the_gate_follows_a_pipeline_map_model_reference(run):
     agent.pipeline_config = {"models": {"required": {"chat_model": "local/a-model"}}}
 
     outputs = run(agent, _deltas("some reasoning", "</think>", "\n\nThe answer"))
+
+    _assert_no_reasoning_visible(outputs)
+    assert _texts(outputs) == ["The answer"]
+
+
+@both_paths
+def test_a_malformed_pipeline_map_leaves_the_gate_off(run):
+    """A `models` block that is not a mapping resolves no provider.
+
+    The gate then stays off and streaming is unchanged, matching how the helper
+    treats every other malformed shape: fail open rather than raise.
+    """
+    agent = _TestableAgent(THINKING_ON, provider=None)
+    agent.pipeline_config = {"models": "not-a-mapping"}
+
+    outputs = run(agent, _deltas("The ", "quick ", "answer"))
+
+    assert _texts(outputs) == ["The", "The quick", "The quick answer"]
+
+
+@both_paths
+def test_an_event_carrying_no_messages_is_skipped(run):
+    """An event the extractor cannot read must not disturb the gate."""
+    agent = _TestableAgent(THINKING_ON)
+    outputs = run(agent, [{}, *_deltas("some reasoning", "</think>", "\n\nThe answer")])
 
     _assert_no_reasoning_visible(outputs)
     assert _texts(outputs) == ["The answer"]
