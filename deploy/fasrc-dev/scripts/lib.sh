@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Shared config + helpers for managing the archi 'dev' deployment on localhost.
+# Shared config + helpers for managing this host's archi deployment (named by
+# $DEPLOYMENT — default 'dev', per-host via host.env; see host.env.example).
 # Sourced by create.sh / redeploy.sh / nuke.sh / status.sh — not run directly.
 # Deploys provision the config/ checkout (fasrc/archi-config) at a pinned,
 # SHA-verified ref via ensure_config — see the "config repo pin" section for

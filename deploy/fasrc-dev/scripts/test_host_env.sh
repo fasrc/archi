@@ -59,7 +59,9 @@ chmod +x "$TESTROOT/bin/archi"
 # preflight/provisioning steps stubbed out — this test is about identity only.
 run_deploy() { # env assignments passed as "VAR=value" args
   : > "$TESTROOT/argv"
-  env "$@" PATH="$TESTROOT/bin:$PATH" bash -c '
+  # -u strips ambient identity vars so the suite tests its fixtures, not the
+  # invoking shell; the case's own assignments (after -u) still apply.
+  env -u DEPLOYMENT -u CONFIG -u GPU_IDS "$@" PATH="$TESTROOT/bin:$PATH" bash -c '
     source "'"$FIXSCRIPTS"'/lib.sh"
     require_files() { :; }
     ensure_config() { :; }

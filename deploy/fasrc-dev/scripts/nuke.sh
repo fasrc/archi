@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Complete nuke of the archi 'dev' deployment — DESTRUCTIVE, IRREVERSIBLE.
+# Complete nuke of THIS HOST'S archi deployment — DESTRUCTIVE, IRREVERSIBLE.
 # Removes: containers, volumes (Postgres DB + ingested corpus), per-deployment
-# images, and the ~/.archi/archi-dev/ files. Your other deployments are NOT
-# touched (the name is hard-wired to 'dev' in lib.sh).
+# images, and the ~/.archi/archi-<name>/ files. Only the deployment named by
+# $DEPLOYMENT is touched — the tracked default 'dev', or this host's own name
+# from host.env / the environment (see lib.sh). The interactive confirmation
+# asks for that resolved name; -y skips it, so check `status.sh` first.
 #
 # Usage: nuke.sh [-y|--yes]   (-y skips the interactive confirmation)
 set -euo pipefail

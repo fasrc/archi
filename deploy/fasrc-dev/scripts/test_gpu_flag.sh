@@ -37,7 +37,8 @@ chmod +x "$TESTROOT/bin/archi"
 # preflight/provisioning steps stubbed out — this test is about the flag only.
 run_deploy() { # env assignments passed as "VAR=value" args
   : > "$TESTROOT/argv"
-  env "$@" PATH="$TESTROOT/bin:$PATH" bash -c '
+  # -u strips an ambient GPU_IDS so case 1 tests the default, not the shell.
+  env -u GPU_IDS "$@" PATH="$TESTROOT/bin:$PATH" bash -c '
     source "'"$SCRIPT_DIR"'/lib.sh"
     require_files() { :; }
     ensure_config() { :; }

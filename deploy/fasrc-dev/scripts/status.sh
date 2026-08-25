@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read-only status of the archi 'dev' deployment: containers, volumes, UI, LLM.
+# Read-only status of this host's archi deployment: containers, volumes, UI, LLM.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 

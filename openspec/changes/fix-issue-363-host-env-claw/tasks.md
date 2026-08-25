@@ -122,3 +122,23 @@ findings become the PR body's Findings block.
       behavior for a case whose outcome already equals the default invocation.
       Terminal condition: rounds bounded, remaining finding refuted with reasons; carried
       into the PR body's Findings block.
+
+## 4. Post-PR review (PR #364)
+
+- [x] 4.1 Round 1 — Greptile **5/5, zero findings**. Codex raised three inline findings,
+      each verified against the code before acting.
+      `[P2]` ambient `DEPLOYMENT`/`CONFIG`/`GPU_IDS` exports leaked into the test
+      subshells (`env "$@"` preserves the caller's environment) — **held**, reproduced
+      first: 5/15 host-env cases and 1/3 gpu-flag cases fail under ambient exports. Fixed
+      with `env -u` for the identity vars in both harnesses; both suites now pass plain
+      AND under ambient exports.
+      `[P2]` `nuke.sh`'s header still claimed the name is hard-wired to `dev` and other
+      deployments cannot be touched — **held**; that claim is false once identity is
+      per-host, and it decorates the destructive wrapper. Headers corrected in `nuke.sh`,
+      `lib.sh`, `create.sh`, `status.sh`.
+      `[P1]` validate end-to-end on a running deployment before merging — **pushed back,
+      deferred to the cutover**: issue #363 records "Do not run a real deploy as part of
+      this work" with the live-production rationale, and its acceptance criteria require
+      that no container or volume was touched. The end-to-end validation is the planned
+      post-merge `claw` cutover on the workstation (an explicitly named non-production
+      deployment), whose logs will be recorded on the issue.
