@@ -3,16 +3,16 @@ re-verified unchanged at `f9a14523` (2026-08-24).
 
 ## 1. Helper: the thinking gate (TDD — red first)
 
-- [ ] 1.1 `model: sonnet` — Add `tests/unit/test_thinking_gate.py` with failing tests for
+- [x] 1.1 `model: sonnet` — Add `tests/unit/test_thinking_gate.py` with failing tests for
       `provider_emits_thinking(config, provider)`: true only when
       `services.chat_app.providers.<provider>.extra_kwargs.extra_body.chat_template_kwargs.enable_thinking`
       is exactly `True`; false for absent provider, absent block, `None`, a
       non-mapping at any level, and a string `"true"`. Watch it FAIL (no module).
-- [ ] 1.2 `model: sonnet` — Add failing tests for `hold_visible(thinking_possible, accumulated_content)`:
+- [x] 1.2 `model: sonnet` — Add failing tests for `hold_visible(thinking_possible, accumulated_content)`:
       false whenever `thinking_possible` is false; true when thinking is possible and
       the content has no `</think>`; false once a `</think>` is present; false on
       empty or `None` content. Watch it FAIL.
-- [ ] 1.3 `model: sonnet` — Write `src/archi/pipelines/agents/utils/thinking_gate.py`
+- [x] 1.3 `model: sonnet` — Write `src/archi/pipelines/agents/utils/thinking_gate.py`
       to green, walking each config level with an `isinstance` check and never
       raising, in the style of `utils/context_budget.py:245`.
 
