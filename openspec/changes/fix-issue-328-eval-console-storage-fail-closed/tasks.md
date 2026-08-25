@@ -38,7 +38,7 @@ Three standing notes for every task:
 
 ## 1. Fail closed on a storage error
 
-- [ ] 1.1 RED, then GREEN. Add `test_evaluation_service_disables_on_an_unwritable_root` to
+- [x] 1.1 RED, then GREEN. Add `test_evaluation_service_disables_on_an_unwritable_root` to
       `tests/unit/test_evaluation_console.py`. Build the blocker inside `tmp_path`: write a
       regular file at `tmp_path / "blocker"`, then set `evaluations.root` to
       `str(tmp_path / "blocker" / "evaluations")`. `mkdir(parents=True, exist_ok=True)` on
