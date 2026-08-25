@@ -31,9 +31,13 @@ if [ -f "$_host_env_file" ]; then
     _he_line="${_he_line%"${_he_line##*[![:space:]]}"}"       # trim trailing ws
     case "$_he_line" in
       ''|\#*) continue ;;
-      DEPLOYMENT=*) [ "${DEPLOYMENT+x}" ] || DEPLOYMENT="${_he_line#*=}" ;;
-      CONFIG=*)     [ "${CONFIG+x}" ]     || CONFIG="${_he_line#*=}" ;;
-      GPU_IDS=*)    [ "${GPU_IDS+x}" ]    || GPU_IDS="${_he_line#*=}" ;;
+      # Identity keys: EMPTY counts as unset on both sides (an empty name or
+      # config path is never a valid value), so an ambient DEPLOYMENT='' can
+      # not bypass the host pin and silently retarget the reserved `dev`.
+      DEPLOYMENT=*) [ -n "${DEPLOYMENT:-}" ] || DEPLOYMENT="${_he_line#*=}" ;;
+      CONFIG=*)     [ -n "${CONFIG:-}" ]     || CONFIG="${_he_line#*=}" ;;
+      # GPU_IDS: set-but-empty IS meaningful (explicit disable), so set wins.
+      GPU_IDS=*)    [ "${GPU_IDS+x}" ]       || GPU_IDS="${_he_line#*=}" ;;
       *) printf 'host.env: unsupported line (allowed: DEPLOYMENT=, CONFIG=, GPU_IDS=, comments): %s\n' \
            "$_he_line" >&2
          exit 1 ;;

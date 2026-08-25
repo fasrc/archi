@@ -43,12 +43,15 @@ Two hosts deploy from this repository, and they must not share one identity.
   it stays overridable per-invocation only.
 - **Precedence:** command-line environment > `host.env` > tracked default —
   a `host.env` value applies only when the variable is not already set, so
-  the command line always wins. Pinned by `test_host_env.sh`.
+  the command line always wins. For `DEPLOYMENT`/`CONFIG` an **empty**
+  environment value counts as unset (an empty identity is never valid, so it
+  cannot bypass the host pin); for `GPU_IDS` empty stays the explicit
+  disable. Pinned by `test_host_env.sh`.
 - **No `host.env`** resolves exactly the tracked defaults (`DEPLOYMENT=dev`,
   `CONFIG=deploy/fasrc-dev/config.yaml`). The GPU host needs no file.
 - **Reserved names (issue #363):** `dev` is the GPU host (`holygpu7c0717`, the
   production deployment); `claw` is the no-GPU / no-local-vLLM workstation.
-- **Self-test:** `bash deploy/fasrc-dev/scripts/test_host_env.sh` — 11 cases
+- **Self-test:** `bash deploy/fasrc-dev/scripts/test_host_env.sh` — 13 cases
   against a fake `archi` and a fixture tree; renders nothing, deploys nothing.
 
 ## Config provisioning (`ensure_config`)

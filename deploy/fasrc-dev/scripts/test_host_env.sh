@@ -21,6 +21,9 @@
 #    9. comments, indented comments, whitespace-only and blank lines are fine
 #   10. CRLF line endings do not poison the value
 #   11. leading/trailing whitespace around an assignment is ignored
+#   12. an EMPTY command-line DEPLOYMENT does not bypass host.env (empty
+#       counts as unset for the identity keys — an empty name is never valid)
+#   13. same for CONFIG
 #
 # Run: bash deploy/fasrc-dev/scripts/test_host_env.sh
 set -euo pipefail
@@ -169,6 +172,25 @@ if [[ "$argv" == *"--name claw --config"* ]]; then
   ok "11 leading/trailing whitespace around an assignment is ignored"
 else
   notok "11 whitespace-padded assignment should parse cleanly, got: $argv"
+fi
+
+# --- 12 + 13: empty identity env vars do not bypass host.env -------------------
+printf 'DEPLOYMENT=claw\n' > "$FIXSCRIPTS/host.env"
+run_deploy DEPLOYMENT= || true
+argv="$(cat "$TESTROOT/argv")"
+if [[ "$argv" == *"--name claw --config"* ]]; then
+  ok "12 empty command-line DEPLOYMENT does not bypass host.env"
+else
+  notok "12 empty DEPLOYMENT must not silently retarget, got: $argv"
+fi
+
+printf 'CONFIG=deploy/fasrc-dev/claw.yaml\n' > "$FIXSCRIPTS/host.env"
+run_deploy CONFIG= || true
+argv="$(cat "$TESTROOT/argv")"
+if [[ "$argv" == *"--config deploy/fasrc-dev/claw.yaml"* ]]; then
+  ok "13 empty command-line CONFIG does not bypass host.env"
+else
+  notok "13 empty CONFIG must not silently retarget, got: $argv"
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

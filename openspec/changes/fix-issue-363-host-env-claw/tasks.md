@@ -42,7 +42,7 @@ Standing notes for every task:
 - [x] 2.1 `model: sonnet` — Run all four shell self-tests and the issue's no-deploy verify
       snippet (fake `archi`, `DEPLOYMENT=claw`); record the observed output here.
 
-      **Measured** (after the round-1 and round-2 fixes below): `test_host_env` 11 passed,
+      **Measured** (after the round-1 and round-2 fixes below): `test_host_env` 13 passed,
       0 failed;
       `test_gpu_flag` 3 passed; `test_ensure_config` 10 passed; `test_firewall` 8 passed.
       Verify snippet with a fake `archi` on `PATH`: `DEPLOYMENT=claw bash -c 'source
@@ -91,3 +91,11 @@ findings become the PR body's Findings block.
       of the operator's own file). Kept fail-closed; code comment, example, README, and
       spec now state the every-wrapper scope explicitly, and case 7 proves the abort lands
       before `archi` is ever invoked. Self-test now 11 cases.
+- [x] 3.3 Round 3 — one finding, **held**, verified by running the shell semantics.
+      `[high]` an ambient EMPTY `DEPLOYMENT=''`/`CONFIG=''` bypassed host.env (`+x` sees
+      "set") and then fell through `:-` to the reserved `dev` — a claw host silently
+      retargeting production's name, reachable from a stray profile export. Fixed: the
+      identity keys treat empty as unset on both sides (`[ -n "${VAR:-}" ]`), while
+      `GPU_IDS` keeps set-wins semantics because there empty is the documented explicit
+      disable. RED cases 12/13 reproduced `--name dev` on a claw-pinned fixture, GREEN
+      after. Self-test now 13 cases.

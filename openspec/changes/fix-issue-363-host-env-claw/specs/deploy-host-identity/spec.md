@@ -27,7 +27,12 @@ only, never from a persistent git-excluded file, so the tracked-pin safety story
 
 The effective precedence SHALL be: command-line environment, then `host.env`, then the
 checked-in default — a `host.env` value applies only when the variable is not already
-set, so an explicit command-line variable always wins.
+set, so an explicit command-line variable always wins. For the identity keys
+(`DEPLOYMENT`, `CONFIG`) an empty environment value SHALL count as unset on both
+sides: an empty name or path is never a valid identity, so an ambient
+`DEPLOYMENT=''` can neither bypass the host pin nor fall through to the reserved
+`dev`. For `GPU_IDS`, set-but-empty stays meaningful (the explicit disable), so
+there set wins.
 
 `GPU_IDS` SHALL keep the no-colon `${GPU_IDS-}` form, so a `host.env` line
 `GPU_IDS=` (empty value) still means "explicitly no GPU flag" while an absent file
@@ -54,6 +59,12 @@ in code — the mechanism itself is name-agnostic.
 - **WHEN** `host.env` contains `DEPLOYMENT=claw` and the operator runs
   `DEPLOYMENT=other ./redeploy.sh`
 - **THEN** `DEPLOYMENT` resolves to `other`
+
+#### Scenario: An empty identity variable does not bypass the host pin
+
+- **WHEN** `host.env` contains `DEPLOYMENT=claw` and the environment carries
+  `DEPLOYMENT=''` (empty)
+- **THEN** `DEPLOYMENT` resolves to `claw`, not to the reserved default `dev`
 
 #### Scenario: A key outside the allowlist fails every wrapper, closed
 
