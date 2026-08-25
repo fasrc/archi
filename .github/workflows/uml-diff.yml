@@ -1,0 +1,160 @@
+# UML class-structure diff on every PR: run pyreverse over the changed Python
+# files on both sides, render one color-coded Mermaid class diagram
+# (scripts/ci/uml_diff.py), and keep it in a single sticky comment near the
+# top of the thread — posted when the PR opens, edited in place afterwards,
+# and deleted again if a later revision drops the structural change.
+#
+# The sticky comment is found by its hidden `<!-- archi-uml-diff -->` marker,
+# not by `--edit-last`, so a comment from another bot workflow can never be
+# clobbered. `pull-requests: write` grants comment-level power only (#333
+# removed the far stronger registry write from PR-triggered jobs); on a fork
+# PR the token is read-only, so the comment step fails soft.
+#
+# Every step after the checkout runs PR-authored code — pyreverse over the
+# PR's files, then the renderer out of the PR's tree. Those steps carry no
+# token in their environment, and `persist-credentials: false` keeps the job
+# token out of `.git/config`, so the PR-controlled half of the job has no
+# credential to reach. Only the last step holds a token, and it runs fixed
+# `gh` commands.
+name: UML Diff
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: uml-diff-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  uml-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history — the diff needs both sides)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Nothing in this job talks to a remote, so the job token has no
+          # reason to sit in `.git/config` where PR code could read it.
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pyreverse (ships inside pylint)
+        run: pip install pylint==4.0.7
+
+      - name: List the PR's changed Python files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # NUL-terminated records, because the default output C-quotes a path
+          # that holds a non-ASCII character, quote, backslash, tab or newline
+          # (`café.py` becomes `"caf\303\251.py"`), and the quoted text is not
+          # a path pyreverse can open.
+          git diff --name-status -z "$BASE_SHA...$HEAD_SHA" -- '*.py' >changed.z
+          tr '\0' '\n' <changed.z # the same records, readable, for the log
+
+      - name: Materialize the base side in a second worktree
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git worktree add "$RUNNER_TEMP/base-tree" "$BASE_SHA"
+
+      - name: Run pyreverse on both sides
+        run: |
+          mkdir -p "$RUNNER_TEMP/uml"
+          # Each record is a status, then one path — or, for a rename or a
+          # copy, the old path and then the new one.
+          mapfile -d '' -t fields <changed.z
+          head_files=()
+          base_files=()
+          i=0
+          while [ "$i" -lt "${#fields[@]}" ]; do
+            status=${fields[i]}
+            case "$status" in
+              R*|C*)
+                old=${fields[i+1]}
+                new=${fields[i+2]}
+                i=$((i + 3))
+                ;;
+              *)
+                old=${fields[i+1]}
+                new=$old
+                i=$((i + 2))
+                ;;
+            esac
+            # Head side: every changed file that still exists (status != D).
+            # Base side: every changed file that existed before (status != A).
+            # The "./" prefix keeps a path that starts with "-" from being
+            # parsed as a pyreverse option.
+            if [ "${status:0:1}" != "D" ]; then
+              head_files+=("./$new")
+            fi
+            if [ "${status:0:1}" != "A" ]; then
+              base_files+=("./$old")
+            fi
+          done
+          if [ "${#head_files[@]}" -gt 0 ]; then
+            pyreverse -o mmd -f ALL -p head \
+              --output-directory "$RUNNER_TEMP/uml" "${head_files[@]}"
+          fi
+          if [ "${#base_files[@]}" -gt 0 ]; then
+            cd "$RUNNER_TEMP/base-tree"
+            pyreverse -o mmd -f ALL -p base \
+              --output-directory "$RUNNER_TEMP/uml" "${base_files[@]}"
+          fi
+
+      - name: Render the Mermaid diff comment
+        id: build
+        run: |
+          set +e
+          python scripts/ci/uml_diff.py \
+            --base "$RUNNER_TEMP/uml/classes_base.mmd" \
+            --head "$RUNNER_TEMP/uml/classes_head.mmd" \
+            --out uml-diff.md
+          code=$?
+          set -e
+          # Exit 3 is the script's documented "no structural change" signal.
+          # The trigger stays unconditional and the next step still runs: a
+          # stale diagram from an earlier revision has to come down.
+          case "$code" in
+            0) echo "post=true" >>"$GITHUB_OUTPUT" ;;
+            3) echo "post=false" >>"$GITHUB_OUTPUT" ;;
+            *) exit "$code" ;;
+          esac
+
+      - name: Reconcile the sticky PR comment
+        continue-on-error: true # fork PRs carry a read-only token
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POST: ${{ steps.build.outputs.post }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          cid=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                  --jq '.[] | select(.body | startswith("<!-- archi-uml-diff -->")) | .id' \
+                | head -n 1)
+          if [ "$POST" != "true" ]; then
+            # This revision has no structural change. An earlier one may have
+            # had, and its diagram would now describe a delta the PR no longer
+            # carries, so take the comment down.
+            if [ -n "$cid" ]; then
+              gh api --method DELETE "repos/$REPO/issues/comments/$cid"
+              echo "uml-diff: removed the stale sticky comment"
+            else
+              echo "uml-diff: no structural change and no comment to remove"
+            fi
+            exit 0
+          fi
+          if [ -n "$cid" ]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$cid" -F body=@uml-diff.md
+          else
+            gh pr comment "$PR" --repo "$REPO" --body-file uml-diff.md
+          fi

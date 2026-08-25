@@ -296,6 +296,60 @@ _A2RCHI_BASE_RE = re.compile(r"^FROM\s+(?P<ref>\S*a2rchi-\w+-base\S*)", re.MULTI
 _EXPECTED_BASE_REGISTRY = "ghcr.io/fasrc/"
 
 
+# Written above a digest-pinned FROM line by
+# `scripts/dev/update_service_base_images.py`. A digest names no build, so this
+# annotation is the only place the build name survives.
+_MANAGED_ANNOTATION_RE = re.compile(
+    r"^#\s*base-image-pin:\s*(?P<build>\S+)\s+"
+    r"\(managed by update_service_base_images\.py\)\s*$"
+)
+
+
+def _base_pins(text):
+    """Every ``a2rchi-*-base`` pin in one template, as ``(ref, build)``.
+
+    ``build`` is the tag for a tag reference, or the build named by the managed
+    annotation above a digest reference. It is ``None`` when nothing names a
+    build: an untagged reference, or a digest with no annotation. A digest and
+    a tag are alternatives, so the two forms are read differently rather than
+    both being split on the last colon.
+    """
+    lines = text.splitlines()
+    pins = []
+    for index, line in enumerate(lines):
+        match = _A2RCHI_BASE_RE.match(line)
+        if not match:
+            continue
+        ref = match.group("ref")
+
+        if "@" in ref:
+            build = None
+            # The annotation sits directly above, but a blank line may separate
+            # them, exactly as the writing script tolerates.
+            back = index - 1
+            while back >= 0 and not lines[back].strip():
+                back -= 1
+            if back >= 0:
+                annotation = _MANAGED_ANNOTATION_RE.match(lines[back].strip())
+                if annotation:
+                    build = annotation.group("build")
+        else:
+            _, separator, tag = ref.rpartition(":")
+            build = tag if separator else None
+
+        pins.append((ref, build))
+    return pins
+
+
+def _a2rchi_base_pins():
+    """``(path, ref, build)`` for every base pin under the template directory."""
+    pins = []
+    for dockerfile in sorted(DOCKERFILE_TEMPLATE_DIR.rglob("Dockerfile*")):
+        for ref, build in _base_pins(dockerfile.read_text()):
+            pins.append((dockerfile.relative_to(REPO_ROOT), ref, build))
+    return pins
+
+
 def _a2rchi_base_references():
     """Every ``FROM`` reference naming an ``a2rchi-*-base`` image.
 
@@ -337,27 +391,98 @@ def test_service_templates_pin_one_explicit_base_tag():
     registry prefix would pass `ghcr.io/fasrc/a2rchi-python-base:latest` and reintroduce the
     same defect class from a registry we do own.
     """
-    references = _a2rchi_base_references()
-    assert references, f"no base reference found under {DOCKERFILE_TEMPLATE_DIR}"
+    pins = _a2rchi_base_pins()
+    assert pins, f"no base reference found under {DOCKERFILE_TEMPLATE_DIR}"
 
-    untagged = [f"{path}: {ref}" for path, ref in references if ":" not in ref]
-    assert not untagged, (
+    unpinned = [
+        f"{path}: {ref}"
+        for path, ref, build in pins
+        if build is None and "@" not in ref
+    ]
+    assert not unpinned, (
         f"service template(s) name a base image with no tag, which resolves to `latest`: "
-        f"{untagged}"
+        f"{unpinned}"
     )
 
-    tags = {}
-    for path, ref in references:
-        tags.setdefault(ref.rpartition(":")[2], []).append(str(path))
+    unnamed = [
+        f"{path}: {ref}" for path, ref, build in pins if build is None and "@" in ref
+    ]
+    assert not unnamed, (
+        f"service template(s) pin a digest with no `# base-image-pin:` annotation above it: "
+        f"{unnamed} -- a digest names no build, so nothing here says which build these "
+        f"services are on, and a split pin becomes invisible"
+    )
 
-    floating = tags.get("latest")
+    builds = {}
+    for path, _ref, build in pins:
+        builds.setdefault(build, []).append(str(path))
+
+    floating = builds.get("latest")
     assert not floating, (
         f"service template(s) pin the floating tag `latest`: {sorted(floating)} -- the image "
         f"behind it can be replaced without a commit here"
     )
 
-    assert len(tags) == 1, (
-        f"service templates reference more than one base tag: "
-        f"{ {tag: sorted(paths) for tag, paths in tags.items()} } -- a split pin means some "
-        f"services build on a different interpreter than others"
+    assert len(builds) == 1, (
+        f"service templates reference more than one base build: "
+        f"{ {build: sorted(paths) for build, paths in builds.items()} } -- a split pin means "
+        f"some services build on a different interpreter than others"
     )
+
+
+# --- The same guard, once the templates carry digests (fasrc/archi#334, #335) ----------
+#
+# A digest reference names no tag, so the check above cannot read a build out of it: it
+# takes the text after the last colon, which for `...@sha256:c068...` is the digest hex.
+# The python and pytorch bases have different digests by construction, so that check sees
+# two "tags" and fails. The build name for a digest-pinned line lives in the managed
+# annotation written above it by `scripts/dev/update_service_base_images.py`.
+
+
+def test_base_pins_reads_a_tag_reference():
+    text = "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+    assert _base_pins(text) == [
+        ("ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4", "dev-4314ac4")
+    ]
+
+
+def test_base_pins_reads_the_build_from_a_digest_annotation():
+    digest = "sha256:" + "c0" * 32
+    text = (
+        "# base-image-pin: dev-4314ac4 (managed by update_service_base_images.py)\n"
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{digest}\n"
+    )
+    assert _base_pins(text) == [
+        (f"ghcr.io/fasrc/a2rchi-python-base@{digest}", "dev-4314ac4")
+    ]
+
+
+def test_base_pins_reports_no_build_for_an_unannotated_digest():
+    """A digest with no annotation says nothing about which build it is."""
+    digest = "sha256:" + "c0" * 32
+    text = f"FROM ghcr.io/fasrc/a2rchi-python-base@{digest}\n"
+    assert _base_pins(text) == [(f"ghcr.io/fasrc/a2rchi-python-base@{digest}", None)]
+
+
+def test_base_pins_reports_no_build_for_an_untagged_reference():
+    text = "FROM ghcr.io/fasrc/a2rchi-python-base\n"
+    assert _base_pins(text) == [("ghcr.io/fasrc/a2rchi-python-base", None)]
+
+
+def test_base_pins_agree_on_one_build_across_two_different_digests():
+    """The whole point: two images, two digests, one build.
+
+    Under the pre-#334 check this is the failing case — it reads the digest hex
+    as the tag and sees a split pin where there is none.
+    """
+    py = "sha256:" + "c0" * 32
+    pt = "sha256:" + "b7" * 32
+    annotation = (
+        "# base-image-pin: dev-4314ac4 (managed by update_service_base_images.py)"
+    )
+    builds = set()
+    for image, digest in (("python", py), ("pytorch", pt)):
+        text = f"{annotation}\nFROM ghcr.io/fasrc/a2rchi-{image}-base@{digest}\n"
+        builds.update(build for _, build in _base_pins(text))
+
+    assert builds == {"dev-4314ac4"}
