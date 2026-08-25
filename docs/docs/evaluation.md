@@ -1165,6 +1165,22 @@ The workspace changed after a phase completed or is incomplete. Restore the
 original artifact from a trusted copy, or rerun the appropriate phase with
 `--overwrite`. Do not edit the manifest to bypass integrity checks.
 
+### The console is not there at all
+
+The chat app disables the console rather than crash when it cannot use its own
+storage, so an enabled deployment whose `/evaluations` link is missing points at
+`services.chat_app.evaluations.root`. At start-up the chat app creates the
+catalog tree under that root and then writes one short-lived probe file to prove
+the root accepts writes — a root that is read-only, owned by another user, or
+already holding the five catalog directories on a read-only volume fails that
+check. Chat keeps serving; only the console turns itself off.
+
+Read the chat-app start-up log and look for the error line naming the root. Fix
+the mount or the ownership, or correct the setting, then redeploy. The same
+sentence covers the two config refusals: an enabled console with no
+`evaluations.agent_config_path`, or one naming the live deployment config, is
+also disabled with one error line each.
+
 ### The console says another job is active
 
 Atom generation and evaluation share a single-flight worker. Wait for the

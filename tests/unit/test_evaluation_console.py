@@ -43,15 +43,19 @@ def test_evaluation_service_uses_deployment_defaults():
     # The defaults are container paths, so the constructor is recorded rather
     # than run: a real build would mkdir /root/archi/evaluations on the host.
     # agent_config_path has no default — it is required, and named here.
+    # The write probe is recorded for the same reason: with construction mocked
+    # nothing creates that tree, so a real probe would report the container path
+    # as unusable on a host that has no /root/archi.
     with patch.object(evaluation_console, "EvaluationConsoleService") as factory:
-        service = build_evaluation_service(
-            {
-                "evaluations": {
-                    "enabled": True,
-                    "agent_config_path": "/root/archi/configs/evaluation.yaml",
+        with patch.object(evaluation_console.tempfile, "NamedTemporaryFile"):
+            service = build_evaluation_service(
+                {
+                    "evaluations": {
+                        "enabled": True,
+                        "agent_config_path": "/root/archi/configs/evaluation.yaml",
+                    }
                 }
-            }
-        )
+            )
 
     assert service is factory.return_value
     assert factory.call_args.args == (Path("/root/archi/evaluations"),)
@@ -313,6 +317,116 @@ def test_evaluation_service_disables_when_the_stale_job_sweep_cannot_write(
 
     assert service is None
     assert [record.levelname for record in caplog.records] == ["ERROR"]
+
+
+def test_evaluation_service_disables_on_a_prepopulated_read_only_root(
+    monkeypatch, tmp_path, caplog
+):
+    """The guard has to catch the root that raises nothing during construction.
+
+    Construction only calls ``mkdir(parents=True, exist_ok=True)`` five times
+    (``src/evaluation/qa/catalog.py:261-268``) and sweeps stale jobs, which
+    writes only when it finds a job to interrupt. A read-only mount that already
+    holds the five directories and no active job therefore raises nothing: the
+    console registers, and the first dataset import 500s on a temporary file.
+    That is the pre-populated case an operator restoring a snapshot onto a
+    read-only volume actually hits.
+    """
+    live = tmp_path / "config.yaml"
+    live.write_text("live: true\n", encoding="utf-8")
+    monkeypatch.setattr(evaluation_console, "LIVE_AGENT_CONFIG_PATH", str(live))
+
+    root = tmp_path / "evaluations"
+    for name in ("datasets", "profiles", "drafts", "runs", "jobs"):
+        (root / name).mkdir(parents=True)
+
+    agent_config_path = tmp_path / "evaluation.yaml"
+    agent_config_path.write_text("redacted: true\n", encoding="utf-8")
+
+    def _read_only(*_args, **_kwargs):
+        raise OSError(30, "Read-only file system")
+
+    monkeypatch.setattr(evaluation_console.tempfile, "NamedTemporaryFile", _read_only)
+
+    with caplog.at_level(
+        logging.ERROR, logger="src.interfaces.chat_app.evaluation_console"
+    ):
+        service = build_evaluation_service(
+            {
+                "evaluations": {
+                    "enabled": True,
+                    "root": str(root),
+                    "agent_config_path": str(agent_config_path),
+                }
+            }
+        )
+
+    assert service is None
+    assert [record.levelname for record in caplog.records] == ["ERROR"]
+    assert str(root) in caplog.text
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root ignores the directory mode this test relies on"
+)
+def test_evaluation_service_disables_on_a_real_read_only_directory(
+    monkeypatch, tmp_path, caplog
+):
+    """The same case without a patched probe: a genuinely unwritable mode."""
+    live = tmp_path / "config.yaml"
+    live.write_text("live: true\n", encoding="utf-8")
+    monkeypatch.setattr(evaluation_console, "LIVE_AGENT_CONFIG_PATH", str(live))
+
+    root = tmp_path / "evaluations"
+    for name in ("datasets", "profiles", "drafts", "runs", "jobs"):
+        (root / name).mkdir(parents=True)
+
+    agent_config_path = tmp_path / "evaluation.yaml"
+    agent_config_path.write_text("redacted: true\n", encoding="utf-8")
+
+    root.chmod(0o555)
+    try:
+        with caplog.at_level(
+            logging.ERROR, logger="src.interfaces.chat_app.evaluation_console"
+        ):
+            service = build_evaluation_service(
+                {
+                    "evaluations": {
+                        "enabled": True,
+                        "root": str(root),
+                        "agent_config_path": str(agent_config_path),
+                    }
+                }
+            )
+    finally:
+        root.chmod(0o755)
+
+    assert service is None
+    assert str(root) in caplog.text
+
+
+def test_evaluation_service_leaves_no_probe_file_behind(tmp_path):
+    """A writable root still builds, and the probe cleans up after itself."""
+    root = tmp_path / "evaluations"
+
+    service = build_evaluation_service(
+        {
+            "evaluations": {
+                "enabled": True,
+                "root": str(root),
+                "agent_config_path": str(tmp_path / "evaluation.yaml"),
+            }
+        }
+    )
+
+    assert service is not None
+    assert sorted(entry.name for entry in root.iterdir()) == [
+        "datasets",
+        "drafts",
+        "jobs",
+        "profiles",
+        "runs",
+    ]
 
 
 def test_evaluation_service_survives_a_corrupt_job_file(monkeypatch, tmp_path, caplog):

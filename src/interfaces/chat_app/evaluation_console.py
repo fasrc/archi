@@ -18,6 +18,7 @@ is off by default and the dev stack runs auth-off.
 """
 
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -110,12 +111,23 @@ def build_evaluation_service(
     mcp_config_path = evaluations_config.get("mcp_config_path")
     root = evaluations_config.get("root", DEFAULT_EVALUATION_ROOT)
     try:
-        return EvaluationConsoleService(
+        service = EvaluationConsoleService(
             Path(root),
             agent_config_path=Path(agent_config_path),
             agents_dir=Path(chat_app_config.get("agents_dir") or DEFAULT_AGENTS_DIR),
             mcp_config_path=Path(mcp_config_path) if mcp_config_path else None,
         )
+        # Construction alone does not prove the root is usable. It only calls
+        # `mkdir(parents=True, exist_ok=True)` five times and sweeps stale jobs,
+        # which writes solely when it finds a job to interrupt — so a read-only
+        # mount already holding the five directories, the shape an operator gets
+        # restoring a snapshot onto a read-only volume, raises nothing at all.
+        # The console would register and the first dataset import would 500.
+        # A probe write is the cheapest statement that the root accepts writes;
+        # it is deleted on close, so it leaves the catalog tree untouched.
+        with tempfile.NamedTemporaryFile(dir=root, prefix=".archi-write-probe-"):
+            pass
+        return service
     except OSError as exc:
         logger.error(
             "Evaluation console disabled: evaluations.root %s is not usable: %s",
