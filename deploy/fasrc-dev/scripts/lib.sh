@@ -19,11 +19,16 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 # overridable per-invocation only, never from a persistent git-excluded file.
 # A value applies only when the variable is not already set, so an explicit
 # environment variable on the command line always wins. Anything else in the
-# file aborts before the deploy touches anything: a typo must fail loudly, not
-# silently deploy the wrong identity. Contract pinned by test_host_env.sh.
+# file aborts EVERY consumer of lib.sh — status.sh and nuke.sh included: with
+# an unparsable host.env the deployment identity is ambiguous, and a teardown
+# on an ambiguous identity is how the wrong deployment dies. Fail closed; the
+# error names the offending line. Contract pinned by test_host_env.sh.
 _host_env_file="$SCRIPT_DIR/host.env"
 if [ -f "$_host_env_file" ]; then
   while IFS= read -r _he_line || [ -n "$_he_line" ]; do
+    _he_line="${_he_line%$'\r'}"                              # tolerate CRLF
+    _he_line="${_he_line#"${_he_line%%[![:space:]]*}"}"       # trim leading ws
+    _he_line="${_he_line%"${_he_line##*[![:space:]]}"}"       # trim trailing ws
     case "$_he_line" in
       ''|\#*) continue ;;
       DEPLOYMENT=*) [ "${DEPLOYMENT+x}" ] || DEPLOYMENT="${_he_line#*=}" ;;

@@ -42,7 +42,8 @@ Standing notes for every task:
 - [x] 2.1 `model: sonnet` — Run all four shell self-tests and the issue's no-deploy verify
       snippet (fake `archi`, `DEPLOYMENT=claw`); record the observed output here.
 
-      **Measured** (after the round-1 redesign below): `test_host_env` 9 passed, 0 failed;
+      **Measured** (after the round-1 and round-2 fixes below): `test_host_env` 11 passed,
+      0 failed;
       `test_gpu_flag` 3 passed; `test_ensure_config` 10 passed; `test_firewall` 8 passed.
       Verify snippet with a fake `archi` on `PATH`: `DEPLOYMENT=claw bash -c 'source
       deploy/fasrc-dev/scripts/lib.sh; …'` printed `DEPLOYMENT=claw
@@ -77,3 +78,16 @@ findings become the PR body's Findings block.
       allowlist, command line always wins), not a sourced file with a `:=` idiom. TDD held
       for the pivot: the rewritten test failed 3/9 against the sourcing implementation
       (cases 5, 7, 8), then passed 9/9 after the parser landed.
+- [x] 3.2 Round 2 — three findings on the parser.
+      `[medium]` CRLF endings poisoned values (`--name claw\r`) — **held**; each line now
+      strips a trailing CR (RED case 10 caught the poisoned argv, GREEN after).
+      `[medium]` the parser was stricter than the docs: indented comments and
+      whitespace-only lines aborted — **held**; edge whitespace is trimmed before
+      classification, docs and spec state it (RED cases 9/11, GREEN after).
+      `[high]` a malformed host.env blocks `status.sh`/`nuke.sh`, not just deploys —
+      **held on the docs, pushed back on the policy**: fail-closed is the point precisely
+      for `nuke.sh` (an unparsable host.env makes identity ambiguous, and a teardown on an
+      ambiguous identity destroys the wrong deployment; the error names the offending line
+      of the operator's own file). Kept fail-closed; code comment, example, README, and
+      spec now state the every-wrapper scope explicitly, and case 7 proves the abort lands
+      before `archi` is ever invoked. Self-test now 11 cases.

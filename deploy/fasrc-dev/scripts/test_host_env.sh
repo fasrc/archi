@@ -15,9 +15,12 @@
 #    5. a command-line environment variable beats host.env
 #    6. host.env GPU_IDS= (empty) still passes no --gpu-ids (the no-colon
 #       ${GPU_IDS-} keeps distinguishing unset from empty)
-#    7. a key outside the allowlist (e.g. CONFIG_SHA) aborts the deploy
+#    7. a key outside the allowlist (e.g. CONFIG_SHA) aborts every wrapper,
+#       before archi is ever invoked (identity is ambiguous — fail closed)
 #    8. a non-assignment line aborts AND is never executed
-#    9. comments and blank lines are accepted
+#    9. comments, indented comments, whitespace-only and blank lines are fine
+#   10. CRLF line endings do not poison the value
+#   11. leading/trailing whitespace around an assignment is ignored
 #
 # Run: bash deploy/fasrc-dev/scripts/test_host_env.sh
 set -euo pipefail
@@ -115,9 +118,13 @@ fi
 # --- 7: a key outside the allowlist aborts ------------------------------------
 printf 'CONFIG_SHA=deadbeef\n' > "$FIXSCRIPTS/host.env"
 if run_deploy HOST_ENV_SET=1 2>/dev/null; then
-  notok "7 an unsupported key (CONFIG_SHA) must abort the deploy"
+  notok "7 an unsupported key (CONFIG_SHA) must abort"
 else
-  ok "7 unsupported key aborts the deploy"
+  if [ -s "$TESTROOT/argv" ]; then
+    notok "7 abort must happen BEFORE archi is invoked, got: $(cat "$TESTROOT/argv")"
+  else
+    ok "7 unsupported key aborts before archi is invoked"
+  fi
 fi
 
 # --- 8: a non-assignment line aborts and is never executed --------------------
@@ -134,14 +141,34 @@ else
   fi
 fi
 
-# --- 9: comments and blank lines are fine --------------------------------------
-printf '# per-host identity\n\nDEPLOYMENT=claw\n' > "$FIXSCRIPTS/host.env"
-run_deploy HOST_ENV_SET=1
+# --- 9: comments, indented comments, whitespace-only and blank lines are fine --
+printf '# per-host identity\n\n  # indented comment\n   \nDEPLOYMENT=claw\n' > "$FIXSCRIPTS/host.env"
+run_deploy HOST_ENV_SET=1 || true
 argv="$(cat "$TESTROOT/argv")"
-if [[ "$argv" == *"--name claw"* ]]; then
-  ok "9 comments and blank lines are accepted"
+if [[ "$argv" == *"--name claw --config"* ]]; then
+  ok "9 comments, indented comments and whitespace-only lines are accepted"
 else
-  notok "9 comments/blank lines should parse, got: $argv"
+  notok "9 comment/whitespace lines should parse, got: $argv"
+fi
+
+# --- 10: CRLF line endings do not poison the value -----------------------------
+printf 'DEPLOYMENT=claw\r\n' > "$FIXSCRIPTS/host.env"
+run_deploy HOST_ENV_SET=1 || true
+argv="$(cat "$TESTROOT/argv")"
+if [[ "$argv" == *"--name claw --config"* ]]; then
+  ok "10 CRLF host.env: value is clean (no trailing CR)"
+else
+  notok "10 CRLF host.env poisoned the value, got: $argv"
+fi
+
+# --- 11: whitespace around an assignment is ignored ----------------------------
+printf '  DEPLOYMENT=claw  \n' > "$FIXSCRIPTS/host.env"
+run_deploy HOST_ENV_SET=1 || true
+argv="$(cat "$TESTROOT/argv")"
+if [[ "$argv" == *"--name claw --config"* ]]; then
+  ok "11 leading/trailing whitespace around an assignment is ignored"
+else
+  notok "11 whitespace-padded assignment should parse cleanly, got: $argv"
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

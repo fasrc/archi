@@ -13,8 +13,13 @@ deployment untouched by this mechanism.
 `host.env` is data, never code. `lib.sh` SHALL parse it rather than source it, so no
 content of the file can execute, and SHALL accept only `KEY=VALUE` lines for an
 explicit allowlist — `DEPLOYMENT`, `CONFIG`, `GPU_IDS` — plus comments and blank
-lines. Any other line SHALL abort before the deploy touches anything, naming the
-offending line: a typo must fail loudly, not silently deploy the wrong identity. The
+lines; leading and trailing whitespace and a trailing carriage return SHALL be
+stripped from each line before it is classified, so an indented comment or a
+CRLF-edited file neither aborts nor poisons a value. Any other line SHALL abort
+every consumer of `lib.sh` — `status.sh` and `nuke.sh` included — naming the
+offending line: an unparsable `host.env` makes the deployment identity ambiguous,
+and a teardown on an ambiguous identity is how the wrong deployment dies. A typo
+must fail loudly and closed, not silently deploy (or destroy) the wrong identity. The
 config pin (`CONFIG_REF`, `CONFIG_SHA`, `CONFIG_REPO`, `CONFIG_DIR`) and the secrets
 path are deliberately outside the allowlist — they stay overridable per-invocation
 only, never from a persistent git-excluded file, so the tracked-pin safety story
@@ -50,11 +55,18 @@ in code — the mechanism itself is name-agnostic.
   `DEPLOYMENT=other ./redeploy.sh`
 - **THEN** `DEPLOYMENT` resolves to `other`
 
-#### Scenario: A key outside the allowlist aborts the deploy
+#### Scenario: A key outside the allowlist fails every wrapper, closed
 
 - **WHEN** `host.env` contains `CONFIG_SHA=deadbeef` (or any key other than
-  `DEPLOYMENT`, `CONFIG`, `GPU_IDS`) and a deploy runs
-- **THEN** the deploy aborts before touching anything, naming the offending line
+  `DEPLOYMENT`, `CONFIG`, `GPU_IDS`) and any wrapper script runs
+- **THEN** the script aborts before `archi` is invoked, naming the offending line
+
+#### Scenario: Edge whitespace and CRLF are tolerated, not poisonous
+
+- **WHEN** `host.env` contains `  DEPLOYMENT=claw  `, an indented comment, a
+  whitespace-only line, or a `DEPLOYMENT=claw` line with a CRLF ending
+- **THEN** the deployment name resolves to exactly `claw`, with no stray
+  whitespace or carriage return in the value
 
 #### Scenario: host.env content is never executed
 
