@@ -38,6 +38,30 @@ _THINKING_PATH = (
 )
 
 
+def _provider_block(config: Any, provider: str) -> Any:
+    """The named provider's config block, matched without regard to case.
+
+    ``BaseReActAgent._build_provider_config()`` resolves a provider block by its
+    lowercased name, so a deployment that writes ``default_provider: LOCAL``
+    against a ``local`` block still builds a thinking-enabled model. Matching
+    exactly here would leave the gate off for precisely that deployment.
+    """
+    node: Any = config
+    for key in ("services", "chat_app", "providers"):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    if not isinstance(node, dict):
+        return None
+    if provider in node:
+        return node[provider]
+    lowered = provider.lower()
+    for name, block in node.items():
+        if isinstance(name, str) and name.lower() == lowered:
+            return block
+    return None
+
+
 def provider_emits_thinking(config: Any, provider: Optional[str]) -> bool:
     """Report whether ``provider`` is configured to emit reasoning.
 
@@ -57,8 +81,8 @@ def provider_emits_thinking(config: Any, provider: Optional[str]) -> bool:
     """
     if not isinstance(provider, str):
         return False
-    node: Any = config
-    for key in ("services", "chat_app", "providers", provider, *_THINKING_PATH):
+    node: Any = _provider_block(config, provider)
+    for key in _THINKING_PATH:
         if not isinstance(node, dict):
             return False
         node = node.get(key)

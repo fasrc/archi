@@ -23,7 +23,12 @@ from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
 
 import pytest
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    HumanMessage,
+    ToolMessage,
+)
 from langgraph.errors import GraphRecursionError
 
 from src.archi.pipelines.agents.base_react import BaseReActAgent
@@ -350,6 +355,73 @@ def test_a_literal_closing_tag_in_an_answer_truncates_as_it_did_before(run):
 
     assert _final(outputs).answer == "suffix"
     assert all("</think>" not in text for text in _texts(outputs))
+
+
+# --- every LLM call in a tool-using loop opens its own reasoning block ------
+
+
+def _tool_call_message(call_id: str = "call_1") -> AIMessage:
+    """The AI message that starts a tool call, ending the reasoning phase."""
+    return AIMessage(
+        content="",
+        tool_calls=[{"name": "a_tool", "args": {}, "id": call_id, "type": "tool_call"}],
+    )
+
+
+@both_paths
+def test_reasoning_after_a_tool_call_is_suppressed_too(run):
+    """A ReAct loop makes several LLM calls, and each opens its own block.
+
+    With `enable_thinking` on, the chat template pre-fills a `<think>` opener for
+    EVERY call, so each one closes with its own orphan tag. Gating on "a closing
+    tag has appeared anywhere in the accumulated content" would leave the gate
+    permanently open after the first call, and every later reasoning phase would
+    stream to the user. The gate is scoped to the current phase instead.
+    """
+    agent = _TestableAgent(THINKING_ON)
+    outputs = run(
+        agent,
+        [
+            *_deltas("first reasoning", "</think>", "an interim answer"),
+            _tool_call_message(),
+            ToolMessage(content="tool result", tool_call_id="call_1"),
+            *_deltas("second reasoning", "</think>", "\n\nThe final answer"),
+        ],
+    )
+
+    _assert_no_reasoning_visible(outputs)
+    assert _final(outputs).answer == "The final answer"
+
+
+# --- a provider using the structured reasoning channel is not gated ---------
+
+
+def _reasoning_delta(reasoning: str) -> AIMessageChunk:
+    """A chunk carrying reasoning on the provider's own field, as Ollama sends."""
+    return AIMessageChunk(
+        content="", additional_kwargs={"reasoning_content": reasoning}
+    )
+
+
+@both_paths
+def test_a_structured_reasoning_provider_still_streams_incrementally(run):
+    """A provider reporting reasoning through `reasoning_content` never leaks.
+
+    Its visible content carries no `</think>` by design, so gating on that tag
+    would hold every answer chunk to the final event. The design records this
+    path as untouched; holding it would contradict that.
+    """
+    agent = _TestableAgent(THINKING_ON)
+    outputs = run(
+        agent,
+        [
+            _reasoning_delta("let me think"),
+            *_deltas("The ", "answer"),
+        ],
+    )
+
+    assert _texts(outputs) == ["The", "The answer"]
+    assert _final(outputs).answer == "The answer"
 
 
 # --- error exits discard held text rather than flushing it (4.1, 4.2) -------

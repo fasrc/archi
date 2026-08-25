@@ -477,6 +477,14 @@ class BaseReActAgent:
         # Whether this provider can emit reasoning at all (issue #122). The
         # provider cannot change mid-stream, so resolve it once here.
         thinking_possible = provider_emits_thinking(self.config, self.default_provider)
+        # Where the current reasoning phase starts in accumulated_content. A
+        # ReAct loop makes one LLM call per tool round and, with thinking on,
+        # each call opens its own block, so the gate is scoped to the current
+        # phase rather than to the whole stream.
+        phase_start = 0
+        # Set once the provider reports reasoning on its own channel, which
+        # means its answer never carries a closing tag to wait for.
+        structured_reasoning = False
 
         try:
             for event in self.agent.stream(
@@ -527,6 +535,11 @@ class BaseReActAgent:
                             emitted_tool_starts.add(tc_id)
                             new_tool_call = True
                     if new_tool_call:
+                        # The LLM call after this tool opens its own reasoning
+                        # block, so the gate must wait for that block's own
+                        # closing tag rather than treat the previous one as
+                        # standing permission to emit (issue #122).
+                        phase_start = len(accumulated_content)
                         # End thinking phase if active before tool execution
                         if thinking_step_id is not None:
                             duration_ms = (
@@ -614,6 +627,10 @@ class BaseReActAgent:
                                 # Ollama sends thinking as deltas, so accumulate
                                 accumulated_thinking += reasoning_content
                                 visible_content = accumulated_content
+                                # This provider keeps reasoning on its own field,
+                                # so its answer carries no closing tag and must
+                                # not be gated on one (issue #122).
+                                structured_reasoning = True
                             else:
                                 # Parse thinking vs visible content
                                 visible_content, thinking_content = (
@@ -626,7 +643,10 @@ class BaseReActAgent:
                             # provider's reasoning block is known to be closed
                             # (issue #122). `last_visible_content` is left alone
                             # while text is held, so nothing is skipped on release.
-                            held = hold_visible(thinking_possible, accumulated_content)
+                            held = hold_visible(
+                                thinking_possible and not structured_reasoning,
+                                accumulated_content[phase_start:],
+                            )
                             if visible_content != last_visible_content and not held:
                                 last_visible_content = visible_content
                                 yield self.finalize_output(
@@ -809,6 +829,14 @@ class BaseReActAgent:
         # Whether this provider can emit reasoning at all (issue #122). The
         # provider cannot change mid-stream, so resolve it once here.
         thinking_possible = provider_emits_thinking(self.config, self.default_provider)
+        # Where the current reasoning phase starts in accumulated_content. A
+        # ReAct loop makes one LLM call per tool round and, with thinking on,
+        # each call opens its own block, so the gate is scoped to the current
+        # phase rather than to the whole stream.
+        phase_start = 0
+        # Set once the provider reports reasoning on its own channel, which
+        # means its answer never carries a closing tag to wait for.
+        structured_reasoning = False
 
         try:
             async for event in self.agent.astream(
@@ -854,6 +882,11 @@ class BaseReActAgent:
                             emitted_tool_starts.add(tc_id)
                             new_tool_call = True
                     if new_tool_call:
+                        # The LLM call after this tool opens its own reasoning
+                        # block, so the gate must wait for that block's own
+                        # closing tag rather than treat the previous one as
+                        # standing permission to emit (issue #122).
+                        phase_start = len(accumulated_content)
                         # End thinking phase if active before tool execution
                         if thinking_step_id is not None:
                             duration_ms = (
@@ -932,6 +965,10 @@ class BaseReActAgent:
                                 # Ollama sends thinking as deltas, so accumulate
                                 accumulated_thinking += reasoning_content
                                 visible_content = accumulated_content
+                                # This provider keeps reasoning on its own field,
+                                # so its answer carries no closing tag and must
+                                # not be gated on one (issue #122).
+                                structured_reasoning = True
                             else:
                                 # Parse thinking vs visible content
                                 visible_content, thinking_content = (
@@ -944,7 +981,10 @@ class BaseReActAgent:
                             # provider's reasoning block is known to be closed
                             # (issue #122). `last_visible_content` is left alone
                             # while text is held, so nothing is skipped on release.
-                            held = hold_visible(thinking_possible, accumulated_content)
+                            held = hold_visible(
+                                thinking_possible and not structured_reasoning,
+                                accumulated_content[phase_start:],
+                            )
                             if visible_content != last_visible_content and not held:
                                 last_visible_content = visible_content
                                 yield self.finalize_output(

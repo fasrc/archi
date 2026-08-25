@@ -5,13 +5,24 @@
 The agent SHALL NOT stream a reasoning model's private chain-of-thought to the
 user as visible text. When the provider the agent is about to call is configured
 to emit thinking, the streaming paths (`stream()` and `astream()`) SHALL hold
-visible text output while no `</think>` has been observed in the
-accumulated content, and SHALL release it once a `</think>` is observed. On a
-stream that completes normally, held text that is never released by a `</think>`
-SHALL still reach the user through the existing end-of-stream `final` event. On a
-stream that terminates early through an error path, held text SHALL be discarded
-rather than flushed, because content that never reached a `</think>` cannot be
-shown to be an answer rather than reasoning.
+visible text output while no `</think>` has been observed in the **current
+reasoning phase**, and SHALL release it once a `</think>` is observed in that
+phase. A ReAct run makes one model call per tool round and each call opens its
+own reasoning block, so a phase begins at the start of the stream and again after
+each tool call; a closing tag from an earlier phase SHALL NOT release a later one.
+On a stream that completes normally, held text that is never released by a
+`</think>` SHALL still reach the user through the existing end-of-stream `final`
+event. On a stream that terminates early through an error path, held text SHALL be
+discarded rather than flushed, because content that never reached a `</think>`
+cannot be shown to be an answer rather than reasoning.
+
+#### Scenario: A later reasoning phase follows a tool call
+
+- **GIVEN** the active provider is configured with `enable_thinking` true
+- **AND** an earlier phase already closed its reasoning with a `</think>`
+- **WHEN** the agent calls a tool and the next model call streams fresh reasoning before its own `</think>`
+- **THEN** that later reasoning is held exactly as the first phase's was
+- **AND** no visible `text` event contains it
 
 #### Scenario: Orphan reasoning precedes the closing tag
 
@@ -54,6 +65,20 @@ suppression logic SHALL add no buffering and no latency to that path.
 - **GIVEN** the active provider is not configured with `enable_thinking` true
 - **WHEN** the stream delivers chunks `["The ", "quick ", "answer"]` with no `</think>` tag anywhere
 - **THEN** visible `text` events are emitted incrementally as the content grows ("The", "The quick", "The quick answer")
+
+#### Scenario: Provider reports reasoning on its own channel
+
+- **GIVEN** a provider that returns reasoning in `additional_kwargs.reasoning_content`
+- **AND** that provider is also configured with `enable_thinking` true
+- **WHEN** it streams an answer that carries no `</think>` tag, as that channel implies
+- **THEN** the answer SHALL stream incrementally rather than being held to the `final` event
+- **AND** the reasoning SHALL stay on its own channel, as it does today
+
+#### Scenario: Provider named in a different case than its config block
+
+- **GIVEN** the provider block is keyed `local` and the active provider is named `LOCAL`
+- **WHEN** the agent resolves the gate
+- **THEN** it SHALL find the block and treat the provider as thinking-enabled, matching how the model itself is built
 
 #### Scenario: Absent or malformed provider configuration
 

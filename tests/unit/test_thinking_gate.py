@@ -113,6 +113,24 @@ def test_malformed_config_is_false(config):
     assert provider_emits_thinking(config, "local") is False
 
 
+@pytest.mark.parametrize("named", ["LOCAL", "Local", "lOcAl"])
+def test_provider_name_matches_case_insensitively(named):
+    """`_build_provider_config()` resolves the block by lowercased name.
+
+    A deployment naming its provider `LOCAL` against a `local` block therefore
+    builds a thinking-enabled model, so an exact-case gate would be off for
+    exactly the deployment that leaks.
+    """
+    config = _config_with_thinking("local", True)
+    assert provider_emits_thinking(config, named) is True
+
+
+def test_an_upper_case_provider_block_is_found_too():
+    """The match works in both directions, so neither casing is privileged."""
+    config = _config_with_thinking("LOCAL", True)
+    assert provider_emits_thinking(config, "local") is True
+
+
 def test_gate_is_provider_granular():
     """Two providers in one config resolve independently (decision 3)."""
     config = {
