@@ -2,9 +2,10 @@
 
 ### Requirement: The release run retargets the service templates and proves it did
 
-The release workflow SHALL rewrite every service template's base reference to the base image
-tag that the release built, regardless of the tag the template carried before, and SHALL fail
-the run when any service template's base reference does not carry that tag after the rewrite.
+The release workflow SHALL rewrite every `a2rchi-*-base` reference a service template declares
+to the base image tag that the release built, regardless of the tag the template carried
+before, and SHALL fail the run when any such reference does not carry that tag after the
+rewrite, or names a base image the rewriter cannot place.
 
 The rewrite and the proof are one requirement because each one alone is worth little. A
 rewrite with no proof is what this change repairs: the call at
@@ -43,6 +44,28 @@ and there the reference is correct and the diff is empty.
 
 The run fails before the smoke deployment, not after it. A smoke test against the wrong base
 proves nothing, and the operator learns more from a named template than from a green run.
+
+#### Scenario: A base image the rewriter cannot place fails the release run
+
+- **WHEN** a service template names an `a2rchi` base image that is not one the rewriter knows
+- **THEN** the release run fails at the verification step
+- **AND** the failure names that template and the reference it declares
+
+The rewriter and the check read the same map of base images, so a template moved onto a
+renamed base is skipped by both: the retarget leaves it alone, and a check that only compares
+the references it recognises never looks at it. One other correct template is then enough to
+carry the run green.
+
+This bounds what the check proves, and the bound is worth stating. The check reads the
+references the templates **declare**. A template that declares an `a2rchi` base gets compared
+or the run fails. A template that declares no base image at all — one moved directly onto a
+third-party image — is invisible here, as it is to the rewriter, to `required_base_images`
+(`src/cli/managers/base_image_preflight.py`), and to
+`test_service_templates_pin_one_explicit_base_tag`. Every one of those skips a template it
+cannot match. Closing that gap means declaring which templates are service templates, which no
+part of the repository does today, and it belongs in the in-tree gate that runs on every
+commit rather than in a release-time check: a template with no base reference is a state of the
+repository, and the release run only ever checks out a ref the gate already passed.
 
 #### Scenario: A verification that finds no base reference fails the release run
 

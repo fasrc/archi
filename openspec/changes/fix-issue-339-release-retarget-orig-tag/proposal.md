@@ -39,10 +39,16 @@ value matches it. `--orig-tag all` covers both causes.
   The `--orig-tag` **default stays `latest`**. A default that changes to suit one caller hides
   the next caller that depends on it, and the existing regression test
   `test_the_default_orig_tag_only_reaches_a_latest_pinned_line` pins that default.
+- A new `--verify` mode on `scripts/dev/update_service_base_images.py` reads the references the
+  templates declare and exits non-zero unless each one names the target reference. It shares
+  the rewriter's `FROM` matcher and base-image map, so the check cannot disagree with the
+  rewriter about what a base line is. It fails on three inputs: a reference on another tag or
+  another registry, a reference to an `a2rchi` base the rewriter cannot place, and a run that
+  matched no reference at all. The last two are the same failure in different clothes — a check
+  that reads nothing passes without reading anything.
 - A new step, "Verify the service templates point at this release's base images", runs
-  directly after the retarget step and before the smoke deployment. It fails the job when any
-  service template's base reference does not carry the release tag, and it fails when it finds
-  no such reference at all.
+  directly after the retarget step and before the smoke deployment, and calls that mode with
+  the tag and registry the retarget step just wrote.
 - The commit step keeps its non-fatal empty-diff branch, and says why the tree is clean
   instead of only that it is.
 

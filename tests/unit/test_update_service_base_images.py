@@ -1194,6 +1194,74 @@ def test_verify_fails_when_no_template_names_a_base_image(tmp_path, monkeypatch)
     assert "no service template" in str(excinfo.value).lower()
 
 
+def test_verify_fails_on_a_base_image_it_does_not_know(tmp_path, monkeypatch):
+    """A renamed base must not pass by being invisible to the check.
+
+    Both the rewriter and the check read `BASE_IMAGE_MAP`, so a template moved
+    onto `a2rchi-python-base-v2` is skipped by both: the retarget leaves it
+    alone and the check never looks at it. As long as one other template
+    matches, the run would go green on a service that ships the base image the
+    release replaced.
+
+    The check therefore refuses any `a2rchi` base it cannot place, rather than
+    passing over it. `--bases` still narrows which known bases are compared, so
+    a run limited to `python` does not fail on the pytorch templates.
+    """
+    module, _ = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n",
+            "Dockerfile-mailbox": (
+                "FROM ghcr.io/fasrc/a2rchi-python-base-v2:v2026.8.0\n"
+            ),
+        },
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            module,
+            monkeypatch,
+            ["--verify", "--tag", "v2026.8.0", "--switch-source", "ghcr"],
+        )
+
+    message = str(excinfo.value)
+    assert "Dockerfile-mailbox" in message
+    assert "a2rchi-python-base-v2" in message
+
+
+def test_verify_narrowed_to_one_base_ignores_the_other(tmp_path, monkeypatch):
+    """`--bases python` compares the python templates and skips the pytorch ones.
+
+    The refusal above is about a base the script cannot place at all, not about
+    a known base this run was told to leave alone.
+    """
+    module, _ = _write_fixtures(
+        tmp_path,
+        monkeypatch,
+        **{
+            "Dockerfile-chat": "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n",
+            "Dockerfile-chat-gpu": (
+                "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4\n"
+            ),
+        },
+    )
+
+    _run(
+        module,
+        monkeypatch,
+        [
+            "--verify",
+            "--tag",
+            "v2026.8.0",
+            "--switch-source",
+            "ghcr",
+            "--bases",
+            "python",
+        ],
+    )
+
+
 def test_verify_requires_a_tag(tmp_path, monkeypatch):
     """A verification with no expected tag has nothing to check."""
     module, _ = _write_fixtures(

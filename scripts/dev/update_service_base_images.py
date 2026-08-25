@@ -309,7 +309,13 @@ def verify_base_tags(options: UpdateOptions) -> None:
         SOURCE_PREFIXES[options.switch_source] if options.switch_source else None
     )
 
+    # Every image the script knows how to rewrite, not just the ones this run
+    # compares. `--bases python` narrows the comparison to the python
+    # templates; it does not make a pytorch base unrecognisable.
+    known_images = set(BASE_IMAGE_MAP.values())
+
     wrong = []
+    unknown = []
     checked = 0
     for path in sorted(DOCKERFILES_DIR.glob("Dockerfile*")):
         for line in path.read_text().splitlines():
@@ -319,6 +325,12 @@ def verify_base_tags(options: UpdateOptions) -> None:
             image_spec = match.group("image")
             prefix, image = _split_image_spec(image_spec)[:2]
             if image not in image_names:
+                # A base this script cannot place is skipped by the rewriter
+                # too, so the retarget left it on whatever it named and the
+                # comparison below would never see it. Passing over it in
+                # silence is the failure this whole mode exists to end.
+                if "a2rchi" in image and image not in known_images:
+                    unknown.append(f"  {path.relative_to(PROJECT_ROOT)}: {image_spec}")
                 continue
             checked += 1
             # With no --switch-source the run names no registry, so the prefix
@@ -331,6 +343,16 @@ def verify_base_tags(options: UpdateOptions) -> None:
             if image_spec != expected:
                 rel_path = path.relative_to(PROJECT_ROOT)
                 wrong.append(f"  {rel_path}: {image_spec} (expected {expected})")
+
+    if unknown:
+        listed = "\n".join(unknown)
+        raise SystemExit(
+            "These service templates name a base image this script cannot place, "
+            f"so the retarget skipped them and this check cannot vouch for "
+            f"them:\n{listed}\n"
+            f"Add the image to BASE_IMAGE_MAP, or point the template at "
+            f"{' or '.join(sorted(known_images))}."
+        )
 
     if not checked:
         raise SystemExit(
@@ -346,7 +368,8 @@ def verify_base_tags(options: UpdateOptions) -> None:
             f"names:\n{listed}"
         )
 
-    print(f"Verified {checked} base references at {options.tag}.")
+    plural = "" if checked == 1 else "s"
+    print(f"Verified {checked} base reference{plural} at {options.tag}.")
 
 
 def update_base_tags(options: UpdateOptions) -> None:
