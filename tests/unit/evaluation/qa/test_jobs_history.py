@@ -2079,3 +2079,68 @@ def test_list_skips_non_job_records(tmp_path):
     assert job_id_a in ids
     assert ids.index(job_id_b) < ids.index(job_id_a)
     manager3.close()
+
+
+def test_a_late_envelope_after_a_restart_never_resurrects_its_job(tmp_path):
+    """A detached worker's late result is inert, and that is the decision.
+
+    Workers are launched with ``start_new_session=True``, so one can outlive the
+    manager that spawned it and write its envelope after the startup sweep has
+    run. The envelope is a handoff to exactly one reader — the
+    ``_execute_process`` call that spawned the worker and is blocked in
+    ``process.wait()`` — and that thread does not exist after a restart. So the
+    record stays ``interrupted``: the run's own evidence under ``runs/`` is
+    untouched, and the operator reruns rather than trusting a summary no live
+    caller ever validated.
+
+    Reading a late envelope back into the record would be crash recovery, which
+    is a feature with its own contract (which envelope shapes to trust, what to
+    do when the worker died mid-write) and not a property of this sweep.
+    """
+    job_id = "9f8e7d6c-5b4a-3928-1706-fedcba098765"
+    write_json(
+        tmp_path / f"{job_id}.json",
+        {"id": job_id, "kind": "evaluation", "status": "running"},
+    )
+
+    manager = EvaluationJobManager(tmp_path)
+    assert manager.get(job_id)["status"] == "interrupted"
+
+    # The survivor finishes now, after the sweep.
+    late_envelope = tmp_path / f".{job_id}.result.json"
+    write_json(late_envelope, {"result": {"draft_id": "d", "status": "completed"}})
+
+    assert manager.get(job_id)["status"] == "interrupted"
+    assert [job["id"] for job in manager.list()] == [job_id]
+    assert manager.start("generate_atoms", lambda: {"draft_id": "d"})["kind"] == (
+        "generate_atoms"
+    ), "a late envelope must not read as an active job and block the next one"
+
+    manager.wait(manager.list()[0]["id"], timeout=2)
+    manager.close()
+
+
+def test_the_sweep_keeps_a_uuid_spelled_differently_than_the_manager_writes_it(
+    tmp_path,
+):
+    """A parseable UUID is not enough; it has to be the name the manager wrote.
+
+    ``uuid.UUID`` accepts spellings the manager never produces — upper case, or
+    wrapped in braces — and re-serialising is what tells them apart. That is the
+    same judgement as the ``.notes.result.json`` case: ``jobs_dir`` is a
+    host-mounted directory a human can reach, so a startup routine deleting a
+    file it did not create is worse than the leak it fixes.
+    """
+    canonical = "7a3f1b2c-4d5e-6f78-90ab-cdef01234567"
+    upper = tmp_path / f".{canonical.upper()}.result.json"
+    braced = tmp_path / f".{{{canonical}}}.result.json"
+    written_by_the_manager = tmp_path / f".{canonical}.result.json"
+    for path in (upper, braced, written_by_the_manager):
+        write_json(path, {"result": {"draft_id": "d"}})
+
+    manager = EvaluationJobManager(tmp_path)
+
+    assert upper.exists(), "not a name the manager writes"
+    assert braced.exists(), "not a name the manager writes"
+    assert not written_by_the_manager.exists()
+    manager.close()

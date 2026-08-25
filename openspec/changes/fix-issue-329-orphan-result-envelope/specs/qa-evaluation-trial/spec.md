@@ -66,6 +66,8 @@ The ordering is load-bearing. The pass that marks stale jobs interrupted is what
 those jobs; sweeping first would delete the result of a job the manager still records as
 running, leaving the directory briefly describing a state that never existed.
 
+A worker is launched with `start_new_session=True`, so one can outlive the manager that spawned it and write its envelope *after* the sweep has run. Such an envelope SHALL remain inert: the manager MUST NOT read it back into a job record, and the record left by the restart pass MUST keep reading `interrupted`. The envelope is a handoff addressed to exactly one reader, the `_execute_process` call blocked in `process.wait()`, and after a restart that reader does not exist — no live caller ever validated the envelope's shape or reconciled it against the run's own artifacts. The run's evidence under `runs/` is untouched either way, so the operator reruns rather than trusting a summary nothing checked. Reading a late envelope back would be crash recovery, which needs its own contract — which envelope shapes to trust, and what to do about a worker killed mid-write — and is not a property of this sweep.
+
 The sweep SHALL match the exact name shape the manager writes, with the middle segment
 parsed as a UUID. `jobs_dir` is a directory a human can reach, and a startup routine that
 deletes files it did not create is a worse failure than the one it fixes.
@@ -91,6 +93,12 @@ like, and only the UUID parse tells it apart from the manager's own.
 - **WHEN** a manager is constructed over a `jobs_dir` holding a record with status `running` and that job's envelope
 - **THEN** the record reads `interrupted`
 - **AND** the envelope is gone
+
+#### Scenario: A late envelope does not resurrect its job
+
+- **WHEN** a worker survives the restart and writes `.<uuid>.result.json` after the sweep, for a job the restart pass has already marked `interrupted`
+- **THEN** that record still reads `interrupted`
+- **AND** the envelope appears in no listing and blocks no new job from starting
 
 ### Requirement: A listing skips a file that is not a job record
 
