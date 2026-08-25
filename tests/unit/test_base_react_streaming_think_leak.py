@@ -62,6 +62,26 @@ THINKING_ON = _config(True)
 THINKING_OFF = _config(False)
 THINKING_UNSET = _config(None)
 
+#: A deployment whose default provider does not think and whose second one does,
+#: so a request-local switch can be driven in either direction.
+TWO_PROVIDERS = {
+    "services": {
+        "chat_app": {
+            "default_provider": "plain",
+            "providers": {
+                "plain": {},
+                "thinker": {
+                    "extra_kwargs": {
+                        "extra_body": {
+                            "chat_template_kwargs": {"enable_thinking": True}
+                        }
+                    }
+                },
+            },
+        }
+    }
+}
+
 
 class _TestableAgent(BaseReActAgent):
     """Subclass that skips LLM/prompt/LangGraph init so the stream paths run alone.
@@ -212,6 +232,53 @@ def test_a_non_thinking_provider_still_streams_incrementally(run, config):
 
     assert _texts(outputs) == ["The", "The quick", "The quick answer"]
     assert _final(outputs).answer == "The quick answer"
+
+
+@both_paths
+@pytest.mark.parametrize(
+    "config",
+    [
+        {},
+        {"services": {"chat_app": {"providers": {"local": None}}}},
+        {"services": {"chat_app": {"providers": {"local": {"extra_kwargs": "no"}}}}},
+    ],
+    ids=["empty", "null-block", "non-mapping-kwargs"],
+)
+def test_a_malformed_config_streams_incrementally_and_never_raises(run, config):
+    """A config typo must not crash a streaming path, nor withhold an answer."""
+    agent = _TestableAgent(config)
+    outputs = run(agent, _deltas("The ", "quick ", "answer"))
+
+    assert _texts(outputs) == ["The", "The quick", "The quick answer"]
+
+
+# --- the gate follows a request-local provider switch (2.8, end to end) -----
+
+
+@both_paths
+def test_a_request_local_switch_to_a_thinking_provider_turns_the_gate_on(run):
+    """``adopt_request_local_model()`` rewrites ``default_provider`` before the
+    stream runs, and the gate reads that attribute, so a chat-UI switch to a
+    thinking-enabled provider suppresses reasoning for that request alone.
+    """
+    agent = _TestableAgent(TWO_PROVIDERS, provider="plain")
+    agent.adopt_request_local_model("thinker", "a-model", None)
+
+    outputs = run(agent, _deltas("some reasoning", "</think>", "\n\nThe answer"))
+
+    _assert_no_reasoning_visible(outputs)
+    assert _texts(outputs) == ["The answer"]
+
+
+@both_paths
+def test_a_request_local_switch_away_from_a_thinking_provider_turns_it_off(run):
+    """The same switch in the other direction restores incremental streaming."""
+    agent = _TestableAgent(TWO_PROVIDERS, provider="thinker")
+    agent.adopt_request_local_model("plain", "a-model", None)
+
+    outputs = run(agent, _deltas("The ", "quick ", "answer"))
+
+    assert _texts(outputs) == ["The", "The quick", "The quick answer"]
 
 
 # --- a thinking provider that never closes its block (2.6) ------------------
