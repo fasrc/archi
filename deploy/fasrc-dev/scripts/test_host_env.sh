@@ -3,16 +3,21 @@
 # COPY of lib.sh in a temporary fixture tree and a fake `archi` binary, so it
 # reads no real config, writes nothing into the working tree, renders no
 # compose, and starts no container.
+#
+# host.env is DATA, not code (adversarial-review round 1): only KEY=VALUE lines
+# for DEPLOYMENT / CONFIG / GPU_IDS are accepted, a value applies only when the
+# variable is not already set (command line always wins), and anything else
+# aborts the deploy before it touches anything.
 #    1. no host.env: DEPLOYMENT=dev, CONFIG=deploy/fasrc-dev/config.yaml
 #    2. a missing host.env is not an error
-#    3. host.env DEPLOYMENT (`:=` form) reaches `archi create --name`
-#    4. host.env CONFIG (`:=` form) reaches `--config`
-#    5. a command-line environment variable beats a `:=`-style host.env
-#    6. a PLAIN assignment in host.env beats the command line — the documented
-#       tradeoff of sourcing before the defaults, pinned here so changing it is
-#       a deliberate red-test-first decision rather than an accident
-#    7. host.env GPU_IDS="" still passes no --gpu-ids (the no-colon ${GPU_IDS-}
-#       keeps distinguishing unset from empty through a host.env)
+#    3. host.env DEPLOYMENT=claw reaches `archi create --name`
+#    4. host.env CONFIG=... reaches `--config`
+#    5. a command-line environment variable beats host.env
+#    6. host.env GPU_IDS= (empty) still passes no --gpu-ids (the no-colon
+#       ${GPU_IDS-} keeps distinguishing unset from empty)
+#    7. a key outside the allowlist (e.g. CONFIG_SHA) aborts the deploy
+#    8. a non-assignment line aborts AND is never executed
+#    9. comments and blank lines are accepted
 #
 # Run: bash deploy/fasrc-dev/scripts/test_host_env.sh
 set -euo pipefail
@@ -67,8 +72,8 @@ else
   notok "1 no host.env should keep the reserved defaults, got: $argv"
 fi
 
-# --- 3: host.env renames the deployment (`:=` form) --------------------------
-printf ': "${DEPLOYMENT:=claw}"\n' > "$FIXSCRIPTS/host.env"
+# --- 3: host.env renames the deployment --------------------------------------
+printf 'DEPLOYMENT=claw\n' > "$FIXSCRIPTS/host.env"
 run_deploy HOST_ENV_SET=1
 argv="$(cat "$TESTROOT/argv")"
 if [[ "$argv" == *"--name claw"* ]]; then
@@ -77,8 +82,8 @@ else
   notok "3 host.env DEPLOYMENT should reach --name, got: $argv"
 fi
 
-# --- 4: host.env overrides CONFIG (`:=` form) ---------------------------------
-printf ': "${CONFIG:=deploy/fasrc-dev/claw.yaml}"\n' > "$FIXSCRIPTS/host.env"
+# --- 4: host.env overrides CONFIG ---------------------------------------------
+printf 'CONFIG=deploy/fasrc-dev/claw.yaml\n' > "$FIXSCRIPTS/host.env"
 run_deploy HOST_ENV_SET=1
 argv="$(cat "$TESTROOT/argv")"
 if [[ "$argv" == *"--config deploy/fasrc-dev/claw.yaml"* ]]; then
@@ -87,34 +92,56 @@ else
   notok "4 host.env CONFIG should reach --config, got: $argv"
 fi
 
-# --- 5: command-line env beats a `:=` host.env --------------------------------
-printf ': "${DEPLOYMENT:=claw}"\n' > "$FIXSCRIPTS/host.env"
-run_deploy DEPLOYMENT=other
-argv="$(cat "$TESTROOT/argv")"
-if [[ "$argv" == *"--name other"* ]]; then
-  ok "5 command-line DEPLOYMENT beats a := host.env"
-else
-  notok "5 command-line env should beat a := host.env, got: $argv"
-fi
-
-# --- 6: a PLAIN assignment beats the command line — pinned, not preferred ----
+# --- 5: the command line always beats host.env --------------------------------
 printf 'DEPLOYMENT=claw\n' > "$FIXSCRIPTS/host.env"
 run_deploy DEPLOYMENT=other
 argv="$(cat "$TESTROOT/argv")"
-if [[ "$argv" == *"--name claw"* ]]; then
-  ok "6 plain assignment in host.env beats the command line (documented)"
+if [[ "$argv" == *"--name other"* ]]; then
+  ok "5 command-line DEPLOYMENT beats host.env"
 else
-  notok "6 plain assignment behavior changed — that needs a deliberate decision, got: $argv"
+  notok "5 command-line env must beat host.env, got: $argv"
 fi
 
-# --- 7: GPU_IDS="" through host.env still disables the flag -------------------
-printf 'GPU_IDS=""\n' > "$FIXSCRIPTS/host.env"
+# --- 6: GPU_IDS= (empty) through host.env still disables the flag -------------
+printf 'GPU_IDS=\n' > "$FIXSCRIPTS/host.env"
 run_deploy HOST_ENV_SET=1
 argv="$(cat "$TESTROOT/argv")"
 if [ -n "$argv" ] && [[ "$argv" != *"--gpu-ids"* ]]; then
-  ok "7 host.env GPU_IDS=\"\": no --gpu-ids"
+  ok "6 host.env GPU_IDS= (empty): no --gpu-ids"
 else
-  notok "7 host.env GPU_IDS=\"\" should pass no --gpu-ids, got: $argv"
+  notok "6 host.env GPU_IDS= should pass no --gpu-ids, got: $argv"
+fi
+
+# --- 7: a key outside the allowlist aborts ------------------------------------
+printf 'CONFIG_SHA=deadbeef\n' > "$FIXSCRIPTS/host.env"
+if run_deploy HOST_ENV_SET=1 2>/dev/null; then
+  notok "7 an unsupported key (CONFIG_SHA) must abort the deploy"
+else
+  ok "7 unsupported key aborts the deploy"
+fi
+
+# --- 8: a non-assignment line aborts and is never executed --------------------
+CANARY="$TESTROOT/canary"
+: > "$CANARY"
+printf 'rm -f %s\n' "$CANARY" > "$FIXSCRIPTS/host.env"
+if run_deploy HOST_ENV_SET=1 2>/dev/null; then
+  notok "8 a non-assignment line must abort the deploy"
+else
+  if [ -f "$CANARY" ]; then
+    ok "8 non-assignment line aborts and is NOT executed"
+  else
+    notok "8 host.env content was EXECUTED (canary deleted)"
+  fi
+fi
+
+# --- 9: comments and blank lines are fine --------------------------------------
+printf '# per-host identity\n\nDEPLOYMENT=claw\n' > "$FIXSCRIPTS/host.env"
+run_deploy HOST_ENV_SET=1
+argv="$(cat "$TESTROOT/argv")"
+if [[ "$argv" == *"--name claw"* ]]; then
+  ok "9 comments and blank lines are accepted"
+else
+  notok "9 comments/blank lines should parse, got: $argv"
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

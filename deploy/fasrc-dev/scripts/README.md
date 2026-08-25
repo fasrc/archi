@@ -28,19 +28,24 @@ deploy/fasrc-dev/scripts/nuke.sh -y     # full teardown, no prompt (automation)
 ## Per-host configuration (`host.env`)
 
 Two hosts deploy from this repository, and they must not share one identity.
-`lib.sh` sources an optional `host.env` (this directory; git-excluded via the
+`lib.sh` reads an optional `host.env` (this directory; git-excluded via the
 `deploy/fasrc-dev/scripts/**/*.env` rule) before it applies its defaults. Copy
 `host.env.example` to start.
 
-- **Precedence:** command-line environment > `host.env` written with
-  `: "${VAR:=value}"` > tracked default. A plain `VAR=value` assignment in
-  `host.env` beats the command line — a documented tradeoff of sourcing before
-  the defaults, pinned by `test_host_env.sh`.
+- **Data, not code.** `host.env` is parsed, never sourced — nothing in it can
+  execute. Only `KEY=VALUE` lines for `DEPLOYMENT`, `CONFIG`, and `GPU_IDS`
+  are accepted (plus comments and blank lines); any other line **aborts the
+  deploy** before it touches anything. The config pin
+  (`CONFIG_REF`/`CONFIG_SHA`/`CONFIG_REPO`) is deliberately not accepted:
+  it stays overridable per-invocation only.
+- **Precedence:** command-line environment > `host.env` > tracked default —
+  a `host.env` value applies only when the variable is not already set, so
+  the command line always wins. Pinned by `test_host_env.sh`.
 - **No `host.env`** resolves exactly the tracked defaults (`DEPLOYMENT=dev`,
   `CONFIG=deploy/fasrc-dev/config.yaml`). The GPU host needs no file.
 - **Reserved names (issue #363):** `dev` is the GPU host (`holygpu7c0717`, the
   production deployment); `claw` is the no-GPU / no-local-vLLM workstation.
-- **Self-test:** `bash deploy/fasrc-dev/scripts/test_host_env.sh` — 7 cases
+- **Self-test:** `bash deploy/fasrc-dev/scripts/test_host_env.sh` — 9 cases
   against a fake `archi` and a fixture tree; renders nothing, deploys nothing.
 
 ## Config provisioning (`ensure_config`)

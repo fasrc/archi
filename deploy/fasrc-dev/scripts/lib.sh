@@ -11,12 +11,31 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-# Optional per-host overrides (git-excluded; see host.env.example). Sourced
+# Optional per-host overrides (git-excluded; see host.env.example), read
 # before the defaults below so a host can pin its own identity without editing
-# this tracked file. Use `: "${VAR:=value}"` inside it so an explicit
-# environment variable on the command line still wins — a plain VAR=value
-# assignment beats the command line (contract pinned by test_host_env.sh).
-[ -f "$SCRIPT_DIR/host.env" ] && . "$SCRIPT_DIR/host.env"
+# this tracked file. host.env is DATA, not code: it is parsed, never sourced,
+# so nothing in it can execute, and only KEY=VALUE lines for the allowlist
+# below are accepted — the config pin (CONFIG_REF/CONFIG_SHA/...) stays
+# overridable per-invocation only, never from a persistent git-excluded file.
+# A value applies only when the variable is not already set, so an explicit
+# environment variable on the command line always wins. Anything else in the
+# file aborts before the deploy touches anything: a typo must fail loudly, not
+# silently deploy the wrong identity. Contract pinned by test_host_env.sh.
+_host_env_file="$SCRIPT_DIR/host.env"
+if [ -f "$_host_env_file" ]; then
+  while IFS= read -r _he_line || [ -n "$_he_line" ]; do
+    case "$_he_line" in
+      ''|\#*) continue ;;
+      DEPLOYMENT=*) [ "${DEPLOYMENT+x}" ] || DEPLOYMENT="${_he_line#*=}" ;;
+      CONFIG=*)     [ "${CONFIG+x}" ]     || CONFIG="${_he_line#*=}" ;;
+      GPU_IDS=*)    [ "${GPU_IDS+x}" ]    || GPU_IDS="${_he_line#*=}" ;;
+      *) printf 'host.env: unsupported line (allowed: DEPLOYMENT=, CONFIG=, GPU_IDS=, comments): %s\n' \
+           "$_he_line" >&2
+         exit 1 ;;
+    esac
+  done < "$_host_env_file"
+fi
+unset _host_env_file _he_line
 
 # --- deployment identity (single source of truth) ---------------------------
 # `dev` is reserved for the GPU host; the no-GPU workstation deploys as `claw`

@@ -29,22 +29,27 @@ for the GPU host; the no-GPU / no-local-vLLM workstation deploys as `claw`.
 
 ## What Changes
 
-- `lib.sh` sources an optional, git-excluded `scripts/host.env` immediately after
-  `REPO_ROOT` is resolved and before the deployment-identity block, and the two identity
-  knobs become overridable with today's values as the defaults:
-  `DEPLOYMENT="${DEPLOYMENT:-dev}"`, `CONFIG="${CONFIG:-deploy/fasrc-dev/config.yaml}"`.
-  `GPU_IDS="${GPU_IDS-}"` keeps its no-colon form — unset and empty stay distinguishable.
-- A new tracked `host.env.example` documents the `: "${VAR:=value}"` idiom and both real
-  host shapes: the GPU host (`DEPLOYMENT=dev`) and the workstation (`DEPLOYMENT=claw`).
-  `host.env` itself is already ignored (`.gitignore:79`); the example is not. Verified both
-  ways with `git check-ignore` — no `.gitignore` change.
+- `lib.sh` reads an optional, git-excluded `scripts/host.env` immediately after
+  `REPO_ROOT` is resolved and before the deployment-identity block. The file is **data,
+  not code**: it is parsed, never sourced, only `KEY=VALUE` lines for the allowlist
+  `DEPLOYMENT` / `CONFIG` / `GPU_IDS` (plus comments and blanks) are accepted, a value
+  applies only when the variable is not already set (the command line always wins), and
+  any other line aborts before the deploy touches anything. The two identity knobs become
+  overridable with today's values as the defaults: `DEPLOYMENT="${DEPLOYMENT:-dev}"`,
+  `CONFIG="${CONFIG:-deploy/fasrc-dev/config.yaml}"`. `GPU_IDS="${GPU_IDS-}"` keeps its
+  no-colon form — unset and empty stay distinguishable.
+- A new tracked `host.env.example` documents the data format, the allowlist, the
+  precedence, and both real host shapes: the GPU host (`DEPLOYMENT=dev`) and the
+  workstation (`DEPLOYMENT=claw`). `host.env` itself is already ignored
+  (`.gitignore:79`); the example is not. Verified both ways with `git check-ignore` — no
+  `.gitignore` change.
 - A new self-test `test_host_env.sh`, modeled on `test_gpu_flag.sh` (fake `archi` on `PATH`,
-  renders no compose, starts no container), pins seven behaviors: the defaults survive a
-  missing `host.env`; a `host.env` `DEPLOYMENT` reaches `archi create --name`; `CONFIG` is
-  honored; a command-line environment variable beats a `:=`-style `host.env`; a **plain**
-  assignment in `host.env` beats the command line (the documented tradeoff, pinned so it is
-  executable rather than folklore); `GPU_IDS=""` still disables the flag; a missing
-  `host.env` is not an error.
+  renders no compose, starts no container), pins nine behaviors: the defaults survive a
+  missing `host.env`; a missing `host.env` is not an error; a `host.env` `DEPLOYMENT`
+  reaches `archi create --name`; `CONFIG` is honored; a command-line environment variable
+  beats `host.env`; `GPU_IDS=` (empty) still disables the flag; a key outside the
+  allowlist aborts the deploy; a non-assignment line aborts **and is never executed**
+  (canary-checked); comments and blank lines parse.
 - The false premise from `eff2ed6a` is corrected in `lib.sh:21-29` and
   `test_gpu_flag.sh:8-13` **without changing any default**: the real reason the default is
   off is that both containers are configured `device: cpu`, the models are served by a
@@ -56,16 +61,23 @@ for the GPU host; the no-GPU / no-local-vLLM workstation deploys as `claw`.
 
 ## The decision this change had to make
 
-Precedence. "Command line beats `host.env`" holds only when the `host.env` author uses
-`: "${VAR:=value}"`. A plain `DEPLOYMENT=claw` assignment wins over the command line,
-because the file is sourced before the defaults are applied. Enforcing the idiom in
-`lib.sh` — snapshotting the pre-source environment and re-applying it after — buys
-strictness at the cost of new machinery in a file every deploy sources with `set -euo
-pipefail`, and the failure it would prevent is local to the host that wrote the file and
-visible on the next `status.sh`. This change takes the issue's route: document the idiom in
-`host.env.example` and the README, and pin **both** behaviors in the self-test — the `:=`
-form yielding to the command line, and the plain form beating it — so the tradeoff is
-recorded as a passing test, not a footnote.
+How `host.env` is read. The issue sketched `[ -f host.env ] && . host.env` plus a
+documented `: "${VAR:=value}"` idiom. The first adversarial-review round refuted that
+design on two grounds, both verified against the code: sourcing executes arbitrary
+shell from a git-excluded file before `require_files` and before `nuke.sh`'s
+confirmation prompt, on the production host; and because every later knob uses
+`${VAR:-default}`, a sourced `host.env` could silently override the config pin
+(`CONFIG_REF`/`CONFIG_SHA`) that the tracked file exists to protect. The `:=` idiom
+also carried a footgun: a plain assignment silently beat the command line.
+
+The delivered design parses `host.env` as data instead: only `KEY=VALUE` lines for
+`DEPLOYMENT`, `CONFIG`, `GPU_IDS` (plus comments and blanks) are accepted; a value
+applies only when the variable is not already set, so the command line always wins
+with no idiom to remember; any other line aborts before the deploy touches anything;
+and nothing in the file can execute. Every acceptance criterion in issue #363 still
+holds — the precedence criterion (`command-line env > host.env > checked-in default`)
+holds unconditionally now, where the sourcing sketch only satisfied it for authors who
+used the idiom.
 
 ## Capabilities
 
