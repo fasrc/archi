@@ -758,8 +758,18 @@ class BaseReActAgent:
                 final=False,
             )
 
+        # Text still held when the stream ends belongs to the newest reasoning
+        # phase, so it is newer than any full message already in all_messages.
+        # Prefer it: otherwise the final answer is a stale earlier message — the
+        # narration before a tool call, say — and the real answer is dropped with
+        # nothing shown in its place, which is worse than the leak (issue #122).
+        holding_at_end = hold_visible(
+            thinking_possible and not structured_reasoning,
+            accumulated_content[phase_start:],
+        )
+
         final_answer = ""
-        if all_messages:
+        if all_messages and not holding_at_end:
             # Find the last AI message with content
             for msg in reversed(all_messages):
                 msg_type = str(getattr(msg, "type", "")).lower()
@@ -1099,8 +1109,18 @@ class BaseReActAgent:
                 final=False,
             )
 
+        # Text still held when the stream ends belongs to the newest reasoning
+        # phase, so it is newer than any full message already in all_messages.
+        # Prefer it: otherwise the final answer is a stale earlier message — the
+        # narration before a tool call, say — and the real answer is dropped with
+        # nothing shown in its place, which is worse than the leak (issue #122).
+        holding_at_end = hold_visible(
+            thinking_possible and not structured_reasoning,
+            accumulated_content[phase_start:],
+        )
+
         final_answer = ""
-        if all_messages:
+        if all_messages and not holding_at_end:
             for msg in reversed(all_messages):
                 msg_type = str(getattr(msg, "type", "")).lower()
                 if (

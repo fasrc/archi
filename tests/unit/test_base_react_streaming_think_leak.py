@@ -360,12 +360,39 @@ def test_a_literal_closing_tag_in_an_answer_truncates_as_it_did_before(run):
 # --- every LLM call in a tool-using loop opens its own reasoning block ------
 
 
-def _tool_call_message(call_id: str = "call_1") -> AIMessage:
-    """The AI message that starts a tool call, ending the reasoning phase."""
+def _tool_call_message(call_id: str = "call_1", content: str = "") -> AIMessage:
+    """The AI message that starts a tool call, ending the reasoning phase.
+
+    ``content`` is what the model said on its way to the call. A ReAct model
+    commonly narrates there, and that text lands in ``all_messages``.
+    """
     return AIMessage(
-        content="",
+        content=content,
         tool_calls=[{"name": "a_tool", "args": {}, "id": call_id, "type": "tool_call"}],
     )
+
+
+@both_paths
+def test_a_held_final_phase_beats_a_stale_earlier_message(run):
+    """The final answer comes from the phase that was held, not an older message.
+
+    A ReAct model commonly narrates before calling a tool, so that message lands
+    in `all_messages` carrying content. If the last phase is then held because it
+    never closed its reasoning block, an end-of-stream scan that prefers
+    `all_messages` would return the older text and drop the real answer — the
+    user would never see it at all, which is worse than the leak this gate closes.
+    """
+    agent = _TestableAgent(THINKING_ON)
+    outputs = run(
+        agent,
+        [
+            _tool_call_message(content="I will look that up"),
+            ToolMessage(content="tool result", tool_call_id="call_1"),
+            *_deltas("the real ", "answer"),
+        ],
+    )
+
+    assert _final(outputs).answer == "the real answer"
 
 
 @both_paths
