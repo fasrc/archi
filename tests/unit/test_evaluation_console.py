@@ -353,6 +353,30 @@ def test_evaluation_service_survives_a_corrupt_job_file(monkeypatch, tmp_path, c
     assert [record.levelname for record in caplog.records] == []
 
 
+def test_evaluation_service_does_not_swallow_a_non_storage_error():
+    """A programming error inside the constructor must not read as a disabled console.
+
+    The ``except OSError`` boundary in ``build_evaluation_service`` is deliberately
+    narrow: only a storage failure disables the console. Anything else — here a
+    ``TypeError`` standing in for a real defect — must propagate, so a later
+    widening to ``except Exception`` fails this test instead of quietly hiding a bug.
+    """
+    with patch.object(
+        evaluation_console,
+        "EvaluationConsoleService",
+        side_effect=TypeError("unexpected keyword argument"),
+    ):
+        with pytest.raises(TypeError):
+            build_evaluation_service(
+                {
+                    "evaluations": {
+                        "enabled": True,
+                        "agent_config_path": "/root/archi/configs/evaluation.yaml",
+                    }
+                }
+            )
+
+
 def test_authorize_request_allows_every_permission_when_auth_is_off():
     authorize_request = build_authorize_request(False)
 
