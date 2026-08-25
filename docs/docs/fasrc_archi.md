@@ -483,19 +483,34 @@ Two settings look mandatory here; only the first actually is.
    here as well buys nothing and persists an authentication-shaped value verbatim
    into Postgres `static_config`.
 
-> **The 3.8 slot runs without a context bound.** vLLM is launched
-> `--max-model-len 32768`, but a request-local override installs no matching
-> protection. A model named in the deployment's `models:` list becomes a
-> `ModelInfo` whose `context_window` defaults to a fabricated **128000**, so
+> **Declare the 3.8 slot's context window per model.** vLLM is launched
+> `--max-model-len 32768`, and nothing discovers that number for you. A model
+> named in the deployment's `models:` list becomes a `ModelInfo` whose
+> `context_window` defaults to a fabricated **128000**, so
 > `resolve_configured_model_window()` deliberately returns `None` rather than
-> trust it — its docstring cites this exact case, a 32768-launched server
-> reporting 128000 (`context_budget.py:375-406`). A request-local view separately
-> withdraws the deployment-wide `context_editing.context_window` precedence, and
-> when no window resolves **nothing is installed**
-> (`context_middleware.py:391-399`). So a long overridden conversation can submit
-> an oversized prompt that vLLM then rejects. Tracked as
-> [#262](https://github.com/fasrc/archi/issues/262); until that lands, keep 3.8
-> conversations short or drive the endpoint directly.
+> trust it — a 32768-launched server reporting 128000 is the exact case its
+> docstring cites. The deployment-wide `context_editing.context_window` does not
+> fill the gap either: a request-local view onto a different model withdraws it
+> by design, because it describes the model the deployment serves.
+>
+> Declare the window against the model id instead, which is the one statement
+> that survives a model override:
+>
+> ```yaml
+> services:
+>   chat_app:
+>     context_editing:
+>       context_windows:
+>         palmfuture/Qwen3.8-27B-GPTQ-Int4: 32768
+> ```
+>
+> Without that entry a long overridden conversation can still submit an
+> oversized prompt that vLLM rejects, and the absence is logged on every agent
+> build naming the key to set. The entry is matched on the model id alone, so it
+> applies under every provider slot — fine here, where each id is served by one
+> slot, and tracked as
+> [#344](https://github.com/fasrc/archi/issues/344) for the day that stops being
+> true.
 
 > **Never put a real OpenAI key in this env file** while this slot points at a
 > local endpoint: whatever `OPENAI_API_KEY` holds is exactly what

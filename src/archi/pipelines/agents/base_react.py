@@ -454,29 +454,41 @@ class BaseReActAgent:
                 latest_messages=[],
             )
 
-    def _streamed_provider(self) -> Optional[str]:
-        """The provider whose kwargs built the model this stream will call.
+    def _effective_provider_model(self) -> Tuple[Optional[str], Optional[str]]:
+        """The provider and model id of the LLM this instance will actually call.
 
-        ``_init_llms()`` uses ``default_provider`` when it is set, and otherwise
-        builds from ``archi.pipeline_map.<agent>.models``, parsing each
-        ``provider/model`` reference and forwarding that provider's
-        ``extra_kwargs`` — ``enable_thinking`` included. The streamed-reasoning
-        gate has to follow the same choice: a pipeline constructed the second way
-        leaves ``default_provider`` at ``None``, so a gate reading only that
-        attribute fails open and streams reasoning anyway (issue #122).
+        ``_init_llms()`` uses ``default_provider``/``default_model`` when they are
+        set, and otherwise builds from ``archi.pipeline_map.<agent>.models``,
+        parsing each ``provider/model`` reference and forwarding that provider's
+        ``extra_kwargs``. A pipeline constructed the second way leaves **both**
+        attributes at ``None``, so a caller that reads them directly has no
+        identity for a model that very much exists.
 
-        Returns ``None`` when no provider can be resolved, which leaves the gate
-        off and streaming unchanged.
+        Two features need that identity and each broke the same way without it.
+        The streamed-reasoning gate resolved no provider, failed open, and
+        streamed reasoning despite the flag (issue #122). The per-model window
+        map is looked up by model id, so every entry missed on this path and the
+        agents a declaration exists for — self-hosted models no provider can
+        resolve by name — installed no bound at all (issue #262).
+
+        Returns ``(None, None)`` when no reference can be parsed, which leaves
+        each caller exactly where it stood without this.
         """
         if self.default_provider:
-            return self.default_provider
+            return self.default_provider, self.default_model
+        # Read through `getattr`, and deliberately not from a class-level
+        # default: `adopt_request_local_model` reaches this on shallow-copied
+        # views and on instances that never ran `__init__`, and one mutable
+        # mapping shared by all of them would let an in-place write on any
+        # instance answer for every later request.
+        pipeline_config = getattr(self, "pipeline_config", None)
         models_config = (
-            self.pipeline_config.get("models", {})
-            if isinstance(self.pipeline_config, dict)
+            pipeline_config.get("models", {})
+            if isinstance(pipeline_config, dict)
             else {}
         )
         if not isinstance(models_config, dict):
-            return None
+            return None, None
         references: Dict[str, Any] = {}
         for group in ("required", "optional"):
             block = models_config.get(group)
@@ -488,9 +500,19 @@ class BaseReActAgent:
         if reference is None:
             reference = next(iter(references.values()), None)
         try:
-            provider, _ = self._parse_provider_model(reference)
+            provider, model = self._parse_provider_model(reference)
         except ValueError:
-            return None
+            return None, None
+        return provider, model
+
+    def _streamed_provider(self) -> Optional[str]:
+        """The provider whose kwargs built the model this stream will call.
+
+        Only the provider half of ``_effective_provider_model()`` matters here:
+        ``enable_thinking`` is declared on the provider block. ``None`` leaves
+        the gate off and streaming unchanged (issue #122).
+        """
+        provider, _ = self._effective_provider_model()
         return provider
 
     def stream(self, **kwargs) -> Iterator[PipelineOutput]:
@@ -1328,6 +1350,20 @@ class BaseReActAgent:
         }
 
     @staticmethod
+    def _provider_key(value: Any) -> Any:
+        """The form the provider layer resolves a provider name by.
+
+        ``get_model()`` builds ``ProviderType(value.lower())`` and
+        ``_build_provider_config()`` lowercases its lookup key, so two spellings
+        differing only in case name one runtime provider. An identity comparison
+        has to agree with that, or it reports a model change where none happened
+        — and a reported change withdraws the operator's declared window. The
+        model id is compared as written: a model id is case-sensitive to the
+        provider serving it, and ``context_windows`` matches it exactly.
+        """
+        return value.lower() if isinstance(value, str) else value
+
+    @staticmethod
     def _parse_provider_model(model_ref: str) -> Tuple[str, str]:
         """Expect model_ref as 'provider/model'. Raise if malformed."""
         if not isinstance(model_ref, str) or "/" not in model_ref:
@@ -1564,13 +1600,19 @@ class BaseReActAgent:
 
     def _build_static_middleware(self) -> List[Callable]:
         """Build and returns static middleware defined in the config."""
+        # Not `default_provider`/`default_model`: those are `None` on the
+        # pipeline-map initialisation path, which would miss every
+        # `context_windows` entry and label the absent-bound warning `None/None`
+        # — the one message an operator gets when nothing is installed.
+        provider, model_id = self._effective_provider_model()
         return build_context_middleware(
             model=self.agent_llm,
             context_window=self._get_model_context_window(),
             config=self.config,
             pipeline_config=self.pipeline_config,
             tool_budgets=self._tool_budgets(),
-            model_label=f"{self.default_provider}/{self.default_model}",
+            model_label=f"{provider}/{model_id}" if provider and model_id else None,
+            model_id=model_id,
             declared_window_applies=not self._is_request_local,
         )
 
@@ -1815,7 +1857,15 @@ class BaseReActAgent:
         window by name, discarding the declaration here would install no bound
         at all on precisely the deployment the declaration exists for.
         """
-        same_model = (provider, model) == (self.default_provider, self.default_model)
+        # Against the *effective* pair, not the raw attributes: a pipeline-map
+        # agent leaves both at None while serving a real model, so comparing
+        # them read every ordinary turn as a switch onto a different model and
+        # withdrew the operator's declared window on the normal chat path.
+        effective_provider, effective_model = self._effective_provider_model()
+        same_model = (self._provider_key(provider), model) == (
+            self._provider_key(effective_provider),
+            effective_model,
+        )
         self.default_provider = provider
         self.default_model = model
         self._request_local_window = positive_int(context_window)

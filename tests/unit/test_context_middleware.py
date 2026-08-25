@@ -1135,6 +1135,192 @@ class TestDeclaredContextWindow:
         assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
 
+OVERRIDE_MODEL = "palmfuture/Qwen3.8-27B-GPTQ-Int4"
+
+
+def _config(**context_editing):
+    return {"services": {"chat_app": {"context_editing": context_editing}}}
+
+
+class TestPerModelDeclaredWindow:
+    """Issue #262: precedence when the operator declared a window per model id.
+
+    The window a run gets comes from one of three sources, in this order: an
+    entry in ``context_windows`` naming the run's own model, then the single
+    ``context_window`` (unless a request-local view withdrew it), then whatever
+    the provider reports.
+
+    ``declared_window_applies=False`` must withdraw only the single window. That
+    flag exists to stop a window describing *the deployment's* model from
+    following a view onto a *different* model (#235 Decision 12); an entry keyed
+    by the override's own id is precisely the testimony the flag demands, so
+    suppressing it would reintroduce the defect this closes.
+
+    Windows are chosen to give distinguishable triggers: 32768 -> 19661,
+    8192 -> 4915, 200000 -> 120000.
+    """
+
+    def test_a_request_local_override_named_in_the_map_gets_a_bound(self):
+        """Branch (a) — the defect this issue exists to close."""
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=None,
+            config=_config(context_windows={OVERRIDE_MODEL: 32_768}),
+            model_id=OVERRIDE_MODEL,
+            declared_window_applies=False,
+        )
+
+        assert len(built) == 1
+        assert built[0].budget.trigger == 19_661
+
+    def test_a_request_local_override_absent_from_the_map_still_fails_open(
+        self, caplog
+    ):
+        """Branch (b) — this path must stay byte-for-byte today's behaviour.
+
+        The single ``context_window`` is present and still withdrawn, the map
+        names a different model, and nothing resolves: no middleware, and the
+        warning that makes the absence audible still fires.
+        """
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=None,
+            config=_config(
+                context_window=8_192,
+                context_windows={"some/other-model": 32_768},
+            ),
+            model_id=OVERRIDE_MODEL,
+            model_label=f"local/{OVERRIDE_MODEL}",
+            declared_window_applies=False,
+        )
+
+        assert built == []
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert warnings, "an installed-nothing outcome must stay visible"
+        assert any("Qwen3.8" in r.message for r in warnings)
+
+    def test_a_map_entry_beats_the_single_window_for_its_own_model(self):
+        """Branch (c) — the two settings differ in specificity, not in trust."""
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=200_000,
+            config=_config(
+                context_window=8_192,
+                context_windows={OVERRIDE_MODEL: 32_768},
+            ),
+            model_id=OVERRIDE_MODEL,
+        )
+
+        assert built[0].budget.trigger == 19_661, "the per-model entry must win"
+
+    def test_a_model_absent_from_the_map_still_gets_the_single_window(self):
+        """Branch (d) — the map narrows nothing it does not name."""
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=200_000,
+            config=_config(
+                context_window=8_192,
+                context_windows={"some/other-model": 32_768},
+            ),
+            model_id=OVERRIDE_MODEL,
+        )
+
+        assert built[0].budget.trigger == 4_916
+
+    def test_a_caller_that_passes_no_model_id_behaves_exactly_as_before(self):
+        """Branch (e) — every existing call site is unchanged."""
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=200_000,
+            config=_config(
+                context_window=8_192,
+                context_windows={OVERRIDE_MODEL: 32_768},
+            ),
+        )
+
+        assert built[0].budget.trigger == 4_916, "no id means no map lookup"
+
+    def test_an_invalid_map_entry_leaves_the_single_window_in_place(self):
+        """A typo in the map must not cost the protection already configured."""
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=200_000,
+            config=_config(
+                context_window=8_192,
+                context_windows={OVERRIDE_MODEL: "big"},
+            ),
+            model_id=OVERRIDE_MODEL,
+        )
+
+        assert built[0].budget.trigger == 4_916
+
+    def test_a_key_is_matched_on_the_whole_model_id_and_nothing_else(self):
+        """Pins today's contract, including its limitation (#344).
+
+        The key is the exact, entire model id. A prefix of it — which is what a
+        provider-qualified key would look like, since model ids may contain
+        ``/`` — must not match, or an entry would silently answer for a model
+        the operator did not name. The declaration therefore applies to its
+        model id under every provider, which is right for deployments where a
+        model id has one provider and is what #344 exists to refine.
+        """
+        windows = {"palmfuture": 8_192, f"local/{OVERRIDE_MODEL}": 8_192}
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=None,
+            config=_config(context_windows=windows),
+            model_id=OVERRIDE_MODEL,
+            model_label=f"local/{OVERRIDE_MODEL}",
+            declared_window_applies=False,
+        )
+
+        assert built == [], "neither a prefix nor a longer key may match"
+
+    def test_the_warning_names_a_remedy_that_survives_the_override(self, caplog):
+        """A remedy the reader cannot use is worse than none.
+
+        On a request-local override the single ``context_window`` is withdrawn,
+        so telling the operator to set it names the one setting that will not
+        work — in exactly the case this warning fires for. Name the per-model
+        key, which is the declaration that survives the override.
+        """
+        build_context_middleware(
+            model=_StubModel(),
+            context_window=None,
+            model_id=OVERRIDE_MODEL,
+            model_label=f"local/{OVERRIDE_MODEL}",
+            declared_window_applies=False,
+        )
+
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert warnings
+        assert any(
+            "context_windows" in r.message for r in warnings
+        ), "name the setting that actually applies to an overridden model"
+        assert any(OVERRIDE_MODEL in r.message for r in warnings), "name the key"
+
+    def test_a_model_id_containing_a_slash_is_matched_in_full(self):
+        """Regression guard: the id is passed, never recovered from the label.
+
+        ``model_label`` is ``f"{provider}/{model}"`` and a model id may itself
+        contain ``/``, so splitting the label yields the wrong id on exactly the
+        deployment this change protects. If anyone later "simplifies" the
+        ``model_id`` parameter away in favour of parsing the label, the lookup
+        misses and this test fails.
+        """
+        built = build_context_middleware(
+            model=_StubModel(),
+            context_window=None,
+            config=_config(context_windows={OVERRIDE_MODEL: 32_768}),
+            model_id=OVERRIDE_MODEL,
+            model_label=f"local/{OVERRIDE_MODEL}",
+            declared_window_applies=False,
+        )
+
+        assert len(built) == 1, "the full id, slash included, must match the key"
+        assert built[0].budget.trigger == 19_661
+
+
 # --- Group 8: the acceptance criteria ---------------------------------------
 #
 # Everything above tests a mechanism. These state the outcomes the change is
