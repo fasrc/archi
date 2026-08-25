@@ -69,7 +69,7 @@ Three standing notes for every task:
 
 ## 2. Hold the two boundaries
 
-- [ ] 2.1 Add `test_evaluation_service_survives_a_corrupt_job_file`. This is the regression
+- [x] 2.1 Add `test_evaluation_service_survives_a_corrupt_job_file`. This is the regression
       test for plan item 3 of issue #328, and it records the answer: a corrupt job file needs
       no net of its own, because `_interrupt_stale_jobs` already catches `ValueError` and
       continues (`src/evaluation/qa/jobs.py:62-64`), and `read_json` turns an unreadable file

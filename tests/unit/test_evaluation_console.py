@@ -315,6 +315,44 @@ def test_evaluation_service_disables_when_the_stale_job_sweep_cannot_write(
     assert [record.levelname for record in caplog.records] == ["ERROR"]
 
 
+def test_evaluation_service_survives_a_corrupt_job_file(monkeypatch, tmp_path, caplog):
+    """A corrupt job file needs no net of its own.
+
+    ``_interrupt_stale_jobs`` already turns an unreadable job file into a caught
+    ``ValueError`` and continues (``src/evaluation/qa/jobs.py:62-64``), because
+    ``read_json`` wraps the read failure as ``ValueError``
+    (``src/evaluation/qa/artifacts.py:176-177``). This pins that as the answer to
+    plan item 3 of issue #328: no production change here.
+    """
+    live = tmp_path / "config.yaml"
+    live.write_text("live: true\n", encoding="utf-8")
+    monkeypatch.setattr(evaluation_console, "LIVE_AGENT_CONFIG_PATH", str(live))
+
+    root = tmp_path / "evaluations"
+    jobs_dir = root / "jobs"
+    jobs_dir.mkdir(parents=True)
+    (jobs_dir / f"{uuid.uuid4()}.json").write_text("not json at all", encoding="utf-8")
+
+    agent_config_path = tmp_path / "evaluation.yaml"
+    agent_config_path.write_text("redacted: true\n", encoding="utf-8")
+
+    with caplog.at_level(
+        logging.ERROR, logger="src.interfaces.chat_app.evaluation_console"
+    ):
+        service = build_evaluation_service(
+            {
+                "evaluations": {
+                    "enabled": True,
+                    "root": str(root),
+                    "agent_config_path": str(agent_config_path),
+                }
+            }
+        )
+
+    assert service is not None
+    assert [record.levelname for record in caplog.records] == []
+
+
 def test_authorize_request_allows_every_permission_when_auth_is_off():
     authorize_request = build_authorize_request(False)
 
