@@ -49,9 +49,13 @@ Standing notes for every task:
       deploy/fasrc-dev/scripts/lib.sh; …'` printed `DEPLOYMENT=claw
       CONFIG=deploy/fasrc-dev/config.yaml`. Nothing deployed; no container or volume
       touched.
-- [ ] 2.2 `model: haiku` — Gate in the container on the finished branch; push
+- [x] 2.2 `model: haiku` — Gate in the container on the finished branch; push
       `fix/issue-363-host-env-claw`; open the PR (`gh pr create --repo fasrc/archi --base
       dev`, `closes #363` in the body, Findings block from the pre-PR review). Do not merge.
+
+      Opened as PR #364. Every commit on the branch passed `bash scripts/gate.sh` in the
+      `archi-loop` container before it was created (the plan-docs commit was validated by
+      the same green gate immediately after; the hook was not yet wired for it).
 
 ## 3. Pre-PR adversarial review
 
