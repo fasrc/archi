@@ -47,6 +47,7 @@ class EvaluationJobManager:
         self._futures: Dict[str, Future] = {}
         self._processes: Dict[str, subprocess.Popen] = {}
         self._interrupt_stale_jobs()
+        self._sweep_orphan_results()
 
     def _path(self, job_id: str) -> Path:
         try:
@@ -56,8 +57,11 @@ class EvaluationJobManager:
             raise LookupError("evaluation job not found") from exc
         return self.jobs_dir / f"{job_id}.json"
 
+    def _job_files(self):
+        return self.jobs_dir.glob("[!.]*.json")
+
     def _interrupt_stale_jobs(self) -> None:
-        for path in self.jobs_dir.glob("*.json"):
+        for path in self._job_files():
             try:
                 job = read_json(path)
             except ValueError:
@@ -72,8 +76,19 @@ class EvaluationJobManager:
                 job["error"] = "service restarted before the job completed"
                 write_json(path, job)
 
+    def _sweep_orphan_results(self) -> None:
+        suffix = ".result.json"
+        for path in self.jobs_dir.glob(".*.result.json"):
+            segment = path.name[1 : -len(suffix)]
+            try:
+                if str(uuid.UUID(segment)) != segment:
+                    continue
+            except (ValueError, TypeError, AttributeError):
+                continue
+            self._remove_result(path)
+
     def _active(self) -> Optional[Dict[str, Any]]:
-        for path in self.jobs_dir.glob("*.json"):
+        for path in self._job_files():
             try:
                 job = read_json(path)
             except ValueError:
@@ -384,11 +399,14 @@ class EvaluationJobManager:
 
     def list(self) -> List[Dict[str, Any]]:
         jobs = []
-        for path in self.jobs_dir.glob("*.json"):
+        for path in self._job_files():
             try:
-                jobs.append(read_json(path))
+                record = read_json(path)
             except ValueError:
                 continue
+            if not isinstance(record, dict) or "id" not in record:
+                continue
+            jobs.append(record)
         return sorted(jobs, key=lambda job: job.get("created_at", ""), reverse=True)
 
     def wait(self, job_id: str, timeout: Optional[float] = None) -> Dict[str, Any]:

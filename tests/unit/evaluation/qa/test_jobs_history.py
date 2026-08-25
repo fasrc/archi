@@ -1919,3 +1919,228 @@ def test_continue_re_runs_the_frozen_agent_inputs_of_the_paused_run(
         == "frozen spec in run\n"
     )
     service.job_manager.close()
+
+
+def test_active_ignores_hidden_result_envelope(tmp_path):
+    manager = EvaluationJobManager(tmp_path)
+
+    # Envelope written after construction — section 2's startup sweep won't touch it.
+    write_json(
+        tmp_path / f".{uuid.uuid4()}.result.json",
+        {"result": {"draft_id": "d"}},
+    )
+
+    # _active() must not see the envelope, so start() must not raise JobConflictError.
+    job = manager.start("generate_atoms", lambda: {"draft_id": "d"})
+    manager.wait(job["id"], timeout=2)
+    manager.close()
+
+
+def test_listing_skips_hidden_result_envelope(tmp_path):
+    job_id = "040bb55f-739c-46a8-a297-f49f54d1e759"
+    # Use tmp_path/jobs so EvaluationConsoleService(tmp_path) shares the same dir.
+    jobs_dir = tmp_path / "jobs"
+    manager = EvaluationJobManager(jobs_dir)
+
+    write_json(
+        jobs_dir / f"{job_id}.json",
+        {
+            "id": job_id,
+            "kind": "evaluation",
+            "status": "completed",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+    )
+    write_json(
+        jobs_dir / f".{uuid.uuid4()}.result.json",
+        {"result": {"draft_id": "d"}},
+    )
+
+    jobs = manager.list()
+    assert len(jobs) == 1
+    assert jobs[0]["id"] == job_id
+
+    service = EvaluationConsoleService(
+        tmp_path,
+        agent_config_path=tmp_path / "config.yaml",
+        agents_dir=tmp_path,
+    )
+    service.list_jobs()  # must not raise KeyError: 'id'
+
+    service.job_manager.close()
+    manager.close()
+
+
+def test_job_manager_sweeps_orphan_result_envelope_at_startup(tmp_path):
+    orphan_id = "7a3f1b2c-4d5e-6f78-90ab-cdef01234567"
+    envelope_path = tmp_path / f".{orphan_id}.result.json"
+    write_json(envelope_path, {"result": {"draft_id": "d"}})
+
+    manager = EvaluationJobManager(tmp_path)
+
+    assert not envelope_path.exists()
+    manager.close()
+
+
+def test_job_manager_sweep_only_deletes_uuid_shaped_envelopes(tmp_path):
+    # Files that must survive: non-UUID dot-result, hidden non-result, plain json.
+    dot_notes_result = tmp_path / ".notes.result.json"
+    dot_notes = tmp_path / ".notes.json"
+    plain_notes = tmp_path / "notes.json"
+    for path in (dot_notes_result, dot_notes, plain_notes):
+        write_json(path, {"other": "data"})
+
+    # The one file that must be deleted: a valid UUID envelope.
+    orphan_id = "7a3f1b2c-4d5e-6f78-90ab-cdef01234567"
+    envelope_path = tmp_path / f".{orphan_id}.result.json"
+    write_json(envelope_path, {"result": {"draft_id": "d"}})
+
+    manager = EvaluationJobManager(tmp_path)
+
+    assert dot_notes_result.exists()
+    assert dot_notes.exists()
+    assert plain_notes.exists()
+    assert not envelope_path.exists()
+
+    manager.close()
+
+
+def test_job_manager_interrupts_stale_then_sweeps_its_envelope(tmp_path):
+    job_id = "5e6f7a8b-9c0d-1e2f-3a4b-5c6d7e8f9a0b"
+    write_json(
+        tmp_path / f"{job_id}.json",
+        {"id": job_id, "kind": "evaluation", "status": "running"},
+    )
+    envelope_path = tmp_path / f".{job_id}.result.json"
+    write_json(envelope_path, {"result": {"draft_id": "d"}})
+
+    manager = EvaluationJobManager(tmp_path)
+
+    assert manager.get(job_id)["status"] == "interrupted"
+    assert not envelope_path.exists()
+    manager.close()
+
+
+def test_list_skips_non_job_records(tmp_path):
+    jobs_dir = tmp_path / "jobs"
+    job_id = "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+    manager = EvaluationJobManager(jobs_dir)
+
+    write_json(
+        jobs_dir / f"{job_id}.json",
+        {
+            "id": job_id,
+            "kind": "evaluation",
+            "status": "completed",
+            "created_at": "2026-08-25T10:00:00",
+        },
+    )
+    write_json(jobs_dir / "stray.json", {"result": {"draft_id": "d"}})
+
+    result = manager.list()
+    assert len(result) == 1
+    assert result[0]["id"] == job_id
+
+    service = EvaluationConsoleService(
+        tmp_path,
+        agent_config_path=tmp_path / "config.yaml",
+        agents_dir=tmp_path,
+    )
+    service.list_jobs()  # must not raise KeyError: 'id'
+
+    service.job_manager.close()
+    manager.close()
+
+    # Two well-formed records come back newest-first.
+    job_id_a = "aaaaaaaa-0000-0000-0000-000000000001"
+    job_id_b = "bbbbbbbb-0000-0000-0000-000000000002"
+    manager3 = EvaluationJobManager(jobs_dir)
+    write_json(
+        jobs_dir / f"{job_id_a}.json",
+        {
+            "id": job_id_a,
+            "kind": "evaluation",
+            "status": "completed",
+            "created_at": "2026-08-25T09:00:00",
+        },
+    )
+    write_json(
+        jobs_dir / f"{job_id_b}.json",
+        {
+            "id": job_id_b,
+            "kind": "evaluation",
+            "status": "completed",
+            "created_at": "2026-08-25T11:00:00",
+        },
+    )
+    results3 = manager3.list()
+    ids = [r["id"] for r in results3]
+    assert job_id_b in ids
+    assert job_id_a in ids
+    assert ids.index(job_id_b) < ids.index(job_id_a)
+    manager3.close()
+
+
+def test_a_late_envelope_after_a_restart_never_resurrects_its_job(tmp_path):
+    """A detached worker's late result is inert, and that is the decision.
+
+    Workers are launched with ``start_new_session=True``, so one can outlive the
+    manager that spawned it and write its envelope after the startup sweep has
+    run. The envelope is a handoff to exactly one reader — the
+    ``_execute_process`` call that spawned the worker and is blocked in
+    ``process.wait()`` — and that thread does not exist after a restart. So the
+    record stays ``interrupted``: the run's own evidence under ``runs/`` is
+    untouched, and the operator reruns rather than trusting a summary no live
+    caller ever validated.
+
+    Reading a late envelope back into the record would be crash recovery, which
+    is a feature with its own contract (which envelope shapes to trust, what to
+    do when the worker died mid-write) and not a property of this sweep.
+    """
+    job_id = "9f8e7d6c-5b4a-3928-1706-fedcba098765"
+    write_json(
+        tmp_path / f"{job_id}.json",
+        {"id": job_id, "kind": "evaluation", "status": "running"},
+    )
+
+    manager = EvaluationJobManager(tmp_path)
+    assert manager.get(job_id)["status"] == "interrupted"
+
+    # The survivor finishes now, after the sweep.
+    late_envelope = tmp_path / f".{job_id}.result.json"
+    write_json(late_envelope, {"result": {"draft_id": "d", "status": "completed"}})
+
+    assert manager.get(job_id)["status"] == "interrupted"
+    assert [job["id"] for job in manager.list()] == [job_id]
+    assert manager.start("generate_atoms", lambda: {"draft_id": "d"})["kind"] == (
+        "generate_atoms"
+    ), "a late envelope must not read as an active job and block the next one"
+
+    manager.wait(manager.list()[0]["id"], timeout=2)
+    manager.close()
+
+
+def test_the_sweep_keeps_a_uuid_spelled_differently_than_the_manager_writes_it(
+    tmp_path,
+):
+    """A parseable UUID is not enough; it has to be the name the manager wrote.
+
+    ``uuid.UUID`` accepts spellings the manager never produces — upper case, or
+    wrapped in braces — and re-serialising is what tells them apart. That is the
+    same judgement as the ``.notes.result.json`` case: ``jobs_dir`` is a
+    host-mounted directory a human can reach, so a startup routine deleting a
+    file it did not create is worse than the leak it fixes.
+    """
+    canonical = "7a3f1b2c-4d5e-6f78-90ab-cdef01234567"
+    upper = tmp_path / f".{canonical.upper()}.result.json"
+    braced = tmp_path / f".{{{canonical}}}.result.json"
+    written_by_the_manager = tmp_path / f".{canonical}.result.json"
+    for path in (upper, braced, written_by_the_manager):
+        write_json(path, {"result": {"draft_id": "d"}})
+
+    manager = EvaluationJobManager(tmp_path)
+
+    assert upper.exists(), "not a name the manager writes"
+    assert braced.exists(), "not a name the manager writes"
+    assert not written_by_the_manager.exists()
+    manager.close()
