@@ -179,7 +179,11 @@ services:
   leaves the console disabled.
 - `evaluations.root` is the in-container catalog root for datasets, profiles,
   atom-review drafts, jobs, and run artifacts. Defaults to
-  `/root/archi/evaluations`.
+  `/root/archi/evaluations`. The chat app creates this tree at start-up. If the
+  root is not usable — a read-only mount, a permission mismatch on the host
+  directory, or a typo'd path — the console disables itself and chat keeps
+  serving. Look for the start-up error line naming the root, then correct this
+  setting and redeploy to re-enable the console.
 - `evaluations.agent_config_path` is the in-container path to the Archi
   deployment YAML that defines the agent under test. Defaults to
   `/root/archi/configs/config.yaml`.
