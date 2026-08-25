@@ -449,6 +449,79 @@ def test_a_full_message_after_a_tool_call_is_still_gated(run):
     assert _final(outputs).answer == "second reasoning"
 
 
+@both_paths
+def test_a_held_final_phase_is_not_concatenated_with_an_earlier_one(run):
+    """The held phase is the answer, not the whole accumulated buffer.
+
+    An earlier phase that already streamed leaves its text in
+    `accumulated_content`. Parsing the whole buffer returns that text run
+    together with the held phase — `an interim answerthe real answer` — because
+    `_parse_thinking_content()` keeps everything after the LAST closing tag, and
+    that tag belongs to the earlier phase. The phase boundary that decides the
+    hold has to decide the extraction too.
+    """
+    agent = _TestableAgent(THINKING_ON)
+    outputs = run(
+        agent,
+        [
+            *_deltas("first reasoning", "</think>", "an interim answer"),
+            _tool_call_message(),
+            ToolMessage(content="tool result", tool_call_id="call_1"),
+            *_deltas("the real ", "answer"),
+        ],
+    )
+
+    assert _final(outputs).answer == "the real answer"
+
+
+@both_paths
+def test_a_tool_call_without_an_id_still_ends_the_phase(run):
+    """Phase detection must not depend on a provider-supplied tool-call id.
+
+    `src/interfaces/chat_app/app.py:2414-2419` skips id-less calls with no
+    meaningful payload and SYNTHESIZES an id for the rest, so a meaningful call
+    carrying no id is a supported shape in this very flow. Keying the phase
+    boundary on the id would leave the next model call's reasoning checked
+    against a slice still holding the previous phase's closing tag.
+    """
+    agent = _TestableAgent(THINKING_ON)
+    outputs = run(
+        agent,
+        [
+            *_deltas("first reasoning", "</think>", "an interim answer"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "a_tool", "args": {"q": 1}, "id": "", "type": "tool_call"}
+                ],
+            ),
+            ToolMessage(content="tool result", tool_call_id="synthesized-1"),
+            *_deltas("second reasoning", "</think>", "\n\nThe final answer"),
+        ],
+    )
+
+    _assert_no_reasoning_visible(outputs)
+
+
+@both_paths
+def test_the_gate_follows_a_pipeline_map_model_reference(run):
+    """A pipeline built without `default_provider` still calls a real provider.
+
+    `_init_llms()` falls back to `archi.pipeline_map.<agent>.models` and builds
+    the model from that `provider/model` reference, forwarding that provider's
+    `extra_kwargs` — `enable_thinking` included. A gate reading only
+    `default_provider` resolves `None` there and fails open, so such a pipeline
+    would stream reasoning despite the flag being set.
+    """
+    agent = _TestableAgent(THINKING_ON, provider=None)
+    agent.pipeline_config = {"models": {"required": {"chat_model": "local/a-model"}}}
+
+    outputs = run(agent, _deltas("some reasoning", "</think>", "\n\nThe answer"))
+
+    _assert_no_reasoning_visible(outputs)
+    assert _texts(outputs) == ["The answer"]
+
+
 # --- a provider using the structured reasoning channel is not gated ---------
 
 

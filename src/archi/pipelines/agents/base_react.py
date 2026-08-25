@@ -454,6 +454,45 @@ class BaseReActAgent:
                 latest_messages=[],
             )
 
+    def _streamed_provider(self) -> Optional[str]:
+        """The provider whose kwargs built the model this stream will call.
+
+        ``_init_llms()`` uses ``default_provider`` when it is set, and otherwise
+        builds from ``archi.pipeline_map.<agent>.models``, parsing each
+        ``provider/model`` reference and forwarding that provider's
+        ``extra_kwargs`` — ``enable_thinking`` included. The streamed-reasoning
+        gate has to follow the same choice: a pipeline constructed the second way
+        leaves ``default_provider`` at ``None``, so a gate reading only that
+        attribute fails open and streams reasoning anyway (issue #122).
+
+        Returns ``None`` when no provider can be resolved, which leaves the gate
+        off and streaming unchanged.
+        """
+        if self.default_provider:
+            return self.default_provider
+        models_config = (
+            self.pipeline_config.get("models", {})
+            if isinstance(self.pipeline_config, dict)
+            else {}
+        )
+        if not isinstance(models_config, dict):
+            return None
+        references: Dict[str, Any] = {}
+        for group in ("required", "optional"):
+            block = models_config.get(group)
+            if isinstance(block, dict):
+                references.update(block)
+        # `_init_llms()` binds `agent_llm` to "chat_model" when present, and to
+        # the first initialised model otherwise; mirror that order.
+        reference = references.get("chat_model")
+        if reference is None:
+            reference = next(iter(references.values()), None)
+        try:
+            provider, _ = self._parse_provider_model(reference)
+        except ValueError:
+            return None
+        return provider
+
     def stream(self, **kwargs) -> Iterator[PipelineOutput]:
         """Stream agent updates synchronously with structured trace events."""
         logger.debug("Streaming %s", self.__class__.__name__)
@@ -476,7 +515,9 @@ class BaseReActAgent:
         last_response_metadata: Optional[Dict[str, Any]] = None
         # Whether this provider can emit reasoning at all (issue #122). The
         # provider cannot change mid-stream, so resolve it once here.
-        thinking_possible = provider_emits_thinking(self.config, self.default_provider)
+        thinking_possible = provider_emits_thinking(
+            self.config, self._streamed_provider()
+        )
         # Where the current reasoning phase starts in accumulated_content. A
         # ReAct loop makes one LLM call per tool round and, with thinking on,
         # each call opens its own block, so the gate is scoped to the current
@@ -523,6 +564,14 @@ class BaseReActAgent:
 
                 # Detect tool call start (AIMessage with tool_calls)
                 if hasattr(message, "tool_calls") and message.tool_calls:
+                    # This message ends the current reasoning phase: the model
+                    # call that follows the tool opens its own block. Keyed on
+                    # the presence of tool calls and never on their ids, because
+                    # a meaningful id-less call is a supported shape here
+                    # (`chat_app/app.py:2414` synthesizes an id for one), and a
+                    # boundary that missed it would leave the next phase checked
+                    # against this one's closing tag (issue #122).
+                    phase_start = len(accumulated_content)
                     logger.debug(
                         "Received stream event type=%s: %s",
                         type(event).__name__,
@@ -535,11 +584,6 @@ class BaseReActAgent:
                             emitted_tool_starts.add(tc_id)
                             new_tool_call = True
                     if new_tool_call:
-                        # The LLM call after this tool opens its own reasoning
-                        # block, so the gate must wait for that block's own
-                        # closing tag rather than treat the previous one as
-                        # standing permission to emit (issue #122).
-                        phase_start = len(accumulated_content)
                         # End thinking phase if active before tool execution
                         if thinking_step_id is not None:
                             duration_ms = (
@@ -787,8 +831,16 @@ class BaseReActAgent:
                         )
                         break
         if not final_answer:
-            # Strip thinking from accumulated content
-            final_answer, _ = self._parse_thinking_content(accumulated_content)
+            # Strip thinking from the held phase, not the whole buffer: an
+            # earlier phase's text is still in there and its closing tag is the
+            # LAST one, so parsing everything would return that earlier text run
+            # together with this phase's (issue #122). The boundary that decides
+            # the hold has to decide the extraction too.
+            final_answer, _ = self._parse_thinking_content(
+                accumulated_content[phase_start:]
+                if holding_at_end
+                else accumulated_content
+            )
 
         # Extract usage and model info for final event
         usage = self._extract_usage_from_messages(usage_messages or all_messages)
@@ -842,7 +894,9 @@ class BaseReActAgent:
         last_response_metadata: Optional[Dict[str, Any]] = None
         # Whether this provider can emit reasoning at all (issue #122). The
         # provider cannot change mid-stream, so resolve it once here.
-        thinking_possible = provider_emits_thinking(self.config, self.default_provider)
+        thinking_possible = provider_emits_thinking(
+            self.config, self._streamed_provider()
+        )
         # Where the current reasoning phase starts in accumulated_content. A
         # ReAct loop makes one LLM call per tool round and, with thinking on,
         # each call opens its own block, so the gate is scoped to the current
@@ -889,6 +943,14 @@ class BaseReActAgent:
 
                 # Detect tool call start
                 if hasattr(message, "tool_calls") and message.tool_calls:
+                    # This message ends the current reasoning phase: the model
+                    # call that follows the tool opens its own block. Keyed on
+                    # the presence of tool calls and never on their ids, because
+                    # a meaningful id-less call is a supported shape here
+                    # (`chat_app/app.py:2414` synthesizes an id for one), and a
+                    # boundary that missed it would leave the next phase checked
+                    # against this one's closing tag (issue #122).
+                    phase_start = len(accumulated_content)
                     new_tool_call = False
                     for tc in message.tool_calls:
                         tc_id = tc.get("id", "")
@@ -896,11 +958,6 @@ class BaseReActAgent:
                             emitted_tool_starts.add(tc_id)
                             new_tool_call = True
                     if new_tool_call:
-                        # The LLM call after this tool opens its own reasoning
-                        # block, so the gate must wait for that block's own
-                        # closing tag rather than treat the previous one as
-                        # standing permission to emit (issue #122).
-                        phase_start = len(accumulated_content)
                         # End thinking phase if active before tool execution
                         if thinking_step_id is not None:
                             duration_ms = (
@@ -1137,8 +1194,16 @@ class BaseReActAgent:
                         )
                         break
         if not final_answer:
-            # Strip thinking from accumulated content
-            final_answer, _ = self._parse_thinking_content(accumulated_content)
+            # Strip thinking from the held phase, not the whole buffer: an
+            # earlier phase's text is still in there and its closing tag is the
+            # LAST one, so parsing everything would return that earlier text run
+            # together with this phase's (issue #122). The boundary that decides
+            # the hold has to decide the extraction too.
+            final_answer, _ = self._parse_thinking_content(
+                accumulated_content[phase_start:]
+                if holding_at_end
+                else accumulated_content
+            )
 
         # Extract usage and model info for final event
         usage = self._extract_usage_from_messages(usage_messages or all_messages)

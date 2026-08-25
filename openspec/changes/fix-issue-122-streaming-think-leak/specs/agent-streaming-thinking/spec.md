@@ -14,7 +14,12 @@ On a stream that completes normally, held text that is never released by a
 `</think>` SHALL still reach the user through the existing end-of-stream `final`
 event, and SHALL take precedence over any earlier full message in the same run,
 so that text the model produced on its way to a tool call cannot stand in for the
-answer that was held. On a stream that terminates early through an error path, held text SHALL be
+answer that was held. That final answer SHALL be taken from the held phase alone,
+not from the whole accumulated buffer, because an earlier phase's closing tag is
+the last one in that buffer and parsing it would return the earlier phase's text
+joined to this one's. A phase boundary SHALL be detected from the presence of tool
+calls on a message and never from a provider-supplied tool-call id, since a
+meaningful call carrying no id is a supported shape. On a stream that terminates early through an error path, held text SHALL be
 discarded rather than flushed, because content that never reached a `</think>`
 cannot be shown to be an answer rather than reasoning.
 
@@ -114,6 +119,14 @@ change the gate.
 - **AND** the request has been bound to a different provider configured with `enable_thinking` true
 - **WHEN** that request streams orphan reasoning followed by `</think>` and an answer
 - **THEN** the reasoning is suppressed for that request
+
+#### Scenario: Pipeline built from a pipeline-map model reference
+
+- **GIVEN** a pipeline constructed with no `default_provider`, whose model comes from `archi.pipeline_map.<agent>.models` as a `provider/model` reference
+- **AND** that reference names a provider configured with `enable_thinking` true
+- **WHEN** the agent resolves the gate
+- **THEN** it SHALL resolve the provider from that reference, because the model was built with that provider's `extra_kwargs`
+- **AND** SHALL NOT fail open merely because `default_provider` is unset
 
 #### Scenario: Request switches model within one provider
 
