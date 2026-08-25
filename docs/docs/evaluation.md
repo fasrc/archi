@@ -1165,6 +1165,31 @@ The workspace changed after a phase completed or is incomplete. Restore the
 original artifact from a trusted copy, or rerun the appropriate phase with
 `--overwrite`. Do not edit the manifest to bypass integrity checks.
 
+### The console is not there at all
+
+On an authenticated deployment, check the signed-in user's roles first. The
+header link is hidden from any session without the `evaluations:view`
+permission, so a missing link there is ordinary access control and not a fault —
+the routes are registered and another user sees them. A console that is switched
+off, by contrast, is missing for everyone and its URL answers 404.
+
+For a console missing for everyone, the storage root is the usual cause. The
+chat app disables the console rather than crash when it cannot use its own
+storage, so an enabled deployment with no `/evaluations` at all points at
+`services.chat_app.evaluations.root`. At start-up the chat app creates the
+catalog tree under that root and then writes one short-lived probe file into each
+of `datasets`, `profiles`, `drafts`, `runs`, and `jobs` to prove they accept
+writes — a tree that is read-only, owned by another user, or already present on a
+read-only volume fails that check. The root itself is only a container and is
+never written to, so a read-only root holding writable catalog directories is
+fine. Chat keeps serving; only the console turns itself off.
+
+Read the chat-app start-up log and look for the error line naming the root. Fix
+the mount or the ownership, or correct the setting, then redeploy. The same
+sentence covers the two config refusals: an enabled console with no
+`evaluations.agent_config_path`, or one naming the live deployment config, is
+also disabled with one error line each.
+
 ### The console says another job is active
 
 Atom generation and evaluation share a single-flight worker. Wait for the

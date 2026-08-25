@@ -5,10 +5,11 @@ needs — is it enabled, may this request proceed, does the nav link show —
 lives here where the gate can cover it. ``app.py`` keeps thin call sites only
 (pattern: ``config_fingerprint.py``).
 
-Two decisions here diverge from upstream on purpose. ``build_evaluation_service``
-refuses an enabled console that names no ``agent_config_path``, and refuses the
-live deployment config outright, because each run copies that file into its own
-run directory (details on the function).
+Three decisions here diverge from upstream on purpose. ``build_evaluation_service``
+refuses an enabled console that names no ``agent_config_path``, refuses the live
+deployment config outright, because each run copies that file into its own run
+directory, and refuses a storage root construction cannot use (details on the
+function).
 
 And the ``authorize_request`` callable is narrower than upstream's: it has no
 bearer-token or SSO branch, so an SSO deployment that turns the console on gets a
@@ -17,6 +18,7 @@ is off by default and the dev stack runs auth-off.
 """
 
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -72,6 +74,13 @@ def build_evaluation_service(
     hard link or bind mount that shares its inode (see
     ``_is_live_agent_config``).
 
+    The same refusal covers ``evaluations.root``: when constructing the service
+    hits an ``OSError`` — an unwritable or unusable root, or a stale-job sweep
+    that cannot write during construction — the console disables itself rather
+    than raise. The net is ``OSError`` only, not ``Exception``, because a wider
+    net would catch a programming error too and report it as a disabled console
+    instead of surfacing the defect.
+
     Each refusal logs an error and returns ``None``. ``app.py`` calls this during
     init, so the console turns itself off while chat stays up.
     """
@@ -100,12 +109,48 @@ def build_evaluation_service(
         return None
 
     mcp_config_path = evaluations_config.get("mcp_config_path")
-    return EvaluationConsoleService(
-        Path(evaluations_config.get("root", DEFAULT_EVALUATION_ROOT)),
-        agent_config_path=Path(agent_config_path),
-        agents_dir=Path(chat_app_config.get("agents_dir") or DEFAULT_AGENTS_DIR),
-        mcp_config_path=Path(mcp_config_path) if mcp_config_path else None,
-    )
+    root = evaluations_config.get("root", DEFAULT_EVALUATION_ROOT)
+    try:
+        service = EvaluationConsoleService(
+            Path(root),
+            agent_config_path=Path(agent_config_path),
+            agents_dir=Path(chat_app_config.get("agents_dir") or DEFAULT_AGENTS_DIR),
+            mcp_config_path=Path(mcp_config_path) if mcp_config_path else None,
+        )
+        # Construction alone does not prove the storage is usable. It only calls
+        # `mkdir(parents=True, exist_ok=True)` seven times and sweeps stale jobs,
+        # which writes solely when it finds a job to interrupt — so a read-only
+        # mount already holding the five directories, the shape an operator gets
+        # restoring a snapshot onto a read-only volume, raises nothing at all.
+        # The console would register and the first dataset import would 500.
+        #
+        # Probe the five directories the console writes into, not the root: the
+        # root itself is never written: imports and drafts stage through
+        # `TemporaryDirectory(dir=...)` inside `datasets`, `profiles` and
+        # `drafts`, runs are workspaces under `runs`, and job records live in
+        # `jobs`. A writable root with one tighter-permissioned or separately
+        # mounted child passes a root-only probe and fails on first use. Each
+        # probe file is deleted on close, so the tree is left as found, and the
+        # `OSError` carries the offending path into the message below.
+        for directory in (
+            service.catalog.datasets_dir,
+            service.catalog.profiles_dir,
+            service.catalog.drafts_dir,
+            service.catalog.runs_dir,
+            service.catalog.jobs_dir,
+        ):
+            with tempfile.NamedTemporaryFile(
+                dir=directory, prefix=".archi-write-probe-"
+            ):
+                pass
+        return service
+    except OSError as exc:
+        logger.error(
+            "Evaluation console disabled: evaluations.root %s is not usable: %s",
+            root,
+            exc,
+        )
+        return None
 
 
 def build_authorize_request(auth_enabled: bool) -> Callable[[str], Optional[Any]]:
