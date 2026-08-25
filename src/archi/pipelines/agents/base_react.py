@@ -37,6 +37,10 @@ from src.archi.pipelines.agents.utils.history_utils import infer_speaker
 from src.archi.pipelines.agents.utils.mcp_utils import AsyncLoopThread
 from src.archi.pipelines.agents.utils.prompt_utils import get_role_context, read_prompt
 from src.archi.pipelines.agents.utils.run_memory import RunMemory
+from src.archi.pipelines.agents.utils.thinking_gate import (
+    hold_visible,
+    provider_emits_thinking,
+)
 from src.archi.providers import get_model
 from src.archi.providers.base import ProviderType
 from src.archi.utils.output_dataclass import PipelineOutput
@@ -470,6 +474,9 @@ class BaseReActAgent:
         accumulated_thinking = ""  # Captured thinking content from <think> tags
         last_visible_content = ""  # Last visible content emitted (without thinking)
         last_response_metadata: Optional[Dict[str, Any]] = None
+        # Whether this provider can emit reasoning at all (issue #122). The
+        # provider cannot change mid-stream, so resolve it once here.
+        thinking_possible = provider_emits_thinking(self.config, self.default_provider)
 
         try:
             for event in self.agent.stream(
@@ -615,8 +622,12 @@ class BaseReActAgent:
                                 if not accumulated_thinking:
                                     accumulated_thinking = thinking_content
 
-                            # Only emit if visible content changed
-                            if visible_content != last_visible_content:
+                            # Emit only when the visible content changed AND the
+                            # provider's reasoning block is known to be closed
+                            # (issue #122). `last_visible_content` is left alone
+                            # while text is held, so nothing is skipped on release.
+                            held = hold_visible(thinking_possible, accumulated_content)
+                            if visible_content != last_visible_content and not held:
                                 last_visible_content = visible_content
                                 yield self.finalize_output(
                                     answer=visible_content,
@@ -795,6 +806,9 @@ class BaseReActAgent:
         accumulated_thinking = ""  # Captured thinking content from <think> tags
         last_visible_content = ""  # Last visible content emitted (without thinking)
         last_response_metadata: Optional[Dict[str, Any]] = None
+        # Whether this provider can emit reasoning at all (issue #122). The
+        # provider cannot change mid-stream, so resolve it once here.
+        thinking_possible = provider_emits_thinking(self.config, self.default_provider)
 
         try:
             async for event in self.agent.astream(
@@ -926,8 +940,12 @@ class BaseReActAgent:
                                 if not accumulated_thinking:
                                     accumulated_thinking = thinking_content
 
-                            # Only emit if visible content changed
-                            if visible_content != last_visible_content:
+                            # Emit only when the visible content changed AND the
+                            # provider's reasoning block is known to be closed
+                            # (issue #122). `last_visible_content` is left alone
+                            # while text is held, so nothing is skipped on release.
+                            held = hold_visible(thinking_possible, accumulated_content)
+                            if visible_content != last_visible_content and not held:
                                 last_visible_content = visible_content
                                 yield self.finalize_output(
                                     answer=visible_content,

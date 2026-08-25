@@ -20,6 +20,7 @@ import pytest
 from langchain_core.documents import Document
 
 from src.archi.pipelines.agents.base_react import BaseReActAgent
+from src.archi.pipelines.agents.utils.thinking_gate import provider_emits_thinking
 from src.interfaces.chat_app.app import _build_request_local_pipeline
 
 
@@ -413,3 +414,78 @@ def test_selecting_the_deployments_own_model_keeps_its_declared_window():
     )
 
     assert _compiled_budget(view).context_window == 32768
+
+
+# --- the streamed-reasoning gate follows the view's provider (issue #122) ---
+
+
+def _thinking_config():
+    """Two providers: the deployment default is unset, ``thinker`` enables it."""
+    return {
+        "services": {
+            "chat_app": {
+                "default_provider": "prov",
+                "providers": {
+                    "prov": {},
+                    "thinker": {
+                        "extra_kwargs": {
+                            "extra_body": {
+                                "chat_template_kwargs": {"enable_thinking": True}
+                            }
+                        }
+                    },
+                },
+            }
+        }
+    }
+
+
+def test_the_thinking_gate_follows_a_request_local_provider_override():
+    """The gate resolves against the provider the request will actually call.
+
+    ``resolved_enable_thinking()`` reads ``services.chat_app.default_provider``,
+    which is the configured default and not this request's provider, so reusing
+    it would resolve the gate against the wrong provider entirely — the same
+    class of defect as issue #262. Reading ``self.default_provider``, which
+    ``adopt_request_local_model()`` rewrites, tracks the override for free.
+    """
+    source = _primed_source(config=_thinking_config())
+    assert provider_emits_thinking(source.config, source.default_provider) is False
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(max_tokens=8192),
+        provider="thinker",
+        model="small-model",
+        context_window=32768,
+    )
+
+    assert provider_emits_thinking(view.config, view.default_provider) is True
+    # And the shared pipeline is still unchanged (issue #86's invariant).
+    assert provider_emits_thinking(source.config, source.default_provider) is False
+
+
+def test_the_thinking_gate_is_unchanged_by_a_same_provider_model_switch():
+    """The gate is provider-granular, which matches the mechanism.
+
+    ``chat_template_kwargs`` is spread verbatim into the request body for every
+    model called through a provider, and the schema carries no per-model
+    ``enable_thinking``. Switching model within one provider therefore leaves the
+    transmitted kwarg unchanged, and must leave the gate unchanged too.
+    """
+    source = _BudgetPipeline(
+        _llm(), provider="thinker", model="big-model", config=_thinking_config()
+    )
+    source.refresh_agent(force=True)
+    assert provider_emits_thinking(source.config, source.default_provider) is True
+
+    view = _build_request_local_pipeline(
+        source,
+        _llm(max_tokens=8192),
+        provider="thinker",
+        model="small-model",
+        context_window=32768,
+    )
+
+    assert view.default_model == "small-model"
+    assert provider_emits_thinking(view.config, view.default_provider) is True
