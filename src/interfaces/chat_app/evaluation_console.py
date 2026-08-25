@@ -5,10 +5,11 @@ needs — is it enabled, may this request proceed, does the nav link show —
 lives here where the gate can cover it. ``app.py`` keeps thin call sites only
 (pattern: ``config_fingerprint.py``).
 
-Two decisions here diverge from upstream on purpose. ``build_evaluation_service``
-refuses an enabled console that names no ``agent_config_path``, and refuses the
-live deployment config outright, because each run copies that file into its own
-run directory (details on the function).
+Three decisions here diverge from upstream on purpose. ``build_evaluation_service``
+refuses an enabled console that names no ``agent_config_path``, refuses the live
+deployment config outright, because each run copies that file into its own run
+directory, and refuses a storage root construction cannot use (details on the
+function).
 
 And the ``authorize_request`` callable is narrower than upstream's: it has no
 bearer-token or SSO branch, so an SSO deployment that turns the console on gets a
@@ -71,6 +72,13 @@ def build_evaluation_service(
     an odd spelling (a ``..`` segment, a doubled separator), a symlink, and a
     hard link or bind mount that shares its inode (see
     ``_is_live_agent_config``).
+
+    The same refusal covers ``evaluations.root``: when constructing the service
+    hits an ``OSError`` — an unwritable or unusable root, or a stale-job sweep
+    that cannot write during construction — the console disables itself rather
+    than raise. The net is ``OSError`` only, not ``Exception``, because a wider
+    net would catch a programming error too and report it as a disabled console
+    instead of surfacing the defect.
 
     Each refusal logs an error and returns ``None``. ``app.py`` calls this during
     init, so the console turns itself off while chat stays up.
