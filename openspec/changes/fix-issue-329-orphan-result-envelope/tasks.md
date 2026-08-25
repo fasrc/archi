@@ -74,7 +74,7 @@ manager is alive. Section 2's tests do the opposite, deliberately.
 
 ## 3. A listing skips what is not a job record
 
-- [ ] 3.1 `model: sonnet` — RED test: write a plainly-named `tmp_path / "stray.json"` holding
+- [x] 3.1 `model: sonnet` — RED test: write a plainly-named `tmp_path / "stray.json"` holding
       `{"result": {"draft_id": "d"}}` — a mapping with no `"id"` — beside one valid job
       record. Assert `list()` returns exactly the one record and that
       `EvaluationConsoleService.list_jobs()` raises nothing. Watch it fail. Implement: in

@@ -401,9 +401,12 @@ class EvaluationJobManager:
         jobs = []
         for path in self._job_files():
             try:
-                jobs.append(read_json(path))
+                record = read_json(path)
             except ValueError:
                 continue
+            if not isinstance(record, dict) or "id" not in record:
+                continue
+            jobs.append(record)
         return sorted(jobs, key=lambda job: job.get("created_at", ""), reverse=True)
 
     def wait(self, job_id: str, timeout: Optional[float] = None) -> Dict[str, Any]:

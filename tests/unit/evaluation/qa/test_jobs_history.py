@@ -2019,3 +2019,63 @@ def test_job_manager_interrupts_stale_then_sweeps_its_envelope(tmp_path):
     assert manager.get(job_id)["status"] == "interrupted"
     assert not envelope_path.exists()
     manager.close()
+
+
+def test_list_skips_non_job_records(tmp_path):
+    jobs_dir = tmp_path / "jobs"
+    job_id = "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+    manager = EvaluationJobManager(jobs_dir)
+
+    write_json(
+        jobs_dir / f"{job_id}.json",
+        {
+            "id": job_id,
+            "kind": "evaluation",
+            "status": "completed",
+            "created_at": "2026-08-25T10:00:00",
+        },
+    )
+    write_json(jobs_dir / "stray.json", {"result": {"draft_id": "d"}})
+
+    result = manager.list()
+    assert len(result) == 1
+    assert result[0]["id"] == job_id
+
+    service = EvaluationConsoleService(
+        tmp_path,
+        agent_config_path=tmp_path / "config.yaml",
+        agents_dir=tmp_path,
+    )
+    service.list_jobs()  # must not raise KeyError: 'id'
+
+    service.job_manager.close()
+    manager.close()
+
+    # Two well-formed records come back newest-first.
+    job_id_a = "aaaaaaaa-0000-0000-0000-000000000001"
+    job_id_b = "bbbbbbbb-0000-0000-0000-000000000002"
+    manager3 = EvaluationJobManager(jobs_dir)
+    write_json(
+        jobs_dir / f"{job_id_a}.json",
+        {
+            "id": job_id_a,
+            "kind": "evaluation",
+            "status": "completed",
+            "created_at": "2026-08-25T09:00:00",
+        },
+    )
+    write_json(
+        jobs_dir / f"{job_id_b}.json",
+        {
+            "id": job_id_b,
+            "kind": "evaluation",
+            "status": "completed",
+            "created_at": "2026-08-25T11:00:00",
+        },
+    )
+    results3 = manager3.list()
+    ids = [r["id"] for r in results3]
+    assert job_id_b in ids
+    assert job_id_a in ids
+    assert ids.index(job_id_b) < ids.index(job_id_a)
+    manager3.close()
