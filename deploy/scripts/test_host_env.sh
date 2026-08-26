@@ -305,5 +305,20 @@ fi
 rm -rf "$TESTROOT/repo/deploy/fasrc-dev"
 rm -f "$FIXSCRIPTS/host.env"
 
+# --- 21: a NON-empty GPU_IDS from host.env reaches --gpu-ids ------------------
+# Case 6 pins only the empty disable. docs/docs/ingest_performance_cpu_vs_gpu.md
+# now tells operators to enable GPU embedding with GPU_IDS=0 in host.env rather
+# than in the shared tracked lib.sh, so the path that instruction depends on has
+# to be pinned too.
+printf 'DEPLOYMENT=claw\nGPU_IDS=0\n' > "$FIXSCRIPTS/host.env"
+run_deploy GPU_ON=1
+argv="$(cat "$TESTROOT/argv")"
+if [[ "$argv" == *"--gpu-ids 0"* ]]; then
+  ok "21 a non-empty GPU_IDS from host.env reaches --gpu-ids"
+else
+  notok "21 host.env GPU_IDS=0 should reach --gpu-ids 0, got: $argv"
+fi
+rm -f "$FIXSCRIPTS/host.env"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
