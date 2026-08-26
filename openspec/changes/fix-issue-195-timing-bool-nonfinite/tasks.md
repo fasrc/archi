@@ -147,7 +147,8 @@ end-to-end check against the *running* deployment, naming the service and the co
 service actually imports. Recorded here rather than only in a PR comment so the evidence
 travels with the change.
 
-- [x] 7.1 Deploy the PR head to the dev stack and name what ran. `deploy/scripts/redeploy.sh`
+- [x] 7.1 Deploy the PR head to the dev stack and name what ran. `deploy/fasrc-dev/scripts/redeploy.sh`
+      (the path as it stood on 2026-08-05; relocated to `deploy/scripts/` on 2026-08-25)
       on 2026-08-05, deployment `dev`, services `chatbot-dev` + `postgres-dev` + `data-manager-dev`,
       `SOURCE_COMMIT=fd73066d-dirty` (the `-dirty` suffix is untracked operator files, no tracked
       edits), config pin `deploy-pin-2026-07e@4d6873e3` `match=yes`.

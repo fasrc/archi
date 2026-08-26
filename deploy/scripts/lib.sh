@@ -176,10 +176,19 @@ die()  { printf '\033[1;31m[archi-%s] ERROR:\033[0m %s\n' "$DEPLOYMENT" "$*" >&2
 # --- preflight --------------------------------------------------------------
 require_archi() { command -v archi >/dev/null 2>&1 || die "archi CLI not found on PATH"; }
 
-require_files() {
-  [ -f "$REPO_ROOT/$CONFIG" ] || die "config not found: $CONFIG"
-  [ -f "$ENV_FILE_ABS" ]      || die "secrets not found: $ENV_FILE_ABS"
+# Split because the two checks belong at different points in the deploy. The
+# secrets file is host-local and must exist up front; the CONFIG file may live
+# INSIDE the config/ checkout that ensure_config clones, so requiring it before
+# provisioning makes a fresh checkout unbootstrappable. Order pinned by
+# test_host_env.sh case 22.
+require_secrets() {
+  [ -f "$ENV_FILE_ABS" ] || die "secrets not found: $ENV_FILE_ABS"
 }
+require_config_file() {
+  [ -f "$REPO_ROOT/$CONFIG" ] || die "config not found: $CONFIG"
+}
+# Both checks, secrets first. Kept for callers that want the whole preflight.
+require_files() { require_secrets; require_config_file; }
 
 # Soft check: the LLM endpoint is VPN-only. Warn (don't block) if unreachable —
 # the deploy will still come up, but chat won't work until the VPN is connected.
@@ -300,8 +309,10 @@ ensure_config() {
 # runs rebuild images + re-render config + restart. Volumes (DB + corpus) are
 # preserved across create/--force; only nuke.sh removes them.
 archi_deploy() {
-  require_archi; require_files
-  ensure_config   # provision config/ at the pin BEFORE rendering the deployment
+  require_archi
+  require_secrets      # host-local; fail on a missing secrets file before any work
+  ensure_config        # provision config/ at the pin BEFORE requiring anything in it
+  require_config_file  # CONFIG may live inside config/, so it can only exist now
   check_llm
   cd "$REPO_ROOT"
   log "Deploying (hostmode, --force; data volumes preserved)…"

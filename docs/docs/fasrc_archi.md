@@ -728,8 +728,11 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 > 1. Add the launchers, both units, the compat shim and `vllm_patches/` to
 >    `fasrc/archi-config`.
 > 2. Give *this* deployment a provisioning step that pins them. Bumping
->    `CONFIG_REF`/`CONFIG_SHA` in `deploy/scripts/lib.sh` governs the
->    `dev` deployment only and does nothing here. Either wrap `g.sh` so it sources
+>    `CONFIG_REF`/`CONFIG_SHA` in `deploy/scripts/lib.sh` governs
+>    **every script-managed deployment** — `dev` on the GPU host and `claw` on the
+>    workstation both source that shared file, and `archi_deploy` calls
+>    `ensure_config` unconditionally, so one bump converges both on their next
+>    create/redeploy. It still does nothing here. Either wrap `g.sh` so it sources
 >    `ensure_config` before `archi create`, or record an explicit checkout step in
 >    this deployment's procedure that **verifies the commit, not just the tag
 >    name**: `git -C config/ fetch --tags`, then

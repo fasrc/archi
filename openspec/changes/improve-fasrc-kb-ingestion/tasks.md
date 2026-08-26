@@ -28,6 +28,6 @@
 
 ## 6. Re-ingest & deploy-verify
 
-- [x] 6.1 Redeploy fasrc-dev (`deploy/scripts/redeploy.sh`) so the non-editable install picks up the code change. Deployed branch code (`archi source commit 26a4dbb0`); all containers healthy, no crash-loop / `ModuleNotFoundError`.
+- [x] 6.1 Redeploy fasrc-dev (`deploy/fasrc-dev/scripts/redeploy.sh`, relocated to `deploy/scripts/` on 2026-08-25) so the non-editable install picks up the code change. Deployed branch code (`archi source commit 26a4dbb0`); all containers healthy, no crash-loop / `ModuleNotFoundError`.
 - [x] 6.2 Re-ingest the KB (body-only Markdown + `metadata["category"]`). NOTE: a plain re-ingest does **not** refresh existing chunks (content-only change under an unchanged `.md` filename/hash — see the ingest-processing "Re-ingest refreshes chunks" caveat), so this required `nuke.sh` + fresh ingest. Result: 366 docs / 2970 chunks; corpus-wide leak check = **0** chunks containing `Bookmarkable Links` or `Filter by categories`.
 - [x] 6.3 `archi-dev-deploy-verify`: chat smoke = **HTTP 200** with a real grounded answer (model `local/palmfuture/Qwen3.6-35B`); **446** KB chunks carry a `category` spanning all **19** taxonomy terms; `llm_category` now has real labels (0 `uncategorized`, fixing the pre-existing state). Non-KB sources (slurm/wiki) correctly have `category = NULL`.

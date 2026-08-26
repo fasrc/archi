@@ -61,7 +61,7 @@ Two hosts deploy from this repository, and they must not share one identity.
   `dev` in silence, because `CONFIG` also falls back to the GPU host's file. So a
   legacy `host.env` with no new one **aborts every script** and prints the `mv` to
   run. A leftover beside a valid new file only warns.
-- **Self-test:** `bash deploy/scripts/test_host_env.sh` — 21 cases
+- **Self-test:** `bash deploy/scripts/test_host_env.sh` — 22 cases
   against a fake `archi` and a fixture tree; renders nothing, deploys nothing.
 
 ## Config provisioning (`ensure_config`)
@@ -105,6 +105,14 @@ config-managed (puppet — its rules carry numeric `0000`/`0010` comment
 prefixes), but the archi ports are not in that managed set. So they can vanish
 on a host rebuild, and a puppet run may purge them outright if the firewall
 class runs with `purge => true`.
+
+**Scope: the GPU host only.** Unlike every other script here, `firewall.sh` is
+not host-neutral. It neither reads `host.env` nor derives ports from the selected
+`CONFIG` — its `FW_RULES` table is fixed, and it opens `7861` to the broad Harvard
+gencom and FASRC VPNs plus several GPU-host service ports. Running it on the
+workstation would widen that host's firewall for services it does not run: `claw`
+serves `7866` and has no local vLLM. Do not run it there unless you first make its
+rule profile host-aware.
 
 `firewall.sh` is the reproducible record of what to re-add:
 

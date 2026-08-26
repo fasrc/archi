@@ -67,7 +67,8 @@ run_deploy() { # env assignments passed as "VAR=value" args
   # invoking shell; the case's own assignments (after -u) still apply.
   env -u DEPLOYMENT -u CONFIG -u GPU_IDS "$@" PATH="$TESTROOT/bin:$PATH" bash -c '
     source "'"$FIXSCRIPTS"'/lib.sh"
-    require_files() { :; }
+    require_secrets() { :; }
+    require_config_file() { :; }
     ensure_config() { :; }
     check_llm()     { :; }
     archi_deploy >/dev/null 2>&1
@@ -319,6 +320,35 @@ else
   notok "21 host.env GPU_IDS=0 should reach --gpu-ids 0, got: $argv"
 fi
 rm -f "$FIXSCRIPTS/host.env"
+
+# --- 22: config/ is provisioned BEFORE its contents are required --------------
+# claw's CONFIG lives INSIDE the config/ checkout that ensure_config clones. If the
+# config-file check runs first, a fresh checkout can never bootstrap: the file is
+# absent, the deploy dies "config not found", and the clone that would create it
+# never runs. Order, not existence, is the contract — so this case keeps the real
+# check and lets a stubbed ensure_config create the file, which only passes if the
+# provision step runs first. The secrets preflight must still precede both.
+rm -f "$FIXSCRIPTS/host.env"
+: > "$TESTROOT/argv"
+mkdir -p "$TESTROOT/repo/config/environments"
+env -u DEPLOYMENT -u CONFIG -u GPU_IDS \
+  CONFIG=config/environments/claw.yaml \
+  ARCHI_ENV_FILE="$TESTROOT/fake-secrets.env" \
+  PATH="$TESTROOT/bin:$PATH" bash -c '
+    : > "'"$TESTROOT"'/fake-secrets.env"
+    source "'"$FIXSCRIPTS"'/lib.sh"
+    # Stand in for the clone: the pinned checkout appears only now.
+    ensure_config() { printf "yes: true\n" > "$REPO_ROOT/$CONFIG"; }
+    check_llm() { :; }
+    archi_deploy >/dev/null 2>&1
+  ' 2>/dev/null || true
+argv="$(cat "$TESTROOT/argv")"
+if [[ "$argv" == *"--config config/environments/claw.yaml"* ]]; then
+  ok "22 ensure_config provisions config/ before the CONFIG path is required"
+else
+  notok "22 a CONFIG inside config/ must survive a fresh checkout, got: ${argv:-<deploy aborted>}"
+fi
+rm -rf "$TESTROOT/repo/config" "$TESTROOT/fake-secrets.env"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
