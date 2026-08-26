@@ -350,5 +350,32 @@ else
 fi
 rm -rf "$TESTROOT/repo/config" "$TESTROOT/fake-secrets.env"
 
+# --- 23: config-derived endpoints survive a bootstrap deploy ------------------
+# CHAT_PORT and LLM_URL are read from $CONFIG at source time. When CONFIG lives
+# inside the config/ checkout, that read happens before the clone, so both are
+# empty and never refreshed: the deploy succeeds with the right config while
+# advertising the fallback port 7861 and skipping the LLM preflight.
+rm -f "$FIXSCRIPTS/host.env"
+mkdir -p "$TESTROOT/repo/config/environments"
+port_seen="$(env -u DEPLOYMENT -u CONFIG -u GPU_IDS \
+  CONFIG=config/environments/claw.yaml \
+  ARCHI_ENV_FILE="$TESTROOT/fake-secrets.env" \
+  PATH="$TESTROOT/bin:$PATH" bash -c '
+    : > "'"$TESTROOT"'/fake-secrets.env"
+    source "'"$FIXSCRIPTS"'/lib.sh"
+    ensure_config() {
+      printf "services:\n  chat_app:\n    external_port: 7866\n" > "$REPO_ROOT/$CONFIG"
+    }
+    check_llm() { :; }
+    archi_deploy >/dev/null 2>&1
+    printf "%s" "$CHAT_PORT"
+  ' 2>/dev/null || true)"
+if [ "$port_seen" = "7866" ]; then
+  ok "23 config-derived endpoints are re-resolved after provisioning"
+else
+  notok "23 CHAT_PORT should be 7866 after ensure_config, got: ${port_seen:-<empty, fell back to 7861>}"
+fi
+rm -rf "$TESTROOT/repo/config" "$TESTROOT/fake-secrets.env"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

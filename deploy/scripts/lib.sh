@@ -156,17 +156,26 @@ VERBOSITY="3"
 # external_port does NOT leak the next service's port (e.g. data_manager 7889) —
 # it falls through to 7861, matching the base-config default (base-config.yaml).
 # Also the fallback when the git-excluded config.yaml is absent.
-CHAT_PORT="$(awk '
-  /^  chat_app:/ {f=1; next}
-  f && /^  [^ ]/ {f=0}
-  f && /external_port:/ {print $2; exit}
-' "$REPO_ROOT/$CONFIG" 2>/dev/null | grep -oE '[0-9]+' || true)"
-CHAT_URL="http://localhost:${CHAT_PORT:-7861}"
-
-# FASRC vLLM endpoint (scheme://host:port), read from the base_url line in the
-# config so it never drifts. Matches both hostnames and IPs.
-LLM_URL="$(grep -E '^[[:space:]]*base_url:' "$REPO_ROOT/$CONFIG" 2>/dev/null \
-  | grep -oE 'http://[A-Za-z0-9_.-]+:[0-9]+' | head -1 || true)"
+# Both values are derived from $CONFIG, which may live INSIDE the config/ checkout
+# that ensure_config clones — so on a fresh host they cannot be resolved at source
+# time. Kept as a function and called twice: once here, so status.sh and nuke.sh
+# (which never provision) still get values, and again after ensure_config in
+# archi_deploy. Without the second call a bootstrap deploy succeeds with the right
+# config while advertising the fallback port and skipping the LLM preflight
+# entirely. Pinned by test_host_env.sh case 23.
+resolve_config_endpoints() {
+  CHAT_PORT="$(awk '
+    /^  chat_app:/ {f=1; next}
+    f && /^  [^ ]/ {f=0}
+    f && /external_port:/ {print $2; exit}
+  ' "$REPO_ROOT/$CONFIG" 2>/dev/null | grep -oE '[0-9]+' || true)"
+  CHAT_URL="http://localhost:${CHAT_PORT:-7861}"
+  # FASRC vLLM endpoint (scheme://host:port), read from the base_url line in the
+  # config so it never drifts. Matches both hostnames and IPs.
+  LLM_URL="$(grep -E '^[[:space:]]*base_url:' "$REPO_ROOT/$CONFIG" 2>/dev/null \
+    | grep -oE 'http://[A-Za-z0-9_.-]+:[0-9]+' | head -1 || true)"
+}
+resolve_config_endpoints
 
 # --- logging ----------------------------------------------------------------
 log()  { printf '\033[1;34m[archi-%s]\033[0m %s\n' "$DEPLOYMENT" "$*"; }
@@ -313,6 +322,7 @@ archi_deploy() {
   require_secrets      # host-local; fail on a missing secrets file before any work
   ensure_config        # provision config/ at the pin BEFORE requiring anything in it
   require_config_file  # CONFIG may live inside config/, so it can only exist now
+  resolve_config_endpoints  # re-read: on a fresh host $CONFIG did not exist at source time
   check_llm
   cd "$REPO_ROOT"
   log "Deploying (hostmode, --force; data volumes preserved)…"
