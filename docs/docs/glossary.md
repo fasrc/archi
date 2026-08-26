@@ -278,7 +278,7 @@ own.
 
 ### dev deploy
 The local `dev` deployment of archi, backed by the FASRC model server, managed by the scripts
-in `deploy/fasrc-dev/scripts/`. Where changes are tried before anything goes further.
+in `deploy/scripts/`. Where changes are tried before anything goes further.
 
 ### redeploy
 Rebuilding and restarting a deployment so code or config edits take effect. archi's deployment
@@ -299,9 +299,15 @@ The high-performance server that hosts the actual chat language model on FASRC's
 separately from archi. archi talks to it over an OpenAI-compatible interface.
 
 ### deploy/fasrc-dev
-The folder holding the FASRC `dev` deployment's config, secrets, and scripts. The real config
-and secrets are deliberately kept out of version control (git-ignored), but the management
-scripts and a sanitized example config *are* tracked and reviewed like any other code.
+The folder holding the FASRC `dev` deployment's own config and agent prompts. `dev` is the
+GPU host. The real config and secrets are deliberately kept out of version control
+(git-ignored); a sanitized example config *is* tracked and reviewed like any other code.
+
+### deploy/scripts
+The management scripts that stand a deployment up, restart it, check it, and tear it down.
+They are host-neutral: every host runs the same scripts, and each host says which deployment
+it is through a small `host.env` file (git-ignored) that the scripts read. The scripts are
+tracked and reviewed like any other code.
 
 ### archi-config
 A separate, private repository holding the operational configuration a deployment needs —

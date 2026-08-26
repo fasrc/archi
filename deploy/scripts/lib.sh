@@ -7,10 +7,10 @@
 # the bump procedure, and test_ensure_config.sh for the executable contract.
 set -euo pipefail
 
-# Resolve the repo root from this file's location (deploy/fasrc-dev/scripts/),
+# Resolve the repo root from this file's location (deploy/scripts/),
 # so the scripts work regardless of the current working directory.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Optional per-host overrides (git-excluded; see host.env.example), read
 # before the defaults below so a host can pin its own identity without editing
@@ -25,6 +25,28 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 # on an ambiguous identity is how the wrong deployment dies. Fail closed; the
 # error names the offending line. Contract pinned by test_host_env.sh.
 _host_env_file="$SCRIPT_DIR/host.env"
+# Migration guard for the deploy/fasrc-dev/scripts -> deploy/scripts move.
+# host.env is git-ignored, so a `git pull` that relocates the scripts CANNOT carry
+# it along: it stays at the old path while this file reads only $SCRIPT_DIR. The
+# identity would then fall through to the reserved default `dev` with nothing said,
+# because CONFIG also falls back to deploy/fasrc-dev/config.yaml — a file that
+# exists on exactly the hosts carrying the stale host.env. A `dev`-named deploy on
+# the claw workstation collides with the GPU host's identity, and nuke.sh would
+# prompt for, and destroy, the wrong deployment. Same rule as an unparsable
+# host.env: an ambiguous identity fails closed. Pinned by test_host_env.sh 19-20.
+_legacy_host_env="$REPO_ROOT/deploy/fasrc-dev/scripts/host.env"
+if [ -f "$_legacy_host_env" ]; then
+  if [ -f "$_host_env_file" ]; then
+    printf 'host.env: leftover legacy file at %s is being IGNORED; this deployment reads %s. Delete the old one.\n' \
+      "$_legacy_host_env" "$_host_env_file" >&2
+  else
+    printf 'host.env: found ONLY the legacy file at %s\n' "$_legacy_host_env" >&2
+    printf 'host.env: the scripts moved to deploy/scripts/ and now read %s\n' "$_host_env_file" >&2
+    printf 'host.env: refusing to run — this host would silently take the reserved name "dev". Move it:\n' >&2
+    printf '  mv %s %s\n' "$_legacy_host_env" "$_host_env_file" >&2
+    exit 1
+  fi
+fi
 if [ -f "$_host_env_file" ]; then
   while IFS= read -r _he_line || [ -n "$_he_line" ]; do
     _he_line="${_he_line%$'\r'}"                              # tolerate CRLF
@@ -66,7 +88,7 @@ if [ -f "$_host_env_file" ]; then
     esac
   done < "$_host_env_file"
 fi
-unset _host_env_file _he_line _he_key _he_val _he_seen
+unset _host_env_file _legacy_host_env _he_line _he_key _he_val _he_seen
 
 # --- deployment identity (single source of truth) ---------------------------
 # `dev` is reserved for the GPU host; the no-GPU workstation deploys as `claw`
@@ -116,8 +138,8 @@ GPU_IDS="${GPU_IDS-}"
 # CONFIG_REPO/CONFIG_DIR are overridable so test_ensure_config.sh can run
 # against a local fixture instead of the real remote/checkout.
 CONFIG_REPO="${CONFIG_REPO:-git@github.com:fasrc/archi-config.git}"
-CONFIG_REF="${CONFIG_REF:-deploy-pin-2026-08a}"
-CONFIG_SHA="${CONFIG_SHA:-889008390d4d3ca30b52282b83bb07fe5716c377}"
+CONFIG_REF="${CONFIG_REF:-deploy-pin-2026-08b}"
+CONFIG_SHA="${CONFIG_SHA:-47d375272bc6edd3631d246977ce781bf86218f4}"
 CONFIG_DIR="${CONFIG_DIR:-$REPO_ROOT/config}"
 
 # Resolve the secrets file: absolute path used as-is, relative path is repo-relative.
@@ -134,17 +156,26 @@ VERBOSITY="3"
 # external_port does NOT leak the next service's port (e.g. data_manager 7889) —
 # it falls through to 7861, matching the base-config default (base-config.yaml).
 # Also the fallback when the git-excluded config.yaml is absent.
-CHAT_PORT="$(awk '
-  /^  chat_app:/ {f=1; next}
-  f && /^  [^ ]/ {f=0}
-  f && /external_port:/ {print $2; exit}
-' "$REPO_ROOT/$CONFIG" 2>/dev/null | grep -oE '[0-9]+' || true)"
-CHAT_URL="http://localhost:${CHAT_PORT:-7861}"
-
-# FASRC vLLM endpoint (scheme://host:port), read from the base_url line in the
-# config so it never drifts. Matches both hostnames and IPs.
-LLM_URL="$(grep -E '^[[:space:]]*base_url:' "$REPO_ROOT/$CONFIG" 2>/dev/null \
-  | grep -oE 'http://[A-Za-z0-9_.-]+:[0-9]+' | head -1 || true)"
+# Both values are derived from $CONFIG, which may live INSIDE the config/ checkout
+# that ensure_config clones — so on a fresh host they cannot be resolved at source
+# time. Kept as a function and called twice: once here, so status.sh and nuke.sh
+# (which never provision) still get values, and again after ensure_config in
+# archi_deploy. Without the second call a bootstrap deploy succeeds with the right
+# config while advertising the fallback port and skipping the LLM preflight
+# entirely. Pinned by test_host_env.sh case 23.
+resolve_config_endpoints() {
+  CHAT_PORT="$(awk '
+    /^  chat_app:/ {f=1; next}
+    f && /^  [^ ]/ {f=0}
+    f && /external_port:/ {print $2; exit}
+  ' "$REPO_ROOT/$CONFIG" 2>/dev/null | grep -oE '[0-9]+' || true)"
+  CHAT_URL="http://localhost:${CHAT_PORT:-7861}"
+  # FASRC vLLM endpoint (scheme://host:port), read from the base_url line in the
+  # config so it never drifts. Matches both hostnames and IPs.
+  LLM_URL="$(grep -E '^[[:space:]]*base_url:' "$REPO_ROOT/$CONFIG" 2>/dev/null \
+    | grep -oE 'http://[A-Za-z0-9_.-]+:[0-9]+' | head -1 || true)"
+}
+resolve_config_endpoints
 
 # --- logging ----------------------------------------------------------------
 log()  { printf '\033[1;34m[archi-%s]\033[0m %s\n' "$DEPLOYMENT" "$*"; }
@@ -154,10 +185,19 @@ die()  { printf '\033[1;31m[archi-%s] ERROR:\033[0m %s\n' "$DEPLOYMENT" "$*" >&2
 # --- preflight --------------------------------------------------------------
 require_archi() { command -v archi >/dev/null 2>&1 || die "archi CLI not found on PATH"; }
 
-require_files() {
-  [ -f "$REPO_ROOT/$CONFIG" ] || die "config not found: $CONFIG"
-  [ -f "$ENV_FILE_ABS" ]      || die "secrets not found: $ENV_FILE_ABS"
+# Split because the two checks belong at different points in the deploy. The
+# secrets file is host-local and must exist up front; the CONFIG file may live
+# INSIDE the config/ checkout that ensure_config clones, so requiring it before
+# provisioning makes a fresh checkout unbootstrappable. Order pinned by
+# test_host_env.sh case 22.
+require_secrets() {
+  [ -f "$ENV_FILE_ABS" ] || die "secrets not found: $ENV_FILE_ABS"
 }
+require_config_file() {
+  [ -f "$REPO_ROOT/$CONFIG" ] || die "config not found: $CONFIG"
+}
+# Both checks, secrets first. Kept for callers that want the whole preflight.
+require_files() { require_secrets; require_config_file; }
 
 # Soft check: the LLM endpoint is VPN-only. Warn (don't block) if unreachable —
 # the deploy will still come up, but chat won't work until the VPN is connected.
@@ -278,8 +318,11 @@ ensure_config() {
 # runs rebuild images + re-render config + restart. Volumes (DB + corpus) are
 # preserved across create/--force; only nuke.sh removes them.
 archi_deploy() {
-  require_archi; require_files
-  ensure_config   # provision config/ at the pin BEFORE rendering the deployment
+  require_archi
+  require_secrets      # host-local; fail on a missing secrets file before any work
+  ensure_config        # provision config/ at the pin BEFORE requiring anything in it
+  require_config_file  # CONFIG may live inside config/, so it can only exist now
+  resolve_config_endpoints  # re-read: on a fresh host $CONFIG did not exist at source time
   check_llm
   cd "$REPO_ROOT"
   log "Deploying (hostmode, --force; data volumes preserved)…"

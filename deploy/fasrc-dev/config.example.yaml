@@ -10,7 +10,7 @@
 #
 # Create with the deploy script — it provisions the config/ checkout
 # (fasrc/archi-config, pinned + SHA-verified) BEFORE rendering the deployment:
-#   deploy/fasrc-dev/scripts/create.sh
+#   deploy/scripts/create.sh
 #
 # Advanced: invoking `archi create` directly BYPASSES that provisioning — on a
 # host without config/ checked out, the CLI silently skips the missing source

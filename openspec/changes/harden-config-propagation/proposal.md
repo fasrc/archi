@@ -19,7 +19,7 @@ Deliberately **out of scope**: a restartless "live reload" of static config whil
 
 ## Impact
 
-- **Deploy tooling**: `deploy/fasrc-dev/scripts/redeploy.sh` / `lib.sh` (guarantee re-seed + chat-service recreate after a config change, scoped so Postgres/data-manager are not bounced).
+- **Deploy tooling**: `deploy/scripts/redeploy.sh` / `lib.sh` (guarantee re-seed + chat-service recreate after a config change, scoped so Postgres/data-manager are not bounced).
 - **Code**: `src/interfaces/chat_app/app.py` (startup effective-config log; optional read-only field on the public `/api/health`). No schema change and no runtime config-cache behavior change.
 - **Verification**: the `archi-dev-deploy-verify` skill (assert the toggle against a live turn, e.g. no `</think>` leakage; grep the boot log for the loaded toggle).
 - **Data**: none destroyed — data volumes preserved and not force-recreated.

@@ -33,7 +33,7 @@
 #       that directory, so `dev/../..` would resolve it to $HOME
 #   17. same guard for an ambient environment DEPLOYMENT (no host.env)
 #
-# Run: bash deploy/fasrc-dev/scripts/test_host_env.sh
+# Run: bash deploy/scripts/test_host_env.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,7 +46,7 @@ trap 'rm -rf "$TESTROOT"' EXIT
 
 # Fixture repo tree: lib.sh is COPIED in, so the SCRIPT_DIR it computes points
 # at the fixture and the host.env this test writes never touches the real tree.
-FIXSCRIPTS="$TESTROOT/repo/deploy/fasrc-dev/scripts"
+FIXSCRIPTS="$TESTROOT/repo/deploy/scripts"
 mkdir -p "$FIXSCRIPTS"
 cp "$SCRIPT_DIR/lib.sh" "$FIXSCRIPTS/lib.sh"
 
@@ -67,7 +67,8 @@ run_deploy() { # env assignments passed as "VAR=value" args
   # invoking shell; the case's own assignments (after -u) still apply.
   env -u DEPLOYMENT -u CONFIG -u GPU_IDS "$@" PATH="$TESTROOT/bin:$PATH" bash -c '
     source "'"$FIXSCRIPTS"'/lib.sh"
-    require_files() { :; }
+    require_secrets() { :; }
+    require_config_file() { :; }
     ensure_config() { :; }
     check_llm()     { :; }
     archi_deploy >/dev/null 2>&1
@@ -249,6 +250,132 @@ else
     ok "17 path-separator DEPLOYMENT from the environment aborts before archi"
   fi
 fi
+
+# --- 18: repo-root depth ------------------------------------------------------
+# The scripts live at deploy/scripts/, so lib.sh must climb exactly TWO levels to
+# reach the repo root. Nothing else in this suite catches a wrong depth:
+# require_files is stubbed out, and CHAT_PORT/LLM_URL both fall back silently
+# when "$REPO_ROOT/$CONFIG" does not resolve. So a lib.sh that climbs three
+# levels passes every other case here and then fails on a real deploy with
+# "config not found". Pin the depth directly.
+rm -f "$FIXSCRIPTS/host.env"
+expected_root="$(cd "$TESTROOT/repo" && pwd)"
+resolved_root="$(env -u DEPLOYMENT -u CONFIG -u GPU_IDS bash -c '
+  source "'"$FIXSCRIPTS"'/lib.sh" >/dev/null 2>&1
+  printf "%s" "$REPO_ROOT"
+')"
+if [ "$resolved_root" = "$expected_root" ]; then
+  ok "18 REPO_ROOT climbs two levels from deploy/scripts to the repo root"
+else
+  notok "18 REPO_ROOT should be $expected_root, got: $resolved_root"
+fi
+
+# --- 19 + 20: legacy host.env migration guard --------------------------------
+# host.env is git-ignored, so `git pull` cannot move it when the scripts relocate:
+# it stays at deploy/fasrc-dev/scripts/host.env while the moved lib.sh reads only
+# $SCRIPT_DIR/host.env. The identity would then fall through to the reserved `dev`
+# WITHOUT a word, because CONFIG also falls back to deploy/fasrc-dev/config.yaml,
+# which exists on exactly the hosts that have the stale file. Fail closed.
+LEGACY="$TESTROOT/repo/deploy/fasrc-dev/scripts"
+mkdir -p "$LEGACY"
+rm -f "$FIXSCRIPTS/host.env"
+printf 'DEPLOYMENT=claw\n' > "$LEGACY/host.env"
+if run_deploy LEGACY_ONLY=1 2>/dev/null; then
+  notok "19 a legacy-only host.env must abort, got: $(cat "$TESTROOT/argv")"
+else
+  if [ -s "$TESTROOT/argv" ]; then
+    notok "19 abort must land before archi is invoked, got: $(cat "$TESTROOT/argv")"
+  else
+    ok "19 a legacy-only host.env aborts before archi, not a silent fallback to dev"
+  fi
+fi
+
+# Migrated host: the new file governs and the leftover is not fatal, only noisy.
+printf 'DEPLOYMENT=claw\n' > "$FIXSCRIPTS/host.env"
+printf 'DEPLOYMENT=stale\n' > "$LEGACY/host.env"
+if run_deploy MIGRATED=1; then
+  argv="$(cat "$TESTROOT/argv")"
+  if [[ "$argv" == *"--name claw"* ]]; then
+    ok "20 with both files present the new host.env governs"
+  else
+    notok "20 the new host.env should win, got: $argv"
+  fi
+else
+  notok "20 a leftover legacy file must not abort a migrated host"
+fi
+rm -rf "$TESTROOT/repo/deploy/fasrc-dev"
+rm -f "$FIXSCRIPTS/host.env"
+
+# --- 21: a NON-empty GPU_IDS from host.env reaches --gpu-ids ------------------
+# Case 6 pins only the empty disable. docs/docs/ingest_performance_cpu_vs_gpu.md
+# now tells operators to enable GPU embedding with GPU_IDS=0 in host.env rather
+# than in the shared tracked lib.sh, so the path that instruction depends on has
+# to be pinned too.
+printf 'DEPLOYMENT=claw\nGPU_IDS=0\n' > "$FIXSCRIPTS/host.env"
+run_deploy GPU_ON=1
+argv="$(cat "$TESTROOT/argv")"
+if [[ "$argv" == *"--gpu-ids 0"* ]]; then
+  ok "21 a non-empty GPU_IDS from host.env reaches --gpu-ids"
+else
+  notok "21 host.env GPU_IDS=0 should reach --gpu-ids 0, got: $argv"
+fi
+rm -f "$FIXSCRIPTS/host.env"
+
+# --- 22: config/ is provisioned BEFORE its contents are required --------------
+# claw's CONFIG lives INSIDE the config/ checkout that ensure_config clones. If the
+# config-file check runs first, a fresh checkout can never bootstrap: the file is
+# absent, the deploy dies "config not found", and the clone that would create it
+# never runs. Order, not existence, is the contract — so this case keeps the real
+# check and lets a stubbed ensure_config create the file, which only passes if the
+# provision step runs first. The secrets preflight must still precede both.
+rm -f "$FIXSCRIPTS/host.env"
+: > "$TESTROOT/argv"
+mkdir -p "$TESTROOT/repo/config/environments"
+env -u DEPLOYMENT -u CONFIG -u GPU_IDS \
+  CONFIG=config/environments/claw.yaml \
+  ARCHI_ENV_FILE="$TESTROOT/fake-secrets.env" \
+  PATH="$TESTROOT/bin:$PATH" bash -c '
+    : > "'"$TESTROOT"'/fake-secrets.env"
+    source "'"$FIXSCRIPTS"'/lib.sh"
+    # Stand in for the clone: the pinned checkout appears only now.
+    ensure_config() { printf "yes: true\n" > "$REPO_ROOT/$CONFIG"; }
+    check_llm() { :; }
+    archi_deploy >/dev/null 2>&1
+  ' 2>/dev/null || true
+argv="$(cat "$TESTROOT/argv")"
+if [[ "$argv" == *"--config config/environments/claw.yaml"* ]]; then
+  ok "22 ensure_config provisions config/ before the CONFIG path is required"
+else
+  notok "22 a CONFIG inside config/ must survive a fresh checkout, got: ${argv:-<deploy aborted>}"
+fi
+rm -rf "$TESTROOT/repo/config" "$TESTROOT/fake-secrets.env"
+
+# --- 23: config-derived endpoints survive a bootstrap deploy ------------------
+# CHAT_PORT and LLM_URL are read from $CONFIG at source time. When CONFIG lives
+# inside the config/ checkout, that read happens before the clone, so both are
+# empty and never refreshed: the deploy succeeds with the right config while
+# advertising the fallback port 7861 and skipping the LLM preflight.
+rm -f "$FIXSCRIPTS/host.env"
+mkdir -p "$TESTROOT/repo/config/environments"
+port_seen="$(env -u DEPLOYMENT -u CONFIG -u GPU_IDS \
+  CONFIG=config/environments/claw.yaml \
+  ARCHI_ENV_FILE="$TESTROOT/fake-secrets.env" \
+  PATH="$TESTROOT/bin:$PATH" bash -c '
+    : > "'"$TESTROOT"'/fake-secrets.env"
+    source "'"$FIXSCRIPTS"'/lib.sh"
+    ensure_config() {
+      printf "services:\n  chat_app:\n    external_port: 7866\n" > "$REPO_ROOT/$CONFIG"
+    }
+    check_llm() { :; }
+    archi_deploy >/dev/null 2>&1
+    printf "%s" "$CHAT_PORT"
+  ' 2>/dev/null || true)"
+if [ "$port_seen" = "7866" ]; then
+  ok "23 config-derived endpoints are re-resolved after provisioning"
+else
+  notok "23 CHAT_PORT should be 7866 after ensure_config, got: ${port_seen:-<empty, fell back to 7861>}"
+fi
+rm -rf "$TESTROOT/repo/config" "$TESTROOT/fake-secrets.env"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

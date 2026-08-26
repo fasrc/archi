@@ -160,15 +160,19 @@ data_manager:
 ```
 
 ```bash
-# deploy/fasrc-dev/scripts/lib.sh
-GPU_IDS="0"
+# deploy/scripts/host.env — per-host, git-ignored. NOT lib.sh: that file is
+# tracked and shared by every host, so a committed GPU_IDS would reach hosts
+# with no NVIDIA runtime, where the deploy dies AFTER recreating the chatbot.
+GPU_IDS=0
 ```
 
 ### Revert to CPU
 
 Remove the `embedding_class_map` override from the deploy config (the template
-defaults to `device: cpu`) and set `GPU_IDS=""` in `lib.sh`. Redeploy — it will
-use `Dockerfile-data-manager` (CPU) instead of `Dockerfile-data-manager-gpu`.
+defaults to `device: cpu`) and either delete the `GPU_IDS` line from this host's
+`deploy/scripts/host.env` or set it to the explicit empty disable, `GPU_IDS=`.
+Redeploy — it will use `Dockerfile-data-manager` (CPU) instead of
+`Dockerfile-data-manager-gpu`.
 
 ### GPU memory
 
@@ -182,7 +186,7 @@ is CUDA runtime overhead.
 | `Dockerfile-data-manager-gpu` | New. `FROM a2rchi-pytorch-base` (torch+CUDA). |
 | `base-compose.yaml` | GPU Dockerfile selection + NVIDIA env/deploy block for data-manager when `gpu_ids` set. |
 | `base-config.yaml` | Render `code_suffixes` when defined in the deploy config. |
-| `deploy/fasrc-dev/scripts/lib.sh` | `GPU_IDS` variable, passed as `--gpu-ids` to `archi create`. |
+| `deploy/scripts/lib.sh` | `GPU_IDS` variable, passed as `--gpu-ids` to `archi create`. |
 | `deploy/fasrc-dev/config.yaml` | `device: cuda:0` override in `embedding_class_map`. |
 
 ## Next Steps

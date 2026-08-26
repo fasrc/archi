@@ -28,7 +28,7 @@ This design closes the deploy-bypass hole and the observability gap. A restartle
 
 Close the two bypass holes without cascading to Postgres:
 
-- **`deploy/fasrc-dev/scripts/redeploy.sh`**: after `archi_deploy`, add an explicit targeted recreate:
+- **`deploy/scripts/redeploy.sh`**: after `archi_deploy`, add an explicit targeted recreate:
   ```
   docker compose -f "$HOME/.archi/archi-$DEPLOYMENT/compose.yaml" --env-file "$ENV_FILE_ABS" \
     up -d --force-recreate config-seed chatbot

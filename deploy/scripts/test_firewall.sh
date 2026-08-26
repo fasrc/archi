@@ -9,7 +9,7 @@
 #    6. multi-port entries render as -m multiport --dports
 #    7. every rule carries a comment
 #    8. a failing iptables call aborts non-zero
-# Run: bash deploy/fasrc-dev/scripts/test_firewall.sh
+# Run: bash deploy/scripts/test_firewall.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
