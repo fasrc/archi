@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Shared config + helpers for managing the archi 'dev' deployment on localhost.
+# Shared config + helpers for managing this host's archi deployment (named by
+# $DEPLOYMENT — default 'dev', per-host via host.env; see host.env.example).
 # Sourced by create.sh / redeploy.sh / nuke.sh / status.sh — not run directly.
 # Deploys provision the config/ checkout (fasrc/archi-config) at a pinned,
 # SHA-verified ref via ensure_config — see the "config repo pin" section for
@@ -11,22 +12,95 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
+# Optional per-host overrides (git-excluded; see host.env.example), read
+# before the defaults below so a host can pin its own identity without editing
+# this tracked file. host.env is DATA, not code: it is parsed, never sourced,
+# so nothing in it can execute, and only KEY=VALUE lines for the allowlist
+# below are accepted — the config pin (CONFIG_REF/CONFIG_SHA/...) stays
+# overridable per-invocation only, never from a persistent git-excluded file.
+# A value applies only when the variable is not already set, so an explicit
+# environment variable on the command line always wins. Anything else in the
+# file aborts EVERY consumer of lib.sh — status.sh and nuke.sh included: with
+# an unparsable host.env the deployment identity is ambiguous, and a teardown
+# on an ambiguous identity is how the wrong deployment dies. Fail closed; the
+# error names the offending line. Contract pinned by test_host_env.sh.
+_host_env_file="$SCRIPT_DIR/host.env"
+if [ -f "$_host_env_file" ]; then
+  while IFS= read -r _he_line || [ -n "$_he_line" ]; do
+    _he_line="${_he_line%$'\r'}"                              # tolerate CRLF
+    _he_line="${_he_line#"${_he_line%%[![:space:]]*}"}"       # trim leading ws
+    _he_line="${_he_line%"${_he_line##*[![:space:]]}"}"       # trim trailing ws
+    case "$_he_line" in
+      ''|\#*) continue ;;
+      DEPLOYMENT=*|CONFIG=*|GPU_IDS=*)
+        _he_key="${_he_line%%=*}"
+        _he_val="${_he_line#*=}"
+        # A duplicate key makes the identity ambiguous (first-wins would let a
+        # stale line silently shadow an appended correction) — fail closed.
+        case " ${_he_seen:-} " in
+          *" $_he_key "*)
+            printf 'host.env: duplicate %s line — ambiguous, refusing: %s\n' \
+              "$_he_key" "$_he_line" >&2
+            exit 1 ;;
+        esac
+        _he_seen="${_he_seen:-} $_he_key"
+        # An empty identity value is never valid — it would fall through to the
+        # reserved default and silently retarget. (GPU_IDS= empty is the
+        # documented explicit disable, so it is allowed.)
+        if [ "$_he_key" != "GPU_IDS" ] && [ -z "$_he_val" ]; then
+          printf 'host.env: empty %s is not a valid identity — set a value or remove the line\n' \
+            "$_he_key" >&2
+          exit 1
+        fi
+        # Identity keys: an EMPTY environment value counts as unset (an empty
+        # name or path is never valid), so an ambient DEPLOYMENT='' cannot
+        # bypass the host pin. GPU_IDS: set-but-empty IS meaningful, set wins.
+        case "$_he_key" in
+          DEPLOYMENT) [ -n "${DEPLOYMENT:-}" ] || DEPLOYMENT="$_he_val" ;;
+          CONFIG)     [ -n "${CONFIG:-}" ]     || CONFIG="$_he_val" ;;
+          GPU_IDS)    [ "${GPU_IDS+x}" ]       || GPU_IDS="$_he_val" ;;
+        esac ;;
+      *) printf 'host.env: unsupported line (allowed: DEPLOYMENT=, CONFIG=, GPU_IDS=, comments): %s\n' \
+           "$_he_line" >&2
+         exit 1 ;;
+    esac
+  done < "$_host_env_file"
+fi
+unset _host_env_file _he_line _he_key _he_val _he_seen
+
 # --- deployment identity (single source of truth) ---------------------------
-DEPLOYMENT="dev"                              # archi deployment name -> archi-dev
-CONFIG="deploy/fasrc-dev/config.yaml"         # repo-relative (git-excluded; copy from config.example.yaml)
+# `dev` is reserved for the GPU host; the no-GPU workstation deploys as `claw`
+# via its host.env (issue #363).
+DEPLOYMENT="${DEPLOYMENT:-dev}"               # archi deployment name -> archi-<name>
+CONFIG="${CONFIG:-deploy/fasrc-dev/config.yaml}"  # repo-relative (git-excluded; copy from config.example.yaml)
+# The name becomes ~/.archi/archi-<name>, and `archi create --force` (which
+# every deploy here passes) rmtree's that directory — so a name carrying a
+# path separator must never get that far: DEPLOYMENT=dev/../.. resolves the
+# deployment dir to $HOME. One safe token, wherever the name came from
+# (tracked default, host.env, or the environment). Pinned by test_host_env.sh.
+case "$DEPLOYMENT" in
+  *[!A-Za-z0-9_-]*)
+    printf 'DEPLOYMENT %s is not a valid deployment name (allowed: letters, digits, - and _)\n' \
+      "'$DEPLOYMENT'" >&2
+    exit 1 ;;
+esac
 # Secrets env (PG_PASSWORD, HUIT_API_KEY, ...). Override with ARCHI_ENV_FILE;
 # defaults to ~/.secrets/archi-secrets.env so the scripts aren't tied to one user.
 ENV_FILE="${ARCHI_ENV_FILE:-$HOME/.secrets/archi-secrets.env}"
 SERVICES="chatbot"                            # auto-pulls postgres + data-manager
-# GPU(s) to reserve for the data-manager embedding pass. Default OFF: this
-# deployment runs no models locally (they are served by a remote vLLM endpoint),
-# the embedding pass is configured `device: cpu`, and the host has neither the
-# nvidia container runtime nor nvidia-smi. A non-empty value renders
-# `driver: nvidia, count: all` into the compose file, and the deploy then fails
-# with "could not select device driver nvidia" *after* recreating chatbot —
-# taking the deployment down instead of failing before it touches anything.
-# Set GPU_IDS=0 (or a list) only on a host that actually has GPUs and the
-# nvidia runtime installed. Contract pinned by test_gpu_flag.sh.
+# GPU(s) to reserve for the data-manager embedding pass. Default OFF — and the
+# reason is the containers, not the host: both are deliberately configured
+# `device: cpu` (the chatbot ships CPU-only torch and would crash-loop on
+# `cuda:0`), and the models are served by a remote vLLM endpoint. On the GPU
+# host the GPUs exist but are owned by the vLLM servers, which pre-reserve
+# their KV pool at startup. On a host WITHOUT the nvidia container runtime a
+# non-empty value is worse than useless: it renders `driver: nvidia, count: all`
+# into the compose file, and the deploy fails with "could not select device
+# driver nvidia" *after* recreating chatbot — taking the deployment down
+# instead of failing before it touches anything. That is why OFF is the safe
+# shared default. Set GPU_IDS=0 (or a list) only on a host that has GPUs, the
+# nvidia runtime, and containers configured to use them. Contract pinned by
+# test_gpu_flag.sh.
 GPU_IDS="${GPU_IDS-}"
 
 # --- config repo pin (fasrc/archi-config) ------------------------------------

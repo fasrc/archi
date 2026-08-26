@@ -1,9 +1,11 @@
-# archi 'dev' deployment — management scripts
+# archi deployment — management scripts
 
-Thin, safe wrappers around the `archi` CLI for the local **`dev`** deployment
-(FASRC vLLM backend). All scripts resolve the repo root from their own location,
-so they run from anywhere. The deployment name is hard-wired to `dev` in
-`lib.sh`, so these scripts can never affect your other deployments.
+Thin, safe wrappers around the `archi` CLI for this host's local archi
+deployment (FASRC vLLM backend). All scripts resolve the repo root from their
+own location, so they run from anywhere. The deployment name defaults to
+**`dev`** in `lib.sh` and is pinned per host by a git-excluded `host.env` (see
+"Per-host configuration" below), so every script affects only this host's own
+deployment.
 
 | Script | Action | Data |
 |---|---|---|
@@ -19,9 +21,42 @@ so they run from anywhere. The deployment name is hard-wired to `dev` in
 deploy/fasrc-dev/scripts/create.sh      # first-time or re-run
 deploy/fasrc-dev/scripts/redeploy.sh    # after editing config.yaml / code
 deploy/fasrc-dev/scripts/status.sh      # check state
-deploy/fasrc-dev/scripts/nuke.sh        # full teardown (asks you to type 'dev')
+deploy/fasrc-dev/scripts/nuke.sh        # full teardown (asks you to type the deployment name)
 deploy/fasrc-dev/scripts/nuke.sh -y     # full teardown, no prompt (automation)
 ```
+
+## Per-host configuration (`host.env`)
+
+Two hosts deploy from this repository, and they must not share one identity.
+`lib.sh` reads an optional `host.env` (this directory; git-excluded via the
+`deploy/fasrc-dev/scripts/**/*.env` rule) before it applies its defaults. Copy
+`host.env.example` to start.
+
+- **Data, not code.** `host.env` is parsed, never sourced — nothing in it can
+  execute. Only `KEY=VALUE` lines for `DEPLOYMENT`, `CONFIG`, and `GPU_IDS`
+  are accepted — each key at most once, the identity keys need a non-empty
+  value, and `DEPLOYMENT` must be one `[A-Za-z0-9_-]+` token from any source
+  (the name becomes `~/.archi/archi-<name>`, which the deploy's `--force`
+  path removes — a path separator in it is refused) (plus comments and blank
+  lines; edge whitespace and CRLF are stripped); any other line **aborts
+  every script that reads `lib.sh`** —
+  `status.sh` and `nuke.sh` included, because an unparsable `host.env` makes
+  the deployment identity ambiguous, and failing closed beats tearing down
+  the wrong deployment. The error names the offending line. The config pin
+  (`CONFIG_REF`/`CONFIG_SHA`/`CONFIG_REPO`) is deliberately not accepted:
+  it stays overridable per-invocation only.
+- **Precedence:** command-line environment > `host.env` > tracked default —
+  a `host.env` value applies only when the variable is not already set, so
+  the command line always wins. For `DEPLOYMENT`/`CONFIG` an **empty**
+  environment value counts as unset (an empty identity is never valid, so it
+  cannot bypass the host pin); for `GPU_IDS` empty stays the explicit
+  disable. Pinned by `test_host_env.sh`.
+- **No `host.env`** resolves exactly the tracked defaults (`DEPLOYMENT=dev`,
+  `CONFIG=deploy/fasrc-dev/config.yaml`). The GPU host needs no file.
+- **Reserved names (issue #363):** `dev` is the GPU host (`holygpu7c0717`, the
+  production deployment); `claw` is the no-GPU / no-local-vLLM workstation.
+- **Self-test:** `bash deploy/fasrc-dev/scripts/test_host_env.sh` — 17 cases
+  against a fake `archi` and a fixture tree; renders nothing, deploys nothing.
 
 ## Config provisioning (`ensure_config`)
 
