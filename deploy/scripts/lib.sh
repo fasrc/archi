@@ -25,6 +25,28 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # on an ambiguous identity is how the wrong deployment dies. Fail closed; the
 # error names the offending line. Contract pinned by test_host_env.sh.
 _host_env_file="$SCRIPT_DIR/host.env"
+# Migration guard for the deploy/fasrc-dev/scripts -> deploy/scripts move.
+# host.env is git-ignored, so a `git pull` that relocates the scripts CANNOT carry
+# it along: it stays at the old path while this file reads only $SCRIPT_DIR. The
+# identity would then fall through to the reserved default `dev` with nothing said,
+# because CONFIG also falls back to deploy/fasrc-dev/config.yaml — a file that
+# exists on exactly the hosts carrying the stale host.env. A `dev`-named deploy on
+# the claw workstation collides with the GPU host's identity, and nuke.sh would
+# prompt for, and destroy, the wrong deployment. Same rule as an unparsable
+# host.env: an ambiguous identity fails closed. Pinned by test_host_env.sh 19-20.
+_legacy_host_env="$REPO_ROOT/deploy/fasrc-dev/scripts/host.env"
+if [ -f "$_legacy_host_env" ]; then
+  if [ -f "$_host_env_file" ]; then
+    printf 'host.env: leftover legacy file at %s is being IGNORED; this deployment reads %s. Delete the old one.\n' \
+      "$_legacy_host_env" "$_host_env_file" >&2
+  else
+    printf 'host.env: found ONLY the legacy file at %s\n' "$_legacy_host_env" >&2
+    printf 'host.env: the scripts moved to deploy/scripts/ and now read %s\n' "$_host_env_file" >&2
+    printf 'host.env: refusing to run — this host would silently take the reserved name "dev". Move it:\n' >&2
+    printf '  mv %s %s\n' "$_legacy_host_env" "$_host_env_file" >&2
+    exit 1
+  fi
+fi
 if [ -f "$_host_env_file" ]; then
   while IFS= read -r _he_line || [ -n "$_he_line" ]; do
     _he_line="${_he_line%$'\r'}"                              # tolerate CRLF
@@ -66,7 +88,7 @@ if [ -f "$_host_env_file" ]; then
     esac
   done < "$_host_env_file"
 fi
-unset _host_env_file _he_line _he_key _he_val _he_seen
+unset _host_env_file _legacy_host_env _he_line _he_key _he_val _he_seen
 
 # --- deployment identity (single source of truth) ---------------------------
 # `dev` is reserved for the GPU host; the no-GPU workstation deploys as `claw`

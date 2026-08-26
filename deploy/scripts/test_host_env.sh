@@ -269,5 +269,41 @@ else
   notok "18 REPO_ROOT should be $expected_root, got: $resolved_root"
 fi
 
+# --- 19 + 20: legacy host.env migration guard --------------------------------
+# host.env is git-ignored, so `git pull` cannot move it when the scripts relocate:
+# it stays at deploy/fasrc-dev/scripts/host.env while the moved lib.sh reads only
+# $SCRIPT_DIR/host.env. The identity would then fall through to the reserved `dev`
+# WITHOUT a word, because CONFIG also falls back to deploy/fasrc-dev/config.yaml,
+# which exists on exactly the hosts that have the stale file. Fail closed.
+LEGACY="$TESTROOT/repo/deploy/fasrc-dev/scripts"
+mkdir -p "$LEGACY"
+rm -f "$FIXSCRIPTS/host.env"
+printf 'DEPLOYMENT=claw\n' > "$LEGACY/host.env"
+if run_deploy LEGACY_ONLY=1 2>/dev/null; then
+  notok "19 a legacy-only host.env must abort, got: $(cat "$TESTROOT/argv")"
+else
+  if [ -s "$TESTROOT/argv" ]; then
+    notok "19 abort must land before archi is invoked, got: $(cat "$TESTROOT/argv")"
+  else
+    ok "19 a legacy-only host.env aborts before archi, not a silent fallback to dev"
+  fi
+fi
+
+# Migrated host: the new file governs and the leftover is not fatal, only noisy.
+printf 'DEPLOYMENT=claw\n' > "$FIXSCRIPTS/host.env"
+printf 'DEPLOYMENT=stale\n' > "$LEGACY/host.env"
+if run_deploy MIGRATED=1; then
+  argv="$(cat "$TESTROOT/argv")"
+  if [[ "$argv" == *"--name claw"* ]]; then
+    ok "20 with both files present the new host.env governs"
+  else
+    notok "20 the new host.env should win, got: $argv"
+  fi
+else
+  notok "20 a leftover legacy file must not abort a migrated host"
+fi
+rm -rf "$TESTROOT/repo/deploy/fasrc-dev"
+rm -f "$FIXSCRIPTS/host.env"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

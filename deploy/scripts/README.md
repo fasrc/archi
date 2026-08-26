@@ -55,7 +55,13 @@ Two hosts deploy from this repository, and they must not share one identity.
   `CONFIG=deploy/fasrc-dev/config.yaml`). The GPU host needs no file.
 - **Reserved names (issue #363):** `dev` is the GPU host (`holygpu7c0717`, the
   production deployment); `claw` is the no-GPU / no-local-vLLM workstation.
-- **Self-test:** `bash deploy/scripts/test_host_env.sh` — 18 cases
+- **Moved from `deploy/fasrc-dev/scripts/`?** `host.env` is git-ignored, so a `git
+  pull` cannot carry it across the move — it stays at the old path while these
+  scripts read only this directory. That would hand the host the reserved name
+  `dev` in silence, because `CONFIG` also falls back to the GPU host's file. So a
+  legacy `host.env` with no new one **aborts every script** and prints the `mv` to
+  run. A leftover beside a valid new file only warns.
+- **Self-test:** `bash deploy/scripts/test_host_env.sh` — 20 cases
   against a fake `archi` and a fixture tree; renders nothing, deploys nothing.
 
 ## Config provisioning (`ensure_config`)
