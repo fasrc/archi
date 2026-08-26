@@ -7,10 +7,10 @@
 # the bump procedure, and test_ensure_config.sh for the executable contract.
 set -euo pipefail
 
-# Resolve the repo root from this file's location (deploy/fasrc-dev/scripts/),
+# Resolve the repo root from this file's location (deploy/scripts/),
 # so the scripts work regardless of the current working directory.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Optional per-host overrides (git-excluded; see host.env.example), read
 # before the defaults below so a host can pin its own identity without editing

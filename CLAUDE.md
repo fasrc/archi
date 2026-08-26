@@ -50,7 +50,7 @@ for the full steps. This project's values:
   a full-deps env — a bare login shell (no black/pytest/runtime deps) cannot execute it.
 - **Uses OpenSpec?** yes — Loop 1 via `/opsx:propose` → `/opsx:apply` → `/opsx:archive`
   (changes under `openspec/changes/`, specs under `openspec/specs/`).
-- **Release steps:** dev deploy via `deploy/fasrc-dev/scripts/redeploy.sh` (= `archi create
+- **Release steps:** dev deploy via `deploy/scripts/redeploy.sh` (= `archi create
   --force`: re-renders config → re-seeds Postgres → recreates containers; data volumes
   preserved). Verify with the `archi-dev-deploy-verify` skill (HTTP 200 + the feature toggle).
 - **Commit attribution:** none — no `Co-Authored-By` / session trailers on this repo's commits.

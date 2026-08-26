@@ -12,7 +12,7 @@
 #    8. wrong CONFIG_SHA on a fresh host aborts naming both ids
 #    9. provenance recorded on every run
 #   10. wrong path type (agents as a file) aborts
-# Run: bash deploy/fasrc-dev/scripts/test_ensure_config.sh
+# Run: bash deploy/scripts/test_ensure_config.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

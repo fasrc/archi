@@ -33,7 +33,7 @@
 #       that directory, so `dev/../..` would resolve it to $HOME
 #   17. same guard for an ambient environment DEPLOYMENT (no host.env)
 #
-# Run: bash deploy/fasrc-dev/scripts/test_host_env.sh
+# Run: bash deploy/scripts/test_host_env.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,7 +46,7 @@ trap 'rm -rf "$TESTROOT"' EXIT
 
 # Fixture repo tree: lib.sh is COPIED in, so the SCRIPT_DIR it computes points
 # at the fixture and the host.env this test writes never touches the real tree.
-FIXSCRIPTS="$TESTROOT/repo/deploy/fasrc-dev/scripts"
+FIXSCRIPTS="$TESTROOT/repo/deploy/scripts"
 mkdir -p "$FIXSCRIPTS"
 cp "$SCRIPT_DIR/lib.sh" "$FIXSCRIPTS/lib.sh"
 
@@ -248,6 +248,25 @@ else
   else
     ok "17 path-separator DEPLOYMENT from the environment aborts before archi"
   fi
+fi
+
+# --- 18: repo-root depth ------------------------------------------------------
+# The scripts live at deploy/scripts/, so lib.sh must climb exactly TWO levels to
+# reach the repo root. Nothing else in this suite catches a wrong depth:
+# require_files is stubbed out, and CHAT_PORT/LLM_URL both fall back silently
+# when "$REPO_ROOT/$CONFIG" does not resolve. So a lib.sh that climbs three
+# levels passes every other case here and then fails on a real deploy with
+# "config not found". Pin the depth directly.
+rm -f "$FIXSCRIPTS/host.env"
+expected_root="$(cd "$TESTROOT/repo" && pwd)"
+resolved_root="$(env -u DEPLOYMENT -u CONFIG -u GPU_IDS bash -c '
+  source "'"$FIXSCRIPTS"'/lib.sh" >/dev/null 2>&1
+  printf "%s" "$REPO_ROOT"
+')"
+if [ "$resolved_root" = "$expected_root" ]; then
+  ok "18 REPO_ROOT climbs two levels from deploy/scripts to the repo root"
+else
+  notok "18 REPO_ROOT should be $expected_root, got: $resolved_root"
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

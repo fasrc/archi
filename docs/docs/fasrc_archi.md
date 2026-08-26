@@ -669,9 +669,11 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 [File reference](#file-reference).
 
 > **This is not the `deploy/fasrc-dev/` deployment.** That one is
-> `DEPLOYMENT="dev"` (`deploy/fasrc-dev/scripts/lib.sh:14-16`) → containers
-> `chatbot-dev` / `postgres-dev`, and it runs on a host with **no GPUs**, pointing
-> at a remote vLLM endpoint (`lib.sh:21-29`). Everything on this page is the
+> `DEPLOYMENT="dev"` (`deploy/scripts/lib.sh:74-75`) → containers
+> `chatbot-dev` / `postgres-dev`. Since issue #363 the name `dev` is reserved for
+> the GPU host; the no-GPU workstation deploys as `claw` via its own `host.env`.
+> Both point at a remote vLLM endpoint, and both leave `GPU_IDS` off
+> (`lib.sh:91-104`). Everything on this page is the
 > `archi-openai-compat` deployment on `archi.rc.fas.harvard.edu`. The container
 > names are not interchangeable between the two.
 
@@ -703,7 +705,7 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 >
 > **Provisioning is not automatic here.** `ensure_config`, which checks the
 > checkout out at a pinned, SHA-verified ref, has exactly one caller —
-> `deploy/fasrc-dev/scripts/lib.sh:208` — on the *other* deployment. This page's
+> `deploy/scripts/lib.sh:282` — on the *other* deployment. This page's
 > active path is the repo-root `g.sh` calling `archi create` directly, which never
 > runs it. So on this host `config/` is simply whatever is on disk, at whatever
 > revision someone last left it, with nothing verifying it.
@@ -726,7 +728,7 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 > 1. Add the launchers, both units, the compat shim and `vllm_patches/` to
 >    `fasrc/archi-config`.
 > 2. Give *this* deployment a provisioning step that pins them. Bumping
->    `CONFIG_REF`/`CONFIG_SHA` in `deploy/fasrc-dev/scripts/lib.sh` governs the
+>    `CONFIG_REF`/`CONFIG_SHA` in `deploy/scripts/lib.sh` governs the
 >    `dev` deployment only and does nothing here. Either wrap `g.sh` so it sources
 >    `ensure_config` before `archi create`, or record an explicit checkout step in
 >    this deployment's procedure that **verifies the commit, not just the tag

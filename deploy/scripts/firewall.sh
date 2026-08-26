@@ -14,9 +14,9 @@
 # FASRC ops; until then, re-run this after any rebuild and verify with --list.
 #
 # Usage:
-#   deploy/fasrc-dev/scripts/firewall.sh --dry-run   # show what would change
-#   deploy/fasrc-dev/scripts/firewall.sh             # apply (needs sudo)
-#   deploy/fasrc-dev/scripts/firewall.sh --list      # show archi rules in place
+#   deploy/scripts/firewall.sh --dry-run   # show what would change
+#   deploy/scripts/firewall.sh             # apply (needs sudo)
+#   deploy/scripts/firewall.sh --list      # show archi rules in place
 #
 # Rules are runtime-only until persisted (e.g. `service iptables save`).
 set -euo pipefail

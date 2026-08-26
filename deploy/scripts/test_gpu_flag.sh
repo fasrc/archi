@@ -13,7 +13,7 @@
 # driver nvidia" *after* recreating chatbot — taking the deployment down rather
 # than failing before it touches it. OFF is the safe default on both hosts.
 #
-# Run: bash deploy/fasrc-dev/scripts/test_gpu_flag.sh
+# Run: bash deploy/scripts/test_gpu_flag.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

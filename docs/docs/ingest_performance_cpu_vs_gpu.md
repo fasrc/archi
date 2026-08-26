@@ -160,7 +160,7 @@ data_manager:
 ```
 
 ```bash
-# deploy/fasrc-dev/scripts/lib.sh
+# deploy/scripts/lib.sh
 GPU_IDS="0"
 ```
 
@@ -182,7 +182,7 @@ is CUDA runtime overhead.
 | `Dockerfile-data-manager-gpu` | New. `FROM a2rchi-pytorch-base` (torch+CUDA). |
 | `base-compose.yaml` | GPU Dockerfile selection + NVIDIA env/deploy block for data-manager when `gpu_ids` set. |
 | `base-config.yaml` | Render `code_suffixes` when defined in the deploy config. |
-| `deploy/fasrc-dev/scripts/lib.sh` | `GPU_IDS` variable, passed as `--gpu-ids` to `archi create`. |
+| `deploy/scripts/lib.sh` | `GPU_IDS` variable, passed as `--gpu-ids` to `archi create`. |
 | `deploy/fasrc-dev/config.yaml` | `device: cuda:0` override in `embedding_class_map`. |
 
 ## Next Steps
