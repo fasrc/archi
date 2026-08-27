@@ -44,7 +44,7 @@ Four standing notes for every task:
       `latest`, which matches nothing here and would exit 0 having written nothing.
       Gate green; commit.
 
-- [ ] 1.2 `model: sonnet` — Guard the shape, so a later commit cannot quietly put a tag back.
+- [x] 1.2 `model: sonnet` — Guard the shape, so a later commit cannot quietly put a tag back.
       **These pass the moment 1.1 lands — that is the point of them. Do not contrive a
       failure first.** In `tests/unit/test_base_image_preflight.py`, add tests over the real
       `TEMPLATE_DIR` asserting all four:
