@@ -8,6 +8,7 @@ import yaml
 from src.cli.managers.templates_manager import BASE_CONFIG_TEMPLATE
 from src.cli.service_registry import service_registry
 from src.cli.source_registry import source_registry
+from src.utils.evaluations_root import validate_evaluations_root
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -238,6 +239,8 @@ class ConfigurationManager:
             raise ValueError(
                 f"Invalid field: '{timeout_path}' must be <= 86400 seconds"
             )
+
+        validate_evaluations_root(chat_cfg)
 
     def _validate_agent_specs_config(
         self, config: Dict[str, Any], services: List[str]

@@ -88,3 +88,53 @@ def test_empty_string_root_raises_naming_field_path():
         validate_evaluations_root({"evaluations": {"enabled": True, "root": ""}})
     msg = str(exc_info.value)
     assert "services.chat_app.evaluations.root" in msg
+
+
+# Task 2.1 — _validate_chat_app_config wires in the evaluations root check
+
+
+from src.cli.managers.config_manager import ConfigurationManager  # noqa: E402
+
+
+def _chat_app_config(root):
+    return {
+        "services": {
+            "chat_app": {
+                "agent_class": "MyAgent",
+                "default_provider": "openai",
+                "default_model": "gpt-4",
+                "evaluations": {"enabled": True, "root": root},
+            }
+        }
+    }
+
+
+def _manager():
+    mgr = object.__new__(ConfigurationManager)
+    return mgr
+
+
+def test_validate_chat_app_config_outside_root_raises():
+    mgr = _manager()
+    with pytest.raises(ValueError) as exc_info:
+        mgr._validate_chat_app_config(
+            _chat_app_config("/data/evaluations"), ["chatbot"]
+        )
+    msg = str(exc_info.value)
+    assert "/data/evaluations" in msg
+    assert "/root/archi/evaluations" in msg
+
+
+def test_validate_chat_app_config_mounted_root_does_not_raise():
+    mgr = _manager()
+    mgr._validate_chat_app_config(
+        _chat_app_config("/root/archi/evaluations"), ["chatbot"]
+    )
+
+
+def test_validate_chat_app_config_non_chatbot_service_skips():
+    mgr = _manager()
+    # data_manager service: should not raise even with an outside root
+    mgr._validate_chat_app_config(
+        _chat_app_config("/data/evaluations"), ["data_manager"]
+    )
