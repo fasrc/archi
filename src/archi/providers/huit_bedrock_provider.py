@@ -57,7 +57,7 @@ DEFAULT_HUIT_BEDROCK_MODELS = [
         name="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
         display_name="Claude Sonnet 4.5 (HUIT Bedrock, pinned)",
         context_window=200000,
-        supports_tools=True,
+        supports_tools=False,
         supports_streaming=False,
         supports_vision=False,
         max_output_tokens=8192,
@@ -67,7 +67,7 @@ DEFAULT_HUIT_BEDROCK_MODELS = [
         name="us.anthropic.claude-opus-4-20250514-v1:0",
         display_name="Claude Opus 4 (HUIT Bedrock)",
         context_window=200000,
-        supports_tools=True,
+        supports_tools=False,
         supports_streaming=False,
         supports_vision=False,
         max_output_tokens=8192,
@@ -77,7 +77,7 @@ DEFAULT_HUIT_BEDROCK_MODELS = [
         name="us.anthropic.claude-3-5-sonnet-20241022-v2:0",
         display_name="Claude 3.5 Sonnet (HUIT Bedrock)",
         context_window=200000,
-        supports_tools=True,
+        supports_tools=False,
         supports_streaming=False,
         supports_vision=False,
         max_output_tokens=8192,
@@ -323,6 +323,16 @@ class HuitBedrockProvider(BaseProvider):
         super().__init__(config)
 
     def get_chat_model(self, model_name: str, **kwargs) -> HuitBedrockChat:
+        # `timeout` is what callers actually pass: an evaluator profile declares
+        # one and ModelDescriptor.provider_kwargs forwards it under that name, as
+        # does most LangChain code. The transport field is `request_timeout`, so
+        # without this alias the value falls off the whitelist below and the model
+        # silently keeps its 120s default -- while the RAGAS benchmark judges the
+        # same model at 300s. An explicit `request_timeout` still wins, so naming
+        # the transport setting directly is never overridden by the alias.
+        if "timeout" in kwargs and "request_timeout" not in kwargs:
+            kwargs["request_timeout"] = kwargs["timeout"]
+
         base_url = self.config.base_url or DEFAULT_HUIT_BEDROCK_BASE_URL
         chat_kwargs: Dict[str, Any] = {
             "model_id": model_name,

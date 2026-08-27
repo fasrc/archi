@@ -252,13 +252,41 @@ def test_structured_output_round_trip(monkeypatch):
     assert seen["body"]["tool_choice"] == {"type": "any"}
 
 
-def test_the_model_catalog_admits_tool_support():
-    """The catalog is what the chat app's model picker reports to operators.
+def test_the_model_catalog_does_not_over_promise():
+    """`supports_tools` stays False, and that is deliberate.
 
-    `supports_tools` is advertisement, not a gate — nothing reads it to decide
-    whether to bind — but it is serialized straight out of the provider API
-    (`src/interfaces/chat_app/app.py:3954`), so leaving it `False` now tells
-    operators these models cannot do the thing they can.
+    The obvious move after adding tool support is to flip this flag. It would be
+    wrong. Nothing reads it to decide whether to bind — it is advertisement,
+    serialized out of the provider API (`src/interfaces/chat_app/app.py:3954`)
+    into the chat app's model picker. An operator reading it there is choosing a
+    model *for the agent*, and the agent drives multi-turn tool loops: call a
+    tool, feed the result back, continue. That still does not work, because
+    `_convert_messages` renders an assistant turn as `str(msg.content)` and drops
+    its `tool_use` blocks, so the following `tool_result` names a `tool_use_id`
+    the proxy cannot match.
+
+    What this module tests is single-shot bound-tool invocation, which is what
+    structured output needs. The flag flips in the follow-up that fixes tool-call
+    history serialization, not here.
     """
     for model in huit_bedrock_provider.DEFAULT_HUIT_BEDROCK_MODELS:
-        assert model.supports_tools is True, model.id
+        assert model.supports_tools is False, model.id
+
+
+def test_a_profile_timeout_reaches_the_transport():
+    """An evaluator profile's timeout arrives as `timeout`, not `request_timeout`.
+
+    `ModelDescriptor.provider_kwargs` (`src/evaluation/qa/profile.py`) passes it
+    under that name, and the keyword whitelist in `get_chat_model` used to drop
+    it — so a profile asking for a long judge call silently kept the 120s default
+    while RAGAS judges the same model at 300s.
+    """
+    provider = huit_bedrock_provider.HuitBedrockProvider()
+    model = provider.get_chat_model("test-model", timeout=300)
+    assert model.request_timeout == 300
+
+
+def test_an_explicit_request_timeout_wins_over_the_alias():
+    provider = huit_bedrock_provider.HuitBedrockProvider()
+    model = provider.get_chat_model("test-model", timeout=300, request_timeout=45)
+    assert model.request_timeout == 45

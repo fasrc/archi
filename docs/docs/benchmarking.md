@@ -374,6 +374,29 @@ services:
 
 The `huit_bedrock` provider is Harvard's Anthropic-compatible Bedrock proxy. Pinning Sonnet 4.5 (rather than the rolling-alias 4.6) makes scores reproducible across rounds. Requires `HUIT_API_KEY` in `~/.archi/.env.benchmark`.
 
+#### Tool calling and structured output on `huit_bedrock`
+
+The provider supports **bound tools for a single request-and-response round**, which is
+what `with_structured_output` needs. That is why the same judge pinned above can also be
+named in a QA evaluation console evaluator profile: the console's scorer classifies each
+gold atom through `with_structured_output`, so before tool support existed it could not use
+this provider at all. RAGAS never hit that limit because it parses judge output itself.
+
+Two limits are deliberate and worth knowing:
+
+- **Multi-turn tool loops do not work yet.** An assistant turn is serialized back to the
+  proxy as plain text, so an `AIMessage` carrying `tool_calls` loses its `tool_use` blocks
+  and the following `tool_result` references an id the proxy cannot match. Single-shot
+  structured output is unaffected; an agent tool loop is not.
+- **`supports_tools` stays `false` in the model catalog** for exactly that reason. The flag
+  is what the chat app's model picker shows an operator choosing a model *for the agent*,
+  and the agent is the caller whose tool use still breaks. It flips when history
+  serialization is fixed, not before.
+
+A profile's `timeout` is honored: `get_chat_model` accepts it as an alias for the
+transport's `request_timeout`, so a judge profile asking for 300 seconds gets 300 rather
+than silently keeping the 120-second default. An explicit `request_timeout` still wins.
+
 ### Argilla configuration
 
 ```yaml
