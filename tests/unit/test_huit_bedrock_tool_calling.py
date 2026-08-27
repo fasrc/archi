@@ -14,6 +14,7 @@ import json
 import pytest
 
 from src.archi.providers import huit_bedrock_provider
+from src.archi.providers.base import ProviderConfig, ProviderType
 from src.archi.providers.huit_bedrock_provider import HuitBedrockChat
 
 PROBE_SCHEMA = {
@@ -290,3 +291,58 @@ def test_an_explicit_request_timeout_wins_over_the_alias():
     provider = huit_bedrock_provider.HuitBedrockProvider()
     model = provider.get_chat_model("test-model", timeout=300, request_timeout=45)
     assert model.request_timeout == 45
+
+
+def test_a_fractional_profile_timeout_survives():
+    """A profile may legitimately ask for 120.5 seconds.
+
+    `_validate_descriptor` accepts any finite positive number and
+    `ModelDescriptor.timeout` is typed `Optional[float]`, so a fractional timeout
+    reaches the provider. Aliasing it onto an `int` field would turn a valid
+    profile into a Pydantic `ValidationError` at model construction — which is
+    strictly worse than the old behavior of dropping the value, since dropping it
+    at least still ran.
+    """
+    provider = huit_bedrock_provider.HuitBedrockProvider()
+    model = provider.get_chat_model("test-model", timeout=120.5)
+    assert model.request_timeout == 120.5
+
+
+def test_a_fractional_timeout_survives_the_whole_profile_path():
+    """End to end from the profile object the evaluator actually builds."""
+    from src.evaluation.qa.profile import _validate_descriptor
+
+    descriptor = _validate_descriptor(
+        {"provider": "huit_bedrock", "model": "test-model", "timeout": 120.5},
+        "qa.evaluator",
+    )
+    provider = huit_bedrock_provider.HuitBedrockProvider()
+    model = provider.get_chat_model("test-model", **descriptor.provider_kwargs())
+    assert model.request_timeout == 120.5
+
+
+def test_a_system_message_becomes_the_body_system_field(monkeypatch):
+    """Anthropic carries the system prompt top-level, not as a message role."""
+    seen = _capture(monkeypatch)
+
+    _model().invoke([("system", "Be terse."), ("human", "go")])
+
+    assert seen["body"]["system"] == "Be terse."
+    assert [m["role"] for m in seen["body"]["messages"]] == ["user"]
+
+
+def test_stop_sequences_reach_the_body(monkeypatch):
+    seen = _capture(monkeypatch)
+
+    _model().invoke([("human", "go")], stop=["END"])
+
+    assert seen["body"]["stop_sequences"] == ["END"]
+
+
+def test_a_config_without_an_api_key_env_gets_the_huit_default():
+    """A caller may build a config without naming the env var; HUIT has only one."""
+    config = ProviderConfig(provider_type=ProviderType.HUIT_BEDROCK, api_key_env="")
+
+    provider = huit_bedrock_provider.HuitBedrockProvider(config)
+
+    assert provider.config.api_key_env == "HUIT_API_KEY"

@@ -21,10 +21,13 @@ Focused run while working:
 
 Three standing notes for every task:
 
-- **Scope.** The only files this change edits are
-  `src/archi/providers/huit_bedrock_provider.py` and
-  `tests/unit/test_huit_bedrock_tool_calling.py`. No other provider, no config, no
-  template. If a task seems to need a third file, stop and revise the design first.
+- **Scope.** This change edits exactly three files:
+  `src/archi/providers/huit_bedrock_provider.py`,
+  `tests/unit/test_huit_bedrock_tool_calling.py`, and — for task 10, which AGENTS.md
+  requires for a public API change — `docs/docs/benchmarking.md`, where the
+  `huit_bedrock` provider and the RAGAS judge pin are already documented. No other
+  provider, no config, no template. If a task seems to need a fourth file, stop and revise
+  the design first.
 - **No live calls in tests.** Every test fakes the transport by patching
   `requests.post` in the provider module. The proxy's tool support was already verified
   against the live endpoint during design; the suite must stay offline and free.
@@ -103,6 +106,13 @@ RAGAS judges the same model at 300s, so this is part of judge parity, not a stra
 - [ ] Test: `get_chat_model(model, timeout=300)` produces a model with
       `request_timeout == 300`.
 - [ ] Test: when both `timeout` and `request_timeout` are given, `request_timeout` wins.
+- [ ] Test: a **fractional** timeout survives — `120.5` reaches the transport intact,
+      including through `ModelDescriptor.provider_kwargs`. `_validate_descriptor` accepts
+      any finite positive number and carries it as `Optional[float]`, so aliasing onto an
+      `int` field would turn a valid profile into a Pydantic `ValidationError` at
+      construction. That is worse than the old behavior of dropping the value, which at
+      least still ran, so the transport field widens to `float` (`requests` takes a float
+      timeout natively).
 - [ ] Implement the alias.
 - [ ] Gate, commit.
 

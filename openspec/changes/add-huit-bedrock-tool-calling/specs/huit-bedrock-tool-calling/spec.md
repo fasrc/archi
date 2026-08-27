@@ -118,6 +118,14 @@ model at 300 seconds
 An explicit `request_timeout` SHALL win over `timeout` when both are given, so a caller who
 names the transport setting directly is never overridden by an alias.
 
+A **fractional** timeout SHALL reach the transport intact. The profile validator accepts any
+finite positive number and `ModelDescriptor.timeout` carries it as a float, so `120.5` is a
+legal profile. The transport field must therefore accept a float: aliasing a fractional
+value onto an integer field would raise a Pydantic validation error at model construction
+and turn a valid profile into a crash — strictly worse than the dropped-value behavior this
+requirement replaces, which at least still ran. `requests` accepts a float timeout, so
+nothing downstream is affected.
+
 #### Scenario: A profile timeout is honored
 
 - **WHEN** a caller passes `timeout` to `get_chat_model`

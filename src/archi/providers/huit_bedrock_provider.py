@@ -170,7 +170,13 @@ class HuitBedrockChat(BaseChatModel):
     max_tokens: int = Field(default=4096)
     temperature: float = Field(default=0.0)
     anthropic_version: str = Field(default=DEFAULT_ANTHROPIC_VERSION)
-    request_timeout: int = Field(default=120)
+    # float, not int: an evaluator profile's timeout is validated as any finite
+    # positive number (`_validate_descriptor`) and carried as `Optional[float]`,
+    # so 120.5 is a legal profile. An `int` field would turn that valid profile
+    # into a Pydantic ValidationError at construction — worse than the old
+    # behavior of silently dropping the value, which at least still ran.
+    # `requests` takes a float timeout natively, so nothing downstream cares.
+    request_timeout: float = Field(default=120)
 
     @property
     def _llm_type(self) -> str:
