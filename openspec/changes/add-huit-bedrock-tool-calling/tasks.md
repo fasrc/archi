@@ -1,9 +1,10 @@
 # Tasks — HUIT Bedrock tool calling
 
-Every checkbox below is one loop turn and ends **green and committed**. Where a checkbox
-says RED, write the failing test, watch it fail *for the right reason*, write the smallest
-code that passes, run the gate, and commit — all inside that one checkbox. Never end a task
-with the suite red, and never use `--no-verify`.
+Every numbered **section** below is one loop turn and ends **green and committed**: write
+the failing test, watch it fail *for the right reason*, write the smallest code that passes,
+run the gate, and commit. The checkboxes inside a section are the steps of that one turn, so
+the intermediate ones are expected to be red — only the section boundary is a commit point.
+Never end a *section* with the suite red, and never use `--no-verify`.
 
 The gate is `bash scripts/gate.sh` (see `CLAUDE.md`). On this host it needs the project
 interpreter on `PATH`:
@@ -92,11 +93,55 @@ Three standing notes for every task:
       whole change exists to unblock — name it so that is obvious.
 - [ ] Gate, commit.
 
-## 8. Verify and open the PR
+## 8. RED: a profile's timeout reaches the transport
+
+`ModelDescriptor.provider_kwargs` passes an evaluator profile's timeout as `timeout`, but
+`get_chat_model` copies only `max_tokens`, `temperature`, `anthropic_version` and
+`request_timeout` — so the profile value is dropped and the model keeps its 120s default.
+RAGAS judges the same model at 300s, so this is part of judge parity, not a stray fix.
+
+- [ ] Test: `get_chat_model(model, timeout=300)` produces a model with
+      `request_timeout == 300`.
+- [ ] Test: when both `timeout` and `request_timeout` are given, `request_timeout` wins.
+- [ ] Implement the alias.
+- [ ] Gate, commit.
+
+## 9. The catalog stays honest
+
+- [ ] Test: every entry in `DEFAULT_HUIT_BEDROCK_MODELS` still reports
+      `supports_tools is False`, with the test's docstring recording *why* — single-shot
+      bound tools work, but the flag is read by the chat app's model picker
+      (`src/interfaces/chat_app/app.py:3954`) where it answers "can the agent use tools",
+      and multi-turn loops still break on history serialization.
+- [ ] Confirm it passes with no production change. Do **not** flip the flags here; that
+      belongs to the follow-up that fixes tool-call history.
+- [ ] Gate, commit.
+
+## 10. Documentation
+
+AGENTS.md requires docs for user-facing behavior and public API changes, or a stated reason
+none is needed. `bind_tools` on a provider is a public API change.
+
+- [ ] Update the HUIT Bedrock section of the provider documentation to say single-shot
+      bound tools and structured output now work, that multi-turn agent tool loops do not
+      yet, and that `supports_tools` stays `false` until they do.
+- [ ] Note in the PR description which docs changed.
+- [ ] Gate, commit.
+
+## 11. Verify end-to-end through the console, not just the proxy
+
+A direct model probe cannot catch a failure in the path this change exists to unblock:
+evaluator-profile loading, provider construction from an empty provider config, console
+orchestration, and persisted results. AGENTS.md's validation policy asks for an end-to-end
+check against the running deployment.
 
 - [ ] Full suite plus `bash scripts/gate.sh`; confirm patch coverage clears 80%.
-- [ ] Re-run the live probe from the design against the real proxy once, by hand, to
-      confirm the shipped `bind_tools` path produces the same `stop_reason: tool_use` the
-      hand-rolled probe did. Record the result in the PR body; do not add it to the suite.
+- [ ] Live probe of the shipped `bind_tools` path against the real proxy, by hand. Record
+      it in the PR body; do not add it to the suite.
+- [ ] **After merge and `bash deploy/scripts/redeploy.sh`** — the console's scorer runs on
+      baked site-packages, so the merged provider does not exist in the container until a
+      redeploy — upload a `huit_bedrock` evaluator profile through `/evaluations`, run one
+      small evaluation, and confirm a scored run with real atom judgments plus clean
+      chatbot logs. Record the run id.
 - [ ] Push the branch, open the PR against `fasrc/archi` base `dev`, and post
       `@codex review`.

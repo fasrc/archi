@@ -75,10 +75,23 @@ if one arrived.
 - Unbound calls are byte-for-byte unchanged: with no tools bound the body carries no
   `tools` key and no `tool_choice` key. A test pins that, because this provider is on the
   agent path for HUIT Bedrock deployments and this change must not alter their requests.
+- `get_chat_model` honors `timeout` as an alias for `request_timeout`, with an explicit
+  `request_timeout` still winning. An evaluator profile declares its timeout as `timeout`
+  and `ModelDescriptor.provider_kwargs` passes it under that name, but the current keyword
+  whitelist drops it — so a profile timeout is silently ignored and the model keeps its
+  120-second default while RAGAS judges the same model at 300. That is the same parity
+  problem as the model id, one layer down.
+- `DEFAULT_HUIT_BEDROCK_MODELS` keep `supports_tools=False`, and a test pins that with the
+  reason. The flag is advertisement read by the chat app's model picker
+  (`src/interfaces/chat_app/app.py:3954`), where it answers "can the agent use tools" —
+  and the agent's multi-turn loops still break (see the limitation below). Flipping it here
+  would over-promise; it belongs to the history-serialization follow-up.
 - `tests/unit/test_huit_bedrock_tool_calling.py` covers the conversion, both `tool_choice`
-  spellings, the response parsing, the unbound-request regression, and one end-to-end
-  `with_structured_output(...).invoke(...)` against a faked transport that asserts the
-  parsed dict comes back.
+  spellings, the response parsing, the unbound-request regression, the timeout alias, the
+  catalog flag, and one end-to-end `with_structured_output(...).invoke(...)` against a faked
+  transport that asserts the parsed dict comes back.
+- Provider documentation records what now works and what does not, per AGENTS.md's rule that
+  a public API change updates `docs/` in the same change.
 
 ## Impact
 

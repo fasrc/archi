@@ -76,18 +76,55 @@ Pydantic-versus-dict schema split away from the library that maintains them.
 - **THEN** the request body carries neither `tools` nor `tool_choice`, and the response is
   handled exactly as before
 
-### Requirement: The HUIT Bedrock model catalog reports tool support truthfully
+### Requirement: The HUIT Bedrock model catalog keeps denying tool support for now
 
-Every entry in the provider's default model list SHALL report `supports_tools` as `true`
-once the models accept bound tools.
+Every entry in the provider's default model list SHALL continue to report `supports_tools`
+as `false` while multi-turn tool history remains unserializable.
 
-Nothing reads this flag to decide whether to bind — it is advertisement, serialized out of
-the provider API to the chat app's model picker. That is exactly why it has to be correct:
-an operator choosing a model reads it as the answer to "can this model use tools", and a
-`false` there is a statement the code no longer supports. A capability the system has but
-denies having is the same class of defect as one it claims and lacks.
+The tempting move is the opposite one, and it is wrong. Nothing reads this flag to decide
+whether to bind — it is advertisement, serialized out of the provider API
+(`src/interfaces/chat_app/app.py:3954`) into the chat app's model picker. An operator
+reading it there is choosing a model *for the agent*, and the agent drives multi-turn tool
+loops: call a tool, feed the result back, continue. That still does not work, because
+`_convert_messages` renders an assistant turn as `str(msg.content)` and drops its
+`tool_use` blocks, so the following `tool_result` references a `tool_use_id` the proxy
+cannot match. Flipping the flag would answer "can this model use tools" with `true` for the
+one caller whose use of tools would break.
 
-#### Scenario: The catalog stops denying tool support
+What this change delivers is single-shot bound-tool invocation, which is what structured
+output needs and what the evaluator uses. That is narrower than what the flag claims. The
+flag flips in the follow-up that fixes tool-call history serialization, not here.
+
+#### Scenario: The catalog does not over-promise
 
 - **WHEN** the provider's default model list is read
-- **THEN** every entry reports `supports_tools` as `true`
+- **THEN** every entry still reports `supports_tools` as `false`, because multi-turn tool
+  loops remain broken even though single-shot structured output now works
+
+### Requirement: A profile's timeout reaches the HUIT transport
+
+`HuitBedrockProvider.get_chat_model` SHALL honor a `timeout` keyword as an alias for
+`request_timeout`, so a caller that asks for a longer call gets one.
+
+This is the same judge-parity problem as the model id, one layer down. An evaluator profile
+declares its timeout as `timeout`, and `ModelDescriptor.provider_kwargs` passes it under
+that name. `get_chat_model` copies only `max_tokens`, `temperature`, `anthropic_version`
+and `request_timeout` out of the caller's keywords, so a profile timeout is dropped without
+a word and the model keeps its 120-second default. The RAGAS benchmark judges the same
+model at 300 seconds
+(`config/benchmarking/ragas.yaml`), so a judge call that RAGAS completes can time out here
+— and the failure would look like a flaky proxy rather than a dropped setting.
+
+An explicit `request_timeout` SHALL win over `timeout` when both are given, so a caller who
+names the transport setting directly is never overridden by an alias.
+
+#### Scenario: A profile timeout is honored
+
+- **WHEN** a caller passes `timeout` to `get_chat_model`
+- **THEN** the constructed model uses it as its `request_timeout` rather than the 120-second
+  default
+
+#### Scenario: The explicit setting wins
+
+- **WHEN** both `timeout` and `request_timeout` are passed
+- **THEN** `request_timeout` is used
