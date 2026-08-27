@@ -180,15 +180,33 @@ services:
 - `evaluations.root` is the in-container catalog root for datasets, profiles,
   atom-review drafts, jobs, and run artifacts. Defaults to
   `/root/archi/evaluations`. The chat app creates this tree at start-up,
-  parent directories included. If the root cannot be used — a read-only mount, or
-  a permission mismatch on the host directory — the console disables itself and
-  chat keeps serving. Look for the start-up error line naming the root, then
-  correct this setting and redeploy to re-enable the console. A typo is **not**
-  caught this way: a mistyped path under a writable parent is simply created, and
-  the console runs against an empty catalog whose artifacts land outside the
-  mounted volume — in ephemeral container storage, where a redeploy discards
-  them. Check the path itself when a console that used to hold datasets comes up
-  empty.
+  parent directories included.
+
+  **Constraint:** `root` must be `/root/archi/evaluations` or a path beneath
+  it (for example `/root/archi/evaluations/trial-a`). The compose bind mount is
+  fixed at `/root/archi/evaluations` — the host volume is attached there and
+  nowhere else. A root set outside that subtree is technically valid YAML, but
+  the path falls in ephemeral container storage: artifacts accumulate during the
+  session and are silently discarded on the next `archi create --force`.
+  `archi create` refuses configs that set `root` outside the mount, so a
+  mistyped root is reported at deploy time instead of quietly writing artifacts
+  to storage that the next redeploy drops.
+
+  !!! warning "The mount is not a backup"
+
+      Keeping `root` inside the mount protects the catalog when a container is
+      recreated or restarted. It does **not** protect it from
+      `archi create --force`: that path calls `remove_existing_deployment()`,
+      which deletes the whole deployment directory — and the host side of this
+      mount, `data/evaluations`, sits inside it. Copy the catalog out of
+      `${ARCHI_DIR:-$HOME/.archi}/archi-<name>/data/evaluations` before a force
+      redeploy if you need to keep it. `ARCHI_DIR` is usually unset, and the CLI
+      then defaults it to `~/.archi`.
+
+  If the root cannot be used at runtime — a read-only mount, or a permission
+  mismatch on the host directory — the console disables itself and chat keeps
+  serving. Look for the start-up error line naming the root, then correct this
+  setting and redeploy to re-enable the console.
 - `evaluations.agent_config_path` is the in-container path to the Archi
   deployment YAML that defines the agent under test. This key is **required**
   when `enabled` is `true`; it has **no default**. `archi create` refuses a

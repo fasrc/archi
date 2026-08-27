@@ -112,7 +112,13 @@ def build_evaluation_service(
         return None
 
     mcp_config_path = evaluations_config.get("mcp_config_path")
-    root = evaluations_config.get("root", DEFAULT_EVALUATION_ROOT)
+    # ``get(key, default)`` returns the default only when the key is ABSENT.
+    # An explicit ``root: null`` returns None, and ``Path(None)`` raises
+    # TypeError -- which the ``except OSError`` below does not catch, so app
+    # init would die rather than the console disabling itself.
+    root = evaluations_config.get("root")
+    if root is None:
+        root = DEFAULT_EVALUATION_ROOT
     try:
         service = EvaluationConsoleService(
             Path(root),

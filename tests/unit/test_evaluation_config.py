@@ -12,6 +12,7 @@ from src.interfaces.chat_app.evaluation_console import (
 )
 from src.interfaces.chat_app.evaluation_routes import register_evaluations
 from src.utils.evaluations_config import LIVE_AGENT_CONFIG_PATH
+from src.utils.evaluations_root import EVALUATIONS_MOUNT_PATH, validate_evaluations_root
 
 ENABLEMENT_MATRIX = [
     ({}, False),
@@ -155,6 +156,118 @@ def test_chatbot_deployments_persist_the_evaluation_root():
     compose = (_repository() / "src/cli/templates/base-compose.yaml").read_text()
 
     assert "./data/evaluations:/root/archi/evaluations" in compose
+
+
+def _render_compose(tmp_path):
+    """Render base-compose.yaml the way the CLI does, then parse it."""
+    from src.cli.utils.service_builder import ServiceBuilder
+
+    plan = ServiceBuilder.build_compose_config(
+        name="demo",
+        verbosity=3,
+        base_dir=tmp_path,
+        enabled_services=["chatbot"],
+        secrets={"PG_PASSWORD"},
+        tag="dev",
+    )
+    template_vars = plan.to_template_vars()
+    template_vars.update(
+        app_version="test",
+        postgres_port=5432,
+        data_manager_port_host=7871,
+        data_manager_port_container=7871,
+        chatbot_port_host=7861,
+        chatbot_port_container=7861,
+        prompt_files=[],
+        rubrics=[],
+        evaluation_mcp_configured=False,
+    )
+    rendered = _template_env().get_template("base-compose.yaml").render(**template_vars)
+    return yaml.safe_load(rendered)
+
+
+def _evaluations_mounts(compose, service):
+    """``(source, target, mode)`` for each of ``service``'s evaluations mounts.
+
+    Scoped to one service, and it keeps the mode field. Both matter, and each
+    guards a drift the other cannot see:
+
+    - A whole-file substring scan cannot tell that the mount moved to another
+      service. The line count and the container side stay identical, so the
+      assertion passes while the chat container has lost the mount.
+    - Dropping the third field hides ``:ro``. The console write-probes the
+      catalog at start-up and disables itself when the probe fails, so a mount
+      turned read-only leaves CI green and the console dead on boot.
+
+    ``mode`` is ``"rw"`` when the spec omits it, matching Docker's default.
+    """
+    volumes = (compose.get("services", {}).get(service) or {}).get("volumes") or []
+    mounts = []
+    for volume in volumes:
+        fields = str(volume).split(":")
+        if len(fields) < 2 or fields[1] != EVALUATIONS_MOUNT_PATH:
+            continue
+        mounts.append((fields[0], fields[1], fields[2] if len(fields) > 2 else "rw"))
+    return mounts
+
+
+def test_the_chatbot_evaluations_mount_is_writable_at_the_expected_path(tmp_path):
+    compose = _render_compose(tmp_path)
+
+    assert _evaluations_mounts(compose, "chatbot") == [
+        ("./data/evaluations", EVALUATIONS_MOUNT_PATH, "rw")
+    ]
+
+
+def test_the_mount_check_is_scoped_to_the_chatbot_service():
+    """Proof that the check discriminates on service ownership.
+
+    Same mount, same spelling, attached to a different service: the chatbot no
+    longer has it, and the check has to say so.
+    """
+    drifted = {
+        "services": {
+            "chatbot": {"volumes": ["./configs:/root/archi/configs"]},
+            "grafana": {"volumes": [f"./data/evaluations:{EVALUATIONS_MOUNT_PATH}"]},
+        }
+    }
+
+    assert _evaluations_mounts(drifted, "chatbot") == []
+    assert len(_evaluations_mounts(drifted, "grafana")) == 1
+
+
+def test_the_mount_check_discriminates_a_read_only_mount():
+    """Proof that the check discriminates on access mode.
+
+    ``:ro`` keeps the container side byte-identical, so a substring scan and a
+    target-only comparison both stay green while the console cannot create its
+    catalog directories.
+    """
+    read_only = {
+        "services": {
+            "chatbot": {"volumes": [f"./data/evaluations:{EVALUATIONS_MOUNT_PATH}:ro"]}
+        }
+    }
+
+    assert _evaluations_mounts(read_only, "chatbot") == [
+        ("./data/evaluations", EVALUATIONS_MOUNT_PATH, "ro")
+    ]
+
+
+def test_default_evaluations_config_is_accepted_and_renders_unchanged():
+    template = _template_env().get_template("base-config.yaml")
+
+    rendered_no_block = yaml.safe_load(template.render(services={"chat_app": {}}))
+    chat_app_no_block = rendered_no_block["services"]["chat_app"]
+    assert chat_app_no_block["evaluations"]["root"] == EVALUATIONS_MOUNT_PATH
+    assert validate_evaluations_root(chat_app_no_block) is None
+
+    rendered_enabled = yaml.safe_load(
+        template.render(services={"chat_app": {"evaluations": {"enabled": True}}})
+    )
+    chat_app_enabled = rendered_enabled["services"]["chat_app"]
+    assert chat_app_enabled["evaluations"]["root"] == EVALUATIONS_MOUNT_PATH
+    assert validate_evaluations_root(chat_app_enabled) is None
 
 
 def _minimal_chatbot_config(evaluations):
