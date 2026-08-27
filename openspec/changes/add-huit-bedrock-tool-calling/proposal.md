@@ -90,5 +90,14 @@ if one arrived.
 - Unblocks an evaluator profile naming the RAGAS judge, which is the parity the QA console
   needs before its numbers can be compared with the RAGAS benchmark's. It does not by
   itself enable or configure any profile.
-- Also removes a general limitation: no agent using a HUIT Bedrock model can call tools
-  today. That is out of scope to exercise here, but the same override is what would fix it.
+- **Single-shot tool use only, and deliberately so.** This makes one request-and-response
+  round carry tools, which is the whole of what the evaluator needs: `_structured` binds a
+  schema, invokes once, and reads the result. A multi-turn agent tool loop still does not
+  work, for a separate reason this change does not touch — `_convert_messages` renders an
+  assistant turn as `{"role": "assistant", "content": str(msg.content)}`
+  (`src/archi/providers/huit_bedrock_provider.py:133`), so an `AIMessage` carrying
+  `tool_calls` loses its `tool_use` blocks on the way back, and the `ToolMessage` branch
+  below it then sends a `tool_result` whose `tool_use_id` matches no `tool_use` in the
+  preceding turn. The Anthropic dialect rejects that. Fixing it means changing how history
+  is serialized, which is a wider blast radius on live agent traffic than this change wants
+  and needs its own tests; it is a follow-up, not a side effect of this one.

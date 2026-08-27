@@ -75,3 +75,19 @@ Pydantic-versus-dict schema split away from the library that maintains them.
 - **WHEN** the model is invoked with no tools bound
 - **THEN** the request body carries neither `tools` nor `tool_choice`, and the response is
   handled exactly as before
+
+### Requirement: The HUIT Bedrock model catalog reports tool support truthfully
+
+Every entry in the provider's default model list SHALL report `supports_tools` as `true`
+once the models accept bound tools.
+
+Nothing reads this flag to decide whether to bind — it is advertisement, serialized out of
+the provider API to the chat app's model picker. That is exactly why it has to be correct:
+an operator choosing a model reads it as the answer to "can this model use tools", and a
+`false` there is a statement the code no longer supports. A capability the system has but
+denies having is the same class of defect as one it claims and lacks.
+
+#### Scenario: The catalog stops denying tool support
+
+- **WHEN** the provider's default model list is read
+- **THEN** every entry reports `supports_tools` as `true`
