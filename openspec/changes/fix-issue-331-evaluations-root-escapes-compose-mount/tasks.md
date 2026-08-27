@@ -125,7 +125,7 @@ Four standing notes for every task:
 
 ## 4. Document the constraint
 
-- [ ] 4.1 Document it where the knob is documented. In `docs/docs/configuration.md`, at the
+- [x] 4.1 Document it where the knob is documented. In `docs/docs/configuration.md`, at the
       `services.chat_app.evaluations` entry, state that `root` must be
       `/root/archi/evaluations` or a path beneath it, that the compose bind mount is fixed at
       that path, and that a root outside it is stored in the container and lost on the next
