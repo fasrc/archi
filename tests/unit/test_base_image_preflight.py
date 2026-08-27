@@ -41,6 +41,12 @@ def _pin_state(reference):
     return "mutable"
 
 
+_IMAGE_NAME = re.compile(r"^ghcr\.io/fasrc/([a-z0-9-]+)[@:]")
+_RELEASE_TAG = re.compile(r"^ghcr\.io/fasrc/[a-z0-9-]+:(v\d{4}\.\d{2}\.\d+)$")
+
+KNOWN_BASES = {preflight.PYTHON_BASE, preflight.PYTORCH_BASE}
+
+
 def _base_references(directory=TEMPLATE_DIR):
     """``(filename, reference)`` for every ``FROM ghcr.io/fasrc/...`` line."""
     references = []
@@ -48,6 +54,20 @@ def _base_references(directory=TEMPLATE_DIR):
         for match in _FROM_GHCR.finditer(path.read_text()):
             references.append((path.name, match.group(1)))
     return references
+
+
+def _image_map(directory=TEMPLATE_DIR):
+    """``{template name: base image name}`` -- identity, with the pin stripped.
+
+    ``_pin_state`` deliberately ignores which image a reference names, so on its
+    own it cannot tell a correct rewrite from one that pointed the CPU templates
+    at the GPU base. This is the half that can.
+    """
+    mapping = {}
+    for name, reference in _base_references(directory):
+        match = _IMAGE_NAME.match(reference)
+        mapping[name] = match.group(1) if match else reference
+    return mapping
 
 
 # --- Digest pins on the real templates (task 1.1) ----------------------------------------
@@ -127,6 +147,15 @@ def test_all_templates_share_one_pin_state():
 
     states = {_pin_state(ref) for _name, ref in references}
     assert len(states) == 1, f"templates disagree on pin state: {states}"
+
+    assert set(_image_map().values()) <= KNOWN_BASES, (
+        "templates name a base image outside "
+        f"{sorted(KNOWN_BASES)}: {sorted(set(_image_map().values()))}"
+    )
+
+    if states == {"release"}:
+        tags = {_RELEASE_TAG.match(ref).group(1) for _name, ref in references}
+        assert len(tags) == 1, f"release-retargeted templates disagree on tag: {tags}"
 
 
 def test_every_digest_pinned_from_line_has_the_annotation_above_it():
@@ -1161,3 +1190,31 @@ def test_the_guards_accept_a_release_retargeted_tree(tmp_path):
     mutable = [name for name, ref in references if _pin_state(ref) == "mutable"]
     assert not mutable, f"release-retargeted templates read as mutable: {mutable}"
     assert {_pin_state(ref) for _name, ref in references} == {"release"}
+
+    # Shape is not enough. A rewrite that pointed every template at one base
+    # would satisfy every assertion above and ship a deployment building the CPU
+    # services on the GPU image. Compare the identity map against the tree the
+    # rewrite started from, so the check is "unchanged except for the pin".
+    assert _image_map(templates_dir) == _image_map()
+
+    tags = {_RELEASE_TAG.match(ref).group(1) for _name, ref in references}
+    assert tags == {"v2026.08.0"}
+
+
+def test_the_release_guard_detects_a_rewrite_to_the_wrong_base(tmp_path):
+    """Proof that the identity comparison above discriminates.
+
+    One template flipped from the python base to the pytorch base: every
+    shape-level assertion still holds, and the identity map has to catch it.
+    """
+    templates_dir = _materialize_release_retargeted_tree(tmp_path)
+    victim = templates_dir / "Dockerfile-chat"
+    victim.write_text(
+        victim.read_text().replace(preflight.PYTHON_BASE, preflight.PYTORCH_BASE)
+    )
+
+    references = _base_references(templates_dir)
+    assert {_pin_state(ref) for _name, ref in references} == {"release"}
+    assert len(references) == TEMPLATE_COUNT
+
+    assert _image_map(templates_dir) != _image_map()
