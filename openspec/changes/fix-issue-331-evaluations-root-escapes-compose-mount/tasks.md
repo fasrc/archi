@@ -42,7 +42,7 @@ Four standing notes for every task:
 
 ## 1. The validator
 
-- [ ] 1.1 RED, then GREEN — refuse a root outside the mount. Create
+- [x] 1.1 RED, then GREEN — refuse a root outside the mount. Create
       `tests/unit/test_evaluations_root_validation.py` with two tests against a new
       `src/utils/evaluations_root.py`: `validate_evaluations_root({"evaluations": {"enabled":
       True, "root": "/data/evaluations"}})` raises `ValueError` whose message contains both
@@ -56,7 +56,7 @@ Four standing notes for every task:
       yet — later tasks bring them with their tests. Do not import anything from
       `src/interfaces/**` (design D7). Gate, commit.
 
-- [ ] 1.2 RED, then GREEN — accept a root beneath the mount, and refuse a prefix sibling.
+- [x] 1.2 RED, then GREEN — accept a root beneath the mount, and refuse a prefix sibling.
       Add two tests: `"/root/archi/evaluations/trial-a"` returns `None`, and
       `"/root/archi/evaluations-backup"` raises. Confirm the first fails and the second
       already passes, then make the first pass by also accepting when
