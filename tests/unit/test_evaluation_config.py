@@ -150,26 +150,41 @@ def _render_compose(tmp_path):
     return yaml.safe_load(rendered)
 
 
-def _container_mount_targets(compose, service):
-    """Container-side targets of ``service``'s own volumes, or [] if absent.
+def _evaluations_mounts(compose, service):
+    """``(source, target, mode)`` for each of ``service``'s evaluations mounts.
 
-    Scoped to one service on purpose. A whole-file substring scan cannot tell
-    that the mount moved to another service: the line count and the container
-    side both stay identical, the assertion still passes, and the validator ends
-    up guarding a mount the chat container does not have.
+    Scoped to one service, and it keeps the mode field. Both matter, and each
+    guards a drift the other cannot see:
+
+    - A whole-file substring scan cannot tell that the mount moved to another
+      service. The line count and the container side stay identical, so the
+      assertion passes while the chat container has lost the mount.
+    - Dropping the third field hides ``:ro``. The console write-probes the
+      catalog at start-up and disables itself when the probe fails, so a mount
+      turned read-only leaves CI green and the console dead on boot.
+
+    ``mode`` is ``"rw"`` when the spec omits it, matching Docker's default.
     """
     volumes = (compose.get("services", {}).get(service) or {}).get("volumes") or []
-    return [str(volume).split(":")[1] for volume in volumes if ":" in str(volume)]
+    mounts = []
+    for volume in volumes:
+        fields = str(volume).split(":")
+        if len(fields) < 2 or fields[1] != EVALUATIONS_MOUNT_PATH:
+            continue
+        mounts.append((fields[0], fields[1], fields[2] if len(fields) > 2 else "rw"))
+    return mounts
 
 
-def test_evaluations_mount_constant_matches_the_chatbot_service(tmp_path):
+def test_the_chatbot_evaluations_mount_is_writable_at_the_expected_path(tmp_path):
     compose = _render_compose(tmp_path)
 
-    assert EVALUATIONS_MOUNT_PATH in _container_mount_targets(compose, "chatbot")
+    assert _evaluations_mounts(compose, "chatbot") == [
+        ("./data/evaluations", EVALUATIONS_MOUNT_PATH, "rw")
+    ]
 
 
 def test_the_mount_check_is_scoped_to_the_chatbot_service():
-    """Proof that the check above discriminates.
+    """Proof that the check discriminates on service ownership.
 
     Same mount, same spelling, attached to a different service: the chatbot no
     longer has it, and the check has to say so.
@@ -181,8 +196,26 @@ def test_the_mount_check_is_scoped_to_the_chatbot_service():
         }
     }
 
-    assert EVALUATIONS_MOUNT_PATH not in _container_mount_targets(drifted, "chatbot")
-    assert EVALUATIONS_MOUNT_PATH in _container_mount_targets(drifted, "grafana")
+    assert _evaluations_mounts(drifted, "chatbot") == []
+    assert len(_evaluations_mounts(drifted, "grafana")) == 1
+
+
+def test_the_mount_check_discriminates_a_read_only_mount():
+    """Proof that the check discriminates on access mode.
+
+    ``:ro`` keeps the container side byte-identical, so a substring scan and a
+    target-only comparison both stay green while the console cannot create its
+    catalog directories.
+    """
+    read_only = {
+        "services": {
+            "chatbot": {"volumes": [f"./data/evaluations:{EVALUATIONS_MOUNT_PATH}:ro"]}
+        }
+    }
+
+    assert _evaluations_mounts(read_only, "chatbot") == [
+        ("./data/evaluations", EVALUATIONS_MOUNT_PATH, "ro")
+    ]
 
 
 def test_default_evaluations_config_is_accepted_and_renders_unchanged():

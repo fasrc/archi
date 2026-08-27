@@ -657,3 +657,32 @@ def test_navigation_visibility_matches_route_access(
 
     assert visible is expected_visible
     assert has_permission.call_count == int(evaluations_enabled and auth_enabled)
+
+
+def test_explicit_null_root_falls_back_to_the_default(monkeypatch, tmp_path):
+    """``root: null`` must disable or default, never crash app init.
+
+    ``dict.get("root", DEFAULT)`` returns the default only when the key is
+    ABSENT; an explicit YAML null returns ``None``, and ``Path(None)`` raises
+    ``TypeError``. That escapes the ``except OSError`` fail-closed path, so a
+    shape the create-time validator accepts as inert would take chat down with
+    it instead of just switching the console off.
+    """
+    redacted = tmp_path / "evaluation.yaml"
+    redacted.write_text("redacted: true\n", encoding="utf-8")
+    monkeypatch.setattr(
+        evaluation_console, "DEFAULT_EVALUATION_ROOT", str(tmp_path / "evaluations")
+    )
+
+    service = build_evaluation_service(
+        {
+            "evaluations": {
+                "enabled": True,
+                "root": None,
+                "agent_config_path": str(redacted),
+            }
+        }
+    )
+
+    assert service is not None
+    assert service.catalog.root == tmp_path / "evaluations"
