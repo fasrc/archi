@@ -10,7 +10,7 @@ from src.interfaces.chat_app.evaluation_console import (
     build_evaluation_service,
 )
 from src.interfaces.chat_app.evaluation_routes import register_evaluations
-from src.utils.evaluations_root import EVALUATIONS_MOUNT_PATH
+from src.utils.evaluations_root import EVALUATIONS_MOUNT_PATH, validate_evaluations_root
 
 ENABLEMENT_MATRIX = [
     ({}, False),
@@ -132,3 +132,19 @@ def test_evaluations_mount_constant_matches_the_compose_template():
     assert len(volume_lines) == 1
     _host_side, container_side = volume_lines[0].split(":", 1)
     assert container_side == EVALUATIONS_MOUNT_PATH
+
+
+def test_default_evaluations_config_is_accepted_and_renders_unchanged():
+    template = _template_env().get_template("base-config.yaml")
+
+    rendered_no_block = yaml.safe_load(template.render(services={"chat_app": {}}))
+    chat_app_no_block = rendered_no_block["services"]["chat_app"]
+    assert chat_app_no_block["evaluations"]["root"] == EVALUATIONS_MOUNT_PATH
+    assert validate_evaluations_root(chat_app_no_block) is None
+
+    rendered_enabled = yaml.safe_load(
+        template.render(services={"chat_app": {"evaluations": {"enabled": True}}})
+    )
+    chat_app_enabled = rendered_enabled["services"]["chat_app"]
+    assert chat_app_enabled["evaluations"]["root"] == EVALUATIONS_MOUNT_PATH
+    assert validate_evaluations_root(chat_app_enabled) is None
