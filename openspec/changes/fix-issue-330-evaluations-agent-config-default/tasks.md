@@ -91,7 +91,7 @@ Four standing notes for every task:
       into a non-zero `ClickException` (`src/cli/cli_main.py:355-365`), so no CLI change is
       needed. Gate, commit.
 
-- [ ] 1.3 Prove the ordering, with no production change. Add a test to
+- [x] 1.3 Prove the ordering, with no production change. Add a test to
       `tests/unit/test_cli_create_dev_smoke.py` in the shape of the existing
       `delete_deployment` tests there: invoke `archi create --force` against an existing
       deployment whose config sets `evaluations.enabled: true` with no `agent_config_path`, and
@@ -103,7 +103,7 @@ Four standing notes for every task:
 
 ## 2. Stop rendering the refused path
 
-- [ ] 2.1 GREEN in one step (the failing assertion already exists — see the standing note).
+- [x] 2.1 GREEN in one step (the failing assertion already exists — see the standing note).
       Change `src/cli/templates/base-config.yaml:126` so `agent_config_path` no longer carries
       a Jinja `default(...)` of the live deployment config path. Use the idiom the sibling
       `mcp_config_path` line at `:127` already uses — pipe the value through
