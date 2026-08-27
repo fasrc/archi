@@ -168,7 +168,7 @@ services:
     evaluations:
       enabled: true
       root: /root/archi/evaluations
-      agent_config_path: /root/archi/configs/config.yaml
+      agent_config_path: /root/archi/configs/config.eval.yaml
       mcp_config_path: ../configs/qa_evaluation_mcp.yaml
 ```
 
@@ -190,8 +190,13 @@ services:
   them. Check the path itself when a console that used to hold datasets comes up
   empty.
 - `evaluations.agent_config_path` is the in-container path to the Archi
-  deployment YAML that defines the agent under test. Defaults to
-  `/root/archi/configs/config.yaml`.
+  deployment YAML that defines the agent under test. This key is **required**
+  when `enabled` is `true`; it has **no default**. `archi create` refuses a
+  config that omits it or that names the live deployment config
+  (`/root/archi/configs/config.yaml`), because every evaluation run copies the
+  named file into the host-mounted run workspace the console serves — credential
+  values included. Use a redacted copy such as
+  `/root/archi/configs/config.eval.yaml` instead.
 - `evaluations.mcp_config_path` is needed only for Dataset V2 live oracle
   items. It is an absolute host path or a path relative to this deployment YAML.
   Archi validates and stages the referenced evaluator MCP registry.
