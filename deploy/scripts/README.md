@@ -106,13 +106,18 @@ prefixes), but the archi ports are not in that managed set. So they can vanish
 on a host rebuild, and a puppet run may purge them outright if the firewall
 class runs with `purge => true`.
 
-**Scope: the GPU host only.** Unlike every other script here, `firewall.sh` is
-not host-neutral. It neither reads `host.env` nor derives ports from the selected
-`CONFIG` — its `FW_RULES` table is fixed, and it opens `7861` to the broad Harvard
-gencom and FASRC VPNs plus several GPU-host service ports. Running it on the
-workstation would widen that host's firewall for services it does not run: `claw`
-serves `7866` and has no local vLLM. Do not run it there unless you first make its
-rule profile host-aware.
+**Scope: the GPU host only — by design, not by omission.** Every other script
+here is host-neutral; this one is deliberately not. It neither reads `host.env`
+nor derives ports from the selected `CONFIG`. Its `FW_RULES` table is fixed and
+opens `7861` to the broad Harvard gencom and FASRC VPNs, plus several GPU-host
+service ports.
+
+Do not run it on any other host, and do not make it host-aware. On the
+workstation it would widen that host's firewall for services it does not run:
+`claw` serves `7866` and has no local vLLM. Opening host-wide ports is a
+privileged action for the one host that needs them, which is why this script is
+also kept out of `create`/`redeploy`. A workstation that needs ports open should
+get its own explicit, reviewed rule set rather than inherit the GPU host's.
 
 `firewall.sh` is the reproducible record of what to re-add:
 

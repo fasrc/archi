@@ -10,6 +10,14 @@
 # It is NOT wired into create/redeploy: opening ports is a privileged, host-wide
 # action that must stay an explicit human decision, not a deploy side effect.
 #
+# SCOPE: the GPU host ONLY, by design. Every other script in this directory is
+# host-neutral and takes its identity from host.env; this one deliberately does
+# not read host.env or CONFIG, and FW_RULES below is fixed. Do not run it on
+# another host and do not make it host-aware: the table opens 7861 to broad
+# Harvard VPNs plus GPU-host service ports, which on the claw workstation (7866,
+# no local vLLM) would open ports for services that do not exist there. A host
+# needing its own ports gets its own explicit, reviewed rule set.
+#
 # The durable fix is to have these ports added to the puppet-managed set by
 # FASRC ops; until then, re-run this after any rebuild and verify with --list.
 #
