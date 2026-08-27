@@ -7,6 +7,9 @@ been removed unless something refuses first (fasrc/archi#266, #287).
 """
 
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,6 +18,185 @@ from src.cli.managers import base_image_preflight as preflight
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = REPO_ROOT / "src" / "cli" / "templates" / "dockerfiles"
+UPDATER = REPO_ROOT / "scripts" / "dev" / "update_service_base_images.py"
+
+TEMPLATE_COUNT = 15
+
+_FROM_GHCR = re.compile(r"^FROM (ghcr\.io/fasrc/\S+)", re.MULTILINE)
+_DIGEST_REF = re.compile(r"^ghcr\.io/fasrc/[a-z0-9-]+@sha256:[0-9a-f]{64}$")
+# The release workflow rewrites every template to the CalVer tag it just built
+# (``test-and-build-tag.yml:158``) and commits the result to the dispatched
+# branch (:207). That state is deliberate and verified two steps later, so it is
+# an accepted pin -- not the mutable ``dev-<sha>`` tag these guards exist to
+# keep out.
+_RELEASE_REF = re.compile(r"^ghcr\.io/fasrc/[a-z0-9-]+:v\d{4}\.\d{2}\.\d+$")
+
+
+def _pin_state(reference):
+    """Classify one base reference as ``digest``, ``release``, or ``mutable``."""
+    if _DIGEST_REF.match(reference):
+        return "digest"
+    if _RELEASE_REF.match(reference):
+        return "release"
+    return "mutable"
+
+
+_IMAGE_NAME = re.compile(r"^ghcr\.io/fasrc/([a-z0-9-]+)[@:]")
+_RELEASE_TAG = re.compile(r"^ghcr\.io/fasrc/[a-z0-9-]+:(v\d{4}\.\d{2}\.\d+)$")
+
+KNOWN_BASES = {preflight.PYTHON_BASE, preflight.PYTORCH_BASE}
+
+
+def _base_references(directory=TEMPLATE_DIR):
+    """``(filename, reference)`` for every ``FROM ghcr.io/fasrc/...`` line."""
+    references = []
+    for path in sorted(directory.glob("Dockerfile-*")):
+        for match in _FROM_GHCR.finditer(path.read_text()):
+            references.append((path.name, match.group(1)))
+    return references
+
+
+def _image_map(directory=TEMPLATE_DIR):
+    """``{template name: base image name}`` -- identity, with the pin stripped.
+
+    ``_pin_state`` deliberately ignores which image a reference names, so on its
+    own it cannot tell a correct rewrite from one that pointed the CPU templates
+    at the GPU base. This is the half that can.
+    """
+    mapping = {}
+    for name, reference in _base_references(directory):
+        match = _IMAGE_NAME.match(reference)
+        mapping[name] = match.group(1) if match else reference
+    return mapping
+
+
+# --- Digest pins on the real templates (task 1.1) ----------------------------------------
+
+
+def test_base_references_are_pinned_to_the_expected_digests():
+    """The templates must carry immutable digest references, not mutable tags.
+
+    Both the pattern and the exact digest are asserted so that a tag repin cannot
+    slip past this check and a digest swap requires an explicit update here.
+    """
+    if {_pin_state(ref) for _name, ref in _base_references()} == {"release"}:
+        pytest.skip(
+            "tree is release-retargeted; the digest constants describe the "
+            "development state only"
+        )
+
+    python_ref = preflight.base_reference(preflight.PYTHON_BASE)
+    pytorch_ref = preflight.base_reference(preflight.PYTORCH_BASE)
+
+    assert python_ref is not None, f"{preflight.PYTHON_BASE} not found in any template"
+    assert (
+        pytorch_ref is not None
+    ), f"{preflight.PYTORCH_BASE} not found in any template"
+
+    digest_re = re.compile(r"@sha256:[0-9a-f]{64}$")
+    assert digest_re.search(
+        python_ref
+    ), f"{preflight.PYTHON_BASE} reference is not digest-pinned: {python_ref!r}"
+    assert digest_re.search(
+        pytorch_ref
+    ), f"{preflight.PYTORCH_BASE} reference is not digest-pinned: {pytorch_ref!r}"
+
+    python_digest = (
+        "sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8"
+    )
+    pytorch_digest = (
+        "sha256:c29c6e8b4262736e3a5d3d47756b0d483db88254a91b16932d37f498bc704b5e"
+    )
+    assert (
+        python_digest in python_ref
+    ), f"{preflight.PYTHON_BASE} digest mismatch: {python_ref!r}"
+    assert (
+        pytorch_digest in pytorch_ref
+    ), f"{preflight.PYTORCH_BASE} digest mismatch: {pytorch_ref!r}"
+
+
+# --- Template shape guards (task 1.2) ---------------------------------------------------
+
+
+def test_no_template_carries_a_mutable_base_reference():
+    """A floating tag such as ``dev-4314ac4`` makes the template mutable.
+
+    Two references are immutable enough to ship: a digest, and the CalVer release
+    tag the release workflow writes. Everything else is rejected.
+    """
+    references = _base_references()
+    assert references, f"no ghcr base references found in {TEMPLATE_DIR}"
+
+    offenders = [
+        f"{name}: {ref}" for name, ref in references if _pin_state(ref) == "mutable"
+    ]
+    assert not offenders, f"mutable ghcr FROM found in: {offenders}"
+
+
+def test_all_templates_share_one_pin_state():
+    """The pin count is fixed at 15, and a split tree means a partial rewrite.
+
+    Counting alone would miss the worse failure: a rewrite that updated some
+    templates and not others leaves the count right and the deployment building
+    against two different base images.
+    """
+    references = _base_references()
+    assert (
+        len(references) == TEMPLATE_COUNT
+    ), f"expected {TEMPLATE_COUNT} base references, found {len(references)}: {references}"
+
+    states = {_pin_state(ref) for _name, ref in references}
+    assert len(states) == 1, f"templates disagree on pin state: {states}"
+
+    assert set(_image_map().values()) <= KNOWN_BASES, (
+        "templates name a base image outside "
+        f"{sorted(KNOWN_BASES)}: {sorted(set(_image_map().values()))}"
+    )
+
+    if states == {"release"}:
+        tags = {_RELEASE_TAG.match(ref).group(1) for _name, ref in references}
+        assert len(tags) == 1, f"release-retargeted templates disagree on tag: {tags}"
+
+
+def test_every_digest_pinned_from_line_has_the_annotation_above_it():
+    """The annotation line is what update_service_base_images.py uses to locate pins."""
+    annotation = (
+        "# base-image-pin: dev-4314ac4 (managed by update_service_base_images.py)"
+    )
+    digest_from_re = re.compile(
+        r"^FROM ghcr\.io/fasrc/[a-z0-9-]+@sha256:[0-9a-f]{64}", re.MULTILINE
+    )
+
+    dockerfiles = list(TEMPLATE_DIR.glob("Dockerfile-*"))
+    assert dockerfiles, f"no Dockerfiles found in {TEMPLATE_DIR}"
+
+    offenders = []
+    for f in dockerfiles:
+        lines = f.read_text().splitlines()
+        for i, line in enumerate(lines):
+            if digest_from_re.match(line):
+                prev = lines[i - 1] if i > 0 else ""
+                if prev != annotation:
+                    offenders.append(
+                        f"{f.name}:{i + 1} — annotation missing above FROM (got {prev!r})"
+                    )
+
+    assert not offenders, f"digest-pinned FROM lines without annotation: {offenders}"
+
+
+def test_no_from_line_contains_a_hash():
+    """A # on a FROM line is a parse error at build time (fasrc/archi#342 regression guard)."""
+    dockerfiles = list(TEMPLATE_DIR.glob("Dockerfile-*"))
+    assert dockerfiles, f"no Dockerfiles found in {TEMPLATE_DIR}"
+
+    offenders = []
+    for f in dockerfiles:
+        for i, line in enumerate(f.read_text().splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("FROM") and "#" in stripped:
+                offenders.append(f"{f.name}:{i}: {line!r}")
+
+    assert not offenders, f"FROM lines containing '#': {offenders}"
 
 
 # --- Which images a deployment requires (design D4) -------------------------------------
@@ -952,3 +1134,87 @@ def test_metadata_is_used_only_when_there_is_no_source_pyproject(monkeypatch):
     monkeypatch.setattr(preflight, "_metadata_python_floor", lambda: ">=3.11")
 
     assert preflight.declared_python_floor() == ">=3.11"
+
+
+# --- The released tree is a legitimate state (review round 1) ----------------------------
+
+
+def _materialize_release_retargeted_tree(tmp_path):
+    """A copy of the templates after the release workflow's retarget step.
+
+    ``update_service_base_images.py`` resolves its target directory from its own
+    location (``scripts/dev/...`` -> ``parents[2]``), so copying the script and
+    the templates into a temporary tree with the same relative layout runs the
+    REAL rewrite against throwaway files. Re-implementing the rewrite here would
+    only test the re-implementation.
+    """
+    scripts_dir = tmp_path / "scripts" / "dev"
+    templates_dir = tmp_path / "src" / "cli" / "templates" / "dockerfiles"
+    scripts_dir.mkdir(parents=True)
+    templates_dir.mkdir(parents=True)
+    shutil.copy(UPDATER, scripts_dir / UPDATER.name)
+    for path in TEMPLATE_DIR.glob("Dockerfile-*"):
+        shutil.copy(path, templates_dir / path.name)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(scripts_dir / UPDATER.name),
+            "--tag",
+            "v2026.08.0",
+            "--switch-source",
+            "ghcr",
+            "--orig-tag",
+            "all",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return templates_dir
+
+
+def test_the_guards_accept_a_release_retargeted_tree(tmp_path):
+    """A released tree must not turn the unit suite red.
+
+    ``test-and-build-tag.yml:158`` rewrites all 15 templates to
+    ``ghcr.io/fasrc/...:<release-tag>`` and the step at :207 commits them to the
+    dispatched branch. That state is deliberate -- the next step verifies it, and
+    the release smoke test builds against it. A guard that calls it mutable makes
+    the released branch red and starts every follow-up PR against it red too.
+    """
+    templates_dir = _materialize_release_retargeted_tree(tmp_path)
+
+    references = _base_references(templates_dir)
+    assert len(references) == TEMPLATE_COUNT
+
+    mutable = [name for name, ref in references if _pin_state(ref) == "mutable"]
+    assert not mutable, f"release-retargeted templates read as mutable: {mutable}"
+    assert {_pin_state(ref) for _name, ref in references} == {"release"}
+
+    # Shape is not enough. A rewrite that pointed every template at one base
+    # would satisfy every assertion above and ship a deployment building the CPU
+    # services on the GPU image. Compare the identity map against the tree the
+    # rewrite started from, so the check is "unchanged except for the pin".
+    assert _image_map(templates_dir) == _image_map()
+
+    tags = {_RELEASE_TAG.match(ref).group(1) for _name, ref in references}
+    assert tags == {"v2026.08.0"}
+
+
+def test_the_release_guard_detects_a_rewrite_to_the_wrong_base(tmp_path):
+    """Proof that the identity comparison above discriminates.
+
+    One template flipped from the python base to the pytorch base: every
+    shape-level assertion still holds, and the identity map has to catch it.
+    """
+    templates_dir = _materialize_release_retargeted_tree(tmp_path)
+    victim = templates_dir / "Dockerfile-chat"
+    victim.write_text(
+        victim.read_text().replace(preflight.PYTHON_BASE, preflight.PYTORCH_BASE)
+    )
+
+    references = _base_references(templates_dir)
+    assert {_pin_state(ref) for _name, ref in references} == {"release"}
+    assert len(references) == TEMPLATE_COUNT
+
+    assert _image_map(templates_dir) != _image_map()

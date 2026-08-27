@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
-FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4
+# base-image-pin: dev-4314ac4 (managed by update_service_base_images.py)
+FROM ghcr.io/fasrc/a2rchi-pytorch-base@sha256:c29c6e8b4262736e3a5d3d47756b0d483db88254a91b16932d37f498bc704b5e
 RUN pip install --upgrade pip setuptools wheel
 
 ENV DEBIAN_FRONTEND=noninteractive
