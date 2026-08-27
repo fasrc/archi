@@ -31,8 +31,9 @@ from src.utils.rbac.permissions import has_permission
 
 logger = get_logger(__name__)
 
+from src.utils.evaluations_config import LIVE_AGENT_CONFIG_PATH
+
 DEFAULT_EVALUATION_ROOT = "/root/archi/evaluations"
-LIVE_AGENT_CONFIG_PATH = "/root/archi/configs/config.yaml"
 DEFAULT_AGENTS_DIR = "/root/archi/agents"
 
 
