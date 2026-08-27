@@ -113,7 +113,7 @@ Four standing notes for every task:
       fail, change it back. This test is the reason a fourth copy of the path is acceptable
       (design D7). Gate, commit.
 
-- [ ] 3.2 RED, then GREEN — a default configuration is accepted and renders unchanged. Add
+- [x] 3.2 RED, then GREEN — a default configuration is accepted and renders unchanged. Add
       `test_default_evaluations_config_is_accepted_and_renders_unchanged` to
       `tests/unit/test_evaluation_config.py`: render `base-config.yaml` for a chat app with
       no `evaluations` block and for one with `enabled: true` and no `root`, assert both
