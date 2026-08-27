@@ -12,7 +12,24 @@ EVALUATIONS_MOUNT_PATH = "/root/archi/evaluations"
 
 def validate_evaluations_root(chat_app_config):
     """Raise ValueError if the configured evaluations root falls outside the mount."""
-    root = chat_app_config["evaluations"]["root"]
+    evaluations = chat_app_config.get("evaluations", {})
+    if evaluations.get("enabled") is not True:
+        return None
+
+    root = evaluations.get("root")
+    if root is None:
+        return None
+
+    if not isinstance(root, str):
+        raise ValueError(
+            f"services.chat_app.evaluations.root must be a string, got {type(root).__name__}"
+        )
+    if not root:
+        raise ValueError(
+            "services.chat_app.evaluations.root must not be empty; an absolute "
+            f"container path under {EVALUATIONS_MOUNT_PATH} is required"
+        )
+
     candidate = PurePosixPath(posixpath.normpath(root))
     if not candidate.is_absolute():
         raise ValueError(

@@ -47,3 +47,44 @@ def test_relative_root_raises():
     msg = str(exc_info.value)
     assert "evaluations" in msg
     assert "absolute" in msg
+
+
+# Task 1.4 — enabled gate and non-string cases
+
+
+def test_disabled_console_skips_validation():
+    config = {"evaluations": {"enabled": False, "root": "/data/evaluations"}}
+    assert validate_evaluations_root(config) is None
+
+
+def test_enabled_absent_skips_validation():
+    config = {"evaluations": {"root": "/data/evaluations"}}
+    assert validate_evaluations_root(config) is None
+
+
+def test_enabled_string_true_skips_validation():
+    config = {"evaluations": {"enabled": "true", "root": "/data/evaluations"}}
+    assert validate_evaluations_root(config) is None
+
+
+def test_no_evaluations_block_returns_none():
+    assert validate_evaluations_root({}) is None
+
+
+def test_none_root_returns_none():
+    config = {"evaluations": {"enabled": True, "root": None}}
+    assert validate_evaluations_root(config) is None
+
+
+def test_integer_root_raises_naming_field_path():
+    with pytest.raises(ValueError) as exc_info:
+        validate_evaluations_root({"evaluations": {"enabled": True, "root": 123}})
+    msg = str(exc_info.value)
+    assert "services.chat_app.evaluations.root" in msg
+
+
+def test_empty_string_root_raises_naming_field_path():
+    with pytest.raises(ValueError) as exc_info:
+        validate_evaluations_root({"evaluations": {"enabled": True, "root": ""}})
+    msg = str(exc_info.value)
+    assert "services.chat_app.evaluations.root" in msg
