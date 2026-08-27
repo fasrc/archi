@@ -136,7 +136,7 @@ Four standing notes for every task:
 
 ## 5. Open the pull request
 
-- [ ] 5.1 Push the branch to `origin` (`fasrc/archi`, **not** the `fork` remote) with
+- [x] 5.1 Push the branch to `origin` (`fasrc/archi`, **not** the `fork` remote) with
       `git push -u origin fix/issue-331-evaluations-root-escapes-compose-mount`, then open a
       PR against `fasrc/archi:dev`. The body must contain the closing keyword for issue 331
       on its own line — a keyword in the title does not link the issue — and must record the
