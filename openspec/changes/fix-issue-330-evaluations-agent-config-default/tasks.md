@@ -46,7 +46,7 @@ Four standing notes for every task:
 
 ## 1. One definition of the refused path, and a validator that runs above the teardown
 
-- [ ] 1.1 RED, then GREEN. Create `src/utils/evaluations_config.py`. It imports `pathlib` and
+- [x] 1.1 RED, then GREEN. Create `src/utils/evaluations_config.py`. It imports `pathlib` and
       `typing` only — no flask, no CLI imports — so both the CLI and the chat app can import it
       (`design.md` D3). It defines `LIVE_AGENT_CONFIG_PATH` holding the live deployment config
       path `/root/archi/configs/config.yaml`, and
@@ -74,7 +74,7 @@ Four standing notes for every task:
       check. Run the full `tests/unit/test_evaluation_console.py` to prove the ten monkeypatch
       sites still work. Gate, commit.
 
-- [ ] 1.2 RED, then GREEN. Wire the validator into `archi create` above the teardown. Add a
+- [x] 1.2 RED, then GREEN. Wire the validator into `archi create` above the teardown. Add a
       test to `tests/unit/test_evaluation_config.py` that calls
       `ConfigManager._validate_chat_app_config` (or `validate_configs`, whichever the existing
       tests already exercise — check `tests/unit/test_cli_create_dev_smoke.py` for the

@@ -5,11 +5,13 @@ import yaml
 from flask import Flask, render_template
 from jinja2 import ChainableUndefined, Environment, FileSystemLoader
 
+from src.cli.managers.config_manager import ConfigurationManager
 from src.interfaces.chat_app.evaluation_console import (
     build_authorize_request,
     build_evaluation_service,
 )
 from src.interfaces.chat_app.evaluation_routes import register_evaluations
+from src.utils.evaluations_config import LIVE_AGENT_CONFIG_PATH
 
 ENABLEMENT_MATRIX = [
     ({}, False),
@@ -119,3 +121,46 @@ def test_chatbot_deployments_persist_the_evaluation_root():
     compose = (_repository() / "src/cli/templates/base-compose.yaml").read_text()
 
     assert "./data/evaluations:/root/archi/evaluations" in compose
+
+
+def _minimal_chatbot_config(evaluations):
+    return {
+        "services": {
+            "chat_app": {
+                "agent_class": "TestAgent",
+                "default_provider": "openai",
+                "default_model": "gpt-4o",
+                "evaluations": evaluations,
+            }
+        }
+    }
+
+
+def _config_manager():
+    return object.__new__(ConfigurationManager)
+
+
+def test_validate_chat_app_config_refuses_enabled_evaluations_without_path():
+    mgr = _config_manager()
+    config = _minimal_chatbot_config({"enabled": True})
+    with pytest.raises(
+        ValueError, match="services\\.chat_app\\.evaluations\\.agent_config_path"
+    ):
+        mgr._validate_chat_app_config(config, ["chatbot"])
+
+
+def test_validate_chat_app_config_refuses_enabled_evaluations_with_live_path():
+    mgr = _config_manager()
+    config = _minimal_chatbot_config(
+        {"enabled": True, "agent_config_path": LIVE_AGENT_CONFIG_PATH}
+    )
+    with pytest.raises(
+        ValueError, match="services\\.chat_app\\.evaluations\\.agent_config_path"
+    ):
+        mgr._validate_chat_app_config(config, ["chatbot"])
+
+
+def test_validate_chat_app_config_allows_disabled_evaluations():
+    mgr = _config_manager()
+    config = _minimal_chatbot_config({"enabled": False})
+    mgr._validate_chat_app_config(config, ["chatbot"])
