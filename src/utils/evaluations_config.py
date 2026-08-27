@@ -63,4 +63,12 @@ def _container_path(raw: str) -> str:
     candidate = raw.strip()
     if not posixpath.isabs(candidate):
         candidate = posixpath.join(CHAT_CONTAINER_WORKDIR, candidate)
-    return posixpath.normpath(candidate)
+    candidate = posixpath.normpath(candidate)
+    # ``normpath`` collapses three or more leading slashes but keeps exactly two,
+    # because POSIX leaves ``//foo`` implementation-defined. Linux treats it as
+    # ``/foo``, so ``//root/archi/configs/config.yaml`` IS the live config and the
+    # runtime seam refuses it on inode identity. Collapse it here too, or the
+    # preflight would accept a path the deployed console then rejects.
+    if candidate.startswith("//"):
+        candidate = "/" + candidate.lstrip("/")
+    return candidate

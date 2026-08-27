@@ -131,3 +131,63 @@ def test_validate_evaluations_config_accepts_relative_redacted_copy():
         )
         is None
     )
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "//root/archi/configs/config.yaml",
+        "///root/archi/configs/config.yaml",
+        "/root/archi//configs/config.yaml",
+    ],
+)
+def test_validate_evaluations_config_raises_for_repeated_slashes(spelling):
+    """``posixpath.normpath`` keeps exactly two leading slashes; POSIX allows it.
+
+    ``//root/archi/configs/config.yaml`` and the live config are one file, so the
+    runtime seam refuses it. The validator has to collapse the doubled root
+    itself, because normalization alone will not.
+    """
+    with pytest.raises(ValueError, match=_DOTTED_KEY):
+        validate_evaluations_config(
+            {"evaluations": {"enabled": True, "agent_config_path": spelling}}
+        )
+
+
+# Absolute spellings only. ``_is_live_agent_config`` answers a relative path by
+# resolving it against the process working directory, which inside the chatbot is
+# ``/root/archi`` (``Dockerfile-chat:4``) and in this test process is the pytest
+# rootdir. A host test cannot adopt the container's workdir, so a relative
+# spelling has no comparable runtime verdict to assert parity against.
+_ABSOLUTE_SPELLINGS = [
+    ("/root/archi/configs/config.yaml", True),
+    ("//root/archi/configs/config.yaml", True),
+    ("///root/archi/configs/config.yaml", True),
+    ("/root/archi//configs/config.yaml", True),
+    ("/root/archi/configs/../configs/config.yaml", True),
+    ("/root/archi/./configs/config.yaml", True),
+    ("/root/archi/configs/config.eval.yaml", False),
+    ("/opt/redacted/config.yaml", False),
+]
+
+
+@pytest.mark.parametrize("spelling,is_live", _ABSOLUTE_SPELLINGS)
+def test_preflight_verdict_matches_the_runtime_seam(spelling, is_live):
+    """Create time and runtime must agree on every absolute spelling.
+
+    The preflight exists only to report early what ``build_evaluation_service``
+    would decide later. A spelling the two disagree on is a deployment that
+    passes ``archi create`` and comes up with the console switched off.
+    """
+    from pathlib import Path
+
+    from src.interfaces.chat_app.evaluation_console import _is_live_agent_config
+
+    assert _is_live_agent_config(Path(spelling)) is is_live
+
+    config = {"evaluations": {"enabled": True, "agent_config_path": spelling}}
+    if is_live:
+        with pytest.raises(ValueError, match=_DOTTED_KEY):
+            validate_evaluations_config(config)
+    else:
+        assert validate_evaluations_config(config) is None
