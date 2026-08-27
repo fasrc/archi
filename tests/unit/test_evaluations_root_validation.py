@@ -138,3 +138,39 @@ def test_validate_chat_app_config_non_chatbot_service_skips():
     mgr._validate_chat_app_config(
         _chat_app_config("/data/evaluations"), ["data_manager"]
     )
+
+
+@pytest.mark.parametrize("block", [None, [], "", 0, {}])
+def test_falsy_evaluations_block_is_treated_as_disabled(block):
+    """``evaluations: null`` was an accepted, inert shape and must stay one.
+
+    The runtime normalizes with ``chat_app_config.get("evaluations") or {}``
+    (``evaluation_console.py:91``) and treats the result as disabled. A validator
+    that raises ``AttributeError`` on the same config would refuse a deployment
+    the runtime is happy to serve.
+    """
+    assert validate_evaluations_root({"evaluations": block}) is None
+
+
+@pytest.mark.parametrize("block", ["/root/archi/evaluations", ["enabled"], 3])
+def test_truthy_non_mapping_evaluations_block_raises_naming_field_path(block):
+    """A malformed block earns an actionable error, never an ``AttributeError``."""
+    with pytest.raises(ValueError) as exc_info:
+        validate_evaluations_root({"evaluations": block})
+    assert "services.chat_app.evaluations" in str(exc_info.value)
+
+
+def test_outside_root_error_says_a_path_beneath_the_mount_is_allowed():
+    """Spec scenario "A root outside the mounted path refuses the deployment".
+
+    The scenario requires the error to name both paths AND to say a path beneath
+    the mount is allowed. Without the third clause an operator reads "only
+    /root/archi/evaluations is mounted" as "collapse your catalogs into that one
+    directory", which defeats the knob's remaining purpose.
+    """
+    with pytest.raises(ValueError) as exc_info:
+        validate_evaluations_root(_config_with_root("/data/evaluations"))
+    msg = str(exc_info.value)
+    assert "/data/evaluations" in msg
+    assert EVALUATIONS_MOUNT_PATH in msg
+    assert "beneath" in msg

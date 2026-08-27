@@ -122,16 +122,67 @@ def test_chatbot_deployments_persist_the_evaluation_root():
     assert "./data/evaluations:/root/archi/evaluations" in compose
 
 
-def test_evaluations_mount_constant_matches_the_compose_template():
-    compose = (_repository() / "src/cli/templates/base-compose.yaml").read_text()
-    volume_lines = [
-        line.strip().lstrip("- ")
-        for line in compose.splitlines()
-        if "./data/evaluations:" in line
-    ]
-    assert len(volume_lines) == 1
-    _host_side, container_side = volume_lines[0].split(":", 1)
-    assert container_side == EVALUATIONS_MOUNT_PATH
+def _render_compose(tmp_path):
+    """Render base-compose.yaml the way the CLI does, then parse it."""
+    from src.cli.utils.service_builder import ServiceBuilder
+
+    plan = ServiceBuilder.build_compose_config(
+        name="demo",
+        verbosity=3,
+        base_dir=tmp_path,
+        enabled_services=["chatbot"],
+        secrets={"PG_PASSWORD"},
+        tag="dev",
+    )
+    template_vars = plan.to_template_vars()
+    template_vars.update(
+        app_version="test",
+        postgres_port=5432,
+        data_manager_port_host=7871,
+        data_manager_port_container=7871,
+        chatbot_port_host=7861,
+        chatbot_port_container=7861,
+        prompt_files=[],
+        rubrics=[],
+        evaluation_mcp_configured=False,
+    )
+    rendered = _template_env().get_template("base-compose.yaml").render(**template_vars)
+    return yaml.safe_load(rendered)
+
+
+def _container_mount_targets(compose, service):
+    """Container-side targets of ``service``'s own volumes, or [] if absent.
+
+    Scoped to one service on purpose. A whole-file substring scan cannot tell
+    that the mount moved to another service: the line count and the container
+    side both stay identical, the assertion still passes, and the validator ends
+    up guarding a mount the chat container does not have.
+    """
+    volumes = (compose.get("services", {}).get(service) or {}).get("volumes") or []
+    return [str(volume).split(":")[1] for volume in volumes if ":" in str(volume)]
+
+
+def test_evaluations_mount_constant_matches_the_chatbot_service(tmp_path):
+    compose = _render_compose(tmp_path)
+
+    assert EVALUATIONS_MOUNT_PATH in _container_mount_targets(compose, "chatbot")
+
+
+def test_the_mount_check_is_scoped_to_the_chatbot_service():
+    """Proof that the check above discriminates.
+
+    Same mount, same spelling, attached to a different service: the chatbot no
+    longer has it, and the check has to say so.
+    """
+    drifted = {
+        "services": {
+            "chatbot": {"volumes": ["./configs:/root/archi/configs"]},
+            "grafana": {"volumes": [f"./data/evaluations:{EVALUATIONS_MOUNT_PATH}"]},
+        }
+    }
+
+    assert EVALUATIONS_MOUNT_PATH not in _container_mount_targets(drifted, "chatbot")
+    assert EVALUATIONS_MOUNT_PATH in _container_mount_targets(drifted, "grafana")
 
 
 def test_default_evaluations_config_is_accepted_and_renders_unchanged():

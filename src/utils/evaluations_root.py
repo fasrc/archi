@@ -12,7 +12,17 @@ EVALUATIONS_MOUNT_PATH = "/root/archi/evaluations"
 
 def validate_evaluations_root(chat_app_config):
     """Raise ValueError if the configured evaluations root falls outside the mount."""
-    evaluations = chat_app_config.get("evaluations", {})
+    # ``or {}`` mirrors the runtime normalization at ``evaluation_console.py:91``:
+    # ``evaluations: null`` is an inert shape the deployed console already accepts
+    # as "disabled", so refusing it at create time would reject a config that
+    # deploys cleanly. A TRUTHY non-mapping is different -- it is malformed, and
+    # an actionable error beats the AttributeError that ``.get`` would raise.
+    evaluations = chat_app_config.get("evaluations") or {}
+    if not isinstance(evaluations, dict):
+        raise ValueError(
+            "services.chat_app.evaluations must be a mapping, got "
+            f"{type(evaluations).__name__}"
+        )
     if evaluations.get("enabled") is not True:
         return None
 
@@ -44,5 +54,7 @@ def validate_evaluations_root(chat_app_config):
         raise ValueError(
             f"evaluations.root {str(root)!r} is outside the compose bind mount "
             f"{EVALUATIONS_MOUNT_PATH!r}; only {EVALUATIONS_MOUNT_PATH} is mounted "
-            f"into the container"
+            f"into the container. Set root to {EVALUATIONS_MOUNT_PATH}, or to a "
+            f"path beneath it such as {EVALUATIONS_MOUNT_PATH}/trial-a to keep "
+            f"catalogs side by side on the same volume"
         )

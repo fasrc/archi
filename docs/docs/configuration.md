@@ -188,8 +188,19 @@ services:
   nowhere else. A root set outside that subtree is technically valid YAML, but
   the path falls in ephemeral container storage: artifacts accumulate during the
   session and are silently discarded on the next `archi create --force`.
-  `archi create` refuses configs that set `root` outside the mount, so this
-  failure surfaces at deploy time rather than after data loss.
+  `archi create` refuses configs that set `root` outside the mount, so a
+  mistyped root is reported at deploy time instead of quietly writing artifacts
+  to storage that the next redeploy drops.
+
+  !!! warning "The mount is not a backup"
+
+      Keeping `root` inside the mount protects the catalog when a container is
+      recreated or restarted. It does **not** protect it from
+      `archi create --force`: that path calls `remove_existing_deployment()`,
+      which deletes the whole deployment directory — and the host side of this
+      mount, `data/evaluations`, sits inside it. Copy the catalog out of
+      `$ARCHI_DIR/archi-<name>/data/evaluations` before a force redeploy if you
+      need to keep it.
 
   If the root cannot be used at runtime — a read-only mount, or a permission
   mismatch on the host directory — the console disables itself and chat keeps
