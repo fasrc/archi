@@ -120,7 +120,7 @@ Four standing notes for every task:
       `tests/unit/test_evaluation_config_staging.py` too: `_stage_evaluation_config` only
       touches `mcp_config_path` and must be unaffected. Gate, commit.
 
-- [ ] 2.2 Align the recorded promise. The function docstring at
+- [x] 2.2 Align the recorded promise. The function docstring at
       `src/interfaces/chat_app/evaluation_console.py:67` already says "`agent_config_path` has
       no default" — that is now true of the template as well, so add one sentence recording
       that `archi create` refuses the two unacceptable values up front and that the seam's
