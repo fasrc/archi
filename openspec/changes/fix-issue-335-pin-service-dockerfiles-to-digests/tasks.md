@@ -21,7 +21,7 @@ Four standing notes for every task:
 
 ## 1. Pin the templates
 
-- [ ] 1.1 `model: opus` — RED first, then the rewrite, in this one turn, because the test
+- [x] 1.1 `model: opus` — RED first, then the rewrite, in this one turn, because the test
       reads the real templates and cannot go green until they change.
       **RED:** in `tests/unit/test_base_image_preflight.py`, add a test asserting that
       `preflight.base_reference(preflight.PYTHON_BASE)` returns a reference matching

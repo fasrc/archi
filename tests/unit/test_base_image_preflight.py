@@ -17,6 +17,45 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = REPO_ROOT / "src" / "cli" / "templates" / "dockerfiles"
 
 
+# --- Digest pins on the real templates (task 1.1) ----------------------------------------
+
+
+def test_base_references_are_pinned_to_the_expected_digests():
+    """The templates must carry immutable digest references, not mutable tags.
+
+    Both the pattern and the exact digest are asserted so that a tag repin cannot
+    slip past this check and a digest swap requires an explicit update here.
+    """
+    python_ref = preflight.base_reference(preflight.PYTHON_BASE)
+    pytorch_ref = preflight.base_reference(preflight.PYTORCH_BASE)
+
+    assert python_ref is not None, f"{preflight.PYTHON_BASE} not found in any template"
+    assert (
+        pytorch_ref is not None
+    ), f"{preflight.PYTORCH_BASE} not found in any template"
+
+    digest_re = re.compile(r"@sha256:[0-9a-f]{64}$")
+    assert digest_re.search(
+        python_ref
+    ), f"{preflight.PYTHON_BASE} reference is not digest-pinned: {python_ref!r}"
+    assert digest_re.search(
+        pytorch_ref
+    ), f"{preflight.PYTORCH_BASE} reference is not digest-pinned: {pytorch_ref!r}"
+
+    python_digest = (
+        "sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8"
+    )
+    pytorch_digest = (
+        "sha256:c29c6e8b4262736e3a5d3d47756b0d483db88254a91b16932d37f498bc704b5e"
+    )
+    assert (
+        python_digest in python_ref
+    ), f"{preflight.PYTHON_BASE} digest mismatch: {python_ref!r}"
+    assert (
+        pytorch_digest in pytorch_ref
+    ), f"{preflight.PYTORCH_BASE} digest mismatch: {pytorch_ref!r}"
+
+
 # --- Which images a deployment requires (design D4) -------------------------------------
 
 

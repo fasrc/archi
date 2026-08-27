@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
-FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4 
+# base-image-pin: dev-4314ac4 (managed by update_service_base_images.py)
+FROM ghcr.io/fasrc/a2rchi-python-base@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8 
 RUN mkdir -p /root/archi
 WORKDIR /root/archi
 
