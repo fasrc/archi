@@ -102,7 +102,7 @@ Four standing notes for every task:
 
 ## 3. Hold the constant and the default render
 
-- [ ] 3.1 RED, then GREEN — the mount constant tracks the template. Add
+- [x] 3.1 RED, then GREEN — the mount constant tracks the template. Add
       `test_evaluations_mount_constant_matches_the_compose_template` to
       `tests/unit/test_evaluation_config.py`, next to
       `test_chatbot_deployments_persist_the_evaluation_root`
