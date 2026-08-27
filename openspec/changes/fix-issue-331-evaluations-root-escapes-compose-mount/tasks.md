@@ -75,7 +75,7 @@ Four standing notes for every task:
       container path under the mount is required, because no working directory is pinned for
       the container (design D3). Gate, commit.
 
-- [ ] 1.4 RED, then GREEN — the enabled gate and the non-string cases. Add tests: a config
+- [x] 1.4 RED, then GREEN — the enabled gate and the non-string cases. Add tests: a config
       with `"enabled": False` (and also one omitting `enabled`, and one with the string
       `"true"`) and a root outside the mount returns `None`; a config with no `evaluations`
       block at all returns `None`; and with the console enabled, a `root` that is `None`
