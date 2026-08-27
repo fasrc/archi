@@ -56,6 +56,76 @@ def test_base_references_are_pinned_to_the_expected_digests():
     ), f"{preflight.PYTORCH_BASE} digest mismatch: {pytorch_ref!r}"
 
 
+# --- Template shape guards (task 1.2) ---------------------------------------------------
+
+
+def test_no_template_carries_a_tag_shaped_ghcr_reference():
+    """Any FROM ghcr.io/fasrc/...:tag line (without @) makes the template mutable."""
+    tag_shaped = re.compile(r"^FROM ghcr\.io/fasrc/[^@]+:[^@\s]+\s*$", re.MULTILINE)
+
+    dockerfiles = list(TEMPLATE_DIR.glob("Dockerfile-*"))
+    assert dockerfiles, f"no Dockerfiles found in {TEMPLATE_DIR}"
+
+    offenders = [f.name for f in dockerfiles if tag_shaped.search(f.read_text())]
+    assert not offenders, f"tag-shaped ghcr FROM found in: {offenders}"
+
+
+def test_exactly_15_templates_carry_a_digest_pinned_from_line():
+    """The pin count is fixed at 15; drifting silently would mean a service was missed."""
+    digest_from = re.compile(
+        r"^FROM ghcr\.io/fasrc/[a-z0-9-]+@sha256:[0-9a-f]{64}", re.MULTILINE
+    )
+
+    dockerfiles = list(TEMPLATE_DIR.glob("Dockerfile-*"))
+    assert dockerfiles, f"no Dockerfiles found in {TEMPLATE_DIR}"
+
+    pinned = [f.name for f in dockerfiles if digest_from.search(f.read_text())]
+    assert (
+        len(pinned) == 15
+    ), f"expected 15 digest-pinned templates, found {len(pinned)}: {pinned}"
+
+
+def test_every_digest_pinned_from_line_has_the_annotation_above_it():
+    """The annotation line is what update_service_base_images.py uses to locate pins."""
+    annotation = (
+        "# base-image-pin: dev-4314ac4 (managed by update_service_base_images.py)"
+    )
+    digest_from_re = re.compile(
+        r"^FROM ghcr\.io/fasrc/[a-z0-9-]+@sha256:[0-9a-f]{64}", re.MULTILINE
+    )
+
+    dockerfiles = list(TEMPLATE_DIR.glob("Dockerfile-*"))
+    assert dockerfiles, f"no Dockerfiles found in {TEMPLATE_DIR}"
+
+    offenders = []
+    for f in dockerfiles:
+        lines = f.read_text().splitlines()
+        for i, line in enumerate(lines):
+            if digest_from_re.match(line):
+                prev = lines[i - 1] if i > 0 else ""
+                if prev != annotation:
+                    offenders.append(
+                        f"{f.name}:{i + 1} — annotation missing above FROM (got {prev!r})"
+                    )
+
+    assert not offenders, f"digest-pinned FROM lines without annotation: {offenders}"
+
+
+def test_no_from_line_contains_a_hash():
+    """A # on a FROM line is a parse error at build time (fasrc/archi#342 regression guard)."""
+    dockerfiles = list(TEMPLATE_DIR.glob("Dockerfile-*"))
+    assert dockerfiles, f"no Dockerfiles found in {TEMPLATE_DIR}"
+
+    offenders = []
+    for f in dockerfiles:
+        for i, line in enumerate(f.read_text().splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("FROM") and "#" in stripped:
+                offenders.append(f"{f.name}:{i}: {line!r}")
+
+    assert not offenders, f"FROM lines containing '#': {offenders}"
+
+
 # --- Which images a deployment requires (design D4) -------------------------------------
 
 
