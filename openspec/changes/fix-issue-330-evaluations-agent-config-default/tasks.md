@@ -130,7 +130,7 @@ Four standing notes for every task:
 
 ## 3. Fix the page that recommends the dead config
 
-- [ ] 3.1 Edit `docs/docs/configuration.md`. In the worked example at `:171`, replace the
+- [x] 3.1 Edit `docs/docs/configuration.md`. In the worked example at `:171`, replace the
       live-deployment-config value of `agent_config_path` with a redacted copy under the same
       mounted directory — `agent_config_path: /root/archi/configs/config.eval.yaml`. In the
       prose at `:192-194`, replace the sentence that calls the live path the default with: the
@@ -143,7 +143,7 @@ Four standing notes for every task:
 
 ## 4. Wrap up
 
-- [ ] 4.1 Confirm the acceptance criteria of issue #330 in order, then ship. Run the focused
+- [x] 4.1 Confirm the acceptance criteria of issue #330 in order, then ship. Run the focused
       files, then the full gate. Confirm with
       `git diff origin/dev -- tests/unit/test_evaluation_console.py` that that file is
       untouched, and with `git diff origin/dev -- tests/unit/test_evaluation_config.py` that
