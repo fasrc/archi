@@ -55,9 +55,43 @@ def test_generated_evaluation_console_requires_explicit_enablement(
     assert rendered_config["services"]["chat_app"]["evaluations"] == {
         "enabled": expected_enabled,
         "root": "/root/archi/evaluations",
-        "agent_config_path": "/root/archi/configs/config.yaml",
+        "agent_config_path": None,
         "mcp_config_path": None,
     }
+
+
+def test_accepted_agent_config_path_renders_through_unchanged():
+    template = _template_env().get_template("base-config.yaml")
+    custom_path = "/root/archi/configs/config.eval.yaml"
+
+    rendered_config = yaml.safe_load(
+        template.render(
+            services={
+                "chat_app": {
+                    "evaluations": {
+                        "enabled": True,
+                        "agent_config_path": custom_path,
+                    }
+                }
+            }
+        )
+    )
+
+    assert (
+        rendered_config["services"]["chat_app"]["evaluations"]["agent_config_path"]
+        == custom_path
+    )
+
+
+def test_unset_agent_config_path_renders_as_none_not_null_string():
+    template = _template_env().get_template("base-config.yaml")
+
+    rendered_config = yaml.safe_load(template.render(services={"chat_app": {}}))
+
+    assert (
+        rendered_config["services"]["chat_app"]["evaluations"]["agent_config_path"]
+        is None
+    )
 
 
 @pytest.mark.parametrize(("chat_app_config", "expected_enabled"), ENABLEMENT_MATRIX)
