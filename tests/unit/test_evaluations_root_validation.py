@@ -20,3 +20,15 @@ def test_outside_root_raises():
 def test_exact_mount_returns_none():
     result = validate_evaluations_root(_config_with_root(EVALUATIONS_MOUNT_PATH))
     assert result is None
+
+
+def test_child_of_mount_returns_none():
+    result = validate_evaluations_root(
+        _config_with_root("/root/archi/evaluations/trial-a")
+    )
+    assert result is None
+
+
+def test_prefix_sibling_raises():
+    with pytest.raises(ValueError):
+        validate_evaluations_root(_config_with_root("/root/archi/evaluations-backup"))

@@ -16,7 +16,8 @@ def validate_evaluations_root(chat_app_config):
     candidate = PurePosixPath(posixpath.normpath(root))
     mount = PurePosixPath(EVALUATIONS_MOUNT_PATH)
 
-    if candidate != mount:
+    # A startswith test would accept "/root/archi/evaluations-backup" as a false positive.
+    if candidate != mount and mount not in candidate.parents:
         raise ValueError(
             f"evaluations.root {str(root)!r} is outside the compose bind mount "
             f"{EVALUATIONS_MOUNT_PATH!r}; only {EVALUATIONS_MOUNT_PATH} is mounted "
