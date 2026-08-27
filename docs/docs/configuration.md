@@ -199,8 +199,9 @@ services:
       `archi create --force`: that path calls `remove_existing_deployment()`,
       which deletes the whole deployment directory — and the host side of this
       mount, `data/evaluations`, sits inside it. Copy the catalog out of
-      `$ARCHI_DIR/archi-<name>/data/evaluations` before a force redeploy if you
-      need to keep it.
+      `${ARCHI_DIR:-$HOME/.archi}/archi-<name>/data/evaluations` before a force
+      redeploy if you need to keep it. `ARCHI_DIR` is usually unset, and the CLI
+      then defaults it to `~/.archi`.
 
   If the root cannot be used at runtime — a read-only mount, or a permission
   mismatch on the host directory — the console disables itself and chat keeps

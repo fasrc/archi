@@ -1,6 +1,9 @@
 """Tests for evaluations root path validation."""
 
+from pathlib import Path
+
 import pytest
+import yaml
 
 from src.utils.evaluations_root import EVALUATIONS_MOUNT_PATH, validate_evaluations_root
 
@@ -174,3 +177,37 @@ def test_outside_root_error_says_a_path_beneath_the_mount_is_allowed():
     assert "/data/evaluations" in msg
     assert EVALUATIONS_MOUNT_PATH in msg
     assert "beneath" in msg
+
+
+def test_the_rendered_root_is_the_value_the_validator_checked():
+    """The validator's verdict is void if rendering changes the value.
+
+    The deployment config is loaded once, validated, then re-emitted through
+    ``base-config.yaml`` and loaded again by the config seed. Interpolating the
+    scalar raw inside double quotes makes that second load decode escape
+    sequences the first load kept literal, so a root the validator read as a
+    descendant of the mount reaches the runtime as an escape from it.
+    """
+    from jinja2 import ChainableUndefined, Environment, FileSystemLoader
+
+    repository = Path(__file__).resolve().parents[2]
+    environment = Environment(
+        loader=FileSystemLoader(str(repository / "src/cli/templates")),
+        undefined=ChainableUndefined,
+    )
+
+    escaped = "/root/archi/evaluations/" + "\\x2e\\x2e/" * 2 + "trial-a"
+    chat_app = {"evaluations": {"enabled": True, "root": escaped}}
+
+    assert validate_evaluations_root(chat_app) is None
+
+    rendered = environment.get_template("base-config.yaml").render(
+        services={"chat_app": chat_app}
+    )
+    reloaded = yaml.safe_load(rendered)["services"]["chat_app"]["evaluations"]["root"]
+
+    assert reloaded == escaped
+    assert (
+        validate_evaluations_root({"evaluations": {"enabled": True, "root": reloaded}})
+        is None
+    )

@@ -122,7 +122,13 @@ services:
     flask_debug_mode: {{ services.chat_app.flask_debug_mode | default(true, false) }}
     evaluations:
       enabled: {{ services.chat_app.evaluations.enabled is sameas true }}
-      root: "{{ services.chat_app.evaluations.root | default('/root/archi/evaluations', true) }}"
+      # tojson, not a raw scalar inside double quotes: the value is loaded once
+      # for validation and again by the config seed, and a double-quoted YAML
+      # scalar decodes escape sequences the first load kept literal. Raw
+      # interpolation therefore lets a root the validator read as a descendant
+      # of the mount reach the runtime as an escape from it. mcp_config_path
+      # below has always serialized this way.
+      root: {{ services.chat_app.evaluations.root | default('/root/archi/evaluations', true) | tojson }}
       agent_config_path: "{{ services.chat_app.evaluations.agent_config_path | default('/root/archi/configs/config.yaml', true) }}"
       mcp_config_path: {{ services.chat_app.evaluations.mcp_config_path | default(none, true) | tojson }}
     auth:
