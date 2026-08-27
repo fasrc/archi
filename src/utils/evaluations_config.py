@@ -1,7 +1,13 @@
-from pathlib import Path
+import posixpath
 from typing import Any, Dict, Optional
 
 LIVE_AGENT_CONFIG_PATH = "/root/archi/configs/config.yaml"
+
+# ``WORKDIR`` of the chatbot image
+# (``src/cli/templates/dockerfiles/Dockerfile-chat:4``). ``agent_config_path`` is
+# consumed inside that container, so a relative value resolves against this
+# directory at runtime — never against the host directory ``archi create`` ran in.
+CHAT_CONTAINER_WORKDIR = "/root/archi"
 
 _DOTTED_KEY = "services.chat_app.evaluations.agent_config_path"
 
@@ -15,10 +21,13 @@ def validate_evaluations_config(chat_app_config: Optional[Dict[str, Any]]) -> No
 
     Two values are refused:
     - A missing, non-string, or blank ``agent_config_path``.
-    - A path that normalizes to ``LIVE_AGENT_CONFIG_PATH`` under
-      ``Path(...).resolve()``. Path normalization only — no ``os.path.samefile``
-      — because on the host the live config does not exist and ``samefile`` would
-      raise (design.md D3).
+    - A path that normalizes to ``LIVE_AGENT_CONFIG_PATH``. A relative value is
+      first joined to ``CHAT_CONTAINER_WORKDIR``, because the container — not the
+      host CLI — is what resolves it; without that join ``configs/config.yaml``
+      resolves against the operator's working directory, passes preflight, and is
+      then refused by ``build_evaluation_service`` after deployment. Path
+      normalization only — no ``os.path.samefile`` — because on the host the live
+      config does not exist and ``samefile`` would raise (design.md D3).
 
     Both messages contain ``services.chat_app.evaluations.agent_config_path``.
     The live-config message also states that the live deployment config is refused
@@ -36,9 +45,22 @@ def validate_evaluations_config(chat_app_config: Optional[Dict[str, Any]]) -> No
     if not isinstance(agent_config_path, str) or not agent_config_path.strip():
         raise ValueError(f"{_DOTTED_KEY} is required when evaluations.enabled is true")
 
-    if Path(agent_config_path).resolve() == Path(LIVE_AGENT_CONFIG_PATH).resolve():
+    if _container_path(agent_config_path) == _container_path(LIVE_AGENT_CONFIG_PATH):
         raise ValueError(
             f"{_DOTTED_KEY} names the live deployment config, which is refused. "
             "Name a redacted copy instead."
         )
     return None
+
+
+def _container_path(raw: str) -> str:
+    """Normalize ``raw`` the way the chatbot container will read it.
+
+    ``posixpath`` rather than ``Path.resolve()``: the value names a path inside
+    the container, so consulting the host filesystem for it is meaningless and
+    would make the verdict depend on the host's own ``/root/archi``.
+    """
+    candidate = raw.strip()
+    if not posixpath.isabs(candidate):
+        candidate = posixpath.join(CHAT_CONTAINER_WORKDIR, candidate)
+    return posixpath.normpath(candidate)

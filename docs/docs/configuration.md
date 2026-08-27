@@ -196,7 +196,14 @@ services:
   (`/root/archi/configs/config.yaml`), because every evaluation run copies the
   named file into the host-mounted run workspace the console serves — credential
   values included. Use a redacted copy such as
-  `/root/archi/configs/config.eval.yaml` instead.
+  `/root/archi/configs/config.eval.yaml` instead. Archi does not generate that
+  copy: place the redacted file in the deployment's own `configs/` directory on
+  the host (`~/.archi/archi-<name>/configs/`, or `$ARCHI_DIR/archi-<name>/configs/`),
+  which Compose mounts at `/root/archi/configs`. A run whose `agent_config_path`
+  names a file that is absent from the container starts and then fails the file
+  check, so confirm the file is in place before the first run. A relative value
+  is read inside the container and so resolves against `/root/archi`, not against
+  the directory `archi create` ran in.
 - `evaluations.mcp_config_path` is needed only for Dataset V2 live oracle
   items. It is an absolute host path or a path relative to this deployment YAML.
   Archi validates and stages the referenced evaluator MCP registry.
