@@ -10,6 +10,7 @@ from src.interfaces.chat_app.evaluation_console import (
     build_evaluation_service,
 )
 from src.interfaces.chat_app.evaluation_routes import register_evaluations
+from src.utils.evaluations_root import EVALUATIONS_MOUNT_PATH
 
 ENABLEMENT_MATRIX = [
     ({}, False),
@@ -119,3 +120,15 @@ def test_chatbot_deployments_persist_the_evaluation_root():
     compose = (_repository() / "src/cli/templates/base-compose.yaml").read_text()
 
     assert "./data/evaluations:/root/archi/evaluations" in compose
+
+
+def test_evaluations_mount_constant_matches_the_compose_template():
+    compose = (_repository() / "src/cli/templates/base-compose.yaml").read_text()
+    volume_lines = [
+        line.strip().lstrip("- ")
+        for line in compose.splitlines()
+        if "./data/evaluations:" in line
+    ]
+    assert len(volume_lines) == 1
+    _host_side, container_side = volume_lines[0].split(":", 1)
+    assert container_side == EVALUATIONS_MOUNT_PATH
