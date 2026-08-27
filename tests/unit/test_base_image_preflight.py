@@ -7,6 +7,9 @@ been removed unless something refuses first (fasrc/archi#266, #287).
 """
 
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,6 +18,36 @@ from src.cli.managers import base_image_preflight as preflight
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = REPO_ROOT / "src" / "cli" / "templates" / "dockerfiles"
+UPDATER = REPO_ROOT / "scripts" / "dev" / "update_service_base_images.py"
+
+TEMPLATE_COUNT = 15
+
+_FROM_GHCR = re.compile(r"^FROM (ghcr\.io/fasrc/\S+)", re.MULTILINE)
+_DIGEST_REF = re.compile(r"^ghcr\.io/fasrc/[a-z0-9-]+@sha256:[0-9a-f]{64}$")
+# The release workflow rewrites every template to the CalVer tag it just built
+# (``test-and-build-tag.yml:158``) and commits the result to the dispatched
+# branch (:207). That state is deliberate and verified two steps later, so it is
+# an accepted pin -- not the mutable ``dev-<sha>`` tag these guards exist to
+# keep out.
+_RELEASE_REF = re.compile(r"^ghcr\.io/fasrc/[a-z0-9-]+:v\d{4}\.\d{2}\.\d+$")
+
+
+def _pin_state(reference):
+    """Classify one base reference as ``digest``, ``release``, or ``mutable``."""
+    if _DIGEST_REF.match(reference):
+        return "digest"
+    if _RELEASE_REF.match(reference):
+        return "release"
+    return "mutable"
+
+
+def _base_references(directory=TEMPLATE_DIR):
+    """``(filename, reference)`` for every ``FROM ghcr.io/fasrc/...`` line."""
+    references = []
+    for path in sorted(directory.glob("Dockerfile-*")):
+        for match in _FROM_GHCR.finditer(path.read_text()):
+            references.append((path.name, match.group(1)))
+    return references
 
 
 # --- Digest pins on the real templates (task 1.1) ----------------------------------------
@@ -26,6 +59,12 @@ def test_base_references_are_pinned_to_the_expected_digests():
     Both the pattern and the exact digest are asserted so that a tag repin cannot
     slip past this check and a digest swap requires an explicit update here.
     """
+    if {_pin_state(ref) for _name, ref in _base_references()} == {"release"}:
+        pytest.skip(
+            "tree is release-retargeted; the digest constants describe the "
+            "development state only"
+        )
+
     python_ref = preflight.base_reference(preflight.PYTHON_BASE)
     pytorch_ref = preflight.base_reference(preflight.PYTORCH_BASE)
 
@@ -59,30 +98,35 @@ def test_base_references_are_pinned_to_the_expected_digests():
 # --- Template shape guards (task 1.2) ---------------------------------------------------
 
 
-def test_no_template_carries_a_tag_shaped_ghcr_reference():
-    """Any FROM ghcr.io/fasrc/...:tag line (without @) makes the template mutable."""
-    tag_shaped = re.compile(r"^FROM ghcr\.io/fasrc/[^@]+:[^@\s]+\s*$", re.MULTILINE)
+def test_no_template_carries_a_mutable_base_reference():
+    """A floating tag such as ``dev-4314ac4`` makes the template mutable.
 
-    dockerfiles = list(TEMPLATE_DIR.glob("Dockerfile-*"))
-    assert dockerfiles, f"no Dockerfiles found in {TEMPLATE_DIR}"
+    Two references are immutable enough to ship: a digest, and the CalVer release
+    tag the release workflow writes. Everything else is rejected.
+    """
+    references = _base_references()
+    assert references, f"no ghcr base references found in {TEMPLATE_DIR}"
 
-    offenders = [f.name for f in dockerfiles if tag_shaped.search(f.read_text())]
-    assert not offenders, f"tag-shaped ghcr FROM found in: {offenders}"
+    offenders = [
+        f"{name}: {ref}" for name, ref in references if _pin_state(ref) == "mutable"
+    ]
+    assert not offenders, f"mutable ghcr FROM found in: {offenders}"
 
 
-def test_exactly_15_templates_carry_a_digest_pinned_from_line():
-    """The pin count is fixed at 15; drifting silently would mean a service was missed."""
-    digest_from = re.compile(
-        r"^FROM ghcr\.io/fasrc/[a-z0-9-]+@sha256:[0-9a-f]{64}", re.MULTILINE
-    )
+def test_all_templates_share_one_pin_state():
+    """The pin count is fixed at 15, and a split tree means a partial rewrite.
 
-    dockerfiles = list(TEMPLATE_DIR.glob("Dockerfile-*"))
-    assert dockerfiles, f"no Dockerfiles found in {TEMPLATE_DIR}"
-
-    pinned = [f.name for f in dockerfiles if digest_from.search(f.read_text())]
+    Counting alone would miss the worse failure: a rewrite that updated some
+    templates and not others leaves the count right and the deployment building
+    against two different base images.
+    """
+    references = _base_references()
     assert (
-        len(pinned) == 15
-    ), f"expected 15 digest-pinned templates, found {len(pinned)}: {pinned}"
+        len(references) == TEMPLATE_COUNT
+    ), f"expected {TEMPLATE_COUNT} base references, found {len(references)}: {references}"
+
+    states = {_pin_state(ref) for _name, ref in references}
+    assert len(states) == 1, f"templates disagree on pin state: {states}"
 
 
 def test_every_digest_pinned_from_line_has_the_annotation_above_it():
@@ -1061,3 +1105,59 @@ def test_metadata_is_used_only_when_there_is_no_source_pyproject(monkeypatch):
     monkeypatch.setattr(preflight, "_metadata_python_floor", lambda: ">=3.11")
 
     assert preflight.declared_python_floor() == ">=3.11"
+
+
+# --- The released tree is a legitimate state (review round 1) ----------------------------
+
+
+def _materialize_release_retargeted_tree(tmp_path):
+    """A copy of the templates after the release workflow's retarget step.
+
+    ``update_service_base_images.py`` resolves its target directory from its own
+    location (``scripts/dev/...`` -> ``parents[2]``), so copying the script and
+    the templates into a temporary tree with the same relative layout runs the
+    REAL rewrite against throwaway files. Re-implementing the rewrite here would
+    only test the re-implementation.
+    """
+    scripts_dir = tmp_path / "scripts" / "dev"
+    templates_dir = tmp_path / "src" / "cli" / "templates" / "dockerfiles"
+    scripts_dir.mkdir(parents=True)
+    templates_dir.mkdir(parents=True)
+    shutil.copy(UPDATER, scripts_dir / UPDATER.name)
+    for path in TEMPLATE_DIR.glob("Dockerfile-*"):
+        shutil.copy(path, templates_dir / path.name)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(scripts_dir / UPDATER.name),
+            "--tag",
+            "v2026.08.0",
+            "--switch-source",
+            "ghcr",
+            "--orig-tag",
+            "all",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return templates_dir
+
+
+def test_the_guards_accept_a_release_retargeted_tree(tmp_path):
+    """A released tree must not turn the unit suite red.
+
+    ``test-and-build-tag.yml:158`` rewrites all 15 templates to
+    ``ghcr.io/fasrc/...:<release-tag>`` and the step at :207 commits them to the
+    dispatched branch. That state is deliberate -- the next step verifies it, and
+    the release smoke test builds against it. A guard that calls it mutable makes
+    the released branch red and starts every follow-up PR against it red too.
+    """
+    templates_dir = _materialize_release_retargeted_tree(tmp_path)
+
+    references = _base_references(templates_dir)
+    assert len(references) == TEMPLATE_COUNT
+
+    mutable = [name for name, ref in references if _pin_state(ref) == "mutable"]
+    assert not mutable, f"release-retargeted templates read as mutable: {mutable}"
+    assert {_pin_state(ref) for _name, ref in references} == {"release"}
