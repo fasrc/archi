@@ -86,7 +86,7 @@ Four standing notes for every task:
 
 ## 2. Wire it into the pre-teardown validator
 
-- [ ] 2.1 RED, then GREEN — `_validate_chat_app_config` refuses. Add tests to
+- [x] 2.1 RED, then GREEN — `_validate_chat_app_config` refuses. Add tests to
       `tests/unit/test_evaluations_root_validation.py` that build a manager with
       `object.__new__(ConfigurationManager)` and call
       `mgr._validate_chat_app_config(config, ["chatbot"])` directly, with a config carrying
