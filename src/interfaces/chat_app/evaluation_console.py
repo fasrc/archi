@@ -31,8 +31,9 @@ from src.utils.rbac.permissions import has_permission
 
 logger = get_logger(__name__)
 
+from src.utils.evaluations_config import LIVE_AGENT_CONFIG_PATH
+
 DEFAULT_EVALUATION_ROOT = "/root/archi/evaluations"
-LIVE_AGENT_CONFIG_PATH = "/root/archi/configs/config.yaml"
 DEFAULT_AGENTS_DIR = "/root/archi/agents"
 
 
@@ -72,7 +73,9 @@ def build_evaluation_service(
     redacted copy instead. The refusal covers every way of naming that one file:
     an odd spelling (a ``..`` segment, a doubled separator), a symlink, and a
     hard link or bind mount that shares its inode (see
-    ``_is_live_agent_config``).
+    ``_is_live_agent_config``). ``archi create`` refuses both of these values
+    up front as a fast preflight diagnostic; this seam remains the authority
+    because the running configuration can be changed after create.
 
     The same refusal covers ``evaluations.root``: when constructing the service
     hits an ``OSError`` — an unwritable or unusable root, or a stale-job sweep

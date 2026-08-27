@@ -100,13 +100,26 @@ from src.cli.managers.config_manager import ConfigurationManager  # noqa: E402
 
 
 def _chat_app_config(root):
+    """A config whose only questionable field is the evaluations root.
+
+    `agent_config_path` is present and deliberately not the live deployment
+    config: `_validate_chat_app_config` also runs `validate_evaluations_config`
+    (#330), which refuses an enabled console that names no path or names the live
+    one, and it runs *before* the root check. Without a valid path here these
+    tests would trip that sibling validator and never exercise the root
+    validation they exist for.
+    """
     return {
         "services": {
             "chat_app": {
                 "agent_class": "MyAgent",
                 "default_provider": "openai",
                 "default_model": "gpt-4",
-                "evaluations": {"enabled": True, "root": root},
+                "evaluations": {
+                    "enabled": True,
+                    "root": root,
+                    "agent_config_path": "/root/archi/configs/agent_config.eval.yaml",
+                },
             }
         }
     }

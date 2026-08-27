@@ -129,7 +129,11 @@ services:
       # of the mount reach the runtime as an escape from it. mcp_config_path
       # below has always serialized this way.
       root: {{ services.chat_app.evaluations.root | default('/root/archi/evaluations', true) | tojson }}
-      agent_config_path: "{{ services.chat_app.evaluations.agent_config_path | default('/root/archi/configs/config.yaml', true) }}"
+      # No default: the rendered live-config path was the one value
+      # build_evaluation_service refuses by file identity (#330), so a default
+      # here produced a console that could never register. tojson for the same
+      # escape-sequence reason as root above.
+      agent_config_path: {{ services.chat_app.evaluations.agent_config_path | default(none, true) | tojson }}
       mcp_config_path: {{ services.chat_app.evaluations.mcp_config_path | default(none, true) | tojson }}
     auth:
       enabled: {{ services.chat_app.auth.enabled | default(false, true) }}

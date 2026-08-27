@@ -5,11 +5,13 @@ import yaml
 from flask import Flask, render_template
 from jinja2 import ChainableUndefined, Environment, FileSystemLoader
 
+from src.cli.managers.config_manager import ConfigurationManager
 from src.interfaces.chat_app.evaluation_console import (
     build_authorize_request,
     build_evaluation_service,
 )
 from src.interfaces.chat_app.evaluation_routes import register_evaluations
+from src.utils.evaluations_config import LIVE_AGENT_CONFIG_PATH
 from src.utils.evaluations_root import EVALUATIONS_MOUNT_PATH, validate_evaluations_root
 
 ENABLEMENT_MATRIX = [
@@ -54,9 +56,43 @@ def test_generated_evaluation_console_requires_explicit_enablement(
     assert rendered_config["services"]["chat_app"]["evaluations"] == {
         "enabled": expected_enabled,
         "root": "/root/archi/evaluations",
-        "agent_config_path": "/root/archi/configs/config.yaml",
+        "agent_config_path": None,
         "mcp_config_path": None,
     }
+
+
+def test_accepted_agent_config_path_renders_through_unchanged():
+    template = _template_env().get_template("base-config.yaml")
+    custom_path = "/root/archi/configs/config.eval.yaml"
+
+    rendered_config = yaml.safe_load(
+        template.render(
+            services={
+                "chat_app": {
+                    "evaluations": {
+                        "enabled": True,
+                        "agent_config_path": custom_path,
+                    }
+                }
+            }
+        )
+    )
+
+    assert (
+        rendered_config["services"]["chat_app"]["evaluations"]["agent_config_path"]
+        == custom_path
+    )
+
+
+def test_unset_agent_config_path_renders_as_none_not_null_string():
+    template = _template_env().get_template("base-config.yaml")
+
+    rendered_config = yaml.safe_load(template.render(services={"chat_app": {}}))
+
+    assert (
+        rendered_config["services"]["chat_app"]["evaluations"]["agent_config_path"]
+        is None
+    )
 
 
 @pytest.mark.parametrize(("chat_app_config", "expected_enabled"), ENABLEMENT_MATRIX)
@@ -232,3 +268,46 @@ def test_default_evaluations_config_is_accepted_and_renders_unchanged():
     chat_app_enabled = rendered_enabled["services"]["chat_app"]
     assert chat_app_enabled["evaluations"]["root"] == EVALUATIONS_MOUNT_PATH
     assert validate_evaluations_root(chat_app_enabled) is None
+
+
+def _minimal_chatbot_config(evaluations):
+    return {
+        "services": {
+            "chat_app": {
+                "agent_class": "TestAgent",
+                "default_provider": "openai",
+                "default_model": "gpt-4o",
+                "evaluations": evaluations,
+            }
+        }
+    }
+
+
+def _config_manager():
+    return object.__new__(ConfigurationManager)
+
+
+def test_validate_chat_app_config_refuses_enabled_evaluations_without_path():
+    mgr = _config_manager()
+    config = _minimal_chatbot_config({"enabled": True})
+    with pytest.raises(
+        ValueError, match="services\\.chat_app\\.evaluations\\.agent_config_path"
+    ):
+        mgr._validate_chat_app_config(config, ["chatbot"])
+
+
+def test_validate_chat_app_config_refuses_enabled_evaluations_with_live_path():
+    mgr = _config_manager()
+    config = _minimal_chatbot_config(
+        {"enabled": True, "agent_config_path": LIVE_AGENT_CONFIG_PATH}
+    )
+    with pytest.raises(
+        ValueError, match="services\\.chat_app\\.evaluations\\.agent_config_path"
+    ):
+        mgr._validate_chat_app_config(config, ["chatbot"])
+
+
+def test_validate_chat_app_config_allows_disabled_evaluations():
+    mgr = _config_manager()
+    config = _minimal_chatbot_config({"enabled": False})
+    mgr._validate_chat_app_config(config, ["chatbot"])
