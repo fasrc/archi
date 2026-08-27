@@ -393,7 +393,7 @@ Two limits are deliberate and worth knowing:
   and the agent is the caller whose tool use still breaks. It flips when history
   serialization is fixed, not before.
 
-A profile's `timeout` is honored: `get_chat_model` accepts it as an alias for the
+A profile's `timeout` is honored, fractional values included: `get_chat_model` accepts it as an alias for the
 transport's `request_timeout`, so a judge profile asking for 300 seconds gets 300 rather
 than silently keeping the 120-second default. An explicit `request_timeout` still wins.
 
