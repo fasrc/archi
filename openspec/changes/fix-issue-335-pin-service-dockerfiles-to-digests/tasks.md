@@ -64,7 +64,7 @@ Four standing notes for every task:
 
 ## 2. Close out
 
-- [ ] 2.1 `model: sonnet` — Run `bash scripts/gate.sh` once more on the finished change and
+- [x] 2.1 `model: sonnet` — Run `bash scripts/gate.sh` once more on the finished change and
       confirm it exits 0. Confirm `git status --porcelain` is empty after the last commit.
       Push with `git push -u origin fix/issue-335-pin-service-dockerfiles-to-digests` — the
       branch tracks `origin/dev`, so `-u` is required or the push retargets the trunk.
