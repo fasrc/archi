@@ -7,6 +7,29 @@ list. An empty list below means nothing is currently blocked.
 
 <!-- The loop appends entries below this line. -->
 
+## Task 2.1 — PR creation blocked by token scope
+
+**Status: BLOCKED — GH_TOKEN lacks pull_request write scope.**
+
+All implementation work for `fix/issue-335-pin-service-dockerfiles-to-digests` is complete
+and green (gate exits 0, `git status --porcelain` clean). The branch is pushed to
+`swinney/archi` (fork). However:
+
+- `git push -u origin fix/issue-335-pin-service-dockerfiles-to-digests` fails: the
+  `swinney` account has no push access to `fasrc/archi` (403).
+- `gh pr create --repo fasrc/archi ...` fails: `Resource not accessible by personal access
+  token (createPullRequest)` — the GH_TOKEN does not have the `repo` / PR-write scope.
+
+**Resolution needed:** a human should open the PR from
+`swinney:fix/issue-335-pin-service-dockerfiles-to-digests` → `fasrc/archi:dev`, or provide
+a token with PR-write access to `fasrc/archi`. The PR body should include:
+- `closes #335`
+- The annotation deviation note: annotation is
+  `# base-image-pin: dev-4314ac4 (managed by update_service_base_images.py)` (not
+  `# base image: dev-4314ac4`), because that is what the #334 script writes.
+- Parse-check note: `docker build --check` on `Dockerfile-chat` exited 0; `podman
+  build --pull=never` parsed the `FROM` line correctly (failed only on local image absence).
+
 ## Task 5.2 — "Run before/after benchmark; record recall/precision deltas"
 
 **Status: BLOCKED — requires live infrastructure not available to the loop.**
