@@ -32,3 +32,18 @@ def test_child_of_mount_returns_none():
 def test_prefix_sibling_raises():
     with pytest.raises(ValueError):
         validate_evaluations_root(_config_with_root("/root/archi/evaluations-backup"))
+
+
+def test_traversal_raises():
+    with pytest.raises(ValueError):
+        validate_evaluations_root(
+            _config_with_root("/root/archi/evaluations/../elsewhere")
+        )
+
+
+def test_relative_root_raises():
+    with pytest.raises(ValueError) as exc_info:
+        validate_evaluations_root(_config_with_root("evaluations"))
+    msg = str(exc_info.value)
+    assert "evaluations" in msg
+    assert "absolute" in msg

@@ -14,6 +14,12 @@ def validate_evaluations_root(chat_app_config):
     """Raise ValueError if the configured evaluations root falls outside the mount."""
     root = chat_app_config["evaluations"]["root"]
     candidate = PurePosixPath(posixpath.normpath(root))
+    if not candidate.is_absolute():
+        raise ValueError(
+            f"evaluations.root {str(root)!r} is not an absolute path; an absolute "
+            f"container path under {EVALUATIONS_MOUNT_PATH} is required because no "
+            f"working directory is pinned for the container (design D3)"
+        )
     mount = PurePosixPath(EVALUATIONS_MOUNT_PATH)
 
     # A startswith test would accept "/root/archi/evaluations-backup" as a false positive.

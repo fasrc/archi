@@ -66,7 +66,7 @@ Four standing notes for every task:
       not among them (design D3). Add a comment at that comparison saying a `startswith` test
       would accept the sibling. Gate, commit.
 
-- [ ] 1.3 RED, then GREEN — refuse traversal and relative roots. Add tests for
+- [x] 1.3 RED, then GREEN — refuse traversal and relative roots. Add tests for
       `"/root/archi/evaluations/../elsewhere"` and for `"evaluations"`, both raising
       `ValueError`. The traversal case passes already if `normpath` is in place from 1.1 —
       verify that by reading the test output, and if it passes, say so in the commit message
