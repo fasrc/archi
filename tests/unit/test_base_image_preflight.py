@@ -20,8 +20,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = REPO_ROOT / "src" / "cli" / "templates" / "dockerfiles"
 UPDATER = REPO_ROOT / "scripts" / "dev" / "update_service_base_images.py"
 
-TEMPLATE_COUNT = 15
-
 _FROM_GHCR = re.compile(r"^FROM (ghcr\.io/fasrc/\S+)", re.MULTILINE)
 _DIGEST_REF = re.compile(r"^ghcr\.io/fasrc/[a-z0-9-]+@sha256:[0-9a-f]{64}$")
 # The release workflow rewrites every template to the CalVer tag it just built
@@ -141,9 +139,10 @@ def test_all_templates_share_one_pin_state():
     against two different base images.
     """
     references = _base_references()
+    expected = len(preflight.service_templates())
     assert (
-        len(references) == TEMPLATE_COUNT
-    ), f"expected {TEMPLATE_COUNT} base references, found {len(references)}: {references}"
+        len(references) == expected
+    ), f"expected {expected} base references, found {len(references)}: {references}"
 
     states = {_pin_state(ref) for _name, ref in references}
     assert len(states) == 1, f"templates disagree on pin state: {states}"
@@ -1185,7 +1184,7 @@ def test_the_guards_accept_a_release_retargeted_tree(tmp_path):
     templates_dir = _materialize_release_retargeted_tree(tmp_path)
 
     references = _base_references(templates_dir)
-    assert len(references) == TEMPLATE_COUNT
+    assert len(references) == len(preflight.service_templates(templates_dir))
 
     mutable = [name for name, ref in references if _pin_state(ref) == "mutable"]
     assert not mutable, f"release-retargeted templates read as mutable: {mutable}"
@@ -1215,7 +1214,7 @@ def test_the_release_guard_detects_a_rewrite_to_the_wrong_base(tmp_path):
 
     references = _base_references(templates_dir)
     assert {_pin_state(ref) for _name, ref in references} == {"release"}
-    assert len(references) == TEMPLATE_COUNT
+    assert len(references) == len(preflight.service_templates(templates_dir))
 
     assert _image_map(templates_dir) != _image_map()
 
