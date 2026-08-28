@@ -150,7 +150,19 @@ def required_base_images(
     named here rather than inferred from the GPU flag. Deciding this by rule instead of by a
     service-to-template map is design D4; `test_two_image_rule_still_matches_every_template`
     is what keeps the rule and the templates from drifting apart.
+
+    Raises ``BaseImagePreflightError`` when any service template carries no ``a2rchi-*-base``
+    FROM reference. The preflight cannot cover such a template, and passing silently would
+    violate the governing invariant: no path may pass silently on an assumption.
     """
+    uncoverable = templates_missing_base_reference(template_dir)
+    if uncoverable:
+        raise BaseImagePreflightError(
+            "Base image check failed: the following service templates declare no "
+            "a2rchi-*-base FROM reference, so the preflight cannot cover them:\n"
+            + "\n".join(f"  {p}" for p in uncoverable)
+        )
+
     references = []
     for image in required_base_image_names(gpu_ids, grader_enabled):
         reference = base_reference(image, template_dir)

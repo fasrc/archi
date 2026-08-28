@@ -844,10 +844,16 @@ def test_base_reference_returns_none_for_an_image_no_template_names(tmp_path):
     assert preflight.base_reference("a2rchi-nonesuch-base", tmp_path) is None
 
 
-def test_required_base_images_is_empty_when_no_template_declares_one(tmp_path):
+def test_required_base_images_refuses_when_no_template_declares_a_base_reference(
+    tmp_path,
+):
+    """A service template with no a2rchi-*-base reference is uncoverable; the preflight
+    refuses rather than returning an empty list and passing silently on an assumption.
+    """
     (tmp_path / "Dockerfile-chat").write_text("FROM docker.io/library/python:3.11\n")
 
-    assert preflight.required_base_images(None, False, tmp_path) == []
+    with pytest.raises(preflight.BaseImagePreflightError):
+        preflight.required_base_images(None, False, tmp_path)
 
 
 def test_declared_python_floor_reads_the_projects_own_pyproject(tmp_path):
@@ -1302,3 +1308,49 @@ def test_templates_missing_base_reference_on_real_directory_is_empty():
     ), "Service templates without an a2rchi-*-base FROM reference: " + ", ".join(
         str(p) for p in missing
     )
+
+
+# --- Deploy preflight: refusing an uncoverable service template (tasks.md 3.1) ----------
+
+
+def test_required_base_images_refuses_and_names_a_template_with_no_base_reference(
+    tmp_path,
+):
+    """A service template carrying no a2rchi-*-base FROM line causes required_base_images
+    to refuse; the refusal names the template so the next reader has the diagnosis."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-broken").write_text("FROM docker.io/library/python:3.11\n")
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.required_base_images(
+            gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+        )
+
+    assert str(tmp_path / "Dockerfile-broken") in str(exc_info.value), (
+        "exception message must name the uncoverable template; "
+        f"got: {exc_info.value}"
+    )
+
+
+def test_required_base_images_returns_unchanged_references_when_all_templates_covered(
+    tmp_path,
+):
+    """A directory where every service template carries an a2rchi-*-base reference returns
+    exactly the references it returned before the uncoverable-template guard — a correct
+    tree's deploy behavior is provably unchanged."""
+    python_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    pytorch_ref = "ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "b" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {python_ref}\nRUN pip install .\n")
+    (tmp_path / "Dockerfile-grader").write_text(
+        f"FROM {pytorch_ref}\nRUN pip install .\n"
+    )
+
+    refs = preflight.required_base_images(
+        gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+    )
+    assert refs == [python_ref]
+
+    refs_gpu = preflight.required_base_images(
+        gpu_ids="all", grader_enabled=True, template_dir=tmp_path
+    )
+    assert refs_gpu == [python_ref, pytorch_ref]
