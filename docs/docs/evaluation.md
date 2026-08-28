@@ -80,7 +80,13 @@ advance. Before running:
 #### Dataset format
 
 The dataset is strict, non-empty, UTF-8 encoded, and must declare
-`qa-dataset-v2`. Unknown fields are rejected.
+`qa-dataset-v2`. A row may carry fields outside the known set: they are
+validated as JSON values, preserved verbatim into every dataset the console
+writes, and contribute to the content hash, but never influence preparation,
+running or scoring. Two kinds of unknown key are still rejected — a key within
+edit distance 1 of a known field (a probable typo such as `expectd_atoms`),
+and the RAGAS alias names `user_input`/`reference`, which the benchmark
+harness would resolve in preference to `question`/`answer`.
 
 - `.json` contains a `qa-dataset-v2` envelope.
 - `.jsonl` starts with `{"schema_version":"qa-dataset-v2"}` and then contains
@@ -673,8 +679,9 @@ a RAGAS 0.3.5 question bank and normalized at the import boundary:
   or scoring. A key within edit distance 1 of a known field (a probable typo
   such as `expectd_atoms`) is refused rather than carried.
 - The import result reports `import_dialect: ragas` and the `carried_fields`,
-  and the Console shows both after an upload. Native datasets report neither
-  and behave exactly as before.
+  and the Console shows both after an upload. Native datasets get no dialect
+  mapping and no report; the carry rules for unknown row fields (see
+  [Dataset format](#dataset-format)) apply to native V1/V2 datasets too.
 - The dialect applies to `.json` arrays only; a `.jsonl` bank is not adapted
   and fails validation loudly rather than importing misread.
 - Imported evaluator profiles must use `.yaml` or `.yml` and follow
