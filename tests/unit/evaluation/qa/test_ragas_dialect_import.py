@@ -37,6 +37,29 @@ def _import_bank(catalog, rows, name="Bank"):
     return catalog.import_dataset(name, "bank.json", json.dumps(rows).encode())
 
 
+def _native_twin_blob():
+    """BANK_ROW in the native dialect, serialized byte-identically to the
+    adapter's normalized output — so its digest collides with the bank's."""
+    question = BANK_ROW["user_input"]
+    answer = BANK_ROW["reference"]
+    native_row = {
+        key: value
+        for key, value in BANK_ROW.items()
+        if key not in {"user_input", "reference"}
+    }
+    native_row.update(
+        {
+            "question": question,
+            "answer": answer,
+            "time_sensitive": False,
+            "id": derive_item_id(question, answer),
+        }
+    )
+    return json.dumps(
+        [native_row], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+
+
 class TestRagasDialectImport:
     def test_bank_row_imports_unconverted(self, tmp_path):
         catalog = EvaluationCatalog(tmp_path)
@@ -173,27 +196,9 @@ class TestRagasDialectImport:
         # to the existing dataset AND still report what this operation
         # detected — the report describes the import, not the artifact.
         catalog = EvaluationCatalog(tmp_path)
-        question = BANK_ROW["user_input"]
-        answer = BANK_ROW["reference"]
-        native_row = {
-            key: value
-            for key, value in BANK_ROW.items()
-            if key not in {"user_input", "reference"}
-        }
-        native_row.update(
-            {
-                "question": question,
-                "answer": answer,
-                "time_sensitive": False,
-                "id": derive_item_id(question, answer),
-            }
-        )
-        native_blob = json.dumps(
-            [native_row], ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode()
 
         first, first_created = catalog.import_dataset(
-            "Native twin", "native.json", native_blob
+            "Native twin", "native.json", _native_twin_blob()
         )
         second, second_created = _import_bank(catalog, [BANK_ROW])
 
@@ -208,6 +213,25 @@ class TestRagasDialectImport:
             "sources",
             "status",
         ]
+
+    def test_native_reimport_of_a_bank_twin_does_not_claim_the_dialect(
+        self, tmp_path
+    ):
+        # The reverse order: bank first (report persisted), byte-identical
+        # native twin second. This import mapped nothing, so its response
+        # must not surface the stored artifact's dialect keys — the console
+        # would otherwise toast a native upload as a recognized RAGAS import.
+        catalog = EvaluationCatalog(tmp_path)
+
+        _, first_created = _import_bank(catalog, [BANK_ROW])
+        second, second_created = catalog.import_dataset(
+            "Native twin", "native.json", _native_twin_blob()
+        )
+
+        assert first_created is True
+        assert second_created is False
+        assert "import_dialect" not in second
+        assert "carried_fields" not in second
 
     def test_v2_container_with_user_input_extra_is_not_adapted(self, tmp_path):
         # Detection is a bounded streaming scan keyed on top-level-array rows:

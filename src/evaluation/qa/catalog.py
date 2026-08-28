@@ -622,10 +622,17 @@ class EvaluationCatalog:
                     existing = self._find_dataset_by_hash(digest)
                     if existing is not None:
                         # The dialect report describes THIS import, not the
-                        # stored artifact: merge it into the response without
-                        # touching the persisted metadata.
+                        # stored artifact: the response carries the current
+                        # operation's report and never a stale persisted one
+                        # (a native upload must not be toasted as a RAGAS
+                        # import). Persisted metadata stays untouched.
+                        existing = {
+                            key: value
+                            for key, value in existing.items()
+                            if key not in ("import_dialect", "carried_fields")
+                        }
                         if dialect_report is not None:
-                            existing = {**existing, **dialect_report}
+                            existing.update(dialect_report)
                         return existing, False
                 elif parent_dataset_id is not None:
                     _catalog_id(parent_dataset_id)
