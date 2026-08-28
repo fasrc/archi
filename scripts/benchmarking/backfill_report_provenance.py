@@ -42,6 +42,7 @@ Usage
     python scripts/benchmarking/backfill_report_provenance.py --dry-run
     python scripts/benchmarking/backfill_report_provenance.py
     python scripts/benchmarking/backfill_report_provenance.py --regenerate-html
+    python scripts/benchmarking/backfill_report_provenance.py --regenerate-md
 
     # a subset
     python scripts/benchmarking/backfill_report_provenance.py bench_out/bench-8192-*.json
@@ -61,6 +62,7 @@ from src.utils.benchmark_provenance import (  # noqa: E402
 )
 from src.utils.generate_benchmark_report import (  # noqa: E402
     format_html_output,
+    format_markdown_output,
     parse_benchmark_results,
 )
 
@@ -81,7 +83,15 @@ def stamp_file(path, dry_run=False):
     with open(path, "r") as handle:
         document = json.load(handle)
 
-    if not isinstance(document, dict) or "metadata" not in document:
+    # A benchmark artifact carries a metadata DICT and a results LIST. A mere
+    # `metadata` key is not enough: a foreign JSON matching that shape used to
+    # be stamped — rewritten with provenance fields — and `metadata: null`
+    # raised an uncaught TypeError that aborted the whole bulk run.
+    if (
+        not isinstance(document, dict)
+        or not isinstance(document.get("metadata"), dict)
+        or not isinstance(document.get("benchmarking_results"), list)
+    ):
         return NOT_AN_ARTIFACT
 
     metadata = document["metadata"]
@@ -162,6 +172,71 @@ def regenerate_html(json_path, dry_run=False):
     return f"re-rendered {html_path.name}"
 
 
+def regenerate_md(json_path, dry_run=False):
+    """Render the markdown sibling; create it when missing.
+
+    Markdown is the run's default report, so a valid artifact without its
+    ``_report.md`` is a recoverable gap — a report write that failed after the
+    JSON landed — and this path creates it. That is why it validates harder
+    than ``NOT_AN_ARTIFACT`` does: without the existing-sibling guard the HTML
+    path has, a metadata-bearing foreign JSON would otherwise gain a bogus
+    report. Anything that does not parse as a benchmark artifact is skipped
+    cleanly: no file, no error.
+    """
+    with open(json_path, "r") as handle:
+        document = json.load(handle)
+
+    if not isinstance(document, dict):
+        return None
+    results = document.get("benchmarking_results")
+    metadata = document.get("metadata")
+    if not isinstance(results, list) or not results or metadata is None:
+        return None
+
+    # parse_benchmark_results defaults every missing field, so it would turn a
+    # shapeless record into a plausible-looking (empty) report. The renderer's
+    # inputs must actually be present before a missing report is CREATED.
+    first = results[0]
+    if not isinstance(first, dict):
+        return None
+    if "single_question_results" not in first or "total_results" not in first:
+        return None
+    if "configuration" not in first and "configuration_file" not in first:
+        return None
+
+    # The render runs inside the same guard as the parse: a record can pass
+    # the key checks above and still blow up the formatter (for example
+    # `configuration: []`), and an escaped exception here would abort the
+    # whole bulk run instead of skipping the one bad file.
+    try:
+        config_data, config_name, timestamp, questions, total_results, provenance = (
+            parse_benchmark_results(results, metadata)
+        )
+        markdown = format_markdown_output(
+            config_data,
+            config_name,
+            timestamp,
+            questions,
+            total_results,
+            provenance=provenance,
+        )
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+        return None
+
+    md_path = json_path.with_name(json_path.stem + "_report.md")
+    verb = "re-rendered" if md_path.exists() else "created"
+    if dry_run:
+        return (
+            f"would re-render {md_path.name}"
+            if md_path.exists()
+            else f"would create {md_path.name}"
+        )
+
+    with open(md_path, "w") as handle:
+        handle.write(markdown)
+    return f"{verb} {md_path.name}"
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Stamp existing benchmark artifacts with a code version "
@@ -182,6 +257,11 @@ def main():
         action="store_true",
         help="also re-render each artifact's existing _report.html",
     )
+    parser.add_argument(
+        "--regenerate-md",
+        action="store_true",
+        help="also render each artifact's _report.md (created when missing)",
+    )
     args = parser.parse_args()
 
     if args.paths:
@@ -195,6 +275,7 @@ def main():
 
     changed = 0
     rendered = 0
+    md_rendered = 0
     for path in paths:
         try:
             status = stamp_file(path, dry_run=args.dry_run)
@@ -221,11 +302,24 @@ def main():
                 rendered += 1
                 print(f"{path.name}: {note}")
 
+        if args.regenerate_md and status != NOT_AN_ARTIFACT:
+            try:
+                note = regenerate_md(path, dry_run=args.dry_run)
+            except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                print(f"{path.name}: ERROR rendering markdown {exc}", file=sys.stderr)
+                continue
+            if note:
+                md_rendered += 1
+                print(f"{path.name}: {note}")
+
     verb = "would change" if args.dry_run else "changed"
     print(f"\n{changed} of {len(paths)} artifact(s) {verb}.")
     if args.regenerate_html:
         noun = "would re-render" if args.dry_run else "re-rendered"
         print(f"{noun} {rendered} report(s).")
+    if args.regenerate_md:
+        noun = "would render" if args.dry_run else "rendered"
+        print(f"{noun} {md_rendered} markdown report(s).")
     return 0
 
 

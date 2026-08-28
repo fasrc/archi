@@ -151,6 +151,36 @@ Make sure the `out_dir` exists before running.
 
 Results are saved in a timestamped subdirectory of `out_dir` (e.g., `bench_out/2042-10-01_12-00-00/`).
 
+### Report formats
+
+Each run writes two artifacts with one shared timestamp: the JSON results
+(`<name>-<timestamp>.json`, the source of truth) and a human-readable
+**markdown** report (`<name>-<timestamp>_report.md`), rendered from the JSON.
+Markdown is the default report format: it renders on GitHub, diffs cleanly,
+and pastes into issues and PRs.
+
+The report CLI re-renders a report from any saved JSON:
+
+```bash
+# Markdown (default): writes <stem>_report.md next to the JSON
+python src/utils/generate_benchmark_report.py bench_out/<run>.json
+
+# Name the markdown path, or opt into the HTML report instead
+python src/utils/generate_benchmark_report.py bench_out/<run>.json --markdown_output report.md
+python src/utils/generate_benchmark_report.py bench_out/<run>.json --html_output report.html
+```
+
+To bulk re-render markdown reports after a renderer fix — or to recreate a
+report whose write failed after the JSON landed — use the backfill script:
+
+```bash
+python scripts/benchmarking/backfill_report_provenance.py --regenerate-md
+```
+
+`--regenerate-md` re-renders an existing `_report.md` sibling and creates a
+missing one for a valid artifact; `--regenerate-html` still re-renders only
+HTML reports that already exist.
+
 To analyze results, see `scripts/benchmarking/` which contains:
 
 - Plotting functions
