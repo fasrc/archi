@@ -12,6 +12,7 @@ fires when no successful response has been received within the budget window.
 from __future__ import annotations
 
 import json
+import urllib.error
 
 import pytest
 
@@ -104,3 +105,68 @@ def test_healthy_ingest_not_killed_by_stall_budget(monkeypatch):
 
     with pytest.raises(_SentinelError):
         bench.wait_for_ingestion_completion()
+
+
+def test_url_error_on_all_urls_raises_timeout_within_two_budgets(monkeypatch):
+    """All candidate URLs raising URLError must produce TimeoutError within ~one
+    budget of the start, not linger forever.
+
+    The stall clock starts at zero successful responses, so the first budget
+    window expires after timeout_seconds without progress and the method raises.
+    Two budgets (120s) is a generous upper bound.
+    """
+    bench = _make_bench(monkeypatch)
+    fake_time = _FakeTime()
+    monkeypatch.setattr(sb, "time", fake_time)
+
+    def handler(url):
+        raise urllib.error.URLError("boom")
+
+    monkeypatch.setattr(sb, "url_request", _make_request(handler))
+
+    with pytest.raises(TimeoutError):
+        bench.wait_for_ingestion_completion()
+
+    assert (
+        fake_time.monotonic() < 120
+    ), f"elapsed {fake_time.monotonic()}s should be under two budgets (120s)"
+
+
+def test_error_state_raises_runtime_error_with_step_name(monkeypatch):
+    """An error-state payload raises RuntimeError whose message contains the
+    step name, and the opener is called at most four times (one per candidate
+    URL) in the first round — a regression guard against swallowing the error
+    back into the poll loop.
+    """
+    bench = _make_bench(monkeypatch)
+    fake_time = _FakeTime()
+    monkeypatch.setattr(sb, "time", fake_time)
+
+    call_count = 0
+
+    def handler(url):
+        nonlocal call_count
+        call_count += 1
+        return {"state": "error", "step": "Embedding", "error": "cuda oom"}
+
+    monkeypatch.setattr(sb, "url_request", _make_request(handler))
+
+    with pytest.raises(RuntimeError, match="Embedding"):
+        bench.wait_for_ingestion_completion()
+
+    assert call_count <= 4, f"opener called {call_count} times; expected ≤4"
+
+
+def test_completed_state_returns_none(monkeypatch):
+    """An opener answering state=completed must return None and raise nothing."""
+    bench = _make_bench(monkeypatch)
+    fake_time = _FakeTime()
+    monkeypatch.setattr(sb, "time", fake_time)
+
+    def handler(url):
+        return {"state": "completed"}
+
+    monkeypatch.setattr(sb, "url_request", _make_request(handler))
+
+    result = bench.wait_for_ingestion_completion()
+    assert result is None
