@@ -23,6 +23,7 @@ import argparse
 import html
 import json
 import math
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -766,6 +767,7 @@ _MD_INLINE_ESCAPES = str.maketrans(
         "[": "\\[",
         "]": "\\]",
         "|": "\\|",
+        "@": "\\@",
         "<": "&lt;",
         ">": "&gt;",
     }
@@ -781,13 +783,11 @@ def md_escape(text):
     a backslash too.
     """
     escaped = " ".join(str(text).split()).translate(_MD_INLINE_ESCAPES)
-    # GFM autolinks bare URLs (scheme:// and word-start www.); an escaped
-    # colon or dot cannot participate, so the payload stays plain text.
+    # GFM autolinks bare URLs (scheme://, any www. — parentheses count as
+    # valid preceders — and emails via the @ escape above); an escaped colon
+    # or dot cannot participate, so the payload stays plain text.
     escaped = escaped.replace("://", "\\://")
-    escaped = " ".join(
-        "www\\." + word[4:] if word.lower().startswith("www.") else word
-        for word in escaped.split(" ")
-    )
+    escaped = re.sub(r"(?i)(www)\.", r"\1\\.", escaped)
     if escaped.startswith(("#", "-", "+")):
         escaped = "\\" + escaped
     else:
@@ -1020,11 +1020,13 @@ def format_markdown_output(
         # the SOURCE-SCORABLE question count, so derive the count from the same
         # key (older artifacts predate it and used len(questions)).
         ret_total = total_results.get("source_scored_count", len(questions))
-        ret_correct = int(ret_total * ret_accuracy)
+        # round(), not int(): the accuracy is stored as a float, and truncating
+        # 15/22*22 == 14.999… would report one hit fewer than the run scored.
+        ret_correct = round(ret_total * ret_accuracy)
         if ret_accuracy:
             ret_accuracy *= 100
         ret_partial = total_results.get("relative_source_accuracy", None)
-        ret_partial = int(ret_total * ret_partial) - ret_correct
+        ret_partial = round(ret_total * ret_partial) - ret_correct
 
         parts += ["", "## 🎯 Retrieval Accuracy", ""]
         parts.append(

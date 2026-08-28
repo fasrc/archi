@@ -155,6 +155,29 @@ def test_non_dict_json_is_skipped_cleanly(tmp_path):
     assert not list(tmp_path.glob("*.md"))
 
 
+def test_stamp_file_does_not_rewrite_foreign_metadata_json(tmp_path):
+    """The stamping pass runs before regeneration in the CLI flow: a foreign
+    dict with a metadata key must be classified NOT_AN_ARTIFACT, not gain
+    provenance fields."""
+    path = tmp_path / "foreign.json"
+    original = {"metadata": {}, "other": 1}
+    path.write_text(json.dumps(original))
+
+    status = backfill.stamp_file(path)
+
+    assert status == backfill.NOT_AN_ARTIFACT
+    assert json.loads(path.read_text()) == original
+
+
+def test_stamp_file_skips_null_metadata_without_raising(tmp_path):
+    """`metadata: null` used to raise an uncaught TypeError on the membership
+    check and abort the whole bulk run."""
+    path = tmp_path / "nullmeta.json"
+    path.write_text(json.dumps({"metadata": None, "benchmarking_results": []}))
+
+    assert backfill.stamp_file(path) == backfill.NOT_AN_ARTIFACT
+
+
 def test_regenerate_html_still_never_creates(tmp_path):
     """The HTML path keeps its re-render-only contract."""
     json_path = _write_artifact(tmp_path)

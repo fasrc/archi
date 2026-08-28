@@ -83,7 +83,15 @@ def stamp_file(path, dry_run=False):
     with open(path, "r") as handle:
         document = json.load(handle)
 
-    if not isinstance(document, dict) or "metadata" not in document:
+    # A benchmark artifact carries a metadata DICT and a results LIST. A mere
+    # `metadata` key is not enough: a foreign JSON matching that shape used to
+    # be stamped — rewritten with provenance fields — and `metadata: null`
+    # raised an uncaught TypeError that aborted the whole bulk run.
+    if (
+        not isinstance(document, dict)
+        or not isinstance(document.get("metadata"), dict)
+        or not isinstance(document.get("benchmarking_results"), list)
+    ):
         return NOT_AN_ARTIFACT
 
     metadata = document["metadata"]

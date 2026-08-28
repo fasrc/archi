@@ -279,6 +279,41 @@ def test_emphasis_strikethrough_and_autolinks_are_neutralized():
     assert "www\\.evil.example" in md
 
 
+def test_email_and_parenthesized_www_autolinks_are_neutralized():
+    """GFM autolinks emails and www. after an opening parenthesis too."""
+    row = _ok_row()
+    row["question"] = "Mail support@example.com (www.evil.example) please"
+
+    md = format_markdown_output(
+        _CONFIG, "bench", "2026-08-28", {"q": row}, _TOTALS, None
+    )
+
+    assert "support\\@example.com" in md
+    assert "(www\\.evil.example)" in md
+
+
+def test_source_hit_counts_survive_float_reconstruction():
+    """15/22 stored as a float must reconstruct to 15 hits, not truncate to
+    14 — int() drops the .999… that binary floating point leaves behind."""
+    totals = {
+        "source_accuracy": 15 / 22,
+        "source_scored_count": 22,
+        "relative_source_accuracy": 15 / 22,
+    }
+
+    md = format_markdown_output(
+        {"services": {"benchmarking": {"modes": ["SOURCES"]}}},
+        "bench",
+        "2026-08-28",
+        {},
+        totals,
+        None,
+    )
+
+    assert "15/22 (68.2%)" in md
+    assert "(no expected sources retrieved): 7" in md
+
+
 def test_leading_ordered_list_marker_is_defused():
     """A field that begins like `1. item` must not become a list item."""
     row = _ok_row()
