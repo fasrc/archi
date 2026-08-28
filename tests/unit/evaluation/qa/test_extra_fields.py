@@ -188,6 +188,37 @@ class TestNearMissKeysAreRefused:
         assert item.extra == bank_extras
 
 
+class TestKnownFieldsKeepTheirContract:
+    def test_wrong_typed_known_field_is_still_rejected(self, tmp_path):
+        # Carrying unknowns must not loosen the known fields: a wrong type is
+        # still an error even on a row that also carries extras.
+        row = {
+            "id": "q1",
+            "question": "Q",
+            "answer": "A",
+            "time_sensitive": "false",
+            **BANK_EXTRAS,
+        }
+        path = tmp_path / "dataset.json"
+        _write_v1(path, [row])
+
+        with pytest.raises(ValueError, match="time_sensitive must be a boolean"):
+            list(DatasetGateway().read(path))
+
+    def test_missing_required_field_is_still_rejected(self, tmp_path):
+        row = {
+            "id": "q1",
+            "question": "Q",
+            "time_sensitive": False,
+            **BANK_EXTRAS,
+        }
+        path = tmp_path / "dataset.json"
+        _write_v1(path, [row])
+
+        with pytest.raises(ValueError, match="answer must be a non-empty string"):
+            list(DatasetGateway().read(path))
+
+
 class _DeterministicExtractor:
     def extract_gold(self, question, answer):
         return {"atoms": [{"id": "required", "text": answer, "required": True}]}

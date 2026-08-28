@@ -76,12 +76,12 @@ Standing notes:
 
 ## 5. RED: known fields keep their contract
 
-- [ ] Test: a known field with the wrong type is still rejected (e.g.
+- [x] Test: a known field with the wrong type is still rejected (e.g.
       `time_sensitive` as a string), and a missing required field is still rejected.
       Carrying unknowns must not have loosened anything about the known ones.
-- [ ] Confirm these pass without new code; if any regressed, section 1 widened the
-      parse path too far.
-- [ ] Gate, commit.
+- [x] Confirm these pass without new code; if any regressed, section 1 widened the
+      parse path too far. (Confirmed green with no production change.)
+- [x] Gate, commit.
 
 ## 6. RED: the RAGAS dialect imports unconverted
 
