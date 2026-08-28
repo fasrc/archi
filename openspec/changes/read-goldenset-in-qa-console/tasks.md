@@ -127,10 +127,20 @@ Standing notes:
 
 ## 9. Verify and open the PR
 
-- [ ] Full suite plus `bash scripts/gate.sh`; confirm patch coverage clears 80%.
-- [ ] **On the dev deployment**, upload the real bank through `/evaluations`,
+- [x] Full suite plus `bash scripts/gate.sh`; confirm patch coverage clears 80%.
+- [x] **On the dev deployment**, upload the real bank through `/evaluations`,
       confirm it appears in the catalog with 110 rows, then generate and save atoms
       for a small subset and confirm the saved child dataset still carries `sources`.
       That last step is the one a unit test cannot prove, and it is the failure this
       change exists to prevent. Record the dataset ids in the PR body.
-- [ ] Push, open the PR against `fasrc/archi` base `dev`, post `@codex review`.
+      (Done 2026-08-28 on dev @ ab25be82: the 105-row bank imported as dataset
+      01ae119e-774e-4344-aca5-dbf5d0cf5766 and the 5-row anchors as
+      30fb78e1-9aae-4a4b-b6df-1a6044b754f7 — 110 rows total, both reporting
+      import_dialect=ragas with all five extras carried; atoms generated via the
+      HUIT Bedrock judge profile; reviewed child
+      9aaab305-2232-40be-8974-8f355076f316 (5 items, 26 atoms) verified on disk —
+      every row still carries its original extras, including sources: [] on the
+      refusal probe, and keys absent in the source stay absent. Full results
+      recorded on PR #379.)
+- [x] Push, open the PR against `fasrc/archi` base `dev`, post `@codex review`.
+      (PR #379; seven codex review rounds + Greptile answered in-thread.)
