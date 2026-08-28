@@ -52,7 +52,9 @@ class TestRagasDialectImport:
         first_metadata, _ = _import_bank(first_catalog, [BANK_ROW])
         second_metadata, _ = _import_bank(second_catalog, [BANK_ROW])
 
-        first_ids = [item.id for item in first_catalog.dataset_items(first_metadata["id"])]
+        first_ids = [
+            item.id for item in first_catalog.dataset_items(first_metadata["id"])
+        ]
         second_ids = [
             item.id for item in second_catalog.dataset_items(second_metadata["id"])
         ]
@@ -83,6 +85,47 @@ class TestRagasDialectImport:
         assert first_created is True
         assert second_created is False
         assert second_metadata["id"] == first_metadata["id"]
+
+    def test_import_result_names_the_dialect_and_the_carried_fields(self, tmp_path):
+        # Silent success on a misunderstood file is the failure mode this
+        # change exists to avoid: the result says what was mapped and what was
+        # carried rather than interpreted.
+        catalog = EvaluationCatalog(tmp_path)
+
+        metadata, _ = _import_bank(catalog, [BANK_ROW])
+
+        assert metadata["import_dialect"] == "ragas"
+        assert metadata["carried_fields"] == [
+            "anchor_type",
+            "notes",
+            "sources",
+            "status",
+        ]
+        # The report is persisted with the dataset, so a deduped re-import
+        # reports the same thing.
+        reimported, created = _import_bank(catalog, [BANK_ROW])
+        assert created is False
+        assert reimported["import_dialect"] == "ragas"
+        assert reimported["carried_fields"] == metadata["carried_fields"]
+
+    def test_native_import_reports_no_dialect_mapping(self, tmp_path):
+        catalog = EvaluationCatalog(tmp_path)
+        native = [
+            {
+                "id": "q1",
+                "question": "Q",
+                "answer": "A",
+                "time_sensitive": False,
+            }
+        ]
+
+        metadata, created = catalog.import_dataset(
+            "Native", "native.json", json.dumps(native).encode()
+        )
+
+        assert created is True
+        assert "import_dialect" not in metadata
+        assert "carried_fields" not in metadata
 
     def test_dialect_rows_still_reach_the_strict_validator(self, tmp_path):
         # The adapter maps names; it never invents an answer. A bank row with

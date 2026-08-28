@@ -99,11 +99,12 @@ Standing notes:
 
 ## 7. RED: the import result reports what it did
 
-- [ ] Test: importing a RAGAS-dialect bank returns a result naming the detected
-      dialect and listing the carried field names.
-- [ ] Test: importing a native dataset reports no dialect mapping and behaves
+- [x] Test: importing a RAGAS-dialect bank returns a result naming the detected
+      dialect and listing the carried field names (persisted, so a deduped
+      re-import reports the same).
+- [x] Test: importing a native dataset reports no dialect mapping and behaves
       exactly as before (regression guard for every existing caller).
-- [ ] Gate, commit.
+- [x] Gate, commit.
 
 ## 8. The real bank, end to end
 
