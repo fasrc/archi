@@ -29,12 +29,39 @@ slot: parse extras into `DatasetItem.extra`, write them back out, and hash them.
 
 ## Why extras are hashed
 
-`canonical_json` (`dataset.py:193`) produces the bytes the catalog's `sha256`
-dedupe key is derived from. If `extra` is excluded, two banks identical in
-questions but differing in `sources` — precisely what a maintenance edit produces —
-address to the same content hash, and `import_dataset` returns the existing dataset
-with `created: False`. The operator's edit appears to import and silently does
-nothing. Hashing extras costs nothing and removes that failure.
+The requirement is that two banks differing only in `sources` must not address to
+the same dataset — otherwise a maintenance edit imports as `created: False`, and
+the operator's change appears to succeed while doing nothing.
+
+**Correction (found during implementation):** an earlier draft of this document
+said `canonical_json` (`dataset.py:193`) produces the bytes the dedupe key is
+derived from. That is wrong. `import_dataset` hashes the uploaded blob directly —
+`digest = _sha256(blob)` (`catalog.py:467`, `_sha256` at `:121`). The requirement
+still holds, but by a different route: the dialect adapter re-serializes the bank
+canonically (sorted keys, compact separators) with extras included, and the digest
+is taken over those normalized bytes. The integrity manifest forces this anyway —
+the stored `metadata.sha256` must equal the hash of the stored source file. Pinned
+from both sides: a sources-only edit yields `created: True`, and a byte-identical
+re-import dedupes.
+
+## Two structural findings from implementation
+
+**There is a second emitter.** Extending `dataset_item_to_dict` is not sufficient.
+An imported bank lands as a **legacy (V1)** dataset, and approved children of legacy
+parents are published through `_dataset_row` (`catalog.py:125`, called at `:216`),
+not through `dataset_item_to_dict`. Miss it and the headline acceptance failure —
+the reviewed child losing `sources` — survives every other part of this change.
+The spec requirement is written as "whenever the console writes a dataset," which
+already covers both paths; this note exists so the next reader does not assume one
+emitter.
+
+**The normalize target is the V1 headerless array, not a V2 container.** This is
+forced by the harness, not a preference: `_load_bank_file`
+(`src/utils/benchmark_schema.py:319`) ends `return bank if isinstance(bank, list)
+else None`, so a V2-container child would silently load as `None` and stop being a
+valid RAGAS bank. Since the whole proposal rests on "a reviewed child is still a
+valid bank," the array shape is load-bearing. Child rows carry `question`/`answer`,
+which the harness's existing legacy-to-modern shim maps back on read.
 
 ## Why the rename lives at the import boundary, not in the parser
 
