@@ -64,7 +64,7 @@ Dockerfile templates themselves. The 19 / 15 / 4 split is already correct.
   exactly as they are. Prove the new assertion discriminates with a fixture-based test beside
   it, not by touching the real templates.
 
-- [ ] 2.2 **Derive the expected count from the declaration.**
+- [x] 2.2 **Derive the expected count from the declaration.**
   In `tests/unit/test_base_image_preflight.py`, make the expected reference count come from
   `len(service_templates())` instead of the module constant `TEMPLATE_COUNT = 15` (`:23`).
   Three assertion sites read it (`:145`, `:1188`, `:1218`); the two later ones run against a
@@ -79,7 +79,7 @@ Dockerfile templates themselves. The 19 / 15 / 4 split is already correct.
 
 ## 3. The deploy preflight
 
-- [ ] 3.1 **Refuse a service template the preflight cannot cover.**
+- [x] 3.1 **Refuse a service template the preflight cannot cover.**
   RED first, in `tests/unit/test_base_image_preflight.py`, against a `tmp_path` fixture
   directory: a service-set member declaring no placeable base reference makes the preflight
   refuse, and the refusal names that template. Assert the naming, not only the refusal.
