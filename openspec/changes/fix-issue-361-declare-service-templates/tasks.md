@@ -53,7 +53,7 @@ Dockerfile templates themselves. The 19 / 15 / 4 split is already correct.
 
 ## 2. Wire the existing guards to the declaration
 
-- [ ] 2.1 **Require a pin from every member of the set.**
+- [x] 2.1 **Require a pin from every member of the set.**
   In `tests/unit/test_python_version_declaration.py`, extend
   `test_service_templates_pin_one_explicit_base_tag` (`:387`): it currently asserts the
   collected pin set is non-empty (`:395`) and internally consistent. Add the assertion that
