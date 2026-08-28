@@ -219,6 +219,35 @@ class TestKnownFieldsKeepTheirContract:
             list(DatasetGateway().read(path))
 
 
+class TestExtraValuesAreValidated:
+    def test_lone_surrogate_in_an_extra_is_refused_at_import(self, tmp_path):
+        # An escaped unmatched surrogate parses as JSON but cannot be written
+        # back (`ensure_ascii=False` raises at child-save time). Extras get
+        # the same JSON-value validation as the known structured fields, so
+        # the upload fails at import instead of stranding a catalog entry
+        # that cannot complete the promised round trip.
+        path = tmp_path / "dataset.json"
+        path.write_text(
+            '[{"id": "q1", "question": "Q", "answer": "A",'
+            ' "time_sensitive": false, "notes": "bad \\ud800 text"}]',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="notes"):
+            list(DatasetGateway().read(path))
+
+    def test_nested_surrogate_in_an_extra_is_refused_at_import(self, tmp_path):
+        path = tmp_path / "dataset.json"
+        path.write_text(
+            '[{"id": "q1", "question": "Q", "answer": "A",'
+            ' "time_sensitive": false, "sources": ["ok", "bad \\udfff"]}]',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="sources"):
+            list(DatasetGateway().read(path))
+
+
 class _DeterministicExtractor:
     def extract_gold(self, question, answer):
         return {"atoms": [{"id": "required", "text": answer, "required": True}]}

@@ -148,7 +148,10 @@ class TestRagasDialectImport:
 
     @pytest.mark.parametrize(
         "dialect_key,native_key,native_value",
-        [("user_input", "question", "A different question"), ("reference", "answer", "A different answer")],
+        [
+            ("user_input", "question", "A different question"),
+            ("reference", "answer", "A different answer"),
+        ],
     )
     def test_conflicting_aliases_are_refused_not_carried(
         self, tmp_path, dialect_key, native_key, native_value

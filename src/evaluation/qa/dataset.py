@@ -524,7 +524,13 @@ def _carry_row_extras(
                 f"(did you mean '{near_misses[0]}'?)"
             )
         extras[key] = raw[key]
-    return extras or None
+    if not extras:
+        return None
+    # Same JSON-value validation the known structured fields get: a lone
+    # surrogate or NUL that parses today would fail only later, at
+    # child-save or canonical-serialization time.
+    validate_json_value(extras, context)
+    return extras
 
 
 def _common_fields(raw: Dict[str, Any], context: str) -> Dict[str, Any]:
