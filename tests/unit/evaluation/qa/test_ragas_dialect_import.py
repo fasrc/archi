@@ -286,6 +286,34 @@ class TestRagasDialectImport:
         with pytest.raises(ValueError, match=r"rows 1 and 2.*duplicate"):
             _import_bank(catalog, [BANK_ROW, variant])
 
+    def test_rows_identical_after_newline_normalization_are_duplicates(
+        self, tmp_path
+    ):
+        # Ids are derived from newline-normalized text, exactly as the row
+        # parser derives them: rows whose question differs only by CRLF vs LF
+        # are the same logical item and must hit the duplicate refusal, not
+        # slip through with two ids and get evaluated twice.
+        catalog = EvaluationCatalog(tmp_path)
+        crlf = {**BANK_ROW, "user_input": "How do I request\r\na GPU?"}
+        lf = {**BANK_ROW, "user_input": "How do I request\na GPU?"}
+
+        with pytest.raises(ValueError, match=r"rows 1 and 2.*duplicate"):
+            _import_bank(catalog, [crlf, lf])
+
+    def test_ids_are_stable_across_line_ending_variants(self, tmp_path):
+        crlf_catalog = EvaluationCatalog(tmp_path / "crlf")
+        lf_catalog = EvaluationCatalog(tmp_path / "lf")
+        crlf = {**BANK_ROW, "user_input": "How do I request\r\na GPU?"}
+        lf = {**BANK_ROW, "user_input": "How do I request\na GPU?"}
+
+        crlf_metadata, _ = _import_bank(crlf_catalog, [crlf])
+        lf_metadata, _ = _import_bank(lf_catalog, [lf])
+
+        (crlf_item,) = crlf_catalog.dataset_items(crlf_metadata["id"])
+        (lf_item,) = lf_catalog.dataset_items(lf_metadata["id"])
+        assert crlf_item.id == lf_item.id
+        assert crlf_item.question == lf_item.question
+
     def test_duplicate_bank_rows_import_with_explicit_ids(self, tmp_path):
         catalog = EvaluationCatalog(tmp_path)
         first = {**BANK_ROW, "id": "gpu-easy"}

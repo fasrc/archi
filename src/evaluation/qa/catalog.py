@@ -139,6 +139,10 @@ RAGAS_IMPORT_DIALECT = "ragas"
 _RAGAS_TO_NATIVE = RAGAS_ALIAS_FIELDS
 
 
+def _normalize_newlines(value: str) -> str:
+    return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _strict_import_json(blob: bytes) -> Any:
     """Parse upload bytes, rejecting duplicate keys and non-finite numbers."""
 
@@ -231,7 +235,12 @@ def _normalize_import_dialect(
         question = mapped.get("question")
         answer = mapped.get("answer")
         if "id" not in mapped and isinstance(question, str) and isinstance(answer, str):
-            derived = derive_item_id(question, answer)
+            # Derive from newline-normalized text, exactly as V1DatasetReader
+            # does: CRLF/LF variance must neither split one logical item into
+            # two ids nor let it bypass the duplicate refusal below.
+            derived = derive_item_id(
+                _normalize_newlines(question), _normalize_newlines(answer)
+            )
             first_index = synthesized_ids.setdefault(derived, index)
             if first_index != index:
                 # Same user_input and reference: the content-derived id
