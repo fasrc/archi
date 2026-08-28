@@ -10,6 +10,7 @@ import tempfile
 import threading
 import uuid
 from copy import deepcopy
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from itertools import zip_longest
 from pathlib import Path
@@ -144,6 +145,40 @@ def _normalize_newlines(value: str) -> str:
     return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _exact_json_numbers(value: Any, context: str) -> Any:
+    """Convert exact Decimals to floats, refusing any that would round.
+
+    The carry contract promises original values; a number the binary float
+    cannot represent would be silently rewritten in the stored source and
+    every derived child. The author can quote such a value as a string to
+    carry it verbatim.
+    """
+    if isinstance(value, Decimal):
+        try:
+            as_float: Optional[float] = float(value)
+            if Decimal(repr(as_float)) != value:
+                as_float = None
+        except (OverflowError, InvalidOperation):
+            as_float = None
+        if as_float is None:
+            raise ValueError(
+                f"{context} numeric value {value} cannot be carried exactly; "
+                "quote it as a string to preserve it verbatim"
+            )
+        return as_float
+    if isinstance(value, list):
+        return [
+            _exact_json_numbers(item, f"{context}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    if isinstance(value, dict):
+        return {
+            key: _exact_json_numbers(item, f"{context}.{key}")
+            for key, item in value.items()
+        }
+    return value
+
+
 def _canonical_row_bytes(row: Any) -> bytes:
     """One row in the canonical serialization; the normalized blob is the
     ``[`` + ``,``-joined rows + ``]`` — byte-identical to serializing the
@@ -165,9 +200,9 @@ def _iter_json_array_rows(blob: bytes) -> Iterator[Any]:
     depth = 0
     object_keys: List[Set[str]] = []
     try:
-        for prefix, event, value in ijson_backend.parse(
-            io.BytesIO(blob), use_float=True
-        ):
+        # use_float=False: numbers arrive as exact Decimals so precision loss
+        # is detectable (see _exact_json_numbers) instead of silent.
+        for prefix, event, value in ijson_backend.parse(io.BytesIO(blob)):
             if builder is None:
                 if prefix != "item":
                     continue
@@ -218,9 +253,9 @@ def _json_array_carries_user_input(blob: bytes) -> bool:
 
 
 def _normalize_import_dialect(
-    blob: bytes, source_format: str
-) -> Tuple[bytes, Optional[Dict[str, Any]]]:
-    """Rewrite a RAGAS-dialect question bank into the native row dialect.
+    blob: bytes, source_format: str, destination: Path
+) -> Optional[Dict[str, Any]]:
+    """Write ``blob`` to ``destination``, rewriting a RAGAS-dialect bank.
 
     Detection keys on ``user_input`` — the one field the benchmark harness
     treats as mandatory and no native dataset row carries. Everything the map
@@ -228,71 +263,99 @@ def _normalize_import_dialect(
     row parser. Rows are treated as static unless declared otherwise, and rows
     lacking an ``id`` get a stable content-derived one, so re-importing the
     same bank yields the same ids (and, via the canonical re-serialization,
-    the same dedupe hash). Anything that does not parse as a JSON array in the
-    dialect passes through unchanged for the strict import pipeline to judge.
+    the same dedupe hash). A non-dialect upload is written unchanged for the
+    strict import pipeline to judge.
+
+    Memory stays bounded for a hostile upload: rows stream in one at a time,
+    the normalized output streams to ``destination``, and duplicate-id
+    tracking spools to a scratch sqlite file rather than a per-row dict.
     """
     if source_format != "json" or not _json_array_carries_user_input(blob):
-        return blob, None
+        write_bytes(destination, blob)
+        return None
     carried: set = set()
-    pieces: List[bytes] = []
-    synthesized_ids: Dict[str, int] = {}
-    for index, row in enumerate(_iter_json_array_rows(blob), 1):
-        if not isinstance(row, dict):
-            # Not mappable, but still validated (a bare string could carry a
-            # surrogate the encode below would crash on); row validation then
-            # rejects it loudly.
-            validate_json_value(row, f"dataset row {index}")
-            pieces.append(_canonical_row_bytes(row))
-            continue
-        mapped = dict(row)
-        for dialect_key, native_key in _RAGAS_TO_NATIVE.items():
-            if dialect_key not in mapped:
-                continue
-            if native_key in mapped:
-                # Both spellings of one concept: the console would evaluate
-                # the native key while the harness prefers the RAGAS one, so
-                # the two stacks would score different content from the same
-                # file. Refuse rather than guess.
-                raise ValueError(
-                    f"dataset row {index} carries both '{dialect_key}' and "
-                    f"'{native_key}'; keep exactly one"
-                )
-            mapped[native_key] = mapped.pop(dialect_key)
-        mapped.setdefault("time_sensitive", False)
-        # The row parser cannot validate what never survives serialization: a
-        # lone surrogate accepted by json.loads would crash the UTF-8 encode
-        # below with a codec error that names no field.
-        validate_json_value(mapped, f"dataset row {index}")
-        question = mapped.get("question")
-        answer = mapped.get("answer")
-        if "id" not in mapped and isinstance(question, str) and isinstance(answer, str):
-            # Derive from newline-normalized text, exactly as V1DatasetReader
-            # does: CRLF/LF variance must neither split one logical item into
-            # two ids nor let it bypass the duplicate refusal below.
-            derived = derive_item_id(
-                _normalize_newlines(question), _normalize_newlines(answer)
+    with tempfile.TemporaryDirectory(prefix=".dialect-ids-") as scratch:
+        connection = sqlite3.connect(str(Path(scratch) / "ids.sqlite3"))
+        try:
+            connection.execute(
+                "CREATE TABLE ids (id TEXT PRIMARY KEY, row INTEGER NOT NULL)"
             )
-            first_index = synthesized_ids.setdefault(derived, index)
-            if first_index != index:
-                # Same user_input and reference: the content-derived id
-                # collides. Deliberately refused rather than disambiguated —
-                # salting the id with carried metadata would change item
-                # identity on every sources edit, and an order-based suffix
-                # would change it on every reorder. Explicit ids are the
-                # escape hatch for rows that must coexist.
-                raise ValueError(
-                    f"dataset rows {first_index} and {index} are duplicates "
-                    "(same user_input and reference); merge them or give "
-                    "each an explicit id"
-                )
-            mapped["id"] = derived
-        carried.update(set(mapped) - V1_ITEM_FIELDS)
-        pieces.append(_canonical_row_bytes(mapped))
-    report = {
+            with destination.open("wb") as handle:
+                handle.write(b"[")
+                for index, row in enumerate(_iter_json_array_rows(blob), 1):
+                    if index > 1:
+                        handle.write(b",")
+                    handle.write(
+                        _normalize_dialect_row(row, index, connection, carried)
+                    )
+                handle.write(b"]")
+        finally:
+            connection.close()
+    return {
         "import_dialect": RAGAS_IMPORT_DIALECT,
         "carried_fields": sorted(carried),
     }
-    return b"[" + b",".join(pieces) + b"]", report
+
+
+def _normalize_dialect_row(
+    row: Any, index: int, id_index: sqlite3.Connection, carried: set
+) -> bytes:
+    context = f"dataset row {index}"
+    row = _exact_json_numbers(row, context)
+    if not isinstance(row, dict):
+        # Not mappable, but still validated (a bare string could carry a
+        # surrogate the encode would crash on); row validation then rejects
+        # it loudly.
+        validate_json_value(row, context)
+        return _canonical_row_bytes(row)
+    mapped = dict(row)
+    for dialect_key, native_key in _RAGAS_TO_NATIVE.items():
+        if dialect_key not in mapped:
+            continue
+        if native_key in mapped:
+            # Both spellings of one concept: the console would evaluate the
+            # native key while the harness prefers the RAGAS one, so the two
+            # stacks would score different content from the same file.
+            # Refuse rather than guess.
+            raise ValueError(
+                f"{context} carries both '{dialect_key}' and "
+                f"'{native_key}'; keep exactly one"
+            )
+        mapped[native_key] = mapped.pop(dialect_key)
+    mapped.setdefault("time_sensitive", False)
+    # The row parser cannot validate what never survives serialization: a
+    # lone surrogate accepted at parse would crash the UTF-8 encode with a
+    # codec error that names no field.
+    validate_json_value(mapped, context)
+    question = mapped.get("question")
+    answer = mapped.get("answer")
+    if "id" not in mapped and isinstance(question, str) and isinstance(answer, str):
+        # Derive from newline-normalized text, exactly as V1DatasetReader
+        # does: CRLF/LF variance must neither split one logical item into two
+        # ids nor let it bypass the duplicate refusal below.
+        derived = derive_item_id(
+            _normalize_newlines(question), _normalize_newlines(answer)
+        )
+        try:
+            id_index.execute("INSERT INTO ids VALUES (?, ?)", (derived, index))
+        except sqlite3.IntegrityError:
+            first_index = id_index.execute(
+                "SELECT row FROM ids WHERE id = ?", (derived,)
+            ).fetchone()[0]
+            # Same user_input and reference: the content-derived id collides.
+            # Deliberately refused rather than disambiguated — salting the id
+            # with carried metadata would change item identity on every
+            # sources edit, and an order-based suffix would change it on
+            # every reorder. Explicit ids are the escape hatch for rows that
+            # must coexist.
+            raise ValueError(
+                f"dataset rows {first_index} and {index} are duplicates "
+                "(same user_input and reference); merge them or give "
+                "each an explicit id"
+            ) from None
+        mapped["id"] = derived
+    carried.update(set(mapped) - V1_ITEM_FIELDS)
+    return _canonical_row_bytes(mapped)
 
 
 def _dataset_row(
@@ -640,14 +703,15 @@ class EvaluationCatalog:
         if suffix not in {".json", ".jsonl"}:
             raise ValueError("dataset must use .json or .jsonl")
         source_format = suffix[1:]
-        blob, dialect_report = _normalize_import_dialect(blob, source_format)
-        digest = _sha256(blob)
         with tempfile.TemporaryDirectory(
             prefix=".dataset-", dir=str(self.datasets_dir)
         ) as temporary:
             temporary_path = Path(temporary)
             source_path = temporary_path / f"source.{source_format}"
-            write_bytes(source_path, blob)
+            dialect_report = _normalize_import_dialect(
+                blob, source_format, source_path
+            )
+            digest = sha256_file(source_path)
 
             # Complete preflight validation is a separate bounded pass. Metadata
             # is then accumulated from a fresh read without retaining the rows.

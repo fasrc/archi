@@ -329,6 +329,29 @@ class TestRagasDialectImport:
             "gpu-hard",
         ]
 
+    def test_high_precision_decimals_are_refused_not_rounded(self, tmp_path):
+        # A carried number the binary float cannot represent would be
+        # silently rewritten in the stored source and every child. Refuse it,
+        # naming the field; quoting the value as a string carries it verbatim.
+        catalog = EvaluationCatalog(tmp_path)
+        blob = (
+            b'[{"user_input": "Q", "reference": "A",'
+            b' "score": 0.12345678901234567890}]'
+        )
+
+        with pytest.raises(ValueError, match="score"):
+            catalog.import_dataset("Bank", "bank.json", blob)
+
+    def test_float_exact_decimals_are_carried_unchanged(self, tmp_path):
+        catalog = EvaluationCatalog(tmp_path)
+        blob = b'[{"user_input": "Q", "reference": "A", "score": 0.5}]'
+
+        metadata, created = catalog.import_dataset("Bank", "bank.json", blob)
+
+        assert created is True
+        (item,) = catalog.dataset_items(metadata["id"])
+        assert item.extra == {"score": 0.5}
+
     def test_dialect_normalization_streams_rows(self):
         # The adapter must never materialize a detected bank: rows are
         # normalized one at a time. Proof of laziness — the first row of a
