@@ -167,9 +167,7 @@ class TestRagasDialectImport:
         with pytest.raises(ValueError, match=f"{dialect_key}.*{native_key}"):
             _import_bank(catalog, [row])
 
-    def test_dedupe_against_native_equivalent_still_reports_the_dialect(
-        self, tmp_path
-    ):
+    def test_dedupe_against_native_equivalent_still_reports_the_dialect(self, tmp_path):
         # A canonically-serialized native dataset and its RAGAS-dialect twin
         # normalize to the same bytes. Importing the bank second must dedupe
         # to the existing dataset AND still report what this operation

@@ -649,6 +649,34 @@ review, background execution, retries, and run-history visualization.
 
 - Datasets use the same strict `.json` or `.jsonl` Dataset V2 contract
   described in [Dataset format](#dataset-format).
+- A `.json` **RAGAS question bank** (the golden-set dialect the benchmark
+  harness consumes, e.g. `fasrc_ragas_queries.json`) imports as-is — see
+  [RAGAS question-bank imports](#ragas-question-bank-imports).
+
+#### RAGAS question-bank imports
+
+A `.json` upload whose rows carry `user_input` — the one field the RAGAS
+harness treats as mandatory and no native dataset row uses — is recognized as
+a RAGAS 0.3.5 question bank and normalized at the import boundary:
+
+- `user_input` becomes the question and `reference` becomes the canonical
+  answer; a row carrying **both** a RAGAS alias and its native key (e.g.
+  `user_input` and `question`) is refused, because the console and the
+  benchmark harness would otherwise score different content from one file.
+- Rows are static unless they declare `time_sensitive`, and a row without an
+  `id` gets a stable content-derived one, so re-importing the same bank
+  yields the same ids and dedupes to the same dataset.
+- Every other field (`sources`, `notes`, `status`, `anchor_type`,
+  `source_match_field`, ...) is **carried, not interpreted**: it survives
+  into every dataset the console writes — including reviewed children — and
+  contributes to the content hash, but has no effect on preparation, running
+  or scoring. A key within edit distance 1 of a known field (a probable typo
+  such as `expectd_atoms`) is refused rather than carried.
+- The import result reports `import_dialect: ragas` and the `carried_fields`,
+  and the Console shows both after an upload. Native datasets report neither
+  and behave exactly as before.
+- The dialect applies to `.json` arrays only; a `.jsonl` bank is not adapted
+  and fails validation loudly rather than importing misread.
 - Imported evaluator profiles must use `.yaml` or `.yml` and follow
   [Evaluator profile format](#evaluator-profile-format). The built-in profile
   requires no upload.

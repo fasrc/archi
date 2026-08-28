@@ -1040,7 +1040,12 @@
   async function submitImport(form, endpoint, noun) {
     try {
       const payload = await api(endpoint, { method: "POST", body: new FormData(form) });
-      toast(`${noun} ${payload.created ? "imported" : "already exists"}`, payload[noun.toLowerCase()].name);
+      const meta = payload[noun.toLowerCase()];
+      toast(`${noun} ${payload.created ? "imported" : "already exists"}`, meta.name);
+      if (meta.import_dialect) {
+        const carried = (meta.carried_fields || []).join(", ") || "none";
+        toast(`Recognized ${meta.import_dialect.toUpperCase()} dialect`, `Carried fields: ${carried}`);
+      }
       form.reset();
       await loadCatalog();
     } catch (error) { toast(`Could not import ${noun.toLowerCase()}`, error.message); }
