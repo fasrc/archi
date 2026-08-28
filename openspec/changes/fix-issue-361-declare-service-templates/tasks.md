@@ -16,7 +16,7 @@ Dockerfile templates themselves. The 19 / 15 / 4 split is already correct.
 
 ## 1. The declared set
 
-- [ ] 1.1 **Declare the set, and guard the exclusion list's honesty.**
+- [x] 1.1 **Declare the set, and guard the exclusion list's honesty.**
   In `src/cli/managers/base_image_preflight.py`, beside `PYTHON_BASE`/`PYTORCH_BASE`, add the
   exclusion list and the accessor:
   - `NON_SERVICE_TEMPLATES` — a mapping from template filename to the reason it is not a

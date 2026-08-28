@@ -28,6 +28,16 @@ PYTORCH_BASE = "a2rchi-pytorch-base"
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "cli" / "templates" / "dockerfiles"
 
+# Templates excluded from the service set. Each value is the reason the file is not a
+# service template, so a reader can tell a base-defining template from a third-party-based
+# one without opening it.
+NON_SERVICE_TEMPLATES: dict[str, str] = {
+    "Dockerfile-base": "defines the a2rchi-python-base image itself",
+    "Dockerfile-base-gpu": "defines the a2rchi-pytorch-base image itself",
+    "Dockerfile-postgres": "builds on docker.io/pgvector/pgvector:pg17",
+    "Dockerfile-grafana": "builds on docker.io/grafana/grafana-enterprise:10.2.0",
+}
+
 # `FROM <ref>` where the reference names an a2rchi base image. `\S+` stops at whitespace, so
 # the trailing spaces several templates carry on that line never reach the tag.
 _FROM_BASE_RE = re.compile(r"^FROM\s+(?P<ref>\S*a2rchi-\w+-base\S*)", re.MULTILINE)
@@ -72,6 +82,28 @@ class Outcome:
     @property
     def unverified(self) -> bool:
         return self.verdict is Verdict.UNVERIFIED
+
+
+def service_templates(template_dir: Optional[Path] = None) -> List[Path]:
+    """The sorted Paths of every Dockerfile* that is a service template.
+
+    Service templates build ``FROM`` an ``a2rchi-*-base`` image. The four excluded by
+    ``NON_SERVICE_TEMPLATES`` define base images themselves or build on third-party images.
+    """
+    directory = template_dir or TEMPLATE_DIR
+    return sorted(
+        p for p in directory.glob("Dockerfile*") if p.name not in NON_SERVICE_TEMPLATES
+    )
+
+
+def stale_template_exclusions(template_dir: Optional[Path] = None) -> List[str]:
+    """Exclusion names in ``NON_SERVICE_TEMPLATES`` that have no matching file on disk.
+
+    A non-empty return means the exclusion list names a template that no longer exists,
+    so it excludes nothing and silently over-reports the service-template count.
+    """
+    directory = template_dir or TEMPLATE_DIR
+    return [name for name in NON_SERVICE_TEMPLATES if not (directory / name).exists()]
 
 
 def base_reference(image: str, template_dir: Optional[Path] = None) -> Optional[str]:

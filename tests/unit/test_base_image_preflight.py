@@ -1218,3 +1218,46 @@ def test_the_release_guard_detects_a_rewrite_to_the_wrong_base(tmp_path):
     assert len(references) == TEMPLATE_COUNT
 
     assert _image_map(templates_dir) != _image_map()
+
+
+# --- The declared service-template set (tasks.md 1.1) ------------------------------------
+
+
+def test_stale_template_exclusions_reports_absent_exclusions_not_present_ones(tmp_path):
+    """An exclusion key with no matching file is stale; one with a file is honest."""
+    (tmp_path / "Dockerfile-base").write_text("FROM scratch\n")
+    # Only Dockerfile-base exists; Dockerfile-base-gpu does not.
+    stale = preflight.stale_template_exclusions(tmp_path)
+    assert "Dockerfile-base-gpu" in stale
+    assert "Dockerfile-base" not in stale
+
+
+def test_stale_template_exclusions_on_the_real_directory_is_empty():
+    """Every key in NON_SERVICE_TEMPLATES must name an actual file on disk."""
+    stale = preflight.stale_template_exclusions()
+    assert not stale, (
+        f"NON_SERVICE_TEMPLATES contains stale entries (no matching file): "
+        + ", ".join(sorted(stale))
+    )
+
+
+def test_service_templates_has_15_of_19_and_excluded_names_match_the_declaration():
+    """service_templates() returns 15 of the 19 Dockerfile* files; the 4 excluded names
+    are exactly the keys of NON_SERVICE_TEMPLATES."""
+    all_dockerfiles = sorted(preflight.TEMPLATE_DIR.glob("Dockerfile*"))
+    services = preflight.service_templates()
+    assert (
+        len(all_dockerfiles) == 19
+    ), f"expected 19 Dockerfile* files, found {len(all_dockerfiles)}: " + ", ".join(
+        p.name for p in all_dockerfiles
+    )
+    assert (
+        len(services) == 15
+    ), f"expected 15 service templates, got {len(services)}: " + ", ".join(
+        p.name for p in services
+    )
+    excluded = {p.name for p in all_dockerfiles} - {p.name for p in services}
+    assert excluded == set(preflight.NON_SERVICE_TEMPLATES.keys()), (
+        f"excluded names {sorted(excluded)!r} do not match "
+        f"NON_SERVICE_TEMPLATES keys {sorted(preflight.NON_SERVICE_TEMPLATES.keys())!r}"
+    )
