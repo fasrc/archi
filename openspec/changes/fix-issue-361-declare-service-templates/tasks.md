@@ -92,7 +92,7 @@ Dockerfile templates themselves. The 19 / 15 / 4 split is already correct.
   returned before this change, so a correct tree's deploy behavior is provably unchanged.
   `required_base_image_names` and the two-image rule of design D4 are not modified.
 
-- [ ] 3.2 **Check the call sites.**
+- [x] 3.2 **Check the call sites.**
   `grep -rn "required_base_images" src/ tests/` and confirm every caller handles the new
   refusal path. If a caller would now raise where it previously returned a list, that is a
   behavior change on the deploy path and it needs a test of its own. Report what you found in
