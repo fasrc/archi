@@ -180,15 +180,25 @@ def _normalize_import_dialect(
         return blob, None
     carried: set = set()
     normalized: List[Any] = []
-    for row in rows:
+    for index, row in enumerate(rows, 1):
         if not isinstance(row, dict):
             # Not mappable; keep it so row validation rejects it loudly.
             normalized.append(row)
             continue
         mapped = dict(row)
         for dialect_key, native_key in _RAGAS_TO_NATIVE.items():
-            if dialect_key in mapped and native_key not in mapped:
-                mapped[native_key] = mapped.pop(dialect_key)
+            if dialect_key not in mapped:
+                continue
+            if native_key in mapped:
+                # Both spellings of one concept: the console would evaluate
+                # the native key while the harness prefers the RAGAS one, so
+                # the two stacks would score different content from the same
+                # file. Refuse rather than guess.
+                raise ValueError(
+                    f"dataset row {index} carries both '{dialect_key}' and "
+                    f"'{native_key}'; keep exactly one"
+                )
+            mapped[native_key] = mapped.pop(dialect_key)
         mapped.setdefault("time_sensitive", False)
         question = mapped.get("question")
         answer = mapped.get("answer")

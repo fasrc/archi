@@ -146,6 +146,23 @@ class TestRagasDialectImport:
         with pytest.raises(ValueError, match="answer must be a non-empty string"):
             _import_bank(catalog, [row])
 
+    @pytest.mark.parametrize(
+        "dialect_key,native_key,native_value",
+        [("user_input", "question", "A different question"), ("reference", "answer", "A different answer")],
+    )
+    def test_conflicting_aliases_are_refused_not_carried(
+        self, tmp_path, dialect_key, native_key, native_value
+    ):
+        # A row carrying both spellings of one concept would be scored as
+        # different content by the two stacks: the console evaluates the
+        # native key while the harness's normalize_record prefers the RAGAS
+        # one. Refuse loudly rather than guess.
+        catalog = EvaluationCatalog(tmp_path)
+        row = {**BANK_ROW, native_key: native_value}
+
+        with pytest.raises(ValueError, match=f"{dialect_key}.*{native_key}"):
+            _import_bank(catalog, [row])
+
     def test_duplicate_keys_pass_through_to_the_strict_pipeline(self, tmp_path):
         # The adapter refuses to parse a duplicate-keyed upload (json.loads
         # would silently collapse the duplicates); the blob falls through
