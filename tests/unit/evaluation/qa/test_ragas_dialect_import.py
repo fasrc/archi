@@ -257,6 +257,52 @@ class TestRagasDialectImport:
                 "Container", "container.json", json.dumps(container).encode()
             )
 
+    def test_surrogate_in_a_dialect_row_fails_naming_the_field(self, tmp_path):
+        # A lone escaped surrogate parses, but encoding the normalized blob
+        # to UTF-8 would crash before the row parser ever sees the value.
+        # The adapter validates each normalized row first, so the upload is
+        # rejected with an error naming the field, not a codec traceback.
+        catalog = EvaluationCatalog(tmp_path)
+        blob = b'[{"user_input": "Q", "reference": "A", "notes": "bad \\ud800"}]'
+
+        with pytest.raises(ValueError, match="notes"):
+            catalog.import_dataset("Bank", "bank.json", blob)
+
+    def test_duplicate_bank_rows_are_refused_with_row_numbers(self, tmp_path):
+        # Two id-less rows with the same user_input and reference collide on
+        # the content-derived id even when carried metadata differs. That is
+        # refused with an error naming both rows in bank terms — not
+        # disambiguated: an id salted with carried metadata would change item
+        # identity on every sources edit, and an order-based suffix would
+        # change it on every reorder. Rows that genuinely must coexist can
+        # carry explicit distinct ids.
+        catalog = EvaluationCatalog(tmp_path)
+        variant = {
+            **BANK_ROW,
+            "sources": ["https://docs.rc.fas.harvard.edu/kb/gpu-jobs"],
+            "anchor_type": "hard_retrieve",
+        }
+
+        with pytest.raises(ValueError, match=r"rows 1 and 2.*duplicate"):
+            _import_bank(catalog, [BANK_ROW, variant])
+
+    def test_duplicate_bank_rows_import_with_explicit_ids(self, tmp_path):
+        catalog = EvaluationCatalog(tmp_path)
+        first = {**BANK_ROW, "id": "gpu-easy"}
+        second = {
+            **BANK_ROW,
+            "id": "gpu-hard",
+            "anchor_type": "hard_retrieve",
+        }
+
+        metadata, created = _import_bank(catalog, [first, second])
+
+        assert created is True
+        assert [item.id for item in catalog.dataset_items(metadata["id"])] == [
+            "gpu-easy",
+            "gpu-hard",
+        ]
+
     def test_duplicate_keys_pass_through_to_the_strict_pipeline(self, tmp_path):
         # The adapter refuses to parse a duplicate-keyed upload (json.loads
         # would silently collapse the duplicates); the blob falls through

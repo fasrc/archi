@@ -38,7 +38,7 @@ from .dataset import (
     derive_item_id,
     iter_dataset_items,
 )
-from .oracle import OracleResolver
+from .oracle import OracleResolver, validate_json_value
 from .preparation import (
     GoldExtractor,
     PreparationRecord,
@@ -203,6 +203,7 @@ def _normalize_import_dialect(
         return blob, None
     carried: set = set()
     normalized: List[Any] = []
+    synthesized_ids: Dict[str, int] = {}
     for index, row in enumerate(rows, 1):
         if not isinstance(row, dict):
             # Not mappable; keep it so row validation rejects it loudly.
@@ -223,10 +224,28 @@ def _normalize_import_dialect(
                 )
             mapped[native_key] = mapped.pop(dialect_key)
         mapped.setdefault("time_sensitive", False)
+        # The row parser cannot validate what never survives serialization: a
+        # lone surrogate accepted by json.loads would crash the UTF-8 encode
+        # below with a codec error that names no field.
+        validate_json_value(mapped, f"dataset row {index}")
         question = mapped.get("question")
         answer = mapped.get("answer")
         if "id" not in mapped and isinstance(question, str) and isinstance(answer, str):
-            mapped["id"] = derive_item_id(question, answer)
+            derived = derive_item_id(question, answer)
+            first_index = synthesized_ids.setdefault(derived, index)
+            if first_index != index:
+                # Same user_input and reference: the content-derived id
+                # collides. Deliberately refused rather than disambiguated —
+                # salting the id with carried metadata would change item
+                # identity on every sources edit, and an order-based suffix
+                # would change it on every reorder. Explicit ids are the
+                # escape hatch for rows that must coexist.
+                raise ValueError(
+                    f"dataset rows {first_index} and {index} are duplicates "
+                    "(same user_input and reference); merge them or give "
+                    "each an explicit id"
+                )
+            mapped["id"] = derived
         carried.update(set(mapped) - V1_ITEM_FIELDS)
         normalized.append(mapped)
     report = {
