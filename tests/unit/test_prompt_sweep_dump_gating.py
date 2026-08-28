@@ -41,7 +41,7 @@ def _reset_and_redirect(tmp_path, monkeypatch):
 
 
 def _dump_and_load(tmp_path):
-    ResultHandler.dump(Path("test-bench"))
+    ResultHandler.dump(Path("test-bench"), "20260828_120000")
     files = list(tmp_path.glob("test-bench-*.json"))
     assert len(files) == 1, f"expected one dump file, found {files}"
     with open(files[0]) as f:
