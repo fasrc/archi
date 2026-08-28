@@ -2110,6 +2110,7 @@ class Benchmarker:
             f"http://host.containers.internal:{dm_external_port}/api/ingestion/status",
         ]
         start_time = time.monotonic()
+        last_progress_time = start_time
         attempt = 0
 
         logger.info(
@@ -2141,6 +2142,7 @@ class Benchmarker:
                         raise RuntimeError(
                             f"Data-manager ingestion failed at step '{step}': {err}"
                         )
+                    last_progress_time = time.monotonic()
                     break
                 except (
                     url_error.URLError,
@@ -2152,7 +2154,7 @@ class Benchmarker:
                     continue
 
             elapsed = time.monotonic() - start_time
-            if elapsed >= timeout_seconds:
+            if time.monotonic() - last_progress_time >= timeout_seconds:
                 if last_error:
                     raise TimeoutError(
                         f"Timed out after {timeout_seconds}s waiting for ingestion status endpoint. Last error: {last_error}"

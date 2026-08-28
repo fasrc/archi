@@ -1,0 +1,106 @@
+"""Tests for wait_for_ingestion_completion stall-budget fix (issue #378).
+
+The production bug: the timeout fired against total elapsed time rather than
+time since the last successful status response.  A long-running ingest
+reporting state=running was killed after one budget even though it was making
+progress.
+
+The fix (task 1.1): track last_progress_time separately; the stall clock only
+fires when no successful response has been received within the budget window.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+import src.bin.service_benchmark as sb
+
+
+class _SentinelError(Exception):
+    """Raised by fakes to distinguish from TimeoutError."""
+
+
+def _make_bench(monkeypatch, timeout="60", poll_interval="5"):
+    monkeypatch.setenv("BENCH_INGEST_WAIT_TIMEOUT", timeout)
+    monkeypatch.setenv("BENCH_INGEST_POLL_INTERVAL", poll_interval)
+    bench = object.__new__(sb.Benchmarker)
+    bench.config = {
+        "services": {
+            "data_manager": {
+                "internal_port": 7871,
+                "external_port": 7881,
+            }
+        }
+    }
+    return bench
+
+
+class _FakeTime:
+    def __init__(self):
+        self._now = 0.0
+
+    def monotonic(self):
+        return self._now
+
+    def sleep(self, n):
+        self._now += n
+
+
+class _ResponseCtx:
+    """Context manager wrapping a JSON-serialisable payload dict."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def read(self):
+        return json.dumps(self._payload).encode()
+
+
+def _make_request(handler):
+    """Return a fake url_request module whose urlopen delegates to handler(url).
+
+    handler(url) either returns a dict payload or raises.
+    """
+
+    class _FakeUrlRequest:
+        def urlopen(self_, url, timeout=None):  # noqa: N805
+            result = handler(url)
+            return _ResponseCtx(result)
+
+    return _FakeUrlRequest()
+
+
+def test_healthy_ingest_not_killed_by_stall_budget(monkeypatch):
+    """An ingest reporting state=running on every poll must not be killed by
+    the stall budget — each successful response resets the progress clock.
+
+    After 99 successful polls (495 simulated seconds, >8 budgets of 60s each)
+    the 100th call raises the sentinel.  On the pre-fix code the method raises
+    TimeoutError at iteration 13 (~60s) instead; the sentinel never fires.
+    After the fix the sentinel propagates unchanged.
+    """
+    bench = _make_bench(monkeypatch)
+    fake_time = _FakeTime()
+    monkeypatch.setattr(sb, "time", fake_time)
+
+    call_count = 0
+
+    def handler(url):
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 100:
+            raise _SentinelError("sentinel on call 100")
+        return {"state": "running", "step": "Updating vectorstore"}
+
+    monkeypatch.setattr(sb, "url_request", _make_request(handler))
+
+    with pytest.raises(_SentinelError):
+        bench.wait_for_ingestion_completion()
