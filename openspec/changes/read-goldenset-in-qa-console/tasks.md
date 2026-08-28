@@ -85,14 +85,17 @@ Standing notes:
 
 ## 6. RED: the RAGAS dialect imports unconverted
 
-- [ ] Test: a bank row shaped `{user_input, reference, sources, notes, status,
+- [x] Test: a bank row shaped `{user_input, reference, sources, notes, status,
       anchor_type}` imports successfully; question comes from `user_input`, answer
       from `reference`, `time_sensitive` defaults false, an `id` is synthesized, and
       the remaining four fields are carried.
-- [ ] Test: ids are stable — importing the same bank twice yields the same ids.
-- [ ] Implement the normalize step in `EvaluationCatalog.import_dataset`, before
+- [x] Test: ids are stable — importing the same bank twice yields the same ids.
+      (Plus the discriminating dedupe pair: an edit to `sources` alone imports as a
+      new dataset, and a byte-identical re-import still dedupes — both against the
+      normalized-blob hash.)
+- [x] Implement the normalize step in `EvaluationCatalog.import_dataset`, before
       validation. No dialect knowledge in the row parser.
-- [ ] Gate, commit.
+- [x] Gate, commit.
 
 ## 7. RED: the import result reports what it did
 

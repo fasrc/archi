@@ -27,8 +27,10 @@ from .artifacts import (
 )
 from .dataset import (
     DATASET_V2_SCHEMA_VERSION,
+    V1_ITEM_FIELDS,
     DatasetItemState,
     dataset_item_to_dict,
+    derive_item_id,
     iter_dataset_items,
 )
 from .oracle import OracleResolver
@@ -120,6 +122,87 @@ def _display_name(value: Any, context: str) -> str:
 
 def _sha256(blob: bytes) -> str:
     return hashlib.sha256(blob).hexdigest()
+
+
+# RAGAS 0.3.5 authoring dialect -> native row schema. The mirror image of the
+# benchmark harness's LEGACY_TO_MODERN shim (src/utils/benchmark_schema.py):
+# each side normalizes on read, so the golden-set bank keeps exactly one
+# on-disk dialect and the row parser keeps exactly one name per concept.
+RAGAS_IMPORT_DIALECT = "ragas"
+_RAGAS_TO_NATIVE = {"user_input": "question", "reference": "answer"}
+
+
+def _strict_import_json(blob: bytes) -> Any:
+    """Parse upload bytes, rejecting duplicate keys and non-finite numbers."""
+
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"non-finite number {value}")
+
+    def reject_duplicates(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+        value: Dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"duplicate key '{key}'")
+            value[key] = item
+        return value
+
+    return json.loads(
+        blob.decode("utf-8"),
+        object_pairs_hook=reject_duplicates,
+        parse_constant=reject_constant,
+    )
+
+
+def _normalize_import_dialect(
+    blob: bytes, source_format: str
+) -> Tuple[bytes, Optional[Dict[str, Any]]]:
+    """Rewrite a RAGAS-dialect question bank into the native row dialect.
+
+    Detection keys on ``user_input`` — the one field the benchmark harness
+    treats as mandatory and no native dataset row carries. Everything the map
+    does not consume stays on the row verbatim, to be carried as extras by the
+    row parser. Rows are treated as static unless declared otherwise, and rows
+    lacking an ``id`` get a stable content-derived one, so re-importing the
+    same bank yields the same ids (and, via the canonical re-serialization,
+    the same dedupe hash). Anything that does not parse as a JSON array in the
+    dialect passes through unchanged for the strict import pipeline to judge.
+    """
+    if source_format != "json":
+        return blob, None
+    try:
+        rows = _strict_import_json(blob)
+    except (UnicodeDecodeError, ValueError):
+        return blob, None
+    if not isinstance(rows, list) or not any(
+        isinstance(row, dict) and "user_input" in row for row in rows
+    ):
+        return blob, None
+    carried: set = set()
+    normalized: List[Any] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            # Not mappable; keep it so row validation rejects it loudly.
+            normalized.append(row)
+            continue
+        mapped = dict(row)
+        for dialect_key, native_key in _RAGAS_TO_NATIVE.items():
+            if dialect_key in mapped and native_key not in mapped:
+                mapped[native_key] = mapped.pop(dialect_key)
+        mapped.setdefault("time_sensitive", False)
+        question = mapped.get("question")
+        answer = mapped.get("answer")
+        if "id" not in mapped and isinstance(question, str) and isinstance(answer, str):
+            mapped["id"] = derive_item_id(question, answer)
+        carried.update(set(mapped) - V1_ITEM_FIELDS)
+        normalized.append(mapped)
+    report = {
+        "import_dialect": RAGAS_IMPORT_DIALECT,
+        "carried_fields": sorted(carried),
+    }
+    canonical = json.dumps(
+        normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return canonical.encode("utf-8"), report
 
 
 def _dataset_row(
@@ -464,6 +547,7 @@ class EvaluationCatalog:
         if suffix not in {".json", ".jsonl"}:
             raise ValueError("dataset must use .json or .jsonl")
         source_format = suffix[1:]
+        blob, dialect_report = _normalize_import_dialect(blob, source_format)
         digest = _sha256(blob)
         with tempfile.TemporaryDirectory(
             prefix=".dataset-", dir=str(self.datasets_dir)
@@ -497,6 +581,8 @@ class EvaluationCatalog:
                 approval_actor=approval_actor,
                 approval_time=utc_now() if approval_actor is not None else None,
             )
+            if dialect_report is not None:
+                metadata.update(dialect_report)
             with self._lock:
                 if parent_dataset_id is None:
                     existing = self._find_dataset_by_hash(digest)
