@@ -15,6 +15,7 @@ from src.evaluation.qa.dataset import (
     dataset_item_to_dict,
 )
 from src.evaluation.qa.oracle import canonical_json
+from src.evaluation.qa.preparation import prepare_dataset_item
 
 BANK_EXTRAS = {
     "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs"],
@@ -98,9 +99,7 @@ class TestExtraFieldRoundTrip:
             dataset_item_to_dict(edited_item)
         )
 
-    def test_import_differing_only_in_carried_field_creates_new_dataset(
-        self, tmp_path
-    ):
+    def test_import_differing_only_in_carried_field_creates_new_dataset(self, tmp_path):
         base = {
             "id": "q1",
             "question": "Q",
@@ -139,3 +138,30 @@ class TestExtraFieldRoundTrip:
 
         assert item.extra is None
         assert dataset_item_to_dict(item) == row
+
+
+class _DeterministicExtractor:
+    def extract_gold(self, question, answer):
+        return {"atoms": [{"id": "required", "text": answer, "required": True}]}
+
+
+class TestExtrasAreInert:
+    def test_preparation_is_identical_with_and_without_extras(self, tmp_path):
+        # Carried fields are data in transit: they must never reach
+        # preparation (and therefore running and scoring).
+        plain_row = {
+            "id": "q1",
+            "question": "Q",
+            "answer": "A",
+            "time_sensitive": False,
+        }
+        extra_row = {**plain_row, **BANK_EXTRAS, "status": "draft"}
+        _write_v1(tmp_path / "plain.json", [plain_row])
+        _write_v1(tmp_path / "extra.json", [extra_row])
+
+        (plain_item,) = list(DatasetGateway().read(tmp_path / "plain.json"))
+        (extra_item,) = list(DatasetGateway().read(tmp_path / "extra.json"))
+        plain_record = prepare_dataset_item(plain_item, _DeterministicExtractor())
+        extra_record = prepare_dataset_item(extra_item, _DeterministicExtractor())
+
+        assert plain_record == extra_record

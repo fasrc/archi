@@ -55,12 +55,13 @@ Standing notes:
 
 ## 3. RED: carried fields are inert
 
-- [ ] Test: preparation over two datasets identical except for carried fields
+- [x] Test: preparation over two datasets identical except for carried fields
       produces identical prepared output. Pins that `extra` is data in transit and
       never reaches scoring.
-- [ ] Confirm it passes with no new code — if it does not, sections 1-2 over-reached
-      and `extra` is leaking into a code path it should not touch.
-- [ ] Gate, commit.
+- [x] Confirm it passes with no new code — if it does not, sections 1-2 over-reached
+      and `extra` is leaking into a code path it should not touch. (Confirmed: green
+      with no production change.)
+- [x] Gate, commit.
 
 ## 4. RED: near-miss field names are refused
 
