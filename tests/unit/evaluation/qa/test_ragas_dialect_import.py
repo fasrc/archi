@@ -204,7 +204,10 @@ class TestTheRealBank:
         # checkout), absent in CI. This is the acceptance test for the whole
         # change — before the adapter it failed with the unknown-field error.
         if not FASRC_BANK.is_file():
-            pytest.skip(f"{FASRC_BANK} not present (archi-config checkout only)")
+            pytest.skip(
+                f"{FASRC_BANK} not present (archi-config checkout only; "
+                "point FASRC_RAGAS_BANK at the bank to run this)"
+            )
         _assert_bank_imports_whole(
             EvaluationCatalog(tmp_path), FASRC_BANK, "FASRC golden set", 105
         )
