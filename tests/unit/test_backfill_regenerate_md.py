@@ -107,12 +107,23 @@ def test_shapeless_result_record_is_skipped_cleanly(tmp_path):
     assert not list(tmp_path.glob("*.md"))
 
 
+def test_render_failure_after_validation_skips_cleanly(tmp_path):
+    """A record can pass the key checks and still blow up the renderer (for
+    example `configuration: []`); the failure must skip, not abort the bulk
+    run with an exception main() does not catch."""
+    payload = _artifact_payload()
+    payload["benchmarking_results"][0]["configuration"] = []
+    path = tmp_path / "listconfig.json"
+    path.write_text(json.dumps(payload))
+
+    assert backfill.regenerate_md(path) is None
+    assert not list(tmp_path.glob("*.md"))
+
+
 def test_dict_shaped_results_are_skipped_cleanly(tmp_path):
     """A truthy non-list benchmarking_results must skip, not raise."""
     path = tmp_path / "dictshape.json"
-    path.write_text(
-        json.dumps({"metadata": {}, "benchmarking_results": {"a": 1}})
-    )
+    path.write_text(json.dumps({"metadata": {}, "benchmarking_results": {"a": 1}}))
 
     assert backfill.regenerate_md(path) is None
     assert not list(tmp_path.glob("*.md"))

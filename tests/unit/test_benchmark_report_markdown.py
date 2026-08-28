@@ -103,15 +103,17 @@ def test_markdown_renders_per_question_content():
         _PROVENANCE,
     )
 
-    assert "Question 1: question_1" in md
+    # The qid is inline-escaped, so its underscore carries a backslash.
+    assert "Question 1: question\\_1" in md
     assert "How do I submit a batch job on the cluster?" in md
     assert "Use sbatch with a submission script" in md
     assert "Submit with sbatch." in md
     # Per-question RAGAS scores render with their display names.
     assert "Answer Relevancy" in md
     assert "0.990" in md
-    # The retrieval check shows expected and retrieved documents.
-    assert "https://docs.example/slurm" in md
+    # The retrieval check shows expected and retrieved documents; the URL's
+    # colon carries the autolink-defusing backslash.
+    assert "https\\://docs.example/slurm" in md
     assert "FULLY CORRECT" in md
 
 
@@ -225,6 +227,56 @@ def test_inline_fields_cannot_restructure_the_report():
     # Emphasis and table pipes are escaped in the config name and source names.
     assert "\\*bold\\*" in md
     assert "evil\\|cell" in md
+
+
+def test_nan_scores_render_unscored_not_green():
+    """build_ragas_aggregates emits NaN when nothing was scorable; NaN fails
+    both threshold comparisons, so it must not wear the green badge."""
+    row = _ok_row()
+    row["answer_relevancy"] = float("nan")
+
+    md = format_markdown_output(
+        {"services": {"benchmarking": {"modes": ["RAGAS"]}}},
+        "bench",
+        "2026-08-28",
+        {"q": row},
+        {"aggregate_faithfulness": float("nan")},
+        None,
+    )
+
+    assert "nan 🟢" not in md
+    assert "n/a (unscored)" in md
+
+
+def test_long_context_keeps_the_full_text_available():
+    """The HTML report exposes the full document behind an expander; the
+    markdown report must not permanently drop the evidence past the preview."""
+    row = _ok_row()
+    row["contexts"] = ["A" * 500 + "TAIL-BEYOND-THE-PREVIEW"]
+
+    md = format_markdown_output(
+        _CONFIG, "bench", "2026-08-28", {"q": row}, _TOTALS, None
+    )
+
+    assert "Show full document" in md
+    assert "TAIL-BEYOND-THE-PREVIEW" in md
+
+
+def test_emphasis_strikethrough_and_autolinks_are_neutralized():
+    row = _ok_row()
+    row["question"] = (
+        "_italic_ ~~strike~~ visit https://evil.example or www.evil.example"
+    )
+
+    md = format_markdown_output(
+        _CONFIG, "bench", "2026-08-28", {"q": row}, _TOTALS, None
+    )
+
+    assert "\\_italic\\_" in md
+    assert "\\~\\~strike\\~\\~" in md
+    # An escaped colon or dot cannot participate in a GFM autolink.
+    assert "https\\://evil.example" in md
+    assert "www\\.evil.example" in md
 
 
 def test_leading_ordered_list_marker_is_defused():

@@ -22,6 +22,7 @@ its ``<stem>_report.md`` sibling. ``--html_output`` opts into the HTML report.
 import argparse
 import html
 import json
+import math
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -753,13 +754,15 @@ def format_html_output(
 
 # Inline (non-fenced) markdown fields are escaped with this table. The report is
 # pasted into GitHub, so a data field must not be able to restructure it: no
-# code spans, links, tables, or raw HTML. Underscores stay literal — GFM does
-# not emphasize intraword underscores, and digests/qids are full of them.
+# emphasis, code spans, links, tables, or raw HTML. The backslashes render
+# invisibly on GitHub, so escaped text still reads as the original.
 _MD_INLINE_ESCAPES = str.maketrans(
     {
         "\\": "\\\\",
         "`": "\\`",
         "*": "\\*",
+        "_": "\\_",
+        "~": "\\~",
         "[": "\\[",
         "]": "\\]",
         "|": "\\|",
@@ -778,6 +781,13 @@ def md_escape(text):
     a backslash too.
     """
     escaped = " ".join(str(text).split()).translate(_MD_INLINE_ESCAPES)
+    # GFM autolinks bare URLs (scheme:// and word-start www.); an escaped
+    # colon or dot cannot participate, so the payload stays plain text.
+    escaped = escaped.replace("://", "\\://")
+    escaped = " ".join(
+        "www\\." + word[4:] if word.lower().startswith("www.") else word
+        for word in escaped.split(" ")
+    )
     if escaped.startswith(("#", "-", "+")):
         escaped = "\\" + escaped
     else:
@@ -831,6 +841,18 @@ def _score_badge(value):
     if value < 0.7:
         return "🟡"
     return "🟢"
+
+
+def _score_cell(value):
+    """A score cell: badged when finite, plainly unscored when not.
+
+    ``build_ragas_aggregates`` emits ``float("nan")`` when nothing was
+    scorable; NaN fails both threshold comparisons, so without this check an
+    unscored run would wear the green badge and read as a success.
+    """
+    if not isinstance(value, (int, float)) or not math.isfinite(value):
+        return "n/a (unscored)"
+    return f"{value:.3f} {_score_badge(value)}"
 
 
 def extract_context_text(ctx):
@@ -1032,9 +1054,7 @@ def format_markdown_output(
         for metric, value in total_results.items():
             if "aggregate" in metric:
                 clean_name = metric.replace("aggregate_", "").replace("_", " ").title()
-                parts.append(
-                    f"| {md_escape(clean_name)} | {value:.3f} {_score_badge(value)} |"
-                )
+                parts.append(f"| {md_escape(clean_name)} | {_score_cell(value)} |")
 
     ragas_metrics = {
         "answer_relevancy": "Answer Relevancy",
@@ -1128,9 +1148,18 @@ def format_markdown_output(
                     header += f" — {md_escape(ticket_id)}"
                 ctx_text = extract_context_text(ctx)
                 if len(ctx_text) > 500:
-                    body = fence(ctx_text[:500] + "...")
-                    note = "*(truncated; the full text is in the JSON artifact)*"
-                    parts += ["", header, "", body, note]
+                    # Same contract as the HTML report's expander: the preview
+                    # is followed by the COMPLETE text, so the evidence never
+                    # requires opening the JSON artifact.
+                    parts += ["", header, "", fence(ctx_text[:500] + "...")]
+                    parts += [
+                        "",
+                        "<details><summary>Show full document</summary>",
+                        "",
+                        fence(ctx_text),
+                        "",
+                        "</details>",
+                    ]
                 else:
                     parts += ["", header, "", fence(ctx_text)]
 
@@ -1160,8 +1189,7 @@ def format_markdown_output(
 
         if "RAGAS" in modes:
             score_rows = [
-                f"| {metric_name} | {q_data[metric_key]:.3f} "
-                f"{_score_badge(q_data[metric_key])} |"
+                f"| {metric_name} | {_score_cell(q_data[metric_key])} |"
                 for metric_key, metric_name in ragas_metrics.items()
                 if metric_key in q_data and q_data[metric_key] is not None
             ]

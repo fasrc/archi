@@ -196,9 +196,21 @@ def regenerate_md(json_path, dry_run=False):
     if "configuration" not in first and "configuration_file" not in first:
         return None
 
+    # The render runs inside the same guard as the parse: a record can pass
+    # the key checks above and still blow up the formatter (for example
+    # `configuration: []`), and an escaped exception here would abort the
+    # whole bulk run instead of skipping the one bad file.
     try:
         config_data, config_name, timestamp, questions, total_results, provenance = (
             parse_benchmark_results(results, metadata)
+        )
+        markdown = format_markdown_output(
+            config_data,
+            config_name,
+            timestamp,
+            questions,
+            total_results,
+            provenance=provenance,
         )
     except (AttributeError, IndexError, KeyError, TypeError, ValueError):
         return None
@@ -212,14 +224,6 @@ def regenerate_md(json_path, dry_run=False):
             else f"would create {md_path.name}"
         )
 
-    markdown = format_markdown_output(
-        config_data,
-        config_name,
-        timestamp,
-        questions,
-        total_results,
-        provenance=provenance,
-    )
     with open(md_path, "w") as handle:
         handle.write(markdown)
     return f"{verb} {md_path.name}"

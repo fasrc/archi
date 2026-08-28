@@ -94,6 +94,13 @@ def test_report_failure_keeps_the_json(handler_state, monkeypatch, caplog):
     with caplog.at_level("ERROR"):
         ResultHandler.dump_artifacts(Path("bench"))
 
-    assert len(list(handler_state.glob("*.json"))) == 1
+    json_files = list(handler_state.glob("*.json"))
+    assert len(json_files) == 1
     assert not list(handler_state.glob("*_report.md"))
-    assert any("report" in record.message.lower() for record in caplog.records)
+    # The recovery hint names the exact JSON that was written — the default
+    # backfill glob (repo bench_out/) is not where a run's OUTPUT_DIR points.
+    assert any(
+        "report" in record.getMessage().lower()
+        and str(json_files[0]) in record.getMessage()
+        for record in caplog.records
+    )

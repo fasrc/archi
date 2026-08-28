@@ -481,15 +481,18 @@ class ResultHandler:
         `--regenerate-md` on the backfill script rebuilds the report later.
         """
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        ResultHandler.dump(benchmark_name, timestamp)
+        json_path = ResultHandler.dump(benchmark_name, timestamp)
         try:
             ResultHandler.dump_report(benchmark_name, timestamp)
         except Exception:
+            # The hint names the exact artifact: the backfill script's default
+            # glob is the repo's bench_out/, which is NOT where OUTPUT_DIR
+            # points inside the benchmark container.
             logger.exception(
-                "Markdown report generation failed — the JSON artifact was "
-                "still dumped; rebuild the report with "
-                "scripts/benchmarking/backfill_report_provenance.py "
-                "--regenerate-md"
+                f"Markdown report generation failed — the JSON artifact was "
+                f"still dumped to {json_path}; rebuild the report with "
+                f"scripts/benchmarking/backfill_report_provenance.py "
+                f"--regenerate-md {json_path}"
             )
 
     @staticmethod
@@ -533,6 +536,7 @@ class ResultHandler:
             output["leaderboard"] = ResultHandler.leaderboard
         with open(file_path, "w") as f:
             json.dump(output, f, indent=4)
+        return file_path
 
     @staticmethod
     def pair_ab_results(idx_a: int = 0, idx_b: int = 1) -> List[ABResult]:
