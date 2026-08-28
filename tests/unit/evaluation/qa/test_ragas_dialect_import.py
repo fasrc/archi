@@ -286,9 +286,7 @@ class TestRagasDialectImport:
         with pytest.raises(ValueError, match=r"rows 1 and 2.*duplicate"):
             _import_bank(catalog, [BANK_ROW, variant])
 
-    def test_rows_identical_after_newline_normalization_are_duplicates(
-        self, tmp_path
-    ):
+    def test_rows_identical_after_newline_normalization_are_duplicates(self, tmp_path):
         # Ids are derived from newline-normalized text, exactly as the row
         # parser derives them: rows whose question differs only by CRLF vs LF
         # are the same logical item and must hit the duplicate refusal, not
