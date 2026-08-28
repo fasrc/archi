@@ -58,8 +58,8 @@ rather than live model switches.
 
 ## 5. Gate and review
 
-- [ ] 5.1 `model: opus` — run `bash scripts/gate.sh` (full toolchain env), fix to green.
-- [ ] 5.2 `model: opus` — pre-PR adversarial review loop (`/codex:adversarial-review`),
+- [x] 5.1 `model: opus` — run `bash scripts/gate.sh` (full toolchain env), fix to green.
+- [x] 5.2 `model: opus` — pre-PR adversarial review loop (`/codex:adversarial-review`),
       verify each finding, fix or push back, re-run until clean or nits-only.
 - [ ] 5.3 `model: opus` — push the branch, open the PR to `dev` per `info-pr-overview`,
       request `@codex review` as a comment.
