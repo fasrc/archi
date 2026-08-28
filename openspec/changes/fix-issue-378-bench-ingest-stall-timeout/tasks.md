@@ -24,7 +24,7 @@ All tests go in a new `tests/unit/test_benchmark_ingest_wait.py`.
 
 ## 1. Build the harness and stop killing healthy ingests
 
-- [ ] 1.1 `model: opus` — Create `tests/unit/test_benchmark_ingest_wait.py` with the shared fakes, then make
+- [x] 1.1 `model: opus` — Create `tests/unit/test_benchmark_ingest_wait.py` with the shared fakes, then make
       the stall clock real.
       Harness: `import src.bin.service_benchmark as sb`; build the subject with
       `bench = object.__new__(sb.Benchmarker)` (the idiom at
@@ -49,7 +49,7 @@ All tests go in a new `tests/unit/test_benchmark_ingest_wait.py`.
       abort test at `src/bin/service_benchmark.py:2155` to compare
       `now - last_progress_time` against `timeout_seconds`. Keep `start_time` — the message
       still reports total elapsed. Gate green; commit.
-- [ ] 1.2 `model: sonnet` — Guard the two fast-fail paths that must survive 1.1. **These pass once 1.1 lands —
+- [x] 1.2 `model: sonnet` — Guard the two fast-fail paths that must survive 1.1. **These pass once 1.1 lands —
       that is the point of them. Do not contrive a failure first.**
       Test one: an opener that raises `urllib.error.URLError("boom")` for every candidate
       URL raises `TimeoutError`, and the fake clock shows it was raised within about one
