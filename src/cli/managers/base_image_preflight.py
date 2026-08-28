@@ -28,6 +28,16 @@ PYTORCH_BASE = "a2rchi-pytorch-base"
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "cli" / "templates" / "dockerfiles"
 
+# Templates excluded from the service set. Each value is the reason the file is not a
+# service template, so a reader can tell a base-defining template from a third-party-based
+# one without opening it.
+NON_SERVICE_TEMPLATES: dict[str, str] = {
+    "Dockerfile-base": "defines the a2rchi-python-base image itself",
+    "Dockerfile-base-gpu": "defines the a2rchi-pytorch-base image itself",
+    "Dockerfile-postgres": "builds on docker.io/pgvector/pgvector:pg17",
+    "Dockerfile-grafana": "builds on docker.io/grafana/grafana-enterprise:10.2.0",
+}
+
 # `FROM <ref>` where the reference names an a2rchi base image. `\S+` stops at whitespace, so
 # the trailing spaces several templates carry on that line never reach the tag.
 _FROM_BASE_RE = re.compile(r"^FROM\s+(?P<ref>\S*a2rchi-\w+-base\S*)", re.MULTILINE)
@@ -74,6 +84,42 @@ class Outcome:
         return self.verdict is Verdict.UNVERIFIED
 
 
+def service_templates(template_dir: Optional[Path] = None) -> List[Path]:
+    """The sorted Paths of every Dockerfile* that is a service template.
+
+    Service templates build ``FROM`` an ``a2rchi-*-base`` image. The four excluded by
+    ``NON_SERVICE_TEMPLATES`` define base images themselves or build on third-party images.
+    """
+    directory = template_dir or TEMPLATE_DIR
+    return sorted(
+        p for p in directory.glob("Dockerfile*") if p.name not in NON_SERVICE_TEMPLATES
+    )
+
+
+def stale_template_exclusions(template_dir: Optional[Path] = None) -> List[str]:
+    """Exclusion names in ``NON_SERVICE_TEMPLATES`` that have no matching file on disk.
+
+    A non-empty return means the exclusion list names a template that no longer exists,
+    so it excludes nothing and silently over-reports the service-template count.
+    """
+    directory = template_dir or TEMPLATE_DIR
+    return [name for name in NON_SERVICE_TEMPLATES if not (directory / name).exists()]
+
+
+def templates_missing_base_reference(template_dir: Optional[Path] = None) -> List[Path]:
+    """Service templates that carry no ``FROM`` referencing an ``a2rchi-*-base`` image.
+
+    A non-empty return means a service template has either lost its base ``FROM`` line or
+    replaced it with a third-party image.  The deploy preflight cannot cover these templates,
+    so the caller should treat a non-empty list as a refusal to proceed.
+    """
+    return [
+        template
+        for template in service_templates(template_dir)
+        if not _FROM_BASE_RE.search(template.read_text())
+    ]
+
+
 def base_reference(image: str, template_dir: Optional[Path] = None) -> Optional[str]:
     """The pinned reference the templates declare for ``image``.
 
@@ -104,7 +150,13 @@ def required_base_images(
     named here rather than inferred from the GPU flag. Deciding this by rule instead of by a
     service-to-template map is design D4; `test_two_image_rule_still_matches_every_template`
     is what keeps the rule and the templates from drifting apart.
+
+    Raises ``BaseImagePreflightError`` when any service template carries no ``a2rchi-*-base``
+    FROM reference. The preflight cannot cover such a template, and passing silently would
+    violate the governing invariant: no path may pass silently on an assumption.
     """
+    _refuse_uncoverable_templates(template_dir)
+
     references = []
     for image in required_base_image_names(gpu_ids, grader_enabled):
         reference = base_reference(image, template_dir)
@@ -466,6 +518,22 @@ class BaseImagePreflightError(Exception):
     """Raised when a base image cannot be established, before anything is destroyed."""
 
 
+def _refuse_uncoverable_templates(template_dir: Optional[Path] = None) -> None:
+    """Refuse when a service template declares no ``a2rchi-*-base`` FROM reference.
+
+    Shared by both entry points deliberately. The refusal first landed only in
+    ``required_base_images``, which has no production caller, so the deploy path went on
+    silently (fasrc/archi#381) -- the fail-open this module exists to remove.
+    """
+    uncoverable = templates_missing_base_reference(template_dir)
+    if uncoverable:
+        raise BaseImagePreflightError(
+            "Base image check failed: the following service templates declare no "
+            "a2rchi-*-base FROM reference, so the preflight cannot cover them:\n"
+            + "\n".join(f"  {p}" for p in uncoverable)
+        )
+
+
 def enforce_base_images(
     compose_config,
     *,
@@ -498,6 +566,12 @@ def enforce_base_images(
         # dict-backed plan that lost a key, and reading that as "grader disabled" is the
         # fail-open this whole module exists to remove.
         grader_enabled = False
+
+    # Before the derivation below, not after: `base_reference` returns the first match in
+    # *any* template, so a healthy template masks a broken one from this point on. Before
+    # `run_preflight` too, and therefore before `remove_existing_deployment()`
+    # (`cli_main.py:294`) -- the ordering contract from #287.
+    _refuse_uncoverable_templates(template_dir)
 
     names = required_base_image_names(
         getattr(compose_config, "gpu_ids", None), grader_enabled

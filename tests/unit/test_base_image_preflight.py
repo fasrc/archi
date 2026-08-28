@@ -20,8 +20,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = REPO_ROOT / "src" / "cli" / "templates" / "dockerfiles"
 UPDATER = REPO_ROOT / "scripts" / "dev" / "update_service_base_images.py"
 
-TEMPLATE_COUNT = 15
-
 _FROM_GHCR = re.compile(r"^FROM (ghcr\.io/fasrc/\S+)", re.MULTILINE)
 _DIGEST_REF = re.compile(r"^ghcr\.io/fasrc/[a-z0-9-]+@sha256:[0-9a-f]{64}$")
 # The release workflow rewrites every template to the CalVer tag it just built
@@ -134,16 +132,17 @@ def test_no_template_carries_a_mutable_base_reference():
 
 
 def test_all_templates_share_one_pin_state():
-    """The pin count is fixed at 15, and a split tree means a partial rewrite.
+    """The pin count equals len(service_templates()), and a split tree means a partial rewrite.
 
     Counting alone would miss the worse failure: a rewrite that updated some
     templates and not others leaves the count right and the deployment building
     against two different base images.
     """
     references = _base_references()
+    expected = len(preflight.service_templates())
     assert (
-        len(references) == TEMPLATE_COUNT
-    ), f"expected {TEMPLATE_COUNT} base references, found {len(references)}: {references}"
+        len(references) == expected
+    ), f"expected {expected} base references, found {len(references)}: {references}"
 
     states = {_pin_state(ref) for _name, ref in references}
     assert len(states) == 1, f"templates disagree on pin state: {states}"
@@ -845,10 +844,16 @@ def test_base_reference_returns_none_for_an_image_no_template_names(tmp_path):
     assert preflight.base_reference("a2rchi-nonesuch-base", tmp_path) is None
 
 
-def test_required_base_images_is_empty_when_no_template_declares_one(tmp_path):
+def test_required_base_images_refuses_when_no_template_declares_a_base_reference(
+    tmp_path,
+):
+    """A service template with no a2rchi-*-base reference is uncoverable; the preflight
+    refuses rather than returning an empty list and passing silently on an assumption.
+    """
     (tmp_path / "Dockerfile-chat").write_text("FROM docker.io/library/python:3.11\n")
 
-    assert preflight.required_base_images(None, False, tmp_path) == []
+    with pytest.raises(preflight.BaseImagePreflightError):
+        preflight.required_base_images(None, False, tmp_path)
 
 
 def test_declared_python_floor_reads_the_projects_own_pyproject(tmp_path):
@@ -1000,7 +1005,12 @@ def test_enforce_refuses_when_a_required_base_cannot_be_resolved(tmp_path):
     working deployment having proved nothing at all. That is precisely the assumption-passing
     this module forbids.
     """
-    (tmp_path / "Dockerfile-chat").write_text("FROM docker.io/library/python:3.11\n")
+    # Names the pytorch base, not the python base this deployment requires: the template is
+    # coverable, so the uncoverable-template guard passes and the unresolved-reference
+    # refusal is what gets tested. A third-party FROM would trip the earlier guard instead.
+    (tmp_path / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4\n"
+    )
     probe = FakeProbe()
 
     with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
@@ -1025,12 +1035,18 @@ def test_enforce_refuses_when_only_the_pytorch_base_is_missing(tmp_path):
 
 
 def test_enforce_refuses_a_missing_reference_on_a_dry_run_too(tmp_path):
-    (tmp_path / "Dockerfile-chat").write_text("FROM docker.io/library/python:3.11\n")
+    (tmp_path / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4\n"
+    )
 
-    with pytest.raises(preflight.BaseImagePreflightError):
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
         preflight.enforce_base_images(
             _Plan(), probe=FakeProbe(), template_dir=tmp_path, dry=True
         )
+
+    # Names the image, so this cannot pass on the uncoverable-template refusal instead --
+    # which is what a third-party `FROM` in the fixture would have made it do, silently.
+    assert preflight.PYTHON_BASE in str(excinfo.value)
 
 
 def test_a_grader_lookup_failure_is_not_silently_treated_as_disabled():
@@ -1185,7 +1201,7 @@ def test_the_guards_accept_a_release_retargeted_tree(tmp_path):
     templates_dir = _materialize_release_retargeted_tree(tmp_path)
 
     references = _base_references(templates_dir)
-    assert len(references) == TEMPLATE_COUNT
+    assert len(references) == len(preflight.service_templates(templates_dir))
 
     mutable = [name for name, ref in references if _pin_state(ref) == "mutable"]
     assert not mutable, f"release-retargeted templates read as mutable: {mutable}"
@@ -1215,6 +1231,181 @@ def test_the_release_guard_detects_a_rewrite_to_the_wrong_base(tmp_path):
 
     references = _base_references(templates_dir)
     assert {_pin_state(ref) for _name, ref in references} == {"release"}
-    assert len(references) == TEMPLATE_COUNT
+    assert len(references) == len(preflight.service_templates(templates_dir))
 
     assert _image_map(templates_dir) != _image_map()
+
+
+# --- The declared service-template set (tasks.md 1.1) ------------------------------------
+
+
+def test_stale_template_exclusions_reports_absent_exclusions_not_present_ones(tmp_path):
+    """An exclusion key with no matching file is stale; one with a file is honest."""
+    (tmp_path / "Dockerfile-base").write_text("FROM scratch\n")
+    # Only Dockerfile-base exists; Dockerfile-base-gpu does not.
+    stale = preflight.stale_template_exclusions(tmp_path)
+    assert "Dockerfile-base-gpu" in stale
+    assert "Dockerfile-base" not in stale
+
+
+def test_stale_template_exclusions_on_the_real_directory_is_empty():
+    """Every key in NON_SERVICE_TEMPLATES must name an actual file on disk."""
+    stale = preflight.stale_template_exclusions()
+    assert not stale, (
+        f"NON_SERVICE_TEMPLATES contains stale entries (no matching file): "
+        + ", ".join(sorted(stale))
+    )
+
+
+def test_service_templates_has_15_of_19_and_excluded_names_match_the_declaration():
+    """service_templates() returns 15 of the 19 Dockerfile* files; the 4 excluded names
+    are exactly the keys of NON_SERVICE_TEMPLATES."""
+    all_dockerfiles = sorted(preflight.TEMPLATE_DIR.glob("Dockerfile*"))
+    services = preflight.service_templates()
+    assert (
+        len(all_dockerfiles) == 19
+    ), f"expected 19 Dockerfile* files, found {len(all_dockerfiles)}: " + ", ".join(
+        p.name for p in all_dockerfiles
+    )
+    assert (
+        len(services) == 15
+    ), f"expected 15 service templates, got {len(services)}: " + ", ".join(
+        p.name for p in services
+    )
+    excluded = {p.name for p in all_dockerfiles} - {p.name for p in services}
+    assert excluded == set(preflight.NON_SERVICE_TEMPLATES.keys()), (
+        f"excluded names {sorted(excluded)!r} do not match "
+        f"NON_SERVICE_TEMPLATES keys {sorted(preflight.NON_SERVICE_TEMPLATES.keys())!r}"
+    )
+
+
+# --- Service templates without a base reference (tasks.md 1.2) ---------------------------
+
+_PINNED_FROM = (
+    "FROM ghcr.io/fasrc/a2rchi-python-base"
+    "@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"
+)
+_THIRD_PARTY_FROM = "FROM docker.io/library/python:3.11\n"
+
+
+def test_templates_missing_base_reference_reports_replaced_line(tmp_path):
+    """A template whose FROM names a third-party image is reported; a correctly pinned
+    one is not."""
+    (tmp_path / "Dockerfile-service-a").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-service-b").write_text(_THIRD_PARTY_FROM)
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert len(missing) == 1
+    assert (
+        missing[0] == tmp_path / "Dockerfile-service-b"
+    ), f"expected Dockerfile-service-b to be reported, got {missing}"
+
+
+def test_templates_missing_base_reference_reports_deleted_line(tmp_path):
+    """A template with no FROM line at all (base removed, not replaced) is also reported."""
+    (tmp_path / "Dockerfile-service-a").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-service-b").write_text("RUN echo hello\n")
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert len(missing) == 1
+    assert (
+        missing[0] == tmp_path / "Dockerfile-service-b"
+    ), f"expected Dockerfile-service-b to be reported, got {missing}"
+
+
+def test_templates_missing_base_reference_on_real_directory_is_empty():
+    """Every service template must reference an a2rchi-*-base image."""
+    missing = preflight.templates_missing_base_reference()
+    assert (
+        not missing
+    ), "Service templates without an a2rchi-*-base FROM reference: " + ", ".join(
+        str(p) for p in missing
+    )
+
+
+# --- Deploy preflight: refusing an uncoverable service template (tasks.md 3.1) ----------
+
+
+def test_required_base_images_refuses_and_names_a_template_with_no_base_reference(
+    tmp_path,
+):
+    """A service template carrying no a2rchi-*-base FROM line causes required_base_images
+    to refuse; the refusal names the template so the next reader has the diagnosis."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-broken").write_text("FROM docker.io/library/python:3.11\n")
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.required_base_images(
+            gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+        )
+
+    assert str(tmp_path / "Dockerfile-broken") in str(exc_info.value), (
+        "exception message must name the uncoverable template; "
+        f"got: {exc_info.value}"
+    )
+
+
+def test_required_base_images_returns_unchanged_references_when_all_templates_covered(
+    tmp_path,
+):
+    """A directory where every service template carries an a2rchi-*-base reference returns
+    exactly the references it returned before the uncoverable-template guard — a correct
+    tree's deploy behavior is provably unchanged."""
+    python_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    pytorch_ref = "ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "b" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {python_ref}\nRUN pip install .\n")
+    (tmp_path / "Dockerfile-grader").write_text(
+        f"FROM {pytorch_ref}\nRUN pip install .\n"
+    )
+
+    refs = preflight.required_base_images(
+        gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+    )
+    assert refs == [python_ref]
+
+    refs_gpu = preflight.required_base_images(
+        gpu_ids="all", grader_enabled=True, template_dir=tmp_path
+    )
+    assert refs_gpu == [python_ref, pytorch_ref]
+
+
+# --- The deploy path itself refuses an uncoverable service template (fasrc/archi#381) ----
+
+
+def test_enforce_base_images_refuses_an_uncoverable_service_template(tmp_path):
+    """`enforce_base_images` is the entry point `archi create` calls, so the refusal has to
+    fire there and not only in `required_base_images`, which no production path calls.
+
+    The fixture is the case that hides the fault: `Dockerfile-chat` supplies the one
+    reference this deployment requires, so `base_reference` resolves it and the broken
+    template is masked. Before this guard ran here, the preflight returned AVAILABLE and
+    `create --force` went on to `remove_existing_deployment()` before failing in the build --
+    the ordering `cli_main.py:283-291` exists to prevent.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-broken").write_text(_THIRD_PARTY_FROM)
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert str(tmp_path / "Dockerfile-broken") in str(exc_info.value), (
+        "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
+    )
+    assert probe.pulled == [], (
+        "the refusal must come before any image work, so it also comes before the "
+        f"--force teardown; probe pulled {probe.pulled}"
+    )
+
+
+def test_enforce_base_images_refuses_an_uncoverable_template_on_a_dry_run_too(tmp_path):
+    """A dry run reporting nothing wrong about an uncoverable template is the same lie."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-broken").write_text(_THIRD_PARTY_FROM)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(
+            _Plan(), probe=FakeProbe(), template_dir=tmp_path, dry=True
+        )
+
+    assert str(tmp_path / "Dockerfile-broken") in str(exc_info.value), (
+        "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
+    )
