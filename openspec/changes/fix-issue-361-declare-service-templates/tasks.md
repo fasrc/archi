@@ -39,7 +39,7 @@ Dockerfile templates themselves. The 19 / 15 / 4 split is already correct.
   `Dockerfile*` files, and that the 4 excluded names are exactly the keys of
   `NON_SERVICE_TEMPLATES`.
 
-- [ ] 1.2 **Fail on a set member that names no `a2rchi-*-base`, and name the file.**
+- [x] 1.2 **Fail on a set member that names no `a2rchi-*-base`, and name the file.**
   RED first, against a `tmp_path` fixture: build a directory holding one correctly pinned
   template plus one template whose `FROM` line is `docker.io/library/python:3.11`, and assert
   the new guard reports the second template's path. Deleting the base `FROM` line from a

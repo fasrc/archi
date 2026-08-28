@@ -106,6 +106,20 @@ def stale_template_exclusions(template_dir: Optional[Path] = None) -> List[str]:
     return [name for name in NON_SERVICE_TEMPLATES if not (directory / name).exists()]
 
 
+def templates_missing_base_reference(template_dir: Optional[Path] = None) -> List[Path]:
+    """Service templates that carry no ``FROM`` referencing an ``a2rchi-*-base`` image.
+
+    A non-empty return means a service template has either lost its base ``FROM`` line or
+    replaced it with a third-party image.  The deploy preflight cannot cover these templates,
+    so the caller should treat a non-empty list as a refusal to proceed.
+    """
+    return [
+        template
+        for template in service_templates(template_dir)
+        if not _FROM_BASE_RE.search(template.read_text())
+    ]
+
+
 def base_reference(image: str, template_dir: Optional[Path] = None) -> Optional[str]:
     """The pinned reference the templates declare for ``image``.
 

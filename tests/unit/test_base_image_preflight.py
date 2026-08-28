@@ -1261,3 +1261,45 @@ def test_service_templates_has_15_of_19_and_excluded_names_match_the_declaration
         f"excluded names {sorted(excluded)!r} do not match "
         f"NON_SERVICE_TEMPLATES keys {sorted(preflight.NON_SERVICE_TEMPLATES.keys())!r}"
     )
+
+
+# --- Service templates without a base reference (tasks.md 1.2) ---------------------------
+
+_PINNED_FROM = (
+    "FROM ghcr.io/fasrc/a2rchi-python-base"
+    "@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"
+)
+_THIRD_PARTY_FROM = "FROM docker.io/library/python:3.11\n"
+
+
+def test_templates_missing_base_reference_reports_replaced_line(tmp_path):
+    """A template whose FROM names a third-party image is reported; a correctly pinned
+    one is not."""
+    (tmp_path / "Dockerfile-service-a").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-service-b").write_text(_THIRD_PARTY_FROM)
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert len(missing) == 1
+    assert (
+        missing[0] == tmp_path / "Dockerfile-service-b"
+    ), f"expected Dockerfile-service-b to be reported, got {missing}"
+
+
+def test_templates_missing_base_reference_reports_deleted_line(tmp_path):
+    """A template with no FROM line at all (base removed, not replaced) is also reported."""
+    (tmp_path / "Dockerfile-service-a").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-service-b").write_text("RUN echo hello\n")
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert len(missing) == 1
+    assert (
+        missing[0] == tmp_path / "Dockerfile-service-b"
+    ), f"expected Dockerfile-service-b to be reported, got {missing}"
+
+
+def test_templates_missing_base_reference_on_real_directory_is_empty():
+    """Every service template must reference an a2rchi-*-base image."""
+    missing = preflight.templates_missing_base_reference()
+    assert (
+        not missing
+    ), "Service templates without an a2rchi-*-base FROM reference: " + ", ".join(
+        str(p) for p in missing
+    )
