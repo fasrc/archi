@@ -146,6 +146,29 @@ class TestRagasDialectImport:
         with pytest.raises(ValueError, match="answer must be a non-empty string"):
             _import_bank(catalog, [row])
 
+    def test_duplicate_keys_pass_through_to_the_strict_pipeline(self, tmp_path):
+        # The adapter refuses to parse a duplicate-keyed upload (json.loads
+        # would silently collapse the duplicates); the blob falls through
+        # unchanged so the strict ijson pipeline reports it.
+        catalog = EvaluationCatalog(tmp_path)
+        blob = b'[{"user_input": "Q", "user_input": "Q2", "reference": "A"}]'
+
+        with pytest.raises(ValueError, match="duplicate key"):
+            catalog.import_dataset("Bank", "bank.json", blob)
+
+    def test_non_finite_numbers_pass_through_to_the_strict_pipeline(self, tmp_path):
+        catalog = EvaluationCatalog(tmp_path)
+        blob = b'[{"user_input": "Q", "reference": "A", "score": NaN}]'
+
+        with pytest.raises(ValueError, match="invalid JSON dataset"):
+            catalog.import_dataset("Bank", "bank.json", blob)
+
+    def test_non_dict_row_in_a_dialect_bank_fails_loudly(self, tmp_path):
+        catalog = EvaluationCatalog(tmp_path)
+
+        with pytest.raises(ValueError, match="must be an object"):
+            _import_bank(catalog, [BANK_ROW, "not a row"])
+
 
 class _DeterministicExtractor:
     def extract_gold(self, question, answer):
@@ -199,8 +222,7 @@ class TestTheRealBank:
             metadata["id"], "builtin", _DeterministicExtractor()
         )
         reviewed = [
-            {"item_id": row["item_id"], "atoms": row["atoms"]}
-            for row in draft["items"]
+            {"item_id": row["item_id"], "atoms": row["atoms"]} for row in draft["items"]
         ]
         child = catalog.save_reviewed_dataset(draft["id"], "Anchors child", reviewed)
 
