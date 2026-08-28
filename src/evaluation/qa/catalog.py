@@ -8,6 +8,7 @@ import sqlite3
 import tempfile
 import threading
 import uuid
+from copy import deepcopy
 from enum import Enum
 from itertools import zip_longest
 from pathlib import Path
@@ -222,6 +223,9 @@ def _dataset_row(
         row["expected_atoms"] = list(atoms)
     if item.oracle is not None:
         row["oracle"] = item.oracle.to_dict()
+    if item.extra:
+        for name, extra_value in item.extra.items():
+            row[name] = deepcopy(extra_value)
     return row
 
 

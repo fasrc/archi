@@ -7,10 +7,20 @@ that dialect into the native row schema before validation — the row parser
 itself keeps exactly one name per concept.
 """
 import json
+import os
+from pathlib import Path
 
 import pytest
 
 from src.evaluation.qa.catalog import EvaluationCatalog
+
+# The tracked 5-row anchor bank ships with the repo; the 105-row FASRC bank
+# lives in the separate archi-config checkout (config/), which deployments
+# have but CI does not — its acceptance test skips when the file is absent.
+ANCHOR_BANK = Path("examples/benchmarking/anchor_questions.json")
+FASRC_BANK = Path(
+    os.environ.get("FASRC_RAGAS_BANK", "config/benchmarking/fasrc_ragas_queries.json")
+)
 
 BANK_ROW = {
     "user_input": "How do I request a GPU on Cannon?",
@@ -135,3 +145,69 @@ class TestRagasDialectImport:
 
         with pytest.raises(ValueError, match="answer must be a non-empty string"):
             _import_bank(catalog, [row])
+
+
+class _DeterministicExtractor:
+    def extract_gold(self, question, answer):
+        return {"atoms": [{"id": "required", "text": answer, "required": True}]}
+
+
+def _import_bank_file(catalog, path, name):
+    return catalog.import_dataset(name, path.name, path.read_bytes())
+
+
+def _assert_bank_imports_whole(catalog, path, name, expected_rows):
+    metadata, created = _import_bank_file(catalog, path, name)
+    assert created is True
+    assert metadata["item_count"] == expected_rows
+    assert metadata["import_dialect"] == "ragas"
+    items = catalog.dataset_items(metadata["id"])
+    assert len(items) == expected_rows
+    for item in items:
+        assert item.question.strip()
+        assert isinstance(item.answer, str) and item.answer.strip()
+        assert item.extra is not None and "sources" in item.extra
+    return metadata
+
+
+class TestTheRealBank:
+    def test_anchor_bank_imports_end_to_end(self, tmp_path):
+        _assert_bank_imports_whole(
+            EvaluationCatalog(tmp_path), ANCHOR_BANK, "Anchors", 5
+        )
+
+    def test_fasrc_bank_imports_end_to_end(self, tmp_path):
+        # The 105-row curated bank; present on deployments (archi-config
+        # checkout), absent in CI. This is the acceptance test for the whole
+        # change — before the adapter it failed with the unknown-field error.
+        if not FASRC_BANK.is_file():
+            pytest.skip(f"{FASRC_BANK} not present (archi-config checkout only)")
+        _assert_bank_imports_whole(
+            EvaluationCatalog(tmp_path), FASRC_BANK, "FASRC golden set", 105
+        )
+
+    def test_saved_child_of_the_bank_still_carries_sources(self, tmp_path):
+        # The console writes datasets as well as reading them: approving
+        # generated atoms publishes an immutable child rebuilt from the item
+        # model. This is the failure the whole change exists to prevent — a
+        # child that silently lost `sources` is a bank the benchmark can no
+        # longer use.
+        catalog = EvaluationCatalog(tmp_path)
+        metadata, _ = _import_bank_file(catalog, ANCHOR_BANK, "Anchors")
+
+        draft = catalog.create_atom_draft(
+            metadata["id"], "builtin", _DeterministicExtractor()
+        )
+        reviewed = [
+            {"item_id": row["item_id"], "atoms": row["atoms"]}
+            for row in draft["items"]
+        ]
+        child = catalog.save_reviewed_dataset(draft["id"], "Anchors child", reviewed)
+
+        child_rows = json.loads(catalog.dataset_path(child["id"]).read_text())
+        assert len(child_rows) == 5
+        for row in child_rows:
+            # Carried, with its original value — [] on a refusal probe is a
+            # value, not an omission.
+            assert "sources" in row, row
+            assert row["expected_atoms"]

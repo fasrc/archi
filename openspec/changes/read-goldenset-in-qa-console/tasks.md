@@ -108,12 +108,22 @@ Standing notes:
 
 ## 8. The real bank, end to end
 
-- [ ] Test: import the actual 105-row `config/benchmarking/fasrc_ragas_queries.json`
+- [x] Test: import the actual 105-row `config/benchmarking/fasrc_ragas_queries.json`
       and the 5-row `examples/benchmarking/anchor_questions.json` from disk; assert
       all 110 rows import, every row has a non-empty question and answer, and
       `sources` is carried on every row. This is the acceptance test for the whole
       change — it fails today with the unknown-field error.
-- [ ] Gate, commit.
+      (Design-meets-code note: `config/` is the archi-config checkout, absent in CI
+      and in worktrees — so the 5-row anchor test is unconditional, the 105-row test
+      skips when the file is missing (`FASRC_RAGAS_BANK` overrides the path), and it
+      was run against the real file on this host: 105/105 imported, `sources`
+      carried. Also added here: the unit-level version of section 9's manual step —
+      import the anchor bank, generate atoms, save the reviewed child, assert the
+      child still carries `sources`. It failed red on `_dataset_row`, the second
+      emitter tasks §1 did not enumerate: legacy parents publish children through
+      `_dataset_row`, not `dataset_item_to_dict`, and the imported bank IS a legacy
+      parent. Fixed in `catalog.py` within the change's stated file scope.)
+- [x] Gate, commit.
 
 ## 9. Verify and open the PR
 
