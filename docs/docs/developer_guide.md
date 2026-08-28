@@ -537,9 +537,10 @@ would otherwise pass without reading anything. It shares the rewriter's `FROM` m
 base image map, so it cannot disagree with the rewriter about what a base line is.
 
 Its bound is worth knowing: it reads the references templates **declare**. A template that
-declares no base image at all is invisible to it, as it is to the rewriter, to
-`required_base_images`, and to `test_service_templates_pin_one_explicit_base_tag`. Closing
-that needs a declared set of service templates, tracked as issue #361.
+declares no base image at all is invisible to it, as it is to the rewriter. In-tree that gap
+is closed: `service_templates()` in `src/cli/managers/base_image_preflight.py` declares the
+service set, the deploy preflight refuses a member that names no `a2rchi-*-base` image, and
+`test_service_templates_pin_one_explicit_base_tag` fails naming the file.
 
 Two CI jobs call the script: `pr-preview.yml` points the templates at the PR's base-image
 build, and `test-and-build-tag.yml` points them at the release build. The release workflow

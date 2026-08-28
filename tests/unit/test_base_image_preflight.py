@@ -1005,7 +1005,12 @@ def test_enforce_refuses_when_a_required_base_cannot_be_resolved(tmp_path):
     working deployment having proved nothing at all. That is precisely the assumption-passing
     this module forbids.
     """
-    (tmp_path / "Dockerfile-chat").write_text("FROM docker.io/library/python:3.11\n")
+    # Names the pytorch base, not the python base this deployment requires: the template is
+    # coverable, so the uncoverable-template guard passes and the unresolved-reference
+    # refusal is what gets tested. A third-party FROM would trip the earlier guard instead.
+    (tmp_path / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4\n"
+    )
     probe = FakeProbe()
 
     with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
@@ -1030,12 +1035,18 @@ def test_enforce_refuses_when_only_the_pytorch_base_is_missing(tmp_path):
 
 
 def test_enforce_refuses_a_missing_reference_on_a_dry_run_too(tmp_path):
-    (tmp_path / "Dockerfile-chat").write_text("FROM docker.io/library/python:3.11\n")
+    (tmp_path / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4\n"
+    )
 
-    with pytest.raises(preflight.BaseImagePreflightError):
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
         preflight.enforce_base_images(
             _Plan(), probe=FakeProbe(), template_dir=tmp_path, dry=True
         )
+
+    # Names the image, so this cannot pass on the uncoverable-template refusal instead --
+    # which is what a third-party `FROM` in the fixture would have made it do, silently.
+    assert preflight.PYTHON_BASE in str(excinfo.value)
 
 
 def test_a_grader_lookup_failure_is_not_silently_treated_as_disabled():
@@ -1354,3 +1365,47 @@ def test_required_base_images_returns_unchanged_references_when_all_templates_co
         gpu_ids="all", grader_enabled=True, template_dir=tmp_path
     )
     assert refs_gpu == [python_ref, pytorch_ref]
+
+
+# --- The deploy path itself refuses an uncoverable service template (fasrc/archi#381) ----
+
+
+def test_enforce_base_images_refuses_an_uncoverable_service_template(tmp_path):
+    """`enforce_base_images` is the entry point `archi create` calls, so the refusal has to
+    fire there and not only in `required_base_images`, which no production path calls.
+
+    The fixture is the case that hides the fault: `Dockerfile-chat` supplies the one
+    reference this deployment requires, so `base_reference` resolves it and the broken
+    template is masked. Before this guard ran here, the preflight returned AVAILABLE and
+    `create --force` went on to `remove_existing_deployment()` before failing in the build --
+    the ordering `cli_main.py:283-291` exists to prevent.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-broken").write_text(_THIRD_PARTY_FROM)
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert str(tmp_path / "Dockerfile-broken") in str(exc_info.value), (
+        "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
+    )
+    assert probe.pulled == [], (
+        "the refusal must come before any image work, so it also comes before the "
+        f"--force teardown; probe pulled {probe.pulled}"
+    )
+
+
+def test_enforce_base_images_refuses_an_uncoverable_template_on_a_dry_run_too(tmp_path):
+    """A dry run reporting nothing wrong about an uncoverable template is the same lie."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-broken").write_text(_THIRD_PARTY_FROM)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(
+            _Plan(), probe=FakeProbe(), template_dir=tmp_path, dry=True
+        )
+
+    assert str(tmp_path / "Dockerfile-broken") in str(exc_info.value), (
+        "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
+    )

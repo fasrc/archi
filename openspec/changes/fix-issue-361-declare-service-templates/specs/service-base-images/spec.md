@@ -94,8 +94,13 @@ that a base image is usable, refuses, or says out loud that it could not tell, a
 pass silently on an assumption. A service template the preflight cannot place is such an
 assumption — the deploy proceeds as though that service's base were checked.
 
+"The deploy preflight" means `enforce_base_images` — the one function `archi create` calls
+(`cli_main.py:282`). `required_base_images` is a helper with no production caller, so a
+refusal placed only there does not satisfy this requirement (fasrc/archi#381). Both call the
+shared `_refuse_uncoverable_templates`, so the message and the rule exist once.
+
 The precise failure is worth stating, because it is not that the preflight returns nothing.
-`required_base_images` (`:92`) resolves each of the two known base images through
+Both entry points resolve each of the two known base images through
 `base_reference` (`:77`), which returns the first matching reference found in **any**
 template. With one service template moved onto a third-party base, the other 14 still supply
 both references. The preflight therefore returns a complete-looking answer that covers one

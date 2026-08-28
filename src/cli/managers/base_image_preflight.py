@@ -155,13 +155,7 @@ def required_base_images(
     FROM reference. The preflight cannot cover such a template, and passing silently would
     violate the governing invariant: no path may pass silently on an assumption.
     """
-    uncoverable = templates_missing_base_reference(template_dir)
-    if uncoverable:
-        raise BaseImagePreflightError(
-            "Base image check failed: the following service templates declare no "
-            "a2rchi-*-base FROM reference, so the preflight cannot cover them:\n"
-            + "\n".join(f"  {p}" for p in uncoverable)
-        )
+    _refuse_uncoverable_templates(template_dir)
 
     references = []
     for image in required_base_image_names(gpu_ids, grader_enabled):
@@ -524,6 +518,22 @@ class BaseImagePreflightError(Exception):
     """Raised when a base image cannot be established, before anything is destroyed."""
 
 
+def _refuse_uncoverable_templates(template_dir: Optional[Path] = None) -> None:
+    """Refuse when a service template declares no ``a2rchi-*-base`` FROM reference.
+
+    Shared by both entry points deliberately. The refusal first landed only in
+    ``required_base_images``, which has no production caller, so the deploy path went on
+    silently (fasrc/archi#381) -- the fail-open this module exists to remove.
+    """
+    uncoverable = templates_missing_base_reference(template_dir)
+    if uncoverable:
+        raise BaseImagePreflightError(
+            "Base image check failed: the following service templates declare no "
+            "a2rchi-*-base FROM reference, so the preflight cannot cover them:\n"
+            + "\n".join(f"  {p}" for p in uncoverable)
+        )
+
+
 def enforce_base_images(
     compose_config,
     *,
@@ -556,6 +566,12 @@ def enforce_base_images(
         # dict-backed plan that lost a key, and reading that as "grader disabled" is the
         # fail-open this whole module exists to remove.
         grader_enabled = False
+
+    # Before the derivation below, not after: `base_reference` returns the first match in
+    # *any* template, so a healthy template masks a broken one from this point on. Before
+    # `run_preflight` too, and therefore before `remove_existing_deployment()`
+    # (`cli_main.py:294`) -- the ordering contract from #287.
+    _refuse_uncoverable_templates(template_dir)
 
     names = required_base_image_names(
         getattr(compose_config, "gpu_ids", None), grader_enabled

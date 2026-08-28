@@ -129,3 +129,19 @@ Dockerfile templates themselves. The 19 / 15 / 4 split is already correct.
   the literal list was rejected), the 19 / 15 / 4 counts, the result of the task 3.2 call-site
   check, and the note that `scripts/dev/update_service_base_images.py` was deliberately left
   unwired. No `Co-Authored-By` trailers. Do not merge.
+
+- [x] 4.3 **Review response: put the refusal on the path `archi create` actually takes.**
+  Five review lenses (Greptile P1, Codex P1, and this change's own three-lens verification
+  pass) found the same defect in the head opened as PR #380: the refusal from task 3.1 lived
+  only in `required_base_images`, which has **zero production callers**, while
+  `cli_main.py:282` calls `enforce_base_images`. The requirement at
+  `specs/service-base-images/spec.md:90` was therefore unmet by the code that claimed it.
+  Filed as #381 and fixed here, RED first:
+  `_refuse_uncoverable_templates` factored out of `required_base_images` and called from
+  `enforce_base_images` **before** `required_base_image_names` — after that point the healthy
+  templates have already masked the broken one, and it must also precede `run_preflight` and
+  so `remove_existing_deployment()`.
+  Two fixtures that used a third-party `FROM` to reach the *unresolved-reference* refusal now
+  name the pytorch base instead: they had become uncoverable templates themselves and were
+  tripping the earlier guard. One of them was asserting only the exception type, so it passed
+  for the wrong reason — it now asserts the image name.
