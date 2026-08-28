@@ -329,6 +329,24 @@ class TestRagasDialectImport:
             "gpu-hard",
         ]
 
+    def test_dialect_normalization_streams_rows(self):
+        # The adapter must never materialize a detected bank: rows are
+        # normalized one at a time. Proof of laziness — the first row of a
+        # document with a malformed tail is yielded before the tail is ever
+        # parsed, which a whole-document json.loads cannot do.
+        from src.evaluation.qa.catalog import _iter_json_array_rows
+
+        rows = _iter_json_array_rows(b'[{"user_input": "Q"}, {"broken":')
+
+        assert next(rows) == {"user_input": "Q"}
+
+    def test_malformed_tail_in_a_dialect_bank_fails_loudly(self, tmp_path):
+        catalog = EvaluationCatalog(tmp_path)
+        blob = b'[{"user_input": "Q", "reference": "A"}, {"broken":'
+
+        with pytest.raises(ValueError, match="invalid JSON"):
+            catalog.import_dataset("Bank", "bank.json", blob)
+
     def test_duplicate_keys_pass_through_to_the_strict_pipeline(self, tmp_path):
         # The adapter refuses to parse a duplicate-keyed upload (json.loads
         # would silently collapse the duplicates); the blob falls through

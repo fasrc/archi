@@ -13,11 +13,12 @@ from copy import deepcopy
 from enum import Enum
 from itertools import zip_longest
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 
 import yaml
 from ijson import JSONError
 from ijson.backends import python as ijson_backend
+from ijson.common import ObjectBuilder
 
 from .artifacts import (
     AtomicJsonlWriter,
@@ -143,25 +144,56 @@ def _normalize_newlines(value: str) -> str:
     return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _strict_import_json(blob: bytes) -> Any:
-    """Parse upload bytes, rejecting duplicate keys and non-finite numbers."""
+def _canonical_row_bytes(row: Any) -> bytes:
+    """One row in the canonical serialization; the normalized blob is the
+    ``[`` + ``,``-joined rows + ``]`` — byte-identical to serializing the
+    whole list, without ever holding the whole list."""
+    return json.dumps(
+        row, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
-    def reject_constant(value: str) -> None:
-        raise ValueError(f"non-finite number {value}")
 
-    def reject_duplicates(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
-        value: Dict[str, Any] = {}
-        for key, item in pairs:
-            if key in value:
-                raise ValueError(f"duplicate key '{key}'")
-            value[key] = item
-        return value
+def _iter_json_array_rows(blob: bytes) -> Iterator[Any]:
+    """Yield the top-level array rows of ``blob`` one at a time.
 
-    return json.loads(
-        blob.decode("utf-8"),
-        object_pairs_hook=reject_duplicates,
-        parse_constant=reject_constant,
-    )
+    The bounded counterpart of ``json.loads`` for detected dialect uploads:
+    peak memory is one row, not the whole document. Duplicate object keys and
+    malformed JSON raise ``ValueError`` with the same wording the strict
+    import pipeline uses for the same defects.
+    """
+    builder: Optional[ObjectBuilder] = None
+    depth = 0
+    object_keys: List[Set[str]] = []
+    try:
+        for prefix, event, value in ijson_backend.parse(
+            io.BytesIO(blob), use_float=True
+        ):
+            if builder is None:
+                if prefix != "item":
+                    continue
+                if event not in {"start_map", "start_array"}:
+                    yield value
+                    continue
+                builder = ObjectBuilder()
+                depth = 1
+            elif event in {"start_map", "start_array"}:
+                depth += 1
+            if event == "start_map":
+                object_keys.append(set())
+            elif event == "map_key":
+                if value in object_keys[-1]:
+                    raise ValueError(f"dataset JSON contains duplicate key '{value}'")
+                object_keys[-1].add(value)
+            builder.event(event, value)
+            if event == "end_map":
+                object_keys.pop()
+            if event in {"end_map", "end_array"}:
+                depth -= 1
+                if depth == 0:
+                    yield builder.value
+                    builder = None
+    except JSONError as exc:
+        raise ValueError(f"invalid JSON dataset: {exc}") from exc
 
 
 def _json_array_carries_user_input(blob: bytes) -> bool:
@@ -201,17 +233,16 @@ def _normalize_import_dialect(
     """
     if source_format != "json" or not _json_array_carries_user_input(blob):
         return blob, None
-    try:
-        rows = _strict_import_json(blob)
-    except (UnicodeDecodeError, ValueError):
-        return blob, None
     carried: set = set()
-    normalized: List[Any] = []
+    pieces: List[bytes] = []
     synthesized_ids: Dict[str, int] = {}
-    for index, row in enumerate(rows, 1):
+    for index, row in enumerate(_iter_json_array_rows(blob), 1):
         if not isinstance(row, dict):
-            # Not mappable; keep it so row validation rejects it loudly.
-            normalized.append(row)
+            # Not mappable, but still validated (a bare string could carry a
+            # surrogate the encode below would crash on); row validation then
+            # rejects it loudly.
+            validate_json_value(row, f"dataset row {index}")
+            pieces.append(_canonical_row_bytes(row))
             continue
         mapped = dict(row)
         for dialect_key, native_key in _RAGAS_TO_NATIVE.items():
@@ -256,15 +287,12 @@ def _normalize_import_dialect(
                 )
             mapped["id"] = derived
         carried.update(set(mapped) - V1_ITEM_FIELDS)
-        normalized.append(mapped)
+        pieces.append(_canonical_row_bytes(mapped))
     report = {
         "import_dialect": RAGAS_IMPORT_DIALECT,
         "carried_fields": sorted(carried),
     }
-    canonical = json.dumps(
-        normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
-    return canonical.encode("utf-8"), report
+    return b"[" + b",".join(pieces) + b"]", report
 
 
 def _dataset_row(
