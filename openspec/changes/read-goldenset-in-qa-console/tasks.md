@@ -65,14 +65,14 @@ Standing notes:
 
 ## 4. RED: near-miss field names are refused
 
-- [ ] Test: a row carrying `expectd_atoms` is rejected, and the error names both the
+- [x] Test: a row carrying `expectd_atoms` is rejected, and the error names both the
       offending key and `expected_atoms`. Name the test for the reason — a silently
       dropped `expected_atoms` means the extractor invents the obligations and the
       run still reports success.
-- [ ] Test: `sources`, `notes`, `status`, `anchor_type`, `source_match_field` are all
+- [x] Test: `sources`, `notes`, `status`, `anchor_type`, `source_match_field` are all
       carried, i.e. the rule refuses typos without refusing the real bank.
-- [ ] Implement the edit-distance-1 check against the known field names.
-- [ ] Gate, commit.
+- [x] Implement the edit-distance-1 check against the known field names.
+- [x] Gate, commit.
 
 ## 5. RED: known fields keep their contract
 

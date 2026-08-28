@@ -489,11 +489,41 @@ class DatasetVersionResolver:
         raise ValueError("dataset container has no supported schema version")
 
 
+def _within_edit_distance_one(candidate: str, target: str) -> bool:
+    length_delta = len(candidate) - len(target)
+    if abs(length_delta) > 1:
+        return False
+    if length_delta == 0:
+        return sum(a != b for a, b in zip(candidate, target)) <= 1
+    shorter, longer = sorted((candidate, target), key=len)
+    prefix = 0
+    while prefix < len(shorter) and shorter[prefix] == longer[prefix]:
+        prefix += 1
+    return shorter[prefix:] == longer[prefix + 1 :]
+
+
 def _carry_row_extras(
     raw: Dict[str, Any], allowed: set, context: str
 ) -> Optional[Dict[str, Any]]:
-    """Split unknown row keys into a carried extras mapping."""
-    extras = {key: raw[key] for key in raw if key not in allowed}
+    """Split unknown row keys into a carried extras mapping.
+
+    A key within edit distance 1 of a known field is a probable typo, and for
+    `expected_atoms` a silently absent field hands atom authorship to the
+    extractor model — so near-misses are refused rather than carried.
+    """
+    extras: Dict[str, Any] = {}
+    for key in raw:
+        if key in allowed:
+            continue
+        near_misses = sorted(
+            field for field in allowed if _within_edit_distance_one(key, field)
+        )
+        if near_misses:
+            raise ValueError(
+                f"{context} has unknown field '{key}' "
+                f"(did you mean '{near_misses[0]}'?)"
+            )
+        extras[key] = raw[key]
     return extras or None
 
 

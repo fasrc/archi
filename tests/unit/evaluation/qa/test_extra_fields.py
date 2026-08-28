@@ -8,6 +8,8 @@ dataset, hashed into the canonical serialization, and inert everywhere else.
 """
 import json
 
+import pytest
+
 from src.evaluation.qa.catalog import EvaluationCatalog
 from src.evaluation.qa.dataset import (
     DATASET_V2_SCHEMA_VERSION,
@@ -138,6 +140,52 @@ class TestExtraFieldRoundTrip:
 
         assert item.extra is None
         assert dataset_item_to_dict(item) == row
+
+
+class TestNearMissKeysAreRefused:
+    def test_misspelled_expected_atoms_hands_authorship_to_the_extractor(
+        self, tmp_path
+    ):
+        # `expectd_atoms` silently carried would mean expected_atoms is absent,
+        # and absent means "invoke the atom extractor": the reviewer's approved
+        # obligations would be swapped for LLM-inferred ones on a run that
+        # reports success. Near-miss keys are refused, naming the likely intent.
+        row = {
+            "id": "q1",
+            "question": "Q",
+            "answer": "A",
+            "time_sensitive": False,
+            "expectd_atoms": [{"id": "a", "text": "A", "required": True}],
+        }
+        path = tmp_path / "dataset.json"
+        _write_v1(path, [row])
+
+        with pytest.raises(ValueError, match=r"expectd_atoms.*expected_atoms"):
+            list(DatasetGateway().read(path))
+
+    def test_the_real_bank_extras_are_not_near_misses(self, tmp_path):
+        # The rule must refuse typos without refusing the bank: every extra the
+        # golden set actually carries is far from every known field name.
+        bank_extras = {
+            "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs"],
+            "notes": "operator note",
+            "status": "draft",
+            "anchor_type": "easy_retrieve",
+            "source_match_field": ["url"],
+        }
+        row = {
+            "id": "q1",
+            "question": "Q",
+            "answer": "A",
+            "time_sensitive": False,
+            **bank_extras,
+        }
+        path = tmp_path / "dataset.json"
+        _write_v1(path, [row])
+
+        (item,) = list(DatasetGateway().read(path))
+
+        assert item.extra == bank_extras
 
 
 class _DeterministicExtractor:
