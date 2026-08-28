@@ -79,6 +79,9 @@ invariant" below). Such issues are neither gating nor parked; do not park them.
   Selected drivers: benchmark integrity, retrieval quality, agent robustness (folded
   into production readiness after classification), production hardening.
   Explicitly **not** drivers: headless `/v1` external frontends, incremental re-ingest.
+  One amendment (2026-08-28): the WordPress chat window
+  ([#384](https://github.com/fasrc/archi/issues/384)) enters `v2026.10.0` by operator
+  decision — the single exception to the frontends line.
 - **Gate bar — broken-without-it:** an issue is in a milestone only if the release's
   feature is broken/wrong/dishonest without it, evidenced by a file:line, a measured
   number, or a repro from the issue itself.
@@ -123,12 +126,15 @@ any "answers improved" claim.
 
 ## v2026.10.0 — Retrieval quality (feature: measurably better answers)
 
-Target: end of October. Depends on the v2026.09.0 rig.
+Target: end of October. Depends on the v2026.09.0 rig. Amended 2026-08-28: the release
+also delivers those answers where users already are — a WordPress chat window backed by
+`/v1` ([#384](https://github.com/fasrc/archi/issues/384)).
 
 | Gate | Why it gates | Size |
 |---|---|---|
 | [#216](https://github.com/fasrc/archi/issues/216) embedding A/B (MiniLM vs gte/nomic) | The feature itself. Measured defect: 68% of chunks (4,684/6,854) exceed MiniLM's 256-token window and are silently truncated today | L |
 | [#215](https://github.com/fasrc/archi/issues/215) GPU TEI embedding | Named enabler in #216: 40 min → ~1 min re-embeds make the A/B (and adopting a winner) feasible | M |
+| [#384](https://github.com/fasrc/archi/issues/384) WordPress chat window on the FASRC site via `/v1` | Enters by operator amendment (2026-08-28), not the broken-without-it bar. The fork's `/v1` already ships bearer-auth chat completions, and inline `[title](url)` citations arrive in the answer text itself via the committed citation-guidance default (`agent_spec.py`), so a markdown-rendering widget shows them (#245 removes `/v1`'s redundant appended source block). AI Engine's free tier ships the widget with a custom OpenAI-compatible connector, so the remaining work is evaluation, config, and ops. The rtCamp `universal-openai-connector` was scouted and is a provider adapter for the WordPress AI Client, not a chat window. **Constraint:** until #81 closes, the widget stays a page-limited pilot — bearer auth on, anonymous `/v1` access off, firewall scoped to the WordPress host; public default-on exposure rides `v2026.11.0` | M |
 
 Parked from this track: #130 (rerank already default-on with +19% RAGAS shipped;
 residual is below judge noise and awaits a human data-egress decision), #241 (the
@@ -165,7 +171,7 @@ classification, only one live robustness gate was left, too thin for its own rel
 | [#148](https://github.com/fasrc/archi/issues/148) | `goldenset-report.timer` active on the fasrc-dev host, firing 06:15 daily (verified via `systemctl --user list-timers`) |
 | [#63](https://github.com/fasrc/archi/issues/63) | Core deliverable shipped as `archi sources build` (PR #37, `cli_main.py:909`); the issue self-describes as superseded |
 
-## Parked — 52 issues, labeled `parked`
+## Parked — 51 issues, labeled `parked`
 
 Query: `gh issue list --repo fasrc/archi --label parked`. An issue leaves the parking
 lot by gating a future feature release, not by aging.
@@ -204,7 +210,6 @@ lot by gating a future feature release, not by aging.
 | #313 | `.gitignore` `*secrets*` masks `secrets_manager.py` from CI's black walk — gate hygiene; the drifted instance was fixed by #308, the structural hole gates no feature |
 | #314 | Dead model-name loop in `_get_model_based_secrets` — `get_models_configs()` returns a constant `[]`; latent trap, no wrong runtime behavior today |
 | #338 | Pin GitHub Actions references to commit SHAs — supply-chain hygiene across workflows; parked 2026-08-24, never rowed here |
-| #331 | Custom `evaluations.root` escapes the fixed compose mount — latent trap behind a knob no deployment sets; the default root deploys correctly, and it needs the console active (#320) |
 | #332 | pr-preview base-image detection diffs against `main` — CI-only: wasted preview minutes and a smoke that validates a throwaway `pr-<n>` tag; the release-workflow twin is #339, scheduled |
 | #344 | Provider-scoped `context_windows` keys — config-surface decision with won't-fix on the table; no deployment has two providers sharing a model id, and it is not a regression against pre-#262 |
 | #345 | A scheduled crawl un-deletes an operator's delete — the primary reading is undecided (transient-by-design vs defect); the narrow mid-crawl race is real under both but unmeasured |
@@ -314,6 +319,25 @@ file-overlap screen flagged all eight as candidates; reading the code cleared th
 is the screen working as designed — it narrows, it does not decide. **A defect being real
 is not the bar; the bar is whether that release's stated feature is broken, wrong, or
 dishonest without it.**
+
+**Tracker state (2026-08-28):** 17 milestone-assigned + 51 parked = 68 of 80 open
+issues accounted. The invariant below is **violated (✗): 12 issues are drifted**
+(#360, #361, #369, #371–#375, #378, #381–#383 — recent filings with triage labels
+only). This entry records the drift; it does not make those scheduling decisions,
+which are owed to the next triage pass and the operator. Milestone open counts
+1 / 4 / 3 / 9. Table repair: #331 closed 2026-08-27, so its parked row is pruned
+and the parked header count moves 52 → 51, so the table matches its own query.
+
+**One scheduled by amendment.** [#384](https://github.com/fasrc/archi/issues/384)
+(WordPress chat window) into `v2026.10.0` — an operator decision (Austin,
+2026-08-28), not a broken-without-it finding, recorded as the single exception to
+the Method section's "not drivers" line. Feasibility evidence is on the issue: the
+fork's `/v1` already ships bearer-auth chat completions, inline `[title](url)`
+citations arrive in the answer text via the committed citation-guidance default,
+and an off-the-shelf plugin (AI Engine free tier) draws the widget, so the work is
+evaluation, config, and ops rather than a build. Until #81 closes, the widget stays
+a page-limited, token-authed pilot (anonymous `/v1` access off); public default-on
+exposure rides `v2026.11.0`.
 
 **The invariant:** every open issue carries exactly one of {a milestone, the `parked`
 label, the `evidence-trial` label}, so
