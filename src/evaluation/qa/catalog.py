@@ -708,9 +708,7 @@ class EvaluationCatalog:
         ) as temporary:
             temporary_path = Path(temporary)
             source_path = temporary_path / f"source.{source_format}"
-            dialect_report = _normalize_import_dialect(
-                blob, source_format, source_path
-            )
+            dialect_report = _normalize_import_dialect(blob, source_format, source_path)
             digest = sha256_file(source_path)
 
             # Complete preflight validation is a separate bounded pass. Metadata
