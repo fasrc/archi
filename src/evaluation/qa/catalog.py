@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import sqlite3
@@ -15,6 +16,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import yaml
+from ijson import JSONError
+from ijson.backends import python as ijson_backend
 
 from .artifacts import (
     AtomicJsonlWriter,
@@ -154,6 +157,27 @@ def _strict_import_json(blob: bytes) -> Any:
     )
 
 
+def _json_array_carries_user_input(blob: bytes) -> bool:
+    """Stream-scan for the RAGAS dialect marker without materializing.
+
+    True only for a top-level JSON array with a row whose own key is
+    ``user_input``. Bails at the first token of any non-array document and
+    stops at the first match, so an ordinary native upload keeps the bounded
+    streaming behavior of the import pipeline.
+    """
+    try:
+        for prefix, event, value in ijson_backend.parse(
+            io.BytesIO(blob), use_float=True
+        ):
+            if prefix == "" and event != "start_array":
+                return False
+            if event == "map_key" and prefix == "item" and value == "user_input":
+                return True
+    except JSONError:
+        return False
+    return False
+
+
 def _normalize_import_dialect(
     blob: bytes, source_format: str
 ) -> Tuple[bytes, Optional[Dict[str, Any]]]:
@@ -168,15 +192,11 @@ def _normalize_import_dialect(
     the same dedupe hash). Anything that does not parse as a JSON array in the
     dialect passes through unchanged for the strict import pipeline to judge.
     """
-    if source_format != "json":
+    if source_format != "json" or not _json_array_carries_user_input(blob):
         return blob, None
     try:
         rows = _strict_import_json(blob)
     except (UnicodeDecodeError, ValueError):
-        return blob, None
-    if not isinstance(rows, list) or not any(
-        isinstance(row, dict) and "user_input" in row for row in rows
-    ):
         return blob, None
     carried: set = set()
     normalized: List[Any] = []
