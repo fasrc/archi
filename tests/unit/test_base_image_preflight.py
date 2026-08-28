@@ -132,7 +132,7 @@ def test_no_template_carries_a_mutable_base_reference():
 
 
 def test_all_templates_share_one_pin_state():
-    """The pin count is fixed at 15, and a split tree means a partial rewrite.
+    """The pin count equals len(service_templates()), and a split tree means a partial rewrite.
 
     Counting alone would miss the worse failure: a rewrite that updated some
     templates and not others leaves the count right and the deployment building

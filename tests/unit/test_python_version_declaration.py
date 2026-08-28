@@ -284,7 +284,7 @@ def test_running_interpreter_satisfies_declared_specifier():
 
 # --- Service base-image references (fasrc/archi#266) -----------------------------------
 #
-# The 15 service templates build on an `a2rchi-*-base` image. Upstream owns
+# The `service_templates()` set builds on an `a2rchi-*-base` image. Upstream owns
 # `docker.io/a2rchi/*` and its `latest` tag floats, so a fork deployment picked up whatever
 # upstream last published -- which is how a Python 3.10 base met a `requires-python >=3.11`
 # project and broke `pip install .` on every clean host.
