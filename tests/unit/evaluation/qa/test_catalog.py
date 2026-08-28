@@ -503,13 +503,16 @@ def test_invalid_review_leaves_draft_open_and_creates_no_child(tmp_path):
     assert len(catalog.list_datasets()) == 1
 
 
-def test_removed_dataset_fields_are_rejected(tmp_path):
+def test_removed_dataset_dialect_is_rejected(tmp_path):
+    # The pre-V1 dialect (expected_answer/freshness) still cannot import: its
+    # unknown keys are now carried rather than refused, but the row has no
+    # answer or time_sensitive, so validation still fails loudly.
     catalog = EvaluationCatalog(tmp_path)
     legacy = json.dumps(
         [{"question": "Q", "expected_answer": "A", "freshness": "static"}]
     ).encode()
 
-    with pytest.raises(ValueError, match="expected_answer.*freshness"):
+    with pytest.raises(ValueError, match="time_sensitive must be a boolean"):
         catalog.import_dataset("Legacy", "legacy.json", legacy)
 
 

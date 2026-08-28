@@ -986,8 +986,7 @@ def test_prepare_validates_all_rows_before_evaluator_calls(monkeypatch, tmp_path
                 {
                     "question": "invalid",
                     "answer": "invalid",
-                    "time_sensitive": False,
-                    "unexpected": "not allowed",
+                    "time_sensitive": "notabool",
                 },
             ]
         )
@@ -1002,7 +1001,7 @@ def test_prepare_validates_all_rows_before_evaluator_calls(monkeypatch, tmp_path
         workflow_module, "LangChainEvaluatorRuntime", unexpected_evaluator
     )
 
-    with pytest.raises(ValueError, match="unknown field.*unexpected"):
+    with pytest.raises(ValueError, match="time_sensitive must be a boolean"):
         QAWorkflow().prepare(dataset, tmp_path / "run")
 
     assert not (tmp_path / "run").exists()
@@ -1103,8 +1102,7 @@ def test_prepare_validates_complete_source_before_evaluator_calls(
             "id": "invalid",
             "question": "invalid",
             "answer": "invalid",
-            "time_sensitive": False,
-            "unexpected": "not allowed",
+            "time_sensitive": "notabool",
         },
     ]
     dataset.write_text(
@@ -1125,7 +1123,7 @@ def test_prepare_validates_complete_source_before_evaluator_calls(
         workflow_module, "LangChainEvaluatorRuntime", unexpected_evaluator
     )
 
-    with pytest.raises(ValueError, match="unknown field.*unexpected"):
+    with pytest.raises(ValueError, match="time_sensitive must be a boolean"):
         QAWorkflow().prepare(dataset, tmp_path / "run")
 
     assert not (tmp_path / "run").exists()
@@ -1192,7 +1190,7 @@ def test_prepare_invalid_source_preserves_overwritten_workspace(
     report = run_dir / "report.md"
     report.write_text("previous report", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="unknown field.*invalid"):
+    with pytest.raises(ValueError, match="question must be a non-empty string"):
         QAWorkflow().prepare(dataset, run_dir, overwrite=True)
 
     assert report.read_text(encoding="utf-8") == "previous report"

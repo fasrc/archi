@@ -32,13 +32,13 @@ Standing notes:
 
 ## 1. RED: an unrecognized field survives the round trip
 
-- [ ] Test: parse a row carrying `sources` and `notes`, re-serialize with
+- [x] Test: parse a row carrying `sources` and `notes`, re-serialize with
       `dataset_item_to_dict`, assert both fields come back with their values. Watch
       it fail first on `ValueError: ... unknown field(s): notes, sources`, which is
       the proof the test binds to the real gap.
-- [ ] Add `extra: Optional[Dict[str, Any]]` to `DatasetItem`; populate it in the row
+- [x] Add `extra: Optional[Dict[str, Any]]` to `DatasetItem`; populate it in the row
       readers; re-emit it in `dataset_item_to_dict`.
-- [ ] Gate, commit.
+- [x] Gate, commit.
 
 ## 2. RED: carried fields change the content hash
 

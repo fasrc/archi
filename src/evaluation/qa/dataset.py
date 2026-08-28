@@ -77,6 +77,10 @@ class DatasetItem:
     oracle: Optional[OracleRecipe] = None
     schema_version: DatasetSchemaVersion = DatasetSchemaVersion.V1
     state: Optional[DatasetItemState] = None
+    # Row fields outside the known set, carried through untouched on behalf of
+    # other consumers of the file (the RAGAS golden-set bank). Never read by
+    # preparation, running or scoring.
+    extra: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         if self.state is None:
@@ -485,10 +489,12 @@ class DatasetVersionResolver:
         raise ValueError("dataset container has no supported schema version")
 
 
-def _strict_row_keys(raw: Dict[str, Any], allowed: set, context: str) -> None:
-    unknown = sorted(set(raw) - allowed)
-    if unknown:
-        raise ValueError(f"{context} has unknown field(s): {', '.join(unknown)}")
+def _carry_row_extras(
+    raw: Dict[str, Any], allowed: set, context: str
+) -> Optional[Dict[str, Any]]:
+    """Split unknown row keys into a carried extras mapping."""
+    extras = {key: raw[key] for key in raw if key not in allowed}
+    return extras or None
 
 
 def _common_fields(raw: Dict[str, Any], context: str) -> Dict[str, Any]:
@@ -518,7 +524,7 @@ class V1DatasetReader:
         context = f"dataset row {index}"
         if not isinstance(raw, dict):
             raise ValueError(f"{context} must be an object")
-        _strict_row_keys(raw, V1_ITEM_FIELDS, context)
+        extra = _carry_row_extras(raw, V1_ITEM_FIELDS, context)
         common = _common_fields(raw, context)
         answer = validate_nonempty_string(
             raw.get("answer"), f"{context}.answer", normalize_newlines=True
@@ -539,6 +545,7 @@ class V1DatasetReader:
             answer=answer,
             expected_atoms=atoms,
             schema_version=DatasetSchemaVersion.V1,
+            extra=extra,
             **common,
         )
 
@@ -551,7 +558,7 @@ class V2DatasetReader:
         context = f"dataset row {index}"
         if not isinstance(raw, dict):
             raise ValueError(f"{context} must be an object")
-        _strict_row_keys(raw, V2_ITEM_FIELDS, context)
+        extra = _carry_row_extras(raw, V2_ITEM_FIELDS, context)
         common = _common_fields(raw, context)
         item_id = validate_nonempty_string(raw.get("id"), f"{context}.id")
         time_sensitive = common["time_sensitive"]
@@ -573,6 +580,7 @@ class V2DatasetReader:
                 answer=answer,
                 expected_atoms=atoms,
                 schema_version=DatasetSchemaVersion.V2,
+                extra=extra,
                 **common,
             )
         if "oracle" not in raw:
@@ -587,6 +595,7 @@ class V2DatasetReader:
                 expected_atoms=None,
                 oracle=recipe,
                 schema_version=DatasetSchemaVersion.V2,
+                extra=extra,
                 **common,
             )
         if has_atoms and not has_answer:
@@ -614,6 +623,7 @@ class V2DatasetReader:
             ),
             oracle=recipe,
             schema_version=DatasetSchemaVersion.V2,
+            extra=extra,
             **common,
         )
 
@@ -754,6 +764,9 @@ def dataset_item_to_dict(item: DatasetItem) -> Dict[str, Any]:
         value["expected_atoms"] = [atom.to_dict() for atom in item.expected_atoms]
     if item.oracle is not None:
         value["oracle"] = item.oracle.to_dict()
+    if item.extra:
+        for name, extra_value in item.extra.items():
+            value[name] = deepcopy(extra_value)
     return value
 
 
