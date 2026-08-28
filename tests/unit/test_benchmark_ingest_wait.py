@@ -170,3 +170,68 @@ def test_completed_state_returns_none(monkeypatch):
 
     result = bench.wait_for_ingestion_completion()
     assert result is None
+
+
+def test_stall_budget_reset_by_successful_polls(monkeypatch):
+    """Successful polls push the stall deadline forward; TimeoutError fires only
+    after a full budget of inactivity following the last success.
+
+    Three rounds of state=running (each resetting last_progress_time to ~10s)
+    are followed by URLError on every call.  On the current tree TimeoutError
+    fires at ~70s (10s of progress + 60s stall); on pre-1.1 code it fires at
+    ~60s (raw elapsed), so fake_time.monotonic() > 60 would fail there.
+    This test passes on the current tree and serves as the regression guard
+    for the stall-clock reset introduced in task 1.1.
+    """
+    bench = _make_bench(monkeypatch)
+    fake_time = _FakeTime()
+    monkeypatch.setattr(sb, "time", fake_time)
+
+    call_count = 0
+
+    def handler(url):
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 3:
+            return {"state": "running", "step": "Embedding"}
+        raise urllib.error.URLError("service gone")
+
+    monkeypatch.setattr(sb, "url_request", _make_request(handler))
+
+    with pytest.raises(TimeoutError):
+        bench.wait_for_ingestion_completion()
+
+    assert fake_time.monotonic() > 60, (
+        f"clock at raise was {fake_time.monotonic()}s; should exceed one budget (60s) "
+        "because successful polls reset last_progress_time"
+    )
+
+
+def test_unrecognised_payload_counts_as_progress(monkeypatch):
+    """A payload with no 'state' key counts as a successful response and resets
+    the stall clock — the method must not raise TimeoutError within a budget's
+    worth of such responses.
+
+    Budget=60s, poll=5s → 12 polls per budget.  We run 13 polls (one round more
+    than a budget), all returning {"step": "warming up"} with no state key.
+    The stall clock resets each round so TimeoutError never fires; the sentinel
+    on the 14th call propagates unchanged.
+    """
+    bench = _make_bench(monkeypatch)
+    fake_time = _FakeTime()
+    monkeypatch.setattr(sb, "time", fake_time)
+
+    rounds_per_budget = 60 // 5  # 12
+    call_count = 0
+
+    def handler(url):
+        nonlocal call_count
+        call_count += 1
+        if call_count > rounds_per_budget + 1:
+            raise _SentinelError("sentinel after one-budget-plus-one rounds")
+        return {"step": "warming up"}
+
+    monkeypatch.setattr(sb, "url_request", _make_request(handler))
+
+    with pytest.raises(_SentinelError):
+        bench.wait_for_ingestion_completion()

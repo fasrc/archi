@@ -60,7 +60,7 @@ All tests go in a new `tests/unit/test_benchmark_ingest_wait.py`.
       no more than four times, so a regression that swallows the error into the poll loop
       is caught. Test three: an opener answering `{"state": "completed"}` returns `None` and
       raises nothing. Gate green; commit.
-- [ ] 1.3 `model: sonnet` — RED test: an opener that answers `{"state": "running", "step": "Embedding"}` for
+- [x] 1.3 `model: sonnet` — RED test: an opener that answers `{"state": "running", "step": "Embedding"}` for
       exactly 3 polls and then raises `URLError` on every later call must raise
       `TimeoutError`, and the fake clock at the raise must read later than one budget from
       the start — proving the successful polls pushed the deadline out rather than being
