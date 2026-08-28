@@ -185,6 +185,17 @@ def regenerate_md(json_path, dry_run=False):
     if not results or metadata is None:
         return None
 
+    # parse_benchmark_results defaults every missing field, so it would turn a
+    # shapeless record into a plausible-looking (empty) report. The renderer's
+    # inputs must actually be present before a missing report is CREATED.
+    first = results[0]
+    if not isinstance(first, dict):
+        return None
+    if "single_question_results" not in first or "total_results" not in first:
+        return None
+    if "configuration" not in first and "configuration_file" not in first:
+        return None
+
     try:
         config_data, config_name, timestamp, questions, total_results, provenance = (
             parse_benchmark_results(results, metadata)

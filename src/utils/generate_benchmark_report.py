@@ -800,6 +800,24 @@ def fence(text):
     return f"{ticks}text\n{text}\n{ticks}"
 
 
+def code_span(text):
+    """Wrap artifact data in an inline code span it cannot terminate.
+
+    Markdown does not process backslashes inside code spans, so ``md_escape``
+    is useless there; instead the delimiter is one backtick longer than the
+    longest backtick run inside the data, space-padded per GFM so edge
+    backticks render and the padding is stripped by the renderer.
+    """
+    text = " ".join(str(text).split())
+    longest = 0
+    run = 0
+    for char in text:
+        run = run + 1 if char == "`" else 0
+        longest = max(longest, run)
+    ticks = "`" * (longest + 1)
+    return f"{ticks} {text} {ticks}"
+
+
 def _score_badge(value):
     """The 0.5 / 0.7 thresholds the HTML report encodes as colors."""
     if value < 0.5:
@@ -846,20 +864,21 @@ def format_version_markdown(provenance):
 
     code_digest = code.get("digest")
     lines.append(
-        "- Code version: " + (f"`{code_digest}`" if code_digest else _MD_NOT_RECORDED)
+        "- Code version: "
+        + (code_span(code_digest) if code_digest else _MD_NOT_RECORDED)
     )
     commit = code.get("deploy_git_commit")
     if commit:
         dirty = " (dirty tree)" if code.get("deploy_git_dirty") else ""
         lines.append(
-            f"- Deploy-time commit: `{commit}`{dirty} — frozen by `archi create`; "
-            "it identifies the deploy, not the image this run used"
+            f"- Deploy-time commit: {code_span(commit)}{dirty} — frozen by "
+            "`archi create`; it identifies the deploy, not the image this run used"
         )
 
     config_digest = config.get("digest")
     lines.append(
         "- Config version: "
-        + (f"`{config_digest}`" if config_digest else _MD_NOT_RECORDED)
+        + (code_span(config_digest) if config_digest else _MD_NOT_RECORDED)
     )
     if config.get("source"):
         lines.append(f"- Config basis: {md_escape(config['source'])}")
@@ -904,7 +923,7 @@ def format_provenance_markdown(provenance):
             "differ between the selected file and what the agent read:"
         )
         lines.append("")
-        lines += [f"- `{md_escape(item)}`" for item in divergence]
+        lines += [f"- {code_span(item)}" for item in divergence]
     elif divergence is None:
         lines.append(
             "⚠️ Whether the run used the selected configuration was **not "
@@ -923,19 +942,19 @@ def format_provenance_markdown(provenance):
     if stable is True:
         lines.append(
             "✅ The corpus was the same at the start and the end of the run "
-            f"(`{after}`). This does not rule out a change that was reverted in "
-            "between."
+            f"({code_span(after)}). This does not rule out a change that was "
+            "reverted in between."
         )
     elif stable is False:
         lines.append(
             "⚠️ The corpus **changed** while the run was in progress, so its "
             "questions were not all scored against the same documents "
-            f"(`{before}` → `{after}`)."
+            f"({code_span(before)} → {code_span(after)})."
         )
     else:
         lines.append(
             "⚠️ Corpus stability is **unknown**: it was not observed both before "
-            f"and after the run (`{before}` → `{after}`)."
+            f"and after the run ({code_span(before)} → {code_span(after)})."
         )
 
     version_md = format_version_markdown(provenance)
@@ -1007,7 +1026,9 @@ def format_markdown_output(
         for metric, value in total_results.items():
             if "aggregate" in metric:
                 clean_name = metric.replace("aggregate_", "").replace("_", " ").title()
-                parts.append(f"| {clean_name} | {value:.3f} {_score_badge(value)} |")
+                parts.append(
+                    f"| {md_escape(clean_name)} | {value:.3f} {_score_badge(value)} |"
+                )
 
     ragas_metrics = {
         "answer_relevancy": "Answer Relevancy",

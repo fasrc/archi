@@ -94,6 +94,29 @@ def test_foreign_metadata_json_is_skipped_cleanly(tmp_path):
     assert not list(tmp_path.glob("*.md"))
 
 
+def test_shapeless_result_record_is_skipped_cleanly(tmp_path):
+    """parse_benchmark_results defaults every field, so an empty record would
+    otherwise gain a plausible-looking report; the validator must require the
+    fields the renderer actually consumes."""
+    path = tmp_path / "shapeless.json"
+    path.write_text(
+        json.dumps({"metadata": {"time": "x"}, "benchmarking_results": [{}]})
+    )
+
+    assert backfill.regenerate_md(path) is None
+    assert not list(tmp_path.glob("*.md"))
+
+
+def test_non_dict_result_record_is_skipped_cleanly(tmp_path):
+    path = tmp_path / "weird.json"
+    path.write_text(
+        json.dumps({"metadata": {}, "benchmarking_results": ["not a record"]})
+    )
+
+    assert backfill.regenerate_md(path) is None
+    assert not list(tmp_path.glob("*.md"))
+
+
 def test_empty_results_list_is_skipped_cleanly(tmp_path):
     path = tmp_path / "empty.json"
     path.write_text(json.dumps({"metadata": {}, "benchmarking_results": []}))

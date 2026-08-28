@@ -227,6 +227,48 @@ def test_inline_fields_cannot_restructure_the_report():
     assert "evil\\|cell" in md
 
 
+def test_aggregate_metric_labels_are_escaped():
+    """A crafted aggregate key must not split the table row or inject markup."""
+    totals = {"aggregate_x|y`z": 0.9}
+
+    md = format_markdown_output(
+        {"services": {"benchmarking": {"modes": ["RAGAS"]}}},
+        "bench",
+        "2026-08-28",
+        {},
+        totals,
+        None,
+    )
+
+    assert "X\\|Y\\`Z" in md
+    assert "| X|Y" not in md
+
+
+def test_data_cannot_close_a_code_span():
+    """Digests and fingerprints render in code spans; a backtick inside the
+    data must not terminate the span early."""
+    provenance = {
+        "configuration_divergence": ["evil` [link](x)"],
+        "corpus_unchanged_at_endpoints": True,
+        "corpus_fingerprint": "abc`def",
+        "corpus_fingerprint_before": "abc`def",
+        "code_version": {"digest": "dig`it"},
+        "config_version": {"digest": "cfg`digest"},
+    }
+
+    md = format_markdown_output(
+        _CONFIG, "bench", "2026-08-28", {"q": _ok_row()}, _TOTALS, provenance
+    )
+
+    # Padded code spans: the data's backtick run is shorter than the delimiter.
+    assert "`` abc`def ``" in md
+    assert "`` dig`it ``" in md
+    assert "`` cfg`digest ``" in md
+    # Inside a padded code span the content renders literally, so the raw
+    # divergence item appears unescaped between the delimiters.
+    assert "`` evil` [link](x) ``" in md
+
+
 def test_markdown_renders_provenance_section():
     md = format_markdown_output(
         _CONFIG,
