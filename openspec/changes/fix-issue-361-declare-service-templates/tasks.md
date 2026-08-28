@@ -101,7 +101,7 @@ Dockerfile templates themselves. The 19 / 15 / 4 split is already correct.
 
 ## 4. Close out
 
-- [ ] 4.1 **Re-derive the counts and correct the stale prose.**
+- [x] 4.1 **Re-derive the counts and correct the stale prose.**
   Re-run the measurement and confirm 19 / 15 / 4:
   ```bash
   ls src/cli/templates/dockerfiles/Dockerfile* | wc -l
@@ -113,7 +113,7 @@ Dockerfile templates themselves. The 19 / 15 / 4 split is already correct.
   `tests/unit/test_python_version_declaration.py:285` and
   `tests/unit/test_base_image_preflight.py:137` both say "15". Point them at the declaration.
 
-- [ ] 4.2 **Full gate, then the PR.**
+- [x] 4.2 **Full gate, then the PR.**
   ```bash
   python -m pytest tests/unit/test_python_version_declaration.py \
     tests/unit/test_base_image_preflight.py \
