@@ -780,6 +780,12 @@ def md_escape(text):
     escaped = " ".join(str(text).split()).translate(_MD_INLINE_ESCAPES)
     if escaped.startswith(("#", "-", "+")):
         escaped = "\\" + escaped
+    else:
+        # An ordered-list marker (`1. item` / `1) item`) is a block starter
+        # too: escape its delimiter so the digits stay plain text.
+        head = escaped.split(" ", 1)[0]
+        if head[:-1].isdigit() and head[-1:] in ".)":
+            escaped = head[:-1] + "\\" + head[-1] + escaped[len(head) :]
     return escaped
 
 

@@ -182,7 +182,7 @@ def regenerate_md(json_path, dry_run=False):
         return None
     results = document.get("benchmarking_results")
     metadata = document.get("metadata")
-    if not results or metadata is None:
+    if not isinstance(results, list) or not results or metadata is None:
         return None
 
     # parse_benchmark_results defaults every missing field, so it would turn a

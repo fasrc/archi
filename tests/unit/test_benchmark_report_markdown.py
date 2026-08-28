@@ -227,6 +227,19 @@ def test_inline_fields_cannot_restructure_the_report():
     assert "evil\\|cell" in md
 
 
+def test_leading_ordered_list_marker_is_defused():
+    """A field that begins like `1. item` must not become a list item."""
+    row = _ok_row()
+    row["question"] = "1. injected list item"
+
+    md = format_markdown_output(
+        _CONFIG, "bench", "2026-08-28", {"q": row}, _TOTALS, None
+    )
+
+    assert "\n1\\. injected list item" in md
+    assert "\n1. injected list item" not in md
+
+
 def test_aggregate_metric_labels_are_escaped():
     """A crafted aggregate key must not split the table row or inject markup."""
     totals = {"aggregate_x|y`z": 0.9}
