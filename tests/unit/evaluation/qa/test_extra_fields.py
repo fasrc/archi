@@ -8,11 +8,13 @@ dataset, hashed into the canonical serialization, and inert everywhere else.
 """
 import json
 
+from src.evaluation.qa.catalog import EvaluationCatalog
 from src.evaluation.qa.dataset import (
     DATASET_V2_SCHEMA_VERSION,
     DatasetGateway,
     dataset_item_to_dict,
 )
+from src.evaluation.qa.oracle import canonical_json
 
 BANK_EXTRAS = {
     "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs"],
@@ -67,6 +69,61 @@ class TestExtraFieldRoundTrip:
         emitted = dataset_item_to_dict(items[0])
         assert emitted["sources"] == BANK_EXTRAS["sources"]
         assert emitted["notes"] == BANK_EXTRAS["notes"]
+
+    def test_carried_fields_change_canonical_serialization(self, tmp_path):
+        # canonical_json(dataset_item_to_dict(...)) is the content-addressed
+        # serialization; a maintenance edit to a carried field must change it,
+        # or the catalog's sha256 dedupe collapses the edit into "already
+        # imported, nothing to do".
+        base = {
+            "id": "q1",
+            "question": "Q",
+            "answer": "A",
+            "time_sensitive": False,
+            "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs"],
+        }
+        edited = {
+            **base,
+            "sources": ["https://docs.rc.fas.harvard.edu/kb/gpu-jobs"],
+        }
+        base_path = tmp_path / "base.json"
+        edited_path = tmp_path / "edited.json"
+        _write_v1(base_path, [base])
+        _write_v1(edited_path, [edited])
+
+        (base_item,) = list(DatasetGateway().read(base_path))
+        (edited_item,) = list(DatasetGateway().read(edited_path))
+
+        assert canonical_json(dataset_item_to_dict(base_item)) != canonical_json(
+            dataset_item_to_dict(edited_item)
+        )
+
+    def test_import_differing_only_in_carried_field_creates_new_dataset(
+        self, tmp_path
+    ):
+        base = {
+            "id": "q1",
+            "question": "Q",
+            "answer": "A",
+            "time_sensitive": False,
+            "sources": ["https://docs.rc.fas.harvard.edu/kb/running-jobs"],
+        }
+        edited = {
+            **base,
+            "sources": ["https://docs.rc.fas.harvard.edu/kb/gpu-jobs"],
+        }
+        catalog = EvaluationCatalog(tmp_path / "catalog")
+
+        first, first_created = catalog.import_dataset(
+            "Bank", "bank.json", json.dumps([base]).encode()
+        )
+        second, second_created = catalog.import_dataset(
+            "Bank", "bank.json", json.dumps([edited]).encode()
+        )
+
+        assert first_created is True
+        assert second_created is True
+        assert second["id"] != first["id"]
 
     def test_rows_without_extras_emit_no_extra_keys(self, tmp_path):
         row = {

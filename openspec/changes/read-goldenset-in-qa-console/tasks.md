@@ -42,13 +42,16 @@ Standing notes:
 
 ## 2. RED: carried fields change the content hash
 
-- [ ] Test: two datasets differing only in a carried field produce different
+- [x] Test: two datasets differing only in a carried field produce different
       `canonical_json` output. This is what stops the catalog's `sha256` dedupe from
       collapsing a genuine maintenance edit into "already imported, nothing to do."
-- [ ] Test at the catalog level: importing the second returns `created: True` rather
+- [x] Test at the catalog level: importing the second returns `created: True` rather
       than resolving to the first.
-- [ ] Include `extra` in the canonical serialization.
-- [ ] Gate, commit.
+- [x] Include `extra` in the canonical serialization. (Section 1's re-emission in
+      `dataset_item_to_dict` already feeds `canonical_json`, so these arrived green —
+      they stand as pins; the dialect-level dedupe test that can go red first lands
+      with the section-6 adapter, which rewrites the hashed blob.)
+- [x] Gate, commit.
 
 ## 3. RED: carried fields are inert
 
