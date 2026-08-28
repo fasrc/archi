@@ -36,6 +36,15 @@ COMMON_ITEM_FIELDS = {
 V1_ITEM_FIELDS = COMMON_ITEM_FIELDS
 V2_ITEM_FIELDS = COMMON_ITEM_FIELDS | {"oracle"}
 
+# The RAGAS authoring dialect's names for question and answer. The import
+# adapter (catalog._normalize_import_dialect) consumes them when it maps a
+# bank; anywhere else the row parser REFUSES them rather than carrying them,
+# because the benchmark harness resolves these names in preference to the
+# native ones — a carried alias would let one saved dataset score as
+# different content in the console and in RAGAS. This is a blocklist, not an
+# alias table: the parser still knows exactly one name per concept.
+RAGAS_ALIAS_FIELDS = {"user_input": "question", "reference": "answer"}
+
 
 class DatasetSchemaVersion(str, Enum):
     V1 = "qa-dataset-v1"
@@ -515,6 +524,13 @@ def _carry_row_extras(
     for key in raw:
         if key in allowed:
             continue
+        alias_native = RAGAS_ALIAS_FIELDS.get(key)
+        if alias_native is not None:
+            raise ValueError(
+                f"{context} carries '{key}', the RAGAS-dialect name for "
+                f"'{alias_native}'; rename the field or import the file as a "
+                "RAGAS bank"
+            )
         near_misses = sorted(
             field for field in allowed if _within_edit_distance_one(key, field)
         )

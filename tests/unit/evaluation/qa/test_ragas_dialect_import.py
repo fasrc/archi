@@ -214,9 +214,7 @@ class TestRagasDialectImport:
             "status",
         ]
 
-    def test_native_reimport_of_a_bank_twin_does_not_claim_the_dialect(
-        self, tmp_path
-    ):
+    def test_native_reimport_of_a_bank_twin_does_not_claim_the_dialect(self, tmp_path):
         # The reverse order: bank first (report persisted), byte-identical
         # native twin second. This import mapped nothing, so its response
         # must not surface the stored artifact's dialect keys — the console
@@ -236,7 +234,10 @@ class TestRagasDialectImport:
     def test_v2_container_with_user_input_extra_is_not_adapted(self, tmp_path):
         # Detection is a bounded streaming scan keyed on top-level-array rows:
         # a Dataset V2 container bails at its first token, so a native import
-        # is never materialized by the dialect check and never mapped.
+        # is never materialized by the dialect check and never mapped. The
+        # alias then reaches the row parser, which refuses it as reserved —
+        # proof the adapter did not consume it, and no carried alias can
+        # diverge the two evaluation stacks.
         catalog = EvaluationCatalog(tmp_path)
         container = {
             "schema_version": "qa-dataset-v2",
@@ -246,20 +247,15 @@ class TestRagasDialectImport:
                     "question": "Q",
                     "answer": "A",
                     "time_sensitive": False,
-                    "user_input": "carried, not mapped",
+                    "user_input": "not mapped, and not carried either",
                 }
             ],
         }
 
-        metadata, created = catalog.import_dataset(
-            "Container", "container.json", json.dumps(container).encode()
-        )
-
-        assert created is True
-        assert "import_dialect" not in metadata
-        (item,) = catalog.dataset_items(metadata["id"])
-        assert item.question == "Q"
-        assert item.extra == {"user_input": "carried, not mapped"}
+        with pytest.raises(ValueError, match="user_input.*question"):
+            catalog.import_dataset(
+                "Container", "container.json", json.dumps(container).encode()
+            )
 
     def test_duplicate_keys_pass_through_to_the_strict_pipeline(self, tmp_path):
         # The adapter refuses to parse a duplicate-keyed upload (json.loads

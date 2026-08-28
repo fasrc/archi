@@ -31,6 +31,7 @@ from .artifacts import (
 )
 from .dataset import (
     DATASET_V2_SCHEMA_VERSION,
+    RAGAS_ALIAS_FIELDS,
     V1_ITEM_FIELDS,
     DatasetItemState,
     dataset_item_to_dict,
@@ -131,9 +132,11 @@ def _sha256(blob: bytes) -> str:
 # RAGAS 0.3.5 authoring dialect -> native row schema. The mirror image of the
 # benchmark harness's LEGACY_TO_MODERN shim (src/utils/benchmark_schema.py):
 # each side normalizes on read, so the golden-set bank keeps exactly one
-# on-disk dialect and the row parser keeps exactly one name per concept.
+# on-disk dialect and the row parser keeps exactly one name per concept. The
+# alias map itself lives in dataset.RAGAS_ALIAS_FIELDS — the same names the
+# row parser refuses as carried extras.
 RAGAS_IMPORT_DIALECT = "ragas"
-_RAGAS_TO_NATIVE = {"user_input": "question", "reference": "answer"}
+_RAGAS_TO_NATIVE = RAGAS_ALIAS_FIELDS
 
 
 def _strict_import_json(blob: bytes) -> Any:

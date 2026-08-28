@@ -219,6 +219,42 @@ class TestKnownFieldsKeepTheirContract:
             list(DatasetGateway().read(path))
 
 
+class TestReservedAliasesAreNeverCarried:
+    def test_reference_extra_on_a_native_row_is_refused(self, tmp_path):
+        # `reference` never enters the dialect adapter when no row carries
+        # `user_input`, but the benchmark harness resolves it in preference
+        # to `answer` — carried, it would make a saved child score different
+        # ground truth in RAGAS than the console evaluated.
+        row = {
+            "id": "q1",
+            "question": "Q",
+            "answer": "A",
+            "time_sensitive": False,
+            "reference": "stale ground truth",
+        }
+        path = tmp_path / "dataset.json"
+        _write_v1(path, [row])
+
+        with pytest.raises(ValueError, match="reference.*answer"):
+            list(DatasetGateway().read(path))
+
+    def test_user_input_extra_on_a_v2_row_is_refused(self, tmp_path):
+        # V2 containers are never dialect-adapted, so the alias would slip
+        # through as an inert-looking extra; refuse it at the parser instead.
+        row = {
+            "id": "q1",
+            "question": "Q",
+            "answer": "A",
+            "time_sensitive": False,
+            "user_input": "a second question",
+        }
+        path = tmp_path / "dataset.json"
+        _write_v2(path, [row])
+
+        with pytest.raises(ValueError, match="user_input.*question"):
+            list(DatasetGateway().read(path))
+
+
 class TestExtraValuesAreValidated:
     def test_lone_surrogate_in_an_extra_is_refused_at_import(self, tmp_path):
         # An escaped unmatched surrogate parses as JSON but cannot be written
