@@ -621,6 +621,11 @@ class EvaluationCatalog:
                 if parent_dataset_id is None:
                     existing = self._find_dataset_by_hash(digest)
                     if existing is not None:
+                        # The dialect report describes THIS import, not the
+                        # stored artifact: merge it into the response without
+                        # touching the persisted metadata.
+                        if dialect_report is not None:
+                            existing = {**existing, **dialect_report}
                         return existing, False
                 elif parent_dataset_id is not None:
                     _catalog_id(parent_dataset_id)

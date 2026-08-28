@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from src.evaluation.qa.catalog import EvaluationCatalog
+from src.evaluation.qa.dataset import derive_item_id
 
 # The tracked 5-row anchor bank ships with the repo; the 105-row FASRC bank
 # lives in the separate archi-config checkout (config/), which deployments
@@ -165,6 +166,50 @@ class TestRagasDialectImport:
 
         with pytest.raises(ValueError, match=f"{dialect_key}.*{native_key}"):
             _import_bank(catalog, [row])
+
+    def test_dedupe_against_native_equivalent_still_reports_the_dialect(
+        self, tmp_path
+    ):
+        # A canonically-serialized native dataset and its RAGAS-dialect twin
+        # normalize to the same bytes. Importing the bank second must dedupe
+        # to the existing dataset AND still report what this operation
+        # detected — the report describes the import, not the artifact.
+        catalog = EvaluationCatalog(tmp_path)
+        question = BANK_ROW["user_input"]
+        answer = BANK_ROW["reference"]
+        native_row = {
+            key: value
+            for key, value in BANK_ROW.items()
+            if key not in {"user_input", "reference"}
+        }
+        native_row.update(
+            {
+                "question": question,
+                "answer": answer,
+                "time_sensitive": False,
+                "id": derive_item_id(question, answer),
+            }
+        )
+        native_blob = json.dumps(
+            [native_row], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
+
+        first, first_created = catalog.import_dataset(
+            "Native twin", "native.json", native_blob
+        )
+        second, second_created = _import_bank(catalog, [BANK_ROW])
+
+        assert first_created is True
+        assert "import_dialect" not in first
+        assert second_created is False
+        assert second["id"] == first["id"]
+        assert second["import_dialect"] == "ragas"
+        assert second["carried_fields"] == [
+            "anchor_type",
+            "notes",
+            "sources",
+            "status",
+        ]
 
     def test_v2_container_with_user_input_extra_is_not_adapted(self, tmp_path):
         # Detection is a bounded streaming scan keyed on top-level-array rows:
