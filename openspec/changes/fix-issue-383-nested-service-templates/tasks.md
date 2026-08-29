@@ -5,7 +5,7 @@ tests and their fix into a single commit on purpose: switching the traversal tur
 existing count assertion red the moment it lands, so a commit holding only the new tests, or
 only the implementation, could never pass the gate.
 
-- [ ] 1.1 Recurse the traversal and re-key the exclusions, tests first, in one commit.
+- [x] 1.1 Recurse the traversal and re-key the exclusions, tests first, in one commit.
 
   **RED first, and watch it fail.** In `tests/unit/test_base_image_preflight.py`, next to
   `test_templates_missing_base_reference_reports_replaced_line` (`:1280`), add a test with a
@@ -37,7 +37,7 @@ only the implementation, could never pass the gate.
   `python -m pytest tests/unit/test_base_image_preflight.py tests/unit/test_python_version_declaration.py -v`,
   run the repo gate script, and commit only when it exits 0.
 
-- [ ] 1.2 Assert the refusal at the deploy entry point.
+- [x] 1.2 Assert the refusal at the deploy entry point.
 
   Add the `enforce_base_images` counterpart to 1.1's helper-level test: a nested service
   template on a third-party base must make `enforce_base_images` raise
