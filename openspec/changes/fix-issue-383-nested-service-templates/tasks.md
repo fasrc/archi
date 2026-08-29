@@ -49,7 +49,7 @@ only the implementation, could never pass the gate.
   refusal that only lived in `required_base_images`, which has no production caller, so the
   deploy path went on silently. Green after 1.1; run the gate and commit.
 
-- [ ] 1.3 Guard the real directory and the re-keyed stale check.
+- [x] 1.3 Guard the real directory and the re-keyed stale check.
 
   Two tests, one commit:
   - Against the **real** template directory (`preflight.TEMPLATE_DIR`, not `tmp_path`), assert
@@ -65,7 +65,7 @@ only the implementation, could never pass the gate.
 
 ## 2. Audit the downstream set
 
-- [ ] 2.1 Audit every consumer of the declaration and record what the audit found.
+- [x] 2.1 Audit every consumer of the declaration and record what the audit found.
 
   Run `grep -rn "service_templates\|NON_SERVICE_TEMPLATES\|stale_template_exclusions" src/ tests/ scripts/`
   and check every hit, not only the ones already touched. Known consumers on this base:
