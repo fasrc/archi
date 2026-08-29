@@ -562,8 +562,10 @@ is one the preflight cannot probe. Three shapes are refused, and the message nam
    is accepted while the lookalike `a2rchi-python-base-custom` is not.
 
 Only a line that starts a Dockerfile instruction can start a stage. A `FROM` inside a
-`RUN <<EOF` heredoc body, on the continuation of an earlier instruction, or in a comment
-is not read as one.
+`RUN <<EOF` heredoc body — including the second payload of a `RUN <<ONE <<TWO` — on the
+continuation of an earlier instruction, or in a comment, is not read as one. A `FROM` may
+carry flags before its reference; `FROM --platform=$BUILDPLATFORM <image>` is read as
+`<image>`, the same form the rewriter above accepts.
 
 The image the preflight actually pulls is the one the final stage names, for the same
 reason: a template may name the same base twice, one digest in a builder stage and another

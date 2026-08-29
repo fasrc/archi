@@ -1877,3 +1877,70 @@ def test_a_comment_ending_in_a_backslash_does_not_start_a_continuation(tmp_path)
         _PINNED_FROM + "# a trailing backslash in prose \\\nRUN pip install .\n"
     )
     assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+# --- Review round 4 (PR #387): every heredoc on an instruction, and FROM flags ----------
+
+
+def test_a_second_heredoc_on_one_instruction_is_also_a_payload(tmp_path):
+    """`RUN <<ONE <<TWO` opens two payloads; both are shell text.
+
+    Tracking only the first delimiter resumes stage scanning inside the second payload, so a
+    `FROM <a2rchi>` line there hides a third-party final stage and the template reads as
+    covered. Fail-open, in the direction that matters.
+    """
+    (tmp_path / "Dockerfile-two").write_text(
+        _THIRD_PARTY_FINAL + "RUN <<ONE <<TWO\necho one\nONE\n" + _PINNED_FROM + "TWO\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-two"
+    ], f"the third-party final stage must still be seen, got {missing}"
+
+
+def test_a_second_heredoc_payload_does_not_falsely_refuse_a_valid_template(tmp_path):
+    """The same gap the other way: a third-party line in the second payload is not a stage."""
+    (tmp_path / "Dockerfile-two").write_text(
+        _PINNED_FROM + "RUN <<ONE <<TWO\necho one\nONE\n" + _THIRD_PARTY_FINAL + "TWO\n"
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+def test_heredoc_delimiters_are_consumed_in_declaration_order(tmp_path):
+    """Docker feeds the payloads in the order the instruction declares them.
+
+    Consuming `TWO` first would end the skip early and expose `ONE`'s remaining lines.
+    """
+    (tmp_path / "Dockerfile-order").write_text(
+        _PINNED_FROM
+        + "RUN <<ONE <<TWO\nTWO\n"
+        + _THIRD_PARTY_FINAL
+        + "ONE\necho after\nTWO\n"
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+def test_a_platform_flag_on_from_does_not_hide_the_base_image(tmp_path):
+    """`FROM --platform=$BUILDPLATFORM <image>` is a supported form, not an unknown base.
+
+    The repository's own rewriter recognizes it
+    (`scripts/dev/update_service_base_images.py:105`), so a preflight that reads the flag as
+    the image name refuses a template the rest of the toolchain supports.
+    """
+    (tmp_path / "Dockerfile-plat").write_text(
+        "FROM --platform=$BUILDPLATFORM " + _PINNED_FROM.split(maxsplit=1)[1]
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+    assert preflight.base_reference(preflight.PYTHON_BASE, tmp_path) == (
+        _PINNED_FROM.split()[1]
+    )
+
+
+def test_a_flagged_from_still_yields_its_stage_alias(tmp_path):
+    """The flag must not swallow the `AS <alias>` that follows the reference."""
+    (tmp_path / "Dockerfile-plat").write_text(
+        "FROM --platform=$BUILDPLATFORM "
+        + _PINNED_FROM.split()[1]
+        + " AS build\nRUN pip wheel .\nFROM build\n"
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == []

@@ -50,8 +50,12 @@ NON_SERVICE_TEMPLATES: dict[str, str] = {
 # Every `FROM <ref> [AS <alias>]` line. One matcher for both readers -- the coverage check
 # and `base_reference` -- so they cannot disagree about what a template's base is. `\S+`
 # stops at whitespace, so the trailing spaces several templates carry never reach the tag.
+# `(?:--\S+\s+)*` skips the flags a FROM may carry -- `--platform=$BUILDPLATFORM` above all,
+# a form the release rewriter already recognizes
+# (`scripts/dev/update_service_base_images.py:105`). Without it the flag is captured as the
+# reference and the preflight refuses a template the rest of the toolchain supports.
 _FROM_STAGE_RE = re.compile(
-    r"^FROM\s+(?P<ref>\S+)(?:\s+AS\s+(?P<alias>\S+))?",
+    r"^FROM\s+(?:--\S+\s+)*(?P<ref>\S+)(?:\s+AS\s+(?P<alias>\S+))?",
     re.MULTILINE | re.IGNORECASE,
 )
 
@@ -87,21 +91,23 @@ def _instruction_text(text: str) -> str:
     third-party final stage and marks the template covered -- a silent pass on an
     assumption, which is the one thing this module may not do.
 
-    The bounds, stated rather than implied. One heredoc delimiter is tracked at a time, so a
-    single instruction opening two heredocs has its second body scanned. A heredoc opened on
-    a continuation line is not recognized. Docker strips comments before joining
-    continuations and this does not, so a comment inside a continuation ends it here. In
-    each of those cases the line is read as written, which is the behavior that predates
-    this function.
+    An instruction may open more than one heredoc -- `RUN <<ONE <<TWO` -- and Docker feeds
+    the payloads in the order they are declared, so every delimiter is collected and
+    consumed in that order.
+
+    The bounds, stated rather than implied. A heredoc opened on a continuation line is not
+    recognized. Docker strips comments before joining continuations and this does not, so a
+    comment inside a continuation ends it here. In both cases the line is read as written,
+    which is the behavior that predates this function.
     """
     lines = []
-    delimiter = None
+    pending: List[str] = []
     continued = False
     for line in text.splitlines():
-        if delimiter is not None:
+        if pending:
             lines.append("")
-            if line.strip() == delimiter:
-                delimiter = None
+            if line.strip() == pending[0]:
+                pending.pop(0)
             continue
         if continued:
             lines.append("")
@@ -112,14 +118,9 @@ def _instruction_text(text: str) -> str:
         stripped = line.strip()
         if stripped.startswith("#"):
             continue
-        opener = (
-            _HEREDOC_RE.search(line)
-            if _HEREDOC_INSTRUCTION_RE.match(stripped)
-            else None
-        )
-        if opener:
-            delimiter = opener.group("tag")
-        else:
+        if _HEREDOC_INSTRUCTION_RE.match(stripped):
+            pending = [m.group("tag") for m in _HEREDOC_RE.finditer(line)]
+        if not pending:
             continued = stripped.endswith("\\")
     return "\n".join(lines)
 
