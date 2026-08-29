@@ -20,7 +20,7 @@ Verified at `7c9915d0`.
 
 ## 0. Re-derive the state before changing anything
 
-- [ ] 0.1 **Confirm both gaps are live on the branch base, and that no fixture already trips.**
+- [x] 0.1 **Confirm both gaps are live on the branch base, and that no fixture already trips.**
   This checkbox ends with **no source change** to `src/`, so commit it as the change artifacts
   themselves (this file, `proposal.md`, `specs/`) if they are not yet committed; otherwise fold
   the measurements into task 1.1's commit message rather than leaving an empty commit.
@@ -93,7 +93,7 @@ Verified at `7c9915d0`.
 
 ## 1. Finding 1 — an a2rchi base the preflight never probes
 
-- [ ] 1.1 **Name the placeable set, and report a template outside it. RED first, both levels.**
+- [x] 1.1 **Name the placeable set, and report a template outside it. RED first, both levels.**
   In `tests/unit/test_base_image_preflight.py`, beside
   `test_templates_missing_base_reference_reports_replaced_line` (`:1291`), add **two** tests
   against a `tmp_path` fixture holding a digest-pinned `Dockerfile-chat` (reuse `_PINNED_FROM`,

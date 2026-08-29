@@ -26,6 +26,12 @@ from typing import List, Optional, Sequence
 PYTHON_BASE = "a2rchi-python-base"
 PYTORCH_BASE = "a2rchi-pytorch-base"
 
+# The bases this preflight can probe. Named once so the coverage check
+# (templates_missing_base_reference) and required_base_image_names cannot disagree
+# about which bases exist: both derive from this set rather than each maintaining its
+# own copy of the list.
+PLACEABLE_BASES = frozenset({PYTHON_BASE, PYTORCH_BASE})
+
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "cli" / "templates" / "dockerfiles"
 
 # Templates excluded from the service set. Each value is the reason the file is not a
@@ -107,17 +113,22 @@ def stale_template_exclusions(template_dir: Optional[Path] = None) -> List[str]:
 
 
 def templates_missing_base_reference(template_dir: Optional[Path] = None) -> List[Path]:
-    """Service templates that carry no ``FROM`` referencing an ``a2rchi-*-base`` image.
+    """Service templates whose ``FROM`` lines do not name a base in ``PLACEABLE_BASES``.
 
-    A non-empty return means a service template has either lost its base ``FROM`` line or
-    replaced it with a third-party image.  The deploy preflight cannot cover these templates,
-    so the caller should treat a non-empty list as a refusal to proceed.
+    A non-empty return means a service template has lost its base ``FROM`` line, replaced
+    it with a third-party image, or names an a2rchi base the preflight cannot probe.  The
+    caller should treat a non-empty list as a refusal to proceed.
     """
-    return [
-        template
-        for template in service_templates(template_dir)
-        if not _FROM_BASE_RE.search(template.read_text())
-    ]
+    result = []
+    for template in service_templates(template_dir):
+        text = template.read_text()
+        covered = any(
+            any(base in match.group("ref") for base in PLACEABLE_BASES)
+            for match in _FROM_BASE_RE.finditer(text)
+        )
+        if not covered:
+            result.append(template)
+    return result
 
 
 def base_reference(image: str, template_dir: Optional[Path] = None) -> Optional[str]:
@@ -168,7 +179,12 @@ def required_base_images(
 def required_base_image_names(
     gpu_ids: Optional[str], grader_enabled: bool
 ) -> List[str]:
-    """The rule itself, with no filesystem in it: which base images this deployment needs."""
+    """The rule itself, with no filesystem in it: which base images this deployment needs.
+
+    Both names are members of ``PLACEABLE_BASES``, the single source of which a2rchi bases
+    exist.  The python base is always required; the pytorch base only when a GPU is
+    requested or the grader is enabled (design D4).
+    """
     images = [PYTHON_BASE]
     if gpu_ids or grader_enabled:
         images.append(PYTORCH_BASE)

@@ -1311,6 +1311,47 @@ def test_templates_missing_base_reference_reports_deleted_line(tmp_path):
     ), f"expected Dockerfile-service-b to be reported, got {missing}"
 
 
+def test_templates_missing_base_reference_reports_unknown_a2rchi_base(tmp_path):
+    """A template whose FROM names an a2rchi base outside the placeable set is reported.
+
+    The preflight can only probe bases it knows about; an unknown base (e.g. node-base)
+    must be treated as uncoverable so the caller can refuse before any teardown.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-node").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-node-base@sha256:" + "b" * 64 + "\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert len(missing) == 1
+    assert (
+        missing[0] == tmp_path / "Dockerfile-node"
+    ), f"expected Dockerfile-node to be reported, got {missing}"
+
+
+def test_enforce_base_images_refuses_template_with_unknown_a2rchi_base(tmp_path):
+    """`enforce_base_images` refuses when a service template names an a2rchi base outside
+    the placeable set — a base the preflight cannot probe.
+
+    A base outside the known set cannot be checked for Python version compatibility;
+    passing silently would violate the governing invariant.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-node").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-node-base@sha256:" + "b" * 64 + "\n"
+    )
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert str(tmp_path / "Dockerfile-node") in str(exc_info.value), (
+        "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
+    )
+    assert probe.pulled == [], (
+        "the refusal must come before any image work; " f"probe pulled {probe.pulled}"
+    )
+
+
 def test_templates_missing_base_reference_on_real_directory_is_empty():
     """Every service template must reference an a2rchi-*-base image."""
     missing = preflight.templates_missing_base_reference()
