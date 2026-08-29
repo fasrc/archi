@@ -1424,3 +1424,30 @@ def test_enforce_base_images_refuses_an_uncoverable_template_on_a_dry_run_too(tm
     assert str(tmp_path / "Dockerfile-broken") in str(exc_info.value), (
         "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
     )
+
+
+def test_enforce_base_images_refuses_a_nested_uncoverable_service_template(tmp_path):
+    """`enforce_base_images` must refuse when a nested service template is on a third-party
+    base, not only when the uncoverable template is at the top level.
+
+    The fixture mirrors the gap from fasrc/archi#383: `Dockerfile-chat` supplies the
+    reference this deployment needs, so `base_reference` resolves it — but the nested
+    `nested/Dockerfile-svc` on a third-party base is still in the declared service set and
+    must cause a refusal before any image work begins.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "Dockerfile-svc").write_text(_THIRD_PARTY_FROM)
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert str(nested / "Dockerfile-svc") in str(exc_info.value), (
+        "the refusal must name the nested uncoverable template; "
+        f"got: {exc_info.value}"
+    )
+    assert probe.pulled == [], (
+        "the refusal must come before any image work; " f"probe pulled {probe.pulled}"
+    )
