@@ -1408,6 +1408,75 @@ def test_required_base_images_returns_unchanged_references_when_all_templates_co
     assert refs_gpu == [python_ref, pytorch_ref]
 
 
+# --- Multistage templates: final-stage resolution (tasks.md 2.1) -------------------------
+
+_MULTISTAGE_THIRD_PARTY_FINAL = (
+    "FROM ghcr.io/fasrc/a2rchi-python-base@sha256:" + "c" * 64 + " AS builder\n"
+    "RUN pip wheel .\n"
+    "FROM docker.io/library/debian:12\n"
+    "COPY --from=builder /wheels /wheels\n"
+)
+
+
+def test_templates_missing_base_reference_reports_multistage_with_third_party_final(
+    tmp_path,
+):
+    """A multistage template whose final stage uses a third-party image is reported.
+
+    Even though the first stage uses an a2rchi base, the deployed container runs the
+    final stage — which here is a third-party image the preflight cannot probe.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-multi").write_text(_MULTISTAGE_THIRD_PARTY_FINAL)
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert len(missing) == 1
+    assert (
+        missing[0] == tmp_path / "Dockerfile-multi"
+    ), f"expected Dockerfile-multi to be reported, got {missing}"
+
+
+def test_enforce_base_images_refuses_multistage_with_third_party_final(tmp_path):
+    """`enforce_base_images` refuses when a service template's final stage is third-party.
+
+    The preflight cannot verify compatibility of the final stage, so it must refuse
+    before any deployment work begins.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-multi").write_text(_MULTISTAGE_THIRD_PARTY_FINAL)
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert str(tmp_path / "Dockerfile-multi") in str(exc_info.value), (
+        "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
+    )
+    assert probe.pulled == [], (
+        "the refusal must come before any image work; " f"probe pulled {probe.pulled}"
+    )
+
+
+def test_templates_missing_base_reference_does_not_report_multistage_back_on_a2rchi(
+    tmp_path,
+):
+    """A multistage template whose final stage is FROM <a2rchi-alias> is not reported.
+
+    Copying build output back onto the a2rchi base is the ordinary reason to write a
+    multistage service template; this guard confirms the check does not over-refuse it.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-multi").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base@sha256:" + "d" * 64 + " AS build\n"
+        "RUN pip wheel .\n"
+        "FROM build\n"
+        "COPY --from=build /wheels /wheels\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert (
+        not missing
+    ), f"a multistage template ending on an a2rchi stage must not be reported, got {missing}"
+
+
 # --- The deploy path itself refuses an uncoverable service template (fasrc/archi#381) ----
 
 

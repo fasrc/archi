@@ -48,6 +48,14 @@ NON_SERVICE_TEMPLATES: dict[str, str] = {
 # the trailing spaces several templates carry on that line never reach the tag.
 _FROM_BASE_RE = re.compile(r"^FROM\s+(?P<ref>\S*a2rchi-\w+-base\S*)", re.MULTILINE)
 
+# Every `FROM <ref> [AS <alias>]` line, used to resolve the final stage of a multistage
+# template. Separate from `_FROM_BASE_RE` so `base_reference` continues to match any
+# a2rchi reference without change.
+_FROM_STAGE_RE = re.compile(
+    r"^FROM\s+(?P<ref>\S+)(?:\s+AS\s+(?P<alias>\S+))?",
+    re.MULTILINE | re.IGNORECASE,
+)
+
 LOCAL_PREFIX = "localhost/"
 
 
@@ -112,20 +120,52 @@ def stale_template_exclusions(template_dir: Optional[Path] = None) -> List[str]:
     return [name for name in NON_SERVICE_TEMPLATES if not (directory / name).exists()]
 
 
+def _final_stage_base(text: str) -> Optional[str]:
+    """The base reference the final stage of a Dockerfile actually runs on.
+
+    Parses all FROM lines in order and follows alias chains to find the ultimate base
+    reference. Handles a linear chain of named stages. Does NOT handle ARG substitution,
+    build args, --platform flags, or COPY --from provenance — the bound is intentional.
+    Stating the bound rather than implying totality is what the original defect lacked.
+
+    Returns None when the template has no FROM lines or when the parser encounters a
+    reference it cannot resolve. Returning None fails closed: the caller treats an
+    unresolvable template as uncovered.
+    """
+    stages = [
+        (m.group("ref"), (m.group("alias") or "").lower())
+        for m in _FROM_STAGE_RE.finditer(text)
+    ]
+    if not stages:
+        return None
+
+    alias_map = {alias: ref for ref, alias in stages if alias}
+
+    ref = stages[-1][0]
+    visited: set = set()
+    # Follow alias chains: `FROM build` where `build` was named by an earlier stage.
+    while ref.lower() in alias_map:
+        if ref.lower() in visited:
+            return None  # cycle guard — malformed template cannot hang the preflight
+        visited.add(ref.lower())
+        ref = alias_map[ref.lower()]
+
+    return ref
+
+
 def templates_missing_base_reference(template_dir: Optional[Path] = None) -> List[Path]:
-    """Service templates whose ``FROM`` lines do not name a base in ``PLACEABLE_BASES``.
+    """Service templates whose final stage does not name a base in ``PLACEABLE_BASES``.
 
     A non-empty return means a service template has lost its base ``FROM`` line, replaced
-    it with a third-party image, or names an a2rchi base the preflight cannot probe.  The
+    it with a third-party image, names an a2rchi base the preflight cannot probe, or (for
+    multistage templates) has a final stage that does not run on an a2rchi base.  The
     caller should treat a non-empty list as a refusal to proceed.
     """
     result = []
     for template in service_templates(template_dir):
         text = template.read_text()
-        covered = any(
-            any(base in match.group("ref") for base in PLACEABLE_BASES)
-            for match in _FROM_BASE_RE.finditer(text)
-        )
+        base = _final_stage_base(text)
+        covered = base is not None and any(pb in base for pb in PLACEABLE_BASES)
         if not covered:
             result.append(template)
     return result
