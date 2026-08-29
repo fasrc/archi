@@ -28,14 +28,16 @@ PYTORCH_BASE = "a2rchi-pytorch-base"
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "cli" / "templates" / "dockerfiles"
 
-# Templates excluded from the service set. Each value is the reason the file is not a
-# service template, so a reader can tell a base-defining template from a third-party-based
-# one without opening it.
+# Templates excluded from the service set. Keys are relative paths from the template
+# directory root. Each value is the reason the file is not a service template, so a
+# reader can tell a base-defining template from a third-party-based one without opening it.
 NON_SERVICE_TEMPLATES: dict[str, str] = {
     "Dockerfile-base": "defines the a2rchi-python-base image itself",
     "Dockerfile-base-gpu": "defines the a2rchi-pytorch-base image itself",
     "Dockerfile-postgres": "builds on docker.io/pgvector/pgvector:pg17",
     "Dockerfile-grafana": "builds on docker.io/grafana/grafana-enterprise:10.2.0",
+    "base-python-image/Dockerfile": "defines an a2rchi base image itself",
+    "base-pytorch-image/Dockerfile": "defines an a2rchi base image itself",
 }
 
 # `FROM <ref>` where the reference names an a2rchi base image. `\S+` stops at whitespace, so
@@ -87,12 +89,14 @@ class Outcome:
 def service_templates(template_dir: Optional[Path] = None) -> List[Path]:
     """The sorted Paths of every Dockerfile* that is a service template.
 
-    Service templates build ``FROM`` an ``a2rchi-*-base`` image. The four excluded by
+    Service templates build ``FROM`` an ``a2rchi-*-base`` image. The six excluded by
     ``NON_SERVICE_TEMPLATES`` define base images themselves or build on third-party images.
     """
     directory = template_dir or TEMPLATE_DIR
     return sorted(
-        p for p in directory.glob("Dockerfile*") if p.name not in NON_SERVICE_TEMPLATES
+        p
+        for p in directory.rglob("Dockerfile*")
+        if p.relative_to(directory).as_posix() not in NON_SERVICE_TEMPLATES
     )
 
 

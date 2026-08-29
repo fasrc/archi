@@ -1257,24 +1257,27 @@ def test_stale_template_exclusions_on_the_real_directory_is_empty():
     )
 
 
-def test_service_templates_has_15_of_19_and_excluded_names_match_the_declaration():
-    """service_templates() returns 15 of the 19 Dockerfile* files; the 4 excluded names
-    are exactly the keys of NON_SERVICE_TEMPLATES."""
-    all_dockerfiles = sorted(preflight.TEMPLATE_DIR.glob("Dockerfile*"))
+def test_service_templates_has_15_of_21_and_excluded_relative_paths_match_the_declaration():
+    """service_templates() returns 15 of the 21 Dockerfile* files; the 6 excluded relative
+    paths are exactly the keys of NON_SERVICE_TEMPLATES."""
+    template_dir = preflight.TEMPLATE_DIR
+    all_dockerfiles = sorted(template_dir.rglob("Dockerfile*"))
     services = preflight.service_templates()
     assert (
-        len(all_dockerfiles) == 19
-    ), f"expected 19 Dockerfile* files, found {len(all_dockerfiles)}: " + ", ".join(
-        p.name for p in all_dockerfiles
+        len(all_dockerfiles) == 21
+    ), f"expected 21 Dockerfile* files, found {len(all_dockerfiles)}: " + ", ".join(
+        p.relative_to(template_dir).as_posix() for p in all_dockerfiles
     )
     assert (
         len(services) == 15
     ), f"expected 15 service templates, got {len(services)}: " + ", ".join(
-        p.name for p in services
+        p.relative_to(template_dir).as_posix() for p in services
     )
-    excluded = {p.name for p in all_dockerfiles} - {p.name for p in services}
+    excluded = {p.relative_to(template_dir).as_posix() for p in all_dockerfiles} - {
+        p.relative_to(template_dir).as_posix() for p in services
+    }
     assert excluded == set(preflight.NON_SERVICE_TEMPLATES.keys()), (
-        f"excluded names {sorted(excluded)!r} do not match "
+        f"excluded paths {sorted(excluded)!r} do not match "
         f"NON_SERVICE_TEMPLATES keys {sorted(preflight.NON_SERVICE_TEMPLATES.keys())!r}"
     )
 
@@ -1298,6 +1301,18 @@ def test_templates_missing_base_reference_reports_replaced_line(tmp_path):
     assert (
         missing[0] == tmp_path / "Dockerfile-service-b"
     ), f"expected Dockerfile-service-b to be reported, got {missing}"
+
+
+def test_templates_missing_base_reference_detects_nested_template(tmp_path):
+    """A nested service template on a third-party base is reported by its full path."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "Dockerfile-svc").write_text(_THIRD_PARTY_FROM)
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        nested / "Dockerfile-svc"
+    ], f"expected the nested template to be reported, got {missing}"
 
 
 def test_templates_missing_base_reference_reports_deleted_line(tmp_path):
