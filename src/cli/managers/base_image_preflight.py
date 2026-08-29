@@ -26,10 +26,13 @@ from typing import List, Optional, Sequence
 PYTHON_BASE = "a2rchi-python-base"
 PYTORCH_BASE = "a2rchi-pytorch-base"
 
-# The bases this preflight can probe. Named once so the coverage check
-# (templates_missing_base_reference) and required_base_image_names cannot disagree
-# about which bases exist: both derive from this set rather than each maintaining its
-# own copy of the list.
+# The bases this preflight can probe. The coverage check
+# (templates_missing_base_reference) accepts a template only when its final stage names a
+# member, so a base that is in here but that `required_base_image_names` never asks for
+# would be accepted and then never probed. That rule cannot be derived from this set --
+# which base a deployment needs depends on the GPU and grader flags, not on set membership
+# (design D4) -- so the two declarations are held together by a guard test instead:
+# `test_every_placeable_base_is_reachable_from_the_two_image_rule`.
 PLACEABLE_BASES = frozenset({PYTHON_BASE, PYTORCH_BASE})
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "cli" / "templates" / "dockerfiles"
@@ -57,6 +60,57 @@ _FROM_STAGE_RE = re.compile(
 )
 
 LOCAL_PREFIX = "localhost/"
+
+# A heredoc opener: `RUN <<EOF`, `RUN <<-EOF`, `COPY <<"EOF" /f`. The leading whitespace and
+# the trailing lookahead are what keep shell text out: `$((1<<n))` and `echo "a << b"` are
+# not heredoc openers, and treating them as one would blank the rest of the template.
+_HEREDOC_RE = re.compile(
+    r"(?:^|\s)<<-?(?P<q>['\"]?)(?P<tag>[A-Za-z_][\w-]*)(?P=q)(?=\s|$)"
+)
+
+
+def _without_heredoc_bodies(text: str) -> str:
+    """``text`` with every heredoc body blanked, leaving only real instruction lines.
+
+    A `RUN <<EOF` payload is shell text. A payload line beginning with ``FROM`` is not a
+    build stage, and reading it as one breaks both ways: a third-party-looking payload
+    refuses a correctly based template, and an a2rchi-looking payload after a third-party
+    stage marks it covered -- a silent pass on an assumption.
+
+    The bound: one delimiter is tracked at a time, so a single instruction opening two
+    heredocs has its second body scanned. No template does that, and the failure direction
+    is the same as before this function existed.
+    """
+    lines = []
+    delimiter = None
+    for line in text.splitlines():
+        if delimiter is None:
+            lines.append(line)
+            match = _HEREDOC_RE.search(line)
+            if match:
+                delimiter = match.group("tag")
+        else:
+            lines.append("")
+            if line.strip() == delimiter:
+                delimiter = None
+    return "\n".join(lines)
+
+
+def _reference_names(reference: str, image: str) -> bool:
+    """True when ``reference`` names exactly ``image``, not merely contains it.
+
+    A registry prefix ends at ``/`` and a tag or digest starts at ``:`` or ``@``, so those
+    are the only characters allowed to touch the name. Without this,
+    ``ghcr.io/other/a2rchi-python-base-custom`` reads as the python base: the coverage check
+    calls the template covered and ``base_reference`` hands the probe an image no template
+    builds from.
+    """
+    return re.search(rf"(?:^|/){re.escape(image)}(?:[:@]|$)", reference) is not None
+
+
+def _names_placeable_base(reference: str) -> bool:
+    """True when ``reference`` names a base in ``PLACEABLE_BASES`` at image boundaries."""
+    return any(_reference_names(reference, base) for base in PLACEABLE_BASES)
 
 
 class Cause(str, Enum):
@@ -124,9 +178,11 @@ def _final_stage_base(text: str) -> Optional[str]:
     """The base reference the final stage of a Dockerfile actually runs on.
 
     Parses all FROM lines in order and follows alias chains to find the ultimate base
-    reference. Handles a linear chain of named stages. Does NOT handle ARG substitution,
-    build args, --platform flags, or COPY --from provenance — the bound is intentional.
-    Stating the bound rather than implying totality is what the original defect lacked.
+    reference. Heredoc bodies are blanked first, so a `RUN <<EOF` payload line beginning
+    with ``FROM`` is not read as a stage. Handles a linear chain of named stages. Does NOT
+    handle ARG substitution, build args, --platform flags, or COPY --from provenance — the
+    bound is intentional. Stating the bound rather than implying totality is what the
+    original defect lacked.
 
     Returns None when the template has no FROM lines or when the parser encounters a
     reference it cannot resolve. Returning None fails closed: the caller treats an
@@ -134,7 +190,7 @@ def _final_stage_base(text: str) -> Optional[str]:
     """
     stages = [
         (m.group("ref"), (m.group("alias") or "").lower())
-        for m in _FROM_STAGE_RE.finditer(text)
+        for m in _FROM_STAGE_RE.finditer(_without_heredoc_bodies(text))
     ]
     if not stages:
         return None
@@ -153,22 +209,80 @@ def _final_stage_base(text: str) -> Optional[str]:
     return ref
 
 
+def uncoverable_template_reasons(
+    template_dir: Optional[Path] = None,
+) -> List[tuple]:
+    """``(template, reason)`` for every service template the preflight cannot cover.
+
+    The reason is what the operator has to act on, and the three cases call for three
+    different actions: restore a missing ``FROM`` line, move a final stage back onto a
+    supported base, or add the named base to ``PLACEABLE_BASES`` and to the two-image rule.
+    Reporting all three as "declares no a2rchi-*-base reference" sends the reader of the
+    latter two looking for a line that is already there.
+    """
+    reasons = []
+    for template in service_templates(template_dir):
+        base = _final_stage_base(template.read_text())
+        if base is None:
+            reasons.append(
+                (template, "no FROM line the preflight can resolve to a base image")
+            )
+        elif _names_placeable_base(base):
+            continue
+        elif "a2rchi-" in base:
+            reasons.append(
+                (
+                    template,
+                    f"final stage builds on {base}, which is not one of the bases the "
+                    f"preflight can probe ({', '.join(sorted(PLACEABLE_BASES))})",
+                )
+            )
+        else:
+            reasons.append(
+                (
+                    template,
+                    f"final stage builds on {base}, which is not an a2rchi base image",
+                )
+            )
+    return reasons
+
+
 def templates_missing_base_reference(template_dir: Optional[Path] = None) -> List[Path]:
     """Service templates whose final stage does not name a base in ``PLACEABLE_BASES``.
 
     A non-empty return means a service template has lost its base ``FROM`` line, replaced
     it with a third-party image, names an a2rchi base the preflight cannot probe, or (for
     multistage templates) has a final stage that does not run on an a2rchi base.  The
-    caller should treat a non-empty list as a refusal to proceed.
+    caller should treat a non-empty list as a refusal to proceed.  Use
+    ``uncoverable_template_reasons`` when the caller has to tell the operator which.
     """
-    result = []
+    return [template for template, _ in uncoverable_template_reasons(template_dir)]
+
+
+def two_image_rule_offenders(template_dir: Optional[Path] = None) -> List[str]:
+    """Service templates whose final-stage base contradicts the two-image rule (design D4).
+
+    The rule `required_base_image_names` applies — python always, pytorch for a ``-gpu``
+    variant or the grader — is a claim about the templates, and it is made against the
+    stage that ships. Reading the first ``FROM`` instead misses the drift that matters: a
+    non-GPU template with ``FROM <python-base> AS builder`` ending on the pytorch base is
+    accepted by the coverage check, asked for python only, and so deploys on an image the
+    preflight never probed.
+    """
+    offenders = []
     for template in service_templates(template_dir):
-        text = template.read_text()
-        base = _final_stage_base(text)
-        covered = base is not None and any(pb in base for pb in PLACEABLE_BASES)
-        if not covered:
-            result.append(template)
-    return result
+        base = _final_stage_base(template.read_text())
+        if base is None:
+            continue  # uncoverable_template_reasons reports this, with its own diagnosis
+        name = template.name
+        is_gpu = name.endswith("-gpu")
+        if _reference_names(base, PYTORCH_BASE) and not (
+            is_gpu or name == "Dockerfile-grader"
+        ):
+            offenders.append(f"{name}: pytorch base but neither -gpu nor the grader")
+        if _reference_names(base, PYTHON_BASE) and is_gpu:
+            offenders.append(f"{name}: -gpu variant on the python base")
+    return offenders
 
 
 def base_reference(image: str, template_dir: Optional[Path] = None) -> Optional[str]:
@@ -179,9 +293,10 @@ def base_reference(image: str, template_dir: Optional[Path] = None) -> Optional[
     """
     directory = template_dir or TEMPLATE_DIR
     for dockerfile in sorted(directory.glob("Dockerfile-*")):
-        for match in _FROM_BASE_RE.finditer(dockerfile.read_text()):
+        text = _without_heredoc_bodies(dockerfile.read_text())
+        for match in _FROM_BASE_RE.finditer(text):
             reference = match.group("ref")
-            if image in reference:
+            if _reference_names(reference, image):
                 return reference
     return None
 
@@ -575,18 +690,18 @@ class BaseImagePreflightError(Exception):
 
 
 def _refuse_uncoverable_templates(template_dir: Optional[Path] = None) -> None:
-    """Refuse when a service template declares no ``a2rchi-*-base`` FROM reference.
+    """Refuse when a service template's final stage is not a base the preflight can probe.
 
     Shared by both entry points deliberately. The refusal first landed only in
     ``required_base_images``, which has no production caller, so the deploy path went on
     silently (fasrc/archi#381) -- the fail-open this module exists to remove.
     """
-    uncoverable = templates_missing_base_reference(template_dir)
+    uncoverable = uncoverable_template_reasons(template_dir)
     if uncoverable:
         raise BaseImagePreflightError(
-            "Base image check failed: the following service templates declare no "
-            "a2rchi-*-base FROM reference, so the preflight cannot cover them:\n"
-            + "\n".join(f"  {p}" for p in uncoverable)
+            "Base image check failed: the preflight cannot cover the following service "
+            "templates:\n"
+            + "\n".join(f"  {path}: {reason}" for path, reason in uncoverable)
         )
 
 

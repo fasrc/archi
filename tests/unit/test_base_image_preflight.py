@@ -264,20 +264,11 @@ def test_two_image_rule_still_matches_every_template():
     A new pytorch-based service that is not a `-gpu` variant, or a `-gpu` variant moved onto
     the python base, silently invalidates the rule -- the preflight would then fetch one image
     and the build would need another. Failing here forces design D4 to be revisited.
+
+    The judgement lives in `two_image_rule_offenders`, which reads the *final* stage. Reading
+    the first FROM here instead let a python-builder/pytorch-final template pass every guard.
     """
-    offenders = []
-    for dockerfile in sorted(TEMPLATE_DIR.glob("Dockerfile-*")):
-        match = re.search(
-            r"^FROM\s+\S*a2rchi-(\w+)-base", dockerfile.read_text(), re.MULTILINE
-        )
-        if not match:
-            continue
-        base, name = match.group(1), dockerfile.name
-        is_gpu = name.endswith("-gpu")
-        if base == "pytorch" and not (is_gpu or name == "Dockerfile-grader"):
-            offenders.append(f"{name}: pytorch base but neither -gpu nor the grader")
-        if base == "python" and is_gpu:
-            offenders.append(f"{name}: -gpu variant on the python base")
+    offenders = preflight.two_image_rule_offenders()
 
     assert not offenders, (
         f"the two-image rule no longer describes the templates: {offenders} -- "
@@ -1519,3 +1510,229 @@ def test_enforce_base_images_refuses_an_uncoverable_template_on_a_dry_run_too(tm
     assert str(tmp_path / "Dockerfile-broken") in str(exc_info.value), (
         "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
     )
+
+
+# --- Review round 1 (PR #387): the coverage check must name bases at image boundaries ----
+
+_LOOKALIKE_FROM = (
+    "FROM ghcr.io/other/a2rchi-python-base-custom"
+    "@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"
+)
+
+
+def test_templates_missing_base_reference_reports_a_lookalike_base(tmp_path):
+    """`a2rchi-python-base-custom` is a different image from `a2rchi-python-base`.
+
+    A substring test calls the lookalike covered, and `base_reference` then hands
+    `enforce_base_images` that unrelated image to probe -- so the deployment proceeds on an
+    image the preflight never established. The name has to match at image boundaries.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-lookalike").write_text(_LOOKALIKE_FROM)
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-lookalike"
+    ], f"expected Dockerfile-lookalike to be reported, got {missing}"
+
+
+def test_base_reference_ignores_a_lookalike_image_name(tmp_path):
+    """`base_reference` must not return a reference whose name merely contains the image.
+
+    It is the same boundary rule as the coverage check, and it has to hold here too:
+    returning the lookalike would send the probe at an image no template builds from.
+    """
+    (tmp_path / "Dockerfile-lookalike").write_text(_LOOKALIKE_FROM)
+    assert (
+        preflight.base_reference(preflight.PYTHON_BASE, tmp_path) is None
+    ), "a lookalike image name must not satisfy a request for the python base"
+
+
+def test_base_reference_still_matches_a_registry_prefixed_digest_pin(tmp_path):
+    """The boundary rule must keep matching what the templates actually declare."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    reference = preflight.base_reference(preflight.PYTHON_BASE, tmp_path)
+    assert reference == _PINNED_FROM.split()[1], f"got {reference}"
+
+
+# --- Review round 1 (PR #387): heredoc payloads are not build stages --------------------
+
+
+def test_templates_missing_base_reference_ignores_a_from_inside_a_heredoc(tmp_path):
+    """A `RUN <<EOF` payload line beginning with FROM is shell text, not a build stage.
+
+    Reading it as the final stage refuses a template that is in fact correctly based --
+    the preflight would block a valid deployment.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-heredoc").write_text(
+        _PINNED_FROM + "RUN <<EOF\nFROM docker.io/library/debian:12\nEOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert (
+        not missing
+    ), f"a FROM inside a heredoc body must not be read as a stage, got {missing}"
+
+
+def test_templates_missing_base_reference_reports_third_party_final_despite_heredoc(
+    tmp_path,
+):
+    """The same gap the other way round is the dangerous one.
+
+    A third-party final stage followed by a heredoc payload that mentions an a2rchi base
+    reads as covered, and the preflight passes silently on an assumption -- the exact
+    fail-open this module exists to remove.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-heredoc").write_text(
+        "FROM docker.io/library/debian:12\nRUN <<EOF\n" + _PINNED_FROM + "EOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-heredoc"
+    ], f"expected Dockerfile-heredoc to be reported, got {missing}"
+
+
+def test_shell_shift_operators_do_not_open_a_heredoc(tmp_path):
+    """`1<<n` and `a << b` are not heredoc openers; blanking after them would refuse a
+    correctly based template."""
+    (tmp_path / "Dockerfile-shift").write_text(
+        'FROM docker.io/library/debian:12 AS builder\nRUN x=$((1<<n)) && echo "a << b"\n'
+        + _PINNED_FROM
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert (
+        not missing
+    ), f"a shift operator must not swallow the following FROM line, got {missing}"
+
+
+# --- Review round 1 (PR #387): the refusal has to state the actual reason ---------------
+
+
+def test_refusal_names_the_unsupported_base_rather_than_claiming_none_is_declared(
+    tmp_path,
+):
+    """A template that names an a2rchi base outside the placeable set *does* declare one.
+
+    Telling the operator it declares no a2rchi base sends them looking for a missing FROM
+    line that is right there. The diagnostic has to name the base it cannot probe.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-node").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-node-base@sha256:" + "b" * 64 + "\n"
+    )
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.required_base_images(
+            gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+        )
+
+    message = str(exc_info.value)
+    assert "a2rchi-node-base" in message, f"the base must be named; got: {message}"
+    assert (
+        "declare no" not in message
+    ), f"the template does declare a base; got: {message}"
+
+
+def test_refusal_says_a_template_with_no_from_line_declares_none(tmp_path):
+    """The no-FROM case keeps the diagnosis it had -- the reason genuinely is absence."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-empty").write_text("RUN echo hello\n")
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.required_base_images(
+            gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+        )
+
+    message = str(exc_info.value)
+    assert "Dockerfile-empty" in message, f"got: {message}"
+    assert (
+        "no FROM" in message
+    ), f"the reason must be the absent FROM line; got: {message}"
+
+
+def test_refusal_names_a_third_party_final_stage_as_the_reason(tmp_path):
+    """A multistage template whose final stage is third-party is refused for that reason."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-multi").write_text(_MULTISTAGE_THIRD_PARTY_FINAL)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.required_base_images(
+            gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+        )
+
+    message = str(exc_info.value)
+    assert "debian:12" in message, f"the final-stage base must be named; got: {message}"
+
+
+# --- Review round 1 (PR #387): the two-image rule must read the final stage -------------
+
+
+def test_two_image_rule_offenders_catches_a_pytorch_final_stage_behind_a_python_builder(
+    tmp_path,
+):
+    """The drift the first-FROM reading cannot see.
+
+    `FROM <python-base> AS builder` ... `FROM <pytorch-base>` is a non-GPU template that
+    deploys on pytorch. `required_base_image_names` would ask for python only, and
+    `base_reference` would resolve the builder line, so the image the container actually
+    runs on is never probed. The rule check has to judge the stage that ships.
+    """
+    (tmp_path / "Dockerfile-drift").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64 + " AS builder\n"
+        "RUN pip wheel .\n"
+        "FROM ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "b" * 64 + "\n"
+    )
+    offenders = preflight.two_image_rule_offenders(tmp_path)
+    assert any(
+        "Dockerfile-drift" in offender for offender in offenders
+    ), f"expected the drifted template to be reported, got {offenders}"
+
+
+def test_two_image_rule_offenders_accepts_the_conforming_shapes(tmp_path):
+    """The rule itself is unchanged: python for a plain service, pytorch for -gpu."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-chat-gpu").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "b" * 64 + "\n"
+    )
+    assert preflight.two_image_rule_offenders(tmp_path) == []
+
+
+def test_every_placeable_base_is_reachable_from_the_two_image_rule():
+    """A base the coverage check accepts but the rule never asks for is never probed.
+
+    `required_base_image_names` cannot be derived from `PLACEABLE_BASES` mechanically --
+    which base a deployment needs depends on the GPU and grader flags, not on set
+    membership. This is what keeps the two declarations from drifting instead: adding a
+    third member without giving it a rule fails here.
+    """
+    reachable = set(preflight.required_base_image_names(None, False)) | set(
+        preflight.required_base_image_names("all", True)
+    )
+    assert reachable == set(preflight.PLACEABLE_BASES), (
+        "every placeable base must be reachable from the two-image rule, or the coverage "
+        f"check accepts a base nothing probes; reachable={sorted(reachable)} "
+        f"placeable={sorted(preflight.PLACEABLE_BASES)}"
+    )
+
+
+def test_two_image_rule_offenders_reports_a_gpu_variant_on_the_python_base(tmp_path):
+    """The other half of the rule: a `-gpu` template must not deploy on the python base."""
+    (tmp_path / "Dockerfile-chat-gpu").write_text(_PINNED_FROM)
+    assert preflight.two_image_rule_offenders(tmp_path) == [
+        "Dockerfile-chat-gpu: -gpu variant on the python base"
+    ]
+
+
+def test_two_image_rule_offenders_leaves_an_unresolvable_template_to_the_coverage_check(
+    tmp_path,
+):
+    """A template with no resolvable base is not a rule offender -- it is uncoverable.
+
+    Reporting it twice, under two different diagnoses, would send the operator to design D4
+    for a template that simply lost its FROM line.
+    """
+    (tmp_path / "Dockerfile-empty").write_text("RUN echo hello\n")
+    assert preflight.two_image_rule_offenders(tmp_path) == []
+    assert preflight.templates_missing_base_reference(tmp_path) == [
+        tmp_path / "Dockerfile-empty"
+    ]
