@@ -539,8 +539,29 @@ base image map, so it cannot disagree with the rewriter about what a base line i
 Its bound is worth knowing: it reads the references templates **declare**. A template that
 declares no base image at all is invisible to it, as it is to the rewriter. In-tree that gap
 is closed: `service_templates()` in `src/cli/managers/base_image_preflight.py` declares the
-service set, the deploy preflight refuses a member that names no `a2rchi-*-base` image, and
+service set, the deploy preflight refuses a member it cannot cover, and
 `test_service_templates_pin_one_explicit_base_tag` fails naming the file.
+
+### Which service templates the deploy preflight refuses
+
+`archi create` refuses **before** it removes an existing deployment when a service template
+is one the preflight cannot probe. Three shapes are refused, and the message names which:
+
+1. **No resolvable `FROM`.** The template carries no `FROM` line, or its final stage is
+   `FROM <alias>` in a chain that does not end at a real reference.
+2. **An a2rchi base outside the placeable set.** Only `a2rchi-python-base` and
+   `a2rchi-pytorch-base` — `PLACEABLE_BASES` in `base_image_preflight.py` — can be probed.
+   A template on, say, `a2rchi-node-base` declares a base and is still refused, because
+   nothing checks that image's Python version before the build needs it. Adding a base means
+   adding it to `PLACEABLE_BASES` *and* giving it a rule in `required_base_image_names`; a
+   guard test fails if you do only the first.
+3. **A final stage that is not an a2rchi base.** The check judges the stage that ships, not
+   the first `FROM`, so a multistage template may build in an a2rchi stage and still be
+   refused if it ends on a third-party image. The name must match at image boundaries: a
+   registry prefix and a tag or digest are allowed, so `ghcr.io/fasrc/a2rchi-python-base@sha256:…`
+   is accepted while the lookalike `a2rchi-python-base-custom` is not.
+
+A `FROM` inside a `RUN <<EOF` heredoc body is shell text and is not read as a stage.
 
 Two CI jobs call the script: `pr-preview.yml` points the templates at the PR's base-image
 build, and `test-and-build-tag.yml` points them at the release build. The release workflow
