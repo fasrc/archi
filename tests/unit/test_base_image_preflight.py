@@ -1805,3 +1805,75 @@ def test_base_reference_skips_a_template_excluded_from_the_service_set(tmp_path)
     assert preflight.base_reference(preflight.PYTHON_BASE, tmp_path) == (
         _PINNED_FROM.split()[1]
     )
+
+
+# --- Review round 3 (PR #387): only an instruction line starts a stage -----------------
+
+_THIRD_PARTY_FINAL = "FROM docker.io/library/debian:12\n"
+
+
+def test_a_heredoc_opener_inside_a_comment_does_not_blank_the_real_stages(tmp_path):
+    """`# Example: RUN <<EOF` is prose, not a heredoc opener.
+
+    Treating it as one blanks every line after it until an `EOF` line that may never come,
+    so a third-party final stage disappears and the template reads as covered on the
+    strength of an earlier builder stage -- a silent pass on an assumption.
+    """
+    (tmp_path / "Dockerfile-comment").write_text(
+        _PINNED_FROM + "# Example: RUN <<EOF\nRUN pip wheel .\n" + _THIRD_PARTY_FINAL
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-comment"
+    ], f"the third-party final stage must still be seen, got {missing}"
+
+
+def test_a_from_on_a_continuation_line_is_not_a_build_stage(tmp_path):
+    """`RUN echo hello \\` followed by a `FROM` line is one command to Docker.
+
+    Reading the continuation as a stage lets a template with a third-party final stage
+    report an a2rchi base and pass the coverage check.
+    """
+    (tmp_path / "Dockerfile-cont").write_text(
+        _THIRD_PARTY_FINAL + "RUN echo hello \\\n" + _PINNED_FROM
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-cont"
+    ], f"a continuation line must not be read as a stage, got {missing}"
+
+
+def test_a_multi_line_continuation_is_skipped_to_its_end(tmp_path):
+    """The continuation runs to the first line that does not end in a backslash."""
+    (tmp_path / "Dockerfile-cont").write_text(
+        _THIRD_PARTY_FINAL + "RUN echo a \\\n  echo b \\\n" + _PINNED_FROM
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == [
+        tmp_path / "Dockerfile-cont"
+    ]
+
+
+def test_a_real_stage_after_a_continuation_is_still_read(tmp_path):
+    """Skipping continuations must not swallow the stage that follows them."""
+    (tmp_path / "Dockerfile-ok").write_text(
+        _THIRD_PARTY_FINAL + "RUN echo hello \\\n  && echo bye\n" + _PINNED_FROM
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+def test_a_heredoc_still_opens_on_a_real_run_instruction(tmp_path):
+    """The narrowing must not undo round 1: a genuine payload is still not a stage."""
+    (tmp_path / "Dockerfile-heredoc").write_text(
+        _THIRD_PARTY_FINAL + "RUN <<EOF\n" + _PINNED_FROM + "EOF\n"
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == [
+        tmp_path / "Dockerfile-heredoc"
+    ]
+
+
+def test_a_comment_ending_in_a_backslash_does_not_start_a_continuation(tmp_path):
+    """Docker strips comments before joining continuations, so one cannot continue."""
+    (tmp_path / "Dockerfile-chat").write_text(
+        _PINNED_FROM + "# a trailing backslash in prose \\\nRUN pip install .\n"
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == []

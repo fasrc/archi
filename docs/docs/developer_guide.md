@@ -561,7 +561,9 @@ is one the preflight cannot probe. Three shapes are refused, and the message nam
    registry prefix and a tag or digest are allowed, so `ghcr.io/fasrc/a2rchi-python-base@sha256:…`
    is accepted while the lookalike `a2rchi-python-base-custom` is not.
 
-A `FROM` inside a `RUN <<EOF` heredoc body is shell text and is not read as a stage.
+Only a line that starts a Dockerfile instruction can start a stage. A `FROM` inside a
+`RUN <<EOF` heredoc body, on the continuation of an earlier instruction, or in a comment
+is not read as one.
 
 The image the preflight actually pulls is the one the final stage names, for the same
 reason: a template may name the same base twice, one digest in a builder stage and another

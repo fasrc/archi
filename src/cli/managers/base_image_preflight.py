@@ -64,31 +64,63 @@ _HEREDOC_RE = re.compile(
     r"(?:^|\s)<<-?(?P<q>['\"]?)(?P<tag>[A-Za-z_][\w-]*)(?P=q)(?=\s|$)"
 )
 
+# Only these instructions can open a heredoc. Without this, `# Example: RUN <<EOF` in an
+# ordinary comment blanks every instruction after it, up to a delimiter line that may never
+# come -- which hides a third-party final stage behind an earlier a2rchi builder stage.
+_HEREDOC_INSTRUCTION_RE = re.compile(r"^(?:RUN|COPY|ADD)\b", re.IGNORECASE)
 
-def _without_heredoc_bodies(text: str) -> str:
-    """``text`` with every heredoc body blanked, leaving only real instruction lines.
 
-    A `RUN <<EOF` payload is shell text. A payload line beginning with ``FROM`` is not a
-    build stage, and reading it as one breaks both ways: a third-party-looking payload
-    refuses a correctly based template, and an a2rchi-looking payload after a third-party
-    stage marks it covered -- a silent pass on an assumption.
+def _instruction_text(text: str) -> str:
+    """``text`` with every line that does not start an instruction blanked.
 
-    The bound: one delimiter is tracked at a time, so a single instruction opening two
-    heredocs has its second body scanned. No template does that, and the failure direction
-    is the same as before this function existed.
+    Three kinds of line look like an instruction to a line-oriented regex and are not one:
+
+    - a **heredoc body**. `RUN <<EOF` opens shell text, so a payload line beginning with
+      ``FROM`` is not a build stage.
+    - a **continuation**. `RUN echo hello \\` and the line under it are one command to
+      Docker, however that next line begins.
+    - a **comment**. `# Example: RUN <<EOF` is prose; reading it as a heredoc opener blanks
+      every instruction after it, up to a delimiter line that may never come.
+
+    Each reads both ways, and the second way is the dangerous one: a third-party-looking
+    line refuses a correctly based template, while an a2rchi-looking line hides a
+    third-party final stage and marks the template covered -- a silent pass on an
+    assumption, which is the one thing this module may not do.
+
+    The bounds, stated rather than implied. One heredoc delimiter is tracked at a time, so a
+    single instruction opening two heredocs has its second body scanned. A heredoc opened on
+    a continuation line is not recognized. Docker strips comments before joining
+    continuations and this does not, so a comment inside a continuation ends it here. In
+    each of those cases the line is read as written, which is the behavior that predates
+    this function.
     """
     lines = []
     delimiter = None
+    continued = False
     for line in text.splitlines():
-        if delimiter is None:
-            lines.append(line)
-            match = _HEREDOC_RE.search(line)
-            if match:
-                delimiter = match.group("tag")
-        else:
+        if delimiter is not None:
             lines.append("")
             if line.strip() == delimiter:
                 delimiter = None
+            continue
+        if continued:
+            lines.append("")
+            continued = line.rstrip().endswith("\\")
+            continue
+
+        lines.append(line)
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        opener = (
+            _HEREDOC_RE.search(line)
+            if _HEREDOC_INSTRUCTION_RE.match(stripped)
+            else None
+        )
+        if opener:
+            delimiter = opener.group("tag")
+        else:
+            continued = stripped.endswith("\\")
     return "\n".join(lines)
 
 
@@ -186,7 +218,7 @@ def _final_stage_base(text: str) -> Optional[str]:
     """
     stages = [
         (m.group("ref"), (m.group("alias") or "").lower())
-        for m in _FROM_STAGE_RE.finditer(_without_heredoc_bodies(text))
+        for m in _FROM_STAGE_RE.finditer(_instruction_text(text))
     ]
     if not stages:
         return None
