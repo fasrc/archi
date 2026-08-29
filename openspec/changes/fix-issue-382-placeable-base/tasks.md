@@ -126,7 +126,7 @@ Verified at `7c9915d0`.
 
 ## 2. Finding 3 — the stage the deployment actually runs
 
-- [ ] 2.1 **Judge the template by its final stage. RED first, both levels, plus the case that
+- [x] 2.1 **Judge the template by its final stage. RED first, both levels, plus the case that
   must stay covered.**
   Add to `tests/unit/test_base_image_preflight.py`, against `tmp_path` fixtures:
   1. `templates_missing_base_reference` reports a `Dockerfile-multi` of
@@ -167,7 +167,7 @@ Verified at `7c9915d0`.
 
 ## 3. Confirm nothing else regressed
 
-- [ ] 3.1 **Sweep every caller and fixture, and re-run the reproduction.**
+- [x] 3.1 **Sweep every caller and fixture, and re-run the reproduction.**
   `templates_missing_base_reference` is now stricter, so any fixture whose template names an
   a2rchi base outside the placeable set, or that is multistage, now reports.
   ```bash
@@ -198,7 +198,7 @@ Verified at `7c9915d0`.
   needed changing, record the sweep's result in the next commit's message instead of committing
   nothing.
 
-- [ ] 3.2 **Full gate, then the PR.**
+- [x] 3.2 **Full gate, then the PR.**
   ```bash
   bash scripts/gate.sh
   ```
