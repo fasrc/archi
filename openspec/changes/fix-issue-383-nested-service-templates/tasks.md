@@ -89,7 +89,7 @@ only the implementation, could never pass the gate.
 
 ## 3. Verify and open the PR
 
-- [ ] 3.1 Prove the acceptance criteria and open the PR.
+- [x] 3.1 Prove the acceptance criteria and open the PR.
 
   Confirm each of these before opening the PR:
   - `git diff --stat origin/dev -- src/cli/templates/dockerfiles/` prints nothing. No template
