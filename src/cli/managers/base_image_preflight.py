@@ -110,6 +110,23 @@ def stale_template_exclusions(template_dir: Optional[Path] = None) -> List[str]:
     return [name for name in NON_SERVICE_TEMPLATES if not (directory / name).exists()]
 
 
+def nested_service_templates(template_dir: Optional[Path] = None) -> List[Path]:
+    """Service templates below the top level of the template directory.
+
+    The declared service set recurses; one of its readers does not.
+    ``scripts/dev/update_service_base_images.py`` rewrites base references and proves them
+    with ``--verify`` over ``DOCKERFILES_DIR.glob("Dockerfile*")`` -- the top level only --
+    so a nested service template would never be retargeted by the release workflow and
+    never checked, and would ship on whatever base it was committed with.
+
+    A non-empty return is therefore not a deploy-time refusal: a nested template on a good
+    base deploys correctly. It is a repo-level guard, so that making the set recursive and
+    making the rewriter recursive have to land together.
+    """
+    directory = template_dir or TEMPLATE_DIR
+    return [p for p in service_templates(directory) if p.parent != directory]
+
+
 def templates_missing_base_reference(template_dir: Optional[Path] = None) -> List[Path]:
     """Service templates that carry no ``FROM`` referencing an ``a2rchi-*-base`` image.
 
@@ -131,7 +148,11 @@ def base_reference(image: str, template_dir: Optional[Path] = None) -> Optional[
     check a different tag than the one the build will use.
     """
     directory = template_dir or TEMPLATE_DIR
-    for dockerfile in sorted(directory.glob("Dockerfile-*")):
+    # rglob, to read the same file set `service_templates` declares. A top-level glob here
+    # would decide which image to probe from a different set of files than the one that
+    # decided a template is covered, so a nested template's own reference would be
+    # invisible to the deploy check that is supposed to cover it.
+    for dockerfile in sorted(directory.rglob("Dockerfile*")):
         for match in _FROM_BASE_RE.finditer(dockerfile.read_text()):
             reference = match.group("ref")
             if image in reference:

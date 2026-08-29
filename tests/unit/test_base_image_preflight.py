@@ -1479,3 +1479,65 @@ def test_enforce_base_images_refuses_a_nested_uncoverable_service_template(tmp_p
     assert probe.pulled == [], (
         "the refusal must come before any image work; " f"probe pulled {probe.pulled}"
     )
+
+
+# --- Review round 2 (PR #388): the recursive service set and its non-recursive readers ---
+
+
+def test_base_reference_reads_a_nested_service_template(tmp_path):
+    """`base_reference` must read the same file set `service_templates` declares.
+
+    With the traversal recursive on one side and a top-level glob on the other, a nested
+    template's own base reference is invisible to the preflight: the check that decides
+    which image to probe reads a different set of files than the check that decided the
+    template is covered.
+    """
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "Dockerfile-svc").write_text(_PINNED_FROM)
+    assert (
+        preflight.base_reference(preflight.PYTHON_BASE, tmp_path)
+        == _PINNED_FROM.split()[1]
+    )
+
+
+def test_nested_service_templates_reports_a_template_below_the_top_level(tmp_path):
+    """The declared service set may recurse; two of its readers still cannot.
+
+    `update_service_base_images.py` rewrites and `--verify`-checks only the `Dockerfile*`
+    files at the top of the template directory, so a nested service template would never be
+    retargeted by the release workflow and never proved by `--verify` -- it would ship on
+    whatever base it was committed with, silently.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "Dockerfile-svc").write_text(_PINNED_FROM)
+    assert preflight.nested_service_templates(tmp_path) == [
+        tmp_path / "sub" / "Dockerfile-svc"
+    ]
+
+
+def test_nested_service_templates_is_empty_for_a_flat_directory(tmp_path):
+    """An excluded nested file is not a nested *service* template."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "base-python-image").mkdir()
+    (tmp_path / "base-python-image" / "Dockerfile").write_text(
+        "FROM docker.io/library/python:3.11\n"
+    )
+    assert preflight.nested_service_templates(tmp_path) == []
+
+
+def test_no_service_template_is_nested_while_the_release_rewriter_is_top_level_only():
+    """The repo-wide guard. Passing today is the point: it fails the day that changes.
+
+    Adding a nested service template is not wrong in itself -- it is wrong while
+    `update_service_base_images.py` reads `DOCKERFILES_DIR.glob("Dockerfile*")` at
+    `:322` and `:382`. Failing here is what forces the two changes to land together
+    instead of a release shipping one service on an unretargeted base image.
+    """
+    nested = preflight.nested_service_templates()
+    assert not nested, (
+        f"nested service template(s) {nested} are in the declared service set, but "
+        f"scripts/dev/update_service_base_images.py rewrites and --verify-checks only the "
+        f"top level -- make that script recursive in the same change, or exclude these "
+        f"files in NON_SERVICE_TEMPLATES"
+    )

@@ -497,7 +497,9 @@ worth knowing before you add a file there:
 - The rewriter above is **not** recursive. It reads only the `Dockerfile*` files at the top
   of the directory, so a nested template's `FROM` line is never retargeted by the release
   workflow and never checked by `--verify`. Keep service templates at the top level unless
-  you extend the rewriter in the same change.
+  you extend the rewriter in the same change --
+  `test_no_service_template_is_nested_while_the_release_rewriter_is_top_level_only` fails
+  otherwise, which is what forces the two changes to land together.
 
 ```bash
 # Move every template to a tag.
