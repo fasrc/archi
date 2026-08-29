@@ -1257,6 +1257,18 @@ def test_stale_template_exclusions_on_the_real_directory_is_empty():
     )
 
 
+def test_stale_template_exclusions_reports_a_bogus_relative_path_key(monkeypatch):
+    """stale_template_exclusions resolves keys by joining with the directory, so a nested
+    relative-path key like 'subdir/Dockerfile-bogus' is reported when the file does not
+    exist -- the join is what makes relative-path keys resolve correctly."""
+    bogus = "no-such-subdir/Dockerfile-bogus"
+    monkeypatch.setattr(preflight, "NON_SERVICE_TEMPLATES", {bogus: "does not exist"})
+    stale = preflight.stale_template_exclusions()
+    assert stale == [
+        bogus
+    ], f"expected bogus relative-path key to be stale, got {stale!r}"
+
+
 def test_service_templates_has_15_of_21_and_excluded_relative_paths_match_the_declaration():
     """service_templates() returns 15 of the 21 Dockerfile* files; the 6 excluded relative
     paths are exactly the keys of NON_SERVICE_TEMPLATES."""
@@ -1280,6 +1292,22 @@ def test_service_templates_has_15_of_21_and_excluded_relative_paths_match_the_de
         f"excluded paths {sorted(excluded)!r} do not match "
         f"NON_SERVICE_TEMPLATES keys {sorted(preflight.NON_SERVICE_TEMPLATES.keys())!r}"
     )
+
+
+def test_base_image_subdirs_are_excluded_from_service_templates_on_real_directory():
+    """base-python-image/Dockerfile and base-pytorch-image/Dockerfile live in subdirectories
+    that the recursive rglob picks up. Asserting against the real TEMPLATE_DIR confirms those
+    files are excluded from service_templates() -- a tmp_path fixture would only prove the
+    mechanism, not that the actual files are handled."""
+    services = preflight.service_templates()
+    template_dir = preflight.TEMPLATE_DIR
+    service_rel_paths = {p.relative_to(template_dir).as_posix() for p in services}
+    assert (
+        "base-python-image/Dockerfile" not in service_rel_paths
+    ), "base-python-image/Dockerfile must not appear in service_templates()"
+    assert (
+        "base-pytorch-image/Dockerfile" not in service_rel_paths
+    ), "base-pytorch-image/Dockerfile must not appear in service_templates()"
 
 
 # --- Service templates without a base reference (tasks.md 1.2) ---------------------------
