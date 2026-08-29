@@ -1736,3 +1736,18 @@ def test_two_image_rule_offenders_leaves_an_unresolvable_template_to_the_coverag
     assert preflight.templates_missing_base_reference(tmp_path) == [
         tmp_path / "Dockerfile-empty"
     ]
+
+
+def test_a_cyclic_alias_chain_is_reported_as_unresolvable(tmp_path):
+    """`FROM b AS a` / `FROM a AS b` must refuse, not hang and not pass.
+
+    The cycle guard is the fail-closed half of stage resolution and had no test, so
+    nothing held it in place. A malformed template ends up in the same bucket as one with
+    no FROM line: the preflight cannot resolve a base, so it refuses.
+    """
+    (tmp_path / "Dockerfile-cycle").write_text(
+        "FROM stage-b AS stage-a\nFROM stage-a AS stage-b\n"
+    )
+    reasons = preflight.uncoverable_template_reasons(tmp_path)
+    assert [path.name for path, _ in reasons] == ["Dockerfile-cycle"]
+    assert "no FROM line the preflight can resolve" in reasons[0][1]
