@@ -563,6 +563,11 @@ is one the preflight cannot probe. Three shapes are refused, and the message nam
 
 A `FROM` inside a `RUN <<EOF` heredoc body is shell text and is not read as a stage.
 
+The image the preflight actually pulls is the one the final stage names, for the same
+reason: a template may name the same base twice, one digest in a builder stage and another
+in the stage that ships, and probing the builder's line would establish an image the
+deployment never runs.
+
 Two CI jobs call the script: `pr-preview.yml` points the templates at the PR's base-image
 build, and `test-and-build-tag.yml` points them at the release build. The release workflow
 passes `--orig-tag all` — without it the script takes its `latest` default and matches none

@@ -47,13 +47,9 @@ NON_SERVICE_TEMPLATES: dict[str, str] = {
     "Dockerfile-grafana": "builds on docker.io/grafana/grafana-enterprise:10.2.0",
 }
 
-# `FROM <ref>` where the reference names an a2rchi base image. `\S+` stops at whitespace, so
-# the trailing spaces several templates carry on that line never reach the tag.
-_FROM_BASE_RE = re.compile(r"^FROM\s+(?P<ref>\S*a2rchi-\w+-base\S*)", re.MULTILINE)
-
-# Every `FROM <ref> [AS <alias>]` line, used to resolve the final stage of a multistage
-# template. Separate from `_FROM_BASE_RE` so `base_reference` continues to match any
-# a2rchi reference without change.
+# Every `FROM <ref> [AS <alias>]` line. One matcher for both readers -- the coverage check
+# and `base_reference` -- so they cannot disagree about what a template's base is. `\S+`
+# stops at whitespace, so the trailing spaces several templates carry never reach the tag.
 _FROM_STAGE_RE = re.compile(
     r"^FROM\s+(?P<ref>\S+)(?:\s+AS\s+(?P<alias>\S+))?",
     re.MULTILINE | re.IGNORECASE,
@@ -286,18 +282,23 @@ def two_image_rule_offenders(template_dir: Optional[Path] = None) -> List[str]:
 
 
 def base_reference(image: str, template_dir: Optional[Path] = None) -> Optional[str]:
-    """The pinned reference the templates declare for ``image``.
+    """The pinned reference the service templates ship ``image`` at.
 
     Read from the templates rather than composed from a constant, so the preflight cannot
-    check a different tag than the one the build will use.
+    check a different tag than the one the build will use. It reads each template's *final
+    stage* -- the same judgement ``templates_missing_base_reference`` makes -- because a
+    template may name the same base twice, one digest in a builder stage and another in the
+    stage that ships. Probing the builder's line would establish an image the deployment
+    never runs.
+
+    Bound, tracked as fasrc/archi#389: the first service template that ships ``image`` wins.
+    Two templates shipping the same base at different references is a split pin that nothing
+    here refuses yet.
     """
-    directory = template_dir or TEMPLATE_DIR
-    for dockerfile in sorted(directory.glob("Dockerfile-*")):
-        text = _without_heredoc_bodies(dockerfile.read_text())
-        for match in _FROM_BASE_RE.finditer(text):
-            reference = match.group("ref")
-            if _reference_names(reference, image):
-                return reference
+    for template in service_templates(template_dir):
+        base = _final_stage_base(template.read_text())
+        if base is not None and _reference_names(base, image):
+            return base
     return None
 
 

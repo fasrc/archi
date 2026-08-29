@@ -1751,3 +1751,57 @@ def test_a_cyclic_alias_chain_is_reported_as_unresolvable(tmp_path):
     reasons = preflight.uncoverable_template_reasons(tmp_path)
     assert [path.name for path, _ in reasons] == ["Dockerfile-cycle"]
     assert "no FROM line the preflight can resolve" in reasons[0][1]
+
+
+# --- Review round 2 (PR #387): probe the reference the shipped stage names -------------
+
+_SPLIT_DIGEST_BUILDER = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+_SPLIT_DIGEST_FINAL = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "b" * 64
+_SPLIT_DIGEST_TEMPLATE = (
+    f"FROM {_SPLIT_DIGEST_BUILDER} AS builder\n"
+    "RUN pip wheel .\n"
+    f"FROM {_SPLIT_DIGEST_FINAL}\n"
+    "COPY --from=builder /wheels /wheels\n"
+)
+
+
+def test_base_reference_returns_the_final_stage_pin_not_the_builder_pin(tmp_path):
+    """Judging coverage by the final stage is worth nothing if the probe reads another line.
+
+    A template that names the same placeable base twice -- one digest in a builder stage,
+    another in the stage that ships -- is covered on the strength of the final stage and
+    then probed on the builder's digest. The preflight would establish an image the build
+    never uses, and the real one can still be stale or below the Python floor.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_SPLIT_DIGEST_TEMPLATE)
+    assert preflight.base_reference(preflight.PYTHON_BASE, tmp_path) == (
+        _SPLIT_DIGEST_FINAL
+    ), "the reference probed must be the one the final stage names"
+
+
+def test_enforce_base_images_pulls_the_final_stage_digest(tmp_path):
+    """The same claim at the entry point `archi create` actually calls."""
+    (tmp_path / "Dockerfile-chat").write_text(_SPLIT_DIGEST_TEMPLATE)
+    probe = FakeProbe()
+
+    preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert probe.pulled == [_SPLIT_DIGEST_FINAL], (
+        "the preflight must materialize the image the final stage names, not the "
+        f"builder's; pulled {probe.pulled}"
+    )
+
+
+def test_base_reference_skips_a_template_excluded_from_the_service_set(tmp_path):
+    """A base-defining or third-party template is not what the services build from.
+
+    `Dockerfile-postgres` is excluded by name, so a reference inside it must not become the
+    probe target for a service base.
+    """
+    (tmp_path / "Dockerfile-postgres").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base@sha256:" + "c" * 64 + "\n"
+    )
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    assert preflight.base_reference(preflight.PYTHON_BASE, tmp_path) == (
+        _PINNED_FROM.split()[1]
+    )
