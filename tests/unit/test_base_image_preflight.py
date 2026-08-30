@@ -132,17 +132,29 @@ def test_no_template_carries_a_mutable_base_reference():
 
 
 def test_all_templates_share_one_pin_state():
-    """The pin count equals len(service_templates()), and a split tree means a partial rewrite.
+    """Every service template carries a pin, and a split tree means a partial rewrite.
 
-    Counting alone would miss the worse failure: a rewrite that updated some
-    templates and not others leaves the count right and the deployment building
-    against two different base images.
+    Coverage alone would miss the worse failure: a rewrite that updated some
+    templates and not others leaves every template pinned and the deployment
+    building against two different base images.
+
+    Coverage is asserted per *template*, not by counting references. A multistage
+    template pins twice -- a builder stage and the stage that ships -- which is the
+    shape `_final_stage_base` exists to read and which
+    `test_base_reference_returns_the_final_stage_pin_not_the_builder_pin` requires.
+    Requiring one reference per template would fail CI the day a real template
+    adopts it, for no safety gain: `update_service_base_images.py` rewrites every
+    matching line in a file, `test_every_digest_pinned_from_line_has_the_annotation_above_it`
+    annotates every pinned line, and the pin-state check below still reads *all*
+    references, so a second stage left unretargeted still fails here.
     """
     references = _base_references()
-    expected = len(preflight.service_templates())
-    assert (
-        len(references) == expected
-    ), f"expected {expected} base references, found {len(references)}: {references}"
+    pinned = {name for name, _reference in references}
+    expected = {template.name for template in preflight.service_templates()}
+    assert pinned == expected, (
+        f"service templates carrying no base reference: {sorted(expected - pinned)}; "
+        f"base references from outside the service set: {sorted(pinned - expected)}"
+    )
 
     states = {_pin_state(ref) for _name, ref in references}
     assert len(states) == 1, f"templates disagree on pin state: {states}"
