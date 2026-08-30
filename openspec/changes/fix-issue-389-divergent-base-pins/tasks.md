@@ -121,7 +121,7 @@ confirm `git status` reports nothing further modified.
 
   Run the gate and commit.
 
-- [ ] 1.5 Document the new refusal.
+- [x] 1.5 Document the new refusal.
 
   In `docs/docs/developer_guide.md`, the paragraph at `:538-544` — "Its bound is worth
   knowing…" — is where the guide says what the deploy preflight refuses about the declared
