@@ -9,7 +9,7 @@ Before each commit, format first and then stage — the pre-commit hook's `black
 while CI's is an assert, so staging first can push a misformatted file. After `git add`,
 confirm `git status` reports nothing further modified.
 
-- [ ] 1.1 Read every reference the declared set gives for a base image, tests first, in one commit.
+- [x] 1.1 Read every reference the declared set gives for a base image, tests first, in one commit.
 
   **RED first, and watch it fail.** In `tests/unit/test_base_image_preflight.py`, next to the
   `base_reference` tests (`:844`), add a test with a `tmp_path` fixture holding
@@ -43,7 +43,7 @@ confirm `git status` reports nothing further modified.
   Run `python -m pytest tests/unit/test_base_image_preflight.py tests/unit/test_python_version_declaration.py -v`,
   then the repo gate script, and commit only when it exits 0.
 
-- [ ] 1.2 Refuse the disagreement from `required_base_images`.
+- [x] 1.2 Refuse the disagreement from `required_base_images`.
 
   **RED first.** Add a test using the same two-digest fixture asserting
   `preflight.required_base_images(gpu_ids=None, grader_enabled=False, template_dir=tmp_path)`
