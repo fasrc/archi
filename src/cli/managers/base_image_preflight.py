@@ -176,9 +176,11 @@ def required_base_images(
     violate the governing invariant: no path may pass silently on an assumption.
     """
     _refuse_uncoverable_templates(template_dir)
+    names = required_base_image_names(gpu_ids, grader_enabled)
+    _refuse_divergent_base_references(names, template_dir)
 
     references = []
-    for image in required_base_image_names(gpu_ids, grader_enabled):
+    for image in names:
         reference = base_reference(image, template_dir)
         if reference:
             references.append(reference)
@@ -552,6 +554,30 @@ def _refuse_uncoverable_templates(template_dir: Optional[Path] = None) -> None:
             "a2rchi-*-base FROM reference, so the preflight cannot cover them:\n"
             + "\n".join(f"  {p}" for p in uncoverable)
         )
+
+
+def _refuse_divergent_base_references(
+    names: List[str], template_dir: Optional[Path] = None
+) -> None:
+    """Refuse when service templates disagree about the reference for a required base image.
+
+    Scope decision (design D2): agreement is checked only for the images
+    ``required_base_image_names`` returns, so a split pin on a base this deployment will not
+    build is not refused; that costs visibility -- the split stays hidden until a deployment
+    that does need that base.
+    """
+    for image in names:
+        sources = _base_reference_sources(image, template_dir)
+        if len(sources) > 1:
+            lines = [
+                f"Base image check failed: service templates declare divergent references "
+                f"for {image}:"
+            ]
+            for reference, templates in sources.items():
+                lines.append(f"  {reference}")
+                for template in templates:
+                    lines.append(f"    {template}")
+            raise BaseImagePreflightError("\n".join(lines))
 
 
 def enforce_base_images(

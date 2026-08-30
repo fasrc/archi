@@ -856,6 +856,30 @@ def test_base_references_returns_all_distinct_references_across_templates(tmp_pa
     ]
 
 
+def test_required_base_images_raises_for_divergent_base_references(tmp_path):
+    """When two service templates pin the same required base image at different references,
+    ``required_base_images`` must refuse rather than silently returning one of them.
+
+    Before the guard, the call returned ``[aaaa_ref]`` -- the first match -- leaving the
+    divergent pin invisible.
+    """
+    aaaa_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    bbbb_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "b" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {aaaa_ref}\n")
+    (tmp_path / "Dockerfile-piazza").write_text(f"FROM {bbbb_ref}\n")
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.required_base_images(
+            gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+        )
+
+    msg = str(exc_info.value)
+    assert "Dockerfile-chat" in msg
+    assert "Dockerfile-piazza" in msg
+    assert aaaa_ref in msg
+    assert bbbb_ref in msg
+
+
 def test_required_base_images_refuses_when_no_template_declares_a_base_reference(
     tmp_path,
 ):
