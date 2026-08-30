@@ -1906,6 +1906,86 @@ def test_a_second_heredoc_payload_does_not_falsely_refuse_a_valid_template(tmp_p
     assert preflight.templates_missing_base_reference(tmp_path) == []
 
 
+def test_an_indented_final_stage_is_still_a_build_stage(tmp_path):
+    """Docker accepts a leading-whitespace instruction; anchoring `FROM` at column zero does not.
+
+    An unindented a2rchi builder followed by an indented third-party final stage reads as
+    covered on the builder's strength, and the deployment proceeds without probing the image
+    that actually ships.
+    """
+    (tmp_path / "Dockerfile-indented").write_text(
+        _PINNED_FROM.replace("FROM", "FROM", 1).rstrip("\n")
+        + " AS builder\nRUN echo hi\n  "
+        + _THIRD_PARTY_FINAL
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-indented"
+    ], f"an indented final stage must still be seen, got {missing}"
+
+
+def test_a_space_indented_heredoc_terminator_does_not_close_the_payload(tmp_path):
+    """`<<EOF` ends only on a line that is exactly the delimiter.
+
+    Docker requires the terminator at column zero for `<<EOF` (`<<-EOF` strips leading tabs,
+    never spaces). Closing on a space-indented `  EOF` ends the payload early, so the rest of
+    the heredoc body is scanned as instructions and an a2rchi `FROM` inside it hides the real
+    third-party final stage.
+    """
+    (tmp_path / "Dockerfile-terminator").write_text(
+        _THIRD_PARTY_FINAL.rstrip("\n")
+        + " AS base\nRUN <<EOF\n  EOF\n"
+        + _PINNED_FROM
+        + "EOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-terminator"
+    ], f"a space-indented line must not close a <<EOF payload, got {missing}"
+
+
+def test_a_heredoc_opened_on_a_continuation_line_still_blanks_its_payload(tmp_path):
+    """`RUN \\` then `<<EOF` is one instruction that opens a heredoc.
+
+    Blanking the continuation without recording its delimiter leaves the payload scanned as
+    instructions, so an a2rchi `FROM` inside the payload masks the third-party final stage.
+    """
+    (tmp_path / "Dockerfile-contheredoc").write_text(
+        _THIRD_PARTY_FINAL + "RUN \\\n  <<EOF\n" + _PINNED_FROM + "EOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-contheredoc"
+    ], f"a heredoc opened on a continuation must blank its payload, got {missing}"
+
+
+def test_an_unterminated_heredoc_fails_closed_instead_of_hiding_the_final_stage(
+    tmp_path,
+):
+    """A delimiter that never arrives means the parser could not tell -- so it must refuse.
+
+    `RUN echo "example <<EOF here"` is quoted shell text, not a heredoc opener, but reading it
+    as one blanks every line to the end of the file. Without this, the blanked final stage
+    leaves an earlier a2rchi builder as the last stage standing and the template reads as
+    covered: a silent pass on an assumption, which this module may not do.
+
+    Failing closed is the module's third option -- say out loud that it could not tell -- and
+    it costs a correct template nothing, because a correct template terminates its heredocs.
+    """
+    (tmp_path / "Dockerfile-unterminated").write_text(
+        _PINNED_FROM.rstrip("\n")
+        + ' AS builder\nRUN echo "example <<EOF here"\n'
+        + _THIRD_PARTY_FINAL
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-unterminated"
+    ], f"an unterminated heredoc must fail closed, got {missing}"
+
+    reasons = dict(preflight.uncoverable_template_reasons(tmp_path))
+    assert "resolve" in reasons[tmp_path / "Dockerfile-unterminated"]
+
+
 def test_heredoc_delimiters_are_consumed_in_declaration_order(tmp_path):
     """Docker feeds the payloads in the order the instruction declares them.
 

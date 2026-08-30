@@ -54,8 +54,11 @@ NON_SERVICE_TEMPLATES: dict[str, str] = {
 # a form the release rewriter already recognizes
 # (`scripts/dev/update_service_base_images.py:105`). Without it the flag is captured as the
 # reference and the preflight refuses a template the rest of the toolchain supports.
+# `[ \t]*`, not `\s*`: Docker accepts an indented instruction, but under re.MULTILINE
+# `\s` also matches the newline, which would let this walk past a blanked line and read the
+# next one as a stage -- reintroducing exactly what the blanking prevents.
 _FROM_STAGE_RE = re.compile(
-    r"^FROM\s+(?:--\S+\s+)*(?P<ref>\S+)(?:\s+AS\s+(?P<alias>\S+))?",
+    r"^[ \t]*FROM\s+(?:--\S+\s+)*(?P<ref>\S+)(?:\s+AS\s+(?P<alias>\S+))?",
     re.MULTILINE | re.IGNORECASE,
 )
 
@@ -65,7 +68,7 @@ LOCAL_PREFIX = "localhost/"
 # the trailing lookahead are what keep shell text out: `$((1<<n))` and `echo "a << b"` are
 # not heredoc openers, and treating them as one would blank the rest of the template.
 _HEREDOC_RE = re.compile(
-    r"(?:^|\s)<<-?(?P<q>['\"]?)(?P<tag>[A-Za-z_][\w-]*)(?P=q)(?=\s|$)"
+    r"(?:^|\s)<<(?P<dash>-?)(?P<q>['\"]?)(?P<tag>[A-Za-z_][\w-]*)(?P=q)(?=\s|$)"
 )
 
 # Only these instructions can open a heredoc. Without this, `# Example: RUN <<EOF` in an
@@ -74,7 +77,16 @@ _HEREDOC_RE = re.compile(
 _HEREDOC_INSTRUCTION_RE = re.compile(r"^(?:RUN|COPY|ADD)\b", re.IGNORECASE)
 
 
-def _instruction_text(text: str) -> str:
+def _heredoc_delimiters(line: str) -> List[tuple]:
+    """``(delimiter, strips_tabs)`` for every heredoc ``line`` opens, in declaration order.
+
+    ``strips_tabs`` is the ``<<-`` form, which lets the terminator carry leading **tabs** --
+    and only tabs. Spaces never indent a terminator in either form.
+    """
+    return [(m.group("tag"), bool(m.group("dash"))) for m in _HEREDOC_RE.finditer(line)]
+
+
+def _instruction_text(text: str) -> Optional[str]:
     """``text`` with every line that does not start an instruction blanked.
 
     Three kinds of line look like an instruction to a line-oriented regex and are not one:
@@ -95,23 +107,42 @@ def _instruction_text(text: str) -> str:
     the payloads in the order they are declared, so every delimiter is collected and
     consumed in that order.
 
-    The bounds, stated rather than implied. A heredoc opened on a continuation line is not
-    recognized. Docker strips comments before joining continuations and this does not, so a
-    comment inside a continuation ends it here. In both cases the line is read as written,
-    which is the behavior that predates this function.
+    A heredoc may also be opened on a **continuation** of the instruction -- `RUN \\` then
+    `<<EOF` -- so continuation lines are read for openers even though they are blanked.
+    Blanking one without recording its delimiter would leave the payload scanned as
+    instructions, which is how an a2rchi `FROM` inside shell text hides a third-party final
+    stage.
+
+    Returns ``None`` when a delimiter never arrives. That is the "could not tell" case, and
+    it is why it fails closed rather than returning the text it managed to blank: an
+    unterminated heredoc swallows the rest of the template, so the last stage still standing
+    is whatever preceded it -- an a2rchi builder, reading as covered. It costs a correct
+    template nothing, because a correct template terminates its heredocs. It is also what
+    keeps a quoted `<<EOF` in ordinary shell text (`RUN echo "example <<EOF here"`) from
+    passing silently: this walk cannot see shell quoting, so it over-reads the opener, finds
+    no terminator, and refuses instead of guessing.
+
+    The bounds, stated rather than implied. Docker strips comments before joining
+    continuations and this does not, so a comment inside a continuation ends it here, and the
+    line is read as written -- the behavior that predates this function.
     """
     lines = []
-    pending: List[str] = []
+    pending: List[tuple] = []
     continued = False
     for line in text.splitlines():
         if pending:
             lines.append("")
-            if line.strip() == pending[0]:
+            delimiter, strips_tabs = pending[0]
+            # Docker ends `<<EOF` only on a line that *is* the delimiter; `<<-EOF` allows
+            # leading tabs. Neither allows leading spaces, so `line.strip()` would end the
+            # payload early and scan the rest of it as instructions.
+            if (line.lstrip("\t") if strips_tabs else line) == delimiter:
                 pending.pop(0)
             continue
         if continued:
             lines.append("")
-            continued = line.rstrip().endswith("\\")
+            pending = _heredoc_delimiters(line)
+            continued = not pending and line.rstrip().endswith("\\")
             continue
 
         lines.append(line)
@@ -119,9 +150,11 @@ def _instruction_text(text: str) -> str:
         if stripped.startswith("#"):
             continue
         if _HEREDOC_INSTRUCTION_RE.match(stripped):
-            pending = [m.group("tag") for m in _HEREDOC_RE.finditer(line)]
+            pending = _heredoc_delimiters(line)
         if not pending:
             continued = stripped.endswith("\\")
+    if pending:
+        return None
     return "\n".join(lines)
 
 
@@ -213,13 +246,16 @@ def _final_stage_base(text: str) -> Optional[str]:
     bound is intentional. Stating the bound rather than implying totality is what the
     original defect lacked.
 
-    Returns None when the template has no FROM lines or when the parser encounters a
-    reference it cannot resolve. Returning None fails closed: the caller treats an
-    unresolvable template as uncovered.
+    Returns None when the template has no FROM lines, when a heredoc is never terminated,
+    or when the parser encounters a reference it cannot resolve. Returning None fails closed:
+    the caller treats an unresolvable template as uncovered.
     """
+    instructions = _instruction_text(text)
+    if instructions is None:
+        return None
     stages = [
         (m.group("ref"), (m.group("alias") or "").lower())
-        for m in _FROM_STAGE_RE.finditer(_instruction_text(text))
+        for m in _FROM_STAGE_RE.finditer(instructions)
     ]
     if not stages:
         return None
