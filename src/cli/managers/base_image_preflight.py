@@ -64,12 +64,51 @@ _FROM_STAGE_RE = re.compile(
 
 LOCAL_PREFIX = "localhost/"
 
-# A heredoc opener: `RUN <<EOF`, `RUN <<-EOF`, `COPY <<"EOF" /f`. The leading whitespace and
-# the trailing lookahead are what keep shell text out: `$((1<<n))` and `echo "a << b"` are
-# not heredoc openers, and treating them as one would blank the rest of the template.
+# A heredoc opener: `RUN <<EOF`, `RUN <<-EOF`, `COPY <<"EOF" /f`, and the forms that put
+# whitespace or a file descriptor around the operator -- `RUN << EOF`, `RUN 3<<EOF`,
+# `RUN <<- EOF`. All are the same redirection, and a pattern that reads only the tight form
+# leaves the payload scanned as instructions.
+#
+# The leading `(?:^|\s)` and the trailing lookahead are what keep shell text out: `$((1<<n))`
+# is not preceded by whitespace, and in `echo "a << b"` the closing quote follows the tag, so
+# neither reads as an opener. Over-reading one is no longer a silent pass in any case -- an
+# opener whose delimiter never arrives now fails closed (`_instruction_text`).
 _HEREDOC_RE = re.compile(
-    r"(?:^|\s)<<(?P<dash>-?)(?P<q>['\"]?)(?P<tag>[A-Za-z_][\w-]*)(?P=q)(?=\s|$)"
+    r"(?:^|\s)\d*<<(?P<dash>-?)\s*(?P<q>['\"]?)(?P<tag>[A-Za-z_][\w-]*)(?P=q)(?=\s|$)"
 )
+
+# Docker's `# escape=` parser directive, which chooses the line-continuation character.
+# Only a backslash or a backtick is allowed.
+_ESCAPE_DIRECTIVE_RE = re.compile(
+    r"^#\s*escape\s*=\s*(?P<char>[\\`])\s*$", re.IGNORECASE
+)
+
+# Any parser directive -- `# syntax=...`, `# escape=...`, `# check=...`. Docker stops looking
+# for directives at the first line that is not one, so this is what lets the scan step over
+# the `# syntax=docker/dockerfile:1` every template in this repo opens with, and stop at the
+# ordinary `# base-image-pin:` comment under it.
+_PARSER_DIRECTIVE_RE = re.compile(r"^#\s*[a-z]+\s*=\s*\S+\s*$", re.IGNORECASE)
+
+
+def _escape_char(text: str) -> str:
+    """The line-continuation character ``text`` declares, or the default backslash.
+
+    Docker reads parser directives only at the very top of a file: the first comment that is
+    not a directive, the first instruction, or the first blank line ends the section, and an
+    ``# escape=`` below that is an ordinary comment. Reading a late one would promote a
+    genuine continuation line to a build stage and refuse a correctly based template.
+    """
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or not stripped.startswith("#"):
+            break
+        match = _ESCAPE_DIRECTIVE_RE.match(stripped)
+        if match:
+            return match.group("char")
+        if not _PARSER_DIRECTIVE_RE.match(stripped):
+            break
+    return "\\"
+
 
 # Only these instructions can open a heredoc. Without this, `# Example: RUN <<EOF` in an
 # ordinary comment blanks every instruction after it, up to a delimiter line that may never
@@ -122,10 +161,16 @@ def _instruction_text(text: str) -> Optional[str]:
     passing silently: this walk cannot see shell quoting, so it over-reads the opener, finds
     no terminator, and refuses instead of guessing.
 
+    The continuation character is whatever the ``# escape=`` parser directive at the top of
+    the file declares, defaulting to the backslash. Hard-coding the backslash reads a
+    backtick-continued `RUN` as a finished instruction, which promotes the line under it to a
+    build stage -- another way a third-party final stage hides behind an a2rchi builder.
+
     The bounds, stated rather than implied. Docker strips comments before joining
     continuations and this does not, so a comment inside a continuation ends it here, and the
     line is read as written -- the behavior that predates this function.
     """
+    escape = _escape_char(text)
     lines = []
     pending: List[tuple] = []
     continued = False
@@ -142,7 +187,7 @@ def _instruction_text(text: str) -> Optional[str]:
         if continued:
             lines.append("")
             pending = _heredoc_delimiters(line)
-            continued = not pending and line.rstrip().endswith("\\")
+            continued = not pending and line.rstrip().endswith(escape)
             continue
 
         lines.append(line)
@@ -152,7 +197,7 @@ def _instruction_text(text: str) -> Optional[str]:
         if _HEREDOC_INSTRUCTION_RE.match(stripped):
             pending = _heredoc_delimiters(line)
         if not pending:
-            continued = stripped.endswith("\\")
+            continued = stripped.endswith(escape)
     if pending:
         return None
     return "\n".join(lines)

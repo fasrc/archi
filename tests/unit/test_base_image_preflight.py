@@ -1998,6 +1998,101 @@ def test_an_unterminated_heredoc_fails_closed_instead_of_hiding_the_final_stage(
     assert "resolve" in reasons[tmp_path / "Dockerfile-unterminated"]
 
 
+def test_a_heredoc_opener_with_a_space_after_the_operator_is_still_an_opener(tmp_path):
+    """`RUN << EOF` is the same redirection as `RUN <<EOF`.
+
+    Requiring the delimiter to touch the operator leaves the payload scanned as
+    instructions, so an a2rchi `FROM` inside it hides the third-party final stage.
+    """
+    (tmp_path / "Dockerfile-spaced").write_text(
+        _THIRD_PARTY_FINAL + "RUN << XEOF\n" + _PINNED_FROM + "XEOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-spaced"
+    ], f"`<< XEOF` must open a heredoc, got {missing}"
+
+
+def test_a_file_descriptor_numbered_heredoc_is_still_an_opener(tmp_path):
+    """`RUN 3<<EOF` redirects on fd 3 and still opens a heredoc.
+
+    The digits sit between the whitespace and the operator, so a pattern anchored on
+    whitespace-then-`<<` misses it and scans the payload as instructions.
+    """
+    (tmp_path / "Dockerfile-fd").write_text(
+        _THIRD_PARTY_FINAL + "RUN 3<<XEOF\n" + _PINNED_FROM + "XEOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-fd"
+    ], f"`3<<XEOF` must open a heredoc, got {missing}"
+
+
+def test_a_dash_heredoc_with_a_space_after_the_operator_is_still_an_opener(tmp_path):
+    """`RUN <<- EOF` combines both forms and must still open a heredoc."""
+    (tmp_path / "Dockerfile-dashspace").write_text(
+        _THIRD_PARTY_FINAL + "RUN <<- XEOF\n" + _PINNED_FROM + "\tXEOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-dashspace"
+    ], f"`<<- XEOF` must open a heredoc, got {missing}"
+
+
+def test_the_escape_parser_directive_changes_the_continuation_character(tmp_path):
+    """The `escape` parser directive makes the backtick continue lines, and the backslash not.
+
+    Reading a backtick-continued `RUN` as a completed instruction leaves the `FROM` under it
+    looking like a build stage, so a third-party final stage is hidden behind an a2rchi one.
+    """
+    (tmp_path / "Dockerfile-escape").write_text(
+        "# escape=`\n" + _THIRD_PARTY_FINAL + "RUN echo hello `\n" + _PINNED_FROM
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-escape"
+    ], f"a backtick continuation must be honored under `# escape=`, got {missing}"
+
+
+def test_the_escape_directive_is_only_read_at_the_top_of_the_file(tmp_path):
+    """Docker stops looking for parser directives at the first comment or instruction.
+
+    An `# escape=` line below a `FROM` is an ordinary comment, so the backslash is still the
+    continuation character: the `FROM` under `RUN echo hello \\` is continuation text, the
+    a2rchi builder remains the final stage, and the template is covered.
+
+    Honoring the late directive would make the backslash an ordinary character, promote that
+    continuation line to a stage, and refuse a template that is in fact correctly based.
+    """
+    (tmp_path / "Dockerfile-late").write_text(
+        _PINNED_FROM.rstrip("\n")
+        + " AS builder\n# escape=`\nRUN echo hello \\\n"
+        + _THIRD_PARTY_FINAL
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert (
+        not missing
+    ), f"a late `# escape=` must not change the continuation character, got {missing}"
+
+
+def test_the_syntax_directive_does_not_stop_the_escape_directive_being_read(tmp_path):
+    """`# syntax=` precedes `# escape=` in every real template; both are parser directives.
+
+    Stopping at the first directive would silently fall back to the backslash on exactly the
+    files this repo ships.
+    """
+    (tmp_path / "Dockerfile-both").write_text(
+        "# syntax=docker/dockerfile:1\n# escape=`\n"
+        + _THIRD_PARTY_FINAL
+        + "RUN echo hello `\n"
+        + _PINNED_FROM
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-both"
+    ], f"`# escape=` after `# syntax=` must still be read, got {missing}"
+
+
 def test_heredoc_delimiters_are_consumed_in_declaration_order(tmp_path):
     """Docker feeds the payloads in the order the instruction declares them.
 
