@@ -540,7 +540,14 @@ Its bound is worth knowing: it reads the references templates **declare**. A tem
 declares no base image at all is invisible to it, as it is to the rewriter. In-tree that gap
 is closed: `service_templates()` in `src/cli/managers/base_image_preflight.py` declares the
 service set, the deploy preflight refuses a member that names no `a2rchi-*-base` image, and
-`test_service_templates_pin_one_explicit_base_tag` fails naming the file.
+`test_service_templates_pin_one_explicit_base_tag` fails naming the file. The deploy preflight
+also refuses when two service templates declare the same required base image at different digest
+references: it can probe only one, so a split pin would otherwise establish one digest in the
+registry while a build pulls another. That check is scoped to the bases the deployment
+requires — a split pin on a base the current deployment will not build stays hidden until a
+deployment that does need it. `test_service_templates_pin_one_explicit_base_tag` is the
+repository-side guard the new check does not replace: that test keys on the annotation, not on
+the reference the templates agree on.
 
 Two CI jobs call the script: `pr-preview.yml` points the templates at the PR's base-image
 build, and `test-and-build-tag.yml` points them at the release build. The release workflow
