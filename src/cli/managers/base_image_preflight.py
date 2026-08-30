@@ -148,10 +148,18 @@ def base_reference(image: str, template_dir: Optional[Path] = None) -> Optional[
     check a different tag than the one the build will use.
     """
     directory = template_dir or TEMPLATE_DIR
-    # rglob, to read the same file set `service_templates` declares. A top-level glob here
-    # would decide which image to probe from a different set of files than the one that
-    # decided a template is covered, so a nested template's own reference would be
-    # invisible to the deploy check that is supposed to cover it.
+    # rglob, so a nested template's own reference is not invisible to the deploy check
+    # that is supposed to cover it: a top-level glob would decide which image to probe from
+    # a different set of files than the one that decided a template is covered.
+    #
+    # The bound, stated rather than implied: this is a *superset* of `service_templates`,
+    # not the same set -- it does not filter `NON_SERVICE_TEMPLATES`. An excluded template
+    # that carried a `FROM ...a2rchi-*-base...` line could therefore win the first match,
+    # and `Dockerfile-base` -- which defines the python base -- sorts ahead of every
+    # `Dockerfile-<service>`. That would hand the probe the reference the base build uses
+    # instead of the one the services ship on. No excluded template declares such a line
+    # today, and `test_no_excluded_template_declares_an_a2rchi_base_reference` is what
+    # keeps that true rather than assumed.
     for dockerfile in sorted(directory.rglob("Dockerfile*")):
         for match in _FROM_BASE_RE.finditer(dockerfile.read_text()):
             reference = match.group("ref")

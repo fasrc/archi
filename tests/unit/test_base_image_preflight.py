@@ -1526,6 +1526,35 @@ def test_nested_service_templates_is_empty_for_a_flat_directory(tmp_path):
     assert preflight.nested_service_templates(tmp_path) == []
 
 
+def test_no_excluded_template_declares_an_a2rchi_base_reference():
+    """The guard that makes `base_reference`'s wider walk safe.
+
+    `service_templates` filters `NON_SERVICE_TEMPLATES`; `base_reference` walks
+    `rglob("Dockerfile*")` and does not.  It reads a strict superset, so an excluded
+    template that carried a `FROM ...a2rchi-*-base...` line could win the first match --
+    and `Dockerfile-base`, which *defines* the python base, sorts ahead of every
+    `Dockerfile-<service>`.  The preflight would then establish the reference the base
+    build uses instead of the one the services ship on: the exact "check a different tag
+    than the one the build will use" failure `base_reference` exists to prevent.
+
+    Nothing in the walk enforces that.  This does, so the assumption is checked rather
+    than assumed.
+    """
+    directory = preflight.TEMPLATE_DIR
+    offenders = {
+        name: preflight._FROM_BASE_RE.findall((directory / name).read_text())
+        for name in preflight.NON_SERVICE_TEMPLATES
+        if (directory / name).exists()
+        and preflight._FROM_BASE_RE.search((directory / name).read_text())
+    }
+    assert not offenders, (
+        f"template(s) excluded from the service set declare an a2rchi base reference: "
+        f"{offenders} -- base_reference reads them anyway, so one of them can win the "
+        f"first match and hand the probe a reference no service builds from. Either drop "
+        f"the FROM line or route base_reference through service_templates()"
+    )
+
+
 def test_no_service_template_is_nested_while_the_release_rewriter_is_top_level_only():
     """The repo-wide guard. Passing today is the point: it fails the day that changes.
 
