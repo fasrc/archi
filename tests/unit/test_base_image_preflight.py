@@ -1445,3 +1445,42 @@ def test_enforce_base_images_refuses_an_uncoverable_template_on_a_dry_run_too(tm
     assert str(tmp_path / "Dockerfile-broken") in str(exc_info.value), (
         "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
     )
+
+
+def test_enforce_base_images_refuses_divergent_base_references(tmp_path):
+    """When two service templates pin the same required base image at different digests,
+    ``enforce_base_images`` must refuse before any image work.
+
+    Before the guard, the call returned outcomes and the probe had pulled -- the divergent
+    pin was invisible at the entry point ``archi create`` calls.
+    """
+    aaaa_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    bbbb_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "b" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {aaaa_ref}\n")
+    (tmp_path / "Dockerfile-piazza").write_text(f"FROM {bbbb_ref}\n")
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    msg = str(exc_info.value)
+    assert "Dockerfile-chat" in msg, f"message must name Dockerfile-chat; got: {msg}"
+    assert (
+        "Dockerfile-piazza" in msg
+    ), f"message must name Dockerfile-piazza; got: {msg}"
+    assert probe.pulled == [], (
+        "the refusal must come before any image work; " f"probe pulled {probe.pulled}"
+    )
+
+
+def test_enforce_base_images_refuses_divergent_references_on_a_dry_run_too(tmp_path):
+    """A dry run reporting nothing wrong about a split pin is the same lie."""
+    aaaa_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    bbbb_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "b" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {aaaa_ref}\n")
+    (tmp_path / "Dockerfile-piazza").write_text(f"FROM {bbbb_ref}\n")
+
+    with pytest.raises(preflight.BaseImagePreflightError):
+        preflight.enforce_base_images(
+            _Plan(), probe=FakeProbe(), template_dir=tmp_path, dry=True
+        )

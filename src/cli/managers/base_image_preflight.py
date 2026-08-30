@@ -613,15 +613,19 @@ def enforce_base_images(
         # fail-open this whole module exists to remove.
         grader_enabled = False
 
-    # Before the derivation below, not after: `base_reference` returns the first match in
-    # *any* template, so a healthy template masks a broken one from this point on. Before
-    # `run_preflight` too, and therefore before `remove_existing_deployment()`
-    # (`cli_main.py:294`) -- the ordering contract from #287.
+    # Both refusals below come before `run_preflight` and therefore before
+    # `remove_existing_deployment()` (`cli_main.py:294`) -- the ordering contract from #287.
+    # The uncoverable-template refusal comes before `names` derivation: `base_reference`
+    # returns the first match in *any* template, so a healthy template masks a broken one.
+    # The divergent-reference refusal comes after `names` because the check is scoped to
+    # what this deployment requires.
     _refuse_uncoverable_templates(template_dir)
 
     names = required_base_image_names(
         getattr(compose_config, "gpu_ids", None), grader_enabled
     )
+
+    _refuse_divergent_base_references(names, template_dir)
 
     references = []
     unresolved = []
