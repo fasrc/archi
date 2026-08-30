@@ -94,7 +94,7 @@ confirm `git status` reports nothing further modified.
 
   Run the gate and commit.
 
-- [ ] 1.4 Pin the boundaries: scope, the agreeing case, and the real directory.
+- [x] 1.4 Pin the boundaries: scope, the agreeing case, and the real directory.
 
   Four tests, one commit. These should be green the moment they are written; if one is not,
   the implementation disagrees with the design and that is a finding.

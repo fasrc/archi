@@ -1484,3 +1484,107 @@ def test_enforce_base_images_refuses_divergent_references_on_a_dry_run_too(tmp_p
         preflight.enforce_base_images(
             _Plan(), probe=FakeProbe(), template_dir=tmp_path, dry=True
         )
+
+
+# --- Boundary tests: scope, the agreeing case, and D3 (tasks.md 1.4) ---------------------
+
+
+def test_divergent_pytorch_base_not_refused_when_gpu_and_grader_not_required(tmp_path):
+    """A split pytorch-base pin is not refused when the deployment does not need pytorch.
+
+    Scope decision (design D2): the check covers only required_base_image_names, so a split
+    pin on a base this deployment will not build stays hidden until a deployment that needs
+    that base.
+    """
+    python_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    pytorch_ref_1 = "ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "c" * 64
+    pytorch_ref_2 = "ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "d" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {python_ref}\n")
+    (tmp_path / "Dockerfile-service-b").write_text(f"FROM {python_ref}\n")
+    (tmp_path / "Dockerfile-grader").write_text(f"FROM {pytorch_ref_1}\n")
+    (tmp_path / "Dockerfile-service-c").write_text(f"FROM {pytorch_ref_2}\n")
+
+    refs = preflight.required_base_images(
+        gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+    )
+    assert refs == [python_ref]
+
+
+def test_divergent_pytorch_base_refused_when_grader_enabled(tmp_path):
+    """The same split pytorch-base pin IS refused when the deployment requires pytorch."""
+    python_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    pytorch_ref_1 = "ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "c" * 64
+    pytorch_ref_2 = "ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "d" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {python_ref}\n")
+    (tmp_path / "Dockerfile-service-b").write_text(f"FROM {python_ref}\n")
+    (tmp_path / "Dockerfile-grader").write_text(f"FROM {pytorch_ref_1}\n")
+    (tmp_path / "Dockerfile-service-c").write_text(f"FROM {pytorch_ref_2}\n")
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.required_base_images(
+            gpu_ids=None, grader_enabled=True, template_dir=tmp_path
+        )
+
+    assert preflight.PYTORCH_BASE in str(
+        exc_info.value
+    ), f"message must name {preflight.PYTORCH_BASE}; got: {exc_info.value}"
+
+
+def test_agreeing_base_references_are_returned_without_refusal(tmp_path):
+    """When all templates agree on references, required_base_images returns them unchanged
+    for both the python-only and the python+pytorch selections."""
+    python_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    pytorch_ref = "ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "b" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {python_ref}\nRUN pip install .\n")
+    (tmp_path / "Dockerfile-grader").write_text(
+        f"FROM {pytorch_ref}\nRUN pip install .\n"
+    )
+
+    refs = preflight.required_base_images(
+        gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+    )
+    assert refs == [python_ref]
+
+    refs_gpu = preflight.required_base_images(
+        gpu_ids="all", grader_enabled=True, template_dir=tmp_path
+    )
+    assert refs_gpu == [python_ref, pytorch_ref]
+
+
+def test_multistage_template_two_from_lines_for_same_base_is_not_refused(tmp_path):
+    """A single template with two FROM lines for the same base at different references is not
+    refused: design D3 takes only the first match per template, so the second line is not a
+    disagreement.  This keeps PR #387's multistage work from becoming a regression."""
+    python_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    python_ref_stage2 = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "e" * 64
+    (tmp_path / "Dockerfile-multistage").write_text(
+        f"FROM {python_ref} AS builder\n"
+        f"RUN echo stage1\n"
+        f"FROM {python_ref_stage2}\n"
+        f"RUN echo stage2\n"
+    )
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {python_ref}\n")
+
+    refs = preflight.required_base_images(
+        gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+    )
+    assert refs == [python_ref]
+
+
+def test_base_references_returns_one_reference_per_base_in_real_directory():
+    """The real template directory must declare exactly one reference per required base.
+
+    A single reference means every template that uses that base agrees on its digest; a split
+    pin would produce two references and be caught here before it reaches production.
+    """
+    python_refs = preflight.base_references(preflight.PYTHON_BASE)
+    assert len(python_refs) == 1, (
+        f"Expected exactly one reference for {preflight.PYTHON_BASE}, "
+        f"got {len(python_refs)}: {python_refs}"
+    )
+
+    pytorch_refs = preflight.base_references(preflight.PYTORCH_BASE)
+    assert len(pytorch_refs) == 1, (
+        f"Expected exactly one reference for {preflight.PYTORCH_BASE}, "
+        f"got {len(pytorch_refs)}: {pytorch_refs}"
+    )
