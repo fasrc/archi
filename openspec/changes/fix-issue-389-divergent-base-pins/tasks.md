@@ -142,7 +142,7 @@ confirm `git status` reports nothing further modified.
 
 ## 2. Verify and open the PR
 
-- [ ] 2.1 Prove the acceptance criteria and open the PR.
+- [x] 2.1 Prove the acceptance criteria and open the PR.
 
   Confirm each of these before opening the PR:
   - The reproduction from the issue now raises `BaseImagePreflightError` instead of printing a
