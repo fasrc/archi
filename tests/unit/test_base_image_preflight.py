@@ -1552,9 +1552,20 @@ def test_agreeing_base_references_are_returned_without_refusal(tmp_path):
 
 
 def test_multistage_template_two_from_lines_for_same_base_is_not_refused(tmp_path):
-    """A single template with two FROM lines for the same base at different references is not
-    refused: design D3 takes only the first match per template, so the second line is not a
-    disagreement.  This keeps PR #387's multistage work from becoming a regression."""
+    """A single template with two FROM lines for the same base is not a disagreement.
+
+    Design D3: the walk asks each template for *the one reference it declares* for an image,
+    so a builder stage and a shipping stage in one file cannot diverge with each other.  Only
+    a second template can.
+
+    The assertion is deliberately seam-independent -- one reference back, no refusal, and it
+    is one of the two the file names -- rather than naming the stage the seam happens to read.
+    Which stage a template contributes is PR #387's decision (`_final_stage_base`), not this
+    change's: #387 reads the *final* stage, so pinning the builder's reference here would
+    turn that merge red at runtime.  The two PRs already conflict textually at the end of
+    this file, and the natural resolution -- keep both sets of added tests -- would not
+    surface a pinned-stage assertion as anything a reviewer has to re-read.
+    """
     python_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
     python_ref_stage2 = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "e" * 64
     (tmp_path / "Dockerfile-multistage").write_text(
@@ -1563,12 +1574,12 @@ def test_multistage_template_two_from_lines_for_same_base_is_not_refused(tmp_pat
         f"FROM {python_ref_stage2}\n"
         f"RUN echo stage2\n"
     )
-    (tmp_path / "Dockerfile-chat").write_text(f"FROM {python_ref}\n")
 
     refs = preflight.required_base_images(
         gpu_ids=None, grader_enabled=False, template_dir=tmp_path
     )
-    assert refs == [python_ref]
+    assert len(refs) == 1
+    assert refs[0] in {python_ref, python_ref_stage2}
 
 
 def test_base_references_returns_one_reference_per_base_in_real_directory():
