@@ -69,7 +69,7 @@ confirm `git status` reports nothing further modified.
 
   Run the gate and commit.
 
-- [ ] 1.3 Refuse it at the entry point `archi create` actually calls, before any image work.
+- [x] 1.3 Refuse it at the entry point `archi create` actually calls, before any image work.
 
   **RED first.** Add the `enforce_base_images` counterpart, modelled on
   `test_enforce_base_images_refuses_an_uncoverable_service_template` (`:1373`): the same
