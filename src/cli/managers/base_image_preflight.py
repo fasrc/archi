@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 PYTHON_BASE = "a2rchi-python-base"
 PYTORCH_BASE = "a2rchi-pytorch-base"
@@ -120,19 +120,39 @@ def templates_missing_base_reference(template_dir: Optional[Path] = None) -> Lis
     ]
 
 
+def _base_reference_sources(
+    image: str, template_dir: Optional[Path] = None
+) -> Dict[str, List[Path]]:
+    """The reference-to-templates mapping for ``image``, in first-seen order.
+
+    Each template contributes at most one reference: the first ``_FROM_BASE_RE`` match whose
+    text contains ``image``. A second match in the same file is not a disagreement — it is a
+    multistage shape handled by design D3.
+    """
+    sources: Dict[str, List[Path]] = {}
+    for template in service_templates(template_dir):
+        for match in _FROM_BASE_RE.finditer(template.read_text()):
+            reference = match.group("ref")
+            if image in reference:
+                sources.setdefault(reference, []).append(template)
+                break
+    return sources
+
+
+def base_references(image: str, template_dir: Optional[Path] = None) -> List[str]:
+    """The distinct references for ``image`` across all service templates, in first-seen order."""
+    return list(_base_reference_sources(image, template_dir))
+
+
 def base_reference(image: str, template_dir: Optional[Path] = None) -> Optional[str]:
     """The pinned reference the templates declare for ``image``.
 
     Read from the templates rather than composed from a constant, so the preflight cannot
-    check a different tag than the one the build will use.
+    check a different tag than the one the build will use. Now the first of ``base_references``,
+    so the guard and the probe share one traversal (design D1).
     """
-    directory = template_dir or TEMPLATE_DIR
-    for dockerfile in sorted(directory.glob("Dockerfile-*")):
-        for match in _FROM_BASE_RE.finditer(dockerfile.read_text()):
-            reference = match.group("ref")
-            if image in reference:
-                return reference
-    return None
+    refs = base_references(image, template_dir)
+    return refs[0] if refs else None
 
 
 def required_base_images(

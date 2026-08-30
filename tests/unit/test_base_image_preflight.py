@@ -844,6 +844,18 @@ def test_base_reference_returns_none_for_an_image_no_template_names(tmp_path):
     assert preflight.base_reference("a2rchi-nonesuch-base", tmp_path) is None
 
 
+def test_base_references_returns_all_distinct_references_across_templates(tmp_path):
+    aaaa_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    bbbb_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "b" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {aaaa_ref}\n")
+    (tmp_path / "Dockerfile-piazza").write_text(f"FROM {bbbb_ref}\n")
+
+    assert preflight.base_references(preflight.PYTHON_BASE, tmp_path) == [
+        aaaa_ref,
+        bbbb_ref,
+    ]
+
+
 def test_required_base_images_refuses_when_no_template_declares_a_base_reference(
     tmp_path,
 ):
