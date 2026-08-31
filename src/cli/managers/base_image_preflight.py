@@ -73,8 +73,16 @@ LOCAL_PREFIX = "localhost/"
 # is not preceded by whitespace, and in `echo "a << b"` the closing quote follows the tag, so
 # neither reads as an opener. Over-reading one is no longer a silent pass in any case -- an
 # opener whose delimiter never arrives now fails closed (`_instruction_text`).
+#
+# The tag is `[\w-]+`, not `[A-Za-z_][\w-]*`: Docker's delimiter is any word, so `RUN cat
+# <<123` is a real heredoc, and demanding a leading letter leaves its payload scanned as
+# instructions -- which is how an a2rchi-looking `FROM` in shell text hides a third-party
+# final stage. Accepting a digit widens the over-read the other way too: spaced arithmetic
+# (`$(( 1 << 3 ))`) now reads as an opener and fails closed. That trade is the module's
+# standing one -- a loud refusal over a silent pass -- and it already applied to the same
+# form with a letter operand (`$(( 1 << n ))`).
 _HEREDOC_RE = re.compile(
-    r"(?:^|\s)\d*<<(?P<dash>-?)\s*(?P<q>['\"]?)(?P<tag>[A-Za-z_][\w-]*)(?P=q)(?=\s|$)"
+    r"(?:^|\s)\d*<<(?P<dash>-?)\s*(?P<q>['\"]?)(?P<tag>[\w-]+)(?P=q)(?=\s|$)"
 )
 
 # Docker's `# escape=` parser directive, which chooses the line-continuation character.
@@ -166,9 +174,16 @@ def _instruction_text(text: str) -> Optional[str]:
     backtick-continued `RUN` as a finished instruction, which promotes the line under it to a
     build stage -- another way a third-party final stage hides behind an a2rchi builder.
 
-    The bounds, stated rather than implied. Docker strips comments before joining
-    continuations and this does not, so a comment inside a continuation ends it here, and the
-    line is read as written -- the behavior that predates this function.
+    Docker removes a full-line comment before it joins a continuation, and so does this: a
+    comment inside a continuation neither ends the instruction nor opens a heredoc. Ending
+    it there read `RUN echo x \\`, a comment, then `FROM <a2rchi base>` as a build stage
+    while Docker had joined all three into one `RUN` -- the third-party stage above it is
+    what ships, so the template passed unprobed.
+
+    The bounds, stated rather than implied. This walk cannot see shell quoting or word
+    splitting, so it over-reads a heredoc opener in text that only looks like one
+    (`$(( 1 << 3 ))`) and refuses. That direction is the deliberate one: a refusal is loud
+    and a silent pass is not.
     """
     escape = _escape_char(text)
     lines = []
@@ -186,6 +201,15 @@ def _instruction_text(text: str) -> Optional[str]:
             continue
         if continued:
             lines.append("")
+            # Docker removes a full-line comment *before* it joins the continuation, so the
+            # comment neither ends the instruction nor opens a heredoc. Ending it here
+            # promoted the next line to a build stage: `RUN echo x \`, a comment, then
+            # `FROM <a2rchi base>` read as covered while the stage that actually ships is
+            # the third-party image above -- a silent pass. Reading the comment for an
+            # opener is the mirror fault, blanking the rest of the file for a line Docker
+            # discarded.
+            if line.strip().startswith("#"):
+                continue
             pending = _heredoc_delimiters(line)
             continued = not pending and line.rstrip().endswith(escape)
             continue

@@ -2131,3 +2131,57 @@ def test_a_flagged_from_still_yields_its_stage_alias(tmp_path):
         + " AS build\nRUN pip wheel .\nFROM build\n"
     )
     assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+# --- Nightly review round 1 (PR #387): two silent passes in the instruction walk ---------
+
+
+def test_a_comment_inside_a_continuation_does_not_end_the_continuation(tmp_path):
+    """Docker removes a full-line comment *before* it joins a continuation.
+
+    `RUN echo x \\`, a comment, then `FROM <a2rchi base>` is one `RUN` instruction to
+    Docker, so the template's final stage is the third-party image above it. Ending the
+    continuation at the comment promotes that `FROM` to a build stage and marks the
+    template covered -- a silent pass that ships an image the preflight never probed,
+    which is the one thing this module may not do.
+    """
+    (tmp_path / "Dockerfile-comment-continuation").write_text(
+        _THIRD_PARTY_FINAL + "RUN echo x \\\n# an ordinary comment\n" + _PINNED_FROM
+    )
+
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-comment-continuation"
+    ], f"a comment must not end a continuation and expose the next line, got {missing}"
+
+
+def test_a_comment_inside_a_continuation_cannot_open_a_heredoc(tmp_path):
+    """The removed comment is not shell text, so a `<<EOF` inside it opens nothing.
+
+    Reading it as an opener blanks every instruction after it up to a delimiter that never
+    arrives, which fails the whole template closed for a line Docker discarded.
+    """
+    (tmp_path / "Dockerfile-comment-heredoc").write_text(
+        _PINNED_FROM.rstrip("\n")
+        + " AS builder\nRUN echo x \\\n# Example: RUN <<EOF\nRUN true\n"
+        + _PINNED_FROM
+    )
+
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+def test_a_numeric_heredoc_delimiter_is_still_an_opener(tmp_path):
+    """Docker's heredoc delimiter is any word, digits included -- `RUN cat <<123`.
+
+    A delimiter pattern that demands a leading letter leaves the payload scanned as
+    instructions, so an a2rchi-looking `FROM` inside shell text hides the third-party
+    final stage above it and the template reads as covered.
+    """
+    (tmp_path / "Dockerfile-numeric-heredoc").write_text(
+        _THIRD_PARTY_FINAL + "RUN cat <<123\n" + _PINNED_FROM + "123\n"
+    )
+
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-numeric-heredoc"
+    ], f"a numeric heredoc delimiter must open a payload, got {missing}"
