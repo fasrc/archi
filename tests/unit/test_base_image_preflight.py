@@ -2185,3 +2185,48 @@ def test_a_numeric_heredoc_delimiter_is_still_an_opener(tmp_path):
     assert missing == [
         tmp_path / "Dockerfile-numeric-heredoc"
     ], f"a numeric heredoc delimiter must open a payload, got {missing}"
+
+
+def test_a_punctuated_heredoc_delimiter_is_still_an_opener(tmp_path):
+    """`RUN cat <<EOF.txt` is a real heredoc -- Docker's delimiter is a whole word.
+
+    Verified against `docker build --check` (Docker 29.5.1, `docker/dockerfile:1`): the
+    payload under it is swallowed, so a delimiter class that stops at the dot leaves that
+    payload scanned as instructions and lets a supported-looking `FROM` inside it hide the
+    third-party final stage above.
+    """
+    (tmp_path / "Dockerfile-dotted").write_text(
+        _THIRD_PARTY_FINAL + "RUN cat <<EOF.txt\n" + _PINNED_FROM + "EOF.txt\n"
+    )
+
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-dotted"
+    ], f"a punctuated heredoc delimiter must open a payload, got {missing}"
+
+
+def test_a_quoted_punctuated_heredoc_delimiter_is_still_an_opener(tmp_path):
+    """Docker strips the quotes, so `<<"EOF.txt"` is terminated by a bare `EOF.txt`."""
+    (tmp_path / "Dockerfile-dotted-quoted").write_text(
+        _THIRD_PARTY_FINAL + 'RUN cat <<"EOF.txt"\n' + _PINNED_FROM + "EOF.txt\n"
+    )
+
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-dotted-quoted"
+    ], f"a quoted punctuated delimiter must open a payload, got {missing}"
+
+
+def test_a_quoted_delimiter_does_not_swallow_the_closing_quote(tmp_path):
+    """The terminator Docker matches is the *unquoted* word, so the tag must exclude quotes.
+
+    Carrying the closing quote into the delimiter leaves it unterminated, which fails a
+    correct template closed instead of reading its real final stage.
+    """
+    (tmp_path / "Dockerfile-quoted-plain").write_text(
+        _PINNED_FROM.rstrip("\n")
+        + ' AS builder\nRUN cat <<"EOF"\nsome payload\nEOF\n'
+        + _PINNED_FROM
+    )
+
+    assert preflight.templates_missing_base_reference(tmp_path) == []

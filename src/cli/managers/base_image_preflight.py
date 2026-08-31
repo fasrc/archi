@@ -74,15 +74,26 @@ LOCAL_PREFIX = "localhost/"
 # neither reads as an opener. Over-reading one is no longer a silent pass in any case -- an
 # opener whose delimiter never arrives now fails closed (`_instruction_text`).
 #
-# The tag is `[\w-]+`, not `[A-Za-z_][\w-]*`: Docker's delimiter is any word, so `RUN cat
-# <<123` is a real heredoc, and demanding a leading letter leaves its payload scanned as
-# instructions -- which is how an a2rchi-looking `FROM` in shell text hides a third-party
-# final stage. Accepting a digit widens the over-read the other way too: spaced arithmetic
-# (`$(( 1 << 3 ))`) now reads as an opener and fails closed. That trade is the module's
-# standing one -- a loud refusal over a silent pass -- and it already applied to the same
-# form with a letter operand (`$(( 1 << n ))`).
+# The delimiter is a whole **word**, not an identifier. Docker accepts `<<123` and
+# `<<EOF.txt` as readily as `<<EOF` -- all three verified against `docker build --check`
+# (Docker 29.5.1, `docker/dockerfile:1`) -- so a character class built around identifier
+# rules leaves those payloads scanned as instructions, which is how an a2rchi-looking `FROM`
+# in shell text hides a third-party final stage.
+#
+# Hence two branches. A quoted delimiter takes everything between the quotes, because Docker
+# matches the terminator *unquoted*: carrying the closing quote into the tag would leave the
+# payload unterminated. A bare delimiter takes any run of non-space characters except a quote
+# or `<`. Excluding the quote is what keeps `echo "a << b"` out -- the tag stops at `b` and
+# the trailing lookahead then sees `"` instead of whitespace -- and `$((1<<n))` is still
+# excluded by the leading `(?:^|\s)`.
+#
+# The over-read that remains is deliberate: spaced arithmetic (`$(( 1 << 3 ))`) reads as an
+# opener, finds no terminator, and fails closed. This walk cannot see shell quoting or word
+# splitting, and a loud refusal beats a silent pass.
 _HEREDOC_RE = re.compile(
-    r"(?:^|\s)\d*<<(?P<dash>-?)\s*(?P<q>['\"]?)(?P<tag>[\w-]+)(?P=q)(?=\s|$)"
+    r"(?:^|\s)\d*<<(?P<dash>-?)\s*"
+    r"(?:(?P<q>['\"])(?P<qtag>[^'\"]+)(?P=q)|(?P<tag>[^\s'\"<]+))"
+    r"(?=\s|$)"
 )
 
 # Docker's `# escape=` parser directive, which chooses the line-continuation character.
@@ -129,8 +140,15 @@ def _heredoc_delimiters(line: str) -> List[tuple]:
 
     ``strips_tabs`` is the ``<<-`` form, which lets the terminator carry leading **tabs** --
     and only tabs. Spaces never indent a terminator in either form.
+
+    A delimiter arrives from whichever branch of ``_HEREDOC_RE`` matched -- quoted or bare --
+    and is reported unquoted either way, because that is the form Docker matches the
+    terminator against.
     """
-    return [(m.group("tag"), bool(m.group("dash"))) for m in _HEREDOC_RE.finditer(line)]
+    return [
+        (m.group("qtag") or m.group("tag"), bool(m.group("dash")))
+        for m in _HEREDOC_RE.finditer(line)
+    ]
 
 
 def _instruction_text(text: str) -> Optional[str]:
