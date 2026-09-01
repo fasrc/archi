@@ -182,7 +182,7 @@ lot by gating a future feature release, not by aging.
 | #280 | Headless `/v1` strip-down scoping — track is not a release driver; go/no-go unmade |
 | #369 | `validate_evaluations_root` raises a bare `AttributeError` instead of its `ValueError` on a non-dict block — a worse refusal message, not a missed refusal |
 | #373 | Re-pin released Dockerfiles to digests rather than the CalVer tag; #370 shipped the narrower remedy, so this is the better alternative to a closed gap, not an open one |
-| #374 | `agent_config_path` interpolated raw inside quotes in `base-config.yaml`; latent behind a path containing quote characters, and the sibling key was already fixed by #368 |
+| #374 | The named line is already fixed: PR #367 (`93fbf45c`) rewrote `agent_config_path` to serialize with `tojson`, and the issue's own reproduction now prints its input unchanged. What remains is step 4 — auditing the other 17 raw double-quoted scalars in `base-config.yaml` — all latent behind operator-written escape sequences |
 | #375 | Three base-image pin-guard gaps, including an exact-digest assertion covering 2 templates of 15, plus a spec contradiction. The guards hold for what the repo ships today |
 | #382 | Preflight over-promises coverage for a base outside its placeable set, or one left behind by a final stage — the issue body states it is not a live defect |
 | #383 | `service_templates` misses nested Dockerfiles; the issue body states it is a gap in the guarantee, not a current fault, and the two nested files today are correctly excluded |
@@ -221,7 +221,6 @@ lot by gating a future feature release, not by aging.
 | #313 | `.gitignore` `*secrets*` masks `secrets_manager.py` from CI's black walk — gate hygiene; the drifted instance was fixed by #308, the structural hole gates no feature |
 | #314 | Dead model-name loop in `_get_model_based_secrets` — `get_models_configs()` returns a constant `[]`; latent trap, no wrong runtime behavior today |
 | #338 | Pin GitHub Actions references to commit SHAs — supply-chain hygiene across workflows; parked 2026-08-24, never rowed here |
-| #331 | Custom `evaluations.root` escapes the fixed compose mount — latent trap behind a knob no deployment sets; the default root deploys correctly, and it needs the console active (#320) |
 | #332 | pr-preview base-image detection diffs against `main` — CI-only: wasted preview minutes and a smoke that validates a throwaway `pr-<n>` tag; the release-workflow twin is #339, scheduled |
 | #344 | Provider-scoped `context_windows` keys — config-surface decision with won't-fix on the table; no deployment has two providers sharing a model id, and it is not a regression against pre-#262 |
 | #345 | A scheduled crawl un-deletes an operator's delete — the primary reading is undecided (transient-by-design vs defect); the narrow mid-crawl race is real under both but unmeasured |
@@ -246,37 +245,6 @@ Milestone open counts 5 / 4 / 2 / 7. #181 and #246 closed via PRs #230 and #251.
 seven issues filed 2026-08-18 — out of the #287 review and the #261 documentation
 round — were triaged here: #286, #293 and #294 into `v2026.11.0`; #285, #288, #290 and
 #291 parked.
-
-**Tracker state (2026-09-01):** 24 milestone-assigned + 61 parked = 85 open
-issues. ✓ Milestone open counts 1 / 6 / 4 / 13. Sixteen issues had drifted into
-neither state — the largest single drift recorded here — and every one but #360
-and #378 was a review follow-up filed by the automated rounds on PRs #367, #368,
-#370, #380, #387 and #391. Six were scheduled: #378 and #394 into `v2026.09.0`,
-#360, #371, #372 and #389 into `v2026.11.0`. Ten were parked, with reasons in
-the table above. #396 was filed the same day and entered `v2026.10.0`.
-
-Nine of the ten parks are the base-image preflight cluster, on the same ground
-each time: the issue's own body states the defect is latent, or names the merged
-PR that already took the narrower remedy. #392, #393 and #395 describe a single
-class — a line-oriented Dockerfile parser that fails open — on syntax no
-template in the repo uses; they park together and should be fixed as a class if
-any one of them is ever scheduled. #395 additionally cites a symbol that exists
-only on the unmerged PR #391, so it could not be checked against `dev` at all.
-**Severity moved none of them:** #375 and #389 are both P2 base-image guard
-defects, and only #389 is scheduled — because only #389 lets a deployment be
-reported ready and then torn down.
-
-#396 is the one gate here that is not a defect. It enters `v2026.10.0` because
-that release's feature is measured improvement, and #216 measures one axis while
-every other ingest and retrieval toggle rides an unmeasured default. Its own
-first task is a power calculation: the August 2026 goldenset work established
-that RAGAS mean deltas sit inside the run-to-run spread and need roughly 40 runs
-per arm to carry a claim, while count-type metrics were decisive far cheaper
-(overflow apology rows 11 → 0, p = 8.1e-5). An under-powered arm reports no
-measurable difference rather than a direction. It is blocked by #279 and #213,
-both `v2026.09.0`: invalid JSON artifacts with inflated scored counts, and an
-unlocked bank drifting under a multi-day campaign, each turn a cross-arm
-comparison into a confident wrong answer.
 
 Two adversarial review rounds moved one of the seven. #294 was parked as design-first
 and is now a gate: `remove_existing_deployment()` is still followed by `mkdir`,
@@ -362,6 +330,37 @@ file-overlap screen flagged all eight as candidates; reading the code cleared th
 is the screen working as designed — it narrows, it does not decide. **A defect being real
 is not the bar; the bar is whether that release's stated feature is broken, wrong, or
 dishonest without it.**
+
+**Tracker state (2026-09-01):** 24 milestone-assigned + 61 parked = 85 open
+issues. ✓ Milestone open counts 1 / 6 / 4 / 13. Sixteen issues had drifted into
+neither state, second only to the seventeen reconciled on 2026-08-25 — and every one but #360
+and #378 was a review follow-up filed by the automated rounds on PRs #367, #368,
+#370, #380, #387 and #391. Six were scheduled: #378 and #394 into `v2026.09.0`,
+#360, #371, #372 and #389 into `v2026.11.0`. Ten were parked, with reasons in
+the table above. #396 was filed the same day and entered `v2026.10.0`.
+
+Nine of the ten parks are the base-image preflight cluster, on the same ground
+each time: the issue's own body states the defect is latent, or names the merged
+PR that already took the narrower remedy. #392, #393 and #395 describe a single
+class — a line-oriented Dockerfile parser that fails open — on syntax no
+template in the repo uses; they park together and should be fixed as a class if
+any one of them is ever scheduled. #395 additionally cites a symbol that exists
+only on the unmerged PR #391, so it could not be checked against `dev` at all.
+**Severity moved none of them:** #375 and #389 are both P2 base-image guard
+defects, and only #389 is scheduled — because only #389 lets a deployment be
+reported ready and then torn down.
+
+#396 is the one gate here that is not a defect. It enters `v2026.10.0` because
+that release's feature is measured improvement, and #216 measures one axis while
+every other ingest and retrieval toggle rides an unmeasured default. Its own
+first task is a power calculation: the August 2026 goldenset work established
+that RAGAS mean deltas sit inside the run-to-run spread and need roughly 40 runs
+per arm to carry a claim, while count-type metrics were decisive far cheaper
+(overflow apology rows 11 → 0, p = 8.1e-5). An under-powered arm reports no
+measurable difference rather than a direction. It is blocked by #279 and #213,
+both `v2026.09.0`: invalid JSON artifacts with inflated scored counts, and an
+unlocked bank drifting under a multi-day campaign, each turn a cross-arm
+comparison into a confident wrong answer.
 
 **The invariant:** every open issue carries exactly one of {a milestone, the `parked`
 label, the `evidence-trial` label}, so
