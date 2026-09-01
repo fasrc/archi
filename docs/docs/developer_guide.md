@@ -545,7 +545,7 @@ service set, the deploy preflight refuses a member it cannot cover, and
 ### Which service templates the deploy preflight refuses
 
 `archi create` refuses **before** it removes an existing deployment when a service template
-is one the preflight cannot probe. Three shapes are refused, and the message names which:
+is one the preflight cannot probe. Four shapes are refused, and the message names which:
 
 1. **No resolvable `FROM`.** The template carries no `FROM` line, or its final stage is
    `FROM <alias>` in a chain that does not end at a real reference.
@@ -560,6 +560,15 @@ is one the preflight cannot probe. Three shapes are refused, and the message nam
    refused if it ends on a third-party image. The name must match at image boundaries: a
    registry prefix and a tag or digest are allowed, so `ghcr.io/fasrc/a2rchi-python-base@sha256:…`
    is accepted while the lookalike `a2rchi-python-base-custom` is not.
+4. **A heredoc this walk cannot prove is closed.** The reader finds a heredoc opener by
+   text, and it cannot see shell quoting. `RUN echo "example <<EOF here"` is a valid
+   instruction Docker builds without complaint, but the walk reads `<<EOF` as an opener,
+   finds no delimiter line below it, and refuses the template. The same goes for other text
+   that only looks like an opener, such as `$(( 1 << 3 ))`. This direction is deliberate: the
+   walk either over-reads and refuses, which is loud, or under-reads and lets a third-party
+   final stage ship unprobed, which is silent. If a template hits this, put the text in a
+   file the instruction reads, or split the line so the marker is not in the instruction the
+   walk sees. Do not work around it by removing the base `FROM`.
 
 Only a line that starts a Dockerfile instruction can start a stage. A `FROM` inside a
 `RUN <<EOF` heredoc body — including the second payload of a `RUN <<ONE <<TWO` — on the
