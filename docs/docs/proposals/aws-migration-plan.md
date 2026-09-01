@@ -13,6 +13,25 @@ performance. Section 9 holds the notes for the call.
 > on-demand, from 2026-09-01. Confirm current prices with the AWS Pricing
 > Calculator and the solutions architects before any commitment.
 
+## The request
+
+Original prompt (2026-09-01), verbatim:
+
+> We are moving archi to AWS, via terraform, give me the options available
+> for AWS services to utilize in that migration. factors to consider are
+> ongoing cost, service reliability, system performance. ask questions for
+> clarity on ambiguious items. Present this as a plan, with notes for an
+> upcoming call with AWS solutions architects and management. Output is a
+> markdown file in docs, use mermaid for visual aids.
+
+Clarity answers received before this draft:
+
+- Scope: the staging stack, the production stack, and the nightly benchmark rig.
+- LLM inference: direct AWS Bedrock and the HUIT Bedrock proxy. No
+  self-hosted GPUs in AWS.
+- Account: the current FASRC AWS account.
+- Cost target: none yet.
+
 ## 1. Decisions already made
 
 - AWS will host the **staging stack**, the **production stack**, and the
@@ -20,8 +39,8 @@ performance. Section 9 holds the notes for the call.
 - The **dev stack stays on the FASRC GPU host** (`holygpu7c0717`).
   *Assumption — confirm.*
 - LLM inference will **not** run on self-hosted GPUs in AWS. The two candidate
-  paths are **direct AWS Bedrock** and the **HUIT Bedrock proxy**. Section 3.3
-  compares them.
+  paths are **direct AWS Bedrock** and the **HUIT Bedrock proxy**. Direct
+  Bedrock needs a new provider module — see section 3.3.
 - The deployment will use the **current FASRC AWS account**.
 - Management has not set a cost target. Section 6 gives cost ranges per
   option, and the target is a decision for the call.
@@ -36,7 +55,7 @@ deploy time.
 | Component | Function | Where it runs today |
 | --- | --- | --- |
 | chatbot | Web chat app, port 7861, RAG agents | compose, GPU host |
-| data-manager | Scrape, chunk, and embed the corpus | compose, GPU host |
+| data-manager | Always-on ingest service, port 7871: scrape, chunk, and embed; upload, schedule, and status APIs for the chatbot | compose, GPU host |
 | postgres | PostgreSQL with pgvector: app config, documents, vectors | compose, GPU host |
 | config-seed, db-migrate | One-shot deploy jobs | compose, GPU host |
 | grafana | Dashboards | compose, GPU host |
@@ -46,7 +65,7 @@ deploy time.
 | vLLM servers | Qwen models on 2 of 4 V100 GPUs | GPU host, outside compose |
 | nightly timers | Benchmark report, team update | systemd on a workstation |
 
-Facts that shape the options:
+Facts that constrain the options:
 
 - **pgvector is the only supported vector backend.** The migration must keep
   PostgreSQL.
@@ -54,9 +73,11 @@ Facts that shape the options:
   database is tiny by AWS standards.
 - **The embedding model is small.** all-MiniLM-L6-v2, about 80 MB. A full
   CPU embed run took 44 minutes on one core. More vCPUs cut this time.
-- **The Bedrock API shape is already proven.** The HUIT Bedrock provider in
-  `src/archi/providers/huit_bedrock_provider.py` speaks the Bedrock-native
-  Anthropic API today.
+- **The Bedrock request format is already in use.** The HUIT Bedrock provider
+  (`src/archi/providers/huit_bedrock_provider.py`) sends the Bedrock-native
+  Anthropic JSON request format today.
+- **The chatbot depends on data-manager at runtime.** It calls the
+  data-manager upload, schedule, and status APIs over HTTP.
 
 ```mermaid
 flowchart TB
@@ -64,7 +85,7 @@ flowchart TB
     subgraph host["FASRC GPU host: holygpu7c0717"]
         subgraph compose["docker compose stack (archi create)"]
             chat["chatbot :7861"]
-            dm["data-manager"]
+            dm["data-manager :7871"]
             pg[("PostgreSQL + pgvector")]
             graf["grafana"]
             grader["grader"]
@@ -79,6 +100,7 @@ flowchart TB
     chat --> vllm
     chat -.-> anth
     chat --> pg
+    chat --> dm
     dm --> pg
     bench --> huit
     ws --> bench
@@ -88,8 +110,9 @@ flowchart TB
 
 ### 3.1 Container compute
 
-The long-lived services are chatbot, grafana, and grader. The batch jobs are
-data-manager, benchmark, config-seed, and db-migrate.
+The long-lived services are chatbot, data-manager, grafana, and grader. The
+batch jobs are benchmark, config-seed, and db-migrate. The chatbot calls the
+data-manager APIs at runtime, so data-manager must stay always-on.
 
 | Option | Monthly cost | Reliability | Performance | Notes |
 | --- | --- | --- | --- | --- |
@@ -98,15 +121,15 @@ data-manager, benchmark, config-seed, and db-migrate.
 | EKS | +$73 per cluster per month, plus nodes | High, but most operator work | Same as nodes | Kubernetes skills and upkeep are not justified at this scale. |
 | EC2 + docker compose (lift and shift) | One t3.large is about $61 | Low: one instance, one AZ | Fine for this load | Reuses `archi create` unchanged. Fastest path, least AWS-native. |
 
-**Recommendation:** ECS on Fargate. The stack is about 2 to 4 always-on vCPUs,
-which is below the EC2 break-even point, and Fargate removes host patch work.
+**Recommendation:** ECS on Fargate. The stack is about 3 to 5 always-on
+vCPUs, near the EC2 break-even point, and Fargate removes host patch work.
 
 ### 3.2 PostgreSQL and pgvector
 
 | Option | Monthly cost | Reliability | Performance | Notes |
 | --- | --- | --- | --- | --- |
 | **RDS for PostgreSQL** (recommended) | db.t4g.medium: about $47 single-AZ, about $95 Multi-AZ, + storage | Multi-AZ failover, automated backups, PITR | More than enough for 6,000 vectors | pgvector is a supported extension on RDS. |
-| Aurora PostgreSQL Serverless v2 | About $87+ at 1 ACU minimum, per instance | Highest | Overkill here | Pays off at much larger scale or spiky load. |
+| Aurora PostgreSQL Serverless v2 | About $87+ at 1 ACU minimum, per instance | Highest | More than this load needs | Pays off at much larger scale or spiky load. |
 | Self-managed on EC2 | Instance + EBS only | You own backups, patches, failover | Same hardware | Saves little money and adds all the operator work. |
 
 **Recommendation:** RDS for PostgreSQL. Multi-AZ in production, single-AZ in
@@ -119,26 +142,46 @@ Self-hosted GPU serving is out of scope by decision. The two paths:
 
 | Option | Monthly cost | Reliability | Performance | Notes |
 | --- | --- | --- | --- | --- |
-| **AWS Bedrock, direct** | Per token; no idle cost. See section 6. | AWS-managed; quotas apply | Lowest latency from inside AWS | Traffic stays in the FASRC account. Data boundary review needed. |
-| HUIT Bedrock proxy | Per token via HUIT | Adds one hop and one dependency | Extra egress hop from AWS to HUIT and back | Keeps the Harvard compliance boundary. Provider code exists today. |
+| **AWS Bedrock, direct** | Per token; no idle cost. See section 6. | AWS-managed; quotas apply | Lowest latency from inside AWS | Traffic stays in the FASRC account. Data boundary review needed. **Needs a new provider module.** |
+| HUIT Bedrock proxy | Per token via HUIT | Adds one network hop and one org dependency | Extra round trip from AWS to HUIT and back | Keeps the Harvard compliance boundary. Works today with no code change. |
 
-**Recommendation:** decide on the call. The choice is a compliance question,
-not a technical one. The archi provider layer supports both, so the config
-can switch between them per environment. A sane setup: Bedrock direct as the
-primary in production, the HUIT proxy as the configured standby.
+Two facts from the code bound this choice:
+
+- **The provider registry has no direct AWS Bedrock provider.**
+  `src/archi/providers/__init__.py` registers `huit_bedrock`, `anthropic`,
+  `openai`, and others; none signs AWS requests. A direct Bedrock provider is
+  new, bounded work: the HUIT provider already sends the Bedrock-native
+  Anthropic JSON request format, so the new module changes authentication and
+  transport, not message handling.
+- **A standby is a manual config switch, not automatic failover.** The chat
+  app reads one `services.chat_app.default_provider` value. A fallback today
+  means an operator edits the config and reseeds Postgres. Automatic failover
+  is new code — do not promise it on the call.
+
+**Recommendation:** decide the target on the call; it is a compliance
+question. The HUIT proxy works with no code change. If the call picks direct
+Bedrock, schedule the provider module in Phase 1 and budget that work.
 
 Questions that gate this choice are in section 9.1, items 2 and 3.
 
 ### 3.4 Ingestion and embedding (data-manager)
 
-| Option | Monthly cost | Reliability | Performance | Notes |
-| --- | --- | --- | --- | --- |
-| **Scheduled ECS Fargate task** (recommended) | About $0.20 per run at 4 vCPU for 1 hour | Retries via EventBridge | 4 vCPUs cut the 44-minute embed far down | Zero idle cost. |
-| AWS Batch | Same compute prices | Adds queue semantics | Same | Extra moving parts with no gain at one job. |
-| Bedrock managed embeddings (Titan, Cohere) | Per token | High | Good | **Changes the embedding model.** Forces a full re-benchmark. Not now. |
+data-manager is not a batch job. It is a long-lived Flask service on port
+7871 (`src/bin/service_data_manager.py`). The chatbot calls its upload,
+schedule, and status APIs at runtime. A cron-style replacement breaks
+uploads and schedule reloads.
 
-**Recommendation:** keep all-MiniLM-L6-v2 on CPU in a scheduled Fargate task.
-The model is CPU-friendly and the benchmark baseline stays valid.
+| Option | Monthly cost | Reliability | Notes |
+| --- | --- | --- | --- |
+| **Always-on Fargate service** (recommended) | About $45 (1 vCPU + 4 GB) | Same as the other services | Ingest runs on the service's internal schedule. No code change. |
+| Split: small API service + batch ingest task | API task + about $0.20 per ingest run | Good | **Needs code changes** to split the service. Price both pieces if this path is chosen. |
+| Bedrock managed embeddings (Titan, Cohere) | Per token | High | **Changes the embedding model** and forces a full re-benchmark. Not now. |
+
+**Recommendation:** keep data-manager whole, as an always-on Fargate
+service, with all-MiniLM-L6-v2 on CPU. The model is CPU-friendly and the
+benchmark baseline stays valid. Fargate cannot resize a live task, so size
+the task for the ingest peak — the embed took 44 minutes on one core, and
+more vCPUs cut that time.
 
 ### 3.5 Nightly benchmark rig
 
@@ -192,49 +235,44 @@ ECR pull-through moves that credential into AWS.
 
 | | A: Lift and shift | B: ECS Fargate + RDS | C: EKS |
 | --- | --- | --- | --- |
-| Shape | EC2 per environment, docker compose via `archi create` | Managed containers, managed Postgres | Kubernetes cluster per environment |
-| Monthly cost (staging + production, before tokens) | About $150 to $350 | About $350 to $700 | About $650 to $1,100 |
+| Architecture | EC2 per environment, docker compose via `archi create` | Managed containers, managed Postgres | Kubernetes cluster per environment |
+| Monthly cost (staging + production, before tokens) | About $150 to $350 | About $450 to $750 | About $750 to $1,150 |
 | Reliability | Low: single instance per environment | High: multi-AZ services and database | High |
 | Operator load | Highest: patch OS, docker, Postgres | Lowest | High: cluster upkeep |
-| Change to archi tooling | None | Compose templates map to ECS task definitions; config-seed and db-migrate become one-shot ECS tasks | Same mapping plus manifests |
+| Change to archi tooling | None | Compose templates map to ECS task definitions; a deploy pipeline must run db-migrate and config-seed before any service update (section 5) | Same mapping plus manifests |
 | Best when | Speed matters most and downtime is acceptable | Steady production service with small team | The org standardizes on Kubernetes |
 
-**Recommendation: Option B.** Option A is a legitimate phase-1 stepping stone:
-it can host staging in days and buys time to build Option B in Terraform for
-production. Option C solves problems this stack does not have.
+**Recommendation: Option B.** Option A is a legitimate phase-1 interim step:
+it can host staging in days and gives time to build Option B in Terraform
+for production. Option C solves problems this stack does not have.
 
-Target shape for Option B:
+The Option B architecture:
 
 ```mermaid
 flowchart TB
-    users["Users"] --> dns["Route 53 / Harvard DNS CNAME"] --> alb["ALB + ACM TLS"]
-    subgraph vpc["VPC — one copy for staging, one for production"]
-        subgraph ecs["ECS cluster (Fargate)"]
-            chat["chatbot service"]
-            graf["grafana service"]
-            grader["grader service"]
+    users["Users"] --> dns["Route 53 or<br/>Harvard DNS CNAME"]
+    dns --> alb["ALB + ACM TLS"]
+    subgraph vpc["VPC — one copy per environment"]
+        direction TB
+        subgraph ecs["ECS on Fargate — always-on services"]
+            direction TB
+            chat["chatbot"]
+            dm["data-manager"]
+            graf["grafana"]
+            grader["grader"]
         end
-        rds[("RDS for PostgreSQL + pgvector<br/>Multi-AZ in production")]
-        ingest["data-manager task (scheduled)"]
-        bench["benchmark task (nightly, staging only)"]
-        seed["config-seed / db-migrate<br/>one-shot tasks at deploy"]
+        deploy["one-shot deploy tasks:<br/>db-migrate, then config-seed"]
+        bench["benchmark task<br/>(nightly, staging only)"]
+        rds[("RDS for PostgreSQL<br/>with pgvector")]
     end
     alb --> chat
-    evb["EventBridge Scheduler"] --> ingest
-    evb --> bench
-    chat --> rds
-    ingest --> rds
+    chat --> dm
+    ecs --> rds
+    deploy --> rds
+    evb["EventBridge<br/>Scheduler"] --> bench
     bench --> rds
-    seed --> rds
-    chat --> bedrock["AWS Bedrock"]
-    chat -.-> huit["HUIT Bedrock proxy (standby)"]
-    bench --> bedrock
-    s3[("S3<br/>reports, corpus snapshots, DB exports")]
-    bench --> s3
-    ingest --> s3
-    ecs --> cw["CloudWatch Logs + alarms"]
-    ecr["ECR pull-through cache"] --> ecs
-    ghcr["GHCR (publish target today)"] --> ecr
+    ecs --> llm["AWS Bedrock (new provider)<br/>or HUIT Bedrock proxy"]
+    ecs --> obs["CloudWatch Logs;<br/>S3 for reports, config, exports"]
 ```
 
 ## 5. Terraform approach
@@ -248,8 +286,8 @@ infra/
   modules/
     network/          # VPC, subnets, endpoints
     database/         # RDS + pgvector, backups
-    ecs-service/      # one long-lived service (chatbot, grafana, grader)
-    scheduled-task/   # data-manager, benchmark
+    ecs-service/      # one long-lived service (chatbot, data-manager, grafana, grader)
+    scheduled-task/   # benchmark
     ingress/          # ALB, ACM, DNS
     secrets/          # SSM parameters
   envs/
@@ -259,9 +297,21 @@ infra/
 
 - **CI auth:** a GitHub Actions OIDC role in the FASRC account. No long-lived
   AWS keys in GitHub secrets. Plan on pull request, apply on merge.
-- **App config stays app config.** Terraform provisions infrastructure. The
-  archi config still seeds Postgres through the config-seed job, so the
-  "edit config.yaml, then redeploy" model survives the move.
+- **App config stays app config.** Terraform provisions infrastructure; the
+  archi config still seeds Postgres through the config-seed job.
+- **The compose start gate must be rebuilt in the deploy pipeline.** Today,
+  compose mounts the rendered config into the containers and blocks service
+  start until db-migrate and config-seed complete. ECS has no cross-service
+  `depends_on`, so the pipeline owns the order:
+
+1. Render the config and upload it to a versioned S3 object.
+2. Run the db-migrate one-shot task. Wait for exit 0.
+3. Run the config-seed one-shot task against that S3 config. Wait for exit 0.
+4. Update the ECS services to the new task definition revision.
+
+Services fetch the rendered config from S3 at container start (an entrypoint
+step sets `CONFIG_PATH`). A failed step 2 or 3 stops the deploy before any
+user-facing service restarts.
 
 ## 6. Cost ranges
 
@@ -269,13 +319,13 @@ Line items for Option B (estimates; confirm on the call):
 
 | Item | Staging | Production |
 | --- | --- | --- |
-| Fargate services (chatbot, grafana, grader) | About $40 (1 vCPU total) | About $110 to $150 (3 to 4 vCPU total) |
+| Fargate services (chatbot, data-manager, grafana, grader) | About $75 (2 vCPU total) | About $150 to $190 (4 to 5 vCPU total) |
 | RDS for PostgreSQL | About $47 (db.t4g.medium, single-AZ) | About $95 to $130 (Multi-AZ) + storage |
 | ALB | About $20 | About $25 |
-| Scheduled tasks (ingest, benchmark) | About $5 to $15 per month of run time | About $5 |
+| Benchmark task (nightly) | About $5 to $15 | $0 — the benchmark runs in staging only |
 | S3, CloudWatch, EventBridge, SSM | About $10 | About $20 |
 | NAT gateway (only if used) | $0 with public subnets | About $35 to $60 |
-| **Subtotal** | **About $120 to $135** | **About $255 to $390** |
+| **Subtotal** | **About $155 to $170** | **About $290 to $425** |
 
 **Bedrock tokens are the variable line.** A worked example for a Claude
 Sonnet-class model at $3 per million input tokens and $15 per million output
@@ -309,13 +359,15 @@ flowchart LR
    guardrails, quotas). Create the Terraform state backend, the OIDC role,
    and the network module. Request Bedrock model access.
 2. **Phase 1 — staging.** Stand up the full Option B stack. Load the corpus
-   with a fresh ingest run. Point the team at it for daily use.
+   with a fresh ingest run. Point the team at it for daily use. Build the
+   direct Bedrock provider module here if the call picks that path.
 3. **Phase 2 — benchmark rig.** Move the nightly goldenset run and reports
    off the workstation. Compare results against the FASRC baseline to prove
    the platform change did not move the numbers.
 4. **Phase 3 — production.** Restore a Postgres dump into production RDS
    (the database is small, so dump-and-restore beats DMS). Cut DNS over in a
-   planned window. Keep the FASRC deployment warm as rollback for two weeks.
+   planned window. Keep the FASRC deployment in place as rollback for two
+   weeks.
 5. **Phase 4 — settle.** The GPU host keeps dev and vLLM provider testing.
    Decommission nothing else until management signs off.
 
@@ -326,9 +378,11 @@ flowchart LR
   that boundary. This is the main compliance question for the call.
 - **Bedrock quotas.** Default per-model token rates can be low in a fresh
   account. Request increases in Phase 0, not at cutover.
-- **HarvardKey SAML.** The chat app's SAML integration needs the production
-  hostname registered as a service provider. A hostname change means an IdP
-  metadata update — coordinate with HUIT IAM.
+- **HarvardKey SSO is OIDC, not SAML.** The chat app uses Authlib OAuth with
+  OpenID Connect (`src/interfaces/chat_app/app.py`): issuer metadata, a
+  registered redirect URI, and client credentials. A production hostname
+  change means a new redirect URI registration with HUIT IAM, and the client
+  secret moves to SSM.
 - **Benchmark integrity.** Corpus fingerprints must match across
   environments before any cross-environment comparison of scores.
 - **Optional integrations.** piazza, mattermost, and the redmine mailer are
@@ -350,7 +404,8 @@ flowchart LR
    classification (public docs corpus plus user chat logs)?
 4. Network: does FASRC-to-AWS traffic ride Internet2 peering, Direct
    Connect, or the public internet? Any private connectivity requirement for
-   HarvardKey SAML? (We believe browser redirects suffice — confirm.)
+   the HarvardKey OIDC flow? (We believe browser redirects and public issuer
+   metadata suffice — confirm.)
 5. DNS and TLS: can `rc.fas.harvard.edu` names CNAME to an ALB, and does ACM
    DNS validation work with Harvard-managed DNS?
 6. Cost: education prices, credits, an EDP, or an Internet2 Net+ agreement
@@ -358,17 +413,18 @@ flowchart LR
 7. Scheduled containers at our scale: EventBridge Scheduler + ECS RunTask,
    or AWS Batch — which do they recommend and why?
 8. pgvector on RDS: supported versions, HNSW index guidance, and the
-   smallest sane instance class for about 10,000 vectors.
-9. Review our Option B diagram (section 4) — what would they change?
+   smallest reasonable instance class for about 10,000 vectors.
+9. Review our Option B diagram (section 4): what changes do they recommend?
 
 ### 9.2 Decisions for management
 
 1. Monthly cost target. Section 6 gives the ranges; Option B lands near
-   $400 to $500 per month plus tokens for both environments.
+   $450 to $600 per month plus tokens for both environments.
 2. Order of environments. Recommendation: staging first, production after
    the benchmark rig proves parity.
 3. LLM path: Bedrock direct or HUIT proxy as the production primary. Needs
-   the compliance answer from question 9.1.3.
+   the compliance answer from question 9.1.3, and Bedrock direct also needs
+   the new provider module (section 3.3).
 4. Data classification sign-off for the corpus and for user chat logs.
 5. Ownership: who operates the AWS environment and holds the on-call duty.
    Managed services shrink this load; they do not remove it.
@@ -379,10 +435,12 @@ flowchart LR
 
 - Corpus: about 820 files, about 6,000 vector chunks. Database size is tiny.
 - Embedding model: all-MiniLM-L6-v2, about 80 MB, CPU-friendly.
-- Always-on compute today: roughly 2 to 4 vCPUs across chatbot, grafana, and
-  grader.
+- Always-on compute today: roughly 3 to 5 vCPUs across chatbot,
+  data-manager, grafana, and grader.
 - Images: GHCR, pulled with a classic PAT.
-- The Bedrock Anthropic API shape is already in production use through the
-  HUIT proxy provider.
+- The Bedrock-native Anthropic JSON request format is already in production
+  use through the HUIT proxy provider. A direct AWS Bedrock provider does
+  not exist in the code yet; it is new, bounded work.
 - Deploy model: config lives in Postgres, seeded at deploy; a config edit
-  without a reseed is a no-op. Any AWS design must keep the seed step.
+  without a reseed is a no-op. Any AWS design must keep the seed step and
+  its start-order gate (section 5).
