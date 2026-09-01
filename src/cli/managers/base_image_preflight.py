@@ -198,6 +198,13 @@ def _instruction_text(text: str) -> Optional[str]:
     while Docker had joined all three into one `RUN` -- the third-party stage above it is
     what ships, so the template passed unprobed.
 
+    An empty or whitespace-only line inside a continuation is the same fault. Docker joins
+    across it and reports only the `NoEmptyContinuation` build check, whose documentation
+    states empty continuation lines become an error in a future release -- so the form is
+    legal today and this models today. Failing closed on it instead would refuse a template
+    Docker still builds, and ending the continuation there hid a third-party final stage
+    behind an a2rchi `FROM` that Docker never treated as a stage at all.
+
     The bounds, stated rather than implied. This walk cannot see shell quoting or word
     splitting, so it over-reads a heredoc opener in text that only looks like one
     (`$(( 1 << 3 ))`) and refuses. That direction is the deliberate one: a refusal is loud
@@ -227,6 +234,13 @@ def _instruction_text(text: str) -> Optional[str]:
             # opener is the mirror fault, blanking the rest of the file for a line Docker
             # discarded.
             if line.strip().startswith("#"):
+                continue
+            # An empty -- or whitespace-only -- line does not end the instruction either.
+            # Docker joins straight across it and only warns `NoEmptyContinuation`; the
+            # check's own documentation says this becomes an error in a *future* release,
+            # so today's parse is the one to model. Ending here promoted the line below to
+            # a build stage, the same silent pass as the comment case above.
+            if not line.strip():
                 continue
             pending = _heredoc_delimiters(line)
             continued = not pending and line.rstrip().endswith(escape)

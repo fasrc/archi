@@ -2170,6 +2170,56 @@ def test_a_comment_inside_a_continuation_cannot_open_a_heredoc(tmp_path):
     assert preflight.templates_missing_base_reference(tmp_path) == []
 
 
+def test_an_empty_line_inside_a_continuation_does_not_end_the_continuation(tmp_path):
+    """Docker joins across an empty continuation line; `NoEmptyContinuation` is a warning.
+
+    `RUN echo x \\`, an empty line, then `FROM <a2rchi base>` is one `RUN` to Docker.
+    Measured with `docker build --check` (Docker 29.5.1, `docker/dockerfile:1`): only the
+    third-party stage above loads metadata and the `FROM` below is swallowed. Ending the
+    continuation at the empty line promotes that `FROM` to a build stage and marks the
+    template covered, so the image that actually ships is never probed.
+    """
+    (tmp_path / "Dockerfile-empty-continuation").write_text(
+        _THIRD_PARTY_FINAL + "RUN echo x \\\n\n" + _PINNED_FROM
+    )
+
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-empty-continuation"
+    ], f"an empty line must not end a continuation and expose the next line, got {missing}"
+
+
+def test_a_whitespace_only_line_inside_a_continuation_does_not_end_it(tmp_path):
+    """Docker swallows a whitespace-only line the same way, not as the joined text.
+
+    Measured on the same frontend: `RUN echo x \\`, a line of three spaces, then a `FROM`
+    naming an unresolvable registry warns `NoEmptyContinuation` and never resolves it.
+    """
+    (tmp_path / "Dockerfile-blank-continuation").write_text(
+        _THIRD_PARTY_FINAL + "RUN echo x \\\n   \n" + _PINNED_FROM
+    )
+
+    assert preflight.templates_missing_base_reference(tmp_path) == [
+        tmp_path / "Dockerfile-blank-continuation"
+    ]
+
+
+def test_an_empty_line_inside_a_heredoc_payload_does_not_end_the_payload(tmp_path):
+    """The empty-line rule is the continuation's alone -- a payload ends at its delimiter.
+
+    This is the edge the continuation fix could plausibly break. An empty line inside
+    `RUN <<EOF` keeps the payload open, so an a2rchi-looking `FROM` below it stays shell
+    text and the third-party stage above it is still what ships.
+    """
+    (tmp_path / "Dockerfile-heredoc-empty-line").write_text(
+        _THIRD_PARTY_FINAL + "RUN <<EOF\necho a\n\n" + _PINNED_FROM + "EOF\n"
+    )
+
+    assert preflight.templates_missing_base_reference(tmp_path) == [
+        tmp_path / "Dockerfile-heredoc-empty-line"
+    ]
+
+
 def test_a_numeric_heredoc_delimiter_is_still_an_opener(tmp_path):
     """Docker's heredoc delimiter is any word, digits included -- `RUN cat <<123`.
 
