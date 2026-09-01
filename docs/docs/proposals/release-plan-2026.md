@@ -120,6 +120,8 @@ any "answers improved" claim.
 | [#213](https://github.com/fasrc/archi/issues/213) drift tripwire actually checks rows | Nightly drift reports "0 checked / 105 skipped" — 0 of 105 goldenset rows carry `source_hashes`, so the bank's gold answers are unverified | L |
 | [#119](https://github.com/fasrc/archi/issues/119) warm NLTK before the thread pool (UX too) | 8 files randomly fail per re-ingest (thread race) — a nondeterministic corpus corrupts arm comparisons **and** silently makes topics unanswerable | S |
 | [#347](https://github.com/fasrc/archi/issues/347) literal `</think>` in an answer truncates it (UX) | Enters by the UX override, not this track. `base_react.py:287-296` keys the orphan-tag rule on literal characters, so an answer that quotes the tag is truncated to what follows it — on every provider, thinking on or off, before and after the #122 gate; pinned by `test_a_literal_closing_tag_in_an_answer_truncates_as_it_did_before`. Not `v2026.08.0`: the fix needs the provider's `reasoning_content` or a first-tag-only rule, an open design question, so this is the earliest **feasible** release | M |
+| [#378](https://github.com/fasrc/archi/issues/378) benchmark aborts a healthy ingest at an absolute deadline | `wait_for_ingestion_completion` (`service_benchmark.py:2116`) holds one absolute `BENCH_INGEST_WAIT_TIMEOUT` (default 7200s) that never resets on healthy progress, then reports the failure as a connection error against a URL it never used. A rig that kills advancing ingests on the clock, and misattributes why, yields neither numbers nor a diagnosis | M |
+| [#394](https://github.com/fasrc/archi/issues/394) run the base-image preflight before `archi evaluate --force` tears the runtime down | `base_image_preflight.py` exists for one ordering guarantee — refuse before the destructive step — and that guarantee holds on the `create` path only. `archi evaluate --force` calls `remove_existing_deployment()` first, so a benchmarking run destroys an existing runtime and only then fails on a base image the preflight would have refused | M |
 
 ## v2026.10.0 — Retrieval quality (feature: measurably better answers)
 
@@ -129,6 +131,7 @@ Target: end of October. Depends on the v2026.09.0 rig.
 |---|---|---|
 | [#216](https://github.com/fasrc/archi/issues/216) embedding A/B (MiniLM vs gte/nomic) | The feature itself. Measured defect: 68% of chunks (4,684/6,854) exceed MiniLM's 256-token window and are silently truncated today | L |
 | [#215](https://github.com/fasrc/archi/issues/215) GPU TEI embedding | Named enabler in #216: 40 min → ~1 min re-embeds make the A/B (and adopting a winner) feasible | M |
+| [#396](https://github.com/fasrc/archi/issues/396) feature-matrix benchmark campaign | "Measurably better answers" is this release's feature, and #216 measures one axis of it. Every other retrieval and ingest toggle ships on an inherited default with no measurement behind it: `hierarchical_rerank` is default-on carrying ADR 0003's "+19% RAGAS" from the pre-sentence-chunking #32 A/B, and `categorization` is code-default `false` (`processing.py:689`) but `true` in the shipped example config (`config.example.yaml:150`) at one LLM call per document. Claiming measured improvement while most of the retrieval config is set by unmeasured default is dishonest. Adds the Time-to-Ingest metric the rig discards today (`service_benchmark.py:2178`) | L |
 
 Parked from this track: #130 (rerank already default-on with +19% RAGAS shipped;
 residual is below judge noise and awaits a human data-egress decision), #241 (the
@@ -154,6 +157,10 @@ classification, only one live robustness gate was left, too thin for its own rel
 | [#326](https://github.com/fasrc/archi/issues/326) crash-safe QA-eval continue/overwrite | Gates #320: the console always continues with `overwrite=True` (`worker.py:113`). `workflow.py:352-380` and `:796-803` write a pruned `manifest.json` under a still-terminal status that `RunManifest.from_dict` refuses, and `:414` unlinks the paused run's only staged `live_checks.jsonl`. The invalid window spans the whole scoring phase, so a redeploy or an OOM leaves the workspace and its paid-for LLM artifacts unrecoverable without hand-editing JSON | M |
 | [#327](https://github.com/fasrc/archi/issues/327) retry verifier accepts what scoring produces | Gates #320: retry is a console feature. `_iter_terminal_plan` (`workflow.py:704-740`) stamps `live_validation_failed` over `execution_failed` attempts too, while `RetryParentStore._load` (`workspace.py:253-258`) demands each pair with `answer_ready` — so a cleanly `scored` run returns 400 forever from console and CLI alike, on an uncorrupted workspace, in the two cases retry exists for | S |
 | [#330](https://github.com/fasrc/archi/issues/330) evaluations `agent_config_path` default the seam accepts | Gates #320's enable-on-dev step by that issue's own terms. `base-config.yaml:124` renders exactly `LIVE_AGENT_CONFIG_PATH` (`evaluation_console.py:33`) — the one value `build_evaluation_service` refuses by file identity — so no rendered default ever works, and `configuration.md:171,183-185` presents the refused path as the working example. The console silently never appears | S |
+| [#360](https://github.com/fasrc/archi/issues/360) cut the release tag from the tree the smoke deployment validated | `test-and-build-tag.yml` resolves the dispatched **branch name** independently in `build-images` (`:35-38`), `smoke-test` (`:103-106`) and `release` (`:221-224`) — three `actions/checkout` calls, no shared SHA. A push landing between them tags code no job in the run ever exercised. A release that cannot name the tree it validated is dishonest about its own tag | M |
+| [#372](https://github.com/fasrc/archi/issues/372) preserve the evaluation catalog across `archi create --force` | The chatbot mounts `./data/evaluations` (`base-compose.yaml:255`) and the redeploy path destroys it, taking datasets, human atom approvals, job records and run history with it. Verified P1 from the #368 review; #368 corrected the documentation and left the destructive path live. Losing paid-for human review on a routine redeploy is the opposite of production-ready | M |
+| [#371](https://github.com/fasrc/archi/issues/371) guarantee the evaluations `agent_config_path` exists in the container at create time | Gates #320 alongside #326/#327/#330. An accepted `agent_config_path` is validated on the host and never proven present inside the chatbot container, so an enabled console registers and then fails every run on a missing file. #81's fourth non-negotiable is an automated eval gate, and this is its operator surface | M |
+| [#389](https://github.com/fasrc/archi/issues/389) refuse a deployment whose service templates pin the same base at different references | `base_reference` (`base_image_preflight.py:123-135`) returns the **first** matching reference and stops, so two templates naming one `a2rchi-*-base` at different refs let the preflight probe whichever sorts first and report the deployment ready — before `archi create --force` tears anything down. PR #391 is open, not merged: the guard is not on `dev` | M |
 
 ---
 
@@ -165,7 +172,7 @@ classification, only one live robustness gate was left, too thin for its own rel
 | [#148](https://github.com/fasrc/archi/issues/148) | `goldenset-report.timer` active on the fasrc-dev host, firing 06:15 daily (verified via `systemctl --user list-timers`) |
 | [#63](https://github.com/fasrc/archi/issues/63) | Core deliverable shipped as `archi sources build` (PR #37, `cli_main.py:909`); the issue self-describes as superseded |
 
-## Parked — 52 issues, labeled `parked`
+## Parked — 61 issues, labeled `parked`
 
 Query: `gh issue list --repo fasrc/archi --label parked`. An issue leaves the parking
 lot by gating a future feature release, not by aging.
@@ -173,6 +180,16 @@ lot by gating a future feature release, not by aging.
 | Issue | One-line reason |
 |---|---|
 | #280 | Headless `/v1` strip-down scoping — track is not a release driver; go/no-go unmade |
+| #369 | `validate_evaluations_root` raises a bare `AttributeError` instead of its `ValueError` on a non-dict block — a worse refusal message, not a missed refusal |
+| #373 | Re-pin released Dockerfiles to digests rather than the CalVer tag; #370 shipped the narrower remedy, so this is the better alternative to a closed gap, not an open one |
+| #374 | `agent_config_path` interpolated raw inside quotes in `base-config.yaml`; latent behind a path containing quote characters, and the sibling key was already fixed by #368 |
+| #375 | Three base-image pin-guard gaps, including an exact-digest assertion covering 2 templates of 15, plus a spec contradiction. The guards hold for what the repo ships today |
+| #382 | Preflight over-promises coverage for a base outside its placeable set, or one left behind by a final stage — the issue body states it is not a live defect |
+| #383 | `service_templates` misses nested Dockerfiles; the issue body states it is a gap in the guarantee, not a current fault, and the two nested files today are correctly excluded |
+| #390 | The release rewriter's `verify_base_tags`/`update_base_tags` are not recursive; an enabler for removing the nested-template guard, which is still in place |
+| #392 | Six Dockerfile-parser divergences from Docker, all failing open — latent on syntax (heredocs opened on a continuation) that no template in the repo uses |
+| #393 | One instance of #392's class: a continuation dropped across an empty physical line. Same latency, and the class is the right unit to fix |
+| #395 | The divergent-pin guard compares the first `FROM` rather than the shipping stage — cites `_base_reference_sources`, which exists only on the unmerged PR #391 |
 | #156, #157 | Incremental re-ingest PR-2/PR-3 — track not a driver; both blocked on an unmerged PR-1 enabler |
 | #276 | lastmod hand-list vs sitemap ownership — metadata-only, both outcomes small and opposite |
 | #166 | CRUD for source list — exploration; deliverable is a note, must not change behavior |
@@ -229,6 +246,37 @@ Milestone open counts 5 / 4 / 2 / 7. #181 and #246 closed via PRs #230 and #251.
 seven issues filed 2026-08-18 — out of the #287 review and the #261 documentation
 round — were triaged here: #286, #293 and #294 into `v2026.11.0`; #285, #288, #290 and
 #291 parked.
+
+**Tracker state (2026-09-01):** 24 milestone-assigned + 61 parked = 85 open
+issues. ✓ Milestone open counts 1 / 6 / 4 / 13. Sixteen issues had drifted into
+neither state — the largest single drift recorded here — and every one but #360
+and #378 was a review follow-up filed by the automated rounds on PRs #367, #368,
+#370, #380, #387 and #391. Six were scheduled: #378 and #394 into `v2026.09.0`,
+#360, #371, #372 and #389 into `v2026.11.0`. Ten were parked, with reasons in
+the table above. #396 was filed the same day and entered `v2026.10.0`.
+
+Nine of the ten parks are the base-image preflight cluster, on the same ground
+each time: the issue's own body states the defect is latent, or names the merged
+PR that already took the narrower remedy. #392, #393 and #395 describe a single
+class — a line-oriented Dockerfile parser that fails open — on syntax no
+template in the repo uses; they park together and should be fixed as a class if
+any one of them is ever scheduled. #395 additionally cites a symbol that exists
+only on the unmerged PR #391, so it could not be checked against `dev` at all.
+**Severity moved none of them:** #375 and #389 are both P2 base-image guard
+defects, and only #389 is scheduled — because only #389 lets a deployment be
+reported ready and then torn down.
+
+#396 is the one gate here that is not a defect. It enters `v2026.10.0` because
+that release's feature is measured improvement, and #216 measures one axis while
+every other ingest and retrieval toggle rides an unmeasured default. Its own
+first task is a power calculation: the August 2026 goldenset work established
+that RAGAS mean deltas sit inside the run-to-run spread and need roughly 40 runs
+per arm to carry a claim, while count-type metrics were decisive far cheaper
+(overflow apology rows 11 → 0, p = 8.1e-5). An under-powered arm reports no
+measurable difference rather than a direction. It is blocked by #279 and #213,
+both `v2026.09.0`: invalid JSON artifacts with inflated scored counts, and an
+unlocked bank drifting under a multi-day campaign, each turn a cross-arm
+comparison into a confident wrong answer.
 
 Two adversarial review rounds moved one of the seven. #294 was parked as design-first
 and is now a gate: `remove_existing_deployment()` is still followed by `mkdir`,
