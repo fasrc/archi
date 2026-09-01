@@ -132,7 +132,17 @@ def _escape_char(text: str) -> str:
 # Only these instructions can open a heredoc. Without this, `# Example: RUN <<EOF` in an
 # ordinary comment blanks every instruction after it, up to a delimiter line that may never
 # come -- which hides a third-party final stage behind an earlier a2rchi builder stage.
-_HEREDOC_INSTRUCTION_RE = re.compile(r"^(?:RUN|COPY|ADD)\b", re.IGNORECASE)
+#
+# `ONBUILD` takes another instruction as its argument, and Docker parses that instruction's
+# heredoc now even though it runs in the child build. Demanding a bare `RUN|COPY|ADD` left
+# an `ONBUILD RUN <<EOF` payload scanned as instructions, so an a2rchi-looking `FROM` inside
+# it became the final stage of a template whose real final stage is third-party -- the
+# silent pass this module may not allow. The allowance stops at the three heredoc-capable
+# instructions: `ONBUILD LABEL note="RUN <<EOF"` opens nothing, and treating it as an opener
+# would fail a working template closed.
+_HEREDOC_INSTRUCTION_RE = re.compile(
+    r"^(?:ONBUILD\s+)?(?:RUN|COPY|ADD)\b", re.IGNORECASE
+)
 
 
 def _heredoc_delimiters(line: str) -> List[tuple]:

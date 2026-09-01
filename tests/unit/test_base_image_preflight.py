@@ -2220,6 +2220,45 @@ def test_an_empty_line_inside_a_heredoc_payload_does_not_end_the_payload(tmp_pat
     ]
 
 
+def test_an_onbuild_wrapped_instruction_still_opens_its_heredoc(tmp_path):
+    """`ONBUILD` takes another instruction as its argument, heredoc and all.
+
+    Measured with `docker build --check` (Docker 29.5.1, `docker/dockerfile:1`) for each of
+    the three wrappers: a `FROM` naming an unresolvable registry inside an `ONBUILD RUN`,
+    `ONBUILD COPY` or `ONBUILD ADD` payload is never resolved, so Docker read it as payload
+    and the third-party stage above it is what ships. Requiring a bare `RUN|COPY|ADD` left
+    the payload scanned as instructions, so the a2rchi-looking `FROM` inside it became the
+    final stage and the template read as covered -- a silent pass.
+    """
+    for wrapper in ("RUN", "COPY", "ADD"):
+        name = f"Dockerfile-onbuild-{wrapper.lower()}"
+        (tmp_path / name).write_text(
+            _THIRD_PARTY_FINAL + f"ONBUILD {wrapper} <<EOF\n" + _PINNED_FROM + "EOF\n"
+        )
+
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-onbuild-add",
+        tmp_path / "Dockerfile-onbuild-copy",
+        tmp_path / "Dockerfile-onbuild-run",
+    ], f"an ONBUILD-wrapped payload must not be scanned as instructions, got {missing}"
+
+
+def test_an_onbuild_wrapper_that_cannot_open_a_heredoc_opens_nothing(tmp_path):
+    """The `ONBUILD` allowance stops at the instructions that take a heredoc.
+
+    `ONBUILD LABEL note="RUN <<EOF"` is one label whose value happens to contain `<<EOF`.
+    Measured on the same frontend: the `FROM` below it *is* resolved, so it is a real stage.
+    Treating every `ONBUILD` line as a potential opener would blank the rest of the file
+    hunting a delimiter that never comes and fail a working template closed.
+    """
+    (tmp_path / "Dockerfile-onbuild-label").write_text(
+        _THIRD_PARTY_FINAL + 'ONBUILD LABEL note="RUN <<EOF"\n' + _PINNED_FROM
+    )
+
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
 def test_a_numeric_heredoc_delimiter_is_still_an_opener(tmp_path):
     """Docker's heredoc delimiter is any word, digits included -- `RUN cat <<123`.
 
