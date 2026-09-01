@@ -46,4 +46,4 @@ imports the main checkout's code).
 - [x] 6.2 `bash scripts/gate.sh` green (archi conda env; run it bare — no pipes or redirects)
 - [x] 6.3 `git status` after every commit (the gate's black writer can rewrite the tree after staging)
 - [x] 6.4 Adversarial review (`/codex:adversarial-review`); verify each finding against the code before acting; address findings
-- [ ] 6.5 Push branch `feat/markdown-aware-chunking`; open PR to `dev` on fasrc/archi with the five-file change set verified (proposal, design, 2 delta specs, tasks all committed); print the full PR URL
+- [x] 6.5 Push branch `feat/markdown-aware-chunking`; open PR to `dev` on fasrc/archi with the five-file change set verified (proposal, design, 2 delta specs, tasks all committed); print the full PR URL
