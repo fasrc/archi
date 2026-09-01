@@ -42,6 +42,8 @@ Clarity answers received before this draft:
   paths are **direct AWS Bedrock** and the **HUIT Bedrock proxy**. Direct
   Bedrock needs a new provider module — see section 3.3.
 - The deployment will use the **current FASRC AWS account**.
+- The Terraform code will live in the **FASRC GitLab**, and AWS will pick it
+  up from there through GitLab CI.
 - Management has not set a cost target. Section 6 gives cost ranges per
   option, and the target is a decision for the call.
 
@@ -303,8 +305,13 @@ infra/
     prod/
 ```
 
-- **CI auth:** a GitHub Actions OIDC role in the FASRC account. No long-lived
-  AWS keys in GitHub secrets. Plan on pull request, apply on merge.
+- **Repo home and CI:** the Terraform lives in the FASRC GitLab, and GitLab
+  CI applies it to AWS. Federate GitLab CI to an IAM role through an OIDC
+  identity provider for the GitLab issuer — no long-lived AWS keys as CI
+  variables. Plan on merge request, apply on merge.
+- **Two repo homes stay in play:** the archi app code and images remain on
+  GitHub and GHCR; only the infrastructure code lives in GitLab. A deploy
+  connects the two only through image tags.
 - **App config stays app config.** Terraform provisions infrastructure; the
   archi config still seeds Postgres through the config-seed job.
 - **The compose start gate must be rebuilt in the deploy pipeline.** Today,
@@ -428,6 +435,10 @@ flowchart LR
 8. pgvector on RDS: supported versions, HNSW index guidance, and the
    smallest reasonable instance class for about 10,000 vectors.
 9. Review our Option B diagram (section 4): what changes do they recommend?
+10. CI federation: the Terraform repo lives in the FASRC GitLab. What is the
+    recommended IAM OIDC identity-provider setup for a self-hosted GitLab
+    issuer, and which claim conditions (audience, project path, branch) do
+    they advise on the role trust policy?
 
 ### 9.2 Decisions for management
 
@@ -452,6 +463,8 @@ flowchart LR
 - Always-on compute on dev today: about 2 to 3 vCPUs (chatbot and
   data-manager). grafana and grader add about 1 vCPU if enabled.
 - Images: GHCR, pulled with a classic PAT.
+- Terraform home: the FASRC GitLab; GitLab CI applies it to AWS. The app
+  code and images stay on GitHub and GHCR.
 - The Bedrock-native Anthropic JSON request format is already in production
   use through the HUIT proxy provider. A direct AWS Bedrock provider does
   not exist in the code yet; it is new, bounded work.
