@@ -15,6 +15,7 @@ from src.data_manager.vectorstore.node_parsing import (
     HierarchicalNode,
     build_hierarchical_nodes,
     embed_child_nodes,
+    resolve_effective_strategy,
 )
 
 
@@ -87,7 +88,12 @@ def test_markdown_strategy_uses_header_sections_as_parents():
     assert any("Section B" in node.parent_text for node in nodes)
     for node in nodes:
         assert len(node.child_texts) >= 1
-        assert node.metadata == {"source": "guide.md"}
+        assert node.metadata["source"] == "guide.md"
+        # The markdown strategy adds the header hierarchy; document metadata stays.
+        assert node.metadata == {
+            "source": "guide.md",
+            "header_path": node.metadata["header_path"],
+        }
 
 
 def test_empty_document_yields_no_nodes():
@@ -172,3 +178,202 @@ def test_embed_child_nodes_raises_on_count_mismatch():
 
     with pytest.raises(ValueError, match="expected exactly one embedding per child"):
         embed_child_nodes(_ShortEmbedder(), ["first.", "second."])
+
+
+# ---------------------------------------------------------------------------
+# Markdown structural chunking (complete-markdown-chunking change)
+# ---------------------------------------------------------------------------
+
+
+_NESTED_MD = (
+    "Preamble text before any header. It has two sentences.\n\n"
+    "# Guide\n\n"
+    "Guide intro sentence one. Guide intro sentence two.\n\n"
+    "## Install\n\n"
+    "Install body sentence one. Install body sentence two.\n\n"
+    "### GPU nodes\n\n"
+    "GPU body sentence one. GPU body sentence two.\n"
+)
+
+
+def _nodes_by_needle(nodes, needle):
+    matches = [node for node in nodes if needle in node.parent_text]
+    assert matches, f"no parent contains {needle!r}"
+    return matches
+
+
+def test_markdown_header_path_reflects_ancestor_headers():
+    """Each section's metadata carries the ancestor header path."""
+    doc = Document(page_content=_NESTED_MD, metadata={"source": "guide.md"})
+
+    nodes = build_hierarchical_nodes(doc, strategy=MARKDOWN_STRATEGY)
+
+    for node in _nodes_by_needle(nodes, "Install body"):
+        assert node.metadata["header_path"] == "/Guide/"
+        assert node.metadata["source"] == "guide.md"
+    for node in _nodes_by_needle(nodes, "GPU body"):
+        assert node.metadata["header_path"] == "/Guide/Install/"
+        assert node.metadata["source"] == "guide.md"
+
+
+def test_markdown_header_path_root_for_preamble_and_h1():
+    """Preamble and H1 sections carry the root path; the key is never absent."""
+    doc = Document(page_content=_NESTED_MD, metadata={})
+
+    nodes = build_hierarchical_nodes(doc, strategy=MARKDOWN_STRATEGY)
+
+    for node in _nodes_by_needle(nodes, "Preamble text"):
+        assert node.metadata["header_path"] == "/"
+    for node in _nodes_by_needle(nodes, "Guide intro"):
+        assert node.metadata["header_path"] == "/"
+    for node in nodes:
+        assert "header_path" in node.metadata
+
+
+def test_markdown_fenced_code_does_not_split_sections():
+    """A '#' line inside a ``` fence never starts a new section."""
+    md = (
+        "# Scripts\n\n"
+        "Intro sentence for the scripts page.\n\n"
+        "```bash\n"
+        "#!/bin/bash\n"
+        "# comment inside the fence\n"
+        "echo hi\n"
+        "```\n\n"
+        "Closing sentence after the fence.\n"
+    )
+    doc = Document(page_content=md, metadata={})
+
+    nodes = build_hierarchical_nodes(doc, strategy=MARKDOWN_STRATEGY)
+
+    # One header -> one section; the fence stays inside it.
+    assert len(nodes) == 1
+    assert "# comment inside the fence" in nodes[0].parent_text
+    assert nodes[0].metadata["header_path"] == "/"
+
+
+def test_markdown_empty_heading_is_tolerated():
+    """An empty heading marker ('### ') neither crashes nor eats content."""
+    md = (
+        "# Top\n\n"
+        "Top body sentence.\n\n"
+        "### \n\n"
+        "Orphan body under the empty heading.\n\n"
+        "### Filesystems\n\n"
+        "Filesystems body sentence.\n"
+    )
+    doc = Document(page_content=md, metadata={})
+
+    nodes = build_hierarchical_nodes(doc, strategy=MARKDOWN_STRATEGY)
+
+    joined = "\n".join(node.parent_text for node in nodes)
+    assert "Orphan body under the empty heading." in joined
+    assert "Filesystems body sentence." in joined
+
+
+def test_markdown_oversized_section_splits_into_multiple_parents():
+    """A section beyond parent_chunk_size caps into several parents."""
+    body = " ".join(
+        f"Section body sentence number {i} with a few filler words." for i in range(80)
+    )
+    md = f"# Guide\n\n## Big\n\n{body}\n"
+    doc = Document(page_content=md, metadata={})
+
+    nodes = build_hierarchical_nodes(
+        doc,
+        strategy=MARKDOWN_STRATEGY,
+        parent_chunk_size=128,
+        child_chunk_size=64,
+    )
+
+    big_parents = _nodes_by_needle(nodes, "Section body sentence number")
+    assert len(big_parents) >= 2
+    for node in big_parents:
+        assert node.metadata["header_path"] == "/Guide/"
+    # Zero-overlap pieces: every numbered sentence lands in exactly one parent.
+    for i in (0, 20, 40, 79):
+        needle = f"Section body sentence number {i} "
+        holders = [n for n in big_parents if needle in n.parent_text]
+        assert len(holders) == 1, f"sentence {i} appears in {len(holders)} parents"
+
+
+def test_small_child_chunk_size_does_not_raise():
+    """child_chunk_size below the splitter's 200-token default overlap works."""
+    md = "# T\n\nBody sentence one. Body sentence two. Body sentence three.\n"
+    for strategy in (MARKDOWN_STRATEGY, SENTENCE_STRATEGY):
+        nodes = build_hierarchical_nodes(
+            Document(page_content=md, metadata={}),
+            strategy=strategy,
+            parent_chunk_size=256,
+            child_chunk_size=64,
+        )
+        assert nodes, f"{strategy}: expected nodes for a small child size"
+    # A tiny child size still works on the markdown path (overlap clamps below it).
+    tiny = build_hierarchical_nodes(
+        Document(page_content=md, metadata={}),
+        strategy=MARKDOWN_STRATEGY,
+        parent_chunk_size=256,
+        child_chunk_size=16,
+    )
+    assert tiny
+
+
+def test_sentence_strategy_metadata_unchanged_by_markdown_completion():
+    """The sentence path adds no extra metadata keys (refactor guard)."""
+    doc = Document(page_content=_sentences(40), metadata={"source": "doc.txt"})
+
+    nodes = build_hierarchical_nodes(
+        doc,
+        strategy=SENTENCE_STRATEGY,
+        parent_chunk_size=256,
+        child_chunk_size=64,
+    )
+
+    for node in nodes:
+        assert node.metadata == {"source": "doc.txt"}
+
+
+@pytest.mark.parametrize("suffix", ["md", ".md", "MD", "markdown", ".MARKDOWN"])
+def test_resolve_effective_strategy_accepts_markdown_suffixes(suffix):
+    """The recorded suffix is authoritative, dotted or not, any case."""
+    assert (
+        resolve_effective_strategy(MARKDOWN_STRATEGY, filename="x.bin", suffix=suffix)
+        == MARKDOWN_STRATEGY
+    )
+
+
+@pytest.mark.parametrize("suffix", ["py", ".py", "txt", "pdf", "html"])
+def test_resolve_effective_strategy_falls_back_to_sentence(suffix):
+    """Non-Markdown files take the sentence strategy under strategy=markdown."""
+    assert (
+        resolve_effective_strategy(MARKDOWN_STRATEGY, filename="x.md", suffix=suffix)
+        == SENTENCE_STRATEGY
+    )
+
+
+def test_resolve_effective_strategy_filename_fallback():
+    """The filename extension decides when no suffix is recorded."""
+    assert (
+        resolve_effective_strategy(MARKDOWN_STRATEGY, filename="guide.md", suffix=None)
+        == MARKDOWN_STRATEGY
+    )
+    assert (
+        resolve_effective_strategy(MARKDOWN_STRATEGY, filename="script.py", suffix=None)
+        == SENTENCE_STRATEGY
+    )
+    assert (
+        resolve_effective_strategy(MARKDOWN_STRATEGY, filename=None, suffix=None)
+        == SENTENCE_STRATEGY
+    )
+
+
+def test_resolve_effective_strategy_passes_other_strategies_through():
+    """Only strategy=markdown dispatches; every other value is untouched."""
+    assert (
+        resolve_effective_strategy(SENTENCE_STRATEGY, filename="guide.md", suffix="md")
+        == SENTENCE_STRATEGY
+    )
+    assert (
+        resolve_effective_strategy("character", filename="guide.md", suffix="md")
+        == "character"
+    )

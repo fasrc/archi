@@ -23,6 +23,7 @@ from .node_parsing import (
     SENTENCE_STRATEGY,
     build_hierarchical_nodes,
     embed_child_nodes,
+    resolve_effective_strategy,
 )
 from .postgres_vectorstore import PostgresVectorStore
 from .schema import ensure_hierarchical_schema
@@ -809,12 +810,20 @@ class VectorStoreManager:
             tokenize = nltk.tokenize.word_tokenize
             stem = self.stemmer.stem
 
+        # Per-file dispatch: the markdown strategy applies only to Markdown
+        # files; every other file falls back to the sentence strategy.
+        effective_strategy = resolve_effective_strategy(
+            self.chunking_strategy,
+            filename=filename,
+            suffix=(file_level_metadata or {}).get("suffix"),
+        )
+
         parents: List[Dict[str, Any]] = []
         parent_index = 0
         for doc in docs:
             for node in build_hierarchical_nodes(
                 doc,
-                strategy=self.chunking_strategy,
+                strategy=effective_strategy,
                 parent_chunk_size=self.parent_chunk_size,
                 child_chunk_size=self.child_chunk_size,
             ):

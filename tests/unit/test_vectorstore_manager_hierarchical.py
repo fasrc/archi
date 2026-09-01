@@ -77,6 +77,7 @@ if "langchain_community.document_loaders" not in sys.modules:
             return []
 
     loaders_module.BSHTMLLoader = _DummyLoader
+    loaders_module.NotebookLoader = _DummyLoader
     loaders_module.PyPDFLoader = _DummyLoader
     loaders_module.PythonLoader = _DummyLoader
     loaders_module.TextLoader = _DummyLoader
@@ -629,3 +630,66 @@ def test_build_hierarchical_payload_passes_configured_chunk_sizes(monkeypatch):
     assert captured["strategy"] == "sentence"
     assert captured["parent_chunk_size"] == 1024
     assert captured["child_chunk_size"] == 256
+
+
+def test_build_hierarchical_payload_dispatches_markdown_per_file(monkeypatch):
+    """strategy=markdown applies only to Markdown files; others get sentence."""
+    manager = _make_manager()
+    manager.chunking_strategy = "markdown"
+    captured = []
+
+    def _capture(document, strategy=None, **_kwargs):
+        captured.append(strategy)
+        return [
+            HierarchicalNode(
+                parent_index=0, parent_text="p", child_texts=["c"], metadata={}
+            )
+        ]
+
+    monkeypatch.setattr(manager_module, "build_hierarchical_nodes", _capture)
+
+    manager._build_hierarchical_payload(
+        docs=[SimpleNamespace(page_content="x", metadata={})],
+        file_level_metadata={"suffix": "md"},
+        filename="guide.md",
+        filehash="h1",
+        apply_stemming=False,
+    )
+    manager._build_hierarchical_payload(
+        docs=[SimpleNamespace(page_content="x", metadata={})],
+        file_level_metadata={"suffix": "py"},
+        filename="script.py",
+        filehash="h2",
+        apply_stemming=False,
+    )
+
+    assert captured == ["markdown", "sentence"]
+
+
+def test_build_hierarchical_payload_sentence_strategy_ignores_markdown_files(
+    monkeypatch,
+):
+    """strategy=sentence never dispatches, not even for a Markdown file."""
+    manager = _make_manager()
+    manager.chunking_strategy = "sentence"
+    captured = []
+
+    def _capture(document, strategy=None, **_kwargs):
+        captured.append(strategy)
+        return [
+            HierarchicalNode(
+                parent_index=0, parent_text="p", child_texts=["c"], metadata={}
+            )
+        ]
+
+    monkeypatch.setattr(manager_module, "build_hierarchical_nodes", _capture)
+
+    manager._build_hierarchical_payload(
+        docs=[SimpleNamespace(page_content="x", metadata={})],
+        file_level_metadata={"suffix": "md"},
+        filename="guide.md",
+        filehash="h1",
+        apply_stemming=False,
+    )
+
+    assert captured == ["sentence"]

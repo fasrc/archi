@@ -163,6 +163,17 @@ data_manager:
   # retrieval. These two blocks are the shipped defaults as of the
   # enable-hierarchical-rerank-default change; shown here explicitly for clarity.
   # Set strategy: character / hierarchical_rerank.enabled: false to opt out.
+  #
+  # Optional: strategy: markdown — header-aware chunking for Markdown files.
+  # Sections split on headers, chunk metadata carries the header hierarchy
+  # (metadata.header_path, e.g. /Guide/Install/), oversized sections cap at
+  # parent_chunk_size, and non-Markdown files fall back to sentence chunking.
+  # CAUTION: flipping the strategy re-chunks NOTHING already ingested — the
+  # vectorstore diffs by resource hash and redeploy.sh preserves data volumes,
+  # so old and new chunks coexist until a forced re-ingest. Clean paths: nuke
+  # the volumes and recreate, or delete the collection's rows from
+  # document_chunks, document_parent_nodes, and documents, then re-run the
+  # data manager.
   chunking:
     strategy: sentence
   retrievers:

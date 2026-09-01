@@ -13,10 +13,16 @@ Two strategies are supported, mirroring ``data_manager.chunking.strategy``:
   character count) at both the parent and child levels. Suitable for the
   HTML-derived FASRC corpus.
 * ``"markdown"`` — :class:`MarkdownNodeParser` carves the document into
-  header-delimited sections (parents); each section is then split into children
-  with :class:`SentenceSplitter`. ``MarkdownElementNodeParser`` is intentionally
-  not used: it requires an LLM (for table summarisation) which the CPU-only
-  ingestion path does not provide. See ``docs/decisions/``.
+  header-delimited sections. Every parent and child carries the section's
+  ancestor header path in ``metadata["header_path"]`` (``"/"`` for preamble
+  and top-level sections — the key is always present under this strategy). A
+  section longer than ``parent_chunk_size`` is sub-split into several parents
+  (zero overlap); children come from :class:`SentenceSplitter` per parent.
+  The strategy is meant for Markdown files only: callers resolve a per-file
+  strategy with :func:`resolve_effective_strategy`, which falls back to
+  ``"sentence"`` for non-Markdown files. ``MarkdownElementNodeParser`` is
+  intentionally not used: it requires an LLM (for table summarisation) which
+  the CPU-only ingestion path does not provide. See ``docs/decisions/``.
 
 The ``"character"`` strategy is the legacy ``CharacterTextSplitter`` path and is
 handled by the caller, not here.
@@ -25,7 +31,8 @@ handled by the caller, not here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from pathlib import Path
+from typing import Dict, List, Optional
 
 from llama_index.core import Document as LlamaDocument
 from llama_index.core.node_parser import (
@@ -41,8 +48,21 @@ from llama_index.core.schema import NodeRelationship
 DEFAULT_PARENT_CHUNK_SIZE = 2048
 DEFAULT_CHILD_CHUNK_SIZE = 512
 
+# Explicit child-splitter overlap (tokens), matching HierarchicalNodeParser's
+# default on the sentence path. SentenceSplitter's own default is 200 and it
+# raises when overlap >= chunk_size, so a small configured child_chunk_size
+# would otherwise fail every document at ingest.
+CHILD_CHUNK_OVERLAP = 20
+
 SENTENCE_STRATEGY = "sentence"
 MARKDOWN_STRATEGY = "markdown"
+
+# Suffixes that count as Markdown for per-file strategy dispatch, compared
+# after a lstrip(".").lower() normalization: converted web pages and
+# git-source files record "md" (bare), local files record ".md" (dotted,
+# raw Path.suffix), and the git source's suffix list is config-driven so
+# ".markdown" files are possible.
+_MARKDOWN_SUFFIXES = frozenset({"md", "markdown"})
 
 # Default dimension of archi's stock embedder (``sentence-transformers/
 # all-MiniLM-L6-v2``). Used only as a fallback when no configured
@@ -98,7 +118,7 @@ def build_hierarchical_nodes(
     li_document = LlamaDocument(text=text, metadata=metadata)
 
     if strategy == MARKDOWN_STRATEGY:
-        parents = _parse_markdown(li_document, child_chunk_size)
+        parents = _parse_markdown(li_document, parent_chunk_size, child_chunk_size)
     elif strategy == SENTENCE_STRATEGY:
         parents = _parse_sentence(li_document, parent_chunk_size, child_chunk_size)
     else:
@@ -112,10 +132,40 @@ def build_hierarchical_nodes(
             parent_index=index,
             parent_text=parent_text,
             child_texts=child_texts,
-            metadata=dict(metadata),
+            metadata={**metadata, **extra_metadata},
         )
-        for index, (parent_text, child_texts) in enumerate(parents)
+        for index, (parent_text, child_texts, extra_metadata) in enumerate(parents)
     ]
+
+
+def resolve_effective_strategy(
+    strategy: str,
+    *,
+    filename: Optional[str] = None,
+    suffix: Optional[str] = None,
+) -> str:
+    """Resolve the strategy to apply to one file.
+
+    The ``markdown`` strategy is meant for Markdown files only: a Markdown
+    file keeps it, every other file falls back to ``sentence``. Any other
+    configured strategy passes through unchanged. The recorded catalog
+    ``suffix`` is authoritative when present; otherwise the ``filename``
+    extension decides. Both are normalized (leading dot stripped, lowercased)
+    before the comparison against :data:`_MARKDOWN_SUFFIXES`.
+    """
+    if strategy != MARKDOWN_STRATEGY:
+        return strategy
+    candidate = suffix if suffix else _filename_suffix(filename)
+    if str(candidate).lstrip(".").lower() in _MARKDOWN_SUFFIXES:
+        return MARKDOWN_STRATEGY
+    return SENTENCE_STRATEGY
+
+
+def _filename_suffix(filename: Optional[str]) -> str:
+    """Extension of ``filename`` (with its dot), or ``""`` when absent."""
+    if not filename:
+        return ""
+    return Path(str(filename)).suffix
 
 
 def embed_child_nodes(
@@ -178,18 +228,30 @@ def embed_child_nodes(
     return embeddings
 
 
+def _clamped_overlap(chunk_size: int) -> int:
+    """Return :data:`CHILD_CHUNK_OVERLAP`, clamped strictly below ``chunk_size``.
+
+    LlamaIndex splitters raise ``ValueError`` when ``chunk_overlap`` is not
+    smaller than ``chunk_size``, so the effective overlap must shrink with a
+    small configured size instead of failing every document at ingest.
+    """
+    return min(CHILD_CHUNK_OVERLAP, max(chunk_size - 1, 0))
+
+
 def _parse_sentence(
     li_document: LlamaDocument,
     parent_chunk_size: int,
     child_chunk_size: int,
-) -> List["tuple[str, List[str]]"]:
+) -> List["tuple[str, List[str], Dict]"]:
     """Sentence-aware two-level parse via :class:`HierarchicalNodeParser`.
 
-    Returns ``(parent_text, [child_text, ...])`` pairs grouped by each leaf's
-    immediate parent, so every returned parent has at least one child.
+    Returns ``(parent_text, [child_text, ...], extra_metadata)`` triples
+    grouped by each leaf's immediate parent, so every returned parent has at
+    least one child. The sentence strategy contributes no extra metadata.
     """
     parser = HierarchicalNodeParser.from_defaults(
-        chunk_sizes=[parent_chunk_size, child_chunk_size]
+        chunk_sizes=[parent_chunk_size, child_chunk_size],
+        chunk_overlap=_clamped_overlap(min(parent_chunk_size, child_chunk_size)),
     )
     nodes = parser.get_nodes_from_documents([li_document])
     nodes_by_id = {node.node_id: node for node in nodes}
@@ -209,7 +271,7 @@ def _parse_sentence(
             order.append(parent_id)
         grouped[parent_id].append(child_text)
 
-    parents: List["tuple[str, List[str]]"] = []
+    parents: List["tuple[str, List[str], Dict]"] = []
     for parent_id in order:
         parent_node = nodes_by_id.get(parent_id)
         parent_text = (
@@ -219,30 +281,48 @@ def _parse_sentence(
         )
         if not parent_text:
             parent_text = " ".join(grouped[parent_id])
-        parents.append((parent_text, grouped[parent_id]))
+        parents.append((parent_text, grouped[parent_id], {}))
     return parents
 
 
 def _parse_markdown(
     li_document: LlamaDocument,
+    parent_chunk_size: int,
     child_chunk_size: int,
-) -> List["tuple[str, List[str]]"]:
-    """Header-aware parse: sections are parents, sentence-split into children."""
+) -> List["tuple[str, List[str], Dict]"]:
+    """Header-aware parse: sections are parents, sentence-split into children.
+
+    Each :class:`MarkdownNodeParser` section carries its ancestor header path
+    in ``metadata["header_path"]`` (``"/"`` for preamble and top-level
+    sections); that key is propagated as the section's extra metadata. A
+    section longer than ``parent_chunk_size`` is sub-split into several
+    parents with ``chunk_overlap=0`` (sections are semantic units, not
+    sliding windows), all carrying the same ``header_path``.
+    """
     section_parser = MarkdownNodeParser()
-    child_splitter = SentenceSplitter(chunk_size=child_chunk_size)
+    parent_splitter = SentenceSplitter(chunk_size=parent_chunk_size, chunk_overlap=0)
+    child_splitter = SentenceSplitter(
+        chunk_size=child_chunk_size,
+        chunk_overlap=_clamped_overlap(child_chunk_size),
+    )
     section_nodes = section_parser.get_nodes_from_documents([li_document])
 
-    parents: List["tuple[str, List[str]]"] = []
+    parents: List["tuple[str, List[str], Dict]"] = []
     for section in section_nodes:
-        parent_text = (section.get_content() or "").strip()
-        if not parent_text:
+        section_text = (section.get_content() or "").strip()
+        if not section_text:
             continue
-        child_texts = [
-            chunk.strip()
-            for chunk in child_splitter.split_text(parent_text)
-            if chunk.strip()
-        ]
-        if not child_texts:
-            child_texts = [parent_text]
-        parents.append((parent_text, child_texts))
+        header_path = section.metadata.get("header_path") or "/"
+        for parent_text in parent_splitter.split_text(section_text):
+            parent_text = parent_text.strip()
+            if not parent_text:
+                continue
+            child_texts = [
+                chunk.strip()
+                for chunk in child_splitter.split_text(parent_text)
+                if chunk.strip()
+            ]
+            if not child_texts:
+                child_texts = [parent_text]
+            parents.append((parent_text, child_texts, {"header_path": header_path}))
     return parents
