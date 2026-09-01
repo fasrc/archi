@@ -19,6 +19,18 @@ Full reference — every flag, the `--summary-json` schema, and the cron install
 lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
 **Maintaining the golden set**.
 
+## Chunking measurement
+
+- **`measure_chunk_overlap.py`** — measures the overlap a sentence splitter
+  *actually* carries across chunk boundaries, for a sweep of `chunk_overlap`
+  values. `chunk_overlap` is a budget, not a guarantee: the splitter copies back
+  only whole sentences that fit, so a budget below one sentence often carries
+  nothing. Reports empty boundaries, tokens carried, and the index inflation each
+  setting costs. Takes a text file of real corpus content (the docstring has the
+  `psql` dump command) and needs no deployment — just the database dump and the
+  project env. Supports the #396 feature matrix and the `chunking.chunk_overlap`
+  key (#403).
+
 ## Analysis and run helpers
 
 The remaining scripts (notebooks, prompt-sweep generation, the Argilla push/reset
