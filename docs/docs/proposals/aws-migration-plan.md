@@ -32,12 +32,14 @@ Clarity answers received before this draft:
 - Account: the current FASRC AWS account.
 - Cost target: none yet.
 
-## 1. Decisions already made
+## 1. Assumptions
+
+This plan builds on the assumptions below, drawn from the clarity answers in
+the section above. Confirm or correct each one on the call.
 
 - AWS will host the **staging stack**, the **production stack**, and the
   **nightly benchmark rig**.
 - The **dev stack stays on the FASRC GPU host** (`holygpu7c0717`).
-  *Assumption — confirm.*
 - LLM inference will **not** run on self-hosted GPUs in AWS. The two candidate
   paths are **direct AWS Bedrock** and the **HUIT Bedrock proxy**. Direct
   Bedrock needs a new provider module — see section 3.3.
@@ -148,7 +150,8 @@ safe start.
 
 ### 3.3 LLM inference
 
-Self-hosted GPU serving is out of scope by decision. The two paths:
+Self-hosted GPU serving is out of scope (section 1 assumptions). The two
+paths:
 
 | Option | Monthly cost | Reliability | Performance | Notes |
 | --- | --- | --- | --- | --- |
@@ -407,8 +410,8 @@ flowchart LR
   the evaluation history.
 - **Optional integrations.** piazza, slack/mattermost, and the redmine
   mailer are off by default today. Undecided whether they move at all.
-- **Assumption to confirm:** dev stays on the FASRC GPU host; AWS region is
-  us-east-1.
+- **Region assumption.** All prices in this plan assume us-east-1. Confirm
+  the region on the call, with the section 1 assumptions.
 
 ## 9. Notes for the call
 
