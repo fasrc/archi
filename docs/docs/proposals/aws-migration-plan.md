@@ -143,19 +143,22 @@ patch work.
 | **RDS for PostgreSQL** (recommended) | db.t4g.medium: about $47 single-AZ, about $95 Multi-AZ, + storage | Multi-AZ failover, automated backups, PITR | More than enough for 6,000 vectors | pgvector is a supported extension on RDS. |
 | Aurora PostgreSQL Serverless v2 | About $87+ at 1 ACU minimum, per instance | Highest | More than this load needs | Pays off at much larger scale or spiky load. |
 | Self-managed on EC2 | Instance + EBS only | You own backups, patches, failover | Same hardware | Saves little money and adds all the operator work. |
+| OpenSearch Service (k-NN), incl. Serverless | Domain from about $80; Serverless minimum about $175 | Managed, multi-AZ options | Built for millions of vectors | **Not pgvector.** New vectorstore backend + full re-benchmark. |
+| Bedrock Knowledge Bases | Per use: embeddings, retrieval, and the store under it | AWS-managed | Good | **Not pgvector**, and it replaces ingestion and retrieval, not just the store — the largest scope change. |
+| MemoryDB vector search | In-memory node prices, the highest per GB | Managed, multi-AZ | Microsecond latency this load does not need | **Not pgvector.** New backend + re-benchmark. |
+| DocumentDB vector search | From about $70 | Managed | Good | **Not pgvector**; MongoDB-compatible API. New backend + re-benchmark. |
+| S3 Vectors | Lowest at-rest cost, per-query prices | High (S3) | Subsecond, for very large cold collections | **Not pgvector.** New backend + re-benchmark. |
 
 **Recommendation:** RDS for PostgreSQL. Multi-AZ in production, single-AZ in
 staging. The dataset is small, so the smallest Graviton instance class is a
 safe start.
 
-AWS also sells vector search outside PostgreSQL: OpenSearch (k-NN),
-OpenSearch Serverless, MemoryDB, DocumentDB, S3 Vectors, and Bedrock
-Knowledge Bases (a managed RAG pipeline that replaces ingestion and
-retrieval, not just the store). None of these is pgvector-compatible. Each
-one needs a new backend in `src/data_manager/vectorstore/` and a full
-re-benchmark, and at about 6,000 vectors none returns a measurable gain.
-Expect the solutions architects to offer these; hold to the backend
-constraint (section 2) unless they show a decisive advantage.
+The last five rows are the AWS vector services outside PostgreSQL. None is
+pgvector-compatible: each needs a new backend in
+`src/data_manager/vectorstore/` and a full re-benchmark, and at about 6,000
+vectors none returns a measurable gain. Expect the solutions architects to
+offer them; hold to the backend constraint (section 2) unless they show a
+decisive advantage.
 
 ### 3.3 LLM inference
 
