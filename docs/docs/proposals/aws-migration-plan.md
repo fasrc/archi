@@ -9,6 +9,10 @@ This document lists the AWS service options for the archi migration. The
 comparison factors are monthly cost, service reliability, and system
 performance. Section 9 holds the notes for the call.
 
+> **DISCLAIMER:** Claude Fable 5, an AI model, created everything in this
+> document. All prices, service details, and code claims are subject to
+> scrutiny — verify them before you rely on them in a decision.
+
 > **NOTE:** All prices in this document are estimates for us-east-1,
 > on-demand, from 2026-09-01. Confirm current prices with the AWS Pricing
 > Calculator and the solutions architects before any commitment.
