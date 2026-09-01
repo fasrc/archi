@@ -42,6 +42,7 @@ from llama_index.core.node_parser import (
     get_leaf_nodes,
 )
 from llama_index.core.schema import NodeRelationship
+from llama_index.core.utils import get_tokenizer
 
 # Default parent/child chunk sizes (in tokens, per LlamaIndex's splitters).
 # Parents hold a larger context window; children are small, precise leaves.
@@ -229,13 +230,15 @@ def embed_child_nodes(
 
 
 def _clamped_overlap(chunk_size: int) -> int:
-    """Return :data:`CHILD_CHUNK_OVERLAP`, clamped strictly below ``chunk_size``.
+    """Return :data:`CHILD_CHUNK_OVERLAP`, clamped to at most ``chunk_size``.
 
-    LlamaIndex splitters raise ``ValueError`` when ``chunk_overlap`` is not
-    smaller than ``chunk_size``, so the effective overlap must shrink with a
-    small configured size instead of failing every document at ingest.
+    LlamaIndex splitters raise ``ValueError`` only when ``chunk_overlap``
+    exceeds ``chunk_size`` (strictly greater), so the clamp preserves every
+    legal value exactly — a ``chunk_size`` of 20 keeps the 20-token overlap it
+    always had — and only shrinks the overlap for smaller configured sizes
+    instead of failing every document at ingest.
     """
-    return min(CHILD_CHUNK_OVERLAP, max(chunk_size - 1, 0))
+    return min(CHILD_CHUNK_OVERLAP, max(chunk_size, 0))
 
 
 def _parse_sentence(
@@ -285,6 +288,81 @@ def _parse_sentence(
     return parents
 
 
+def _cap_section(
+    section_text: str,
+    parent_splitter: SentenceSplitter,
+    parent_chunk_size: int,
+) -> List[str]:
+    """Cap one header section at the parent budget without cutting fences.
+
+    A section that fits yields itself unchanged. An oversized section is
+    rebuilt fence-aware: fenced code blocks stay atomic while the prose runs
+    between them are sentence-split, and the resulting parts are packed back
+    greedily up to ``parent_chunk_size`` tokens. A fenced block larger than
+    the budget becomes one oversized parent on its own — a bisected fence is
+    worse for retrieval context than an occasional large parent.
+    """
+    pieces = parent_splitter.split_text(section_text)
+    if len(pieces) <= 1:
+        return [section_text]
+
+    parts: List[str] = []
+    for is_fence, segment in _fence_segments(section_text):
+        segment = segment.strip("\n")
+        if not segment.strip():
+            continue
+        if is_fence:
+            parts.append(segment)
+        else:
+            parts.extend(
+                piece for piece in parent_splitter.split_text(segment) if piece.strip()
+            )
+
+    tokenizer = get_tokenizer()
+    capped: List[str] = []
+    current: List[str] = []
+    current_tokens = 0
+    for part in parts:
+        part_tokens = len(tokenizer(part))
+        if current and current_tokens + part_tokens > parent_chunk_size:
+            capped.append("\n\n".join(current))
+            current, current_tokens = [], 0
+        current.append(part)
+        current_tokens += part_tokens
+    if current:
+        capped.append("\n\n".join(current))
+    return capped
+
+
+def _fence_segments(text: str) -> List["tuple[bool, str]"]:
+    """Split ``text`` into ordered ``(is_fence, segment)`` runs.
+
+    Uses the same fence rule as the upstream ``MarkdownNodeParser`` (a line
+    whose lstripped form starts with three backticks toggles fence state). An
+    unterminated fence extends to the end of the text and stays atomic.
+    """
+    segments: List["tuple[bool, str]"] = []
+    buffer: List[str] = []
+    in_fence = False
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            if in_fence:
+                buffer.append(line)
+                segments.append((True, "\n".join(buffer)))
+                buffer = []
+                in_fence = False
+            else:
+                if buffer:
+                    segments.append((False, "\n".join(buffer)))
+                buffer = [line]
+                in_fence = True
+            continue
+        buffer.append(line)
+    if buffer:
+        segments.append((in_fence, "\n".join(buffer)))
+    return segments
+
+
 def _parse_markdown(
     li_document: LlamaDocument,
     parent_chunk_size: int,
@@ -313,7 +391,9 @@ def _parse_markdown(
         if not section_text:
             continue
         header_path = section.metadata.get("header_path") or "/"
-        for parent_text in parent_splitter.split_text(section_text):
+        for parent_text in _cap_section(
+            section_text, parent_splitter, parent_chunk_size
+        ):
             parent_text = parent_text.strip()
             if not parent_text:
                 continue

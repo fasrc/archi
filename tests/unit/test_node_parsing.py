@@ -297,6 +297,76 @@ def test_markdown_oversized_section_splits_into_multiple_parents():
         assert len(holders) == 1, f"sentence {i} appears in {len(holders)} parents"
 
 
+def test_markdown_oversized_section_never_bisects_fences():
+    """The section cap keeps fenced code blocks whole inside one parent."""
+    prose = " ".join(
+        f"Prose sentence number {i} with a few filler words attached."
+        for i in range(40)
+    )
+    fence = (
+        "```bash\n" + "\n".join(f"echo fence_payload_{i}" for i in range(5)) + "\n```"
+    )
+    md = f"# Guide\n\n## Big\n\n{prose}\n\n{fence}\n\n{prose}\n"
+    doc = Document(page_content=md, metadata={})
+
+    nodes = build_hierarchical_nodes(
+        doc,
+        strategy=MARKDOWN_STRATEGY,
+        parent_chunk_size=128,
+        child_chunk_size=64,
+    )
+
+    big_parents = [n for n in nodes if n.metadata["header_path"] == "/Guide/"]
+    assert len(big_parents) >= 2, "expected the oversized section to cap"
+    # Every parent holds balanced fences: never an odd number of ``` markers.
+    for node in big_parents:
+        fence_markers = sum(
+            1
+            for line in node.parent_text.split("\n")
+            if line.lstrip().startswith("```")
+        )
+        assert fence_markers % 2 == 0, f"bisected fence in: {node.parent_text[:80]!r}"
+    # The fence body is contiguous in exactly one parent.
+    holders = [n for n in big_parents if "fence_payload_0" in n.parent_text]
+    assert len(holders) == 1
+    for i in range(5):
+        assert f"fence_payload_{i}" in holders[0].parent_text
+
+
+def test_markdown_fence_larger_than_parent_budget_stays_whole():
+    """A fenced block bigger than parent_chunk_size becomes one whole parent."""
+    fence = (
+        "```bash\n"
+        + "\n".join(f"echo oversized_fence_line_{i} with words" for i in range(40))
+        + "\n```"
+    )
+    md = f"# Scripts\n\nIntro sentence.\n\n{fence}\n"
+    doc = Document(page_content=md, metadata={})
+
+    nodes = build_hierarchical_nodes(
+        doc,
+        strategy=MARKDOWN_STRATEGY,
+        parent_chunk_size=64,
+        child_chunk_size=32,
+    )
+
+    holders = [n for n in nodes if "oversized_fence_line_0" in n.parent_text]
+    assert len(holders) == 1
+    for i in range(40):
+        assert f"oversized_fence_line_{i}" in holders[0].parent_text
+
+
+def test_clamped_overlap_boundary_values():
+    """The clamp preserves legal overlaps exactly (upstream raises only on >)."""
+    from src.data_manager.vectorstore.node_parsing import _clamped_overlap
+
+    assert _clamped_overlap(0) == 0
+    assert _clamped_overlap(1) == 1
+    assert _clamped_overlap(20) == 20  # unchanged topology at the boundary
+    assert _clamped_overlap(21) == 20
+    assert _clamped_overlap(200) == 20
+
+
 def test_small_child_chunk_size_does_not_raise():
     """child_chunk_size below the splitter's 200-token default overlap works."""
     md = "# T\n\nBody sentence one. Body sentence two. Body sentence three.\n"
