@@ -52,18 +52,23 @@ templates. It runs on one FASRC GPU host. Container images come from GHCR.
 The running app config lives in Postgres, and a config-seed job writes it at
 deploy time.
 
-| Component | Function | Where it runs today |
-| --- | --- | --- |
-| chatbot | Web chat app, port 7861, RAG agents | compose, GPU host |
-| data-manager | Always-on ingest service, port 7871: scrape, chunk, and embed; upload, schedule, and status APIs for the chatbot | compose, GPU host |
-| postgres | PostgreSQL with pgvector: app config, documents, vectors | compose, GPU host |
-| config-seed, db-migrate | One-shot deploy jobs | compose, GPU host |
-| grafana | Dashboards | compose, GPU host |
-| grader | Grading app, no GPU | compose, GPU host |
-| benchmark | RAGAS goldenset runs | compose, GPU host |
-| piazza, mattermost, redmine mailer | Optional integrations | compose, off by default |
-| vLLM servers | Qwen models on 2 of 4 V100 GPUs | GPU host, outside compose |
-| nightly timers | Benchmark report, team update | systemd on a workstation |
+| Component | Function | Where it runs today | On dev today |
+| --- | --- | --- | --- |
+| chatbot | Web chat app, port 7861, RAG agents | compose, GPU host | **Yes** |
+| data-manager | Always-on ingest service, port 7871: scrape, chunk, and embed; upload, schedule, and status APIs for the chatbot | compose, GPU host | **Yes** |
+| postgres | PostgreSQL with pgvector: app config, documents, vectors | compose, GPU host | **Yes** |
+| config-seed, db-migrate | One-shot deploy jobs | compose, GPU host | **Yes**, at each deploy |
+| grafana | Dashboards | compose template, available | No |
+| grader | Grading app, no GPU | compose template, available | No |
+| benchmark | RAGAS goldenset runs | compose, GPU host | On demand, for goldenset campaigns |
+| QA evaluation console | Atoms evaluation: judges answers against gold atoms (`atom_score`, `required_atom_recall`) with a judge-LLM oracle; reads the RAGAS golden set | routes inside the chatbot app, plus a CLI (`src/cli/qa_eval.py`) | **Yes**, inside chatbot |
+| piazza, slack/mattermost, redmine mailer | Optional integrations | compose template, available | No |
+| vLLM servers | Qwen models on 2 of 4 V100 GPUs | GPU host, outside compose | **Yes** |
+| nightly timers | Benchmark report, team update | systemd on a workstation | **Yes** |
+
+The dev deploy enables `--services chatbot`, which auto-pulls postgres and
+data-manager (`deploy/scripts/lib.sh:112`). The other services exist as
+templates and deploy only when named in `--services`.
 
 Facts that constrain the options:
 
@@ -110,9 +115,11 @@ flowchart TB
 
 ### 3.1 Container compute
 
-The long-lived services are chatbot, data-manager, grafana, and grader. The
-batch jobs are benchmark, config-seed, and db-migrate. The chatbot calls the
-data-manager APIs at runtime, so data-manager must stay always-on.
+The long-lived services in use today are chatbot and data-manager. grafana
+and grader are available in the templates but off on dev; they enter the
+cost model only if the team enables them in AWS. The batch jobs are
+benchmark, config-seed, and db-migrate. The chatbot calls the data-manager
+APIs at runtime, so data-manager must stay always-on.
 
 | Option | Monthly cost | Reliability | Performance | Notes |
 | --- | --- | --- | --- | --- |
@@ -121,8 +128,9 @@ data-manager APIs at runtime, so data-manager must stay always-on.
 | EKS | +$73 per cluster per month, plus nodes | High, but most operator work | Same as nodes | Kubernetes skills and upkeep are not justified at this scale. |
 | EC2 + docker compose (lift and shift) | One t3.large is about $61 | Low: one instance, one AZ | Fine for this load | Reuses `archi create` unchanged. Fastest path, least AWS-native. |
 
-**Recommendation:** ECS on Fargate. The stack is about 3 to 5 always-on
-vCPUs, near the EC2 break-even point, and Fargate removes host patch work.
+**Recommendation:** ECS on Fargate. The in-use stack is about 2 to 4
+always-on vCPUs, below the EC2 break-even point, and Fargate removes host
+patch work.
 
 ### 3.2 PostgreSQL and pgvector
 
@@ -209,9 +217,9 @@ RAGAS judge LLM calls Bedrock or the HUIT proxy, the same choice as 3.3.
 
 - **CloudWatch Logs** for all container logs. Set retention to 30 or 90 days;
   unlimited retention grows cost forever.
-- **Grafana:** keep the current container on ECS (cost: one small task) rather
-  than Amazon Managed Grafana ($9 per editor per month). Move later if SSO
-  for dashboards becomes a requirement.
+- **Grafana** (off on dev today): if it moves to AWS, keep the container on
+  ECS (cost: one small task) rather than Amazon Managed Grafana ($9 per
+  editor per month). Move later if SSO for dashboards becomes a requirement.
 
 ### 3.8 Secrets
 
@@ -236,7 +244,7 @@ ECR pull-through moves that credential into AWS.
 | | A: Lift and shift | B: ECS Fargate + RDS | C: EKS |
 | --- | --- | --- | --- |
 | Architecture | EC2 per environment, docker compose via `archi create` | Managed containers, managed Postgres | Kubernetes cluster per environment |
-| Monthly cost (staging + production, before tokens) | About $150 to $350 | About $450 to $750 | About $750 to $1,150 |
+| Monthly cost (staging + production, before tokens) | About $150 to $350 | About $400 to $650 | About $750 to $1,150 |
 | Reliability | Low: single instance per environment | High: multi-AZ services and database | High |
 | Operator load | Highest: patch OS, docker, Postgres | Lowest | High: cluster upkeep |
 | Change to archi tooling | None | Compose templates map to ECS task definitions; a deploy pipeline must run db-migrate and config-seed before any service update (section 5) | Same mapping plus manifests |
@@ -256,10 +264,10 @@ flowchart TB
         direction TB
         subgraph ecs["ECS on Fargate — always-on services"]
             direction TB
-            chat["chatbot"]
+            chat["chatbot<br/>(+ QA evaluation console)"]
             dm["data-manager"]
-            graf["grafana"]
-            grader["grader"]
+            graf["grafana (optional)"]
+            grader["grader (optional)"]
         end
         deploy["one-shot deploy tasks:<br/>db-migrate, then config-seed"]
         bench["benchmark task<br/>(nightly, staging only)"]
@@ -319,13 +327,13 @@ Line items for Option B (estimates; confirm on the call):
 
 | Item | Staging | Production |
 | --- | --- | --- |
-| Fargate services (chatbot, data-manager, grafana, grader) | About $75 (2 vCPU total) | About $150 to $190 (4 to 5 vCPU total) |
+| Fargate services (chatbot, data-manager; grafana and grader if enabled) | About $60 to $75 | About $110 to $190 |
 | RDS for PostgreSQL | About $47 (db.t4g.medium, single-AZ) | About $95 to $130 (Multi-AZ) + storage |
 | ALB | About $20 | About $25 |
 | Benchmark task (nightly) | About $5 to $15 | $0 — the benchmark runs in staging only |
-| S3, CloudWatch, EventBridge, SSM | About $10 | About $20 |
+| S3, EFS (evaluation artifacts), CloudWatch, EventBridge, SSM | About $15 | About $25 |
 | NAT gateway (only if used) | $0 with public subnets | About $35 to $60 |
-| **Subtotal** | **About $155 to $170** | **About $290 to $425** |
+| **Subtotal** | **About $145 to $175** | **About $255 to $430** |
 
 **Bedrock tokens are the variable line.** A worked example for a Claude
 Sonnet-class model at $3 per million input tokens and $15 per million output
@@ -385,8 +393,13 @@ flowchart LR
   secret moves to SSM.
 - **Benchmark integrity.** Corpus fingerprints must match across
   environments before any cross-environment comparison of scores.
-- **Optional integrations.** piazza, mattermost, and the redmine mailer are
-  off by default today. Undecided whether they move at all.
+- **Evaluation artifacts are file-backed.** The QA evaluation console
+  (`src/evaluation/qa/`) keeps atoms, judgments, and run history in files
+  and SQLite on the container filesystem. Fargate task storage is ephemeral:
+  without a persistent volume (EFS) or an S3 sync, a task restart erases
+  the evaluation history.
+- **Optional integrations.** piazza, slack/mattermost, and the redmine
+  mailer are off by default today. Undecided whether they move at all.
 - **Assumption to confirm:** dev stays on the FASRC GPU host; AWS region is
   us-east-1.
 
@@ -419,7 +432,7 @@ flowchart LR
 ### 9.2 Decisions for management
 
 1. Monthly cost target. Section 6 gives the ranges; Option B lands near
-   $450 to $600 per month plus tokens for both environments.
+   $400 to $600 per month plus tokens for both environments.
 2. Order of environments. Recommendation: staging first, production after
    the benchmark rig proves parity.
 3. LLM path: Bedrock direct or HUIT proxy as the production primary. Needs
@@ -429,14 +442,15 @@ flowchart LR
 5. Ownership: who operates the AWS environment and holds the on-call duty.
    Managed services shrink this load; they do not remove it.
 6. Cutover window for production DNS, and the two-week FASRC rollback hold.
-7. Scope ruling on the optional integrations (piazza, mattermost, redmine).
+7. Scope ruling on the optional services: grafana, grader, piazza,
+   slack/mattermost, redmine mailer.
 
 ### 9.3 Facts to have on hand
 
 - Corpus: about 820 files, about 6,000 vector chunks. Database size is tiny.
 - Embedding model: all-MiniLM-L6-v2, about 80 MB, CPU-friendly.
-- Always-on compute today: roughly 3 to 5 vCPUs across chatbot,
-  data-manager, grafana, and grader.
+- Always-on compute on dev today: about 2 to 3 vCPUs (chatbot and
+  data-manager). grafana and grader add about 1 vCPU if enabled.
 - Images: GHCR, pulled with a classic PAT.
 - The Bedrock-native Anthropic JSON request format is already in production
   use through the HUIT proxy provider. A direct AWS Bedrock provider does
