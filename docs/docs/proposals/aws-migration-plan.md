@@ -148,6 +148,15 @@ patch work.
 staging. The dataset is small, so the smallest Graviton instance class is a
 safe start.
 
+AWS also sells vector search outside PostgreSQL: OpenSearch (k-NN),
+OpenSearch Serverless, MemoryDB, DocumentDB, S3 Vectors, and Bedrock
+Knowledge Bases (a managed RAG pipeline that replaces ingestion and
+retrieval, not just the store). None of these is pgvector-compatible. Each
+one needs a new backend in `src/data_manager/vectorstore/` and a full
+re-benchmark, and at about 6,000 vectors none returns a measurable gain.
+Expect the solutions architects to offer these; hold to the backend
+constraint (section 2) unless they show a decisive advantage.
+
 ### 3.3 LLM inference
 
 Self-hosted GPU serving is out of scope (section 1 assumptions). The two
