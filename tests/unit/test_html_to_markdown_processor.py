@@ -581,3 +581,33 @@ def test_wire_guard_native_pre_with_language_class_unchanged():
     # converts to a bare fence. The promotion must not add an infostring to it.
     html = '<pre class="bash"><code>echo hi</code></pre>'
     assert html_to_markdown(html) == "```\necho hi\n```"
+
+
+# --- design trade-offs pinned after the adversarial review (issue #399) --------
+# These pin behaviour the design accepts on purpose, so a later change to the
+# promotion predicate or the whitespace scrub is deliberate, not accidental.
+
+
+def test_wire_multiline_code_inside_prose_becomes_its_own_block():
+    # Design trade-off (openspec design.md, Risks): a multi-line <code> that shares
+    # its paragraph with prose still becomes a fenced block. An inline span cannot
+    # carry a line break in CommonMark; dev merged the lines into one. Measured
+    # 2026-09-02: 9 of 25 such elements in a 60-page KB sample share a block with
+    # prose, and all 9 are terminal transcripts, multi-line commands, or JSON.
+    html = '<p>Before <code class="bash">a<br>b</code> after</p>'
+    assert html_to_markdown(html) == "Before\n\n```bash\na\nb\n```\n\nafter"
+
+
+def test_promote_block_code_keeps_a_tab_that_indents_a_code_line():
+    # A build-recipe line keeps its leading tab after the dropped source newline.
+    # dev collapsed it to nothing: '`all:  \ncc main.c`'.
+    html = "<p><code>all:<br>\n\tcc main.c</code></p>"
+    assert _promoted_code_text(html) == "all:\n\tcc main.c"
+
+
+def test_promote_block_code_drops_only_whitespace_beside_a_source_newline():
+    # Horizontal whitespace that touches a source newline beside a <br> is dropped:
+    # an inline element collapses it in the browser and dev already dropped it
+    # ('`cmd\n  \nnext`'). Whitespace with no newline beside it is payload and stays.
+    assert _promoted_code_text("<p><code>cmd\t\n<br>next</code></p>") == "cmd\nnext"
+    assert _promoted_code_text("<p><code>a\tb\t<br>c</code></p>") == "a\tb\t\nc"
