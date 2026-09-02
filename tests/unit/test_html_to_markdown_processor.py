@@ -5,8 +5,13 @@ from pathlib import Path
 
 from src.data_manager.collectors.localfile_resource import LocalFileResource
 from src.data_manager.collectors.processing import (
+    _FENCE_LANGUAGES,
+    _PROMOTED_ATTR,
     HtmlToMarkdownProcessor,
     ResourcePipeline,
+    _fence_language,
+    _promote_block_code,
+    _promoted_fence_language,
     _slice_kb_article,
     html_to_markdown,
 )
@@ -347,3 +352,262 @@ def test_extraction_seam_reports_blank_conversion_as_empty():
     # The processor keeps the original HTML on a blank conversion; the seam says
     # so by returning "" rather than inventing text to hash.
     assert html_to_markdown("<!-- nothing -->") == ""
+
+
+# --- _promote_block_code (issue #399) ----------------------------------------
+# Multi-line bare <code> elements (no <pre> parent, contains <br>) are promoted
+# into a <pre><code> block so markdownify renders them as fenced code, not inline.
+
+
+def test_promote_block_code_wraps_multiline_code_with_class():
+    result = _promote_block_code('<p><code class="bash">a<br>b</code></p>')
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(result, "html.parser")
+    code = soup.find("code")
+    assert code is not None
+    pre = code.find_parent("pre")
+    assert pre is not None, "expected <code> to be wrapped in <pre>"
+    assert pre.get("class") == ["bash"]
+    assert code.get_text() == "a\nb"
+    assert soup.find("br") is None
+
+
+def test_promote_block_code_skips_inline_code():
+    result = _promote_block_code("<p>Add <code>--gpus=1</code>.</p>")
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(result, "html.parser")
+    code = soup.find("code")
+    assert code is not None
+    assert code.find_parent("pre") is None
+
+
+def test_promote_block_code_skips_code_already_in_pre():
+    result = _promote_block_code("<pre><code>a<br>b</code></pre>")
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(result, "html.parser")
+    assert len(soup.find_all("pre")) == 1
+    assert soup.find("br") is not None
+
+
+def test_promote_block_code_wraps_no_class():
+    result = _promote_block_code("<p><code>a<br>b</code></p>")
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(result, "html.parser")
+    code = soup.find("code")
+    assert code is not None
+    pre = code.find_parent("pre")
+    assert pre is not None, "expected <code> to be wrapped in <pre>"
+    assert pre.get("class") is None
+
+
+# --- _FENCE_LANGUAGES / _fence_language (issue #399) -------------------------
+# Language detection maps the class attribute of a <pre> element to the fenced-
+# code language label passed to markdownify's code_language_callback.
+
+
+def test_fence_languages_set():
+    assert _FENCE_LANGUAGES == frozenset(
+        {
+            "bash",
+            "sh",
+            "spec",
+            "lua",
+            "python",
+            "c",
+            "cpp",
+            "fortran",
+            "r",
+            "perl",
+            "json",
+            "yaml",
+            "text",
+        }
+    )
+
+
+def test_fence_language_exact_match():
+    from bs4 import BeautifulSoup
+
+    pre = BeautifulSoup('<pre class="bash">x</pre>', "html.parser").pre
+    assert _fence_language(pre) == "bash"
+
+
+def test_fence_language_compound_class():
+    from bs4 import BeautifulSoup
+
+    pre = BeautifulSoup('<pre class="hljs bash">x</pre>', "html.parser").pre
+    assert _fence_language(pre) == "bash"
+
+
+def test_fence_language_case_insensitive():
+    from bs4 import BeautifulSoup
+
+    pre = BeautifulSoup('<pre class="Bash">x</pre>', "html.parser").pre
+    assert _fence_language(pre) == "bash"
+
+
+def test_fence_language_unknown_class():
+    from bs4 import BeautifulSoup
+
+    pre = BeautifulSoup('<pre class="wp-block-code">x</pre>', "html.parser").pre
+    assert _fence_language(pre) == ""
+
+
+def test_fence_language_no_class():
+    from bs4 import BeautifulSoup
+
+    pre = BeautifulSoup("<pre>x</pre>", "html.parser").pre
+    assert _fence_language(pre) == ""
+
+
+# --- wire helpers into html_to_markdown (issue #399, task 2.1) ---------------
+# _promote_block_code and _fence_language are wired into _worker() so the full
+# html_to_markdown() / HtmlToMarkdownProcessor pipeline produces fenced blocks.
+
+_BASH_CODE_HTML = '<p><code class="bash">#!/bin/bash<br># comment<br>echo hi</code></p>'
+_WP_CODE_HTML = '<p><code class="wp-block-code">line1<br>line2</code></p>'
+
+
+def test_wire_fenced_block_with_language():
+    md = html_to_markdown(_BASH_CODE_HTML)
+    assert "```bash\n#!/bin/bash\n# comment\necho hi\n```" in md
+    for line in md.splitlines():
+        assert not (
+            line.startswith("#") and line.endswith("  ")
+        ), f"trailing two-space line still present: {line!r}"
+
+
+def test_wire_fenced_block_unknown_language():
+    md = html_to_markdown(_WP_CODE_HTML)
+    assert "```\nline1\nline2\n```" in md
+    assert "wp-block-code" not in md
+
+
+def test_wire_guard_inline_code_unchanged():
+    html = "<h1>Title</h1><p>Add <code>--gpus=1</code>.</p>"
+    assert html_to_markdown(html) == "# Title\n\nAdd `--gpus=1`."
+
+
+def test_wire_guard_pre_code_unchanged():
+    html = "<pre><code>#!/bin/bash\n# c\necho hi</code></pre>"
+    assert html_to_markdown(html) == "```\n#!/bin/bash\n# c\necho hi\n```"
+
+
+def test_wire_processor_produces_fenced_block():
+    out = HtmlToMarkdownProcessor().process(_html_resource(content=_BASH_CODE_HTML))
+    assert out.suffix == "md"
+    content = out.get_content()
+    assert content == html_to_markdown(_BASH_CODE_HTML)
+    assert "```bash" in content
+
+
+# --- source whitespace next to a promoted <br> (issue #399, Codex review) -----
+# Formatted HTML (WordPress wpautop emits "<br />\n") carries a newline text node
+# next to every break. Inline rendering collapses it; inside the promoted <pre> it
+# would survive as a blank line between every code line.
+
+
+def _promoted_code_text(html):
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(_promote_block_code(html), "html.parser")
+    return soup.find("code").get_text()
+
+
+def test_promote_block_code_drops_source_newline_after_br():
+    html = (
+        '<p><code class="bash">#!/bin/bash<br />\n# comment<br />\necho hi</code></p>'
+    )
+    assert _promoted_code_text(html) == "#!/bin/bash\n# comment\necho hi"
+
+
+def test_promote_block_code_keeps_indentation_after_the_dropped_newline():
+    html = "<p><code>if x:<br>\n    y<br>\nz</code></p>"
+    assert _promoted_code_text(html) == "if x:\n    y\nz"
+
+
+def test_promote_block_code_drops_source_newline_before_br():
+    assert _promoted_code_text("<p><code>a\n<br>b</code></p>") == "a\nb"
+
+
+def test_promote_block_code_keeps_blank_line_from_two_breaks():
+    assert _promoted_code_text("<p><code>a<br>\n<br>\nb</code></p>") == "a\n\nb"
+    assert _promoted_code_text("<p><code>a<br><br>b</code></p>") == "a\n\nb"
+
+
+def test_wire_fenced_block_wpautop_newlines_have_no_blank_lines():
+    html = (
+        '<p><code class="bash">#!/bin/bash<br />\n# comment<br />\necho hi</code></p>'
+    )
+    assert html_to_markdown(html) == "```bash\n#!/bin/bash\n# comment\necho hi\n```"
+
+
+# --- fence language only for promoted blocks (issue #399, Codex review) -------
+# markdownify calls code_language_callback for every <pre>. A native
+# <pre class="bash"> must keep converting to a bare fence, byte-identical to the
+# output before #399, so the class lookup is gated on the promotion marker.
+
+
+def test_promote_block_code_marks_the_new_pre():
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(
+        _promote_block_code("<p><code>a<br>b</code></p>"), "html.parser"
+    )
+    assert soup.find("pre").has_attr(_PROMOTED_ATTR)
+
+
+def test_promoted_fence_language_ignores_a_native_pre():
+    from bs4 import BeautifulSoup
+
+    pre = BeautifulSoup('<pre class="bash">x</pre>', "html.parser").pre
+    assert _promoted_fence_language(pre) == ""
+
+
+def test_promoted_fence_language_reads_a_promoted_pre():
+    from bs4 import BeautifulSoup
+
+    html = f'<pre class="bash" {_PROMOTED_ATTR}="">x</pre>'
+    pre = BeautifulSoup(html, "html.parser").pre
+    assert _promoted_fence_language(pre) == "bash"
+
+
+def test_wire_guard_native_pre_with_language_class_unchanged():
+    # Measured on origin/dev 9d17fd92 (2026-09-02): a native <pre class="bash">
+    # converts to a bare fence. The promotion must not add an infostring to it.
+    html = '<pre class="bash"><code>echo hi</code></pre>'
+    assert html_to_markdown(html) == "```\necho hi\n```"
+
+
+# --- design trade-offs pinned after the adversarial review (issue #399) --------
+# These pin behaviour the design accepts on purpose, so a later change to the
+# promotion predicate or the whitespace scrub is deliberate, not accidental.
+
+
+def test_wire_multiline_code_inside_prose_becomes_its_own_block():
+    # Design trade-off (openspec design.md, Risks): a multi-line <code> that shares
+    # its paragraph with prose still becomes a fenced block. An inline span cannot
+    # carry a line break in CommonMark; dev merged the lines into one. Measured
+    # 2026-09-02: 9 of 25 such elements in a 60-page KB sample share a block with
+    # prose, and all 9 are terminal transcripts, multi-line commands, or JSON.
+    html = '<p>Before <code class="bash">a<br>b</code> after</p>'
+    assert html_to_markdown(html) == "Before\n\n```bash\na\nb\n```\n\nafter"
+
+
+def test_promote_block_code_keeps_a_tab_that_indents_a_code_line():
+    # A build-recipe line keeps its leading tab after the dropped source newline.
+    # dev collapsed it to nothing: '`all:  \ncc main.c`'.
+    html = "<p><code>all:<br>\n\tcc main.c</code></p>"
+    assert _promoted_code_text(html) == "all:\n\tcc main.c"
+
+
+def test_promote_block_code_drops_only_whitespace_beside_a_source_newline():
+    # Horizontal whitespace that touches a source newline beside a <br> is dropped:
+    # an inline element collapses it in the browser and dev already dropped it
+    # ('`cmd\n  \nnext`'). Whitespace with no newline beside it is payload and stays.
+    assert _promoted_code_text("<p><code>cmd\t\n<br>next</code></p>") == "cmd\nnext"
+    assert _promoted_code_text("<p><code>a\tb\t<br>c</code></p>") == "a\tb\t\nc"

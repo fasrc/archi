@@ -29,7 +29,7 @@ from typing import (
     runtime_checkable,
 )
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 from markdownify import markdownify
 
 from src.data_manager.collectors.resource_base import BaseResource
@@ -281,6 +281,119 @@ class HtmlToMarkdownProcessor:
         return resource
 
 
+# Source whitespace beside a ``<br>`` inside a promoted code block (issue #399 review).
+# Formatted HTML — WordPress ``wpautop`` emits ``<br />\n`` — carries a newline text node
+# next to every break. Inline rendering collapses it, but inside the promoted ``<pre>``
+# it would survive as a blank line between every code line (106 of 107 breaks in a
+# 60-page KB sample, 2026-09-02). Horizontal whitespace after the newline is kept so an
+# indented code line stays indented.
+_BR_TRAILING_WS = re.compile(r"(?:[ \t]*\r?\n[ \t]*)+$")
+_BR_LEADING_WS = re.compile(r"^(?:[ \t]*\r?\n)+")
+
+# Marker set on every ``<pre>`` that ``_promote_block_code`` creates (issue #399 review).
+# ``markdownify`` calls ``code_language_callback`` for every ``<pre>``, so without the
+# marker a native ``<pre class="bash">`` would gain a ``bash`` infostring and stop
+# converting byte-identically to the output before #399. Only promoted blocks are ours
+# to label.
+_PROMOTED_ATTR = "data-archi-promoted"
+
+
+def _strip_break_whitespace(br) -> None:
+    """Drop the source newlines that sit beside a ``<br>`` about to become ``"\\n"``."""
+    for node, pattern in (
+        (br.previous_sibling, _BR_TRAILING_WS),
+        (br.next_sibling, _BR_LEADING_WS),
+    ):
+        if type(node) is not NavigableString:
+            continue
+        stripped = pattern.sub("", str(node))
+        if stripped == str(node):
+            continue
+        if stripped:
+            node.replace_with(stripped)
+        else:
+            node.extract()
+
+
+def _promote_block_code(html: str) -> str:
+    """Promote bare multi-line ``<code>`` elements to ``<pre><code>`` blocks (issue #399).
+
+    A ``<code>`` tag that is not already under a ``<pre>`` and that contains at least
+    one ``<br>`` is treated as a block-level code listing rather than inline code.
+    The source newlines beside each ``<br>`` are dropped first (they are formatting,
+    not content — see ``_strip_break_whitespace``), then each ``<br>`` is replaced with
+    a newline, and the element is wrapped in a new ``<pre>`` that inherits the
+    ``class`` attribute of the ``<code>`` (if present) so that downstream language
+    detection by ``_fence_language`` can fire on the ``<pre>``. The new ``<pre>`` is
+    marked with ``_PROMOTED_ATTR`` so ``_promoted_fence_language`` labels only it.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for code in soup.find_all("code"):
+        if code.find_parent("pre") is not None:
+            continue
+        brs = code.find_all("br")
+        if not brs:
+            continue
+        # Two passes: strip the source whitespace beside every break while the
+        # neighbours are still the original text nodes, then insert the newlines.
+        # Interleaving would let the "\n" inserted for one break be read as source
+        # whitespace of the next and stripped, collapsing an intended blank line.
+        for br in brs:
+            _strip_break_whitespace(br)
+        for br in brs:
+            br.replace_with("\n")
+        pre = soup.new_tag("pre")
+        pre[_PROMOTED_ATTR] = ""
+        if code.get("class"):
+            pre["class"] = code["class"]
+        code.wrap(pre)
+    return str(soup)
+
+
+_FENCE_LANGUAGES: frozenset = frozenset(
+    {
+        "bash",
+        "sh",
+        "spec",
+        "lua",
+        "python",
+        "c",
+        "cpp",
+        "fortran",
+        "r",
+        "perl",
+        "json",
+        "yaml",
+        "text",
+    }
+)
+
+
+def _fence_language(pre) -> str:
+    """Return the fenced-code language label for a ``<pre>`` element (issue #399).
+
+    Iterates the element's ``class`` list, lowercases each token, and returns the
+    first that is a member of ``_FENCE_LANGUAGES``.  Returns ``""`` when no match
+    is found or when the element carries no ``class`` attribute.
+    """
+    for token in pre.get("class") or []:
+        token_lower = token.lower()
+        if token_lower in _FENCE_LANGUAGES:
+            return token_lower
+    return ""
+
+
+def _promoted_fence_language(pre) -> str:
+    """``code_language_callback`` that labels only promoted blocks (issue #399 review).
+
+    Returns ``_fence_language(pre)`` when ``pre`` carries ``_PROMOTED_ATTR`` and ``""``
+    otherwise, so a native ``<pre>`` keeps the bare fence it had before #399.
+    """
+    if not pre.has_attr(_PROMOTED_ATTR):
+        return ""
+    return _fence_language(pre)
+
+
 def _markdownify_deep_safe(content: str) -> str:
     """Convert HTML to Markdown with headroom for deeply-nested input.
 
@@ -295,7 +408,11 @@ def _markdownify_deep_safe(content: str) -> str:
 
     def _worker() -> None:
         try:
-            result["value"] = markdownify(content, heading_style="ATX")
+            result["value"] = markdownify(
+                _promote_block_code(content),
+                heading_style="ATX",
+                code_language_callback=_promoted_fence_language,
+            )
         except BaseException as exc:  # noqa: BLE001 - re-raised to caller below
             result["error"] = exc
 

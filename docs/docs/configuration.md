@@ -522,6 +522,17 @@ data_manager:
   Like the body slice, it takes effect only on **newly** ingested documents or when an
   already-persisted document is force-overwritten — see *Applying to an existing
   corpus* below.
+- **Multi-line code becomes a fenced block.** A `<code>` element with no `<pre>`
+  ancestor that contains a `<br>` is a code listing, not an inline span. The conversion
+  wraps it in a `<pre>` before `markdownify` runs, so it becomes a fenced code block and
+  no comment line inside it parses as a heading (issue #399). The fence gets an
+  infostring only when a class on the element is one of `bash`, `sh`, `spec`, `lua`,
+  `python`, `c`, `cpp`, `fortran`, `r`, `perl`, `json`, `yaml`, `text`; any other class
+  gives a bare fence. A source newline next to a `<br>` (WordPress emits `<br />\n`) is
+  dropped, so the fence has no blank line between code lines. Native `<pre>` blocks and
+  single-line inline `<code>` convert as before. Like the body slice, the change reaches
+  disk only for new or force-overwritten documents — see *Applying to an existing
+  corpus* below.
 - **Cost.** Categorization issues one LLM call per document — expensive on large
   crawls, hence off by default.
 - **Local `.html` uploads are not converted.** Uploaded local files arrive as `bytes`
