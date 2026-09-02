@@ -14,6 +14,7 @@ imports the main checkout's code).
 - [x] 1.6 Test: `child_chunk_size=64` (below the 200 default overlap) does not raise on either hierarchical strategy
 - [x] 1.7 Test: `sentence` strategy output and metadata unchanged (explicit metadata assertion as the refactor guard)
 - [x] 1.8 Watch all new tests fail for the expected reason
+- [x] 1.9 Test: packed parents count the `\n\n` joins against `parent_chunk_size` (PR #402 review round 1: Greptile P1 / Codex P2)
 
 ## 2. Green: node_parsing implementation (src/data_manager/vectorstore/node_parsing.py)
 
@@ -39,6 +40,7 @@ imports the main checkout's code).
 
 - [x] 5.1 `deploy/fasrc-dev/config.example.yaml`: comment documenting the `markdown` opt-in and the re-ingest caution (a strategy flip re-chunks nothing; clean paths: volume nuke + recreate, or delete the collection's rows and re-run the data manager)
 - [x] 5.2 Same short caution comment beside the `chunking:` block in `src/cli/templates/base-config.yaml` (comment only — no new keys)
+- [x] 5.3 `docs/docs/configuration.md` Chunking section: document the completed `markdown` strategy (per-file dispatch, `header_path`, section cap, fence handling, overlap clamp) and the safe forced re-ingest path — delete the collection's `document_chunks` and `document_parent_nodes` rows, keep `documents` (PR #402 review round 1: Greptile P2 / Codex P2 ×2)
 
 ## 6. Gate and wrap-up
 

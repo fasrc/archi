@@ -363,17 +363,17 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 
 ### Chunking
 
-Controls how documents are split at ingestion. The default `character` strategy
-uses the flat `chunk_size`/`chunk_overlap` settings above. Setting `strategy` to
-`sentence` or `markdown` enables **hierarchical** parent-child chunking: small
-embedded child nodes linked to larger parent context nodes (the parent text is
-what a hierarchical-rerank retriever returns).
+Controls how the data manager splits documents at ingestion. The shipped default
+`sentence` and the opt-in `markdown` strategy both build **hierarchical** parent-child
+chunks: small embedded child nodes linked to larger parent context nodes (the parent
+text is what a hierarchical-rerank retriever returns). The legacy `character` strategy
+uses the flat `chunk_size`/`chunk_overlap` settings above.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `chunking.strategy` | string | `character` | `character` (flat), `sentence`, or `markdown` (both hierarchical) |
-| `chunking.parent_chunk_size` | int | `2048` | Target size of parent context nodes (hierarchical strategies only) |
-| `chunking.child_chunk_size` | int | `512` | Target size of embedded child leaf nodes (hierarchical strategies only) |
+| `chunking.strategy` | string | `sentence` | `sentence` (hierarchical, sentence-aware), `markdown` (hierarchical, header-aware for Markdown files — see below), or `character` (legacy flat chunks) |
+| `chunking.parent_chunk_size` | int | `2048` | Target size in tokens of parent context nodes (hierarchical strategies only) |
+| `chunking.child_chunk_size` | int | `512` | Target size in tokens of embedded child leaf nodes (hierarchical strategies only) |
 
 ```yaml
 data_manager:
@@ -388,6 +388,37 @@ data_manager:
 > deployment's chunking is unchanged. They exist so a benchmark can sweep chunk
 > sizes and recommend defaults from data — see
 > [Benchmarking → Hierarchical-rerank A/B](benchmarking.md#hierarchical-rerank-ab).
+
+#### The `markdown` strategy
+
+`strategy: markdown` is header-aware chunking for Markdown sources. HTML pages that
+`html_to_markdown` converted count as Markdown. The strategy is off by default and
+adds no config keys.
+
+- **Sections become parents.** Each header-delimited section is one parent node. A
+  section longer than `parent_chunk_size` splits into several parents with no overlap,
+  and each parent stays within the budget, separators included. Fenced code blocks
+  stay whole: a fence larger than the budget becomes one oversized parent rather than
+  a bisected one.
+- **Header hierarchy in metadata.** Every parent and child carries
+  `metadata.header_path`, the section's ancestor headers (for example
+  `/Guide/Install/`; `/` for text before the first header and for top-level sections).
+  The key is always present under this strategy.
+- **Per-file dispatch.** Only files whose suffix is `md` or `markdown` (any case, with
+  or without the dot) take the Markdown parser. Every other file chunks with the
+  `sentence` strategy, so a mixed corpus needs no per-source setting.
+- **Child overlap.** Child nodes overlap by 20 tokens, clamped to `child_chunk_size`,
+  on both hierarchical strategies. A `child_chunk_size` below 200 no longer fails
+  ingestion.
+
+> **A strategy change re-chunks nothing already ingested.** The vectorstore diffs by
+> resource hash, and `redeploy.sh` preserves the data volumes, so old and new chunks
+> coexist until you force a re-ingest. Either recreate the data volumes, or delete this
+> collection's rows from `document_chunks` and `document_parent_nodes` (both filter on
+> `metadata->>'collection'`) and re-run the data manager. Keep the `documents` table:
+> it is the source catalog the data manager reads to decide what to embed, and it has
+> no collection column. If you delete its rows, the corpus becomes empty instead of
+> refreshed.
 
 ### Sources
 

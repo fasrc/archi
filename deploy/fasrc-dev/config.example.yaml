@@ -171,9 +171,11 @@ data_manager:
   # CAUTION: flipping the strategy re-chunks NOTHING already ingested — the
   # vectorstore diffs by resource hash and redeploy.sh preserves data volumes,
   # so old and new chunks coexist until a forced re-ingest. Clean paths: nuke
-  # the volumes and recreate, or delete the collection's rows from
-  # document_chunks, document_parent_nodes, and documents, then re-run the
-  # data manager.
+  # the volumes and recreate, or delete this collection's rows from
+  # document_chunks and document_parent_nodes (both filter on
+  # metadata->>'collection'), then re-run the data manager. Keep `documents`:
+  # it is the source catalog the data manager reads and has no collection
+  # column — deleting its rows empties the corpus instead of refreshing it.
   chunking:
     strategy: sentence
   retrievers:

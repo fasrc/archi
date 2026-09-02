@@ -222,7 +222,8 @@ data_manager:
     # parent context (ADR 0003). 'markdown' is header-aware for Markdown files
     # (header hierarchy in metadata.header_path, sections capped at
     # parent_chunk_size, non-Markdown files fall back to sentence); note a
-    # strategy flip re-chunks nothing already ingested — force a re-ingest.
+    # strategy flip re-chunks nothing already ingested — force a re-ingest
+    # (docs/docs/configuration.md, Chunking → "The markdown strategy").
     # 'character' is the legacy CharacterTextSplitter path (flat chunks, no
     # parent_id) — pair it with `retrievers.hierarchical_rerank.enabled: false`
     # to avoid paying rerank cost with no parent-context benefit.
