@@ -21,12 +21,22 @@ Under `data_manager.chunking.strategy: markdown`, ingestion SHALL record each ch
 - **THEN** the document-level metadata keys (url, title, filename, and the rest) remain present and unchanged
 
 ### Requirement: Section size cap
-A header section whose text exceeds the configured `parent_chunk_size` SHALL split into multiple parent nodes; every resulting parent SHALL carry the section's `header_path`, and the pieces SHALL NOT overlap in content.
+A header section whose text exceeds the configured `parent_chunk_size` SHALL split into multiple parent nodes, each at most `parent_chunk_size` tokens as persisted (a single fenced code block that alone exceeds the budget excepted); every resulting parent SHALL carry the section's `header_path`, and the pieces SHALL NOT overlap in content.
 
 #### Scenario: Oversized section yields multiple parents
 
 - **WHEN** one header section is longer than `parent_chunk_size`
 - **THEN** ingestion produces more than one parent node for that section, all with the same `header_path`, with no content repeated between the pieces
+
+#### Scenario: Packed pieces respect the budget
+
+- **WHEN** the pieces of an oversized section pack back into parents
+- **THEN** each packed parent's token count, the separators written between pieces included, is at most `parent_chunk_size`
+
+#### Scenario: A fence larger than the budget stays whole
+
+- **WHEN** a fenced code block alone exceeds `parent_chunk_size`
+- **THEN** it becomes one oversized parent on its own instead of a bisected fence
 
 #### Scenario: Section within the cap stays whole
 

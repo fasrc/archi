@@ -356,6 +356,38 @@ def test_markdown_fence_larger_than_parent_budget_stays_whole():
         assert f"oversized_fence_line_{i}" in holders[0].parent_text
 
 
+def test_markdown_capped_parents_count_separators_against_budget():
+    """Packed parents stay within parent_chunk_size, joins included.
+
+    Two parts whose token counts sum exactly to the budget must not pack into
+    one parent: the ``\\n\\n`` written between them costs a token too, so the
+    persisted parent would exceed the cap by one (PR #402 review, round 1).
+    """
+    from llama_index.core.utils import get_tokenizer
+
+    tokenizer = get_tokenizer()
+    header = "## Big"
+    fence_a = "```bash\n" + "\n".join(f"echo alpha_{i}" for i in range(6)) + "\n```"
+    fence_b = "```bash\n" + "\n".join(f"echo beta_{i}" for i in range(6)) + "\n```"
+    md = f"# Guide\n\n{header}\n\n{fence_a}\n\n{fence_b}\n"
+    # Budget = header + first fence exactly, so only the join can tip it over.
+    parent_chunk_size = len(tokenizer(header)) + len(tokenizer(fence_a))
+    doc = Document(page_content=md, metadata={})
+
+    nodes = build_hierarchical_nodes(
+        doc,
+        strategy=MARKDOWN_STRATEGY,
+        parent_chunk_size=parent_chunk_size,
+        child_chunk_size=32,
+    )
+
+    big_parents = [n for n in nodes if n.metadata["header_path"] == "/Guide/"]
+    assert len(big_parents) >= 2, "expected the oversized section to cap"
+    for node in big_parents:
+        tokens = len(tokenizer(node.parent_text))
+        assert tokens <= parent_chunk_size, (tokens, node.parent_text)
+
+
 def test_clamped_overlap_boundary_values():
     """The clamp preserves legal overlaps exactly (upstream raises only on >)."""
     from src.data_manager.vectorstore.node_parsing import _clamped_overlap

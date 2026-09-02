@@ -318,17 +318,19 @@ def _cap_section(
                 piece for piece in parent_splitter.split_text(segment) if piece.strip()
             )
 
+    # Measure the exact text a parent would persist: the "\n\n" written between
+    # packed parts costs tokens too, so summing per-part counts under-counts by
+    # one token per join and lets an ordinary parent exceed the cap.
     tokenizer = get_tokenizer()
     capped: List[str] = []
     current: List[str] = []
-    current_tokens = 0
     for part in parts:
-        part_tokens = len(tokenizer(part))
-        if current and current_tokens + part_tokens > parent_chunk_size:
+        candidate = "\n\n".join([*current, part])
+        if current and len(tokenizer(candidate)) > parent_chunk_size:
             capped.append("\n\n".join(current))
-            current, current_tokens = [], 0
-        current.append(part)
-        current_tokens += part_tokens
+            current = [part]
+        else:
+            current.append(part)
     if current:
         capped.append("\n\n".join(current))
     return capped
