@@ -19,6 +19,8 @@ imports the main checkout's code).
 - [x] 1.11 Test: capped parents are verbatim slices of the section (a long URL comes back intact), with the `\n\n` join kept as the fallback when a piece cannot be located (PR #402 review round 2: Codex P2)
 - [x] 1.12 Test: a `#` line inside a `~~~` fence starts no section; the section parser is a fence-aware subclass of `MarkdownNodeParser` because upstream (llama-index-core 0.14.19) protects backtick fences only (PR #402 review round 3: Codex P2)
 - [x] 1.13 Test: a ```` fence holding a literal ``` line and a `#` line stays one section and one parent; `_fence_segments` honors the opening run's character and length (CommonMark close rule) (PR #402 review round 4: Codex P2)
+- [x] 1.14 Test: a fence behind `> ` blockquote markers stays whole under the cap; `_FENCE_RUN` accepts blockquote prefixes (PR #402 review round 5: Codex P2)
+- [x] 1.15 Tests pinning two deliberate deviations from strict CommonMark, measured on the FASRC KB corpus (3,040 fence lines): indentation is not limited to three spaces (all 68 deep-indented fence lines sit in list-item content), and a closer with glued trailing text still closes (3 conversion artifacts, 0 "```not-a-close" lines) (PR #402 review round 5: Codex P2 ×2, pushback)
 
 ## 2. Green: node_parsing implementation (src/data_manager/vectorstore/node_parsing.py)
 

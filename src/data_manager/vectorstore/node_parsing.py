@@ -376,10 +376,23 @@ def _pack_parts(
 
 
 # Fence delimiter runs the section split and the cap both recognise: three or
-# more backticks or tildes (CommonMark). The upstream MarkdownNodeParser tracks
-# a bare "```" prefix only; _FenceAwareMarkdownNodeParser closes that gap for
-# the section split and _fence_segments for the cap.
-_FENCE_RUN = re.compile(r"^\s*(`{3,}|~{3,})")
+# more backticks or tildes (CommonMark), optionally behind blockquote markers
+# ("> ```"). The upstream MarkdownNodeParser tracks a bare "```" prefix only;
+# _FenceAwareMarkdownNodeParser closes that gap for the section split and
+# _fence_segments for the cap.
+#
+# Two deliberate deviations from strict CommonMark, both pinned by tests and
+# measured on the FASRC KB corpus (346 pages, 3,040 fence lines, 2026-09-02):
+# * Indentation is not limited to three spaces. CommonMark's limit is relative
+#   to the enclosing container (list item, blockquote), which neither this
+#   parser nor upstream tracks. All 68 fence lines indented 4+ spaces in the
+#   corpus sit inside list-item content; none is an indented code block.
+# * A closing run may carry trailing text. The HTML-to-Markdown conversion
+#   glues a closer to the paragraph after it ("```Set the following fields...",
+#   3 lines in the corpus); a strict closer would leave that fence open until
+#   the next opener and invert code and prose for the rest of the page. The
+#   "```not-a-close" shape the strict rule protects does not occur.
+_FENCE_RUN = re.compile(r"^[ \t]*(?:>[ \t]?)*[ \t]*(`{3,}|~{3,})")
 
 
 def _fence_marker(line: str) -> Optional[str]:

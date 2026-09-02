@@ -48,6 +48,16 @@ A header section whose text exceeds the configured `parent_chunk_size` SHALL spl
 - **WHEN** a `~~~` fenced block contains a line that starts with ``` (or the reverse)
 - **THEN** that line does not end the fence; the block stays whole under the cap
 
+#### Scenario: A blockquoted fence stays whole
+
+- **WHEN** an oversized section contains a fenced block whose lines carry a `> ` blockquote prefix
+- **THEN** the block stays inside one parent
+
+#### Scenario: Fence recognition stays lenient where the corpus needs it
+
+- **WHEN** a fence is indented four or more spaces inside list-item content, or a closing run carries trailing text glued to it by the HTML-to-Markdown conversion
+- **THEN** the indented fence still counts as a fence, and the glued closer still closes its block; both deviations from strict CommonMark are deliberate, documented in code with the corpus measurements, and pinned by tests
+
 #### Scenario: Section within the cap stays whole
 
 - **WHEN** a header section fits within `parent_chunk_size`

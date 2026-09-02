@@ -475,6 +475,70 @@ def test_fence_segments_honor_the_opening_run_length():
     ]
 
 
+def test_markdown_blockquoted_fence_stays_whole_under_the_cap():
+    """A fence nested in a blockquote ('> ' prefixed lines) is still atomic."""
+    fence = (
+        ["> ```bash"]
+        + [f"> echo quoted_fence_line_{i} with words" for i in range(40)]
+        + ["> ```"]
+    )
+    md = "# Notes\n\nIntro sentence.\n\n" + "\n".join(fence) + "\n"
+    doc = Document(page_content=md, metadata={})
+
+    nodes = build_hierarchical_nodes(
+        doc,
+        strategy=MARKDOWN_STRATEGY,
+        parent_chunk_size=64,
+        child_chunk_size=32,
+    )
+
+    holders = [n for n in nodes if "quoted_fence_line_0" in n.parent_text]
+    assert len(holders) == 1
+    for i in range(40):
+        assert f"quoted_fence_line_{i}" in holders[0].parent_text
+
+
+def test_fence_closer_with_trailing_text_still_closes_the_fence():
+    """Pinned deviation from CommonMark: a compatible run closes even with text after it.
+
+    The HTML-to-Markdown conversion glues a closing fence to the paragraph that
+    follows it ("```Set the following fields..."). CommonMark would keep that
+    fence open until the next block's opener and invert code and prose for the
+    rest of the page. The FASRC KB corpus has 3 such lines and 0 lines of the
+    "```not-a-close" shape the strict rule protects (PR #402 review round 5).
+    """
+    from src.data_manager.vectorstore.node_parsing import _fence_segments
+
+    text = (
+        "```\n~/.config/docker/daemon.json\n```Set the following fields:\n\n"
+        '```\n{ "a": 1 }\n```\nAfter.'
+    )
+
+    segments = _fence_segments(text)
+
+    assert (True, '```\n{ "a": 1 }\n```') in segments
+    assert segments[-1] == (False, "After.")
+    assert sum(1 for is_fence, _ in segments if is_fence) == 2
+
+
+def test_fence_indented_inside_a_list_item_is_still_a_fence():
+    """Pinned deviation from CommonMark's absolute 3-space indent rule.
+
+    The rule is relative to the enclosing container, which this parser does not
+    track (neither does upstream). In the FASRC KB, all 68 fence lines indented
+    4+ spaces sit inside list-item content (numbered steps with code blocks) and
+    none is an indented code block (PR #402 review round 5).
+    """
+    from src.data_manager.vectorstore.node_parsing import _fence_segments
+
+    fence = (
+        "     ```\n     ~/.config/docker/daemon.json\n     # not a heading\n     ```"
+    )
+    text = f"1. Configure per user:\n\n{fence}\n\n   Next step."
+
+    assert (True, fence) in _fence_segments(text)
+
+
 def test_markdown_longer_fence_run_protects_inner_triple_and_headers():
     """A ```` block with an inner ``` line and a '#' line stays one section and one parent."""
     inner = "\n".join(f"echo long_fence_line_{i} with words" for i in range(40))
