@@ -46,6 +46,18 @@ def _resolve_chunk_sizes(chunking_cfg):
     return parent, child
 
 
+def _resolve_chunking_strategy(chunking_cfg):
+    """Resolve ``data_manager.chunking.strategy``, defaulting to the shipped strategy.
+
+    The CLI template renders ``sentence`` when the key is unset, and the
+    markdown-structural-chunking spec requires an unset strategy to chunk with
+    ``sentence``. A hand-authored runtime config that omits the key lands on the
+    same path, not on legacy flat ``character`` chunks that the default-on
+    hierarchical reranker cannot expand to parent context.
+    """
+    return chunking_cfg.get("strategy", SENTENCE_STRATEGY)
+
+
 class VectorStoreManager:
     """
     Encapsulates vectorstore configuration and synchronization.
@@ -123,12 +135,13 @@ class VectorStoreManager:
         )
 
         # Structure-aware chunking strategy (data_manager.chunking.strategy).
-        # 'character' (default) keeps the CharacterTextSplitter path above;
-        # 'sentence'/'markdown' enable hierarchical parent-child node parsing,
-        # persisting parents to document_parent_nodes and embedded children to
-        # document_chunks (linked via metadata.parent_id).
+        # 'sentence' (the default, also when the key is absent) and 'markdown'
+        # enable hierarchical parent-child node parsing, persisting parents to
+        # document_parent_nodes and embedded children to document_chunks (linked
+        # via metadata.parent_id); 'character' keeps the CharacterTextSplitter
+        # path above.
         chunking_cfg = self._data_manager_config.get("chunking", {}) or {}
-        self.chunking_strategy = chunking_cfg.get("strategy", "character")
+        self.chunking_strategy = _resolve_chunking_strategy(chunking_cfg)
         self.hierarchical_chunking = self.chunking_strategy in (
             SENTENCE_STRATEGY,
             MARKDOWN_STRATEGY,

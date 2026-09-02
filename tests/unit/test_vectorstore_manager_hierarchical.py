@@ -94,6 +94,7 @@ from src.data_manager.vectorstore import manager as manager_module
 from src.data_manager.vectorstore.manager import (
     VectorStoreManager,
     _resolve_chunk_sizes,
+    _resolve_chunking_strategy,
 )
 from src.data_manager.vectorstore.node_parsing import (
     CHILD_EMBEDDING_DIM,
@@ -575,6 +576,21 @@ def test_add_to_postgres_skips_schema_ensure_when_not_hierarchical(monkeypatch):
     assert not any(
         "document_parent_nodes" in sql for sql, _ in fake_cursor.executed
     ), "non-hierarchical path must not reference the parent-node table"
+
+
+def test_resolve_chunking_strategy_defaults_to_sentence_when_absent():
+    """An absent ``strategy`` key means the shipped default, not legacy flat chunks.
+
+    The CLI template renders ``sentence`` when the key is unset; a hand-authored
+    runtime config that omits it must land on the same strategy (PR #402 round 4).
+    """
+    assert _resolve_chunking_strategy({}) == "sentence"
+    assert _resolve_chunking_strategy({"parent_chunk_size": 1024}) == "sentence"
+
+
+def test_resolve_chunking_strategy_passes_configured_values_through():
+    assert _resolve_chunking_strategy({"strategy": "character"}) == "character"
+    assert _resolve_chunking_strategy({"strategy": "markdown"}) == "markdown"
 
 
 def test_resolve_chunk_sizes_defaults_when_absent():
