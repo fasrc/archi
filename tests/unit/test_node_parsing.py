@@ -252,6 +252,38 @@ def test_markdown_fenced_code_does_not_split_sections():
     assert nodes[0].metadata["header_path"] == "/"
 
 
+def test_markdown_tilde_fenced_code_does_not_split_sections():
+    """A '#' line inside a ``~~~`` fence never starts a new section either.
+
+    The upstream parser protects backtick fences only (PR #402 review round 3).
+    A backtick line inside the tilde fence must not close it, and a real header
+    after the fence must still open a section with the right ``header_path``.
+    """
+    md = (
+        "# Scripts\n\n"
+        "Intro sentence for the scripts page.\n\n"
+        "~~~bash\n"
+        "#!/bin/bash\n"
+        "# comment inside the tilde fence\n"
+        "```\n"
+        "# still inside the fence\n"
+        "echo hi\n"
+        "~~~\n\n"
+        "Closing sentence after the fence.\n\n"
+        "## After\n\n"
+        "Text under the real header.\n"
+    )
+    doc = Document(page_content=md, metadata={})
+
+    nodes = build_hierarchical_nodes(doc, strategy=MARKDOWN_STRATEGY)
+
+    assert [n.metadata["header_path"] for n in nodes] == ["/", "/Scripts/"]
+    assert "# comment inside the tilde fence" in nodes[0].parent_text
+    assert "# still inside the fence" in nodes[0].parent_text
+    assert "Closing sentence after the fence." in nodes[0].parent_text
+    assert nodes[1].parent_text.startswith("## After")
+
+
 def test_markdown_empty_heading_is_tolerated():
     """An empty heading marker ('### ') neither crashes nor eats content."""
     md = (

@@ -12,8 +12,9 @@ Two strategies are supported, mirroring ``data_manager.chunking.strategy``:
   :class:`SentenceSplitter`. Segments on sentence boundaries (never a fixed
   character count) at both the parent and child levels. Suitable for the
   HTML-derived FASRC corpus.
-* ``"markdown"`` — :class:`MarkdownNodeParser` carves the document into
-  header-delimited sections. Every parent and child carries the section's
+* ``"markdown"`` — a fence-aware :class:`MarkdownNodeParser` subclass carves
+  the document into header-delimited sections (a ``#`` line inside a ``` or
+  ``~~~`` fence starts no section). Every parent and child carries the section's
   ancestor header path in ``metadata["header_path"]`` (``"/"`` for preamble
   and top-level sections — the key is always present under this strategy). A
   section longer than ``parent_chunk_size`` is sub-split into several parents
@@ -30,6 +31,7 @@ handled by the caller, not here.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -41,7 +43,7 @@ from llama_index.core.node_parser import (
     SentenceSplitter,
     get_leaf_nodes,
 )
-from llama_index.core.schema import NodeRelationship
+from llama_index.core.schema import BaseNode, MetadataMode, NodeRelationship, TextNode
 from llama_index.core.utils import get_tokenizer
 
 # Default parent/child chunk sizes (in tokens, per LlamaIndex's splitters).
@@ -373,9 +375,9 @@ def _pack_parts(
     return capped
 
 
-# Fence markers _fence_segments recognises. The upstream MarkdownNodeParser
-# tracks backticks only, so a `#` line inside a tilde fence still starts a new
-# section upstream; the cap nevertheless keeps either kind of fence whole.
+# Fence markers the section split and the cap both recognise. The upstream
+# MarkdownNodeParser tracks backticks only; _FenceAwareMarkdownNodeParser
+# closes that gap for the section split and _fence_segments for the cap.
 _FENCE_MARKERS = ("```", "~~~")
 
 
@@ -418,6 +420,61 @@ def _fence_segments(text: str) -> List["tuple[bool, str]"]:
     return segments
 
 
+class _FenceAwareMarkdownNodeParser(MarkdownNodeParser):
+    """``MarkdownNodeParser`` that protects tilde fences from header detection.
+
+    Upstream (llama-index-core 0.14.19, ``get_nodes_from_node``) toggles its
+    code-block state on backtick fences only, so a ``#`` line inside a ``~~~``
+    fence starts a new section and the block is split before the cap ever
+    sees it. This override is the upstream method with the fence rule
+    generalised to :func:`_fence_marker` and the opening marker tracked (a
+    backtick line inside a tilde fence does not close it). Header stack and
+    ``header_path`` metadata are inherited unchanged.
+    """
+
+    def get_nodes_from_node(self, node: BaseNode) -> List[TextNode]:
+        text = node.get_content(metadata_mode=MetadataMode.NONE)
+        markdown_nodes: List[TextNode] = []
+        current_section = ""
+        header_stack: List["tuple[int, str]"] = []
+        open_marker: Optional[str] = None
+
+        def close_section() -> None:
+            if current_section.strip():
+                markdown_nodes.append(
+                    self._build_node_from_split(
+                        current_section.strip(),
+                        node,
+                        self.header_path_separator.join(
+                            header[1] for header in header_stack[:-1]
+                        ),
+                    )
+                )
+
+        for line in text.split("\n"):
+            marker = _fence_marker(line)
+            if open_marker is None and marker is not None:
+                open_marker = marker
+            elif open_marker is not None:
+                if marker == open_marker:
+                    open_marker = None
+            else:
+                header_match = re.match(r"^(#+)\s(.*)", line)
+                if header_match:
+                    close_section()
+                    header_level = len(header_match.group(1))
+                    header_text = header_match.group(2)
+                    while header_stack and header_stack[-1][0] >= header_level:
+                        header_stack.pop()
+                    header_stack.append((header_level, header_text))
+                    current_section = "#" * header_level + f" {header_text}\n"
+                    continue
+            current_section += line + "\n"
+
+        close_section()
+        return markdown_nodes
+
+
 def _parse_markdown(
     li_document: LlamaDocument,
     parent_chunk_size: int,
@@ -432,7 +489,7 @@ def _parse_markdown(
     parents with ``chunk_overlap=0`` (sections are semantic units, not
     sliding windows), all carrying the same ``header_path``.
     """
-    section_parser = MarkdownNodeParser()
+    section_parser = _FenceAwareMarkdownNodeParser()
     parent_splitter = SentenceSplitter(chunk_size=parent_chunk_size, chunk_overlap=0)
     child_splitter = SentenceSplitter(
         chunk_size=child_chunk_size,

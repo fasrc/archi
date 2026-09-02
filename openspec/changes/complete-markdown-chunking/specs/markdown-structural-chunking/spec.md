@@ -61,6 +61,11 @@ The markdown strategy SHALL NOT treat a `#` line inside a fenced code block as a
 - **WHEN** a Markdown document contains a ``` fenced block whose lines start with `#`
 - **THEN** those lines stay inside their section and start no new section
 
+#### Scenario: Tilde fenced code does not split sections either
+
+- **WHEN** a Markdown document contains a `~~~` fenced block whose lines start with `#`, or a ``` line inside that block
+- **THEN** those lines stay inside their section, the ``` line does not close the block, and the next real header still opens a section with the correct `header_path`
+
 #### Scenario: Empty heading is tolerated
 
 - **WHEN** a document contains an empty heading such as `### ` (marker with no text)

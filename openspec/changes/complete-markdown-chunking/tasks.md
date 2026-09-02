@@ -17,6 +17,7 @@ imports the main checkout's code).
 - [x] 1.9 Test: packed parents count the `\n\n` joins against `parent_chunk_size` (PR #402 review round 1: Greptile P1 / Codex P2)
 - [x] 1.10 Test: `~~~` fences stay whole under the cap, and a ``` line inside one does not close it (PR #402 review round 2: Codex P2)
 - [x] 1.11 Test: capped parents are verbatim slices of the section (a long URL comes back intact), with the `\n\n` join kept as the fallback when a piece cannot be located (PR #402 review round 2: Codex P2)
+- [x] 1.12 Test: a `#` line inside a `~~~` fence starts no section; the section parser is a fence-aware subclass of `MarkdownNodeParser` because upstream (llama-index-core 0.14.19) protects backtick fences only (PR #402 review round 3: Codex P2)
 
 ## 2. Green: node_parsing implementation (src/data_manager/vectorstore/node_parsing.py)
 
