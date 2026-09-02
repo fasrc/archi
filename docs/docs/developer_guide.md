@@ -564,7 +564,7 @@ service set, the deploy preflight refuses a member it cannot cover, and
 ### Which service templates the deploy preflight refuses
 
 `archi create` refuses **before** it removes an existing deployment when a service template
-is one the preflight cannot probe. Four shapes are refused, and the message names which:
+is one the preflight cannot probe. Five shapes are refused, and the message names which:
 
 1. **No resolvable `FROM`.** The template carries no `FROM` line, or its final stage is
    `FROM <alias>` in a chain that does not end at a real reference.
@@ -588,6 +588,14 @@ is one the preflight cannot probe. Four shapes are refused, and the message name
    final stage ship unprobed, which is silent. If a template hits this, put the text in a
    file the instruction reads, or split the line so the marker is not in the instruction the
    walk sees. Do not work around it by removing the base `FROM`.
+5. **A split pin on a required base.** Two service templates name the same required base
+   image at different references. The preflight can probe only one, so a split pin would
+   otherwise establish one digest in the registry while a build pulls another. The check is
+   scoped to the bases the deployment requires — a split pin on a base the current deployment
+   will not build stays hidden until a deployment that does need it.
+   `test_service_templates_pin_one_explicit_base_tag` is the repository-side guard this check
+   does not replace: that test keys on the annotation, not on the reference the templates
+   agree on.
 
 Only a line that starts a Dockerfile instruction can start a stage. A `FROM` inside a
 `RUN <<EOF` heredoc body — including the second payload of a `RUN <<ONE <<TWO` — on the

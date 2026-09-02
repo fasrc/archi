@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 PYTHON_BASE = "a2rchi-python-base"
 PYTORCH_BASE = "a2rchi-pytorch-base"
@@ -482,6 +482,30 @@ def two_image_rule_offenders(template_dir: Optional[Path] = None) -> List[str]:
     return offenders
 
 
+def _base_reference_sources(
+    image: str, template_dir: Optional[Path] = None
+) -> Dict[str, List[Path]]:
+    """The reference-to-templates mapping for ``image``, in first-seen order.
+
+    Each template contributes at most one reference: the base its *final stage* runs on
+    (``_final_stage_base``), when that base names ``image`` at image-name boundaries
+    (``_reference_names``). A builder stage naming the same base at another digest is not a
+    disagreement — it is a multistage shape handled by design D3, and which stage a template
+    contributes is fasrc/archi#382's decision, made once in ``_final_stage_base``.
+    """
+    sources: Dict[str, List[Path]] = {}
+    for template in service_templates(template_dir):
+        base = _final_stage_base(template.read_text())
+        if base is not None and _reference_names(base, image):
+            sources.setdefault(base, []).append(template)
+    return sources
+
+
+def base_references(image: str, template_dir: Optional[Path] = None) -> List[str]:
+    """The distinct references for ``image`` across all service templates, in first-seen order."""
+    return list(_base_reference_sources(image, template_dir))
+
+
 def base_reference(image: str, template_dir: Optional[Path] = None) -> Optional[str]:
     """The pinned reference the service templates ship ``image`` at.
 
@@ -492,15 +516,14 @@ def base_reference(image: str, template_dir: Optional[Path] = None) -> Optional[
     stage that ships. Probing the builder's line would establish an image the deployment
     never runs.
 
-    Bound, tracked as fasrc/archi#389: the first service template that ships ``image`` wins.
-    Two templates shipping the same base at different references is a split pin that nothing
-    here refuses yet.
+    The first of ``base_references``, so the divergence guard and the probe share one
+    traversal (design D1). Two service templates shipping ``image`` at different references
+    is a split pin (fasrc/archi#389); ``required_base_images`` and ``enforce_base_images``
+    call ``_refuse_divergent_base_references`` before reading this, so the first-match
+    contract here no longer hides one.
     """
-    for template in service_templates(template_dir):
-        base = _final_stage_base(template.read_text())
-        if base is not None and _reference_names(base, image):
-            return base
-    return None
+    refs = base_references(image, template_dir)
+    return refs[0] if refs else None
 
 
 def required_base_images(
@@ -524,9 +547,11 @@ def required_base_images(
     violate the governing invariant: no path may pass silently on an assumption.
     """
     _refuse_uncoverable_templates(template_dir)
+    names = required_base_image_names(gpu_ids, grader_enabled)
+    _refuse_divergent_base_references(names, template_dir)
 
     references = []
-    for image in required_base_image_names(gpu_ids, grader_enabled):
+    for image in names:
         reference = base_reference(image, template_dir)
         if reference:
             references.append(reference)
@@ -907,6 +932,30 @@ def _refuse_uncoverable_templates(template_dir: Optional[Path] = None) -> None:
         )
 
 
+def _refuse_divergent_base_references(
+    names: List[str], template_dir: Optional[Path] = None
+) -> None:
+    """Refuse when service templates disagree about the reference for a required base image.
+
+    Scope decision (design D2): agreement is checked only for the images
+    ``required_base_image_names`` returns, so a split pin on a base this deployment will not
+    build is not refused; that costs visibility -- the split stays hidden until a deployment
+    that does need that base.
+    """
+    for image in names:
+        sources = _base_reference_sources(image, template_dir)
+        if len(sources) > 1:
+            lines = [
+                f"Base image check failed: service templates declare divergent references "
+                f"for {image}:"
+            ]
+            for reference, templates in sources.items():
+                lines.append(f"  {reference}")
+                for template in templates:
+                    lines.append(f"    {template}")
+            raise BaseImagePreflightError("\n".join(lines))
+
+
 def enforce_base_images(
     compose_config,
     *,
@@ -940,15 +989,19 @@ def enforce_base_images(
         # fail-open this whole module exists to remove.
         grader_enabled = False
 
-    # Before the derivation below, not after: `base_reference` returns the first match in
-    # *any* template, so a healthy template masks a broken one from this point on. Before
-    # `run_preflight` too, and therefore before `remove_existing_deployment()`
-    # (`cli_main.py:294`) -- the ordering contract from #287.
+    # Both refusals below come before `run_preflight` and therefore before
+    # `remove_existing_deployment()` (`cli_main.py:294`) -- the ordering contract from #287.
+    # The uncoverable-template refusal comes before `names` derivation: `base_reference`
+    # returns the first match in *any* template, so a healthy template masks a broken one.
+    # The divergent-reference refusal comes after `names` because the check is scoped to
+    # what this deployment requires.
     _refuse_uncoverable_templates(template_dir)
 
     names = required_base_image_names(
         getattr(compose_config, "gpu_ids", None), grader_enabled
     )
+
+    _refuse_divergent_base_references(names, template_dir)
 
     references = []
     unresolved = []
