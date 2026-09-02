@@ -1260,26 +1260,57 @@ def test_stale_template_exclusions_on_the_real_directory_is_empty():
     )
 
 
-def test_service_templates_has_15_of_19_and_excluded_names_match_the_declaration():
-    """service_templates() returns 15 of the 19 Dockerfile* files; the 4 excluded names
-    are exactly the keys of NON_SERVICE_TEMPLATES."""
-    all_dockerfiles = sorted(preflight.TEMPLATE_DIR.glob("Dockerfile*"))
+def test_stale_template_exclusions_reports_a_bogus_relative_path_key(monkeypatch):
+    """stale_template_exclusions resolves keys by joining with the directory, so a nested
+    relative-path key like 'subdir/Dockerfile-bogus' is reported when the file does not
+    exist -- the join is what makes relative-path keys resolve correctly."""
+    bogus = "no-such-subdir/Dockerfile-bogus"
+    monkeypatch.setattr(preflight, "NON_SERVICE_TEMPLATES", {bogus: "does not exist"})
+    stale = preflight.stale_template_exclusions()
+    assert stale == [
+        bogus
+    ], f"expected bogus relative-path key to be stale, got {stale!r}"
+
+
+def test_service_templates_has_15_of_21_and_excluded_relative_paths_match_the_declaration():
+    """service_templates() returns 15 of the 21 Dockerfile* files; the 6 excluded relative
+    paths are exactly the keys of NON_SERVICE_TEMPLATES."""
+    template_dir = preflight.TEMPLATE_DIR
+    all_dockerfiles = sorted(template_dir.rglob("Dockerfile*"))
     services = preflight.service_templates()
     assert (
-        len(all_dockerfiles) == 19
-    ), f"expected 19 Dockerfile* files, found {len(all_dockerfiles)}: " + ", ".join(
-        p.name for p in all_dockerfiles
+        len(all_dockerfiles) == 21
+    ), f"expected 21 Dockerfile* files, found {len(all_dockerfiles)}: " + ", ".join(
+        p.relative_to(template_dir).as_posix() for p in all_dockerfiles
     )
     assert (
         len(services) == 15
     ), f"expected 15 service templates, got {len(services)}: " + ", ".join(
-        p.name for p in services
+        p.relative_to(template_dir).as_posix() for p in services
     )
-    excluded = {p.name for p in all_dockerfiles} - {p.name for p in services}
+    excluded = {p.relative_to(template_dir).as_posix() for p in all_dockerfiles} - {
+        p.relative_to(template_dir).as_posix() for p in services
+    }
     assert excluded == set(preflight.NON_SERVICE_TEMPLATES.keys()), (
-        f"excluded names {sorted(excluded)!r} do not match "
+        f"excluded paths {sorted(excluded)!r} do not match "
         f"NON_SERVICE_TEMPLATES keys {sorted(preflight.NON_SERVICE_TEMPLATES.keys())!r}"
     )
+
+
+def test_base_image_subdirs_are_excluded_from_service_templates_on_real_directory():
+    """base-python-image/Dockerfile and base-pytorch-image/Dockerfile live in subdirectories
+    that the recursive rglob picks up. Asserting against the real TEMPLATE_DIR confirms those
+    files are excluded from service_templates() -- a tmp_path fixture would only prove the
+    mechanism, not that the actual files are handled."""
+    services = preflight.service_templates()
+    template_dir = preflight.TEMPLATE_DIR
+    service_rel_paths = {p.relative_to(template_dir).as_posix() for p in services}
+    assert (
+        "base-python-image/Dockerfile" not in service_rel_paths
+    ), "base-python-image/Dockerfile must not appear in service_templates()"
+    assert (
+        "base-pytorch-image/Dockerfile" not in service_rel_paths
+    ), "base-pytorch-image/Dockerfile must not appear in service_templates()"
 
 
 # --- Service templates without a base reference (tasks.md 1.2) ---------------------------
@@ -1301,6 +1332,18 @@ def test_templates_missing_base_reference_reports_replaced_line(tmp_path):
     assert (
         missing[0] == tmp_path / "Dockerfile-service-b"
     ), f"expected Dockerfile-service-b to be reported, got {missing}"
+
+
+def test_templates_missing_base_reference_detects_nested_template(tmp_path):
+    """A nested service template on a third-party base is reported by its full path."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "Dockerfile-svc").write_text(_THIRD_PARTY_FROM)
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        nested / "Dockerfile-svc"
+    ], f"expected the nested template to be reported, got {missing}"
 
 
 def test_templates_missing_base_reference_reports_deleted_line(tmp_path):
@@ -1521,6 +1564,95 @@ def test_enforce_base_images_refuses_an_uncoverable_template_on_a_dry_run_too(tm
 
     assert str(tmp_path / "Dockerfile-broken") in str(exc_info.value), (
         "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
+    )
+
+
+def test_enforce_base_images_refuses_a_nested_uncoverable_service_template(tmp_path):
+    """`enforce_base_images` must refuse when a nested service template is on a third-party
+    base, not only when the uncoverable template is at the top level.
+
+    The fixture mirrors the gap from fasrc/archi#383: `Dockerfile-chat` supplies the
+    reference this deployment needs, so `base_reference` resolves it — but the nested
+    `nested/Dockerfile-svc` on a third-party base is still in the declared service set and
+    must cause a refusal before any image work begins.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "Dockerfile-svc").write_text(_THIRD_PARTY_FROM)
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert str(nested / "Dockerfile-svc") in str(exc_info.value), (
+        "the refusal must name the nested uncoverable template; "
+        f"got: {exc_info.value}"
+    )
+    assert probe.pulled == [], (
+        "the refusal must come before any image work; " f"probe pulled {probe.pulled}"
+    )
+
+
+# --- Review round 2 (PR #388): the recursive service set and its non-recursive readers ---
+
+
+def test_base_reference_reads_a_nested_service_template(tmp_path):
+    """`base_reference` must read the same file set `service_templates` declares.
+
+    With the traversal recursive on one side and a top-level glob on the other, a nested
+    template's own base reference is invisible to the preflight: the check that decides
+    which image to probe reads a different set of files than the check that decided the
+    template is covered.
+    """
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "Dockerfile-svc").write_text(_PINNED_FROM)
+    assert (
+        preflight.base_reference(preflight.PYTHON_BASE, tmp_path)
+        == _PINNED_FROM.split()[1]
+    )
+
+
+def test_nested_service_templates_reports_a_template_below_the_top_level(tmp_path):
+    """The declared service set may recurse; two of its readers still cannot.
+
+    `update_service_base_images.py` rewrites and `--verify`-checks only the `Dockerfile*`
+    files at the top of the template directory, so a nested service template would never be
+    retargeted by the release workflow and never proved by `--verify` -- it would ship on
+    whatever base it was committed with, silently.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "Dockerfile-svc").write_text(_PINNED_FROM)
+    assert preflight.nested_service_templates(tmp_path) == [
+        tmp_path / "sub" / "Dockerfile-svc"
+    ]
+
+
+def test_nested_service_templates_is_empty_for_a_flat_directory(tmp_path):
+    """An excluded nested file is not a nested *service* template."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "base-python-image").mkdir()
+    (tmp_path / "base-python-image" / "Dockerfile").write_text(
+        "FROM docker.io/library/python:3.11\n"
+    )
+    assert preflight.nested_service_templates(tmp_path) == []
+
+
+def test_no_service_template_is_nested_while_the_release_rewriter_is_top_level_only():
+    """The repo-wide guard. Passing today is the point: it fails the day that changes.
+
+    Adding a nested service template is not wrong in itself -- it is wrong while
+    `update_service_base_images.py` reads `DOCKERFILES_DIR.glob("Dockerfile*")` at
+    `:322` and `:382`. Failing here is what forces the two changes to land together
+    instead of a release shipping one service on an unretargeted base image.
+    """
+    nested = preflight.nested_service_templates()
+    assert not nested, (
+        f"nested service template(s) {nested} are in the declared service set, but "
+        f"scripts/dev/update_service_base_images.py rewrites and --verify-checks only the "
+        f"top level -- make that script recursive in the same change, or exclude these "
+        f"files in NON_SERVICE_TEMPLATES"
     )
 
 

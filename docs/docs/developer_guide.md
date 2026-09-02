@@ -482,6 +482,25 @@ The 15 service templates under `src/cli/templates/dockerfiles/` each start with 
 line that names a base image. `scripts/dev/update_service_base_images.py` is the only
 writer of those lines. Do not edit them by hand.
 
+**What counts as a service template.** `service_templates()` in
+`src/cli/managers/base_image_preflight.py` walks that directory **recursively**: every
+`Dockerfile*` at any depth is a service template unless it is named in
+`NON_SERVICE_TEMPLATES`. Those keys are paths relative to the template directory —
+`base-python-image/Dockerfile`, not `Dockerfile` — so excluding a nested file cannot
+silently exclude every file of the same name elsewhere in the tree. Two consequences are
+worth knowing before you add a file there:
+
+- A `Dockerfile*` you add in a subdirectory joins the service set the moment it lands, and
+  `archi create` refuses to deploy when the preflight cannot cover it. If the file is not a
+  service template — it defines a base image, or builds on a third-party image — add its
+  relative path to `NON_SERVICE_TEMPLATES` with the reason, in the same change.
+- The rewriter above is **not** recursive. It reads only the `Dockerfile*` files at the top
+  of the directory, so a nested template's `FROM` line is never retargeted by the release
+  workflow and never checked by `--verify`. Keep service templates at the top level unless
+  you extend the rewriter in the same change --
+  `test_no_service_template_is_nested_while_the_release_rewriter_is_top_level_only` fails
+  otherwise, which is what forces the two changes to land together.
+
 ```bash
 # Move every template to a tag.
 python scripts/dev/update_service_base_images.py --tag dev-abc1234 --switch-source ghcr --orig-tag all

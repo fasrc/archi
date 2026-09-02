@@ -37,14 +37,16 @@ PLACEABLE_BASES = frozenset({PYTHON_BASE, PYTORCH_BASE})
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "cli" / "templates" / "dockerfiles"
 
-# Templates excluded from the service set. Each value is the reason the file is not a
-# service template, so a reader can tell a base-defining template from a third-party-based
-# one without opening it.
+# Templates excluded from the service set. Keys are relative paths from the template
+# directory root. Each value is the reason the file is not a service template, so a
+# reader can tell a base-defining template from a third-party-based one without opening it.
 NON_SERVICE_TEMPLATES: dict[str, str] = {
     "Dockerfile-base": "defines the a2rchi-python-base image itself",
     "Dockerfile-base-gpu": "defines the a2rchi-pytorch-base image itself",
     "Dockerfile-postgres": "builds on docker.io/pgvector/pgvector:pg17",
     "Dockerfile-grafana": "builds on docker.io/grafana/grafana-enterprise:10.2.0",
+    "base-python-image/Dockerfile": "defines an a2rchi base image itself",
+    "base-pytorch-image/Dockerfile": "defines an a2rchi base image itself",
 }
 
 # Every `FROM <ref> [AS <alias>]` line. One matcher for both readers -- the coverage check
@@ -328,12 +330,14 @@ class Outcome:
 def service_templates(template_dir: Optional[Path] = None) -> List[Path]:
     """The sorted Paths of every Dockerfile* that is a service template.
 
-    Service templates build ``FROM`` an ``a2rchi-*-base`` image. The four excluded by
+    Service templates build ``FROM`` an ``a2rchi-*-base`` image. The six excluded by
     ``NON_SERVICE_TEMPLATES`` define base images themselves or build on third-party images.
     """
     directory = template_dir or TEMPLATE_DIR
     return sorted(
-        p for p in directory.glob("Dockerfile*") if p.name not in NON_SERVICE_TEMPLATES
+        p
+        for p in directory.rglob("Dockerfile*")
+        if p.relative_to(directory).as_posix() not in NON_SERVICE_TEMPLATES
     )
 
 
@@ -345,6 +349,23 @@ def stale_template_exclusions(template_dir: Optional[Path] = None) -> List[str]:
     """
     directory = template_dir or TEMPLATE_DIR
     return [name for name in NON_SERVICE_TEMPLATES if not (directory / name).exists()]
+
+
+def nested_service_templates(template_dir: Optional[Path] = None) -> List[Path]:
+    """Service templates below the top level of the template directory.
+
+    The declared service set recurses; one of its readers does not.
+    ``scripts/dev/update_service_base_images.py`` rewrites base references and proves them
+    with ``--verify`` over ``DOCKERFILES_DIR.glob("Dockerfile*")`` -- the top level only --
+    so a nested service template would never be retargeted by the release workflow and
+    never checked, and would ship on whatever base it was committed with.
+
+    A non-empty return is therefore not a deploy-time refusal: a nested template on a good
+    base deploys correctly. It is a repo-level guard, so that making the set recursive and
+    making the rewriter recursive have to land together.
+    """
+    directory = template_dir or TEMPLATE_DIR
+    return [p for p in service_templates(directory) if p.parent != directory]
 
 
 def _final_stage_base(text: str) -> Optional[str]:

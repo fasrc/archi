@@ -317,6 +317,8 @@ def verify_base_tags(options: UpdateOptions) -> None:
     wrong = []
     unknown = []
     checked = 0
+    # Non-recursive: nested service templates (e.g. subdir/Dockerfile-svc) are
+    # outside this rewriter's reach. The preflight refuses them at deploy time.
     for path in sorted(DOCKERFILES_DIR.glob("Dockerfile*")):
         for line in path.read_text().splitlines():
             match = _FROM_RE.match(line)
@@ -375,6 +377,8 @@ def verify_base_tags(options: UpdateOptions) -> None:
 def update_base_tags(options: UpdateOptions) -> None:
     bases = _validated_bases(options.bases)
 
+    # Non-recursive: nested service templates (e.g. subdir/Dockerfile-svc) are
+    # outside this rewriter's reach. The preflight refuses them at deploy time.
     for path in sorted(DOCKERFILES_DIR.glob("Dockerfile*")):
         original = path.read_text()
         updated = original
