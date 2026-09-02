@@ -106,7 +106,7 @@ import math
 import re
 import statistics
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -295,12 +295,14 @@ def attach_source_text(
         metadata = dict(getattr(document, "metadata", {}) or {})
         if "source" in record.metadata:
             metadata["source"] = record.metadata["source"]
+        # replace(), never Record(...): the loader document supplies only text and
+        # metadata, and every other field has to survive untouched. Constructing a
+        # fresh Record here silently dropped children_verbatim (#412).
         attached.append(
-            Record(
+            replace(
+                record,
                 text=getattr(document, "page_content", "") or "",
                 metadata=metadata,
-                children=record.children,
-                path=record.path,
             )
         )
         replaced += 1
