@@ -21,15 +21,20 @@ lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
 
 ## Chunking measurement
 
-- **`measure_chunk_overlap.py`** — measures the overlap a sentence splitter
+- **`measure_chunk_overlap.py`** — measures the overlap the ingest's chunking
   *actually* carries across chunk boundaries, for a sweep of `chunk_overlap`
   values. `chunk_overlap` is a budget, not a guarantee: the splitter copies back
   only whole sentences that fit, so a budget below one sentence often carries
-  nothing. Reports empty boundaries, tokens carried, and the index inflation each
-  setting costs. Takes a text file of real corpus content (the docstring has the
-  `psql` dump command) and needs no deployment — just the database dump and the
-  project env. Supports the #396 feature matrix and the `chunking.chunk_overlap`
-  key (#403).
+  nothing. Runs each document through the same two-level parent/child
+  `HierarchicalNodeParser` the `sentence` strategy uses (one overlap budget at
+  both levels) and reads the carried text from the splitter's own character
+  offsets, so a block a page happens to repeat is never mistaken for overlap.
+  Reports empty boundaries, tokens carried, and the index inflation each
+  setting costs; overlap 0 stays in the sweep as the control row. Takes a text
+  file of real corpus content, one NUL-terminated document per record (the
+  docstring has the `psql -0` dump command), and needs no deployment — just the
+  database dump and the project env. Supports the #396 feature matrix and the
+  `chunking.chunk_overlap` key (#403).
 
 ## Analysis and run helpers
 
