@@ -18,6 +18,7 @@ imports the main checkout's code).
 - [x] 1.10 Test: `~~~` fences stay whole under the cap, and a ``` line inside one does not close it (PR #402 review round 2: Codex P2)
 - [x] 1.11 Test: capped parents are verbatim slices of the section (a long URL comes back intact), with the `\n\n` join kept as the fallback when a piece cannot be located (PR #402 review round 2: Codex P2)
 - [x] 1.12 Test: a `#` line inside a `~~~` fence starts no section; the section parser is a fence-aware subclass of `MarkdownNodeParser` because upstream (llama-index-core 0.14.19) protects backtick fences only (PR #402 review round 3: Codex P2)
+- [x] 1.13 Test: a ```` fence holding a literal ``` line and a `#` line stays one section and one parent; `_fence_segments` honors the opening run's character and length (CommonMark close rule) (PR #402 review round 4: Codex P2)
 
 ## 2. Green: node_parsing implementation (src/data_manager/vectorstore/node_parsing.py)
 
@@ -39,6 +40,7 @@ imports the main checkout's code).
 - [x] 4.1 Dispatch helper in node_parsing.py (suffix + filename normalization → effective strategy)
 - [x] 4.2 One thin call in `_build_hierarchical_payload` (manager.py, before the `build_hierarchical_nodes` call at ~:815, outside the `apply_stemming` branch)
 - [x] 4.3 All group-3 tests green
+- [x] 4.4 `_resolve_chunking_strategy` helper in manager.py: an absent `strategy` key resolves to `sentence` (the template default and the spec's opt-in scenario), not legacy `character`; tested in test_vectorstore_manager_hierarchical.py (PR #402 review round 4: Codex P2)
 
 ## 5. Docs
 
@@ -46,6 +48,7 @@ imports the main checkout's code).
 - [x] 5.2 Same short caution comment beside the `chunking:` block in `src/cli/templates/base-config.yaml` (comment only — no new keys)
 - [x] 5.3 `docs/docs/configuration.md` Chunking section: document the completed `markdown` strategy (per-file dispatch, `header_path`, section cap, fence handling, overlap clamp) and the safe forced re-ingest path — delete the collection's `document_chunks` and `document_parent_nodes` rows, keep `documents` (PR #402 review round 1: Greptile P2 / Codex P2 ×2)
 - [x] 5.4 Docs and `config.example.yaml` comment: the re-ingest delete predicate is `metadata->>'collection' = '<name>' OR IS NULL`, because legacy rows carry NULL and `_collect_postgres_hashes` counts them as this collection's (PR #402 review round 2: Codex P2)
+- [x] 5.5 Spec wording (hierarchical-rerank-retrieval delta): the overlap clamp is "at most the chunk size", upstream's legal range, matching the exact clamp settled in the pre-PR adversarial review; the near-duplicate regime at chunk sizes ≤ 20 is routed to #403, where the overlap becomes configurable (PR #402 review round 4: Codex P2, pushback)
 
 ## 6. Gate and wrap-up
 

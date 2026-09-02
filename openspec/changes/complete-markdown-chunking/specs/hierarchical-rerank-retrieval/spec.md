@@ -4,7 +4,7 @@
 
 ### Requirement: Structural parent-child chunking at ingestion
 
-Ingestion SHALL split documents with a structure-aware parser that produces small embedded **child** nodes linked to larger **parent** nodes, replacing fixed-character splitting. The parser SHALL default to sentence-aware splitting; the opt-in `markdown` strategy for Markdown sources is specified by the `markdown-structural-chunking` capability. The target **parent** and **child** node sizes SHALL be configurable via `data_manager.chunking` (`parent_chunk_size` / `child_chunk_size`); when unset, the system SHALL fall back to its built-in defaults, preserving prior behavior. A configured child size below the splitter's built-in default overlap SHALL work: the ingestion path SHALL clamp the effective overlap below the chunk size instead of failing documents.
+Ingestion SHALL split documents with a structure-aware parser that produces small embedded **child** nodes linked to larger **parent** nodes, replacing fixed-character splitting. The parser SHALL default to sentence-aware splitting; the opt-in `markdown` strategy for Markdown sources is specified by the `markdown-structural-chunking` capability. The target **parent** and **child** node sizes SHALL be configurable via `data_manager.chunking` (`parent_chunk_size` / `child_chunk_size`); when unset, the system SHALL fall back to its built-in defaults, preserving prior behavior. A configured child size below the splitter's built-in default overlap SHALL work: the ingestion path SHALL clamp the effective overlap to at most the chunk size (the splitter's legal range, so a legal configured value is never shrunk) instead of failing documents.
 
 #### Scenario: Document produces linked parent and child nodes
 

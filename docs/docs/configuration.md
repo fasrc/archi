@@ -363,11 +363,13 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 
 ### Chunking
 
-Controls how the data manager splits documents at ingestion. The shipped default
-`sentence` and the opt-in `markdown` strategy both build **hierarchical** parent-child
-chunks: small embedded child nodes linked to larger parent context nodes (the parent
-text is what a hierarchical-rerank retriever returns). The legacy `character` strategy
-uses the flat `chunk_size`/`chunk_overlap` settings above.
+Controls how the data manager splits documents at ingestion. `sentence` is the
+default: the CLI template renders it when the key is unset, and the data manager also
+falls back to it when a hand-authored config omits the key. `sentence` and the opt-in
+`markdown` strategy both build **hierarchical** parent-child chunks: small embedded
+child nodes linked to larger parent context nodes (the parent text is what a
+hierarchical-rerank retriever returns). The legacy `character` strategy uses the flat
+`chunk_size`/`chunk_overlap` settings above.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
