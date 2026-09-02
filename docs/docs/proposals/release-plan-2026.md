@@ -79,6 +79,9 @@ invariant" below). Such issues are neither gating nor parked; do not park them.
   Selected drivers: benchmark integrity, retrieval quality, agent robustness (folded
   into production readiness after classification), production hardening.
   Explicitly **not** drivers: headless `/v1` external frontends, incremental re-ingest.
+  One amendment (2026-08-28): the WordPress chat window
+  ([#384](https://github.com/fasrc/archi/issues/384)) enters `v2026.10.0` by operator
+  decision — the single exception to the frontends line.
 - **Gate bar — broken-without-it:** an issue is in a milestone only if the release's
   feature is broken/wrong/dishonest without it, evidenced by a file:line, a measured
   number, or a repro from the issue itself.
@@ -125,12 +128,15 @@ any "answers improved" claim.
 
 ## v2026.10.0 — Retrieval quality (feature: measurably better answers)
 
-Target: end of October. Depends on the v2026.09.0 rig.
+Target: end of October. Depends on the v2026.09.0 rig. Amended 2026-08-28: the release
+also delivers those answers where users already are — a WordPress chat window backed by
+`/v1` ([#384](https://github.com/fasrc/archi/issues/384)).
 
 | Gate | Why it gates | Size |
 |---|---|---|
 | [#216](https://github.com/fasrc/archi/issues/216) embedding A/B (MiniLM vs gte/nomic) | The feature itself. Measured defect: 68% of chunks (4,684/6,854) exceed MiniLM's 256-token window and are silently truncated today | L |
 | [#215](https://github.com/fasrc/archi/issues/215) GPU TEI embedding | Named enabler in #216: 40 min → ~1 min re-embeds make the A/B (and adopting a winner) feasible | M |
+| [#384](https://github.com/fasrc/archi/issues/384) WordPress chat window on the FASRC site via `/v1` | Enters by operator amendment (2026-08-28), not the broken-without-it bar. The fork's `/v1` already ships bearer-auth chat completions, and inline `[title](url)` citations arrive in the answer text itself via the committed citation-guidance default (`agent_spec.py`), so a markdown-rendering widget shows them (#245 removes `/v1`'s redundant appended source block). AI Engine's free tier ships the widget with a custom OpenAI-compatible connector, so the remaining work is evaluation, config, and ops. The rtCamp `universal-openai-connector` was scouted and is a provider adapter for the WordPress AI Client, not a chat window. **Constraint:** until #81 closes, the widget stays a page-limited pilot — bearer auth on, anonymous `/v1` access off, firewall scoped to the WordPress host; public default-on exposure rides `v2026.11.0` | M |
 | [#396](https://github.com/fasrc/archi/issues/396) feature-matrix benchmark campaign | "Measurably better answers" is this release's feature, and #216 measures one axis of it. Every other retrieval and ingest toggle ships on an inherited default with no measurement behind it: `hierarchical_rerank` is default-on carrying ADR 0003's "+19% RAGAS" from the pre-sentence-chunking #32 A/B, and `categorization` is code-default `false` (`processing.py:689`) but `true` in the shipped example config (`config.example.yaml:150`) at one LLM call per document. Claiming measured improvement while most of the retrieval config is set by unmeasured default is dishonest. Adds the Time-to-Ingest metric the rig discards today (`service_benchmark.py:2178`) | L |
 
 Parked from this track: #130 (rerank already default-on with +19% RAGAS shipped;
@@ -173,6 +179,7 @@ classification, only one live robustness gate was left, too thin for its own rel
 | [#63](https://github.com/fasrc/archi/issues/63) | Core deliverable shipped as `archi sources build` (PR #37, `cli_main.py:909`); the issue self-describes as superseded |
 | [#369](https://github.com/fasrc/archi/issues/369) | Fixed the day it was filed by the merged form of PR #368 (`aa00155f`): `evaluations_root.py:20-25` normalizes a falsy `evaluations` block to `{}` and raises the field-naming `ValueError` on a truthy non-mapping, pinned by `test_falsy_evaluations_block_is_treated_as_disabled` and `test_truthy_non_mapping_evaluations_block_raises_naming_field_path`. The issue reproduced against a pre-merge tip of that PR. Closed 2026-09-01 during review of this reconciliation |
 
+## Parked — 51 issues, labeled `parked`
 ## Parked — 60 issues, labeled `parked`
 
 Query: `gh issue list --repo fasrc/archi --label parked`. An issue leaves the parking
