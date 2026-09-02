@@ -21,28 +21,271 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 PYTHON_BASE = "a2rchi-python-base"
 PYTORCH_BASE = "a2rchi-pytorch-base"
 
+# The bases this preflight can probe. The coverage check
+# (templates_missing_base_reference) accepts a template only when its final stage names a
+# member, so a base that is in here but that `required_base_image_names` never asks for
+# would be accepted and then never probed. That rule cannot be derived from this set --
+# which base a deployment needs depends on the GPU and grader flags, not on set membership
+# (design D4) -- so the two declarations are held together by a guard test instead:
+# `test_every_placeable_base_is_reachable_from_the_two_image_rule`.
+PLACEABLE_BASES = frozenset({PYTHON_BASE, PYTORCH_BASE})
+
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "cli" / "templates" / "dockerfiles"
 
-# Templates excluded from the service set. Each value is the reason the file is not a
-# service template, so a reader can tell a base-defining template from a third-party-based
-# one without opening it.
+# Templates excluded from the service set. Keys are relative paths from the template
+# directory root. Each value is the reason the file is not a service template, so a
+# reader can tell a base-defining template from a third-party-based one without opening it.
 NON_SERVICE_TEMPLATES: dict[str, str] = {
     "Dockerfile-base": "defines the a2rchi-python-base image itself",
     "Dockerfile-base-gpu": "defines the a2rchi-pytorch-base image itself",
     "Dockerfile-postgres": "builds on docker.io/pgvector/pgvector:pg17",
     "Dockerfile-grafana": "builds on docker.io/grafana/grafana-enterprise:10.2.0",
+    "base-python-image/Dockerfile": "defines an a2rchi base image itself",
+    "base-pytorch-image/Dockerfile": "defines an a2rchi base image itself",
 }
 
-# `FROM <ref>` where the reference names an a2rchi base image. `\S+` stops at whitespace, so
-# the trailing spaces several templates carry on that line never reach the tag.
-_FROM_BASE_RE = re.compile(r"^FROM\s+(?P<ref>\S*a2rchi-\w+-base\S*)", re.MULTILINE)
+# Every `FROM <ref> [AS <alias>]` line. One matcher for both readers -- the coverage check
+# and `base_reference` -- so they cannot disagree about what a template's base is. `\S+`
+# stops at whitespace, so the trailing spaces several templates carry never reach the tag.
+# `(?:--\S+\s+)*` skips the flags a FROM may carry -- `--platform=$BUILDPLATFORM` above all,
+# a form the release rewriter already recognizes
+# (`scripts/dev/update_service_base_images.py:105`). Without it the flag is captured as the
+# reference and the preflight refuses a template the rest of the toolchain supports.
+# `[ \t]*`, not `\s*`: Docker accepts an indented instruction, but under re.MULTILINE
+# `\s` also matches the newline, which would let this walk past a blanked line and read the
+# next one as a stage -- reintroducing exactly what the blanking prevents.
+_FROM_STAGE_RE = re.compile(
+    r"^[ \t]*FROM\s+(?:--\S+\s+)*(?P<ref>\S+)(?:\s+AS\s+(?P<alias>\S+))?",
+    re.MULTILINE | re.IGNORECASE,
+)
 
 LOCAL_PREFIX = "localhost/"
+
+# A heredoc opener: `RUN <<EOF`, `RUN <<-EOF`, `COPY <<"EOF" /f`, and the forms that put
+# whitespace or a file descriptor around the operator -- `RUN << EOF`, `RUN 3<<EOF`,
+# `RUN <<- EOF`. All are the same redirection, and a pattern that reads only the tight form
+# leaves the payload scanned as instructions.
+#
+# The leading `(?:^|\s)` and the trailing lookahead are what keep shell text out: `$((1<<n))`
+# is not preceded by whitespace, and in `echo "a << b"` the closing quote follows the tag, so
+# neither reads as an opener. Over-reading one is no longer a silent pass in any case -- an
+# opener whose delimiter never arrives now fails closed (`_instruction_text`).
+#
+# The delimiter is a whole **word**, not an identifier. Docker accepts `<<123` and
+# `<<EOF.txt` as readily as `<<EOF` -- all three verified against `docker build --check`
+# (Docker 29.5.1, `docker/dockerfile:1`) -- so a character class built around identifier
+# rules leaves those payloads scanned as instructions, which is how an a2rchi-looking `FROM`
+# in shell text hides a third-party final stage.
+#
+# Hence two branches. A quoted delimiter takes everything between the quotes, because Docker
+# matches the terminator *unquoted*: carrying the closing quote into the tag would leave the
+# payload unterminated. A bare delimiter takes any run of non-space characters except a quote
+# or `<`. Excluding the quote is what keeps `echo "a << b"` out -- the tag stops at `b` and
+# the trailing lookahead then sees `"` instead of whitespace -- and `$((1<<n))` is still
+# excluded by the leading `(?:^|\s)`.
+#
+# The over-read that remains is deliberate: spaced arithmetic (`$(( 1 << 3 ))`) reads as an
+# opener, finds no terminator, and fails closed. This walk cannot see shell quoting or word
+# splitting, and a loud refusal beats a silent pass.
+_HEREDOC_RE = re.compile(
+    r"(?:^|\s)\d*<<(?P<dash>-?)\s*"
+    r"(?:(?P<q>['\"])(?P<qtag>[^'\"]+)(?P=q)|(?P<tag>[^\s'\"<]+))"
+    r"(?=\s|$)"
+)
+
+# Docker's `# escape=` parser directive, which chooses the line-continuation character.
+# Only a backslash or a backtick is allowed.
+_ESCAPE_DIRECTIVE_RE = re.compile(
+    r"^#\s*escape\s*=\s*(?P<char>[\\`])\s*$", re.IGNORECASE
+)
+
+# Any parser directive -- `# syntax=...`, `# escape=...`, `# check=...`. Docker stops looking
+# for directives at the first line that is not one, so this is what lets the scan step over
+# the `# syntax=docker/dockerfile:1` every template in this repo opens with, and stop at the
+# ordinary `# base-image-pin:` comment under it.
+_PARSER_DIRECTIVE_RE = re.compile(r"^#\s*[a-z]+\s*=\s*\S+\s*$", re.IGNORECASE)
+
+
+def _escape_char(text: str) -> str:
+    """The line-continuation character ``text`` declares, or the default backslash.
+
+    Docker reads parser directives only at the very top of a file: the first comment that is
+    not a directive, the first instruction, or the first blank line ends the section, and an
+    ``# escape=`` below that is an ordinary comment. Reading a late one would promote a
+    genuine continuation line to a build stage and refuse a correctly based template.
+    """
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or not stripped.startswith("#"):
+            break
+        match = _ESCAPE_DIRECTIVE_RE.match(stripped)
+        if match:
+            return match.group("char")
+        if not _PARSER_DIRECTIVE_RE.match(stripped):
+            break
+    return "\\"
+
+
+# Only these instructions can open a heredoc. Without this, `# Example: RUN <<EOF` in an
+# ordinary comment blanks every instruction after it, up to a delimiter line that may never
+# come -- which hides a third-party final stage behind an earlier a2rchi builder stage.
+#
+# `ONBUILD` takes another instruction as its argument, and Docker parses that instruction's
+# heredoc now even though it runs in the child build. Demanding a bare `RUN|COPY|ADD` left
+# an `ONBUILD RUN <<EOF` payload scanned as instructions, so an a2rchi-looking `FROM` inside
+# it became the final stage of a template whose real final stage is third-party -- the
+# silent pass this module may not allow. The allowance stops at the three heredoc-capable
+# instructions: `ONBUILD LABEL note="RUN <<EOF"` opens nothing, and treating it as an opener
+# would fail a working template closed.
+_HEREDOC_INSTRUCTION_RE = re.compile(
+    r"^(?:ONBUILD\s+)?(?:RUN|COPY|ADD)\b", re.IGNORECASE
+)
+
+
+def _heredoc_delimiters(line: str) -> List[tuple]:
+    """``(delimiter, strips_tabs)`` for every heredoc ``line`` opens, in declaration order.
+
+    ``strips_tabs`` is the ``<<-`` form, which lets the terminator carry leading **tabs** --
+    and only tabs. Spaces never indent a terminator in either form.
+
+    A delimiter arrives from whichever branch of ``_HEREDOC_RE`` matched -- quoted or bare --
+    and is reported unquoted either way, because that is the form Docker matches the
+    terminator against.
+    """
+    return [
+        (m.group("qtag") or m.group("tag"), bool(m.group("dash")))
+        for m in _HEREDOC_RE.finditer(line)
+    ]
+
+
+def _instruction_text(text: str) -> Optional[str]:
+    """``text`` with every line that does not start an instruction blanked.
+
+    Three kinds of line look like an instruction to a line-oriented regex and are not one:
+
+    - a **heredoc body**. `RUN <<EOF` opens shell text, so a payload line beginning with
+      ``FROM`` is not a build stage.
+    - a **continuation**. `RUN echo hello \\` and the line under it are one command to
+      Docker, however that next line begins.
+    - a **comment**. `# Example: RUN <<EOF` is prose; reading it as a heredoc opener blanks
+      every instruction after it, up to a delimiter line that may never come.
+
+    Each reads both ways, and the second way is the dangerous one: a third-party-looking
+    line refuses a correctly based template, while an a2rchi-looking line hides a
+    third-party final stage and marks the template covered -- a silent pass on an
+    assumption, which is the one thing this module may not do.
+
+    An instruction may open more than one heredoc -- `RUN <<ONE <<TWO` -- and Docker feeds
+    the payloads in the order they are declared, so every delimiter is collected and
+    consumed in that order.
+
+    A heredoc may also be opened on a **continuation** of the instruction -- `RUN \\` then
+    `<<EOF` -- so continuation lines are read for openers even though they are blanked.
+    Blanking one without recording its delimiter would leave the payload scanned as
+    instructions, which is how an a2rchi `FROM` inside shell text hides a third-party final
+    stage.
+
+    Returns ``None`` when a delimiter never arrives. That is the "could not tell" case, and
+    it is why it fails closed rather than returning the text it managed to blank: an
+    unterminated heredoc swallows the rest of the template, so the last stage still standing
+    is whatever preceded it -- an a2rchi builder, reading as covered. It costs a correct
+    template nothing, because a correct template terminates its heredocs. It is also what
+    keeps a quoted `<<EOF` in ordinary shell text (`RUN echo "example <<EOF here"`) from
+    passing silently: this walk cannot see shell quoting, so it over-reads the opener, finds
+    no terminator, and refuses instead of guessing.
+
+    The continuation character is whatever the ``# escape=`` parser directive at the top of
+    the file declares, defaulting to the backslash. Hard-coding the backslash reads a
+    backtick-continued `RUN` as a finished instruction, which promotes the line under it to a
+    build stage -- another way a third-party final stage hides behind an a2rchi builder.
+
+    Docker removes a full-line comment before it joins a continuation, and so does this: a
+    comment inside a continuation neither ends the instruction nor opens a heredoc. Ending
+    it there read `RUN echo x \\`, a comment, then `FROM <a2rchi base>` as a build stage
+    while Docker had joined all three into one `RUN` -- the third-party stage above it is
+    what ships, so the template passed unprobed.
+
+    An empty or whitespace-only line inside a continuation is the same fault. Docker joins
+    across it and reports only the `NoEmptyContinuation` build check, whose documentation
+    states empty continuation lines become an error in a future release -- so the form is
+    legal today and this models today. Failing closed on it instead would refuse a template
+    Docker still builds, and ending the continuation there hid a third-party final stage
+    behind an a2rchi `FROM` that Docker never treated as a stage at all.
+
+    The bounds, stated rather than implied. This walk cannot see shell quoting or word
+    splitting, so it over-reads a heredoc opener in text that only looks like one
+    (`$(( 1 << 3 ))`) and refuses. That direction is the deliberate one: a refusal is loud
+    and a silent pass is not.
+    """
+    escape = _escape_char(text)
+    lines = []
+    pending: List[tuple] = []
+    continued = False
+    for line in text.splitlines():
+        if pending:
+            lines.append("")
+            delimiter, strips_tabs = pending[0]
+            # Docker ends `<<EOF` only on a line that *is* the delimiter; `<<-EOF` allows
+            # leading tabs. Neither allows leading spaces, so `line.strip()` would end the
+            # payload early and scan the rest of it as instructions.
+            if (line.lstrip("\t") if strips_tabs else line) == delimiter:
+                pending.pop(0)
+            continue
+        if continued:
+            lines.append("")
+            # Docker removes a full-line comment *before* it joins the continuation, so the
+            # comment neither ends the instruction nor opens a heredoc. Ending it here
+            # promoted the next line to a build stage: `RUN echo x \`, a comment, then
+            # `FROM <a2rchi base>` read as covered while the stage that actually ships is
+            # the third-party image above -- a silent pass. Reading the comment for an
+            # opener is the mirror fault, blanking the rest of the file for a line Docker
+            # discarded.
+            if line.strip().startswith("#"):
+                continue
+            # An empty -- or whitespace-only -- line does not end the instruction either.
+            # Docker joins straight across it and only warns `NoEmptyContinuation`; the
+            # check's own documentation says this becomes an error in a *future* release,
+            # so today's parse is the one to model. Ending here promoted the line below to
+            # a build stage, the same silent pass as the comment case above.
+            if not line.strip():
+                continue
+            pending = _heredoc_delimiters(line)
+            continued = not pending and line.rstrip().endswith(escape)
+            continue
+
+        lines.append(line)
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if _HEREDOC_INSTRUCTION_RE.match(stripped):
+            pending = _heredoc_delimiters(line)
+        if not pending:
+            continued = stripped.endswith(escape)
+    if pending:
+        return None
+    return "\n".join(lines)
+
+
+def _reference_names(reference: str, image: str) -> bool:
+    """True when ``reference`` names exactly ``image``, not merely contains it.
+
+    A registry prefix ends at ``/`` and a tag or digest starts at ``:`` or ``@``, so those
+    are the only characters allowed to touch the name. Without this,
+    ``ghcr.io/other/a2rchi-python-base-custom`` reads as the python base: the coverage check
+    calls the template covered and ``base_reference`` hands the probe an image no template
+    builds from.
+    """
+    return re.search(rf"(?:^|/){re.escape(image)}(?:[:@]|$)", reference) is not None
+
+
+def _names_placeable_base(reference: str) -> bool:
+    """True when ``reference`` names a base in ``PLACEABLE_BASES`` at image boundaries."""
+    return any(_reference_names(reference, base) for base in PLACEABLE_BASES)
 
 
 class Cause(str, Enum):
@@ -87,12 +330,14 @@ class Outcome:
 def service_templates(template_dir: Optional[Path] = None) -> List[Path]:
     """The sorted Paths of every Dockerfile* that is a service template.
 
-    Service templates build ``FROM`` an ``a2rchi-*-base`` image. The four excluded by
+    Service templates build ``FROM`` an ``a2rchi-*-base`` image. The six excluded by
     ``NON_SERVICE_TEMPLATES`` define base images themselves or build on third-party images.
     """
     directory = template_dir or TEMPLATE_DIR
     return sorted(
-        p for p in directory.glob("Dockerfile*") if p.name not in NON_SERVICE_TEMPLATES
+        p
+        for p in directory.rglob("Dockerfile*")
+        if p.relative_to(directory).as_posix() not in NON_SERVICE_TEMPLATES
     )
 
 
@@ -106,33 +351,179 @@ def stale_template_exclusions(template_dir: Optional[Path] = None) -> List[str]:
     return [name for name in NON_SERVICE_TEMPLATES if not (directory / name).exists()]
 
 
-def templates_missing_base_reference(template_dir: Optional[Path] = None) -> List[Path]:
-    """Service templates that carry no ``FROM`` referencing an ``a2rchi-*-base`` image.
+def nested_service_templates(template_dir: Optional[Path] = None) -> List[Path]:
+    """Service templates below the top level of the template directory.
 
-    A non-empty return means a service template has either lost its base ``FROM`` line or
-    replaced it with a third-party image.  The deploy preflight cannot cover these templates,
-    so the caller should treat a non-empty list as a refusal to proceed.
+    The declared service set recurses; one of its readers does not.
+    ``scripts/dev/update_service_base_images.py`` rewrites base references and proves them
+    with ``--verify`` over ``DOCKERFILES_DIR.glob("Dockerfile*")`` -- the top level only --
+    so a nested service template would never be retargeted by the release workflow and
+    never checked, and would ship on whatever base it was committed with.
+
+    A non-empty return is therefore not a deploy-time refusal: a nested template on a good
+    base deploys correctly. It is a repo-level guard, so that making the set recursive and
+    making the rewriter recursive have to land together.
     """
-    return [
-        template
-        for template in service_templates(template_dir)
-        if not _FROM_BASE_RE.search(template.read_text())
+    directory = template_dir or TEMPLATE_DIR
+    return [p for p in service_templates(directory) if p.parent != directory]
+
+
+def _final_stage_base(text: str) -> Optional[str]:
+    """The base reference the final stage of a Dockerfile actually runs on.
+
+    Parses all FROM lines in order and follows alias chains to find the ultimate base
+    reference. Heredoc bodies are blanked first, so a `RUN <<EOF` payload line beginning
+    with ``FROM`` is not read as a stage. Handles a linear chain of named stages. Does NOT
+    handle ARG substitution, build args, --platform flags, or COPY --from provenance — the
+    bound is intentional. Stating the bound rather than implying totality is what the
+    original defect lacked.
+
+    Returns None when the template has no FROM lines, when a heredoc is never terminated,
+    or when the parser encounters a reference it cannot resolve. Returning None fails closed:
+    the caller treats an unresolvable template as uncovered.
+    """
+    instructions = _instruction_text(text)
+    if instructions is None:
+        return None
+    stages = [
+        (m.group("ref"), (m.group("alias") or "").lower())
+        for m in _FROM_STAGE_RE.finditer(instructions)
     ]
+    if not stages:
+        return None
+
+    alias_map = {alias: ref for ref, alias in stages if alias}
+
+    ref = stages[-1][0]
+    visited: set = set()
+    # Follow alias chains: `FROM build` where `build` was named by an earlier stage.
+    while ref.lower() in alias_map:
+        if ref.lower() in visited:
+            return None  # cycle guard — malformed template cannot hang the preflight
+        visited.add(ref.lower())
+        ref = alias_map[ref.lower()]
+
+    return ref
+
+
+def uncoverable_template_reasons(
+    template_dir: Optional[Path] = None,
+) -> List[tuple]:
+    """``(template, reason)`` for every service template the preflight cannot cover.
+
+    The reason is what the operator has to act on, and the three cases call for three
+    different actions: restore a missing ``FROM`` line, move a final stage back onto a
+    supported base, or add the named base to ``PLACEABLE_BASES`` and to the two-image rule.
+    Reporting all three as "declares no a2rchi-*-base reference" sends the reader of the
+    latter two looking for a line that is already there.
+    """
+    reasons = []
+    for template in service_templates(template_dir):
+        base = _final_stage_base(template.read_text())
+        if base is None:
+            reasons.append(
+                (template, "no FROM line the preflight can resolve to a base image")
+            )
+        elif _names_placeable_base(base):
+            continue
+        elif "a2rchi-" in base:
+            reasons.append(
+                (
+                    template,
+                    f"final stage builds on {base}, which is not one of the bases the "
+                    f"preflight can probe ({', '.join(sorted(PLACEABLE_BASES))})",
+                )
+            )
+        else:
+            reasons.append(
+                (
+                    template,
+                    f"final stage builds on {base}, which is not an a2rchi base image",
+                )
+            )
+    return reasons
+
+
+def templates_missing_base_reference(template_dir: Optional[Path] = None) -> List[Path]:
+    """Service templates whose final stage does not name a base in ``PLACEABLE_BASES``.
+
+    A non-empty return means a service template has lost its base ``FROM`` line, replaced
+    it with a third-party image, names an a2rchi base the preflight cannot probe, or (for
+    multistage templates) has a final stage that does not run on an a2rchi base.  The
+    caller should treat a non-empty list as a refusal to proceed.  Use
+    ``uncoverable_template_reasons`` when the caller has to tell the operator which.
+    """
+    return [template for template, _ in uncoverable_template_reasons(template_dir)]
+
+
+def two_image_rule_offenders(template_dir: Optional[Path] = None) -> List[str]:
+    """Service templates whose final-stage base contradicts the two-image rule (design D4).
+
+    The rule `required_base_image_names` applies — python always, pytorch for a ``-gpu``
+    variant or the grader — is a claim about the templates, and it is made against the
+    stage that ships. Reading the first ``FROM`` instead misses the drift that matters: a
+    non-GPU template with ``FROM <python-base> AS builder`` ending on the pytorch base is
+    accepted by the coverage check, asked for python only, and so deploys on an image the
+    preflight never probed.
+    """
+    offenders = []
+    for template in service_templates(template_dir):
+        base = _final_stage_base(template.read_text())
+        if base is None:
+            continue  # uncoverable_template_reasons reports this, with its own diagnosis
+        name = template.name
+        is_gpu = name.endswith("-gpu")
+        if _reference_names(base, PYTORCH_BASE) and not (
+            is_gpu or name == "Dockerfile-grader"
+        ):
+            offenders.append(f"{name}: pytorch base but neither -gpu nor the grader")
+        if _reference_names(base, PYTHON_BASE) and is_gpu:
+            offenders.append(f"{name}: -gpu variant on the python base")
+    return offenders
+
+
+def _base_reference_sources(
+    image: str, template_dir: Optional[Path] = None
+) -> Dict[str, List[Path]]:
+    """The reference-to-templates mapping for ``image``, in first-seen order.
+
+    Each template contributes at most one reference: the base its *final stage* runs on
+    (``_final_stage_base``), when that base names ``image`` at image-name boundaries
+    (``_reference_names``). A builder stage naming the same base at another digest is not a
+    disagreement — it is a multistage shape handled by design D3, and which stage a template
+    contributes is fasrc/archi#382's decision, made once in ``_final_stage_base``.
+    """
+    sources: Dict[str, List[Path]] = {}
+    for template in service_templates(template_dir):
+        base = _final_stage_base(template.read_text())
+        if base is not None and _reference_names(base, image):
+            sources.setdefault(base, []).append(template)
+    return sources
+
+
+def base_references(image: str, template_dir: Optional[Path] = None) -> List[str]:
+    """The distinct references for ``image`` across all service templates, in first-seen order."""
+    return list(_base_reference_sources(image, template_dir))
 
 
 def base_reference(image: str, template_dir: Optional[Path] = None) -> Optional[str]:
-    """The pinned reference the templates declare for ``image``.
+    """The pinned reference the service templates ship ``image`` at.
 
     Read from the templates rather than composed from a constant, so the preflight cannot
-    check a different tag than the one the build will use.
+    check a different tag than the one the build will use. It reads each template's *final
+    stage* -- the same judgement ``templates_missing_base_reference`` makes -- because a
+    template may name the same base twice, one digest in a builder stage and another in the
+    stage that ships. Probing the builder's line would establish an image the deployment
+    never runs.
+
+    The first of ``base_references``, so the divergence guard and the probe share one
+    traversal (design D1). Two service templates shipping ``image`` at different references
+    is a split pin (fasrc/archi#389); ``required_base_images`` and ``enforce_base_images``
+    call ``_refuse_divergent_base_references`` before reading this, so the first-match
+    contract here no longer hides one.
     """
-    directory = template_dir or TEMPLATE_DIR
-    for dockerfile in sorted(directory.glob("Dockerfile-*")):
-        for match in _FROM_BASE_RE.finditer(dockerfile.read_text()):
-            reference = match.group("ref")
-            if image in reference:
-                return reference
-    return None
+    refs = base_references(image, template_dir)
+    return refs[0] if refs else None
 
 
 def required_base_images(
@@ -156,9 +547,11 @@ def required_base_images(
     violate the governing invariant: no path may pass silently on an assumption.
     """
     _refuse_uncoverable_templates(template_dir)
+    names = required_base_image_names(gpu_ids, grader_enabled)
+    _refuse_divergent_base_references(names, template_dir)
 
     references = []
-    for image in required_base_image_names(gpu_ids, grader_enabled):
+    for image in names:
         reference = base_reference(image, template_dir)
         if reference:
             references.append(reference)
@@ -168,7 +561,12 @@ def required_base_images(
 def required_base_image_names(
     gpu_ids: Optional[str], grader_enabled: bool
 ) -> List[str]:
-    """The rule itself, with no filesystem in it: which base images this deployment needs."""
+    """The rule itself, with no filesystem in it: which base images this deployment needs.
+
+    Both names are members of ``PLACEABLE_BASES``, the single source of which a2rchi bases
+    exist.  The python base is always required; the pytorch base only when a GPU is
+    requested or the grader is enabled (design D4).
+    """
     images = [PYTHON_BASE]
     if gpu_ids or grader_enabled:
         images.append(PYTORCH_BASE)
@@ -519,19 +917,43 @@ class BaseImagePreflightError(Exception):
 
 
 def _refuse_uncoverable_templates(template_dir: Optional[Path] = None) -> None:
-    """Refuse when a service template declares no ``a2rchi-*-base`` FROM reference.
+    """Refuse when a service template's final stage is not a base the preflight can probe.
 
     Shared by both entry points deliberately. The refusal first landed only in
     ``required_base_images``, which has no production caller, so the deploy path went on
     silently (fasrc/archi#381) -- the fail-open this module exists to remove.
     """
-    uncoverable = templates_missing_base_reference(template_dir)
+    uncoverable = uncoverable_template_reasons(template_dir)
     if uncoverable:
         raise BaseImagePreflightError(
-            "Base image check failed: the following service templates declare no "
-            "a2rchi-*-base FROM reference, so the preflight cannot cover them:\n"
-            + "\n".join(f"  {p}" for p in uncoverable)
+            "Base image check failed: the preflight cannot cover the following service "
+            "templates:\n"
+            + "\n".join(f"  {path}: {reason}" for path, reason in uncoverable)
         )
+
+
+def _refuse_divergent_base_references(
+    names: List[str], template_dir: Optional[Path] = None
+) -> None:
+    """Refuse when service templates disagree about the reference for a required base image.
+
+    Scope decision (design D2): agreement is checked only for the images
+    ``required_base_image_names`` returns, so a split pin on a base this deployment will not
+    build is not refused; that costs visibility -- the split stays hidden until a deployment
+    that does need that base.
+    """
+    for image in names:
+        sources = _base_reference_sources(image, template_dir)
+        if len(sources) > 1:
+            lines = [
+                f"Base image check failed: service templates declare divergent references "
+                f"for {image}:"
+            ]
+            for reference, templates in sources.items():
+                lines.append(f"  {reference}")
+                for template in templates:
+                    lines.append(f"    {template}")
+            raise BaseImagePreflightError("\n".join(lines))
 
 
 def enforce_base_images(
@@ -567,15 +989,19 @@ def enforce_base_images(
         # fail-open this whole module exists to remove.
         grader_enabled = False
 
-    # Before the derivation below, not after: `base_reference` returns the first match in
-    # *any* template, so a healthy template masks a broken one from this point on. Before
-    # `run_preflight` too, and therefore before `remove_existing_deployment()`
-    # (`cli_main.py:294`) -- the ordering contract from #287.
+    # Both refusals below come before `run_preflight` and therefore before
+    # `remove_existing_deployment()` (`cli_main.py:294`) -- the ordering contract from #287.
+    # The uncoverable-template refusal comes before `names` derivation: `base_reference`
+    # returns the first match in *any* template, so a healthy template masks a broken one.
+    # The divergent-reference refusal comes after `names` because the check is scoped to
+    # what this deployment requires.
     _refuse_uncoverable_templates(template_dir)
 
     names = required_base_image_names(
         getattr(compose_config, "gpu_ids", None), grader_enabled
     )
+
+    _refuse_divergent_base_references(names, template_dir)
 
     references = []
     unresolved = []

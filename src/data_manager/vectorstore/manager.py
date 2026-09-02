@@ -23,6 +23,7 @@ from .node_parsing import (
     SENTENCE_STRATEGY,
     build_hierarchical_nodes,
     embed_child_nodes,
+    resolve_effective_strategy,
 )
 from .postgres_vectorstore import PostgresVectorStore
 from .schema import ensure_hierarchical_schema
@@ -43,6 +44,18 @@ def _resolve_chunk_sizes(chunking_cfg):
     parent = chunking_cfg.get("parent_chunk_size", DEFAULT_PARENT_CHUNK_SIZE)
     child = chunking_cfg.get("child_chunk_size", DEFAULT_CHILD_CHUNK_SIZE)
     return parent, child
+
+
+def _resolve_chunking_strategy(chunking_cfg):
+    """Resolve ``data_manager.chunking.strategy``, defaulting to the shipped strategy.
+
+    The CLI template renders ``sentence`` when the key is unset, and the
+    markdown-structural-chunking spec requires an unset strategy to chunk with
+    ``sentence``. A hand-authored runtime config that omits the key lands on the
+    same path, not on legacy flat ``character`` chunks that the default-on
+    hierarchical reranker cannot expand to parent context.
+    """
+    return chunking_cfg.get("strategy", SENTENCE_STRATEGY)
 
 
 class VectorStoreManager:
@@ -122,12 +135,13 @@ class VectorStoreManager:
         )
 
         # Structure-aware chunking strategy (data_manager.chunking.strategy).
-        # 'character' (default) keeps the CharacterTextSplitter path above;
-        # 'sentence'/'markdown' enable hierarchical parent-child node parsing,
-        # persisting parents to document_parent_nodes and embedded children to
-        # document_chunks (linked via metadata.parent_id).
+        # 'sentence' (the default, also when the key is absent) and 'markdown'
+        # enable hierarchical parent-child node parsing, persisting parents to
+        # document_parent_nodes and embedded children to document_chunks (linked
+        # via metadata.parent_id); 'character' keeps the CharacterTextSplitter
+        # path above.
         chunking_cfg = self._data_manager_config.get("chunking", {}) or {}
-        self.chunking_strategy = chunking_cfg.get("strategy", "character")
+        self.chunking_strategy = _resolve_chunking_strategy(chunking_cfg)
         self.hierarchical_chunking = self.chunking_strategy in (
             SENTENCE_STRATEGY,
             MARKDOWN_STRATEGY,
@@ -809,12 +823,20 @@ class VectorStoreManager:
             tokenize = nltk.tokenize.word_tokenize
             stem = self.stemmer.stem
 
+        # Per-file dispatch: the markdown strategy applies only to Markdown
+        # files; every other file falls back to the sentence strategy.
+        effective_strategy = resolve_effective_strategy(
+            self.chunking_strategy,
+            filename=filename,
+            suffix=(file_level_metadata or {}).get("suffix"),
+        )
+
         parents: List[Dict[str, Any]] = []
         parent_index = 0
         for doc in docs:
             for node in build_hierarchical_nodes(
                 doc,
-                strategy=self.chunking_strategy,
+                strategy=effective_strategy,
                 parent_chunk_size=self.parent_chunk_size,
                 child_chunk_size=self.child_chunk_size,
             ):
