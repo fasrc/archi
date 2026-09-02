@@ -28,7 +28,7 @@ Standing notes for every task:
 
 ## 1. The two helpers, each with direct tests
 
-- [ ] 1.1 `model: opus` — Add `_promote_block_code(html: str) -> str` to
+- [x] 1.1 `model: opus` — Add `_promote_block_code(html: str) -> str` to
       `src/data_manager/collectors/processing.py` as a module-level function placed directly
       above `_markdownify_deep_safe`, with a docstring that names issue #399 and the shape it
       fixes. RED tests first, in `tests/unit/test_html_to_markdown_processor.py`. Import the
