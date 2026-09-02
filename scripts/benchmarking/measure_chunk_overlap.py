@@ -319,34 +319,106 @@ def sweep_budgets(
     return pairs
 
 
-def place_chunks(
+def _occurrences(text: str, needle: str) -> List[int]:
+    positions: List[int] = []
+    found = text.find(needle)
+    while found >= 0:
+        positions.append(found)
+        found = text.find(needle, found + 1)
+    return positions
+
+
+def _fits(
     text: str,
-    chunk_texts: Sequence[str],
-    *,
-    document: int,
+    chunk_text: str,
+    start: int,
+    previous_end: Optional[int],
     budget: int,
     tokenizer,
-) -> List[Chunk]:
-    """Locate each emitted chunk in its document, in order.
+) -> bool:
+    """Whether an occurrence continues the tiling from the previous chunk."""
+    if previous_end is None:
+        return True
+    end = start + len(chunk_text)
+    if end < previous_end:
+        return False
+    if start >= previous_end:
+        return not text[previous_end:start].strip()
+    return len(tokenizer(chunk_text[: previous_end - start])) <= budget
 
-    The splitter emits chunks as verbatim substrings whose ends never move
-    backwards (a child made only of text copied from the previous parent ends
-    exactly where the previous chunk ends), so each chunk is the first
-    occurrence that ends no earlier than the previous chunk — except where a
-    page repeats a block longer than a chunk: that occurrence can then sit
-    inside the previous chunk and imply an overlap the splitter never copied.
-    An occurrence implying more than ``budget`` carried tokens is skipped in
-    favour of a later one; when none fits (tokenizing the joined overlap can
-    count differently from the splitter's per-sentence sizes) the earliest
-    verbatim occurrence is kept. A chunk not found verbatim gets no offsets.
+
+def _tile(
+    text, chunk_texts, budget, tokenizer, limit=20000
+) -> Optional[List[Optional[int]]]:
+    """Leftmost placement of every chunk that tiles the document, or ``None``.
+
+    Depth-first over each chunk's occurrences: ends never move backwards, an
+    overlap stays within the budget, nothing but whitespace lies between two
+    chunks or before the first or after the last. A chunk found nowhere is a
+    wildcard that restarts the chain. Gives up after ``limit`` steps.
     """
-    chunks: List[Chunk] = []
+    count = len(chunk_texts)
+    starts: List[Optional[int]] = [None] * count
+    options: List[Optional[List[Optional[int]]]] = [None] * count
+    cursor = [0] * count
+    steps = 0
+    index = 0
+
+    def previous_end(index: int) -> Optional[int]:
+        for back in range(index - 1, -1, -1):
+            if starts[back] is not None:
+                return starts[back] + len(chunk_texts[back])
+        return None
+
+    while 0 <= index < count:
+        if options[index] is None:
+            prior = previous_end(index)
+            found = _occurrences(text, chunk_texts[index])
+            options[index] = (
+                [None]
+                if not found
+                else [
+                    start
+                    for start in found
+                    if _fits(text, chunk_texts[index], start, prior, budget, tokenizer)
+                    and (prior is not None or index > 0 or not text[:start].strip())
+                ]
+            )
+            cursor[index] = 0
+        if cursor[index] >= len(options[index]):
+            options[index] = None
+            index -= 1
+            if index >= 0:
+                cursor[index] += 1
+            continue
+        steps += 1
+        if steps > limit:
+            return None
+        starts[index] = options[index][cursor[index]]
+        if index == count - 1:
+            last = previous_end(count)
+            if last is None or not text[last:].strip():
+                return starts
+            cursor[index] += 1
+            continue
+        index += 1
+    return None
+
+
+def _place_greedily(text, chunk_texts, budget, tokenizer) -> List[Optional[int]]:
+    """Left-to-right placement when no complete tiling exists.
+
+    Each chunk is the first occurrence ending no earlier than the previous
+    chunk whose implied overlap fits the budget; when none fits (tokenizing the
+    joined overlap can count differently from the splitter's per-sentence
+    sizes) the earliest verbatim occurrence is kept; a chunk found nowhere gets
+    no offset.
+    """
+    starts: List[Optional[int]] = []
     previous_end: Optional[int] = None
     for chunk_text in chunk_texts:
-        cursor = 0
-        if previous_end is not None:
-            cursor = max(0, previous_end - len(chunk_text))
-        earliest = start = text.find(chunk_text, cursor)
+        lowest = 0 if previous_end is None else max(0, previous_end - len(chunk_text))
+        earliest = start = text.find(chunk_text, lowest)
         while (
             start >= 0
             and previous_end is not None
@@ -357,14 +429,47 @@ def place_chunks(
         if start < 0:
             start = earliest
         if start < 0:
-            chunks.append(
-                Chunk(text=chunk_text, document=document, start=None, end=None)
-            )
+            starts.append(None)
             continue
-        end = start + len(chunk_text)
-        chunks.append(Chunk(text=chunk_text, document=document, start=start, end=end))
-        previous_end = end
-    return chunks
+        starts.append(start)
+        previous_end = start + len(chunk_text)
+    return starts
+
+
+def place_chunks(
+    text: str,
+    chunk_texts: Sequence[str],
+    *,
+    document: int,
+    budget: int,
+    tokenizer,
+) -> List[Chunk]:
+    """Locate each emitted chunk in its document, in order.
+
+    The splitter emits chunks as verbatim substrings that tile the document:
+    ends never move backwards (a child made only of text copied from the
+    previous parent ends exactly where the previous chunk ends), an overlap
+    never exceeds the budget, and nothing but whitespace lies between one
+    chunk's end and the next one's start. A block a page repeats can satisfy
+    the local rules at two positions — inside the previous chunk, implying an
+    overlap the splitter never copied, or at its real position — so the
+    placement is the leftmost one under which *all* chunks tile the document
+    (:func:`_tile`); when no complete tiling exists (a chunk the splitter did
+    not emit verbatim, a truncated chunk list) it falls back to the greedy
+    left-to-right rule (:func:`_place_greedily`).
+    """
+    starts = _tile(text, chunk_texts, budget, tokenizer)
+    if starts is None:
+        starts = _place_greedily(text, chunk_texts, budget, tokenizer)
+    return [
+        Chunk(
+            text=chunk_text,
+            document=document,
+            start=start,
+            end=None if start is None else start + len(chunk_text),
+        )
+        for chunk_text, start in zip(chunk_texts, starts)
+    ]
 
 
 def split_documents(

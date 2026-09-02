@@ -189,6 +189,35 @@ class TestPlaceChunks:
         assert [(c.start, c.end) for c in chunks] == [(0, 13), (14, 22), (7, 30)]
         assert carried_chars(chunks[1], chunks[2]) == len("B two. C three.")
 
+    def test_a_repeat_within_the_budget_is_placed_where_the_tiling_requires(self):
+        # Both occurrences of the second chunk satisfy the local rules (the
+        # first implies a 2-token overlap, within budget), but only the second
+        # lets the chunks tile the document without leaving text uncovered.
+        doc = "abc XYZ abc XYZ"
+        chunks = place_chunks(
+            doc, ["abc XYZ", "abc XYZ"], document=0, budget=2, tokenizer=_word_tokenizer
+        )
+        assert [(c.start, c.end) for c in chunks] == [(0, 7), (8, 15)]
+        assert carried_chars(chunks[0], chunks[1]) == 0
+
+    def test_a_repeated_block_before_new_text_is_not_taken_as_overlap(self):
+        # A navigation block rendered twice, shorter than the budget: the second
+        # chunk starts at the second copy, because the first copy would leave
+        # the second one uncovered.
+        doc = "MENU A. MENU A. body one. body two."
+        chunks = place_chunks(
+            doc,
+            ["MENU A. MENU A.", "MENU A. body one.", "body two."],
+            document=0,
+            budget=2,
+            tokenizer=_word_tokenizer,
+        )
+        assert [(c.start, c.end) for c in chunks] == [(0, 15), (8, 25), (26, 35)]
+        assert [carried_chars(a, b) for a, b in zip(chunks, chunks[1:])] == [
+            len("MENU A."),
+            0,
+        ]
+
     def test_a_chunk_made_only_of_copied_text_ends_where_the_previous_one_ends(self):
         # When the first new sentence of a parent does not fit beside the text
         # copied from the previous parent, the splitter emits the copied text

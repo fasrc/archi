@@ -2,18 +2,21 @@
 --
 -- Emits one JSON record per loader document — {"text", "metadata", "path",
 -- "children"} — reconstructed from the parents the ingest stored:
---   * only parents referenced by a live chunk of the target collection are used
---     (document_parent_nodes keeps the parents of every past ingest run, and a
---     database can hold more than one collection);
+--   * only parents referenced by a chunk retrieval can return are used: the
+--     target collection, no soft-deleted document (document_parent_nodes keeps
+--     the parents of every past ingest run, and a database can hold more than
+--     one collection);
 --   * parents that share a document and metadata belong to one loader document
 --     (a PDF page, a file); their text is re-joined in parent_index order;
 --   * metadata is projected down to what the loader attached, because the
 --     splitter subtracts its token length from every budget: TextLoader /
 --     PythonLoader / NotebookLoader attach `source`; PyPDFLoader adds the PDF
 --     keys; BSHTMLLoader adds `title` (loaders: src/data_manager/vectorstore/
---     loader_utils.py). Measured 2026-09-02 on the claw KB: with this projection
---     the re-chunk reproduced 593/593 sampled children byte for byte; with the
---     stored (post-parse) metadata it produced a third more chunks;
+--     loader_utils.py; the suffix is stored as ".html" by LocalFileResource and
+--     as "html" by the web collector, so it is normalized first). Measured
+--     2026-09-02 on the claw KB: with this projection the re-chunk reproduced
+--     593/593 sampled children byte for byte; with the stored (post-parse)
+--     metadata it produced a third more chunks;
 --   * the children that reference each parent ride along, in order, so the
 --     script can report how many the re-chunk reproduces, and `path` (the file
 --     under the data manager's data directory) lets `--data-root` re-read the
@@ -24,11 +27,16 @@
 --     -v collection=default_collection_with_HuggingFaceEmbeddings \
 --     < scripts/benchmarking/dump_chunk_overlap_corpus.sql > corpus.jsonl
 WITH live AS (
-  SELECT (metadata->>'parent_id')::int AS parent_id,
-         jsonb_agg(chunk_text ORDER BY chunk_index) AS children
-  FROM document_chunks
-  WHERE metadata ? 'parent_id'
-    AND (metadata->>'collection' = :'collection' OR metadata->>'collection' IS NULL)
+  -- the chunks retrieval can return: one collection (NULL = legacy rows, as in
+  -- VectorStoreManager._remove_from_postgres) and no soft-deleted document (as
+  -- in PostgresVectorStore's search filters)
+  SELECT (c.metadata->>'parent_id')::int AS parent_id,
+         jsonb_agg(c.chunk_text ORDER BY c.chunk_index) AS children
+  FROM document_chunks c
+  LEFT JOIN documents d ON d.id = c.document_id
+  WHERE c.metadata ? 'parent_id'
+    AND (c.metadata->>'collection' = :'collection' OR c.metadata->>'collection' IS NULL)
+    AND (d.id IS NULL OR d.is_deleted = FALSE)
   GROUP BY 1
 ), parents AS (
   SELECT p.document_id,
@@ -43,7 +51,8 @@ WITH live AS (
                     'producer', 'creator', 'creationdate', 'moddate', 'total_pages',
                     'page', 'page_label', 'title', 'author', 'subject', 'keywords',
                     'aapl:keywords'))
-              OR (p.metadata->>'suffix' IN ('html', 'htm') AND key = 'title')
+              OR (lower(ltrim(p.metadata->>'suffix', '.')) IN ('html', 'htm')
+                  AND key = 'title')
          ) AS loader_metadata
   FROM document_parent_nodes p
   JOIN live ON live.parent_id = p.id
