@@ -460,3 +460,44 @@ def test_fence_language_no_class():
 
     pre = BeautifulSoup("<pre>x</pre>", "html.parser").pre
     assert _fence_language(pre) == ""
+
+
+# --- wire helpers into html_to_markdown (issue #399, task 2.1) ---------------
+# _promote_block_code and _fence_language are wired into _worker() so the full
+# html_to_markdown() / HtmlToMarkdownProcessor pipeline produces fenced blocks.
+
+_BASH_CODE_HTML = '<p><code class="bash">#!/bin/bash<br># comment<br>echo hi</code></p>'
+_WP_CODE_HTML = '<p><code class="wp-block-code">line1<br>line2</code></p>'
+
+
+def test_wire_fenced_block_with_language():
+    md = html_to_markdown(_BASH_CODE_HTML)
+    assert "```bash\n#!/bin/bash\n# comment\necho hi\n```" in md
+    for line in md.splitlines():
+        assert not (
+            line.startswith("#") and line.endswith("  ")
+        ), f"trailing two-space line still present: {line!r}"
+
+
+def test_wire_fenced_block_unknown_language():
+    md = html_to_markdown(_WP_CODE_HTML)
+    assert "```\nline1\nline2\n```" in md
+    assert "wp-block-code" not in md
+
+
+def test_wire_guard_inline_code_unchanged():
+    html = "<h1>Title</h1><p>Add <code>--gpus=1</code>.</p>"
+    assert html_to_markdown(html) == "# Title\n\nAdd `--gpus=1`."
+
+
+def test_wire_guard_pre_code_unchanged():
+    html = "<pre><code>#!/bin/bash\n# c\necho hi</code></pre>"
+    assert html_to_markdown(html) == "```\n#!/bin/bash\n# c\necho hi\n```"
+
+
+def test_wire_processor_produces_fenced_block():
+    out = HtmlToMarkdownProcessor().process(_html_resource(content=_BASH_CODE_HTML))
+    assert out.suffix == "md"
+    content = out.get_content()
+    assert content == html_to_markdown(_BASH_CODE_HTML)
+    assert "```bash" in content

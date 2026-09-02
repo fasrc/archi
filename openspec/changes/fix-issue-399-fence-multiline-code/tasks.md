@@ -64,7 +64,7 @@ Standing notes for every task:
 
 ## 2. Wire the helpers into the conversion
 
-- [ ] 2.1 `model: opus` — RED tests first, all through `html_to_markdown()` and the
+- [x] 2.1 `model: opus` — RED tests first, all through `html_to_markdown()` and the
       processor, in the same test file:
       (a) `html_to_markdown('<p><code class="bash">#!/bin/bash<br># comment<br>echo hi</code></p>')`
       contains `"```bash\n#!/bin/bash\n# comment\necho hi\n```"`, and no line of it both

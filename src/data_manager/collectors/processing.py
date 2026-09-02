@@ -353,7 +353,11 @@ def _markdownify_deep_safe(content: str) -> str:
 
     def _worker() -> None:
         try:
-            result["value"] = markdownify(content, heading_style="ATX")
+            result["value"] = markdownify(
+                _promote_block_code(content),
+                heading_style="ATX",
+                code_language_callback=_fence_language,
+            )
         except BaseException as exc:  # noqa: BLE001 - re-raised to caller below
             result["error"] = exc
 
