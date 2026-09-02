@@ -14,6 +14,8 @@ the chunking the ingest really does, so the tests pin three things:
 * the summary statistics use nearest-rank percentiles.
 """
 
+import json
+
 import pytest
 from langchain_core.documents import Document
 
@@ -389,6 +391,25 @@ class TestAttachSourceText:
         assert attached[0].metadata == {"source": "/root/data/websites/a.md"}
         assert attached[0].path == "websites/a.md"
 
+    def test_the_stemming_marker_survives_the_replacement(self, tmp_path):
+        # A stemming-enabled deployment (#396 arm 4) stores children that are not
+        # substrings of their parents. The dump flags that; the flag has to reach
+        # the warning on this path too, which is the one the docstring prefers.
+        (tmp_path / "a.md").write_text("original text", encoding="utf-8")
+        records = [
+            Record(
+                text="rejoined",
+                metadata={"source": "/root/data/a.md"},
+                children=["stem"],
+                path="a.md",
+                children_verbatim=False,
+            )
+        ]
+        loaded = lambda path: [_Doc("original text", {"source": str(path)})]
+        attached, count = attach_source_text(records, tmp_path, load=loaded)
+        assert count == 1
+        assert attached[0].children_verbatim is False
+
     def test_matches_a_pdf_page_by_its_page_metadata(self, tmp_path):
         (tmp_path / "doc.pdf").write_bytes(b"%PDF-stub")
         records = [
@@ -446,6 +467,40 @@ class TestAttachSourceText:
         assert count == 1
         assert attached[0].text == "plain text file\n"
         assert attached[0].metadata == {"source": str(tmp_path / "notes.txt")}
+
+
+class TestStemmedCorpusWarning:
+    """The defect this guards: the warning vanished on the --data-root path."""
+
+    def _dump(self, tmp_path, text, *, verbatim):
+        data = tmp_path / "data"
+        (data / "websites").mkdir(parents=True)
+        (data / "websites" / "a.md").write_text(text, encoding="utf-8")
+        dump = tmp_path / "corpus.jsonl"
+        dump.write_text(
+            json.dumps(
+                {
+                    "text": text,
+                    "metadata": {"source": "/root/data/websites/a.md"},
+                    "path": "websites/a.md",
+                    "children": ["stem stem stem"],
+                    "children_verbatim": verbatim,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return dump, data
+
+    def test_warns_when_the_stored_children_are_stemmed(self, tmp_path, capsys):
+        dump, data = self._dump(tmp_path, _prose(8), verbatim=False)
+        assert mco.main([str(dump), "--data-root", str(data), "--overlap", "20"]) == 0
+        assert "stemming" in capsys.readouterr().err
+
+    def test_stays_quiet_when_the_stored_children_are_verbatim(self, tmp_path, capsys):
+        dump, data = self._dump(tmp_path, _prose(8), verbatim=True)
+        assert mco.main([str(dump), "--data-root", str(data), "--overlap", "20"]) == 0
+        assert "stemming" not in capsys.readouterr().err
 
 
 class TestSweepBudgets:
