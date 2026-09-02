@@ -5,8 +5,10 @@ from pathlib import Path
 
 from src.data_manager.collectors.localfile_resource import LocalFileResource
 from src.data_manager.collectors.processing import (
+    _FENCE_LANGUAGES,
     HtmlToMarkdownProcessor,
     ResourcePipeline,
+    _fence_language,
     _promote_block_code,
     _slice_kb_article,
     html_to_markdown,
@@ -398,3 +400,63 @@ def test_promote_block_code_wraps_no_class():
     pre = code.find_parent("pre")
     assert pre is not None, "expected <code> to be wrapped in <pre>"
     assert pre.get("class") is None
+
+
+# --- _FENCE_LANGUAGES / _fence_language (issue #399) -------------------------
+# Language detection maps the class attribute of a <pre> element to the fenced-
+# code language label passed to markdownify's code_language_callback.
+
+
+def test_fence_languages_set():
+    assert _FENCE_LANGUAGES == frozenset(
+        {
+            "bash",
+            "sh",
+            "spec",
+            "lua",
+            "python",
+            "c",
+            "cpp",
+            "fortran",
+            "r",
+            "perl",
+            "json",
+            "yaml",
+            "text",
+        }
+    )
+
+
+def test_fence_language_exact_match():
+    from bs4 import BeautifulSoup
+
+    pre = BeautifulSoup('<pre class="bash">x</pre>', "html.parser").pre
+    assert _fence_language(pre) == "bash"
+
+
+def test_fence_language_compound_class():
+    from bs4 import BeautifulSoup
+
+    pre = BeautifulSoup('<pre class="hljs bash">x</pre>', "html.parser").pre
+    assert _fence_language(pre) == "bash"
+
+
+def test_fence_language_case_insensitive():
+    from bs4 import BeautifulSoup
+
+    pre = BeautifulSoup('<pre class="Bash">x</pre>', "html.parser").pre
+    assert _fence_language(pre) == "bash"
+
+
+def test_fence_language_unknown_class():
+    from bs4 import BeautifulSoup
+
+    pre = BeautifulSoup('<pre class="wp-block-code">x</pre>', "html.parser").pre
+    assert _fence_language(pre) == ""
+
+
+def test_fence_language_no_class():
+    from bs4 import BeautifulSoup
+
+    pre = BeautifulSoup("<pre>x</pre>", "html.parser").pre
+    assert _fence_language(pre) == ""

@@ -50,7 +50,7 @@ Standing notes for every task:
       otherwise call `br.replace_with("\n")` for each `<br>`, create `soup.new_tag("pre")`,
       copy `class` when present, and `code.wrap(pre)`; return `str(soup)`. Gate green;
       commit.
-- [ ] 1.2 `model: sonnet` — Add `_FENCE_LANGUAGES` (a `frozenset` of exactly `bash`, `sh`,
+- [x] 1.2 `model: sonnet` — Add `_FENCE_LANGUAGES` (a `frozenset` of exactly `bash`, `sh`,
       `spec`, `lua`, `python`, `c`, `cpp`, `fortran`, `r`, `perl`, `json`, `yaml`, `text`)
       and `_fence_language(pre) -> str` to `processing.py`, next to the helper from 1.1. RED
       tests first, importing both by name: build `<pre>` tags with

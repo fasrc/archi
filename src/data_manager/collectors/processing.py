@@ -306,6 +306,39 @@ def _promote_block_code(html: str) -> str:
     return str(soup)
 
 
+_FENCE_LANGUAGES: frozenset = frozenset(
+    {
+        "bash",
+        "sh",
+        "spec",
+        "lua",
+        "python",
+        "c",
+        "cpp",
+        "fortran",
+        "r",
+        "perl",
+        "json",
+        "yaml",
+        "text",
+    }
+)
+
+
+def _fence_language(pre) -> str:
+    """Return the fenced-code language label for a ``<pre>`` element (issue #399).
+
+    Iterates the element's ``class`` list, lowercases each token, and returns the
+    first that is a member of ``_FENCE_LANGUAGES``.  Returns ``""`` when no match
+    is found or when the element carries no ``class`` attribute.
+    """
+    for token in pre.get("class") or []:
+        token_lower = token.lower()
+        if token_lower in _FENCE_LANGUAGES:
+            return token_lower
+    return ""
+
+
 def _markdownify_deep_safe(content: str) -> str:
     """Convert HTML to Markdown with headroom for deeply-nested input.
 
