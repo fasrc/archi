@@ -171,8 +171,9 @@ classification, only one live robustness gate was left, too thin for its own rel
 | [#244](https://github.com/fasrc/archi/issues/244), [#239](https://github.com/fasrc/archi/issues/239) | Fixed by merged PR #240 (commit `80765cb4`): `postgres_vectorstore.py:411` normalizes `score = 1.0 - distance` for every metric, with in-code monotonicity proof |
 | [#148](https://github.com/fasrc/archi/issues/148) | `goldenset-report.timer` active on the fasrc-dev host, firing 06:15 daily (verified via `systemctl --user list-timers`) |
 | [#63](https://github.com/fasrc/archi/issues/63) | Core deliverable shipped as `archi sources build` (PR #37, `cli_main.py:909`); the issue self-describes as superseded |
+| [#369](https://github.com/fasrc/archi/issues/369) | Fixed the day it was filed by the merged form of PR #368 (`aa00155f`): `evaluations_root.py:20-25` normalizes a falsy `evaluations` block to `{}` and raises the field-naming `ValueError` on a truthy non-mapping, pinned by `test_falsy_evaluations_block_is_treated_as_disabled` and `test_truthy_non_mapping_evaluations_block_raises_naming_field_path`. The issue reproduced against a pre-merge tip of that PR. Closed 2026-09-01 during review of this reconciliation |
 
-## Parked — 61 issues, labeled `parked`
+## Parked — 60 issues, labeled `parked`
 
 Query: `gh issue list --repo fasrc/archi --label parked`. An issue leaves the parking
 lot by gating a future feature release, not by aging.
@@ -180,7 +181,6 @@ lot by gating a future feature release, not by aging.
 | Issue | One-line reason |
 |---|---|
 | #280 | Headless `/v1` strip-down scoping — track is not a release driver; go/no-go unmade |
-| #369 | `validate_evaluations_root` raises a bare `AttributeError` instead of its `ValueError` on a non-dict block — a worse refusal message, not a missed refusal |
 | #373 | Re-pin released Dockerfiles to digests rather than the CalVer tag; #370 shipped the narrower remedy, so this is the better alternative to a closed gap, not an open one |
 | #374 | The named line is already fixed: PR #367 (`93fbf45c`) rewrote `agent_config_path` to serialize with `tojson`, and the issue's own reproduction now prints its input unchanged. What remains is step 4 — auditing the other 17 raw double-quoted scalars in `base-config.yaml` — all latent behind operator-written escape sequences |
 | #375 | Three base-image pin-guard gaps, including an exact-digest assertion covering 2 templates of 15, plus a spec contradiction. The guards hold for what the repo ships today |
@@ -332,16 +332,21 @@ is not the bar; the bar is whether that release's stated feature is broken, wron
 dishonest without it.**
 
 **Tracker state (2026-09-01):** 24 milestone-assigned + 61 parked = 85 open
-issues. ✓ Milestone open counts 1 / 6 / 4 / 13. Sixteen issues had drifted into
+issues. ✓ Milestone open counts 1 / 6 / 4 / 13; October's fourth open item is
+#384, rowed by the open amendment PR #385 rather than here. Sixteen issues had drifted into
 neither state, second only to the seventeen reconciled on 2026-08-25 — and every one but #360
 and #378 was a review follow-up filed by the automated rounds on PRs #367, #368,
 #370, #380, #387 and #391. Six were scheduled: #378 and #394 into `v2026.09.0`,
-#360, #371, #372 and #389 into `v2026.11.0`. Ten were parked, with reasons in
-the table above. #396 was filed the same day and entered `v2026.10.0`.
+#360, #371, #372 and #389 into `v2026.11.0`. Ten were parked at the sweep; review
+of this reconciliation found one of them, #369, already fixed by merged PR #368
+and closed it (closed-during-planning table above), so nine remain in the parked
+table, which now holds 60. #396 was filed the same day and entered `v2026.10.0`.
 
-Nine of the ten parks are the base-image preflight cluster, on the same ground
+Eight of the nine parks are the base-image preflight cluster, on the same ground
 each time: the issue's own body states the defect is latent, or names the merged
-PR that already took the narrower remedy. #392, #393 and #395 describe a single
+PR that already took the narrower remedy. The ninth, #374, is an evaluations-config
+refusal whose named line PR #367 already fixed; only its 17-scalar audit remains.
+#392, #393 and #395 describe a single
 class — a line-oriented Dockerfile parser that fails open — on syntax no
 template in the repo uses; they park together and should be fixed as a class if
 any one of them is ever scheduled. #395 additionally cites a symbol that exists
