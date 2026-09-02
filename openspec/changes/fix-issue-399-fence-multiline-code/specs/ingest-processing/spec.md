@@ -20,6 +20,12 @@ so a deeply nested page (issue #40) is converted, not failed, by the new code pa
 - **AND** the three lines appear in order with no trailing two-space hard break
 - **AND** no line in the output both starts with `#` and ends with two spaces
 
+#### Scenario: A source newline beside a break does not become a blank line
+
+- **WHEN** `html_to_markdown('<p><code class="bash">#!/bin/bash<br />\n# comment<br />\necho hi</code></p>')` is called
+- **THEN** the output is exactly `` ```bash\n#!/bin/bash\n# comment\necho hi\n``` ``
+- **AND** the fence contains no blank line
+
 #### Scenario: A single-line inline code element stays inline
 
 - **WHEN** `html_to_markdown('<h1>Title</h1><p>Add <code>--gpus=1</code>.</p>')` is called
@@ -67,3 +73,8 @@ markup into the corpus.
 
 - **WHEN** the promoted `<pre>` carries the class `Bash`
 - **THEN** the infostring is `bash`
+
+#### Scenario: A native pre block with a language class keeps its bare fence
+
+- **WHEN** `html_to_markdown('<pre class="bash"><code>echo hi</code></pre>')` is called
+- **THEN** the output is exactly `` ```\necho hi\n``` ``, the same string the conversion produced before this change
