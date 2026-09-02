@@ -414,11 +414,24 @@ adds no config keys.
 > **A strategy change re-chunks nothing already ingested.** The vectorstore diffs by
 > resource hash, and `redeploy.sh` preserves the data volumes, so old and new chunks
 > coexist until you force a re-ingest. Either recreate the data volumes, or delete this
-> collection's rows from `document_chunks` and `document_parent_nodes` (both filter on
-> `metadata->>'collection'`) and re-run the data manager. Keep the `documents` table:
-> it is the source catalog the data manager reads to decide what to embed, and it has
-> no collection column. If you delete its rows, the corpus becomes empty instead of
-> refreshed.
+> collection's rows from `document_chunks` and `document_parent_nodes` and re-run the
+> data manager. Match rows the way the data manager does: `metadata->>'collection'`
+> equal to the collection name **or `IS NULL`**. Rows embedded before collection
+> metadata existed carry `NULL`, and the data manager counts them as this collection's.
+> If they stay, it still sees their hashes as embedded and skips them. Keep the
+> `documents` table: it is the source catalog the data manager reads to decide what to
+> embed, and it has no collection column. If you delete its rows, the corpus becomes
+> empty instead of refreshed.
+
+The collection name is `<collection_name>_with_<embedding_name>`, as logged at startup
+(`VectorStoreManager initialized: collection=...`):
+
+```sql
+DELETE FROM document_parent_nodes
+ WHERE metadata->>'collection' = '<collection>' OR metadata->>'collection' IS NULL;
+DELETE FROM document_chunks
+ WHERE metadata->>'collection' = '<collection>' OR metadata->>'collection' IS NULL;
+```
 
 ### Sources
 

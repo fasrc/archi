@@ -15,6 +15,8 @@ imports the main checkout's code).
 - [x] 1.7 Test: `sentence` strategy output and metadata unchanged (explicit metadata assertion as the refactor guard)
 - [x] 1.8 Watch all new tests fail for the expected reason
 - [x] 1.9 Test: packed parents count the `\n\n` joins against `parent_chunk_size` (PR #402 review round 1: Greptile P1 / Codex P2)
+- [x] 1.10 Test: `~~~` fences stay whole under the cap, and a ``` line inside one does not close it (PR #402 review round 2: Codex P2)
+- [x] 1.11 Test: capped parents are verbatim slices of the section (a long URL comes back intact), with the `\n\n` join kept as the fallback when a piece cannot be located (PR #402 review round 2: Codex P2)
 
 ## 2. Green: node_parsing implementation (src/data_manager/vectorstore/node_parsing.py)
 
@@ -29,6 +31,7 @@ imports the main checkout's code).
 - [x] 3.1 Tests in test_node_parsing.py for the dispatch helper: suffix normalization accepts `"md"`, `".md"`, `"MD"`, `"markdown"`; rejects `"py"`, `"txt"`, `"pdf"`; filename-extension fallback works when suffix is missing
 - [x] 3.2 Tests in tests/unit/test_vectorstore_manager_hierarchical.py: under `strategy: markdown`, a `.md` file takes the markdown parse and a non-markdown file takes the sentence parse (both dispatch branches exercised, for diff-cover)
 - [x] 3.3 Watch the new tests fail for the expected reason
+- [x] 3.4 Test in tests/unit/test_loader_utils.py: `select_loader` accepts `.markdown`, so the advertised suffix reaches the dispatch instead of failing as an unsupported format (PR #402 review round 2: Codex P2)
 
 ## 4. Green: dispatch implementation
 
@@ -41,6 +44,7 @@ imports the main checkout's code).
 - [x] 5.1 `deploy/fasrc-dev/config.example.yaml`: comment documenting the `markdown` opt-in and the re-ingest caution (a strategy flip re-chunks nothing; clean paths: volume nuke + recreate, or delete the collection's rows and re-run the data manager)
 - [x] 5.2 Same short caution comment beside the `chunking:` block in `src/cli/templates/base-config.yaml` (comment only — no new keys)
 - [x] 5.3 `docs/docs/configuration.md` Chunking section: document the completed `markdown` strategy (per-file dispatch, `header_path`, section cap, fence handling, overlap clamp) and the safe forced re-ingest path — delete the collection's `document_chunks` and `document_parent_nodes` rows, keep `documents` (PR #402 review round 1: Greptile P2 / Codex P2 ×2)
+- [x] 5.4 Docs and `config.example.yaml` comment: the re-ingest delete predicate is `metadata->>'collection' = '<name>' OR IS NULL`, because legacy rows carry NULL and `_collect_postgres_hashes` counts them as this collection's (PR #402 review round 2: Codex P2)
 
 ## 6. Gate and wrap-up
 

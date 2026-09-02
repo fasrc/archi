@@ -33,10 +33,20 @@ A header section whose text exceeds the configured `parent_chunk_size` SHALL spl
 - **WHEN** the pieces of an oversized section pack back into parents
 - **THEN** each packed parent's token count, the separators written between pieces included, is at most `parent_chunk_size`
 
+#### Scenario: Packed parents are verbatim slices of the section
+
+- **WHEN** several pieces of an oversized section pack into one parent
+- **THEN** the parent text is the section's source text from the first piece's start to the last piece's end, with nothing inserted between the pieces (a URL or hash the splitter cut mid-token comes back intact)
+
 #### Scenario: A fence larger than the budget stays whole
 
-- **WHEN** a fenced code block alone exceeds `parent_chunk_size`
+- **WHEN** a fenced code block, delimited by ``` or by `~~~`, alone exceeds `parent_chunk_size`
 - **THEN** it becomes one oversized parent on its own instead of a bisected fence
+
+#### Scenario: Only the opening marker closes a fence
+
+- **WHEN** a `~~~` fenced block contains a line that starts with ``` (or the reverse)
+- **THEN** that line does not end the fence; the block stays whole under the cap
 
 #### Scenario: Section within the cap stays whole
 
@@ -63,6 +73,11 @@ With `strategy: markdown`, ingestion SHALL apply the markdown parser only to Mar
 
 - **WHEN** a file with suffix `md` (or `.md`, `MD`, `markdown`) is ingested under `strategy: markdown`
 - **THEN** its chunks come from the header-aware markdown parse
+
+#### Scenario: A `.markdown` file loads
+
+- **WHEN** a file with suffix `markdown` is ingested
+- **THEN** the text loader accepts it, so it reaches the markdown dispatch instead of failing as an unsupported format
 
 #### Scenario: Non-Markdown file falls back to sentence
 
