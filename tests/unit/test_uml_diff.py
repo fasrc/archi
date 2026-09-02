@@ -120,6 +120,13 @@ class TestRender:
     def test_marker_is_first_line(self):
         assert self._md().startswith(uml_diff.MARKER)
 
+    def test_direction_is_left_to_right_so_classes_stack_vertically(self):
+        # Classes with no arrow between them all sit at rank 0, and Mermaid
+        # spreads same-rank nodes across the rank axis: the default top-to-
+        # bottom direction lays them out as one wide row. Left-to-right turns
+        # that row into a column, which fits the width of a PR comment.
+        assert "```mermaid\nclassDiagram\n  direction LR\n" in self._md()
+
     def test_added_class_is_styled_and_full(self):
         md = self._md()
         assert "class Cat:::added" in md
