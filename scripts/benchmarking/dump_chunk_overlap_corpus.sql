@@ -18,9 +18,12 @@
 --     593/593 sampled children byte for byte; with the stored (post-parse)
 --     metadata it produced a third more chunks;
 --   * the children that reference each parent ride along, in order, so the
---     script can report how many the re-chunk reproduces, and `path` (the file
---     under the data manager's data directory) lets `--data-root` re-read the
---     original loader document instead of the reconstruction.
+--     script can report how many the re-chunk reproduces; `children_verbatim`
+--     is false when they are not substrings of their parent (the ingest stemmed
+--     them, data_manager.stemming.enabled), which the script warns about; and
+--     `path` (the file under the data manager's data directory) lets
+--     `--data-root` re-read the original loader document instead of the
+--     reconstruction.
 --
 -- Usage (the collection is the one the data manager logs at startup):
 --   docker exec -i postgres-dev psql -U archi -d archi-db -t -A \
@@ -44,6 +47,9 @@ WITH live AS (
          p.parent_text,
          live.children,
          p.metadata - 'parent_index' AS loader_doc,
+         (SELECT bool_and(position(child IN p.parent_text) > 0)
+            FROM jsonb_array_elements_text(live.children) AS child
+         ) AS children_verbatim,
          (SELECT COALESCE(jsonb_object_agg(key, value), '{}'::jsonb)
             FROM jsonb_each(p.metadata)
            WHERE key = 'source'
@@ -61,6 +67,7 @@ SELECT json_build_object(
   'text', string_agg(p.parent_text, E'\n\n' ORDER BY p.parent_index),
   'metadata', p.loader_metadata,
   'path', min(p.loader_doc->>'path'),
+  'children_verbatim', bool_and(p.children_verbatim),
   'children', (SELECT jsonb_agg(c.child ORDER BY q.parent_index, c.ord)
                  FROM parents q,
                       jsonb_array_elements_text(q.children)

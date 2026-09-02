@@ -28,8 +28,12 @@ stored children byte for byte; with the enriched metadata stored on the parent
 rows it produces a third more, smaller chunks. The boundaries counted are those
 between consecutive *child* chunks of one loader document — the rows that get
 embedded — including the boundary where one parent ends and the next begins.
-When the dump carries the stored children, the run also reports how many of
-them the re-chunk reproduced at the ingest's own overlap.
+Chunk text is accounted for the way the ingest stores it — NUL bytes removed —
+for token counts and the parity check; placement uses the raw text. When the
+dump carries the stored children, the run also reports how many of them the
+re-chunk reproduced at the ingest's own overlap; a deployment with
+``data_manager.stemming.enabled`` stores stemmed children, which the dump flags
+and the run warns about, because the sweep measures unstemmed text.
 
 How the carried text is found — from source offsets, not string inference. The
 splitter emits every chunk as a verbatim substring of its document whose end
@@ -129,13 +133,15 @@ class Chunk:
     """One embedded child chunk and its character span in its document.
 
     ``start``/``end`` are ``None`` when the chunk was not found verbatim in its
-    document (see :func:`place_chunks`).
+    document; ``tiled`` is False when the document's chunks admitted no complete
+    tiling and were placed greedily (see :func:`place_chunks`).
     """
 
     text: str
     document: int
     start: Optional[int]
     end: Optional[int]
+    tiled: bool = True
 
 
 @dataclass(frozen=True)
@@ -145,13 +151,16 @@ class Record:
     ``metadata`` is what the loader attached (the splitter subtracts its token
     length from every budget); ``children`` are the chunks the ingest stored for
     it, when the dump carries them, for the parity check; ``path`` is the file's
-    location under the data root, so :func:`attach_source_text` can re-read it.
+    location under the data root, so :func:`attach_source_text` can re-read it;
+    ``children_verbatim`` is False when the stored children are not substrings
+    of their parents — the ingest stemmed them — so parity cannot be expected.
     """
 
     text: str
     metadata: Dict[str, object] = field(default_factory=dict)
     children: Optional[List[str]] = None
     path: Optional[str] = None
+    children_verbatim: Optional[bool] = None
 
 
 def normalize_whitespace(text: str) -> str:
@@ -215,6 +224,7 @@ def load_records(text: str) -> List[Record]:
                     metadata=dict(payload.get("metadata") or {}),
                     children=list(children) if children is not None else None,
                     path=payload.get("path") or None,
+                    children_verbatim=payload.get("children_verbatim"),
                 )
             )
         return records
@@ -265,18 +275,20 @@ def attach_source_text(
     """
     load = load or _ingest_loader()
     root = Path(data_root)
+    loaded: Dict[Path, List[object]] = {}  # a PDF's pages share one file
     attached: List[Record] = []
     replaced = 0
     for record in records:
         document = None
         file = root / record.path if record.path else None
         if file is not None and file.is_file():
-            try:
-                document = _match_loader_document(
-                    load(file), record.metadata.get("page")
-                )
-            except Exception as exc:  # a loader failure is not a reason to abort
-                print(f"warning: could not load {file}: {exc}", file=sys.stderr)
+            if file not in loaded:
+                try:
+                    loaded[file] = load(file)
+                except Exception as exc:  # a loader failure is not a reason to abort
+                    print(f"warning: could not load {file}: {exc}", file=sys.stderr)
+                    loaded[file] = []
+            document = _match_loader_document(loaded[file], record.metadata.get("page"))
         if document is None:
             attached.append(record)
             continue
@@ -347,62 +359,69 @@ def _fits(
     return len(tokenizer(chunk_text[: previous_end - start])) <= budget
 
 
-def _tile(
-    text, chunk_texts, budget, tokenizer, limit=20000
+def tile_chunks(
+    text: str, chunk_texts: Sequence[str], *, budget: int, tokenizer
 ) -> Optional[List[Optional[int]]]:
     """Leftmost placement of every chunk that tiles the document, or ``None``.
 
-    Depth-first over each chunk's occurrences: ends never move backwards, an
-    overlap stays within the budget, nothing but whitespace lies between two
-    chunks or before the first or after the last. A chunk found nowhere is a
-    wildcard that restarts the chain. Gives up after ``limit`` steps.
+    Each chunk depends only on where the previous one ended, so this is a
+    two-pass dynamic programme over the chunks' occurrences: backwards, mark the
+    occurrences from which the rest of the document can still be tiled (ends
+    never move backwards, an overlap stays within the budget, only whitespace
+    between consecutive chunks and after the last); forwards, take the leftmost
+    marked occurrence that continues from the previous chunk. A chunk found
+    nowhere is a wildcard that restarts the chain. The work is bounded by the
+    number of occurrences, with no cutoff.
     """
     count = len(chunk_texts)
-    starts: List[Optional[int]] = [None] * count
-    options: List[Optional[List[Optional[int]]]] = [None] * count
-    cursor = [0] * count
-    steps = 0
-    index = 0
+    if count == 0:
+        return []
+    states: List[List[Optional[int]]] = [
+        _occurrences(text, chunk_text) or [None] for chunk_text in chunk_texts
+    ]
 
-    def previous_end(index: int) -> Optional[int]:
-        for back in range(index - 1, -1, -1):
-            if starts[back] is not None:
-                return starts[back] + len(chunk_texts[back])
-        return None
+    def end_of(index: int, start: Optional[int]) -> Optional[int]:
+        return None if start is None else start + len(chunk_texts[index])
 
-    while 0 <= index < count:
-        if options[index] is None:
-            prior = previous_end(index)
-            found = _occurrences(text, chunk_texts[index])
-            options[index] = (
-                [None]
-                if not found
-                else [
-                    start
-                    for start in found
-                    if _fits(text, chunk_texts[index], start, prior, budget, tokenizer)
-                    and (prior is not None or index > 0 or not text[:start].strip())
-                ]
+    def continues(
+        index: int, start: Optional[int], previous_end: Optional[int]
+    ) -> bool:
+        return start is None or _fits(
+            text, chunk_texts[index], start, previous_end, budget, tokenizer
+        )
+
+    feasible: List[List[bool]] = [[False] * len(options) for options in states]
+    for j, start in enumerate(states[-1]):
+        last_end = end_of(count - 1, start)
+        feasible[-1][j] = last_end is None or not text[last_end:].strip()
+    for index in range(count - 2, -1, -1):
+        for j, start in enumerate(states[index]):
+            previous_end = end_of(index, start)
+            feasible[index][j] = any(
+                feasible[index + 1][k] and continues(index + 1, following, previous_end)
+                for k, following in enumerate(states[index + 1])
             )
-            cursor[index] = 0
-        if cursor[index] >= len(options[index]):
-            options[index] = None
-            index -= 1
-            if index >= 0:
-                cursor[index] += 1
-            continue
-        steps += 1
-        if steps > limit:
+    for j, start in enumerate(states[0]):
+        if start is not None and text[:start].strip():
+            feasible[0][j] = False
+
+    starts: List[Optional[int]] = []
+    previous_end: Optional[int] = None
+    for index in range(count):
+        choice = next(
+            (
+                j
+                for j, start in enumerate(states[index])
+                if feasible[index][j] and continues(index, start, previous_end)
+            ),
+            None,
+        )
+        if choice is None:
             return None
-        starts[index] = options[index][cursor[index]]
-        if index == count - 1:
-            last = previous_end(count)
-            if last is None or not text[last:].strip():
-                return starts
-            cursor[index] += 1
-            continue
-        index += 1
-    return None
+        start = states[index][choice]
+        starts.append(start)
+        previous_end = end_of(index, start)
+    return starts
 
 
 def _place_greedily(text, chunk_texts, budget, tokenizer) -> List[Optional[int]]:
@@ -454,11 +473,13 @@ def place_chunks(
     the local rules at two positions — inside the previous chunk, implying an
     overlap the splitter never copied, or at its real position — so the
     placement is the leftmost one under which *all* chunks tile the document
-    (:func:`_tile`); when no complete tiling exists (a chunk the splitter did
-    not emit verbatim, a truncated chunk list) it falls back to the greedy
-    left-to-right rule (:func:`_place_greedily`).
+    (:func:`tile_chunks`). When no complete tiling exists (a chunk the splitter
+    did not emit verbatim, a truncated chunk list) the chunks are placed by the
+    greedy left-to-right rule (:func:`_place_greedily`) and marked
+    ``tiled=False`` so the run can report it.
     """
-    starts = _tile(text, chunk_texts, budget, tokenizer)
+    starts = tile_chunks(text, chunk_texts, budget=budget, tokenizer=tokenizer)
+    tiled = starts is not None
     if starts is None:
         starts = _place_greedily(text, chunk_texts, budget, tokenizer)
     return [
@@ -467,6 +488,7 @@ def place_chunks(
             document=document,
             start=start,
             end=None if start is None else start + len(chunk_text),
+            tiled=tiled,
         )
         for chunk_text, start in zip(chunk_texts, starts)
     ]
@@ -522,7 +544,7 @@ def reproduced_children(
 
     produced: Dict[int, Counter] = {}
     for chunk in chunks:
-        produced.setdefault(chunk.document, Counter())[chunk.text] += 1
+        produced.setdefault(chunk.document, Counter())[embedded_text(chunk.text)] += 1
     reproduced = stored = 0
     for index, record in enumerate(records):
         if record.children is None:
@@ -532,6 +554,16 @@ def reproduced_children(
             (produced.get(index, Counter()) & Counter(record.children)).values()
         )
     return reproduced, stored
+
+
+def embedded_text(text: str) -> str:
+    """What the ingest stores and embeds for a chunk: the text with every NUL removed.
+
+    Placement works on the raw chunk (a verbatim substring of the document);
+    token accounting and the parity check use this form, as production does
+    (``_build_hierarchical_payload`` strips NUL before embedding).
+    """
+    return text.replace("\x00", "")
 
 
 def has_offsets(previous: Chunk, following: Chunk) -> bool:
@@ -548,7 +580,7 @@ def carried_text(previous: Chunk, following: Chunk) -> str:
     if has_offsets(previous, following):
         shared = max(0, previous.end - following.start)
         return following.text[:shared]
-    return overlap_text(previous.text, following.text)
+    return overlap_text(embedded_text(previous.text), embedded_text(following.text))
 
 
 def carried_chars(previous: Chunk, following: Chunk) -> int:
@@ -601,9 +633,9 @@ def measure(
         for previous, following in zip(chunks, chunks[1:])
         if previous.document == following.document
     ]
-    carried = [len(tokenizer(carried_text(a, b))) for a, b in pairs]
-    base_tokens = sum(len(tokenizer(record.text)) for record in records)
-    chunked_tokens = sum(len(tokenizer(chunk.text)) for chunk in chunks)
+    carried = [len(tokenizer(embedded_text(carried_text(a, b)))) for a, b in pairs]
+    base_tokens = sum(len(tokenizer(embedded_text(record.text))) for record in records)
+    chunked_tokens = sum(len(tokenizer(embedded_text(chunk.text))) for chunk in chunks)
 
     row: Dict[str, float] = {
         "overlap": overlap,
@@ -615,6 +647,9 @@ def measure(
     }
     row.update(summarize_boundaries(carried))
     row["fallback_boundaries"] = sum(1 for a, b in pairs if not has_offsets(a, b))
+    row["untiled_documents"] = len(
+        {chunk.document for chunk in chunks if not chunk.tiled}
+    )
     row["reproduced_children"], row["stored_children"] = reproduced_children(
         records, chunks
     )
@@ -649,6 +684,11 @@ def format_table(rows: Sequence[Dict[str, float]]) -> str:
             lines.append(
                 f"overlap {row['overlap']}: {row['fallback_boundaries']} boundaries "
                 "measured by string matching (chunk not emitted verbatim)"
+            )
+        if row["untiled_documents"]:
+            lines.append(
+                f"overlap {row['overlap']}: documents whose chunks admit no complete "
+                f"tiling, placed greedily: {row['untiled_documents']}"
             )
         if row["stored_children"] and row["effective_overlap"] == PRODUCTION_OVERLAP:
             share = 100.0 * row["reproduced_children"] / row["stored_children"]
@@ -727,6 +767,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     loaded = 0
     if args.data_root is not None:
         records, loaded = attach_source_text(records, args.data_root)
+    stemmed = sum(1 for record in records if record.children_verbatim is False)
+    if stemmed:
+        print(
+            f"warning: {stemmed} documents have stored children that are not "
+            "verbatim in their parents (data_manager.stemming.enabled?): the sweep "
+            "measures unstemmed text and the parity line will read low",
+            file=sys.stderr,
+        )
 
     budgets = sweep_budgets(
         args.overlaps or list(DEFAULT_OVERLAPS),

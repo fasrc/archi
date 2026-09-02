@@ -218,6 +218,30 @@ class TestPlaceChunks:
             0,
         ]
 
+    def test_many_repeats_are_still_placed_consecutively(self):
+        # 15 copies of the same chunk with a one-token budget: every copy
+        # admits two positions locally, so a bounded search would give up and a
+        # greedy one would stack them all at offset 0.
+        doc = " ".join(["abc"] * 15)
+        chunks = place_chunks(
+            doc, ["abc"] * 15, document=0, budget=1, tokenizer=_word_tokenizer
+        )
+        assert [c.start for c in chunks] == [4 * i for i in range(15)]
+        assert all(carried_chars(a, b) == 0 for a, b in zip(chunks, chunks[1:]))
+
+    def test_reports_whether_the_chunks_tiled_the_document(self):
+        from scripts.benchmarking.measure_chunk_overlap import tile_chunks
+
+        doc = "A one. B two. C three."
+        assert tile_chunks(
+            doc, ["A one. B two.", "C three."], budget=0, tokenizer=_word_tokenizer
+        ) == [0, 14]
+        # a truncated chunk list leaves text uncovered: no tiling exists
+        assert (
+            tile_chunks(doc, ["A one. B two."], budget=0, tokenizer=_word_tokenizer)
+            is None
+        )
+
     def test_a_chunk_made_only_of_copied_text_ends_where_the_previous_one_ends(self):
         # When the first new sentence of a parent does not fit beside the text
         # copied from the previous parent, the splitter emits the copied text
@@ -397,6 +421,24 @@ class TestAttachSourceText:
         assert count == 0
         assert [r.text for r in attached] == ["kept", "kept too", "no path"]
 
+    def test_a_file_is_loaded_once_for_all_its_pages(self, tmp_path):
+        (tmp_path / "doc.pdf").write_bytes(b"%PDF-stub")
+        records = [
+            Record(text="p0", metadata={"page": 0}, path="doc.pdf"),
+            Record(text="p1", metadata={"page": 1}, path="doc.pdf"),
+            Record(text="p2", metadata={"page": 2}, path="doc.pdf"),
+        ]
+        calls = []
+
+        def loaded(path):
+            calls.append(path)
+            return [_Doc(f"page {n}", {"page": n}) for n in range(3)]
+
+        attached, count = attach_source_text(records, tmp_path, load=loaded)
+        assert count == 3
+        assert len(calls) == 1
+        assert [r.text for r in attached] == ["page 0", "page 1", "page 2"]
+
     def test_default_loader_is_the_ingest_loader(self, tmp_path):
         (tmp_path / "notes.txt").write_text("plain text file\n", encoding="utf-8")
         records = [Record(text="rejoined", metadata={}, path="notes.txt")]
@@ -424,6 +466,23 @@ class TestSweepBudgets:
         assert sweep_budgets([-5, 0], chunk_size=512, parent_chunk_size=2048) == [
             (-5, 0)
         ]
+
+
+class TestEmbeddedText:
+    def test_nul_bytes_are_removed_like_the_ingest_does(self):
+        from scripts.benchmarking.measure_chunk_overlap import embedded_text
+
+        assert embedded_text("ab\x00c") == "abc"
+
+    def test_parity_and_fallback_matching_ignore_nul_bytes(self):
+        # Placement keeps the raw text; token accounting and the parity check
+        # see what production stored, with every NUL removed.
+        chunks = [Chunk(text="al\x00pha", document=0, start=None, end=None)]
+        records = [Record(text="al\x00pha", children=["alpha"])]
+        assert reproduced_children(records, chunks) == (1, 1)
+        a = Chunk(text="lead in shared\x00 tail", document=0, start=None, end=None)
+        b = Chunk(text="shared tail then more", document=0, start=None, end=None)
+        assert carried_chars(a, b) == len("shared tail")
 
 
 class TestReproducedChildren:
