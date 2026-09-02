@@ -375,29 +375,36 @@ def _pack_parts(
     return capped
 
 
-# Fence markers the section split and the cap both recognise. The upstream
-# MarkdownNodeParser tracks backticks only; _FenceAwareMarkdownNodeParser
-# closes that gap for the section split and _fence_segments for the cap.
-_FENCE_MARKERS = ("```", "~~~")
+# Fence delimiter runs the section split and the cap both recognise: three or
+# more backticks or tildes (CommonMark). The upstream MarkdownNodeParser tracks
+# a bare "```" prefix only; _FenceAwareMarkdownNodeParser closes that gap for
+# the section split and _fence_segments for the cap.
+_FENCE_RUN = re.compile(r"^\s*(`{3,}|~{3,})")
 
 
 def _fence_marker(line: str) -> Optional[str]:
-    """Return the fence marker ``line`` opens or closes with, if any."""
-    stripped = line.lstrip()
-    for marker in _FENCE_MARKERS:
-        if stripped.startswith(marker):
-            return marker
-    return None
+    """Return the fence delimiter run ``line`` starts with (e.g. "````"), if any."""
+    match = _FENCE_RUN.match(line)
+    return match.group(1) if match else None
+
+
+def _closes_fence(open_marker: str, marker: Optional[str]) -> bool:
+    """CommonMark close rule: same character as the opener and at least as long."""
+    return (
+        marker is not None
+        and marker[0] == open_marker[0]
+        and len(marker) >= len(open_marker)
+    )
 
 
 def _fence_segments(text: str) -> List["tuple[bool, str]"]:
     """Split ``text`` into ordered ``(is_fence, segment)`` runs.
 
     Extends the upstream ``MarkdownNodeParser`` rule (a line whose lstripped
-    form starts with three backticks toggles fence state) to tilde fences, and
-    tracks the opening marker so only a line that starts with the same marker
-    closes the fence. An unterminated fence extends to the end of the text and
-    stays atomic.
+    form starts with three backticks toggles fence state) to tilde fences and
+    longer delimiter runs, and tracks the opening run so only a run of the same
+    character, at least as long, closes the fence (CommonMark). An unterminated
+    fence extends to the end of the text and stays atomic.
     """
     segments: List["tuple[bool, str]"] = []
     buffer: List[str] = []
@@ -411,7 +418,7 @@ def _fence_segments(text: str) -> List["tuple[bool, str]"]:
             open_marker = marker
             continue
         buffer.append(line)
-        if marker is not None and marker == open_marker:
+        if open_marker is not None and _closes_fence(open_marker, marker):
             segments.append((True, "\n".join(buffer)))
             buffer = []
             open_marker = None
@@ -427,9 +434,10 @@ class _FenceAwareMarkdownNodeParser(MarkdownNodeParser):
     code-block state on backtick fences only, so a ``#`` line inside a ``~~~``
     fence starts a new section and the block is split before the cap ever
     sees it. This override is the upstream method with the fence rule
-    generalised to :func:`_fence_marker` and the opening marker tracked (a
-    backtick line inside a tilde fence does not close it). Header stack and
-    ``header_path`` metadata are inherited unchanged.
+    generalised to :func:`_fence_marker` and :func:`_closes_fence` (tilde
+    fences, longer delimiter runs; a backtick line inside a tilde fence does
+    not close it). Header stack and ``header_path`` metadata are inherited
+    unchanged.
     """
 
     def get_nodes_from_node(self, node: BaseNode) -> List[TextNode]:
@@ -456,7 +464,7 @@ class _FenceAwareMarkdownNodeParser(MarkdownNodeParser):
             if open_marker is None and marker is not None:
                 open_marker = marker
             elif open_marker is not None:
-                if marker == open_marker:
+                if _closes_fence(open_marker, marker):
                     open_marker = None
             else:
                 header_match = re.match(r"^(#+)\s(.*)", line)

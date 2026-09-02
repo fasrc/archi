@@ -457,6 +457,59 @@ def test_fence_segments_close_only_on_the_opening_marker():
     ]
 
 
+def test_fence_segments_honor_the_opening_run_length():
+    """A longer fence run is closed only by a run of the same char, at least as long.
+
+    CommonMark lets a ```` fence hold a literal ``` line (PR #402 review round 4).
+    """
+    from src.data_manager.vectorstore.node_parsing import _fence_segments
+
+    text = "intro\n````md\n```\n# literal\n```\n````\nafter\n~~~~\n~~~\n~~~~~\nlast"
+
+    assert _fence_segments(text) == [
+        (False, "intro"),
+        (True, "````md\n```\n# literal\n```\n````"),
+        (False, "after"),
+        (True, "~~~~\n~~~\n~~~~~"),
+        (False, "last"),
+    ]
+
+
+def test_markdown_longer_fence_run_protects_inner_triple_and_headers():
+    """A ```` block with an inner ``` line and a '#' line stays one section and one parent."""
+    inner = "\n".join(f"echo long_fence_line_{i} with words" for i in range(40))
+    md = (
+        "# Docs\n\n"
+        "How to show a fence inside a fence.\n\n"
+        "````markdown\n"
+        "```bash\n"
+        "# not a header\n"
+        f"{inner}\n"
+        "```\n"
+        "````\n\n"
+        "## After\n\n"
+        "Text under the real header.\n"
+    )
+    doc = Document(page_content=md, metadata={})
+
+    nodes = build_hierarchical_nodes(
+        doc,
+        strategy=MARKDOWN_STRATEGY,
+        parent_chunk_size=64,
+        child_chunk_size=32,
+    )
+
+    # The oversized first section caps into a prose parent and the whole-fence
+    # parent (both under the H1); "# not a header" opens no section of its own.
+    assert [n.metadata["header_path"] for n in nodes] == ["/", "/", "/Docs/"]
+    assert not any(n.parent_text.startswith("# not a header") for n in nodes)
+    holders = [n for n in nodes if "long_fence_line_0" in n.parent_text]
+    assert len(holders) == 1
+    assert "# not a header" in holders[0].parent_text
+    for i in range(40):
+        assert f"long_fence_line_{i}" in holders[0].parent_text
+
+
 def test_markdown_capped_parents_are_verbatim_slices_of_the_source():
     """Repacked parents reproduce the source text; no separators are invented.
 
