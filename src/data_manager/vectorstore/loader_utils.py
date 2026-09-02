@@ -41,6 +41,9 @@ def select_loader(file_path: str | Path):
         ".log",
         ".rst",
         ".md",
+        # Long Markdown suffix: accepted as Markdown by the chunking dispatch
+        # (node_parsing._MARKDOWN_SUFFIXES), so it must load too.
+        ".markdown",
         # Shipped-default git code suffixes the loader was missing — collected by
         # default (see git_scraper.py `code_suffixes`) but previously unloadable.
         ".js",

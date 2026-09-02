@@ -82,6 +82,13 @@ def test_slurm_job_scripts_are_loadable(tmp_path):
     assert isinstance(_loader_for(tmp_path, "array.slurm"), TextLoader)
 
 
+def test_long_markdown_suffix_is_loadable(tmp_path):
+    # The chunking dispatch accepts `.markdown` as Markdown (node_parsing
+    # `_MARKDOWN_SUFFIXES`), so the loader must accept it too — or the file is
+    # collected, then fails as an unsupported format before chunking runs.
+    assert isinstance(_loader_for(tmp_path, "README.markdown"), TextLoader)
+
+
 @pytest.mark.parametrize("suffix", HPC_ADDITION_SUFFIXES)
 def test_hpc_addition_suffixes_are_loadable(tmp_path, suffix):
     loader = _loader_for(tmp_path, f"example{suffix}")
