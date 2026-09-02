@@ -47,7 +47,7 @@ from src.utils.benchmark_schema import (
 from src.utils.config_access import get_static_config
 from src.utils.env import read_secret
 from src.utils.generate_benchmark_report import (
-    format_html_output,
+    format_markdown_output,
     parse_benchmark_results,
 )
 from src.utils.logging import get_logger, setup_logging
@@ -471,31 +471,55 @@ class ResultHandler:
         ResultHandler.metadata.update(meta_data)
 
     @staticmethod
-    def dump_html(benchmark_name: Path):
+    def dump_artifacts(benchmark_name: Path):
+        """Write the run's JSON artifact and its markdown report.
 
-        config_data, config_name, timestamp, questions, total_results, provenance = (
+        The timestamp is captured ONCE so the report is always the JSON's
+        `_report.md` sibling — the invariant the backfill script's bulk
+        re-render path locates reports by. The JSON is written first (it is
+        the source of truth); a report failure is logged and swallowed, and
+        `--regenerate-md` on the backfill script rebuilds the report later.
+        """
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        json_path = ResultHandler.dump(benchmark_name, timestamp)
+        try:
+            ResultHandler.dump_report(benchmark_name, timestamp)
+        except Exception:
+            # The hint names the exact artifact: the backfill script's default
+            # glob is the repo's bench_out/, which is NOT where OUTPUT_DIR
+            # points inside the benchmark container.
+            logger.exception(
+                f"Markdown report generation failed — the JSON artifact was "
+                f"still dumped to {json_path}; rebuild the report with "
+                f"scripts/benchmarking/backfill_report_provenance.py "
+                f"--regenerate-md {json_path}"
+            )
+
+    @staticmethod
+    def dump_report(benchmark_name: Path, timestamp: str):
+
+        config_data, config_name, run_time, questions, total_results, provenance = (
             parse_benchmark_results(ResultHandler.results, ResultHandler.metadata)
         )
 
         logger.info(config_data)
 
-        html_content = format_html_output(
-            config_data, config_name, timestamp, questions, total_results, provenance
+        markdown_content = format_markdown_output(
+            config_data, config_name, run_time, questions, total_results, provenance
         )
 
-        filename = f"{benchmark_name}-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_report.html"
-        file_path = OUTPUT_DIR / filename
+        file_path = OUTPUT_DIR / f"{benchmark_name}-{timestamp}_report.md"
 
         logger.info(f"Dumping results to {file_path}")
 
         with open(file_path, "w") as f:
-            f.write(html_content)
+            f.write(markdown_content)
 
-        logger.info(f"✅ HTML report generated: {file_path}")
+        logger.info(f"✅ Markdown report generated: {file_path}")
 
     @staticmethod
-    def dump(benchmark_name: Path):
-        filename = f"{benchmark_name}-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+    def dump(benchmark_name: Path, timestamp: str):
+        filename = f"{benchmark_name}-{timestamp}.json"
         file_path = OUTPUT_DIR / filename
         logger.info(f"Dumping results to {file_path}")
         logger.debug(f"Full results: {ResultHandler.results}")
@@ -512,6 +536,7 @@ class ResultHandler:
             output["leaderboard"] = ResultHandler.leaderboard
         with open(file_path, "w") as f:
             json.dump(output, f, indent=4)
+        return file_path
 
     @staticmethod
     def pair_ab_results(idx_a: int = 0, idx_b: int = 1) -> List[ABResult]:
@@ -2009,8 +2034,7 @@ class Benchmarker:
                     "Argilla push failed — results were still dumped to disk."
                 )
 
-        ResultHandler.dump(self.benchmark_name)
-        ResultHandler.dump_html(self.benchmark_name)
+        ResultHandler.dump_artifacts(self.benchmark_name)
         return
 
     def _merge_anchor_questions(self) -> None:

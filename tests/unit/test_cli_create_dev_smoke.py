@@ -1894,6 +1894,68 @@ def test_force_create_with_unobtainable_base_image_keeps_existing_deployment(
     assert (existing / "marker.txt").exists(), "existing deployment was destroyed"
 
 
+def test_force_create_with_an_uncoverable_service_template_keeps_existing_deployment(
+    archi_home, env_file, monkeypatch, tmp_path
+):
+    """The ordering contract, applied to the uncoverable-template refusal (fasrc/archi#381).
+
+    The refusal is unit-tested in `test_base_image_preflight.py`. This is the end-to-end half:
+    the CLI reaches it, and reaches it above the teardown.
+
+    The trigger is deliberately a template this create does not need. `Dockerfile-chat` still
+    supplies the one base reference a chatbot deployment requires, so every other check in the
+    preflight resolves cleanly and sees nothing wrong -- which is exactly why the refusal had
+    to move onto this path rather than stay in a helper the CLI never calls.
+    """
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+    from src.cli.managers import base_image_preflight
+
+    templates = tmp_path / "dockerfiles"
+    templates.mkdir()
+    (templates / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base"
+        "@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"
+    )
+    (templates / "Dockerfile-probe").write_text("FROM docker.io/library/python:3.11\n")
+    monkeypatch.setattr(base_image_preflight, "TEMPLATE_DIR", templates)
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    record = _patch_probe(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-e",
+            str(env_file),
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "--services",
+            "chatbot",
+        ],
+    )
+
+    assert result.exit_code != 0, f"expected refusal. output:\n{result.output}"
+    assert "Dockerfile-probe" in result.output, (
+        "the refusal must name the uncoverable template, or the operator cannot act on it. "
+        f"output:\n{result.output}"
+    )
+    assert teardowns == [], f"deployment was torn down before the refusal: {teardowns}"
+    assert (existing / "marker.txt").exists(), "existing deployment was destroyed"
+    assert record["pulled"] == [], (
+        "the refusal must precede any image work, which is what puts it above the teardown; "
+        f"pulled {record['pulled']}"
+    )
+
+
 def test_refusal_names_the_classic_pat_requirement(archi_home, env_file, monkeypatch):
     """An operator told only "log in" retries with a fine-grained token and fails identically."""
     if not EXAMPLE_CONFIG.exists():
