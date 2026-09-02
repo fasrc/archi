@@ -388,6 +388,86 @@ def test_markdown_capped_parents_count_separators_against_budget():
         assert tokens <= parent_chunk_size, (tokens, node.parent_text)
 
 
+def test_markdown_tilde_fence_larger_than_parent_budget_stays_whole():
+    """A ``~~~`` fence bigger than parent_chunk_size is as atomic as a backtick one."""
+    fence = (
+        "~~~bash\n"
+        + "\n".join(f"echo tilde_fence_line_{i} with words" for i in range(40))
+        + "\n~~~"
+    )
+    md = f"# Scripts\n\nIntro sentence.\n\n{fence}\n"
+    doc = Document(page_content=md, metadata={})
+
+    nodes = build_hierarchical_nodes(
+        doc,
+        strategy=MARKDOWN_STRATEGY,
+        parent_chunk_size=64,
+        child_chunk_size=32,
+    )
+
+    holders = [n for n in nodes if "tilde_fence_line_0" in n.parent_text]
+    assert len(holders) == 1
+    for i in range(40):
+        assert f"tilde_fence_line_{i}" in holders[0].parent_text
+
+
+def test_fence_segments_close_only_on_the_opening_marker():
+    """A backtick line inside a tilde fence does not end it, and vice versa."""
+    from src.data_manager.vectorstore.node_parsing import _fence_segments
+
+    text = "intro\n~~~\ncode\n```\nstill code\n~~~\nafter\n```\nlast\n~~~\n```"
+
+    assert _fence_segments(text) == [
+        (False, "intro"),
+        (True, "~~~\ncode\n```\nstill code\n~~~"),
+        (False, "after"),
+        (True, "```\nlast\n~~~\n```"),
+    ]
+
+
+def test_markdown_capped_parents_are_verbatim_slices_of_the_source():
+    """Repacked parents reproduce the source text; no separators are invented.
+
+    A long unbroken URL makes SentenceSplitter cut mid-token into pieces far
+    below the cap in tokens, so several pieces pack into one parent. They must
+    come back together with nothing inserted between them (PR #402 round 2).
+    """
+    url = "https://example.org/" + "/".join(f"segment{i:03d}" for i in range(60))
+    prose = " ".join(f"Prose sentence number {i} with filler words." for i in range(6))
+    md = f"# Links\n\n## Big\n\n{prose} See {url} for details.\n\n{prose}\n"
+    doc = Document(page_content=md, metadata={})
+
+    nodes = build_hierarchical_nodes(
+        doc,
+        strategy=MARKDOWN_STRATEGY,
+        parent_chunk_size=64,
+        child_chunk_size=32,
+    )
+
+    big_parents = [n for n in nodes if n.metadata["header_path"] == "/Links/"]
+    assert len(big_parents) >= 2, "expected the oversized section to cap"
+    for node in big_parents:
+        assert node.parent_text in md, node.parent_text[:120]
+    # The URL has no whitespace, so the parents that hold it concatenate back
+    # to the exact URL — nothing was injected at the cuts.
+    assert url in "".join(n.parent_text for n in big_parents)
+
+
+def test_cap_section_falls_back_to_join_when_a_piece_is_not_in_the_source():
+    """A splitter that rewrites whitespace still packs; the join path is the fallback."""
+    from src.data_manager.vectorstore.node_parsing import _cap_section
+
+    class _RewritingSplitter:
+        def split_text(self, text):
+            # Two pieces so the section counts as oversized; the double space
+            # in the first piece is not in the source, so it cannot be located.
+            return ["alpha  beta", "gamma delta"]
+
+    capped = _cap_section("alpha beta gamma delta", _RewritingSplitter(), 1000)
+
+    assert capped == ["alpha  beta\n\ngamma delta"]
+
+
 def test_clamped_overlap_boundary_values():
     """The clamp preserves legal overlaps exactly (upstream raises only on >)."""
     from src.data_manager.vectorstore.node_parsing import _clamped_overlap

@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from llama_index.core import Document as LlamaDocument
 from llama_index.core.node_parser import (
@@ -318,50 +318,103 @@ def _cap_section(
                 piece for piece in parent_splitter.split_text(segment) if piece.strip()
             )
 
-    # Measure the exact text a parent would persist: the "\n\n" written between
-    # packed parts costs tokens too, so summing per-part counts under-counts by
-    # one token per join and lets an ordinary parent exceed the cap.
+    # Pack the parts back greedily, measuring the exact text a parent would
+    # persist, so the bytes between parts count against the cap too. A parent
+    # is a verbatim slice of the section at the parts' original offsets: a
+    # piece the splitter cut mid-token (a long URL or hash) comes back together
+    # with nothing inserted. If a piece cannot be located in the source (a
+    # splitter fallback rewrote whitespace), parts are joined with a blank line.
     tokenizer = get_tokenizer()
-    capped: List[str] = []
-    current: List[str] = []
+    spans = _locate_parts(section_text, parts)
+    if spans is None:
+        render = lambda first, last: "\n\n".join(parts[first : last + 1])
+    else:
+        render = lambda first, last: section_text[spans[first][0] : spans[last][1]]
+    return _pack_parts(len(parts), render, tokenizer, parent_chunk_size)
+
+
+def _locate_parts(text: str, parts: List[str]) -> Optional[List["tuple[int, int]"]]:
+    """Return each part's ``(start, end)`` offsets in ``text``, in order.
+
+    Parts are searched from the previous part's end, so repeated text resolves
+    to the right occurrence. Returns ``None`` when a part is not a verbatim
+    substring of ``text``.
+    """
+    spans: List["tuple[int, int]"] = []
+    cursor = 0
     for part in parts:
-        candidate = "\n\n".join([*current, part])
-        if current and len(tokenizer(candidate)) > parent_chunk_size:
-            capped.append("\n\n".join(current))
-            current = [part]
-        else:
-            current.append(part)
-    if current:
-        capped.append("\n\n".join(current))
+        start = text.find(part, cursor)
+        if start < 0:
+            return None
+        cursor = start + len(part)
+        spans.append((start, cursor))
+    return spans
+
+
+def _pack_parts(
+    count: int,
+    render: Callable[[int, int], str],
+    tokenizer: Callable[[str], List],
+    parent_chunk_size: int,
+) -> List[str]:
+    """Greedily pack parts ``0..count-1`` (``count`` >= 1) under the budget.
+
+    ``render(first, last)`` returns the text parts ``first..last`` persist as;
+    that text is what gets measured, so separators count. A single part larger
+    than the budget becomes a parent on its own.
+    """
+    capped: List[str] = []
+    first = 0
+    for index in range(1, count):
+        if len(tokenizer(render(first, index))) > parent_chunk_size:
+            capped.append(render(first, index - 1))
+            first = index
+    capped.append(render(first, count - 1))
     return capped
+
+
+# Fence markers _fence_segments recognises. The upstream MarkdownNodeParser
+# tracks backticks only, so a `#` line inside a tilde fence still starts a new
+# section upstream; the cap nevertheless keeps either kind of fence whole.
+_FENCE_MARKERS = ("```", "~~~")
+
+
+def _fence_marker(line: str) -> Optional[str]:
+    """Return the fence marker ``line`` opens or closes with, if any."""
+    stripped = line.lstrip()
+    for marker in _FENCE_MARKERS:
+        if stripped.startswith(marker):
+            return marker
+    return None
 
 
 def _fence_segments(text: str) -> List["tuple[bool, str]"]:
     """Split ``text`` into ordered ``(is_fence, segment)`` runs.
 
-    Uses the same fence rule as the upstream ``MarkdownNodeParser`` (a line
-    whose lstripped form starts with three backticks toggles fence state). An
-    unterminated fence extends to the end of the text and stays atomic.
+    Extends the upstream ``MarkdownNodeParser`` rule (a line whose lstripped
+    form starts with three backticks toggles fence state) to tilde fences, and
+    tracks the opening marker so only a line that starts with the same marker
+    closes the fence. An unterminated fence extends to the end of the text and
+    stays atomic.
     """
     segments: List["tuple[bool, str]"] = []
     buffer: List[str] = []
-    in_fence = False
+    open_marker: Optional[str] = None
     for line in text.split("\n"):
-        if line.lstrip().startswith("```"):
-            if in_fence:
-                buffer.append(line)
-                segments.append((True, "\n".join(buffer)))
-                buffer = []
-                in_fence = False
-            else:
-                if buffer:
-                    segments.append((False, "\n".join(buffer)))
-                buffer = [line]
-                in_fence = True
+        marker = _fence_marker(line)
+        if open_marker is None and marker is not None:
+            if buffer:
+                segments.append((False, "\n".join(buffer)))
+            buffer = [line]
+            open_marker = marker
             continue
         buffer.append(line)
+        if marker is not None and marker == open_marker:
+            segments.append((True, "\n".join(buffer)))
+            buffer = []
+            open_marker = None
     if buffer:
-        segments.append((in_fence, "\n".join(buffer)))
+        segments.append((open_marker is not None, "\n".join(buffer)))
     return segments
 
 
