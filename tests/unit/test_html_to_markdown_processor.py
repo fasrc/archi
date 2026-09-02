@@ -6,10 +6,12 @@ from pathlib import Path
 from src.data_manager.collectors.localfile_resource import LocalFileResource
 from src.data_manager.collectors.processing import (
     _FENCE_LANGUAGES,
+    _PROMOTED_ATTR,
     HtmlToMarkdownProcessor,
     ResourcePipeline,
     _fence_language,
     _promote_block_code,
+    _promoted_fence_language,
     _slice_kb_article,
     html_to_markdown,
 )
@@ -542,3 +544,40 @@ def test_wire_fenced_block_wpautop_newlines_have_no_blank_lines():
         '<p><code class="bash">#!/bin/bash<br />\n# comment<br />\necho hi</code></p>'
     )
     assert html_to_markdown(html) == "```bash\n#!/bin/bash\n# comment\necho hi\n```"
+
+
+# --- fence language only for promoted blocks (issue #399, Codex review) -------
+# markdownify calls code_language_callback for every <pre>. A native
+# <pre class="bash"> must keep converting to a bare fence, byte-identical to the
+# output before #399, so the class lookup is gated on the promotion marker.
+
+
+def test_promote_block_code_marks_the_new_pre():
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(
+        _promote_block_code("<p><code>a<br>b</code></p>"), "html.parser"
+    )
+    assert soup.find("pre").has_attr(_PROMOTED_ATTR)
+
+
+def test_promoted_fence_language_ignores_a_native_pre():
+    from bs4 import BeautifulSoup
+
+    pre = BeautifulSoup('<pre class="bash">x</pre>', "html.parser").pre
+    assert _promoted_fence_language(pre) == ""
+
+
+def test_promoted_fence_language_reads_a_promoted_pre():
+    from bs4 import BeautifulSoup
+
+    html = f'<pre class="bash" {_PROMOTED_ATTR}="">x</pre>'
+    pre = BeautifulSoup(html, "html.parser").pre
+    assert _promoted_fence_language(pre) == "bash"
+
+
+def test_wire_guard_native_pre_with_language_class_unchanged():
+    # Measured on origin/dev 9d17fd92 (2026-09-02): a native <pre class="bash">
+    # converts to a bare fence. The promotion must not add an infostring to it.
+    html = '<pre class="bash"><code>echo hi</code></pre>'
+    assert html_to_markdown(html) == "```\necho hi\n```"

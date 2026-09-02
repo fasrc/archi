@@ -290,6 +290,13 @@ class HtmlToMarkdownProcessor:
 _BR_TRAILING_WS = re.compile(r"(?:[ \t]*\r?\n[ \t]*)+$")
 _BR_LEADING_WS = re.compile(r"^(?:[ \t]*\r?\n)+")
 
+# Marker set on every ``<pre>`` that ``_promote_block_code`` creates (issue #399 review).
+# ``markdownify`` calls ``code_language_callback`` for every ``<pre>``, so without the
+# marker a native ``<pre class="bash">`` would gain a ``bash`` infostring and stop
+# converting byte-identically to the output before #399. Only promoted blocks are ours
+# to label.
+_PROMOTED_ATTR = "data-archi-promoted"
+
 
 def _strip_break_whitespace(br) -> None:
     """Drop the source newlines that sit beside a ``<br>`` about to become ``"\\n"``."""
@@ -317,7 +324,8 @@ def _promote_block_code(html: str) -> str:
     not content — see ``_strip_break_whitespace``), then each ``<br>`` is replaced with
     a newline, and the element is wrapped in a new ``<pre>`` that inherits the
     ``class`` attribute of the ``<code>`` (if present) so that downstream language
-    detection by ``_fence_language`` can fire on the ``<pre>``.
+    detection by ``_fence_language`` can fire on the ``<pre>``. The new ``<pre>`` is
+    marked with ``_PROMOTED_ATTR`` so ``_promoted_fence_language`` labels only it.
     """
     soup = BeautifulSoup(html, "html.parser")
     for code in soup.find_all("code"):
@@ -335,6 +343,7 @@ def _promote_block_code(html: str) -> str:
         for br in brs:
             br.replace_with("\n")
         pre = soup.new_tag("pre")
+        pre[_PROMOTED_ATTR] = ""
         if code.get("class"):
             pre["class"] = code["class"]
         code.wrap(pre)
@@ -374,6 +383,17 @@ def _fence_language(pre) -> str:
     return ""
 
 
+def _promoted_fence_language(pre) -> str:
+    """``code_language_callback`` that labels only promoted blocks (issue #399 review).
+
+    Returns ``_fence_language(pre)`` when ``pre`` carries ``_PROMOTED_ATTR`` and ``""``
+    otherwise, so a native ``<pre>`` keeps the bare fence it had before #399.
+    """
+    if not pre.has_attr(_PROMOTED_ATTR):
+        return ""
+    return _fence_language(pre)
+
+
 def _markdownify_deep_safe(content: str) -> str:
     """Convert HTML to Markdown with headroom for deeply-nested input.
 
@@ -391,7 +411,7 @@ def _markdownify_deep_safe(content: str) -> str:
             result["value"] = markdownify(
                 _promote_block_code(content),
                 heading_style="ATX",
-                code_language_callback=_fence_language,
+                code_language_callback=_promoted_fence_language,
             )
         except BaseException as exc:  # noqa: BLE001 - re-raised to caller below
             result["error"] = exc
