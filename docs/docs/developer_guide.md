@@ -482,6 +482,25 @@ The 15 service templates under `src/cli/templates/dockerfiles/` each start with 
 line that names a base image. `scripts/dev/update_service_base_images.py` is the only
 writer of those lines. Do not edit them by hand.
 
+**What counts as a service template.** `service_templates()` in
+`src/cli/managers/base_image_preflight.py` walks that directory **recursively**: every
+`Dockerfile*` at any depth is a service template unless it is named in
+`NON_SERVICE_TEMPLATES`. Those keys are paths relative to the template directory —
+`base-python-image/Dockerfile`, not `Dockerfile` — so excluding a nested file cannot
+silently exclude every file of the same name elsewhere in the tree. Two consequences are
+worth knowing before you add a file there:
+
+- A `Dockerfile*` you add in a subdirectory joins the service set the moment it lands, and
+  `archi create` refuses to deploy when the preflight cannot cover it. If the file is not a
+  service template — it defines a base image, or builds on a third-party image — add its
+  relative path to `NON_SERVICE_TEMPLATES` with the reason, in the same change.
+- The rewriter above is **not** recursive. It reads only the `Dockerfile*` files at the top
+  of the directory, so a nested template's `FROM` line is never retargeted by the release
+  workflow and never checked by `--verify`. Keep service templates at the top level unless
+  you extend the rewriter in the same change --
+  `test_no_service_template_is_nested_while_the_release_rewriter_is_top_level_only` fails
+  otherwise, which is what forces the two changes to land together.
+
 ```bash
 # Move every template to a tag.
 python scripts/dev/update_service_base_images.py --tag dev-abc1234 --switch-source ghcr --orig-tag all
@@ -539,15 +558,55 @@ base image map, so it cannot disagree with the rewriter about what a base line i
 Its bound is worth knowing: it reads the references templates **declare**. A template that
 declares no base image at all is invisible to it, as it is to the rewriter. In-tree that gap
 is closed: `service_templates()` in `src/cli/managers/base_image_preflight.py` declares the
-service set, the deploy preflight refuses a member that names no `a2rchi-*-base` image, and
-`test_service_templates_pin_one_explicit_base_tag` fails naming the file. The deploy preflight
-also refuses when two service templates declare the same required base image at different digest
-references: it can probe only one, so a split pin would otherwise establish one digest in the
-registry while a build pulls another. That check is scoped to the bases the deployment
-requires — a split pin on a base the current deployment will not build stays hidden until a
-deployment that does need it. `test_service_templates_pin_one_explicit_base_tag` is the
-repository-side guard the new check does not replace: that test keys on the annotation, not on
-the reference the templates agree on.
+service set, the deploy preflight refuses a member it cannot cover, and
+`test_service_templates_pin_one_explicit_base_tag` fails naming the file.
+
+### Which service templates the deploy preflight refuses
+
+`archi create` refuses **before** it removes an existing deployment when a service template
+is one the preflight cannot probe. Five shapes are refused, and the message names which:
+
+1. **No resolvable `FROM`.** The template carries no `FROM` line, or its final stage is
+   `FROM <alias>` in a chain that does not end at a real reference.
+2. **An a2rchi base outside the placeable set.** Only `a2rchi-python-base` and
+   `a2rchi-pytorch-base` — `PLACEABLE_BASES` in `base_image_preflight.py` — can be probed.
+   A template on, say, `a2rchi-node-base` declares a base and is still refused, because
+   nothing checks that image's Python version before the build needs it. Adding a base means
+   adding it to `PLACEABLE_BASES` *and* giving it a rule in `required_base_image_names`; a
+   guard test fails if you do only the first.
+3. **A final stage that is not an a2rchi base.** The check judges the stage that ships, not
+   the first `FROM`, so a multistage template may build in an a2rchi stage and still be
+   refused if it ends on a third-party image. The name must match at image boundaries: a
+   registry prefix and a tag or digest are allowed, so `ghcr.io/fasrc/a2rchi-python-base@sha256:…`
+   is accepted while the lookalike `a2rchi-python-base-custom` is not.
+4. **A heredoc this walk cannot prove is closed.** The reader finds a heredoc opener by
+   text, and it cannot see shell quoting. `RUN echo "example <<EOF here"` is a valid
+   instruction Docker builds without complaint, but the walk reads `<<EOF` as an opener,
+   finds no delimiter line below it, and refuses the template. The same goes for other text
+   that only looks like an opener, such as `$(( 1 << 3 ))`. This direction is deliberate: the
+   walk either over-reads and refuses, which is loud, or under-reads and lets a third-party
+   final stage ship unprobed, which is silent. If a template hits this, put the text in a
+   file the instruction reads, or split the line so the marker is not in the instruction the
+   walk sees. Do not work around it by removing the base `FROM`.
+5. **A split pin on a required base.** Two service templates name the same required base
+   image at different references. The preflight can probe only one, so a split pin would
+   otherwise establish one digest in the registry while a build pulls another. The check is
+   scoped to the bases the deployment requires — a split pin on a base the current deployment
+   will not build stays hidden until a deployment that does need it.
+   `test_service_templates_pin_one_explicit_base_tag` is the repository-side guard this check
+   does not replace: that test keys on the annotation, not on the reference the templates
+   agree on.
+
+Only a line that starts a Dockerfile instruction can start a stage. A `FROM` inside a
+`RUN <<EOF` heredoc body — including the second payload of a `RUN <<ONE <<TWO` — on the
+continuation of an earlier instruction, or in a comment, is not read as one. A `FROM` may
+carry flags before its reference; `FROM --platform=$BUILDPLATFORM <image>` is read as
+`<image>`, the same form the rewriter above accepts.
+
+The image the preflight actually pulls is the one the final stage names, for the same
+reason: a template may name the same base twice, one digest in a builder stage and another
+in the stage that ships, and probing the builder's line would establish an image the
+deployment never runs.
 
 Two CI jobs call the script: `pr-preview.yml` points the templates at the PR's base-image
 build, and `test-and-build-tag.yml` points them at the release build. The release workflow
