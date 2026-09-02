@@ -29,7 +29,7 @@ from typing import (
     runtime_checkable,
 )
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 from markdownify import markdownify
 
 from src.data_manager.collectors.resource_base import BaseResource
@@ -281,14 +281,43 @@ class HtmlToMarkdownProcessor:
         return resource
 
 
+# Source whitespace beside a ``<br>`` inside a promoted code block (issue #399 review).
+# Formatted HTML — WordPress ``wpautop`` emits ``<br />\n`` — carries a newline text node
+# next to every break. Inline rendering collapses it, but inside the promoted ``<pre>``
+# it would survive as a blank line between every code line (106 of 107 breaks in a
+# 60-page KB sample, 2026-09-02). Horizontal whitespace after the newline is kept so an
+# indented code line stays indented.
+_BR_TRAILING_WS = re.compile(r"(?:[ \t]*\r?\n[ \t]*)+$")
+_BR_LEADING_WS = re.compile(r"^(?:[ \t]*\r?\n)+")
+
+
+def _strip_break_whitespace(br) -> None:
+    """Drop the source newlines that sit beside a ``<br>`` about to become ``"\\n"``."""
+    for node, pattern in (
+        (br.previous_sibling, _BR_TRAILING_WS),
+        (br.next_sibling, _BR_LEADING_WS),
+    ):
+        if type(node) is not NavigableString:
+            continue
+        stripped = pattern.sub("", str(node))
+        if stripped == str(node):
+            continue
+        if stripped:
+            node.replace_with(stripped)
+        else:
+            node.extract()
+
+
 def _promote_block_code(html: str) -> str:
     """Promote bare multi-line ``<code>`` elements to ``<pre><code>`` blocks (issue #399).
 
     A ``<code>`` tag that is not already under a ``<pre>`` and that contains at least
     one ``<br>`` is treated as a block-level code listing rather than inline code.
-    Each ``<br>`` is replaced with a newline, and the element is wrapped in a new
-    ``<pre>`` that inherits the ``class`` attribute of the ``<code>`` (if present) so
-    that downstream language detection by ``_fence_language`` can fire on the ``<pre>``.
+    The source newlines beside each ``<br>`` are dropped first (they are formatting,
+    not content — see ``_strip_break_whitespace``), then each ``<br>`` is replaced with
+    a newline, and the element is wrapped in a new ``<pre>`` that inherits the
+    ``class`` attribute of the ``<code>`` (if present) so that downstream language
+    detection by ``_fence_language`` can fire on the ``<pre>``.
     """
     soup = BeautifulSoup(html, "html.parser")
     for code in soup.find_all("code"):
@@ -297,6 +326,12 @@ def _promote_block_code(html: str) -> str:
         brs = code.find_all("br")
         if not brs:
             continue
+        # Two passes: strip the source whitespace beside every break while the
+        # neighbours are still the original text nodes, then insert the newlines.
+        # Interleaving would let the "\n" inserted for one break be read as source
+        # whitespace of the next and stripped, collapsing an intended blank line.
+        for br in brs:
+            _strip_break_whitespace(br)
         for br in brs:
             br.replace_with("\n")
         pre = soup.new_tag("pre")

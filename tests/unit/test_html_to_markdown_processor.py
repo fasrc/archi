@@ -501,3 +501,44 @@ def test_wire_processor_produces_fenced_block():
     content = out.get_content()
     assert content == html_to_markdown(_BASH_CODE_HTML)
     assert "```bash" in content
+
+
+# --- source whitespace next to a promoted <br> (issue #399, Codex review) -----
+# Formatted HTML (WordPress wpautop emits "<br />\n") carries a newline text node
+# next to every break. Inline rendering collapses it; inside the promoted <pre> it
+# would survive as a blank line between every code line.
+
+
+def _promoted_code_text(html):
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(_promote_block_code(html), "html.parser")
+    return soup.find("code").get_text()
+
+
+def test_promote_block_code_drops_source_newline_after_br():
+    html = (
+        '<p><code class="bash">#!/bin/bash<br />\n# comment<br />\necho hi</code></p>'
+    )
+    assert _promoted_code_text(html) == "#!/bin/bash\n# comment\necho hi"
+
+
+def test_promote_block_code_keeps_indentation_after_the_dropped_newline():
+    html = "<p><code>if x:<br>\n    y<br>\nz</code></p>"
+    assert _promoted_code_text(html) == "if x:\n    y\nz"
+
+
+def test_promote_block_code_drops_source_newline_before_br():
+    assert _promoted_code_text("<p><code>a\n<br>b</code></p>") == "a\nb"
+
+
+def test_promote_block_code_keeps_blank_line_from_two_breaks():
+    assert _promoted_code_text("<p><code>a<br>\n<br>\nb</code></p>") == "a\n\nb"
+    assert _promoted_code_text("<p><code>a<br><br>b</code></p>") == "a\n\nb"
+
+
+def test_wire_fenced_block_wpautop_newlines_have_no_blank_lines():
+    html = (
+        '<p><code class="bash">#!/bin/bash<br />\n# comment<br />\necho hi</code></p>'
+    )
+    assert html_to_markdown(html) == "```bash\n#!/bin/bash\n# comment\necho hi\n```"
