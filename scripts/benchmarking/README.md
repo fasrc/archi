@@ -25,16 +25,19 @@ lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
   *actually* carries across chunk boundaries, for a sweep of `chunk_overlap`
   values. `chunk_overlap` is a budget, not a guarantee: the splitter copies back
   only whole sentences that fit, so a budget below one sentence often carries
-  nothing. Runs each document through the same two-level parent/child
+  nothing. Runs each loader document through the same two-level parent/child
   `HierarchicalNodeParser` the `sentence` strategy uses (one overlap budget at
-  both levels) and reads the carried text from the splitter's own character
-  offsets, so a block a page happens to repeat is never mistaken for overlap.
-  Reports empty boundaries, tokens carried, and the index inflation each
-  setting costs; overlap 0 stays in the sweep as the control row. Takes a text
-  file of real corpus content, one NUL-terminated document per record (the
-  docstring has the `psql -0` dump command), and needs no deployment — just the
-  database dump and the project env. Supports the #396 feature matrix and the
-  `chunking.chunk_overlap` key (#403).
+  both levels, the loader's metadata replayed because the splitter subtracts it
+  from every budget) and reads the carried text from the splitter's own
+  character offsets, so a block a page happens to repeat is never mistaken for
+  overlap. Reports empty boundaries, tokens carried, and the index inflation
+  each setting costs; overlap 0 stays in the sweep as the control row, and at
+  the ingest's own overlap the run reports how many of the stored children it
+  reproduced. Needs no deployment — just the project env, a dump made with
+  **`dump_chunk_overlap_corpus.sql`** (one JSON record per loader document,
+  live parents of the target collection only), and, for exact text, a copy of
+  the data manager's data directory passed as `--data-root`. Supports the #396
+  feature matrix and the `chunking.chunk_overlap` key (#403).
 
 ## Analysis and run helpers
 

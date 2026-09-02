@@ -20,15 +20,20 @@ from langchain_core.documents import Document
 from scripts.benchmarking import measure_chunk_overlap as mco
 from scripts.benchmarking.measure_chunk_overlap import (
     Chunk,
+    Record,
+    attach_source_text,
     carried_chars,
+    load_records,
     longest_overlap_chars,
     normalize_whitespace,
     overlap_text,
     percentile,
     place_chunks,
+    reproduced_children,
     split_documents,
     split_records,
     summarize_boundaries,
+    sweep_budgets,
 )
 
 
@@ -268,6 +273,149 @@ class TestSplitRecords:
         assert split_records("just one\n\ndocument") == ["just one\n\ndocument"]
 
 
+class TestLoadRecords:
+    def test_json_lines_carry_text_metadata_and_stored_children(self):
+        dump = (
+            '{"text": "Doc one.", "metadata": {"source": "/a.md"}, '
+            '"children": ["Doc one."]}\n'
+            "\n"
+            '{"text": "Doc two.", "metadata": {"source": "/b.pdf", "page": 3}}\n'
+        )
+        records = load_records(dump)
+        assert records == [
+            Record(
+                text="Doc one.", metadata={"source": "/a.md"}, children=["Doc one."]
+            ),
+            Record(
+                text="Doc two.", metadata={"source": "/b.pdf", "page": 3}, children=None
+            ),
+        ]
+
+    def test_json_lines_without_metadata_get_an_empty_mapping(self):
+        assert load_records('{"text": "Doc."}') == [
+            Record(text="Doc.", metadata={}, children=None)
+        ]
+
+    def test_plain_text_falls_back_to_nul_separated_documents(self):
+        assert load_records("doc one\x00doc two") == [
+            Record(text="doc one", metadata={}, children=None),
+            Record(text="doc two", metadata={}, children=None),
+        ]
+
+    def test_blank_json_text_is_dropped(self):
+        assert load_records('{"text": "   "}\n{"text": "kept"}') == [
+            Record(text="kept", metadata={}, children=None)
+        ]
+
+
+class _Doc:
+    def __init__(self, text, metadata):
+        self.page_content = text
+        self.metadata = metadata
+
+
+class TestAttachSourceText:
+    def test_replaces_text_and_metadata_with_the_loader_document(self, tmp_path):
+        (tmp_path / "websites").mkdir()
+        (tmp_path / "websites" / "a.md").write_text(
+            "original  text\n", encoding="utf-8"
+        )
+        records = [
+            Record(
+                text="rejoined text",
+                metadata={"source": "/root/data/websites/a.md"},
+                path="websites/a.md",
+            )
+        ]
+        loaded = lambda path: [_Doc("original  text\n", {"source": str(path)})]
+        attached, count = attach_source_text(records, tmp_path, load=loaded)
+        assert count == 1
+        assert attached[0].text == "original  text\n"
+        # The loader stamps the host path; the stored production path is kept so
+        # the metadata token count matches what production subtracted.
+        assert attached[0].metadata == {"source": "/root/data/websites/a.md"}
+        assert attached[0].path == "websites/a.md"
+
+    def test_matches_a_pdf_page_by_its_page_metadata(self, tmp_path):
+        (tmp_path / "doc.pdf").write_bytes(b"%PDF-stub")
+        records = [
+            Record(
+                text="page two rejoined",
+                metadata={"source": "/d/doc.pdf", "page": 1},
+                path="doc.pdf",
+                children=["x"],
+            )
+        ]
+        loaded = lambda path: [
+            _Doc("page one", {"source": str(path), "page": 0}),
+            _Doc("page two", {"source": str(path), "page": 1}),
+        ]
+        attached, count = attach_source_text(records, tmp_path, load=loaded)
+        assert count == 1
+        assert attached[0].text == "page two"
+        assert attached[0].metadata["page"] == 1
+        assert attached[0].children == ["x"]
+
+    def test_keeps_the_record_when_the_file_or_page_is_missing(self, tmp_path):
+        (tmp_path / "present.md").write_text("x", encoding="utf-8")
+        records = [
+            Record(text="kept", metadata={}, path="missing.md"),
+            Record(text="kept too", metadata={"page": 7}, path="present.md"),
+            Record(text="no path", metadata={}),
+        ]
+        loaded = lambda path: [_Doc("page zero", {"page": 0})]
+        attached, count = attach_source_text(records, tmp_path, load=loaded)
+        assert count == 0
+        assert [r.text for r in attached] == ["kept", "kept too", "no path"]
+
+    def test_default_loader_is_the_ingest_loader(self, tmp_path):
+        (tmp_path / "notes.txt").write_text("plain text file\n", encoding="utf-8")
+        records = [Record(text="rejoined", metadata={}, path="notes.txt")]
+        attached, count = attach_source_text(records, tmp_path)
+        assert count == 1
+        assert attached[0].text == "plain text file\n"
+        assert attached[0].metadata == {"source": str(tmp_path / "notes.txt")}
+
+
+class TestSweepBudgets:
+    def test_reports_the_effective_budget_and_collapses_duplicates(self):
+        # 600 clamps to the child size; 64 and 128 both clamp to a 48-token child.
+        assert sweep_budgets(
+            [128, 600, 64], chunk_size=512, parent_chunk_size=2048
+        ) == [
+            (64, 64),
+            (128, 128),
+            (600, 512),
+        ]
+        assert sweep_budgets([64, 128], chunk_size=48, parent_chunk_size=2048) == [
+            (64, 48)
+        ]
+
+    def test_negative_requests_measure_zero(self):
+        assert sweep_budgets([-5, 0], chunk_size=512, parent_chunk_size=2048) == [
+            (-5, 0)
+        ]
+
+
+class TestReproducedChildren:
+    def test_counts_stored_children_the_split_reproduces(self):
+        chunks = [
+            Chunk(text="alpha", document=0, start=0, end=5),
+            Chunk(text="beta", document=0, start=6, end=10),
+            Chunk(text="gamma", document=1, start=0, end=5),
+        ]
+        records = [
+            Record(text="alpha beta", metadata={}, children=["alpha", "beta", "extra"]),
+            Record(text="gamma", metadata={}, children=["different"]),
+        ]
+        assert reproduced_children(records, chunks) == (2, 4)
+
+    def test_records_without_children_are_not_counted(self):
+        records = [Record(text="alpha", metadata={}, children=None)]
+        chunks = [Chunk(text="alpha", document=0, start=0, end=5)]
+        assert reproduced_children(records, chunks) == (0, 0)
+
+
 class TestSplitDocuments:
     """Runs the real parser, exactly as the production unit tests do."""
 
@@ -288,22 +436,67 @@ class TestSplitDocuments:
             for child in node.child_texts
         ]
         chunks = split_documents(
-            [text], chunk_size=48, parent_chunk_size=128, overlap=CHILD_CHUNK_OVERLAP
+            [Record(text=text, metadata={}, children=None)],
+            chunk_size=48,
+            parent_chunk_size=128,
+            overlap=CHILD_CHUNK_OVERLAP,
         )
         assert len(chunks) > 8
         assert [chunk.text for chunk in chunks] == expected
 
+    def test_metadata_shrinks_the_budget_exactly_as_the_ingest_does(self):
+        # The splitter subtracts the metadata string's tokens from every level's
+        # budget, so the loader metadata production attaches must be replayed.
+        from src.data_manager.vectorstore.node_parsing import (
+            CHILD_CHUNK_OVERLAP,
+            build_hierarchical_nodes,
+        )
+
+        text = _prose(80)
+        metadata = {"source": "/root/data/websites/1.md", "page": 3, "total_pages": 9}
+        expected = [
+            child
+            for node in build_hierarchical_nodes(
+                Document(page_content=text, metadata=metadata),
+                parent_chunk_size=128,
+                child_chunk_size=64,
+            )
+            for child in node.child_texts
+        ]
+        with_metadata = split_documents(
+            [Record(text=text, metadata=metadata, children=None)],
+            chunk_size=64,
+            parent_chunk_size=128,
+            overlap=CHILD_CHUNK_OVERLAP,
+        )
+        without = split_documents(
+            [Record(text=text, metadata={}, children=None)],
+            chunk_size=64,
+            parent_chunk_size=128,
+            overlap=CHILD_CHUNK_OVERLAP,
+        )
+        assert [chunk.text for chunk in with_metadata] == expected
+        assert [chunk.text for chunk in without] != expected
+
     def test_spans_are_verbatim_document_offsets(self):
         text = _prose(60)
         chunks = split_documents(
-            [text], chunk_size=48, parent_chunk_size=128, overlap=16
+            [Record(text=text, metadata={}, children=None)],
+            chunk_size=48,
+            parent_chunk_size=128,
+            overlap=16,
         )
         assert len(chunks) > 4
         assert all(text[chunk.start : chunk.end] == chunk.text for chunk in chunks)
 
     def test_documents_are_split_independently_and_in_order(self):
         docs = [_prose(30, "a"), _prose(30, "b")]
-        chunks = split_documents(docs, chunk_size=48, parent_chunk_size=128, overlap=16)
+        chunks = split_documents(
+            [Record(text=doc) for doc in docs],
+            chunk_size=48,
+            parent_chunk_size=128,
+            overlap=16,
+        )
         owners = [chunk.document for chunk in chunks]
         assert set(owners) == {0, 1}
         assert owners == sorted(owners)
@@ -312,7 +505,10 @@ class TestSplitDocuments:
     def test_offsets_and_string_matching_agree_on_clean_prose(self):
         text = _prose(60)
         chunks = split_documents(
-            [text], chunk_size=48, parent_chunk_size=128, overlap=16
+            [Record(text=text, metadata={}, children=None)],
+            chunk_size=48,
+            parent_chunk_size=128,
+            overlap=16,
         )
         pairs = list(zip(chunks, chunks[1:]))
         assert pairs
@@ -328,3 +524,4 @@ class TestDefaultsMirrorProduction:
 
         assert mco.DEFAULT_PARENT_CHUNK_SIZE == node_parsing.DEFAULT_PARENT_CHUNK_SIZE
         assert mco.DEFAULT_CHUNK_SIZE == node_parsing.DEFAULT_CHILD_CHUNK_SIZE
+        assert mco.PRODUCTION_OVERLAP == node_parsing.CHILD_CHUNK_OVERLAP
