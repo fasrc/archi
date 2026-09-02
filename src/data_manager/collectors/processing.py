@@ -281,6 +281,31 @@ class HtmlToMarkdownProcessor:
         return resource
 
 
+def _promote_block_code(html: str) -> str:
+    """Promote bare multi-line ``<code>`` elements to ``<pre><code>`` blocks (issue #399).
+
+    A ``<code>`` tag that is not already under a ``<pre>`` and that contains at least
+    one ``<br>`` is treated as a block-level code listing rather than inline code.
+    Each ``<br>`` is replaced with a newline, and the element is wrapped in a new
+    ``<pre>`` that inherits the ``class`` attribute of the ``<code>`` (if present) so
+    that downstream language detection by ``_fence_language`` can fire on the ``<pre>``.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for code in soup.find_all("code"):
+        if code.find_parent("pre") is not None:
+            continue
+        brs = code.find_all("br")
+        if not brs:
+            continue
+        for br in brs:
+            br.replace_with("\n")
+        pre = soup.new_tag("pre")
+        if code.get("class"):
+            pre["class"] = code["class"]
+        code.wrap(pre)
+    return str(soup)
+
+
 def _markdownify_deep_safe(content: str) -> str:
     """Convert HTML to Markdown with headroom for deeply-nested input.
 

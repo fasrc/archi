@@ -7,6 +7,7 @@ from src.data_manager.collectors.localfile_resource import LocalFileResource
 from src.data_manager.collectors.processing import (
     HtmlToMarkdownProcessor,
     ResourcePipeline,
+    _promote_block_code,
     _slice_kb_article,
     html_to_markdown,
 )
@@ -347,3 +348,53 @@ def test_extraction_seam_reports_blank_conversion_as_empty():
     # The processor keeps the original HTML on a blank conversion; the seam says
     # so by returning "" rather than inventing text to hash.
     assert html_to_markdown("<!-- nothing -->") == ""
+
+
+# --- _promote_block_code (issue #399) ----------------------------------------
+# Multi-line bare <code> elements (no <pre> parent, contains <br>) are promoted
+# into a <pre><code> block so markdownify renders them as fenced code, not inline.
+
+
+def test_promote_block_code_wraps_multiline_code_with_class():
+    result = _promote_block_code('<p><code class="bash">a<br>b</code></p>')
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(result, "html.parser")
+    code = soup.find("code")
+    assert code is not None
+    pre = code.find_parent("pre")
+    assert pre is not None, "expected <code> to be wrapped in <pre>"
+    assert pre.get("class") == ["bash"]
+    assert code.get_text() == "a\nb"
+    assert soup.find("br") is None
+
+
+def test_promote_block_code_skips_inline_code():
+    result = _promote_block_code("<p>Add <code>--gpus=1</code>.</p>")
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(result, "html.parser")
+    code = soup.find("code")
+    assert code is not None
+    assert code.find_parent("pre") is None
+
+
+def test_promote_block_code_skips_code_already_in_pre():
+    result = _promote_block_code("<pre><code>a<br>b</code></pre>")
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(result, "html.parser")
+    assert len(soup.find_all("pre")) == 1
+    assert soup.find("br") is not None
+
+
+def test_promote_block_code_wraps_no_class():
+    result = _promote_block_code("<p><code>a<br>b</code></p>")
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(result, "html.parser")
+    code = soup.find("code")
+    assert code is not None
+    pre = code.find_parent("pre")
+    assert pre is not None, "expected <code> to be wrapped in <pre>"
+    assert pre.get("class") is None
