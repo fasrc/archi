@@ -33,7 +33,7 @@ Standing notes for every task:
 
 ## 1. Resolve the edge text node beside each break
 
-- [ ] 1.1 `model: opus` — Add `_edge_text(br, *, forward: bool, stop_at) -> NavigableString | None`
+- [x] 1.1 `model: opus` — Add `_edge_text(br, *, forward: bool, stop_at) -> NavigableString | None`
       to `src/data_manager/collectors/processing.py`, placed directly above
       `_strip_break_whitespace`, change `_strip_break_whitespace` to
       `_strip_break_whitespace(br, *, stop_at) -> None` and route both sides through the new

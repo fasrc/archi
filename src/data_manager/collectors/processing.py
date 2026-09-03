@@ -29,7 +29,7 @@ from typing import (
     runtime_checkable,
 )
 
-from bs4 import BeautifulSoup, NavigableString
+from bs4 import BeautifulSoup, NavigableString, Tag
 from markdownify import markdownify
 
 from src.data_manager.collectors.resource_base import BaseResource
@@ -298,13 +298,44 @@ _BR_LEADING_WS = re.compile(r"^(?:[ \t]*\r?\n)+")
 _PROMOTED_ATTR = "data-archi-promoted"
 
 
-def _strip_break_whitespace(br) -> None:
-    """Drop the source newlines that sit beside a ``<br>`` about to become ``"\\n"``."""
-    for node, pattern in (
-        (br.previous_sibling, _BR_TRAILING_WS),
-        (br.next_sibling, _BR_LEADING_WS),
-    ):
-        if type(node) is not NavigableString:
+def _edge_text(br, *, forward: bool, stop_at) -> NavigableString | None:
+    """Return the text node that logically neighbours ``br`` on one side (issue #408).
+
+    Climbs through inline parent tags when the direct sibling is absent, stopping
+    before ``stop_at`` (the containing ``<code>`` element).  If the first reachable
+    sibling is a ``Tag``, descends into it to reach the nearest text leaf on the
+    appropriate edge.
+    """
+    node = br
+    while True:
+        sibling = node.next_sibling if forward else node.previous_sibling
+        if sibling is not None:
+            break
+        parent = node.parent
+        if parent is None or parent is stop_at:
+            return None
+        node = parent
+    if type(sibling) is NavigableString:
+        return sibling
+    if isinstance(sibling, Tag):
+        strings = [
+            s for s in sibling.find_all(string=True) if type(s) is NavigableString
+        ]
+        if strings:
+            return strings[0] if forward else strings[-1]
+    return None
+
+
+def _strip_break_whitespace(br, *, stop_at) -> None:
+    """Drop the source newlines beside a ``<br>`` about to become ``"\\n"``.
+
+    The neighbour is resolved through inline nodes (issue #408): when the
+    direct sibling is absent the search climbs through inline parent tags,
+    stopping at ``stop_at`` (the containing ``<code>``).
+    """
+    for forward, pattern in ((False, _BR_TRAILING_WS), (True, _BR_LEADING_WS)):
+        node = _edge_text(br, forward=forward, stop_at=stop_at)
+        if node is None:
             continue
         stripped = pattern.sub("", str(node))
         if stripped == str(node):
@@ -339,7 +370,7 @@ def _promote_block_code(html: str) -> str:
         # Interleaving would let the "\n" inserted for one break be read as source
         # whitespace of the next and stripped, collapsing an intended blank line.
         for br in brs:
-            _strip_break_whitespace(br)
+            _strip_break_whitespace(br, stop_at=code)
         for br in brs:
             br.replace_with("\n")
         pre = soup.new_tag("pre")
