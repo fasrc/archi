@@ -330,6 +330,21 @@ def _has_content(tag) -> bool:
     return False
 
 
+def _trim_cut_whitespace(half, *, trailing: bool) -> None:
+    """Strip leading or trailing whitespace from the NavigableString at the cut edge."""
+    strings = [n for n in half.descendants if type(n) is NavigableString]
+    if not strings:
+        return
+    node = strings[-1] if trailing else strings[0]
+    stripped = str(node).rstrip() if trailing else str(node).lstrip()
+    if stripped == str(node):
+        return
+    if stripped:
+        node.replace_with(stripped)
+    else:
+        node.extract()
+
+
 def _hoist_out_of_inline(pre, soup) -> None:
     """Lift *pre* out of any inline-markup ancestors (issue #406).
 
@@ -345,6 +360,8 @@ def _hoist_out_of_inline(pre, soup) -> None:
         for node in list(pre.next_siblings):
             tail.append(node)
         parent.insert_after(pre)
+        _trim_cut_whitespace(parent, trailing=True)
+        _trim_cut_whitespace(tail, trailing=False)
         if _has_content(tail):
             pre.insert_after(tail)
         if not _has_content(parent):

@@ -808,3 +808,68 @@ def test_hoist_guard_prose_around_block_unchanged():
         html_to_markdown('<p>Before <code class="bash">a<br>b</code> after</p>')
         == "Before\n\n```bash\na\nb\n```\n\nafter"
     )
+
+
+# --- trim edge whitespace at the cut (issue #406, task 1.2) ---
+
+
+def test_hoist_trim_tree_strong_dot_string():
+    """After hoist+trim the two <strong> halves have no edge whitespace."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(
+        _promote_block_code("<p><strong>Note: <code>a<br>b</code> done</strong></p>"),
+        "html.parser",
+    )
+    strongs = soup.find_all("strong")
+    assert len(strongs) == 2
+    assert strongs[0].string == "Note:"
+    assert strongs[1].string == "done"
+
+
+def test_hoist_trim_link_exact():
+    assert (
+        html_to_markdown('<p><a href="http://x">See <code>a<br>b</code> now</a></p>')
+        == "[See](http://x)\n\n```\na\nb\n```\n\n[now](http://x)"
+    )
+
+
+def test_hoist_trim_split_strong_exact():
+    assert (
+        html_to_markdown("<p><strong>Note: <code>a<br>b</code> done</strong></p>")
+        == "**Note:**\n\n```\na\nb\n```\n\n**done**"
+    )
+
+
+def test_hoist_trim_a_em_nested_exact():
+    assert (
+        html_to_markdown(
+            '<p><a href="http://x"><em>See <code>a<br>b</code> now</em></a></p>'
+        )
+        == "[*See*](http://x)\n\n```\na\nb\n```\n\n[*now*](http://x)"
+    )
+
+
+def test_hoist_trim_a_with_title_exact():
+    assert (
+        html_to_markdown(
+            '<p><a href="http://x" title="T">See <code>a<br>b</code> now</a></p>'
+        )
+        == '[See](http://x "T")\n\n```\na\nb\n```\n\n[now](http://x "T")'
+    )
+
+
+def test_hoist_trim_double_code_in_em_exact():
+    assert (
+        html_to_markdown(
+            "<p><em>x <code>a<br>b</code> y <code>c<br>d</code> z</em></p>"
+        )
+        == "*x*\n\n```\na\nb\n```\n\n*y*\n\n```\nc\nd\n```\n\n*z*"
+    )
+
+
+def test_hoist_trim_img_space_before_cut_kept():
+    assert (
+        html_to_markdown('<p><em>x <img src="i.png"/> <code>a<br>b</code></em></p>')
+        == "*x ![](i.png)*\n\n```\na\nb\n```"
+    )
