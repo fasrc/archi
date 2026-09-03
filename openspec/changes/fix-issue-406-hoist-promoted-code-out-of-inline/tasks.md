@@ -140,7 +140,7 @@ Standing notes for every task:
 
 ## 2. Close out
 
-- [ ] 2.1 `model: sonnet` — Verify, push, and open the PR. Steps, in order:
+- [x] 2.1 `model: sonnet` — Verify, push, and open the PR. Steps, in order:
       1. `bash scripts/gate.sh` on the finished branch exits 0. `git status` is empty.
       2. `git diff origin/dev --stat` lists only `src/data_manager/collectors/processing.py`,
          `tests/unit/test_html_to_markdown_processor.py`, and this change's
@@ -177,8 +177,13 @@ Standing notes for every task:
          branch pushed, do **not** open a PR on any other repository, and stop.
       7. Record the PR URL as a line under this task, tick the task, and commit that edit
          with the gate. Do not merge.
-      Note (2026-09-03): gate green (100% diff coverage), verification PASS, corpus sample
+      Note (2026-09-03, loop): gate green (100% diff coverage), verification PASS, corpus sample
       `kb pages=213 sampled=60 multi-line bare code=25 under marked inline ancestor=0`, branch
       pushed to `fork/fix/issue-406-hoist-promoted-code-out-of-inline`. `gh pr create` against
       `fasrc/archi` failed with "Resource not accessible by personal access token" — stopped per
-      spec; human operator must open the PR manually.
+      spec.
+      Note (2026-09-03, wrap-up): the nightly wrap-up re-ran the gate on the host at `4d097be1`
+      (3669 passed, diff coverage 100%), re-ran both verification scripts (PASS; corpus line
+      identical), pushed the same tip to `origin`, and opened the PR from the host, because the
+      loop container's token lacks `createPullRequest` on `fasrc/archi`.
+      PR: https://github.com/fasrc/archi/pull/414
