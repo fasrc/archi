@@ -615,6 +615,7 @@ def test_promote_block_code_drops_only_whitespace_beside_a_source_newline():
     # an inline element collapses it in the browser and dev already dropped it
     # ('`cmd\n  \nnext`'). Whitespace with no newline beside it is payload and stays.
     assert _promoted_code_text("<p><code>cmd\t\n<br>next</code></p>") == "cmd\nnext"
+    assert _promoted_code_text("<p><code>a\tb\t<br>c</code></p>") == "a\tb\t\nc"
 
 
 # --- fence delimiter sized to the longest backtick run inside the block (#407) ---
@@ -661,4 +662,3 @@ def test_markdownify_matches_the_library_for_every_strip_pre_mode(mode):
 def test_markdownify_rejects_an_invalid_strip_pre_mode():
     with pytest.raises(ValueError):
         _markdownify("<pre>x</pre>", strip_pre="bogus")
-    assert _promoted_code_text("<p><code>a\tb\t<br>c</code></p>") == "a\tb\t\nc"
