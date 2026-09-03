@@ -3,6 +3,10 @@
 import sys
 from pathlib import Path
 
+import pytest
+from markdownify import STRIP, STRIP_ONE
+from markdownify import markdownify as library_markdownify
+
 from src.data_manager.collectors.localfile_resource import LocalFileResource
 from src.data_manager.collectors.processing import (
     _FENCE_LANGUAGES,
@@ -10,6 +14,7 @@ from src.data_manager.collectors.processing import (
     HtmlToMarkdownProcessor,
     ResourcePipeline,
     _fence_language,
+    _markdownify,
     _promote_block_code,
     _promoted_fence_language,
     _slice_kb_article,
@@ -117,7 +122,7 @@ def test_converter_raises_keeps_original(monkeypatch):
     def _boom(*_a, **_k):
         raise RuntimeError("markdownify failed")
 
-    monkeypatch.setattr("src.data_manager.collectors.processing.markdownify", _boom)
+    monkeypatch.setattr("src.data_manager.collectors.processing._markdownify", _boom)
     resource = _html_resource(content="<h1>Title</h1>")
     out = HtmlToMarkdownProcessor().process(resource)
     assert out.content == "<h1>Title</h1>"
@@ -127,7 +132,7 @@ def test_converter_raises_keeps_original(monkeypatch):
 
 def test_blank_output_keeps_original(monkeypatch):
     monkeypatch.setattr(
-        "src.data_manager.collectors.processing.markdownify",
+        "src.data_manager.collectors.processing._markdownify",
         lambda *_a, **_k: "   \n  ",
     )
     resource = _html_resource(content="<script>noop()</script>")
@@ -610,4 +615,50 @@ def test_promote_block_code_drops_only_whitespace_beside_a_source_newline():
     # an inline element collapses it in the browser and dev already dropped it
     # ('`cmd\n  \nnext`'). Whitespace with no newline beside it is payload and stays.
     assert _promoted_code_text("<p><code>cmd\t\n<br>next</code></p>") == "cmd\nnext"
+
+
+# --- fence delimiter sized to the longest backtick run inside the block (#407) ---
+
+
+def test_fence_widens_past_an_embedded_triple_backtick_run():
+    html = "<p><code>a<br>```<br># heading</code></p>"
+    assert html_to_markdown(html) == "````\na\n```\n# heading\n````"
+
+
+def test_fence_widens_past_an_embedded_triple_backtick_run_in_a_native_pre():
+    html = "<pre>a\n```\nb</pre>"
+    assert html_to_markdown(html) == "````\na\n```\nb\n````"
+
+
+def test_fence_widens_past_a_four_backtick_run():
+    html = "<pre>a\n````\nb</pre>"
+    assert html_to_markdown(html) == "`````\na\n````\nb\n`````"
+
+
+def test_fence_widens_and_keeps_the_infostring():
+    html = '<p><code class="bash">x<br>```<br>y</code></p>'
+    assert html_to_markdown(html) == "````bash\nx\n```\ny\n````"
+
+
+def test_fence_widens_for_a_mid_line_backtick_run():
+    html = "<pre>use ``` inline</pre>"
+    assert html_to_markdown(html) == "````\nuse ``` inline\n````"
+
+
+def test_fence_empty_block_is_unaffected():
+    assert html_to_markdown("<p>x</p><pre></pre><p>y</p>") == "x\n\ny"
+    assert _markdownify("<pre></pre>") == ""
+
+
+@pytest.mark.parametrize("mode", [STRIP, STRIP_ONE, None])
+def test_markdownify_matches_the_library_for_every_strip_pre_mode(mode):
+    html = "<p>x</p><pre>\n\n  a\n\n</pre><p>y</p>"
+    assert _markdownify(html, strip_pre=mode) == library_markdownify(
+        html, strip_pre=mode
+    )
+
+
+def test_markdownify_rejects_an_invalid_strip_pre_mode():
+    with pytest.raises(ValueError):
+        _markdownify("<pre>x</pre>", strip_pre="bogus")
     assert _promoted_code_text("<p><code>a\tb\t<br>c</code></p>") == "a\tb\t\nc"

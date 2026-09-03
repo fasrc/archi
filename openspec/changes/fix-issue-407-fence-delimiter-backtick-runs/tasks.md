@@ -33,7 +33,7 @@ Standing notes for every task:
 
 ## 1. The converter and the seam
 
-- [ ] 1.1 `model: sonnet` — RED tests first, in `tests/unit/test_html_to_markdown_processor.py`,
+- [x] 1.1 `model: sonnet` — RED tests first, in `tests/unit/test_html_to_markdown_processor.py`,
       both through `html_to_markdown()`:
       (a) ````html_to_markdown('<p><code>a<br>```<br># heading</code></p>')```` equals
       `````'````\na\n```\n# heading\n````'````` exactly. Today it returns
@@ -75,7 +75,7 @@ Standing notes for every task:
       `test_wire_guard_native_pre_with_language_class_unchanged`) and
       `python -m pytest tests/unit/test_html_to_markdown_processor.py -k "deeply_nested or recursion" -q`
       (still green: issue #40 is not reintroduced). Gate green; commit.
-- [ ] 1.2 `model: sonnet` — Guards and direct converter tests. **These pass once 1.1 lands;
+- [x] 1.2 `model: sonnet` — Guards and direct converter tests. **These pass once 1.1 lands;
       that is the point of them. Do not contrive a failure first.** Add to the same test
       module, importing `_markdownify` by name in the module's existing
       `from src.data_manager.collectors.processing import (...)` block and
