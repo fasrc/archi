@@ -109,7 +109,7 @@ Standing notes for every task:
 
 ## 2. Close out
 
-- [ ] 2.1 `model: sonnet` — Verify, push, and open the PR. Steps, in order:
+- [x] 2.1 `model: sonnet` — Verify, push, and open the PR. Steps, in order:
       1. `bash scripts/gate.sh` on the finished branch exits 0. `git status` is empty.
       2. `git diff origin/dev --stat` lists only `src/data_manager/collectors/processing.py`,
          `tests/unit/test_html_to_markdown_processor.py`, and this change's
@@ -143,3 +143,10 @@ Standing notes for every task:
          branch pushed, do **not** open a PR on any other repository, and stop.
       6. Record the PR URL as a line under this task, tick the task, and commit that edit
          with the gate. Do not merge.
+
+      PR: https://github.com/fasrc/archi/pull/416 — opened 2026-09-03 by the nightly
+      wrap-up step from the branch tip `398970d7`. The loop's token was denied the push to
+      `fasrc/archi` (HTTP 403) and the PR create, so the wrap-up did steps 4 and 5 from the
+      host. Steps 1 to 3 on the host: gate green (3654 passed, 1 skipped, 1 xfailed; diff
+      coverage 100%, 23 lines, 0 missing), diff scope as listed, verification `PASS` for
+      13 cases.
