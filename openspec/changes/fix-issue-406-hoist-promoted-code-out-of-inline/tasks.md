@@ -177,3 +177,8 @@ Standing notes for every task:
          branch pushed, do **not** open a PR on any other repository, and stop.
       7. Record the PR URL as a line under this task, tick the task, and commit that edit
          with the gate. Do not merge.
+      Note (2026-09-03): gate green (100% diff coverage), verification PASS, corpus sample
+      `kb pages=213 sampled=60 multi-line bare code=25 under marked inline ancestor=0`, branch
+      pushed to `fork/fix/issue-406-hoist-promoted-code-out-of-inline`. `gh pr create` against
+      `fasrc/archi` failed with "Resource not accessible by personal access token" — stopped per
+      spec; human operator must open the PR manually.
