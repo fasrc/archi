@@ -107,7 +107,7 @@ Standing notes for every task:
       after the last one. That is expected here and is the next task's red. Gate green;
       commit.
 
-- [ ] 1.2 `model: opus` — Drop the whitespace at the cut (design D6). RED tests first, exact
+- [x] 1.2 `model: opus` — Drop the whitespace at the cut (design D6). RED tests first, exact
       strings through `html_to_markdown()`:
         - `'<p><a href="http://x">See <code>a<br>b</code> now</a></p>'` →
           `'[See](http://x)\n\n```\na\nb\n```\n\n[now](http://x)'`;
