@@ -29,7 +29,7 @@ from typing import (
     runtime_checkable,
 )
 
-from bs4 import BeautifulSoup, NavigableString
+from bs4 import BeautifulSoup, NavigableString, Tag
 from markdownify import markdownify
 
 from src.data_manager.collectors.resource_base import BaseResource
@@ -315,6 +315,42 @@ def _strip_break_whitespace(br) -> None:
             node.extract()
 
 
+_INLINE_MARKUP_TAGS: frozenset = frozenset(
+    {"a", "b", "strong", "em", "i", "del", "s", "kbd", "samp", "sub", "sup"}
+)
+
+
+def _has_content(tag) -> bool:
+    """True when *tag* has at least one Tag child or one non-whitespace text child."""
+    for node in tag.children:
+        if isinstance(node, Tag):
+            return True
+        if type(node) is NavigableString and str(node).strip():
+            return True
+    return False
+
+
+def _hoist_out_of_inline(pre, soup) -> None:
+    """Lift *pre* out of any inline-markup ancestors (issue #406).
+
+    A promoted ``<pre>`` nested inside ``<em>``, ``<strong>``, ``<a>``, etc. would render
+    wrapped in the inline markers.  Walk up the parent chain while the parent is one of
+    the eleven inline tags; at each level split the parent around *pre*: re-append the
+    siblings that follow *pre* into a clone of the parent and insert that clone (and *pre*
+    itself) after the original parent, discarding the clone when it is empty.
+    """
+    while isinstance(pre.parent, Tag) and pre.parent.name in _INLINE_MARKUP_TAGS:
+        parent = pre.parent
+        tail = soup.new_tag(parent.name, attrs=dict(parent.attrs))
+        for node in list(pre.next_siblings):
+            tail.append(node)
+        parent.insert_after(pre)
+        if _has_content(tail):
+            pre.insert_after(tail)
+        if not _has_content(parent):
+            parent.decompose()
+
+
 def _promote_block_code(html: str) -> str:
     """Promote bare multi-line ``<code>`` elements to ``<pre><code>`` blocks (issue #399).
 
@@ -347,6 +383,7 @@ def _promote_block_code(html: str) -> str:
         if code.get("class"):
             pre["class"] = code["class"]
         code.wrap(pre)
+        _hoist_out_of_inline(pre, soup)
     return str(soup)
 
 

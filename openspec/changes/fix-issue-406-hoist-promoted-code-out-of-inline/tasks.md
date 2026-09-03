@@ -35,7 +35,7 @@ Standing notes for every task:
 
 ## 1. Split the marked inline ancestors around the promoted block
 
-- [ ] 1.1 `model: opus` — Add `_INLINE_MARKUP_TAGS` and `_hoist_out_of_inline(pre, soup) -> None`
+- [x] 1.1 `model: opus` — Add `_INLINE_MARKUP_TAGS` and `_hoist_out_of_inline(pre, soup) -> None`
       to `src/data_manager/collectors/processing.py`, placed directly above
       `_promote_block_code`, and call the helper once directly after `code.wrap(pre)`.
       Docstrings name issue #406 and the shape they fix. RED tests first, in

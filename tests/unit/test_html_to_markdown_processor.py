@@ -6,6 +6,7 @@ from pathlib import Path
 from src.data_manager.collectors.localfile_resource import LocalFileResource
 from src.data_manager.collectors.processing import (
     _FENCE_LANGUAGES,
+    _INLINE_MARKUP_TAGS,
     _PROMOTED_ATTR,
     HtmlToMarkdownProcessor,
     ResourcePipeline,
@@ -26,6 +27,25 @@ def _html_resource(content="<h1>Title</h1>", suffix="html", **kwargs):
         source_type="web",
         **kwargs,
     )
+
+
+def _assert_one_clean_fence(md):
+    lines = md.splitlines()
+    fence_lines = [ln for ln in lines if ln.startswith("```")]
+    assert (
+        len(fence_lines) == 2
+    ), f"expected 2 fence lines, got {fence_lines!r} in:\n{md}"
+    assert (
+        fence_lines[1] == "```"
+    ), f"expected bare closing fence, got {fence_lines[1]!r}"
+    in_fence = False
+    for ln in lines:
+        if ln.startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence:
+            assert not ln.startswith(
+                "# "
+            ), f"found heading line outside fence in:\n{md}"
 
 
 def test_converts_html_to_atx_markdown_and_flips_suffix():
@@ -611,3 +631,180 @@ def test_promote_block_code_drops_only_whitespace_beside_a_source_newline():
     # ('`cmd\n  \nnext`'). Whitespace with no newline beside it is payload and stays.
     assert _promoted_code_text("<p><code>cmd\t\n<br>next</code></p>") == "cmd\nnext"
     assert _promoted_code_text("<p><code>a\tb\t<br>c</code></p>") == "a\tb\t\nc"
+
+
+# --- hoist a promoted block out of inline formatting ancestors (issue #406) ---
+
+
+def _promote_block_code_soup(html):
+    from bs4 import BeautifulSoup
+
+    return BeautifulSoup(_promote_block_code(html), "html.parser")
+
+
+# (a) tag set
+
+
+def test_inline_markup_tags_set():
+    assert _INLINE_MARKUP_TAGS == frozenset(
+        {"a", "b", "strong", "em", "i", "del", "s", "kbd", "samp", "sub", "sup"}
+    )
+
+
+# (b) tree tests through _promote_block_code
+
+
+def test_hoist_em_pre_parent_is_p_and_em_removed():
+    from bs4 import Tag
+
+    soup = _promote_block_code_soup("<p><em><code>a<br># heading</code></em></p>")
+    pre = soup.find("pre")
+    assert pre.parent.name == "p"
+    assert soup.find("em") is None
+    assert pre.has_attr(_PROMOTED_ATTR)
+
+
+def test_hoist_strong_split_order_and_text():
+    from bs4 import Tag
+
+    soup = _promote_block_code_soup(
+        "<p><strong>Note: <code>a<br>b</code> done</strong></p>"
+    )
+    p = soup.find("p")
+    tag_children = [c for c in p.children if isinstance(c, Tag)]
+    assert [c.name for c in tag_children] == ["strong", "pre", "strong"]
+    assert tag_children[0].get_text().strip() == "Note:"
+    assert tag_children[2].get_text().strip() == "done"
+
+
+def test_hoist_a_with_title_splits_into_two_anchors_with_attrs():
+    soup = _promote_block_code_soup(
+        '<p><a href="http://x" title="T">See <code>a<br>b</code> now</a></p>'
+    )
+    anchors = soup.find_all("a")
+    assert len(anchors) == 2
+    assert all(a["href"] == "http://x" for a in anchors)
+    assert all(a["title"] == "T" for a in anchors)
+    pre = soup.find("pre")
+    assert pre.previous_sibling.name == "a"
+    assert pre.next_sibling.name == "a"
+
+
+def test_hoist_a_em_nested_pre_parent_is_p_two_anchors_each_with_em():
+    soup = _promote_block_code_soup(
+        '<p><a href="http://x"><em>See <code>a<br>b</code> now</em></a></p>'
+    )
+    pre = soup.find("pre")
+    assert pre.parent.name == "p"
+    anchors = soup.find_all("a")
+    assert len(anchors) == 2
+    assert all(len(a.find_all("em")) == 1 for a in anchors)
+
+
+def test_hoist_em_class_preserved_on_both_halves():
+    soup = _promote_block_code_soup(
+        '<p><em class="note">x <code>a<br>b</code> y</em></p>'
+    )
+    ems = soup.find_all("em")
+    assert len(ems) == 2
+    assert all(em.get("class") == ["note"] for em in ems)
+
+
+def test_hoist_em_whitespace_only_and_comment_only_leave_no_em():
+    for html in (
+        "<p><em> <code>a<br>b</code> </em></p>",
+        "<p><em><!-- c --><code>a<br>b</code></em></p>",
+    ):
+        soup = _promote_block_code_soup(html)
+        assert soup.find("em") is None, f"em survived in: {html}"
+
+
+def test_hoist_a_img_kept_inside_anchor_pre_is_next_sibling():
+    soup = _promote_block_code_soup(
+        '<p><a href="http://x"><img src="i.png"/><code>a<br>b</code></a></p>'
+    )
+    anchors = soup.find_all("a")
+    assert len(anchors) == 1
+    assert anchors[0].find("img") is not None
+    pre = soup.find("pre")
+    assert anchors[0].find_next_sibling() == pre
+
+
+def test_hoist_stops_at_non_inline_tag_span():
+    soup = _promote_block_code_soup("<p><em><span><code>a<br>b</code></span></em></p>")
+    pre = soup.find("pre")
+    assert pre.parent.name == "span"
+
+
+# (c) exact strings through html_to_markdown — red today
+
+
+def test_hoist_em_exact_output():
+    assert (
+        html_to_markdown("<p><em><code>a<br># heading</code></em></p>")
+        == "```\na\n# heading\n```"
+    )
+
+
+def test_hoist_strong_with_language_class_exact_output():
+    assert (
+        html_to_markdown(
+            '<p><strong><code class="bash">a<br># heading</code></strong></p>'
+        )
+        == "```bash\na\n# heading\n```"
+    )
+
+
+def test_hoist_kbd_exact_output():
+    assert (
+        html_to_markdown("<p><kbd><code>a<br># heading</code></kbd></p>")
+        == "```\na\n# heading\n```"
+    )
+
+
+# (d) structural fence checks — red today
+
+
+def test_hoist_em_structural_fence():
+    _assert_one_clean_fence(
+        html_to_markdown("<p><em><code>a<br># heading</code></em></p>")
+    )
+
+
+def test_hoist_strong_structural_fence():
+    _assert_one_clean_fence(
+        html_to_markdown(
+            '<p><strong><code class="bash">a<br># heading</code></strong></p>'
+        )
+    )
+
+
+def test_hoist_link_structural_fence_and_link_text():
+    out = html_to_markdown('<p><a href="http://x">See <code>a<br>b</code> now</a></p>')
+    _assert_one_clean_fence(out)
+    assert "[See](http://x)" in out
+    assert "[now](http://x)" in out
+
+
+def test_hoist_split_strong_structural_fence_and_bold_text():
+    out = html_to_markdown("<p><strong>Note: <code>a<br>b</code> done</strong></p>")
+    _assert_one_clean_fence(out)
+    assert "**Note:**" in out
+    assert "**done**" in out
+
+
+# (e) guards that pass today and must keep passing
+
+
+def test_hoist_guard_inline_code_in_em_unchanged():
+    assert (
+        html_to_markdown("<p><em>Add <code>--gpus=1</code>.</em></p>")
+        == "*Add `--gpus=1`.*"
+    )
+
+
+def test_hoist_guard_prose_around_block_unchanged():
+    assert (
+        html_to_markdown('<p>Before <code class="bash">a<br>b</code> after</p>')
+        == "Before\n\n```bash\na\nb\n```\n\nafter"
+    )
