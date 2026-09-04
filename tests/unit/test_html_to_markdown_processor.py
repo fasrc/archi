@@ -3,13 +3,19 @@
 import sys
 from pathlib import Path
 
+import pytest
+from markdownify import STRIP, STRIP_ONE
+from markdownify import markdownify as library_markdownify
+
 from src.data_manager.collectors.localfile_resource import LocalFileResource
 from src.data_manager.collectors.processing import (
     _FENCE_LANGUAGES,
+    _INLINE_MARKUP_TAGS,
     _PROMOTED_ATTR,
     HtmlToMarkdownProcessor,
     ResourcePipeline,
     _fence_language,
+    _markdownify,
     _promote_block_code,
     _promoted_fence_language,
     _slice_kb_article,
@@ -26,6 +32,25 @@ def _html_resource(content="<h1>Title</h1>", suffix="html", **kwargs):
         source_type="web",
         **kwargs,
     )
+
+
+def _assert_one_clean_fence(md):
+    lines = md.splitlines()
+    fence_lines = [ln for ln in lines if ln.startswith("```")]
+    assert (
+        len(fence_lines) == 2
+    ), f"expected 2 fence lines, got {fence_lines!r} in:\n{md}"
+    assert (
+        fence_lines[1] == "```"
+    ), f"expected bare closing fence, got {fence_lines[1]!r}"
+    in_fence = False
+    for ln in lines:
+        if ln.startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence:
+            assert not ln.startswith(
+                "# "
+            ), f"found heading line outside fence in:\n{md}"
 
 
 def test_converts_html_to_atx_markdown_and_flips_suffix():
@@ -117,7 +142,7 @@ def test_converter_raises_keeps_original(monkeypatch):
     def _boom(*_a, **_k):
         raise RuntimeError("markdownify failed")
 
-    monkeypatch.setattr("src.data_manager.collectors.processing.markdownify", _boom)
+    monkeypatch.setattr("src.data_manager.collectors.processing._markdownify", _boom)
     resource = _html_resource(content="<h1>Title</h1>")
     out = HtmlToMarkdownProcessor().process(resource)
     assert out.content == "<h1>Title</h1>"
@@ -127,7 +152,7 @@ def test_converter_raises_keeps_original(monkeypatch):
 
 def test_blank_output_keeps_original(monkeypatch):
     monkeypatch.setattr(
-        "src.data_manager.collectors.processing.markdownify",
+        "src.data_manager.collectors.processing._markdownify",
         lambda *_a, **_k: "   \n  ",
     )
     resource = _html_resource(content="<script>noop()</script>")
@@ -681,6 +706,415 @@ def test_promote_block_code_drops_only_whitespace_beside_a_source_newline():
     # ('`cmd\n  \nnext`'). Whitespace with no newline beside it is payload and stays.
     assert _promoted_code_text("<p><code>cmd\t\n<br>next</code></p>") == "cmd\nnext"
     assert _promoted_code_text("<p><code>a\tb\t<br>c</code></p>") == "a\tb\t\nc"
+
+
+# --- fence delimiter sized to the longest backtick run inside the block (#407) ---
+
+
+def test_fence_widens_past_an_embedded_triple_backtick_run():
+    html = "<p><code>a<br>```<br># heading</code></p>"
+    assert html_to_markdown(html) == "````\na\n```\n# heading\n````"
+
+
+def test_fence_widens_past_an_embedded_triple_backtick_run_in_a_native_pre():
+    html = "<pre>a\n```\nb</pre>"
+    assert html_to_markdown(html) == "````\na\n```\nb\n````"
+
+
+def test_fence_widens_past_a_four_backtick_run():
+    html = "<pre>a\n````\nb</pre>"
+    assert html_to_markdown(html) == "`````\na\n````\nb\n`````"
+
+
+def test_fence_widens_and_keeps_the_infostring():
+    html = '<p><code class="bash">x<br>```<br>y</code></p>'
+    assert html_to_markdown(html) == "````bash\nx\n```\ny\n````"
+
+
+def test_fence_widens_for_a_mid_line_backtick_run():
+    html = "<pre>use ``` inline</pre>"
+    assert html_to_markdown(html) == "````\nuse ``` inline\n````"
+
+
+def test_fence_empty_block_is_unaffected():
+    assert html_to_markdown("<p>x</p><pre></pre><p>y</p>") == "x\n\ny"
+    assert _markdownify("<pre></pre>") == ""
+
+
+@pytest.mark.parametrize("mode", [STRIP, STRIP_ONE, None])
+def test_markdownify_matches_the_library_for_every_strip_pre_mode(mode):
+    html = "<p>x</p><pre>\n\n  a\n\n</pre><p>y</p>"
+    assert _markdownify(html, strip_pre=mode) == library_markdownify(
+        html, strip_pre=mode
+    )
+
+
+def test_markdownify_rejects_an_invalid_strip_pre_mode():
+    with pytest.raises(ValueError):
+        _markdownify("<pre>x</pre>", strip_pre="bogus")
+
+
+# --- hoist a promoted block out of inline formatting ancestors (issue #406) ---
+
+
+def _promote_block_code_soup(html):
+    from bs4 import BeautifulSoup
+
+    return BeautifulSoup(_promote_block_code(html), "html.parser")
+
+
+# (a) tag set
+
+
+def test_inline_markup_tags_set():
+    assert _INLINE_MARKUP_TAGS == frozenset(
+        {"a", "b", "strong", "em", "i", "del", "s", "kbd", "samp", "sub", "sup"}
+    )
+
+
+# (b) tree tests through _promote_block_code
+
+
+def test_hoist_em_pre_parent_is_p_and_em_removed():
+    from bs4 import Tag
+
+    soup = _promote_block_code_soup("<p><em><code>a<br># heading</code></em></p>")
+    pre = soup.find("pre")
+    assert pre.parent.name == "p"
+    assert soup.find("em") is None
+    assert pre.has_attr(_PROMOTED_ATTR)
+
+
+def test_hoist_strong_split_order_and_text():
+    from bs4 import Tag
+
+    soup = _promote_block_code_soup(
+        "<p><strong>Note: <code>a<br>b</code> done</strong></p>"
+    )
+    p = soup.find("p")
+    tag_children = [c for c in p.children if isinstance(c, Tag)]
+    assert [c.name for c in tag_children] == ["strong", "pre", "strong"]
+    assert tag_children[0].get_text().strip() == "Note:"
+    assert tag_children[2].get_text().strip() == "done"
+
+
+def test_hoist_a_with_title_splits_into_two_anchors_with_attrs():
+    soup = _promote_block_code_soup(
+        '<p><a href="http://x" title="T">See <code>a<br>b</code> now</a></p>'
+    )
+    anchors = soup.find_all("a")
+    assert len(anchors) == 2
+    assert all(a["href"] == "http://x" for a in anchors)
+    assert all(a["title"] == "T" for a in anchors)
+    pre = soup.find("pre")
+    assert pre.previous_sibling.name == "a"
+    assert pre.next_sibling.name == "a"
+
+
+def test_hoist_a_em_nested_pre_parent_is_p_two_anchors_each_with_em():
+    soup = _promote_block_code_soup(
+        '<p><a href="http://x"><em>See <code>a<br>b</code> now</em></a></p>'
+    )
+    pre = soup.find("pre")
+    assert pre.parent.name == "p"
+    anchors = soup.find_all("a")
+    assert len(anchors) == 2
+    assert all(len(a.find_all("em")) == 1 for a in anchors)
+
+
+def test_hoist_em_class_preserved_on_both_halves():
+    soup = _promote_block_code_soup(
+        '<p><em class="note">x <code>a<br>b</code> y</em></p>'
+    )
+    ems = soup.find_all("em")
+    assert len(ems) == 2
+    assert all(em.get("class") == ["note"] for em in ems)
+
+
+def test_hoist_em_whitespace_only_and_comment_only_leave_no_em():
+    for html in (
+        "<p><em> <code>a<br>b</code> </em></p>",
+        "<p><em><!-- c --><code>a<br>b</code></em></p>",
+    ):
+        soup = _promote_block_code_soup(html)
+        assert soup.find("em") is None, f"em survived in: {html}"
+
+
+def test_hoist_a_img_kept_inside_anchor_pre_is_next_sibling():
+    soup = _promote_block_code_soup(
+        '<p><a href="http://x"><img src="i.png"/><code>a<br>b</code></a></p>'
+    )
+    anchors = soup.find_all("a")
+    assert len(anchors) == 1
+    assert anchors[0].find("img") is not None
+    pre = soup.find("pre")
+    assert anchors[0].find_next_sibling() == pre
+
+
+def test_hoist_stops_at_non_inline_tag_span():
+    soup = _promote_block_code_soup("<p><em><span><code>a<br>b</code></span></em></p>")
+    pre = soup.find("pre")
+    assert pre.parent.name == "span"
+
+
+# (c) exact strings through html_to_markdown — red today
+
+
+def test_hoist_em_exact_output():
+    assert (
+        html_to_markdown("<p><em><code>a<br># heading</code></em></p>")
+        == "```\na\n# heading\n```"
+    )
+
+
+def test_hoist_strong_with_language_class_exact_output():
+    assert (
+        html_to_markdown(
+            '<p><strong><code class="bash">a<br># heading</code></strong></p>'
+        )
+        == "```bash\na\n# heading\n```"
+    )
+
+
+def test_hoist_kbd_exact_output():
+    assert (
+        html_to_markdown("<p><kbd><code>a<br># heading</code></kbd></p>")
+        == "```\na\n# heading\n```"
+    )
+
+
+# (d) structural fence checks — red today
+
+
+def test_hoist_em_structural_fence():
+    _assert_one_clean_fence(
+        html_to_markdown("<p><em><code>a<br># heading</code></em></p>")
+    )
+
+
+def test_hoist_strong_structural_fence():
+    _assert_one_clean_fence(
+        html_to_markdown(
+            '<p><strong><code class="bash">a<br># heading</code></strong></p>'
+        )
+    )
+
+
+def test_hoist_link_structural_fence_and_link_text():
+    out = html_to_markdown('<p><a href="http://x">See <code>a<br>b</code> now</a></p>')
+    _assert_one_clean_fence(out)
+    assert "[See](http://x)" in out
+    assert "[now](http://x)" in out
+
+
+def test_hoist_split_strong_structural_fence_and_bold_text():
+    out = html_to_markdown("<p><strong>Note: <code>a<br>b</code> done</strong></p>")
+    _assert_one_clean_fence(out)
+    assert "**Note:**" in out
+    assert "**done**" in out
+
+
+# (e) guards that pass today and must keep passing
+
+
+def test_hoist_guard_inline_code_in_em_unchanged():
+    assert (
+        html_to_markdown("<p><em>Add <code>--gpus=1</code>.</em></p>")
+        == "*Add `--gpus=1`.*"
+    )
+
+
+def test_hoist_guard_prose_around_block_unchanged():
+    assert (
+        html_to_markdown('<p>Before <code class="bash">a<br>b</code> after</p>')
+        == "Before\n\n```bash\na\nb\n```\n\nafter"
+    )
+
+
+# --- trim edge whitespace at the cut (issue #406, task 1.2) ---
+
+
+def test_hoist_trim_tree_strong_dot_string():
+    """After hoist+trim the two <strong> halves have no edge whitespace."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(
+        _promote_block_code("<p><strong>Note: <code>a<br>b</code> done</strong></p>"),
+        "html.parser",
+    )
+    strongs = soup.find_all("strong")
+    assert len(strongs) == 2
+    assert strongs[0].string == "Note:"
+    assert strongs[1].string == "done"
+
+
+def test_hoist_trim_link_exact():
+    assert (
+        html_to_markdown('<p><a href="http://x">See <code>a<br>b</code> now</a></p>')
+        == "[See](http://x)\n\n```\na\nb\n```\n\n[now](http://x)"
+    )
+
+
+def test_hoist_trim_split_strong_exact():
+    assert (
+        html_to_markdown("<p><strong>Note: <code>a<br>b</code> done</strong></p>")
+        == "**Note:**\n\n```\na\nb\n```\n\n**done**"
+    )
+
+
+def test_hoist_trim_a_em_nested_exact():
+    assert (
+        html_to_markdown(
+            '<p><a href="http://x"><em>See <code>a<br>b</code> now</em></a></p>'
+        )
+        == "[*See*](http://x)\n\n```\na\nb\n```\n\n[*now*](http://x)"
+    )
+
+
+def test_hoist_trim_a_with_title_exact():
+    assert (
+        html_to_markdown(
+            '<p><a href="http://x" title="T">See <code>a<br>b</code> now</a></p>'
+        )
+        == '[See](http://x "T")\n\n```\na\nb\n```\n\n[now](http://x "T")'
+    )
+
+
+def test_hoist_trim_double_code_in_em_exact():
+    assert (
+        html_to_markdown(
+            "<p><em>x <code>a<br>b</code> y <code>c<br>d</code> z</em></p>"
+        )
+        == "*x*\n\n```\na\nb\n```\n\n*y*\n\n```\nc\nd\n```\n\n*z*"
+    )
+
+
+def test_hoist_trim_img_space_before_cut_kept():
+    assert (
+        html_to_markdown('<p><em>x <img src="i.png"/> <code>a<br>b</code></em></p>')
+        == "*x ![](i.png)*\n\n```\na\nb\n```"
+    )
+
+
+# --- trim only the text that touches the cut (Codex review on PR #414) ---
+
+
+def test_hoist_trim_void_tag_at_head_cut_keeps_space_before_it():
+    """A void tag at the cut has no text; the space before it does not touch the cut."""
+    assert (
+        html_to_markdown('<p><em>x <img src="i.png"/><code>a<br>b</code></em></p>')
+        == "*x ![](i.png)*\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_trim_void_tag_at_tail_cut_keeps_space_after_it():
+    assert (
+        html_to_markdown('<p><em><code>a<br>b</code><img src="i.png"/> y</em></p>')
+        == "```\na\nb\n```\n\n*![](i.png) y*"
+    )
+
+
+def test_hoist_trim_tree_text_inside_earlier_tag_untouched():
+    soup = _promote_block_code_soup(
+        '<p><em>x <b>y </b><img src="i.png"/><code>a<br>b</code></em></p>'
+    )
+    assert soup.find("b").string == "y "
+    assert soup.find("em").contents[0] == "x "
+
+
+def test_hoist_trim_looks_through_a_comment_at_the_cut():
+    """A comment renders nothing, so the text before it still touches the cut."""
+    soup = _promote_block_code_soup("<p><em>x <!-- c --><code>a<br>b</code></em></p>")
+    assert soup.find("em").contents[0] == "x"
+
+
+# --- hoist many blocks out of one ancestor in linear time (Codex review on PR #414) ---
+
+
+def test_hoist_many_blocks_in_one_ancestor_moves_each_sibling_once(monkeypatch):
+    """Split the shared tail once per block: the move count is linear in the block count.
+
+    ``Tag.append`` is the only bs4 call that moves a node into a split half (``wrap``
+    uses it once per promoted block; parsing does not use it at all), so its call
+    count is a deterministic proxy for the work. Hoisting the blocks first-to-last
+    moved every later sibling once per earlier block (about n**2 appends).
+    """
+    from bs4.element import Tag
+
+    n = 40
+    html = (
+        "<p><em>"
+        + "".join(f"t{i} <code>a<br>b</code> " for i in range(n))
+        + "</em></p>"
+    )
+    calls = {"append": 0}
+    original_append = Tag.append
+
+    def counting_append(self, node):
+        calls["append"] += 1
+        return original_append(self, node)
+
+    monkeypatch.setattr(Tag, "append", counting_append)
+    out = _promote_block_code(html)
+    assert out.count("<pre") == n
+    assert calls["append"] <= 3 * n, calls["append"]
+
+
+def test_hoist_many_blocks_in_one_ancestor_exact_output_head_and_tail():
+    n = 40
+    html = (
+        "<p><em>"
+        + "".join(f"t{i} <code>a<br>b</code> " for i in range(n))
+        + "</em></p>"
+    )
+    out = html_to_markdown(html)
+    assert out.startswith("*t0*\n\n```\na\nb\n```\n\n*t1*\n\n```\na\nb\n```")
+    assert out.endswith("*t39*\n\n```\na\nb\n```")
+    assert out.count("```") == 2 * n
+
+
+def test_hoist_trim_continues_past_a_blank_node_and_a_comment():
+    # Codex round 2 on PR #414: a blank text node at the cut, then a comment (renders
+    # nothing), then text with leading whitespace. Removing the blank node must not end
+    # the trim, or the line after the fence starts with a space.
+    from bs4 import BeautifulSoup, NavigableString
+
+    html = "<p><em><code>a<br>b</code> <!-- c -->    done</em></p>"
+    assert html_to_markdown(html) == "```\na\nb\n```\n\n*done*"
+    em = BeautifulSoup(_promote_block_code(html), "html.parser").find("em")
+    assert [str(n) for n in em.contents if type(n) is NavigableString] == ["done"]
+
+
+def test_cut_edge_text_reads_only_the_edge_children():
+    # Codex round 2 on PR #414: the edge lookup must not scan every child of the half.
+    # With n blocks under one ancestor the head half is re-trimmed once per split, so a
+    # full scan there is O(n) per split and O(n^2) overall. Count list iterations on the
+    # lookup itself; the mutation that follows (replace_with/extract) is bs4's and pays
+    # its own Tag.index() scan, which this test does not measure.
+    from bs4 import BeautifulSoup
+
+    from src.data_manager.collectors.processing import _cut_edge_text
+
+    class CountingList(list):
+        def __init__(self, items):
+            super().__init__(items)
+            self.iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return super().__iter__()
+
+    soup = BeautifulSoup(
+        "<p><em>"
+        + "".join(f"<b>x{i}</b> " for i in range(50))
+        + "<!-- c --> tail  </em></p>",
+        "html.parser",
+    )
+    em = soup.find("em")
+    em.contents = CountingList(em.contents)
+    edge = _cut_edge_text(em, trailing=True)
+    assert str(edge) == " tail  "
+    assert em.contents.iterations == 0
 
 
 # --- the neighbour is the text that touches the break, not the first text anywhere ---

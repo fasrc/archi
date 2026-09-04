@@ -30,7 +30,7 @@ from typing import (
 )
 
 from bs4 import BeautifulSoup, NavigableString, Tag
-from markdownify import markdownify
+from markdownify import STRIP, STRIP_ONE, MarkdownConverter, strip1_pre, strip_pre
 
 from src.data_manager.collectors.resource_base import BaseResource
 from src.utils.logging import get_logger
@@ -351,6 +351,92 @@ def _strip_break_whitespace(br, *, stop_at) -> None:
             node.extract()
 
 
+_INLINE_MARKUP_TAGS: frozenset = frozenset(
+    {"a", "b", "strong", "em", "i", "del", "s", "kbd", "samp", "sub", "sup"}
+)
+
+
+def _has_content(tag) -> bool:
+    """True when *tag* has at least one Tag child or one non-whitespace text child."""
+    for node in tag.children:
+        if isinstance(node, Tag):
+            return True
+        if type(node) is NavigableString and str(node).strip():
+            return True
+    return False
+
+
+def _cut_edge_text(half, *, trailing: bool):
+    """Return the exact ``NavigableString`` that touches the cut edge of *half*, or None.
+
+    Walk down from *half* along its edge child (the last child of the head half, the
+    first child of the tail half), stepping inward past comments, which render nothing.
+    A tag with no children at the edge (``<img>``) ends the walk with None: whatever
+    text sits behind it does not touch the cut and must keep its whitespace.
+
+    Only the edge is read. The head half is re-trimmed once per split when several
+    blocks share one ancestor, so scanning its whole child list here would cost O(n)
+    per split and O(n^2) for the hoist (Codex review on PR #414).
+    """
+    node = half
+    while isinstance(node, Tag):
+        contents = node.contents
+        if not contents:
+            return None
+        edge = contents[-1] if trailing else contents[0]
+        while edge is not None and not (
+            isinstance(edge, Tag) or type(edge) is NavigableString
+        ):
+            edge = edge.previous_sibling if trailing else edge.next_sibling
+        if edge is None:
+            return None
+        node = edge
+    return node
+
+
+def _trim_cut_whitespace(half, *, trailing: bool) -> None:
+    """Strip leading or trailing whitespace from the text at the cut edge of *half*.
+
+    A blank text node at the edge is removed and the walk repeats, so text that sits
+    behind it — past a comment, say (``" <!-- c -->    done"``) — is trimmed too. The
+    loop ends at the first non-blank text, at a childless tag, or when nothing is left.
+    """
+    while True:
+        node = _cut_edge_text(half, trailing=trailing)
+        if node is None:
+            return
+        text = str(node)
+        stripped = text.rstrip() if trailing else text.lstrip()
+        if stripped:
+            if stripped != text:
+                node.replace_with(stripped)
+            return
+        node.extract()
+
+
+def _hoist_out_of_inline(pre, soup) -> None:
+    """Lift *pre* out of any inline-markup ancestors (issue #406).
+
+    A promoted ``<pre>`` nested inside ``<em>``, ``<strong>``, ``<a>``, etc. would render
+    wrapped in the inline markers.  Walk up the parent chain while the parent is one of
+    the eleven inline tags; at each level split the parent around *pre*: re-append the
+    siblings that follow *pre* into a clone of the parent and insert that clone (and *pre*
+    itself) after the original parent, discarding the clone when it is empty.
+    """
+    while isinstance(pre.parent, Tag) and pre.parent.name in _INLINE_MARKUP_TAGS:
+        parent = pre.parent
+        tail = soup.new_tag(parent.name, attrs=dict(parent.attrs))
+        for node in list(pre.next_siblings):
+            tail.append(node)
+        parent.insert_after(pre)
+        _trim_cut_whitespace(parent, trailing=True)
+        _trim_cut_whitespace(tail, trailing=False)
+        if _has_content(tail):
+            pre.insert_after(tail)
+        if not _has_content(parent):
+            parent.decompose()
+
+
 def _promote_block_code(html: str) -> str:
     """Promote bare multi-line ``<code>`` elements to ``<pre><code>`` blocks (issue #399).
 
@@ -364,6 +450,7 @@ def _promote_block_code(html: str) -> str:
     marked with ``_PROMOTED_ATTR`` so ``_promoted_fence_language`` labels only it.
     """
     soup = BeautifulSoup(html, "html.parser")
+    promoted = []
     for code in soup.find_all("code"):
         if code.find_parent("pre") is not None:
             continue
@@ -383,6 +470,15 @@ def _promote_block_code(html: str) -> str:
         if code.get("class"):
             pre["class"] = code["class"]
         code.wrap(pre)
+        promoted.append(pre)
+    # Hoist last-to-first. Each split moves the siblings after the block into the tail
+    # half; with the later blocks already out of the ancestor, that tail holds only the
+    # nodes up to the next block, so every sibling moves once. First-to-last moved the
+    # whole remaining tail once per block: quadratic in the block count (Codex review on
+    # PR #414). The final tree is the same either way, because the split at each block
+    # partitions the ancestor's children the same way regardless of order.
+    for pre in reversed(promoted):
+        _hoist_out_of_inline(pre, soup)
     return str(soup)
 
 
@@ -430,6 +526,44 @@ def _promoted_fence_language(pre) -> str:
     return _fence_language(pre)
 
 
+_BACKTICK_RUNS = re.compile(r"`+")
+
+
+class _ArchiMarkdownConverter(MarkdownConverter):
+    """The project's ``MarkdownConverter`` overrides (issue #407).
+
+    This is the one place project-specific ``MarkdownConverter`` overrides live;
+    issue #410 adds a ``convert_list`` override here alongside ``convert_pre``.
+    """
+
+    def convert_pre(self, el, text, parent_tags):
+        if not text:
+            return ""
+        code_language = self.options["code_language"]
+
+        if self.options["code_language_callback"]:
+            code_language = self.options["code_language_callback"](el) or code_language
+
+        mode = self.options["strip_pre"]
+        if mode == STRIP:
+            text = strip_pre(text)  # remove all leading/trailing newlines
+        elif mode == STRIP_ONE:
+            text = strip1_pre(text)  # remove one leading/trailing newline
+        elif mode is None:
+            pass  # leave leading and trailing newlines as-is
+        else:
+            raise ValueError("Invalid value for strip_pre: %s" % mode)
+
+        longest_run = max((len(m) for m in _BACKTICK_RUNS.findall(text)), default=0)
+        fence = "`" * max(3, longest_run + 1)
+        return "\n\n%s%s\n%s\n%s\n\n" % (fence, code_language, text, fence)
+
+
+def _markdownify(html: str, **options) -> str:
+    """Mirror the library's ``markdownify()`` using the project converter."""
+    return _ArchiMarkdownConverter(**options).convert(html)
+
+
 def _markdownify_deep_safe(content: str) -> str:
     """Convert HTML to Markdown with headroom for deeply-nested input.
 
@@ -444,7 +578,7 @@ def _markdownify_deep_safe(content: str) -> str:
 
     def _worker() -> None:
         try:
-            result["value"] = markdownify(
+            result["value"] = _markdownify(
                 _promote_block_code(content),
                 heading_style="ATX",
                 code_language_callback=_promoted_fence_language,
