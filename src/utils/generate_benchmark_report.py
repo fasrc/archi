@@ -110,8 +110,8 @@ def parse_benchmark_results(results, metadata):
         "code_version": metadata.get("code_version"),
         # Three readings, and the renderers keep them apart: the sentinel means
         # the artifact predates the field, None means no ingest was observed
-        # (the run reused an existing corpus), a float means seconds. A plain
-        # .get() would collapse the first two into one wrong claim.
+        # while the run waited, a float means seconds. A plain .get() would
+        # collapse the first two into one wrong claim.
         "ingest_wall_seconds": result.get("ingest_wall_seconds", _INGEST_NOT_RECORDED),
     }
 
@@ -1043,7 +1043,7 @@ def format_provenance_markdown(provenance):
     lines.append("")
     if ingest is _INGEST_NOT_RECORDED:
         lines.append(
-            "⏱️ Time to ingest is **not recorded**: this artifact predates the " "field."
+            "⏱️ Time to ingest is **not recorded**: this artifact predates the field."
         )
     elif ingest is None:
         lines.append(
