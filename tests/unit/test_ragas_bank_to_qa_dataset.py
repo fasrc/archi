@@ -255,6 +255,50 @@ def test_a_time_sensitive_bank_row_is_refused_because_v2_needs_an_oracle(
     assert not out.exists()
 
 
+def test_refuses_a_bank_with_duplicate_object_keys(tmp_path, capsys):
+    # ``json.loads`` keeps the last spelling of a repeated key and says nothing.
+    # The import path refuses the file instead, because the row that would be
+    # scored is not the row that was authored -- and the CLI must agree.
+    bank = tmp_path / "bank.json"
+    bank.write_text(
+        '[{"user_input": "Q", "reference": "A", "user_input": "Q again"}]',
+        encoding="utf-8",
+    )
+    out = tmp_path / "out.json"
+
+    code = converter.main([str(bank), "--no-anchors", "--out", str(out)])
+
+    assert code == 2
+    assert "duplicate key" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_refuses_a_carried_number_it_cannot_reproduce_exactly(tmp_path, capsys):
+    # A value binary floats cannot hold would be silently rewritten in the
+    # dataset and in everything derived from it; the import path refuses it and
+    # tells the author to quote it as a string.
+    bank = tmp_path / "bank.json"
+    bank.write_text(
+        '[{"user_input": "Q", "reference": "A", "weight": 0.12345678901234567890123}]',
+        encoding="utf-8",
+    )
+    out = tmp_path / "out.json"
+
+    code = converter.main([str(bank), "--no-anchors", "--out", str(out)])
+
+    assert code == 2
+    assert "cannot be carried exactly" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_an_ordinary_carried_number_survives_as_a_number(tmp_path):
+    code, out = _run(tmp_path, [dict(BANK_ROW, weight=0.5)])
+
+    assert code == 0
+    (item,) = _items(out)
+    assert item.extra["weight"] == 0.5
+
+
 def test_refuses_duplicate_rows_naming_the_row_numbers(tmp_path, capsys):
     code, out = _run(tmp_path, [BANK_ROW, SECOND_ROW, dict(BANK_ROW)])
 
@@ -420,7 +464,21 @@ def test_json_report_carries_the_counts_and_the_output_sha256(tmp_path, capsys):
     assert report["anchors_added"] == 1
     assert report["anchors_skipped"] == 1
     assert report["items"] == 2
+    assert report["explicit_ids"] == 0
     assert report["sha256"] == converter.sha256_file(out)
+
+
+def test_the_report_counts_rows_that_carry_an_explicit_id(tmp_path, capsys):
+    # An explicit id is kept verbatim, so that item cannot be matched to a RAGAS
+    # artifact by recomputing the id from its question and reference. The report
+    # says how many rows are in that position.
+    rows = [dict(BANK_ROW, id="qa-hand-authored-id"), SECOND_ROW]
+
+    code, _out = _run(tmp_path, rows, extra=["--json"])
+
+    assert code == 0
+    report = json.loads(capsys.readouterr().out)
+    assert (report["items"], report["explicit_ids"]) == (2, 1)
 
 
 def test_a_missing_bank_file_is_a_usage_error(tmp_path, capsys):

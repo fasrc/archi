@@ -11,10 +11,13 @@ the one adapter that maps the dialect lives behind the browser import path
 (``EvaluationCatalog.import_dataset``). This script is the CLI door to that same
 adapter.
 
-It reuses, and never reimplements, five library pieces:
+It reuses, and never reimplements, six library pieces:
 
 * ``benchmark_schema.normalize_bank`` -- legacy ``question``/``answer`` rows onto
   ragas 0.3.5's ``user_input``/``reference``, exactly as the harness loads a bank;
+* ``catalog._iter_json_array_rows`` + ``catalog._exact_json_numbers`` -- the
+  strict read: a repeated object key and a number binary floats cannot hold are
+  refused instead of silently collapsed and rounded;
 * ``catalog._normalize_import_dialect`` -- the dialect mapping, the
   ``time_sensitive`` default, the content-derived ids, the alias+native refusal
   and the duplicate-row refusal;
@@ -29,6 +32,12 @@ deduped on exact ``user_input`` with the bank row winning
 the ids here recomputable from a RAGAS artifact's ``question`` +
 ``reference_answer`` later, and what keeps the two runs comparable question for
 question. On the FASRC bank it is 105 + 5 - 1 = 109 items.
+
+The one exception to that join: a bank row that carries its own ``id`` keeps it,
+so its item id is authored rather than derived, and a RAGAS result row carries
+the question and reference but not the bank's id -- such an item has to be
+matched by question text instead. The run report counts those rows
+(``explicit_ids``), and it is 0 for the FASRC bank, whose rows carry no ids.
 
 Refusals are loud on purpose. A bank that cannot be converted honestly -- a row
 spelling one concept twice, two rows that are the same question and answer, a row
@@ -46,9 +55,11 @@ Usage:
 
     archi eval qa --dataset fasrc.qa-v2.json --agent-config <agent.yaml> ...
 
-Exit codes: 0 converted, 1 usage or unreadable input, 2 refused (not a RAGAS
-bank; a row carrying both dialect spellings; duplicate rows; a row the dataset
-reader rejects).
+Exit codes: 0 converted, 1 the run cannot start (bad flags, a file that cannot be
+read, an ``--out`` that is not ``.json`` or that would overwrite an input),
+2 refused (not a RAGAS bank; malformed JSON; a repeated object key; a number that
+cannot be carried exactly; a row carrying both dialect spellings; duplicate rows;
+a row the dataset reader rejects).
 """
 
 from __future__ import annotations
@@ -68,6 +79,8 @@ from src.evaluation.qa.artifacts import (  # noqa: E402  # isort: skip
     sha256_file,
 )
 from src.evaluation.qa.catalog import (  # noqa: E402  # isort: skip
+    _exact_json_numbers,
+    _iter_json_array_rows,
     _normalize_import_dialect,
 )
 from src.evaluation.qa.dataset import (  # noqa: E402  # isort: skip
@@ -98,15 +111,11 @@ class BankRefused(Exception):
     """The input cannot be converted honestly (exit 2)."""
 
 
-def _read_json(path: Path, *, what: str) -> Any:
+def _read_bytes(path: Path, *, what: str) -> bytes:
     try:
-        text = path.read_text(encoding="utf-8")
+        return path.read_bytes()
     except OSError as exc:
         raise UsageError(f"cannot read {what} {path}: {exc}") from exc
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise UsageError(f"{what} {path} is not valid JSON: {exc}") from exc
 
 
 def _spells_one_concept_twice(row: Any) -> bool:
@@ -145,13 +154,27 @@ def load_bank(path: Path, *, what: str = "bank") -> List[Any]:
     bank and a V1 dataset are the same bytes (``question``/``answer``, no schema
     version), nothing in the file separates them, and converting reproduces a
     native row exactly, so guessing could only ever refuse valid input.
+
+    Parsed by the import path's own strict reader rather than ``json.loads``: a
+    repeated object key and a number no binary float can hold are both refused
+    there, while ``json.loads`` would silently keep the last spelling of the key
+    and round the number. Reading the bank leniently and re-serializing it would
+    hand the adapter a document the author never wrote, and the two entry points
+    would stop carrying identical content.
     """
-    document = _read_json(path, what=what)
-    if not isinstance(document, list):
+    blob = _read_bytes(path, what=what)
+    try:
+        document = [
+            _exact_json_numbers(row, f"{what} row {index}")
+            for index, row in enumerate(_iter_json_array_rows(blob), 1)
+        ]
+    except ValueError as exc:
+        raise BankRefused(f"{path}: {exc}") from exc
+    if not document:
         raise BankRefused(
-            f"{path} is not a RAGAS bank: a bank is a top-level JSON array of "
-            "rows, and this file is not one (a qa-dataset-v1/v2 document is an "
-            "object with a schema_version)"
+            f"{path} is not a RAGAS bank: a bank is a non-empty top-level JSON "
+            "array of rows, and this file is not one (a qa-dataset-v1/v2 "
+            "document is an object with a schema_version)"
         )
     return _modernized(document)
 
@@ -309,6 +332,11 @@ def convert(
         "status_filter": list(statuses),
         "dropped_by_status": len(merged) - len(selected),
         "items": count,
+        # Rows whose id was authored, not derived: those items cannot be matched
+        # to a RAGAS artifact by recomputing the id from question + reference.
+        "explicit_ids": sum(
+            1 for row in selected if isinstance(row, dict) and row.get("id")
+        ),
         "out": str(out),
         "sha256": sha256_file(out),
     }
@@ -334,6 +362,10 @@ def format_report(report: Dict[str, Any]) -> str:
             f"{report['dropped_by_status']} rows"
         )
     lines.append(f"items written: {report['items']}")
+    lines.append(
+        f"rows carrying an authored id: {report['explicit_ids']} "
+        "(the rest join to a RAGAS run by derived id)"
+    )
     lines.append(f"out: {report['out']}")
     lines.append(f"sha256: {report['sha256']}")
     return "\n".join(lines)
