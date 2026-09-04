@@ -1091,28 +1091,39 @@ def _ingest_wait_timeout_message(
     last_ok_url: Optional[str],
     last_state: Optional[str],
     last_step: Any,
-    last_error: Optional[BaseException],
+    errors_by_url: Dict[str, BaseException],
 ) -> str:
     """Explain an ingest timeout in terms of what the harness actually observed.
 
-    `last_error` only ever appears when it is still the live reason nothing is
-    answering: the wait loop clears it on every successful poll, so this can no
-    longer quote a connection failure from a candidate URL it fell past (issue
-    #378, defect 2).
+    Errors are kept per URL and reported against the URL they belong to, which
+    is what issue #378's defect 2 needed in both its forms. The first form was
+    a single `last_error` surviving a later candidate's success, so a timeout
+    quoted a connection failure from a URL that was working around it. The
+    second is subtler: when the URL that *had* been serving status goes down,
+    the loop falls through the remaining candidates too, and one shared
+    `last_error` ends up holding whatever the final fallback raised -- often an
+    unrelated DNS failure for `host.containers.internal`. The operator needs
+    the failure of the endpoint that was working, so that is what this reports.
     """
     if last_ok_url is None:
-        observed = (
-            "none of the candidate status URLs ever answered "
-            f"({', '.join(candidate_urls)})"
+        # Nothing ever answered, so every candidate's error is current and each
+        # one is a distinct fact about a distinct host. Label them.
+        tried = "; ".join(
+            f"{url}: {errors_by_url[url]}"
+            for url in dict.fromkeys(candidate_urls)
+            if url in errors_by_url
         )
-    else:
-        observed = (
-            f"last successful poll was {last_ok_url} -> "
-            f"state={last_state} step={last_step}"
-        )
+        observed = f"none of the candidate status URLs ever answered ({tried})"
+        return f"Timed out waiting for data-manager ingestion: {reason}. {observed}."
+
+    observed = (
+        f"last successful poll was {last_ok_url} -> "
+        f"state={last_state} step={last_step}"
+    )
     message = f"Timed out waiting for data-manager ingestion: {reason}. {observed}."
-    if last_error is not None:
-        message = f"{message} Last error: {last_error}"
+    serving_error = errors_by_url.get(last_ok_url)
+    if serving_error is not None:
+        message = f"{message} That URL now fails with: {serving_error}"
     return message
 
 
@@ -2275,7 +2286,9 @@ class Benchmarker:
         last_ok_url: Optional[str] = None
         last_state: Optional[str] = None
         last_step: Any = None
-        last_error: Optional[BaseException] = None
+        # Per URL, not one shared "last error": an error belongs to the host
+        # that raised it, and only the serving URL's failure explains a timeout.
+        errors_by_url: Dict[str, BaseException] = {}
         attempt = 0
 
         logger.info(
@@ -2305,7 +2318,7 @@ class Benchmarker:
                     ValueError,
                     json.JSONDecodeError,
                 ) as exc:
-                    last_error = exc
+                    errors_by_url[status_url] = exc
                     continue
 
                 state = str(payload.get("state", "")).lower()
@@ -2317,11 +2330,12 @@ class Benchmarker:
                     state,
                     step,
                 )
-                # This URL answered, so whatever an earlier candidate raised is
-                # no longer the reason for anything -- drop it (defect 2).
-                # Reachability facts update on any answer; the stall budget
-                # restarts only on evidence of actual progress.
-                last_error = None
+                # THIS URL answered, so only ITS own recorded failure is stale.
+                # Another candidate's error is still that candidate's business
+                # and stays on the books against it (defect 2). Reachability
+                # facts update on any answer; the stall budget restarts only on
+                # evidence of actual progress.
+                errors_by_url.pop(status_url, None)
                 last_ok_url = status_url
                 last_state = state
                 last_step = step
@@ -2352,7 +2366,7 @@ class Benchmarker:
                         last_ok_url=last_ok_url,
                         last_state=last_state,
                         last_step=last_step,
-                        last_error=last_error,
+                        errors_by_url=errors_by_url,
                     )
                 )
             if budgets.max_wait_seconds and elapsed >= budgets.max_wait_seconds:
@@ -2364,7 +2378,7 @@ class Benchmarker:
                         last_ok_url=last_ok_url,
                         last_state=last_state,
                         last_step=last_step,
-                        last_error=last_error,
+                        errors_by_url=errors_by_url,
                     )
                 )
 
