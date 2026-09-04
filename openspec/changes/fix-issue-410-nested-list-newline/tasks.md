@@ -192,6 +192,9 @@ Standing notes for every task:
       6. Record the PR URL as a line under this task, tick the task, and commit that edit
          with the gate. Do not merge.
 
-      Branch pushed to fork (swinney/archi). `gh pr create --repo fasrc/archi` failed with
-      "Resource not accessible by personal access token"; PR not opened per the stop condition.
-      Gate: green (3685 passed). Live: 0 glued closers, 36,966 chars.
+      The loop pushed the branch to the fork (swinney/archi). `gh pr create --repo fasrc/archi`
+      failed with "Resource not accessible by personal access token"; the loop stopped per the
+      stop condition. Gate in the loop: green (3685 passed). Live: 0 glued closers, 36,966 chars.
+      The nightly wrap-up (2026-09-04) pushed the same tip `42136e3b` to `origin` and opened
+      the PR: https://github.com/fasrc/archi/pull/429 (host gate: 3687 passed, 1 skipped,
+      1 xfailed; diff coverage 100%, 31 lines, 0 missing).
