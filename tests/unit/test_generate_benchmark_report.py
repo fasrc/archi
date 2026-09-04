@@ -182,6 +182,47 @@ def test_html_omits_the_retrieval_section_when_source_accuracy_is_unscored():
     assert "Retrieval Accuracy" not in html
 
 
+def test_html_omits_the_retrieval_section_when_nothing_was_source_scorable():
+    """``build_source_aggregates`` emits ``0.0 / 0.0 / 0`` when no question
+    declared an expected source — an EMPTY sample, not a measured failure.
+    Rendering it produced "0/0 (0.0%) Fully Correct", which reads as a total
+    retrieval collapse: the same "unscored shown as a scored zero" confusion
+    #279 is about, one section over."""
+    totals = {
+        "source_accuracy": 0.0,
+        "relative_source_accuracy": 0.0,
+        "source_scored_count": 0,
+    }
+
+    html = format_html_output(
+        _CONFIG, "ragas-bench", "2026-09-03", {"question_1": _ok_row()}, totals
+    )
+
+    assert "Retrieval Accuracy" not in html
+
+
+def test_html_retrieval_counts_round_rather_than_truncate():
+    """The counts are reconstructed by multiplying the rate back out, and binary
+    floats make ``22 * (15/22) == 14.999999999999998`` — which ``int()`` turns
+    into 14. The markdown path was already fixed to ``round()``; the HTML path
+    was not, so the two reports disagreed about the same artifact and the HTML
+    one moved a hit into the "Incorrect" bucket."""
+    totals = {
+        "source_accuracy": 15 / 22,
+        "relative_source_accuracy": 17 / 22,
+        "source_scored_count": 22,
+    }
+
+    html = format_html_output(
+        _CONFIG, "ragas-bench", "2026-09-03", {"question_1": _ok_row()}, totals
+    )
+
+    assert "Fully Correct: 15/22" in html
+    # partial = 17 - 15 = 2, incorrect = 22 - 15 - 2 = 5
+    assert ">2</div>" in html
+    assert ">5</div>" in html
+
+
 def test_html_still_renders_the_retrieval_section_when_the_metrics_are_there():
     """The guard must not swallow a real zero: 0.0 accuracy is a measured floor
     result, not an absent one."""

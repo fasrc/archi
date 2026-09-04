@@ -8,7 +8,10 @@ for artifacts that predate provenance stamping.
 
 from __future__ import annotations
 
-from src.utils.generate_benchmark_report import format_markdown_output
+from src.utils.generate_benchmark_report import (
+    format_html_output,
+    format_markdown_output,
+)
 
 _CONFIG = {"services": {"benchmarking": {"modes": ["RAGAS", "SOURCES"]}}}
 
@@ -260,6 +263,42 @@ def test_markdown_omits_the_retrieval_section_when_no_source_metrics_were_record
 
     assert "Retrieval Accuracy" not in md
     assert "Aggregate RAGAS Metrics" in md
+
+
+def test_markdown_omits_the_retrieval_section_when_nothing_was_source_scorable():
+    """Mirror of the HTML case: ``source_scored_count: 0`` is an empty sample,
+    and "0/0 (0.0%)" reads as a measured retrieval collapse instead."""
+    totals = {
+        "source_accuracy": 0.0,
+        "relative_source_accuracy": 0.0,
+        "source_scored_count": 0,
+    }
+
+    md = format_markdown_output(
+        _CONFIG, "bench", "2026-09-03", {"q": _ok_row()}, totals, None
+    )
+
+    assert "Retrieval Accuracy" not in md
+
+
+def test_the_two_reports_agree_on_the_retrieval_tally():
+    """The HTML report reconstructed its counts with ``int()`` and the markdown
+    report with ``round()``, so one artifact yielded two different tallies. They
+    are rendered from the same numbers and must say the same thing."""
+    totals = {
+        "source_accuracy": 15 / 22,
+        "relative_source_accuracy": 17 / 22,
+        "source_scored_count": 22,
+    }
+    questions = {"q": _ok_row()}
+
+    md = format_markdown_output(_CONFIG, "bench", "2026-09-03", questions, totals, None)
+    html = format_html_output(_CONFIG, "bench", "2026-09-03", questions, totals)
+
+    assert "- **Fully Correct:** 15/22 (68.2%)" in md
+    assert "Fully Correct: 15/22" in html
+    assert "- **Partially Correct** (some expected sources retrieved): 2" in md
+    assert "- **Incorrect** (no expected sources retrieved): 5" in md
 
 
 def test_markdown_still_renders_the_retrieval_section_when_the_metrics_are_there():

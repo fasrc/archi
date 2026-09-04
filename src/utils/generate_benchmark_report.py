@@ -407,21 +407,21 @@ def format_html_output(
     sources_mode = "SOURCES" in config_data.get("services", {}).get(
         "benchmarking", {}
     ).get("modes", [])
-    if sources_mode and _has_source_tally(total_results):
+    if sources_mode and _has_source_tally(total_results, questions):
 
         # Retrieval Accuracy
         ret_accuracy = total_results.get("source_accuracy", None)
-        # The scores were divided by the SOURCE-SCORABLE question count, which
-        # excludes zero-source rows (e.g. the `should_refuse` anchor). Deriving the
-        # count from len(questions) would disagree with the score it is derived
-        # from. Older result files predate the key and used len(questions).
-        ret_total = total_results.get("source_scored_count", len(questions))
-        ret_correct = int(ret_total * ret_accuracy)
+        ret_total = source_scored_count(total_results, questions)
+        # round(), not int(): the count is reconstructed by multiplying the rate
+        # back out, and 22 * (15/22) == 14.999999999999998 in binary floating
+        # point, which int() truncates to 14 — moving a hit into the "Incorrect"
+        # bucket and disagreeing with the markdown report of the same artifact.
+        ret_correct = round(ret_total * ret_accuracy)
 
         if ret_accuracy:
             ret_accuracy *= 100
         ret_partial = total_results.get("relative_source_accuracy", None)
-        ret_partial = int(ret_total * ret_partial) - ret_correct
+        ret_partial = round(ret_total * ret_partial) - ret_correct
 
         html_parts.append('<div class="metrics">')
         html_parts.append("<h2>🎯 Retrieval Accuracy</h2>")
@@ -858,21 +858,41 @@ def _is_scored(value):
 UNSCORED_CELL = "n/a (unscored)"
 
 
-def _has_source_tally(total_results):
+def source_scored_count(total_results, questions):
+    """The retrieval-accuracy denominator.
+
+    The scores were divided by the SOURCE-SCORABLE question count, which excludes
+    zero-source rows (the ``should_refuse`` anchor is why this exists). Deriving
+    the count from ``len(questions)`` would disagree with the score it is derived
+    from; artifacts older than the key predate that fix and used ``len(questions)``.
+    """
+    return total_results.get("source_scored_count", len(questions))
+
+
+def _has_source_tally(total_results, questions):
     """True when the retrieval-accuracy section can actually be computed.
 
-    Both rates are multiplied by ``source_scored_count`` to produce the three
-    counts the section shows, so either one missing makes the whole tally
-    unreportable. A run CAN declare ``SOURCES`` and record neither — every
-    question degraded, or an artifact older than the keys — and unguarded that
-    reached ``int(count * None)`` and took the report down with a ``TypeError``
-    after the scores had already been computed and dumped (#279).
+    Three things have to hold, and each of them failed differently in practice:
 
-    A measured ``0.0`` is a real floor result and keeps its section; only an
-    absent or non-finite rate suppresses it.
+    - Both rates present. A run CAN declare ``SOURCES`` and record neither —
+      every question degraded, or an artifact older than the keys — and
+      unguarded that reached ``int(count * None)`` and took the report down with
+      a ``TypeError`` after the scores had already been computed and dumped.
+    - Both rates finite, for the same reason a metric cell has to be (#279):
+      ``int(count * nan)`` raises ``ValueError``.
+    - A denominator above zero. ``build_source_aggregates`` emits
+      ``0.0 / 0.0 / 0`` when NO question declared an expected source, and
+      rendering that printed "Fully Correct: 0/0 (0.0%)" — an empty sample shown
+      as a total retrieval failure, which is the same "unscored read as a scored
+      zero" confusion this issue is about.
+
+    A measured ``0.0`` over a real denominator IS a floor result and keeps its
+    section; only an absent, non-finite or empty-sample tally suppresses it.
     """
-    return _is_scored(total_results.get("source_accuracy")) and _is_scored(
-        total_results.get("relative_source_accuracy")
+    return (
+        _is_scored(total_results.get("source_accuracy"))
+        and _is_scored(total_results.get("relative_source_accuracy"))
+        and source_scored_count(total_results, questions) > 0
     )
 
 
@@ -1058,14 +1078,12 @@ def format_markdown_output(
     if provenance_md:
         parts += ["", provenance_md]
 
-    if "SOURCES" in modes and _has_source_tally(total_results):
+    if "SOURCES" in modes and _has_source_tally(total_results, questions):
         ret_accuracy = total_results.get("source_accuracy", None)
-        # Same denominator caveat as the HTML report: the score was divided by
-        # the SOURCE-SCORABLE question count, so derive the count from the same
-        # key (older artifacts predate it and used len(questions)).
-        ret_total = total_results.get("source_scored_count", len(questions))
-        # round(), not int(): the accuracy is stored as a float, and truncating
-        # 15/22*22 == 14.999… would report one hit fewer than the run scored.
+        # Same denominator and the same round()-not-int() reconstruction as the
+        # HTML report, from the same shared helper: the two reports render the
+        # same numbers and must not disagree about them.
+        ret_total = source_scored_count(total_results, questions)
         ret_correct = round(ret_total * ret_accuracy)
         if ret_accuracy:
             ret_accuracy *= 100
