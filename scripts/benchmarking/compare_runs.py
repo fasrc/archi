@@ -89,6 +89,37 @@ SMALL_SLICE = 10
 #: An easy-retrieve anchor drop this large is an alarm when no sigma is known.
 ANCHOR_DROP_WITHOUT_SIGMA = 0.10
 
+#: How much of a refusal-anchor answer the report quotes.
+REFUSAL_SNIPPET_CHARS = 160
+
+#: An answer at least this long that never declines is a confident answer to a
+#: question the system has no documentation for — the failure the anchor exists
+#: to catch. Shorter non-declining answers go to REVIEW rather than being judged
+#: by length alone.
+CONFIDENT_ANSWER_CHARS = 200
+
+#: Phrases that mark a decline-and-refer. Deliberately a small, readable list:
+#: the verdict it produces is a *proposal for a human*, printed beside the first
+#: 160 characters of the answer so the reader can overrule it, and a `--qa-run`
+#: item pass overrides it outright.
+DECLINE_PATTERNS = (
+    r"i (?:do not|don't) have",
+    r"i (?:do not|don't) know",
+    r"i (?:can not|cannot|can't) (?:help|answer|provide|find)",
+    r"i(?:'m| am) (?:not able|unable)",
+    r"(?:outside|beyond) (?:the |my )?(?:scope|documentation)",
+    r"not (?:covered|documented) (?:by|in)",
+    # Impersonal declines. The 2026-08-17 runs answered this anchor with "The
+    # indexed FASRC documentation does not appear to cover ..." — a correct
+    # refusal that never says "I", which a first-person-only rule scored FAIL.
+    r"do(?:es)? not (?:appear to |seem to )?(?:cover|include|mention|contain|discuss|have|address)",
+    r"(?:is|are) not (?:covered|documented|included|available)",
+    r"no (?:fasrc )?documentation",
+    r"(?:a )?(?:separate|different) institution",
+    r"(?:refer|reach out|contact) (?:you )?to",
+)
+_DECLINE_RE = re.compile("|".join(DECLINE_PATTERNS), re.IGNORECASE)
+
 #: ``src/bin/service_benchmark.py`` writes this prefix instead of a value it
 #: could not read; it is an absence, not an identity.
 UNAVAILABLE_PREFIX = "<unavailable:"
@@ -329,10 +360,22 @@ def require_same_question_sets(baseline: Arm, arms: Sequence[Arm]) -> None:
 # --- G3 and Procedure E: the provenance gates -------------------------------
 
 
-def provenance_rows(arms: Sequence[Arm]) -> List[dict]:
-    """One row per provenance field, one column per arm."""
+def provenance_rows(
+    arms: Sequence[Arm], anchors: Optional[Dict[str, dict]] = None
+) -> List[dict]:
+    """One row per provenance field, one column per arm.
+
+    The three question counts are provenance too: "delta +0.03" means nothing
+    without the denominator it was averaged over, and the anchors split is the
+    difference between the bank's score and the bank's score with five tripwires
+    stirred into it.
+    """
+    counts = anchors if anchors is not None else {}
     fields = [
         ("source", lambda a: a.source),
+        ("questions asked", lambda a: question_counts(a, counts)["asked"]),
+        ("anchors", lambda a: question_counts(a, counts)["anchors"]),
+        ("bank rows", lambda a: question_counts(a, counts)["bank_rows"]),
         ("corpus_fingerprint", lambda a: a.corpus_fingerprint or "not recorded"),
         ("corpus_snapshot_id", lambda a: a.corpus_snapshot_id or "not recorded"),
         ("code_version.digest", lambda a: a.code_version_digest or "not recorded"),
@@ -705,6 +748,428 @@ def timing_block(arms: Sequence[Arm]) -> List[dict]:
     return block
 
 
+# --- G8: the anchors ---------------------------------------------------------
+
+
+def _project_root_on_path() -> None:
+    """Make ``src`` importable from a plain ``python scripts/...`` run.
+
+    The two project imports below happen *inside* their functions on purpose:
+    a module-level import would be sorted above this shim by isort and the
+    script would then only work when it was already run from the repo root.
+    """
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+
+
+def anchor_questions(path: str, *, required: bool = True) -> Dict[str, dict]:
+    """The anchors, keyed by question text.
+
+    Read through the harness's own ``normalize_bank`` so an anchors file written
+    in the legacy dialect (``question``/``answer``) matches the same rows the
+    harness would have asked. The ``anchor_type`` used everywhere downstream
+    comes from **this file**, never from the artifact row: the FASRC bank sets
+    ``anchor_type`` on all 109 rows, so the field cannot tell an anchor from a
+    bank question.
+    """
+    _project_root_on_path()
+    try:
+        from src.utils.benchmark_schema import normalize_bank
+    except ImportError as exc:  # pragma: no cover - environment, not logic
+        raise CompareError(
+            f"the anchors reader needs the project importable: {exc}", EXIT_USAGE
+        ) from None
+    file = Path(path)
+    if not file.exists():
+        if required:
+            raise CompareError(f"anchors file not found: {file}", EXIT_USAGE)
+        return {}
+    try:
+        rows = json.loads(file.read_text())
+    except (OSError, ValueError) as exc:
+        raise CompareError(
+            f"cannot read anchors file {file}: {exc}", EXIT_USAGE
+        ) from None
+    normalized = normalize_bank(rows)
+    if not isinstance(normalized, list):
+        raise CompareError(f"{file} is not a list of anchor rows", EXIT_USAGE)
+    anchors: Dict[str, dict] = {}
+    for row in normalized:
+        if isinstance(row, dict) and isinstance(row.get("user_input"), str):
+            anchors[row["user_input"]] = row
+    return anchors
+
+
+def bank_questions(
+    arm: Arm, anchors: Dict[str, dict], *, include_anchors: bool
+) -> List[str]:
+    """The questions the bank aggregates cover, in the arm's run order.
+
+    Anchors are excluded by default (Gap 3). An anchor whose text also appears in
+    the bank is asked once and stays an anchor: the harness dedupes on exact
+    ``user_input`` and keeps the bank row, so the artifact holds one row for it —
+    counting that row in the bank would put a tripwire back into the number the
+    tripwire is supposed to guard.
+    """
+    if include_anchors:
+        return list(arm.order)
+    return [question for question in arm.order if question not in anchors]
+
+
+def question_counts(arm: Arm, anchors: Dict[str, dict]) -> dict:
+    """asked / anchors / bank rows — the denominators, printed with the report."""
+    matched = sum(1 for question in arm.order if question in anchors)
+    return {
+        "asked": len(arm.order),
+        "anchors": matched,
+        "bank_rows": len(arm.order) - matched,
+    }
+
+
+def refusal_verdict(answer: Any) -> Tuple[str, str]:
+    """Judge a ``should_refuse`` answer, and quote what was judged.
+
+    A heuristic, and labelled as one everywhere it is printed: PASS when the
+    answer declines, FAIL when it is long and confident about a system there is
+    no documentation for, REVIEW otherwise. The snippet is returned so the reader
+    can overrule it without opening the artifact.
+    """
+    if not isinstance(answer, str) or not answer.strip():
+        return "REVIEW", ""
+    snippet = answer[:REFUSAL_SNIPPET_CHARS]
+    if _DECLINE_RE.search(answer):
+        return "PASS", snippet
+    if len(answer) >= CONFIDENT_ANSWER_CHARS:
+        return "FAIL", snippet
+    return "REVIEW", snippet
+
+
+def _qa_item_pass(qa_run: Optional[dict], item_id: Optional[str]) -> Optional[float]:
+    if not qa_run or not item_id:
+        return None
+    item = qa_run["items"].get(item_id)
+    return None if item is None else item.get("item_pass_rate")
+
+
+def anchor_block(
+    baseline: Arm,
+    arms: Sequence[Arm],
+    anchors: Dict[str, dict],
+    sigmas: Dict[str, float],
+    qa_runs: Dict[str, dict],
+) -> List[dict]:
+    """The tripwire track: per anchor, per arm, read by anchor type.
+
+    ``easy_retrieve`` raises an ALARM on a drop bigger than the metric's noise
+    floor (or than 0.10 when no floor was measured) — a fall there means
+    retrieval broke, not that the change is subtle. ``reasoning`` is reported as
+    a trend and never alarms; two questions cannot establish anything.
+    ``should_refuse`` is a binary assertion judged from the answer text, or from
+    the QA item's pass when a ``--qa-run`` covers it — the QA run actually checks
+    the required atoms, so it outranks the phrase heuristic.
+    """
+    block: List[dict] = []
+    for question, anchor in anchors.items():
+        if question not in baseline.rows:
+            continue
+        anchor_type = anchor.get("anchor_type") or "unassigned"
+        entry = {"question": question, "anchor_type": anchor_type, "arms": {}}
+        for arm in arms:
+            row = arm.rows.get(question)
+            if row is None:
+                continue
+            metrics = {
+                metric: float(row[metric])
+                for metric in METRICS
+                if is_finite(row.get(metric))
+            }
+            deltas: Dict[str, float] = {}
+            alarms: List[str] = []
+            thresholds: Dict[str, float] = {}
+            if arm is not baseline:
+                for metric, value in metrics.items():
+                    if not is_finite(baseline.value(question, metric)):
+                        continue
+                    delta = value - float(baseline.value(question, metric))
+                    deltas[metric] = delta
+                    if anchor_type != "easy_retrieve" or delta >= 0:
+                        continue
+                    sigma = sigmas.get(metric)
+                    threshold = (
+                        sigma if sigma is not None else ANCHOR_DROP_WITHOUT_SIGMA
+                    )
+                    if -delta > threshold:
+                        alarms.append(metric)
+                        thresholds[metric] = threshold
+            arm_entry = {
+                "metrics": metrics,
+                "deltas": deltas,
+                "alarms": alarms,
+                # The threshold that fired is printed with the alarm. sigma is a
+                # RUN-mean noise floor and this is ONE question, whose own
+                # spread is several times larger, so the bar is tight and an
+                # alarm is a prompt to look, not a verdict.
+                "alarm_thresholds": thresholds,
+                "refusal": None,
+                "refusal_source": None,
+            }
+            if anchor_type == "should_refuse":
+                heuristic, snippet = refusal_verdict(row.get("answer"))
+                arm_entry.update(
+                    {
+                        "refusal": heuristic,
+                        "refusal_source": "heuristic",
+                        "answer_snippet": snippet,
+                    }
+                )
+                pass_rate = _qa_item_pass(qa_runs.get(arm.label), qa_item_id(row))
+                if pass_rate is not None:
+                    arm_entry["refusal"] = (
+                        "PASS"
+                        if pass_rate >= 1.0
+                        else "FAIL" if pass_rate <= 0.0 else "REVIEW"
+                    )
+                    arm_entry["refusal_source"] = "qa"
+                    arm_entry["qa_item_pass_rate"] = pass_rate
+            entry["arms"][arm.label] = arm_entry
+        block.append(entry)
+    return block
+
+
+# --- slices ------------------------------------------------------------------
+
+
+def slice_block(
+    baseline: Arm,
+    arms: Sequence[Arm],
+    questions: Sequence[str],
+    sigmas: Dict[str, float],
+) -> List[dict]:
+    """Paired deltas cut by a bank field, for fields every arm actually carries.
+
+    A field present on one side only is not a slice, it is a difference between
+    artifacts, so it is skipped rather than reported against a missing column.
+    Slices below ``SMALL_SLICE`` rows are marked directional: at n=6 a single
+    question swinging moves the mean by 0.17.
+    """
+    block: List[dict] = []
+    for field in SLICE_FIELDS:
+        if not all(arm.has_metric(field) for arm in arms):
+            continue
+        groups: Dict[str, List[str]] = {}
+        for question in questions:
+            value = baseline.rows.get(question, {}).get(field)
+            if isinstance(value, str) and value:
+                groups.setdefault(value, []).append(question)
+        for value, members in sorted(groups.items()):
+            for arm in arms:
+                if arm is baseline:
+                    continue
+                for metric in METRICS:
+                    if not (baseline.has_metric(metric) and arm.has_metric(metric)):
+                        continue
+                    summary = summarize_deltas(
+                        paired_deltas(baseline, arm, metric, members)
+                    )
+                    if summary["n"] == 0:
+                        continue
+                    sigma = sigmas.get(metric)
+                    directional = summary["n"] < SMALL_SLICE
+                    block.append(
+                        {
+                            "field": field,
+                            "value": value,
+                            "metric": metric,
+                            "arm": arm.label,
+                            "n": summary["n"],
+                            "mean": summary["mean"],
+                            "se": summary["se"],
+                            "sigma": sigma,
+                            # A small slice never claims significance. G7's
+                            # 2*SE test is arithmetic, and at n=2 the stdev of
+                            # two numbers will clear it whenever they happen to
+                            # agree — two same-code runs printed SIGNIFICANT on
+                            # the 2-row should_refuse slice. Direction is all a
+                            # slice this size can honestly report.
+                            "verdict": (
+                                f"directional (n={summary['n']} < {SMALL_SLICE})"
+                                if directional
+                                else verdict(summary, sigma)
+                            ),
+                            "directional": directional,
+                        }
+                    )
+    return block
+
+
+# --- the optional QA join -----------------------------------------------------
+
+
+def _normalize_newlines(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def qa_item_id(row: dict) -> Optional[str]:
+    """The ``archi eval qa`` item id for a benchmark row, or None.
+
+    The id is content-derived from the newline-normalized question and reference
+    answer — the same derivation the RAGAS-bank converter uses — so the two
+    stacks agree without either of them storing a mapping. A row whose reference
+    the harness wrote as the placeholder ``"N/A"`` has no ground truth and
+    therefore no QA item.
+    """
+    question = row.get("question")
+    reference = row.get("reference_answer")
+    if not isinstance(question, str) or not isinstance(reference, str):
+        return None
+    if reference.strip() in {"", "N/A"}:
+        return None
+    _project_root_on_path()
+    try:
+        from src.evaluation.qa.dataset import derive_item_id
+    except ImportError as exc:  # pragma: no cover - environment, not logic
+        raise CompareError(
+            f"the QA join needs the project importable: {exc}", EXIT_USAGE
+        ) from None
+    return derive_item_id(_normalize_newlines(question), _normalize_newlines(reference))
+
+
+def _read_jsonl(path: Path) -> List[dict]:
+    if not path.exists():
+        return []
+    rows = []
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError as exc:
+            raise CompareError(f"{path}:{number} is not valid JSON: {exc}", EXIT_USAGE)
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def load_qa_run(directory: str) -> dict:
+    """Read one ``archi eval qa`` run directory into an item-keyed index."""
+    base = Path(directory)
+    summary_path = base / "summary.json"
+    if not summary_path.exists():
+        raise CompareError(f"{base} has no summary.json", EXIT_USAGE)
+    try:
+        summary = json.loads(summary_path.read_text())
+    except (OSError, ValueError) as exc:
+        raise CompareError(f"cannot read {summary_path}: {exc}", EXIT_USAGE) from None
+    items = {
+        item["item_id"]: item
+        for item in summary.get("items") or []
+        if isinstance(item, dict) and isinstance(item.get("item_id"), str)
+    }
+    durations: Dict[str, List[float]] = {}
+    for row in _read_jsonl(base / "answers.jsonl"):
+        if isinstance(row.get("item_id"), str) and is_finite(row.get("duration_ms")):
+            durations.setdefault(row["item_id"], []).append(float(row["duration_ms"]))
+    evaluations: Dict[str, List[dict]] = {}
+    for row in _read_jsonl(base / "evaluation_results.jsonl"):
+        if isinstance(row.get("item_id"), str):
+            evaluations.setdefault(row["item_id"], []).append(row)
+    return {
+        "path": str(base),
+        "overall_attempt_pass_rate": summary.get("overall_attempt_pass_rate"),
+        "macro_mean_item_pass_rate": summary.get("macro_mean_item_pass_rate"),
+        "macro_mean_scored_attempt_atom_score": summary.get(
+            "macro_mean_scored_attempt_atom_score"
+        ),
+        "items": items,
+        "durations": durations,
+        "evaluations": evaluations,
+    }
+
+
+def qa_block(
+    baseline: Arm, arms: Sequence[Arm], qa_runs: Dict[str, dict]
+) -> Optional[dict]:
+    """Per-arm QA rates and latencies, joined to the bank by derived item id."""
+    if not qa_runs:
+        return None
+    # question text -> the QA facts for it, per arm. Pairing stays on question
+    # text (G5); the item id is only how the QA artifacts are looked up.
+    joined: Dict[str, Dict[str, dict]] = {}
+    rows = []
+    for arm in arms:
+        run = qa_runs.get(arm.label)
+        if run is None:
+            continue
+        matched: Dict[str, dict] = {}
+        for question in arm.order:
+            item_id = qa_item_id(arm.rows[question])
+            if not item_id or item_id not in run["items"]:
+                continue
+            scores = [
+                float(result["atom_score"])
+                for result in run["evaluations"].get(item_id, [])
+                if is_finite(result.get("atom_score"))
+            ]
+            matched[question] = {
+                "item_id": item_id,
+                "item_pass_rate": run["items"][item_id].get("item_pass_rate"),
+                "atom_score": statistics.fmean(scores) if scores else None,
+                "durations": run["durations"].get(item_id, []),
+            }
+        joined[arm.label] = matched
+        durations = [d for facts in matched.values() for d in facts["durations"]]
+        scores = [
+            facts["atom_score"]
+            for facts in matched.values()
+            if facts["atom_score"] is not None
+        ]
+        rows.append(
+            {
+                "arm": arm.label,
+                "path": run["path"],
+                "joined": len(matched),
+                "asked": len(arm.order),
+                "overall_attempt_pass_rate": run["overall_attempt_pass_rate"],
+                "macro_mean_item_pass_rate": run["macro_mean_item_pass_rate"],
+                "macro_mean_scored_attempt_atom_score": run[
+                    "macro_mean_scored_attempt_atom_score"
+                ],
+                "mean_atom_score": statistics.fmean(scores) if scores else None,
+                "mean_duration_ms": statistics.fmean(durations) if durations else None,
+                "p90_duration_ms": percentile(durations, 90),
+            }
+        )
+
+    paired: List[dict] = []
+    base_items = joined.get(baseline.label, {})
+    for arm in arms:
+        if arm is baseline or not joined.get(arm.label):
+            continue
+        arm_items = joined[arm.label]
+        shared = [question for question in base_items if question in arm_items]
+        for name in ("item_pass_rate", "atom_score"):
+            deltas = [
+                float(arm_items[question][name]) - float(base_items[question][name])
+                for question in shared
+                if is_finite(base_items[question][name])
+                and is_finite(arm_items[question][name])
+            ]
+            summary = summarize_deltas(deltas)
+            if summary["n"]:
+                paired.append(
+                    {
+                        "arm": arm.label,
+                        "baseline": baseline.label,
+                        "metric": name,
+                        "n": summary["n"],
+                        "mean": summary["mean"],
+                        "se": summary["se"],
+                    }
+                )
+    return {"arms": rows, "paired": paired}
+
+
 # --- report ------------------------------------------------------------------
 
 
@@ -877,6 +1342,106 @@ def render_markdown(report: dict) -> str:
     )
     out.append("")
 
+    out += ["## Anchors", ""]
+    out.append(
+        f"Tripwires, matched by question text against `{report['anchors_path']}`. "
+        "The artifact's `anchor_type` is the bank's own field and is set on every "
+        "row, so it cannot identify an anchor; the type below comes from the "
+        "anchors file. "
+        + (
+            "These rows are averaged into the bank above (--include-anchors-in-bank)."
+            if report["anchors_in_bank"]
+            else "These rows are excluded from the bank aggregates above (Gap 3)."
+        )
+    )
+    out.append("")
+    out.append(
+        "An `easy_retrieve` ALARM fires when one question drops further than the "
+        "metric's noise floor (0.10 when none was measured). That floor is a "
+        "*run-mean* sigma and this is *one question*, whose own spread is several "
+        "times larger — so the alarm is a prompt to open the answer, not a verdict. "
+        "`reasoning` anchors are a trend line and never alarm; two questions "
+        "establish nothing. `should_refuse` is a phrase heuristic unless a "
+        "`--qa-run` covers the item, in which case the QA item pass decides."
+    )
+    out.append("")
+    if report["anchors"]:
+        anchor_rows = []
+        for entry in report["anchors"]:
+            for label in labels:
+                arm_entry = entry["arms"].get(label)
+                if arm_entry is None:
+                    continue
+                deltas = (
+                    ", ".join(
+                        f"{metric} {_signed(value, 3)}"
+                        for metric, value in sorted(arm_entry["deltas"].items())
+                    )
+                    or "baseline"
+                )
+                refusal = arm_entry.get("refusal") or ""
+                if refusal:
+                    refusal += f" ({arm_entry.get('refusal_source')})"
+                anchor_rows.append(
+                    [
+                        entry["question"][:70],
+                        entry["anchor_type"],
+                        label,
+                        deltas,
+                        refusal,
+                        ", ".join(
+                            f"ALARM {metric} ({_signed(arm_entry['deltas'][metric], 3)}"
+                            f" past {_fmt(arm_entry['alarm_thresholds'][metric], 3)})"
+                            for metric in arm_entry["alarms"]
+                        ),
+                    ]
+                )
+        out += _table(
+            ["anchor", "type", "arm", "deltas vs baseline", "should_refuse", "alarms"],
+            anchor_rows,
+        )
+        snippets = [
+            f"- `{label}` on {entry['question'][:60]!r}: "
+            f"{entry['arms'][label].get('answer_snippet', '')!r}"
+            for entry in report["anchors"]
+            for label in labels
+            if entry["anchor_type"] == "should_refuse"
+            and label in entry["arms"]
+            and entry["arms"][label].get("answer_snippet")
+        ]
+        if snippets:
+            out += ["", "Answers judged (first 160 characters):"] + snippets
+    else:
+        out.append("No anchor question from that file appears in these arms.")
+    out.append("")
+
+    out += ["## Slices", ""]
+    if report["slices"]:
+        out += _table(
+            ["field", "value", "metric", "arm", "n", "delta", "SE", "verdict", "note"],
+            [
+                [
+                    row["field"],
+                    row["value"],
+                    row["metric"],
+                    row["arm"],
+                    str(row["n"]),
+                    _signed(row["mean"]),
+                    _fmt(row["se"]),
+                    row["verdict"],
+                    "directional (small slice)" if row["directional"] else "",
+                ]
+                for row in report["slices"]
+            ],
+        )
+    else:
+        out.append(
+            "No slice field (`"
+            + "`, `".join(SLICE_FIELDS)
+            + "`) is present in every arm."
+        )
+    out.append("")
+
     out += ["## Timing", ""]
     out += _table(
         ["arm", "n", "mean s", "p90 s", "warm n", "warm mean s", "warm p90 s"],
@@ -894,7 +1459,59 @@ def render_markdown(report: dict) -> str:
         ],
     )
     out.append("")
-    return "\n".join(out)
+
+    if report.get("qa"):
+        out += ["## QA runs", ""]
+        out.append(
+            "Joined to the bank by derived item id (`qa-<sha256 of the "
+            "newline-normalized question + reference answer>`); rows whose "
+            "reference the harness wrote as `N/A` carry no ground truth and are "
+            "skipped."
+        )
+        for row in report["qa"]["arms"]:
+            out.append(
+                f"- `{row['arm']}`: {row['joined']} joined of {row['asked']} "
+                f"questions, from `{row['path']}`"
+            )
+        out.append("")
+        out += _table(
+            [
+                "arm",
+                "attempt pass rate",
+                "item pass rate",
+                "atom score",
+                "mean ms",
+                "p90 ms",
+            ],
+            [
+                [
+                    row["arm"],
+                    _fmt(row["overall_attempt_pass_rate"]),
+                    _fmt(row["macro_mean_item_pass_rate"]),
+                    _fmt(row["macro_mean_scored_attempt_atom_score"]),
+                    _fmt(row["mean_duration_ms"], 0),
+                    _fmt(row["p90_duration_ms"], 0),
+                ]
+                for row in report["qa"]["arms"]
+            ],
+        )
+        if report["qa"]["paired"]:
+            out.append("")
+            out += _table(
+                ["arm", "metric", "n", "delta", "SE"],
+                [
+                    [
+                        row["arm"],
+                        row["metric"],
+                        str(row["n"]),
+                        _signed(row["mean"]),
+                        _fmt(row["se"]),
+                    ]
+                    for row in report["qa"]["paired"]
+                ],
+            )
+        out.append("")
+    return "\n".join(out).rstrip("\n")
 
 
 def build_report(
@@ -904,7 +1521,10 @@ def build_report(
     gates: Sequence[dict],
     sigmas: Dict[str, float],
     questions: Sequence[str],
+    anchors: Dict[str, dict],
+    anchors_path: str,
     anchors_in_bank: bool,
+    qa_runs: Optional[Dict[str, dict]] = None,
 ) -> dict:
     return {
         "baseline": baseline.label,
@@ -912,15 +1532,20 @@ def build_report(
             {"label": arm.label, "source": arm.source, "questions": len(arm.rows)}
             for arm in arms
         ],
+        "counts": question_counts(baseline, anchors),
         "paired_question_count": len(questions),
+        "anchors_path": anchors_path,
         "anchors_in_bank": anchors_in_bank,
-        "provenance": provenance_rows(arms),
+        "provenance": provenance_rows(arms, anchors),
         "gates": list(gates),
         "noise_floor": dict(sigmas),
         "paired": paired_block(baseline, arms, questions, sigmas),
         "scored_counts": {arm.label: scored_counts(arm) for arm in arms},
         "sources": source_block(arms),
+        "anchors": anchor_block(baseline, arms, anchors, sigmas, qa_runs or {}),
+        "slices": slice_block(baseline, arms, questions, sigmas),
         "timing": timing_block(arms),
+        "qa": qa_block(baseline, arms, qa_runs or {}),
     }
 
 
@@ -986,8 +1611,37 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="average the anchors into the bank aggregates (Gap 3: do not)",
     )
+    parser.add_argument(
+        "--qa-run",
+        action="append",
+        default=[],
+        metavar="LABEL=RUN_DIR",
+        help="an `archi eval qa` run directory to join to an arm (repeatable)",
+    )
     parser.add_argument("--json", metavar="PATH", help="write the report as JSON")
     return parser
+
+
+def parse_qa_run_specs(specs: Sequence[str], arms: Sequence[Arm]) -> Dict[str, dict]:
+    """Resolve ``LABEL=RUN_DIR`` pairs against the loaded arms."""
+    labels = {arm.label for arm in arms}
+    runs: Dict[str, dict] = {}
+    for spec in specs:
+        label, sep, directory = spec.partition("=")
+        if not sep or not label or not directory:
+            raise CompareError(
+                f"--qa-run expects LABEL=RUN_DIR, got {spec!r}; "
+                f"labels are {', '.join(sorted(labels))}",
+                EXIT_USAGE,
+            )
+        if label not in labels:
+            raise CompareError(
+                f"--qa-run names no such arm: {label!r}; "
+                f"labels are {', '.join(sorted(labels))}",
+                EXIT_USAGE,
+            )
+        runs[label] = load_qa_run(directory)
+    return runs
 
 
 def run(argv: Optional[Sequence[str]] = None) -> int:
@@ -1029,14 +1683,23 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     if args.noise_floor:
         sigmas.update(parse_noise_floor(args.noise_floor))
 
-    questions = list(baseline.order)
+    anchors = anchor_questions(
+        args.anchors, required=args.anchors != str(DEFAULT_ANCHORS)
+    )
+    qa_runs = parse_qa_run_specs(args.qa_run, arms)
+    questions = bank_questions(
+        baseline, anchors, include_anchors=args.include_anchors_in_bank
+    )
     report = build_report(
         arms,
         baseline,
         gates=gates,
         sigmas=sigmas,
         questions=questions,
+        anchors=anchors,
+        anchors_path=args.anchors,
         anchors_in_bank=args.include_anchors_in_bank,
+        qa_runs=qa_runs,
     )
     print(render_markdown(report))
     if args.json:
