@@ -564,6 +564,10 @@ bench_out/benchmarking-<name>-<timestamp>.json
 └── benchmarking_results[]     # one entry per config in a -cd sweep
     ├── configuration_file
     ├── config_version         # this arm's config identity (§5.E)
+    ├── ingest_wall_seconds    # cost of building this corpus (§5.E)
+    │                          #   float = seconds, harness-observed
+    │                          #   null  = no ingest seen (corpus reused)
+    │                          #   absent = artifact predates the field
     ├── total_results
     │   ├── aggregate_<metric>  # null when nothing was scored; 0.0 is a real score
     │   ├── <metric>_scored    # "71 of 73" — CHECK THIS (§3.4). Counts the values
@@ -611,6 +615,7 @@ for Postgres or the config file to still exist.
 | `<arm>.config_version.key_settings` | per arm | Which settings define this arm? |
 | `<arm>.config_version.divergence_from_selected_file` | per arm | Did the run use the config you selected? |
 | `<arm>.corpus_fingerprint` | per arm | Did they see the same documents? (§3.3) |
+| `<arm>.ingest_wall_seconds` | per arm | What did building those documents cost? |
 
 Read them like this:
 
@@ -625,6 +630,30 @@ Read them like this:
   recorded configuration says `context_window: 32768`, because the agent reads
   Postgres while the harness wrote a YAML file. Its scores (relevancy 0.681,
   faithfulness 0.562) cannot be attributed to either setting.
+- **`ingest_wall_seconds`** → what the corpus above cost to build, in seconds.
+  Some settings — document categorization, chunking strategy — are paid for
+  almost entirely at ingest, and this is the only place that price is recorded.
+  Read the three states apart: a **float** is a measurement; **`null`** means no
+  ingest was observed while the run waited, which normally means it found the
+  corpus already built; an **absent key** means the artifact predates the field.
+  It is *harness-observed* — the span from the first status poll reporting
+  progress to the one reporting `completed` — and it is an **approximation, not
+  a measurement**, with error in both directions. Ingestion that ran before the
+  benchmark container started polling is missing from it, because the harness
+  cannot see backwards; non-ingest time after polling began is included in it,
+  because a phase boundary is all the status payload reports. Time queued
+  behind another data-manager task is excluded. Use it to compare arms of the
+  same shape, not as the ingest's true duration; an exact figure needs
+  `started_at`/`finished_at` from the data-manager (#428).
+
+  There is **one ingest wait per invocation**, not one per arm, so every arm of
+  a `-cd` sweep carries the same number. The check that tells you whether it
+  applies to a given arm is comparing `corpus_fingerprint` **across arms** — if
+  they differ, a background re-ingest landed mid-sweep and this figure
+  describes only the first arm's corpus. Do **not** use
+  `corpus_unchanged_at_endpoints` for this: a re-ingest that lands wholly
+  between two arms leaves that boolean `true` on both sides, because each arm
+  samples the corpus only at its own two endpoints.
 
 Two caveats worth knowing:
 

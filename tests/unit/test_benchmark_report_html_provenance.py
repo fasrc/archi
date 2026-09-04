@@ -182,3 +182,44 @@ def test_html_still_renders_without_provenance():
     html = format_html_output(config_data, name, ts, questions, totals)
 
     assert "<html>" in html
+
+
+def test_provenance_shows_time_to_ingest():
+    """The HTML mirrors the markdown: seconds, plus a human-readable span."""
+    html = _html(ingest_wall_seconds=7351.2)
+
+    assert "Time to ingest" in html
+    assert "7351 s" in html
+    assert "2h 2m 31s" in html
+    assert "every arm" in html
+    assert "corpus_fingerprint" in html
+    assert "approximation" in html
+
+
+def test_provenance_says_not_measured_for_a_reused_corpus():
+    html = _html(ingest_wall_seconds=None)
+
+    assert "reused an existing corpus" in html
+    assert "not measured" in html
+    assert "0 s" not in html
+
+
+def test_provenance_says_not_recorded_for_an_older_artifact():
+    """`_results()` writes no such key, exactly as a pre-#417 artifact does.
+
+    Asserted on wording unique to this branch: the version-stamp block has its
+    own "not recorded" string, and would satisfy a looser check on its own.
+    """
+    html = _html()
+
+    assert "Time to ingest" in html
+    assert "predates the field" in html
+    assert "reused an existing corpus" not in html
+
+
+def test_parse_carries_ingest_wall_seconds_through_to_provenance():
+    results, metadata = _results(ingest_wall_seconds=7351.2)
+
+    _, _, _, _, _, provenance = parse_benchmark_results(results, metadata)
+
+    assert provenance["ingest_wall_seconds"] == 7351.2

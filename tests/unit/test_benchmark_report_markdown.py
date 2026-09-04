@@ -9,6 +9,7 @@ for artifacts that predate provenance stamping.
 from __future__ import annotations
 
 from src.utils.generate_benchmark_report import (
+    _format_seconds,
     format_html_output,
     format_markdown_output,
 )
@@ -462,3 +463,65 @@ def test_markdown_renders_provenance_section():
     assert "matches" in md
     assert "cfg-digest-1" in md
     assert "code-digest-1" in md
+
+
+def _provenance_md(**overrides):
+    provenance = dict(_PROVENANCE)
+    provenance.update(overrides)
+    return format_markdown_output(
+        _CONFIG,
+        "ragas-bench",
+        "2026-08-28",
+        {"question_1": _ok_row()},
+        _TOTALS,
+        provenance,
+    )
+
+
+def test_provenance_shows_time_to_ingest():
+    """Seconds for arithmetic, h/m/s so a person can read it (#417)."""
+    md = _provenance_md(ingest_wall_seconds=7351.2)
+
+    assert "Time to ingest" in md
+    assert "7351 s" in md
+    assert "2h 2m 31s" in md
+    # The wait happens once, before the sweep, so a reader must not attribute
+    # the number to this arm's corpus in particular. The check that catches
+    # that is comparing `corpus_fingerprint` across arms -- NOT
+    # `corpus_unchanged_at_endpoints`, which reads True on both sides of a
+    # re-ingest that lands wholly between two arms.
+    assert "every arm" in md
+    assert "corpus_fingerprint" in md
+    # Nor is it a clean bound in either direction: work before the first poll
+    # is missing, non-ingest time after it is included.
+    assert "approximation" in md
+
+
+def test_provenance_says_not_measured_for_a_reused_corpus():
+    """`null` = the run found the corpus already ingested. Not "0 seconds"."""
+    md = _provenance_md(ingest_wall_seconds=None)
+
+    assert "reused an existing corpus" in md
+    assert "not measured" in md
+    assert "0 s" not in md
+
+
+def test_provenance_says_not_recorded_for_an_older_artifact():
+    """Key absent = the artifact predates the field, which is a third thing."""
+    md = _provenance_md()
+
+    assert "ingest_wall_seconds" not in _PROVENANCE
+    assert "Time to ingest" in md
+    assert "predates the field" in md
+    assert "reused an existing corpus" not in md
+
+
+def test_format_seconds_reads_at_every_scale():
+    """Seconds always; the h/m/s gloss only where it adds something.
+
+    A sub-minute duration needs no gloss at all, and one under an hour must not
+    pad itself out to "0h" -- the gloss exists to be read, not to be uniform.
+    """
+    assert _format_seconds(42.4) == "42 s"
+    assert _format_seconds(1832) == "1832 s (30m 32s)"
+    assert _format_seconds(7351.2) == "7351 s (2h 2m 31s)"

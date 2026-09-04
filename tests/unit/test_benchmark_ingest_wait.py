@@ -386,6 +386,102 @@ def test_budgets_come_from_the_environment(monkeypatch):
     assert service_benchmark._ingest_wait_budgets().max_wait_seconds == 0
 
 
+def test_returns_observed_ingest_wall_seconds(monkeypatch):
+    """The wait already knows how long the ingest took -- issue #417 keeps it.
+
+    Harness-observed, not data-manager-reported: the status payload carries no
+    timestamps, so this spans the first poll to the completed one and includes
+    data-manager start-up.
+    """
+    _budget_env(monkeypatch, stall="3600", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted([_running(), _running(), {"state": "completed", "step": "done"}])
+
+    elapsed = _bench().wait_for_ingestion_completion(
+        fetch=fetch, clock=clock, sleep=clock.sleep
+    )
+
+    assert elapsed == 10.0
+
+
+def test_returns_none_not_zero_when_ingest_was_already_complete(monkeypatch):
+    """No ingest was observed -- that is not the same as an ingest of 0s.
+
+    A run that reuses an existing corpus finds `completed` on its first poll.
+    Recording 0.0 there would put a fabricated measurement into the campaign's
+    cost table; `None` says "not measured", which is the truth.
+    """
+    _budget_env(monkeypatch, stall="3600", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted([{"state": "completed", "step": "done"}])
+
+    elapsed = _bench().wait_for_ingestion_completion(
+        fetch=fetch, clock=clock, sleep=clock.sleep
+    )
+
+    assert elapsed is None
+    assert clock.slept == []
+
+
+def test_queue_time_is_not_counted_as_ingest_cost(monkeypatch):
+    """The clock starts when the ingest starts, not when the waiting starts.
+
+    A benchmark queued behind another holder of `ingestion_lock` sees
+    `running`/`initializing` while nothing of its own is happening. Counting
+    that as ingest cost would make the campaign's cost table depend on what
+    else the data-manager happened to be doing.
+    """
+    _budget_env(monkeypatch, stall="60", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted(
+        [_running("initializing")] * 3
+        + [_running()] * 2
+        + [{"state": "completed", "step": "done"}]
+    )
+
+    elapsed = _bench().wait_for_ingestion_completion(
+        fetch=fetch, clock=clock, sleep=clock.sleep
+    )
+
+    assert clock.now - 1000.0 == 25.0, "the whole wait was 25s"
+    assert elapsed == 10.0, "but only 10s of it was this ingest"
+
+
+def test_no_progressing_poll_means_no_observed_ingest(monkeypatch):
+    """Polls that never showed work cannot be turned into a measurement."""
+    _budget_env(monkeypatch, stall="60", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted(
+        [{"state": "pending", "step": None, "error": None}] * 2
+        + [{"state": "completed", "step": "done"}]
+    )
+
+    assert (
+        _bench().wait_for_ingestion_completion(
+            fetch=fetch, clock=clock, sleep=clock.sleep
+        )
+        is None
+    )
+
+
+def test_an_unreachable_first_url_does_not_count_as_an_observed_ingest(monkeypatch):
+    """ "First successful poll" -- a candidate URL that raised is not a poll."""
+    _budget_env(monkeypatch, stall="3600", max_wait="0", poll="5")
+    clock = FakeClock()
+
+    def fetch(url):
+        if "data-manager" in url:
+            raise url_error.URLError("[Errno 111] Connection refused")
+        return {"state": "completed", "step": "done"}
+
+    assert (
+        _bench().wait_for_ingestion_completion(
+            fetch=fetch, clock=clock, sleep=clock.sleep
+        )
+        is None
+    )
+
+
 def test_default_fetch_parses_the_status_payload(monkeypatch):
     """The real fetch decodes the endpoint's JSON body into a dict."""
     captured = {}

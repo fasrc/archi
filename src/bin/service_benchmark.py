@@ -345,6 +345,7 @@ class ResultHandler:
         *,
         running_config: Optional[Dict[str, Any]],
         corpus_before: Optional[str] = None,
+        ingest_wall_seconds: Optional[float] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -418,6 +419,13 @@ class ResultHandler:
             "corpus_fingerprint_before": corpus_before,
             "corpus_fingerprint": corpus_after,
             "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
+            # What the corpus above COST to build, in harness-observed seconds.
+            # Three readings, kept distinct on purpose: key absent = artifact
+            # predates the field; null = no ingest was observed (the run reused
+            # an existing corpus); a float = seconds. Never 0.0 for "not
+            # measured". Recorded per arm and nowhere else -- a sweep runs
+            # several arms, so a run-level copy would label them all with one.
+            "ingest_wall_seconds": ingest_wall_seconds,
             # Per arm, not per file. One invocation runs every config in the
             # sweep directory (the `while self.all_config_files` loop), so a
             # single version on the metadata block would label every arm with
@@ -1940,7 +1948,7 @@ class Benchmarker:
             }
 
     def run(self):
-        self.wait_for_ingestion_completion()
+        ingest_wall_seconds = self.wait_for_ingestion_completion()
 
         modes_being_run = set(self.benchmarking_configs["modes"])
 
@@ -1974,6 +1982,14 @@ class Benchmarker:
                 # questions ran -- not a fresh query, which would report the
                 # config as it stands now rather than as the arm used it.
                 running_config=getattr(self.chain, "config", None),
+                # Measured once, before the sweep, and stamped on every arm --
+                # there is one ingest wait per invocation, not one per arm.
+                # Ingestion can continue in the background, so a later arm may
+                # score a corpus this number did not build. The signal for that
+                # is `corpus_fingerprint` differing ACROSS arms, not
+                # `corpus_unchanged_at_endpoints`: a re-ingest landing wholly
+                # between two arms leaves that boolean True on both sides.
+                ingest_wall_seconds=ingest_wall_seconds,
             )
             self.load_new_configuration()
 
@@ -2232,8 +2248,22 @@ class Benchmarker:
         fetch: Optional[Callable[[str], Dict[str, Any]]] = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
-    ) -> None:
+    ) -> Optional[float]:
         """Block until the data-manager reports ingestion complete.
+
+        Returns the wall-clock seconds this ingest was observed working, or
+        `None` when it was never observed working at all -- the run found the
+        corpus already built. Never `0.0`: that would put a fabricated
+        measurement where "not measured" belongs (issue #417).
+
+        The span runs from the first poll `_ingest_is_progressing` accepts to
+        the one reporting `completed`, so queue time behind another holder of
+        `ingestion_lock` is excluded but everything after work starts is
+        included. It approximates the ingest rather than measuring it, and errs
+        in both directions: ingestion that ran before this container started
+        polling cannot be seen at all, and non-ingest time after polling began
+        is counted. An exact figure needs `started_at`/`finished_at` in the
+        status payload, which is a data-manager change (#428).
 
         `fetch`, `clock` and `sleep` are injection seams for the tests only;
         production calls this with no arguments.
@@ -2289,6 +2319,13 @@ class Benchmarker:
         # Per URL, not one shared "last error": an error belongs to the host
         # that raised it, and only the serving URL's failure explains a timeout.
         errors_by_url: Dict[str, BaseException] = {}
+        # When this ingest was first seen actually working -- NOT when the
+        # waiting started. A run queued behind another holder of
+        # `ingestion_lock` sits at `running`/`initializing` while nothing of its
+        # own happens, and charging that queue time to the corpus would make the
+        # campaign's cost table depend on what else the data-manager was doing.
+        # Still None at the completed poll = no ingest was observed at all (#417).
+        ingest_started_at: Optional[float] = None
         attempt = 0
 
         logger.info(
@@ -2341,10 +2378,14 @@ class Benchmarker:
                 last_step = step
                 if _ingest_is_progressing(state, step):
                     last_ok_at = clock()
+                    if ingest_started_at is None:
+                        ingest_started_at = last_ok_at
 
                 if state == "completed":
                     logger.info("Data-manager ingestion completed; starting benchmark.")
-                    return
+                    if ingest_started_at is None:
+                        return None
+                    return clock() - ingest_started_at
                 if state == "error":
                     raise RuntimeError(
                         f"Data-manager ingestion failed at step '{step}': "
