@@ -87,9 +87,18 @@ variants.
 This section is the "first task" #396 asks for. Every number here comes from a command in
 [Appendix A](#appendix-a-how-to-re-derive-the-numbers).
 
-### 4.1 Run-to-run noise of the mean (σ)
+**The numbers in §4.1–4.2 are a planning prior, not this campaign's noise floor.** They
+come from runs that used `fasrc-inline-v1.md`, a different tool surface from the campaign
+prompt (§2). They size the budget. The σ that every verdict uses is measured on this
+campaign's own prompt, corpus and code by the three opening baseline runs (§6 step 4,
+Procedure A), and `compare_runs.py` computes every MDE from those runs — never from the
+tables below. If the opening σ exceeds the prior by more than 50 % on the primary metric,
+the operator decides, before any arm runs, whether to raise N (and re-locks the pre-reg).
 
-Six goldenset runs of the same code on the same bank (2026-08-11 ×3, 2026-08-17 ×3):
+### 4.1 Run-to-run noise of the mean (σ) — prior
+
+Six goldenset runs of the same code on the same bank (2026-08-11 ×3, 2026-08-17 ×3), on
+the `fasrc-inline-v1.md` prompt:
 
 | Metric | mean | σ of run means | 2·σ |
 |---|---|---|---|
@@ -99,10 +108,10 @@ Six goldenset runs of the same code on the same bank (2026-08-11 ×3, 2026-08-17
 | context_recall | 0.839 | 0.021 | 0.043 |
 | answer_correctness | 0.465 | ≈ 0.009 (three same-code values from the #305 bracket) | ≈ 0.018 |
 
-### 4.2 Paired per-question sensitivity (SE)
+### 4.2 Paired per-question sensitivity (SE) — prior
 
 The three same-code pairs of 2026-08-17, paired on question text over rows scored in both
-runs (n = 108–109):
+runs (n = 108–109), same prompt caveat as above:
 
 | Metric | SD of per-question delta | SE at n = 109 | 2·SE |
 |---|---|---|---|
@@ -119,11 +128,12 @@ runs (n = 108–109):
   run-mean σ likewise. The minimum detectable effect (MDE) per metric is
   `max(2·SE_pooled, 2·σ_pooled)`, computed by `compare_runs.py` from the runs actually made
   and printed next to every delta.
-- **What this campaign can claim:** deltas of about **0.03 or more** on
-  `context_precision`, `context_recall` and `answer_correctness`; about **0.05 or more** on
-  `answer_relevancy` and `faithfulness`. A smaller true effect is out of reach at this
-  budget and is reported as "no measurable difference at N = 2 (MDE = x)", never as a
-  direction.
+- **What this campaign expects to be able to claim (prior):** deltas of about **0.03 or
+  more** on `context_precision`, `context_recall` and `answer_correctness`; about **0.05
+  or more** on `answer_relevancy` and `faithfulness`. The locked MDE per metric is the
+  one computed from the opening baseline runs and printed by `compare_runs.py`. A true
+  effect below it is out of reach at this budget and is reported as "no measurable
+  difference at N = 2 (MDE = x)", never as a direction.
 - **Count metrics are cheaper.** Source hits, `should_refuse` passes, degraded rows, and
   QA pass counts are paired binary outcomes; an exact paired test (McNemar) on 109 rows
   decides them at N = 1, as the August 2026 overflow-apology count did (11 → 0,
@@ -167,12 +177,14 @@ scripts/benchmarking/feature_matrix/run_arm.sh $ARM $YAML            # archi eva
 scripts/benchmarking/feature_matrix/archive_run.sh $ARM 1            # copies the artifact + report into bench_out/feature_matrix/, appends ledger.json
 scripts/benchmarking/feature_matrix/run_arm.sh $ARM --rerun          # benchmark container only, same corpus → run 2
 scripts/benchmarking/feature_matrix/archive_run.sh $ARM 2
-scripts/benchmarking/feature_matrix/qa_arm.sh $ARM                   # archi eval qa against the same stack (§5.3)
+scripts/benchmarking/feature_matrix/qa_arm.sh $ARM $YAML             # archi eval qa against the same stack (§5.3)
 archi delete --name fm-$ARM --rmi --rmv                              # after archive_run.sh confirmed both artifacts
 ```
 
 `archive_run.sh` refuses when the artifact's `config_version.divergence_from_selected_file`
-is non-empty (the run did not use the settings you selected; Procedure E) and records:
+is non-empty (the run did not use the settings you selected; Procedure E), when the
+artifact is already in the ledger, or when it predates the run's `ragas-start` entry (a
+re-run that wrote nothing must not re-archive run 1 as run 2), and records:
 artifact path, `corpus_fingerprint`, `corpus_snapshot_id`, `config_version.digest`,
 `metadata.code_version.digest`, `ingest_wall_seconds`, the `documents` and
 `document_chunks` counts (queried from the stack), and the scored counts per metric.
@@ -188,7 +200,7 @@ scripts/benchmarking/feature_matrix/reseed_arm.sh 01 config/benchmarking/feature
 scripts/benchmarking/feature_matrix/archive_run.sh 01 1
 scripts/benchmarking/feature_matrix/run_arm.sh 01 --rerun                  # run 2, still on fm-00
 scripts/benchmarking/feature_matrix/archive_run.sh 01 2
-scripts/benchmarking/feature_matrix/qa_arm.sh 01 --stack fm-00
+scripts/benchmarking/feature_matrix/qa_arm.sh 01 config/benchmarking/feature_matrix/01-rerank-off.yaml --stack fm-00
 scripts/benchmarking/feature_matrix/reseed_arm.sh 00 config/benchmarking/feature_matrix/00-baseline.yaml   # restore
 ```
 
@@ -200,11 +212,16 @@ rebuilt.
 ### 5.3 QA evaluator run (every arm, after the RAGAS runs, never concurrent with them)
 
 ```bash
-scripts/benchmarking/feature_matrix/qa_arm.sh $ARM [--stack fm-00]
+scripts/benchmarking/feature_matrix/qa_arm.sh $ARM $YAML [--stack fm-00]
 ```
 
 What it does, and why each step exists:
 
+0. Proves the stack is on the requested arm: the rendered config's chunking, processing,
+   stemming and `hierarchical_rerank` keys must equal the arm YAML's, else it refuses. A
+   retrieval arm left on `fm-00` after a restore, or a wrong `--stack`, would otherwise
+   produce a plausible QA record for the wrong configuration. The ledger entry records
+   the rendered config's sha256 and the corpus fingerprint so the record can be tied back.
 1. Writes `bench_out/feature_matrix/qa/$ARM.agent-config.yaml` from the stack's rendered
    `~/.archi/archi-<stack>/configs/config.yaml` with **three fields overwritten**:
    `services.chat_app.agent_class`, `default_provider`, `default_model` ←
@@ -270,7 +287,8 @@ time of day across arms where possible, and the ledger records start and end tim
 | Different corpus for an ingest arm is declared | G3 | `--corpus-differs-by-design`, with both fingerprints and the document/chunk counts printed |
 | The run used the selected settings | Procedure E | `divergence_from_selected_file` empty on every artifact |
 | Same code | Procedure E | `metadata.code_version.digest` equal across the campaign |
-| Paired on rows scored in both arms | G5, G6 | join on question text; `status == ok` and finite in both |
+| Paired on rows scored in both arms | G5, G6 | join on question text; `status == ok` and finite in both. Question text is the key because the harness dedupes the bank and the anchors on exact text before asking (105 + 5 − 1 = 109 unique rows; the bank itself has 105 unique texts). The tool refuses an artifact that carries the same text twice. |
+| The shared should_refuse row is an anchor | Gap 3 | one anchor duplicates a bank row; the harness keeps the bank row's reference. That row is treated as the anchor: it appears in the anchor block and is excluded from the bank aggregate, which therefore covers 104 rows |
 | Honest denominators | #279 | scored counts recomputed from finite values, printed per metric per arm; arms whose ok-row counts differ by more than 5 are flagged |
 | Anchors are tripwires, not bank rows | Gap 3 | the 5 anchors identified by question text, reported in their own block, excluded from bank aggregates |
 | A verdict needs a noise floor | G2, G7 | SIGNIFICANT only with σ known and \|Δ\| > max(2·SE, 2·σ) |

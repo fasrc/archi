@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Run the QA (gold-atoms) evaluator against a feature-matrix stack (plan §5.3).
 #
-#   qa_arm.sh <arm> [--stack <name>] [--run N] [--dataset <qa-v2.json>] [--profile <yaml>]
+#   qa_arm.sh <arm> <arm.yaml> [--stack <name>] [--run N] [--dataset <qa-v2.json>] [--profile <yaml>]
 #
+# 0. Proves the stack is on the requested arm: every factor key in the arm YAML must equal
+#    the stack's rendered config (chunking, processing, stemming, hierarchical_rerank), or
+#    it refuses — a retrieval arm left on fm-00 after a restore, or a wrong --stack, would
+#    otherwise yield a plausible QA record for the wrong configuration. The ledger entry
+#    records the rendered config's sha256 and the corpus fingerprint.
 # 1. Writes a secret-free agent config from the stack's rendered configs/config.yaml with
 #    services.chat_app.{agent_class,default_provider,default_model} overwritten from
 #    services.benchmarking.{agent_class,provider,model}. An evaluate stack renders the
@@ -15,7 +20,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-ARM="${1:-}"; fm_require_arm "$ARM"; shift
+ARM="${1:-}"; fm_require_arm "$ARM"; YAML="${2:-}"; [ -n "$YAML" ] && [ -f "$YAML" ] || fm_die "usage: qa_arm.sh <arm> <arm.yaml> [--stack <name>] ... (arm config not found: '${YAML}')"; shift 2
 STACK="fm-$ARM"; RUN=1
 DATASET="$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
 PROFILE="config/benchmarking/feature_matrix/qa/evaluator-profile.huit.yaml"
@@ -38,6 +43,11 @@ RENDERED="$STACK_DIR/configs/config.yaml"
 [ -f "$SPEC" ] || fm_die "agent spec not found: $SPEC"
 [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "a RAGAS run is in flight on $STACK; QA runs are serial"
 [ -f "$STACK_DIR/secrets/pg_password.txt" ] || fm_die "no $STACK_DIR/secrets/pg_password.txt"
+fm_verify_stack_matches_arm "$STACK" "$YAML"
+CFG_SHA="$(fm_sha256 "$RENDERED")"
+FINGERPRINT="$(fm_fingerprint "$STACK")"
+[ -n "$FINGERPRINT" ] || fm_die "could not read the corpus fingerprint of $STACK"
+fm_log "stack $STACK is on arm $ARM (config sha256 ${CFG_SHA:0:12}, corpus $FINGERPRINT)"
 
 mkdir -p "$FM_OUT/qa"
 AGENT_CFG="$FM_OUT/qa/$ARM.agent-config.yaml"
@@ -70,6 +80,6 @@ OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
   --evaluator-profile "$PROFILE" \
   --output-dir "$OUT_DIR" \
   --attempts 1 --run-workers 1 --score-workers "${FM_SCORE_WORKERS:-4}"
-fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s"}' \
-  "$ARM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$DATASET" "$PROFILE" "$SPEC")"
+fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s"}' \
+  "$ARM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$DATASET" "$PROFILE" "$SPEC" "$YAML" "$CFG_SHA" "$FINGERPRINT")"
 fm_log "done; report: $OUT_DIR/report.md  summary: $OUT_DIR/summary.json"

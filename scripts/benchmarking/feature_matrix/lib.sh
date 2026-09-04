@@ -59,6 +59,35 @@ fm_require_pinned_corpus() { # $1 = stack name → refuses unless the fingerprin
   fm_log "corpus fingerprint matches pin $pin"
 }
 
+# The factor keys every arm YAML states (plan §3). A stack "is on" an arm when its rendered
+# config agrees with the arm YAML on all of them.
+fm_verify_stack_matches_arm() { # $1 = stack name, $2 = arm YAML → refuses on any differing key
+  local rendered; rendered="$(fm_stack_dir "$1")/configs/config.yaml"
+  [ -f "$rendered" ] || fm_die "no rendered config at $rendered"
+  FM_ARM_YAML="$2" FM_RENDERED="$rendered" "$FM_PYTHON" - <<'EOF' || fm_die "stack $1 is not on the arm described by $2 (see above); re-seed or pick the right --stack"
+import os, sys, yaml
+arm = yaml.safe_load(open(os.environ["FM_ARM_YAML"]))["data_manager"]
+dm = yaml.safe_load(open(os.environ["FM_RENDERED"]))["data_manager"]
+KEYS = [("chunking", "strategy"), ("processing", "html_to_markdown", "enabled"),
+        ("processing", "categorization", "enabled"), ("stemming", "enabled"),
+        ("retrievers", "hierarchical_rerank", "enabled"),
+        ("retrievers", "hierarchical_rerank", "candidate_pool_size"),
+        ("retrievers", "hierarchical_rerank", "num_documents_to_retrieve")]
+def get(d, path):
+    for k in path:
+        if not isinstance(d, dict) or k not in d:
+            return None
+        d = d[k]
+    return d
+bad = [(".".join(p), get(arm, p), get(dm, p)) for p in KEYS if get(arm, p) is not None and get(arm, p) != get(dm, p)]
+for key, a, r in bad:
+    print(f"factor {key}: arm={a!r} stack={r!r}", file=sys.stderr)
+sys.exit(1 if bad else 0)
+EOF
+}
+
+fm_sha256() { sha256sum "$1" | cut -d' ' -f1; }
+
 fm_ledger_append() { # $1 = JSON object (one line); appends to the ledger array, creating it
   local ledger; ledger="$(fm_ledger)"
   mkdir -p "$(dirname "$ledger")"

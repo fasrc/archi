@@ -51,6 +51,13 @@ Stated per arm, as the falsifiable claim the arm tests:
   and a finite score in both arms, joined on question text; the five tripwire anchors
   excluded from the bank aggregate; both arms' N runs pooled. Computed by
   `scripts/benchmarking/compare_runs.py` (#419), never by hand.
+- **Why question text is a valid key:** the harness dedupes the bank and the anchors on
+  exact text before asking, so an artifact holds 109 unique questions (the bank's 105
+  texts are themselves unique). The tool refuses an artifact with a repeated text. The
+  one anchor that duplicates a bank row is treated as the anchor: it sits in the anchor
+  block and outside the bank aggregate, which therefore covers 104 rows. The QA family
+  joins by the content-derived item id (question + reference), the same id the converter
+  assigns.
 - **Source data:** the arm's `bench_out/feature_matrix/*.json` artifacts named in
   `ledger.json`; σ from the three opening-baseline runs (`--noise-runs`).
 
@@ -65,10 +72,15 @@ MDE = `max(2·SE_pooled, 2·σ_pooled)` for the primary metric, printed by the t
 | **no measurable difference** | −MDE ≤ Δ ≤ +MDE | record with the MDE; if the setting costs ingest time or latency, file an issue proposing the cheaper setting |
 | **mixed** | Δ_primary > +MDE but another RAGAS metric, `source_accuracy`, or the QA pass rate drops by more than one σ, or an `easy_retrieve` anchor drops by more than σ, or the `should_refuse` anchor fails | no default change; record the trade-off |
 
-Expected sensitivity (from the six 2026-08 same-code runs; plan §4): MDE ≈ 0.03 on
-`context_precision` / `context_recall` / `answer_correctness`, ≈ 0.05 on
-`answer_relevancy` / `faithfulness`. A true effect below these is out of reach and is
-reported as the null, not as a direction.
+**Where σ comes from.** The MDE is computed from the three opening baseline runs of this
+campaign (same prompt, corpus and code as every arm), never from earlier runs. The six
+2026-08 same-code runs used a different prompt (`fasrc-inline-v1.md`) and serve only as
+the planning prior: MDE ≈ 0.03 on `context_precision` / `context_recall` /
+`answer_correctness`, ≈ 0.05 on `answer_relevancy` / `faithfulness`. **Pre-committed
+rule:** if the opening σ on the primary metric exceeds that prior by more than 50 %, the
+operator decides — before any other arm runs — whether to raise N for every arm, and
+re-locks this file with the decision. A true effect below the locked MDE is out of reach
+and is reported as the null, not as a direction.
 
 ## Secondary analyses (planned)
 

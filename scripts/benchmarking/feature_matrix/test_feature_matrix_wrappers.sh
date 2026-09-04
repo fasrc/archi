@@ -20,6 +20,10 @@
 #   12. qa_arm.sh refuses when the converted QA dataset is missing
 #   13. archive_run.sh refuses a later run whose fingerprint differs from the pin unless
 #       --new-corpus, which then rewrites the pin
+#   14. qa_arm.sh refuses when the stack's rendered config is not on the requested arm
+#   15. qa_arm.sh records the rendered config's sha256 and the corpus fingerprint
+#   16. archive_run.sh refuses an artifact that is already in the ledger
+#   17. archive_run.sh refuses an artifact older than the stack's latest ragas-start
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -193,6 +197,13 @@ cp "$S/configs/config.yaml" "$T/rendered.before"
 run bash "$HERE/reseed_arm.sh" 02 "$T/arms/02-chunking-character.yaml" --stack fm-00
 if [ "$RC" = 2 ] && grep -q "ingest-side" "$T/stderr" && cmp -s "$S/configs/config.yaml" "$T/rendered.before"; then ok "reseed refuses an ingest-side arm"; else notok "reseed refuses an ingest-side arm (rc=$RC: $(cat "$T/stderr"))"; fi
 
+# 14 (before the re-seed: the stack is still on the baseline, so arm 01 must be refused)
+mkdir -p "$FM_OUT/qa"; printf '{"format":"qa-dataset-v2","items":[]}\n' > "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
+: > "$T/archi.calls"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml"
+if [ "$RC" = 2 ] && grep -q "factor retrievers.hierarchical_rerank.enabled: arm=False stack=True" "$T/stderr" && [ ! -s "$T/archi.calls" ]; then ok "qa_arm refuses a stack that is not on the requested arm"; else notok "qa_arm refuses a stack not on the arm (rc=$RC: $(cat "$T/stderr"))"; fi
+rm -f "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
+
 # 10
 : > "$T/docker.calls"
 run bash "$HERE/reseed_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00
@@ -201,17 +212,19 @@ if [ "$RC" = 0 ] && grep -q "up --force-recreate config-seed" "$T/docker.calls" 
   ok "reseed writes the retrieval key, backs up outside configs/, recreates config-seed"; else notok "reseed writes the retrieval key (rc=$RC: $(cat "$T/stderr"))"; fi
 
 # 12 (before 11: the dataset does not exist yet)
-run bash "$HERE/qa_arm.sh" 01 --stack fm-00 --profile "$T/cfg/qa/profile.yaml"
+run bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml"
 [ "$RC" = 2 ] && grep -q "QA dataset not found" "$T/stderr" && ok "qa_arm refuses without the converted dataset" || notok "qa_arm refuses without the converted dataset (rc=$RC: $(cat "$T/stderr"))"
 
-# 11
+# 11 + 15
 mkdir -p "$FM_OUT/qa"; printf '{"format":"qa-dataset-v2","items":[]}\n' > "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
 : > "$T/archi.calls"
-run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 --stack fm-00 --profile "$T/cfg/qa/profile.yaml"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml"
 if [ "$RC" = 0 ] && grep -q -- "eval qa --dataset $FM_OUT/qa/fasrc_ragas_queries.qa-v2.json --agent-config $FM_OUT/qa/01.agent-config.yaml --agent-spec $T/cfg/spec.md --evaluator-profile $T/cfg/qa/profile.yaml --output-dir $FM_OUT/qa/fm-00-arm01-r1 --attempts 1 --run-workers 1 --score-workers 4" "$T/archi.calls" \
    && "$FM_PYTHON" -c "import yaml,sys; c=yaml.safe_load(open('$FM_OUT/qa/01.agent-config.yaml'))['services']['chat_app']; sys.exit(0 if (c['agent_class'],c['default_provider'],c['default_model'])==('FASRCDocsAgent','openai','palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4') and 'evaluations' not in c and c['providers']['openai']['api_key']=='EMPTY' else 1)" \
    && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['kind']=='qa' and e['arm']=='01' and e['stack']=='fm-00' else 1)"; then
   ok "qa_arm overwrites the SUT fields, drops evaluations, calls archi eval qa serially"; else notok "qa_arm agent config + call (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+EXPECT_SHA="$(sha256sum "$S/configs/config.yaml" | cut -d' ' -f1)"
+if "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e.get('rendered_config_sha256')=='$EXPECT_SHA' and e.get('corpus_fingerprint')=='abc' and e.get('arm_config')=='$T/arms/01-rerank-off.yaml' else 1)"; then ok "qa_arm records the rendered config sha256, the arm config, and the corpus fingerprint"; else notok "qa_arm ledger identity fields"; fi
 
 # 13
 rm -f "$FM_OUT"/benchmarking-fm-00-*.json
@@ -220,6 +233,20 @@ run bash "$HERE/archive_run.sh" 00 2
 R1=$RC
 run bash "$HERE/archive_run.sh" 00 2 --new-corpus
 if [ "$R1" = 2 ] && [ "$RC" = 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-00")" = def ]; then ok "archive refuses a drifted fingerprint unless --new-corpus, which re-pins"; else notok "archive fingerprint gate (rc1=$R1 rc2=$RC: $(cat "$T/stderr"))"; fi
+
+# 16: the same artifact again → refused, ledger unchanged
+BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" 00 3
+if [ "$RC" = 2 ] && grep -q "already archived as arm 00 run 2" "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ]; then ok "archive refuses an artifact already in the ledger"; else notok "archive duplicate guard (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 17: a re-run that produced nothing leaves run 2's file as the newest; the file predates
+# the new ragas-start, so archiving "run 3" must refuse
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000004.json" '[]' def
+touch -d '2020-01-01T00:00:00Z' "$FM_OUT/benchmarking-fm-00-20260903_000004.json"
+run bash "$HERE/run_arm.sh" 00 --rerun          # appends a fresh ragas-start for fm-00
+run bash "$HERE/archive_run.sh" 00 3
+if [ "$RC" = 2 ] && grep -q "before the latest ragas-start" "$T/stderr"; then ok "archive refuses an artifact older than the latest ragas-start"; else notok "archive stale-artifact guard (rc=$RC: $(cat "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

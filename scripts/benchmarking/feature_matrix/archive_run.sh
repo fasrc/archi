@@ -5,6 +5,8 @@
 #
 # Waits (with --wait) for benchmarking-<stack> to exit, takes the newest artifact
 # benchmarking-<stack>-*.json in FM_OUT, and REFUSES when
+#   - the artifact is already in the ledger, or is older than the stack's latest
+#     `ragas-start` entry (a re-run that wrote nothing must not re-archive run 1 as run 2),
 #   - the artifact's config_version.divergence_from_selected_file is non-empty (the run
 #     did not use the settings you selected — Procedure E of interpreting_benchmark_results),
 #   - a corpus pin exists for the stack and the artifact's fingerprint differs (unless
@@ -35,6 +37,23 @@ fi
 
 ARTIFACT="$(ls -t "$FM_OUT"/benchmarking-"$STACK"-*.json 2>/dev/null | head -1 || true)"
 [ -n "$ARTIFACT" ] || fm_die "no artifact benchmarking-$STACK-*.json under $FM_OUT"
+
+# One artifact, one ledger row: refuse a file already archived, and a file that predates
+# this stack's latest ragas-start (the re-run produced nothing; this is run 1's file).
+FM_LEDGER="$(fm_ledger)" FM_ARTIFACT="$ARTIFACT" FM_STACK="$STACK" "$FM_PYTHON" - <<'EOF' || fm_die "refusing to archive $ARTIFACT (see above)"
+import datetime as dt, json, os, sys
+ledger, artifact, stack = os.environ["FM_LEDGER"], os.environ["FM_ARTIFACT"], os.environ["FM_STACK"]
+rows = json.load(open(ledger)) if os.path.exists(ledger) else []
+dup = [r for r in rows if r.get("artifact") == artifact]
+if dup:
+    print(f"artifact already archived as arm {dup[0].get('arm')} run {dup[0].get('run')}", file=sys.stderr); sys.exit(1)
+starts = [r["started"] for r in rows if r.get("kind") == "ragas-start" and r.get("stack") == stack and r.get("started")]
+if starts:
+    latest = max(dt.datetime.fromisoformat(s.replace("Z", "+00:00")) for s in starts)
+    mtime = dt.datetime.fromtimestamp(os.path.getmtime(artifact), tz=dt.timezone.utc)
+    if mtime < latest:
+        print(f"artifact written {mtime:%Y-%m-%dT%H:%M:%SZ}, before the latest ragas-start for {stack} at {latest:%Y-%m-%dT%H:%M:%SZ} — the run produced no new artifact", file=sys.stderr); sys.exit(1)
+EOF
 
 DOCS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "select count(*) from documents where is_deleted is not true;" 2>/dev/null | tr -d '[:space:]' || echo null)"
 CHUNKS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "select count(*) from document_chunks;" 2>/dev/null | tr -d '[:space:]' || echo null)"

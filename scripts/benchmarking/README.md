@@ -53,16 +53,19 @@ One thin wrapper per step of the #396 campaign protocol
   the rendered config, re-runs `config-seed`, starts the benchmark container. Refuses an arm
   whose change is ingest-side (chunking, processing, stemming) — a re-seed cannot re-chunk
   what is already stored.
-- **`qa_arm.sh <arm> [--stack …]`** — `archi eval qa` against the same stack, with the
-  rendered config's `chat_app` SUT fields overwritten from `services.benchmarking` (an
-  evaluate stack renders the template defaults there) and the campaign judge profile.
+- **`qa_arm.sh <arm> <arm.yaml> [--stack …]`** — `archi eval qa` against the same stack.
+  Refuses unless the stack's rendered config agrees with the arm YAML on every factor key,
+  overwrites the rendered config's `chat_app` SUT fields from `services.benchmarking` (an
+  evaluate stack renders the template defaults there), uses the campaign judge profile,
+  and records the rendered config's sha256 and the corpus fingerprint in the ledger.
 - **`archive_run.sh <arm> <run> [--wait]`** — records a finished run in
   `bench_out/feature_matrix/ledger.json`: fingerprint, digests, ingest seconds, live
-  document and chunk counts, scored counts recomputed from finite values. Refuses a run
-  whose `divergence_from_selected_file` is non-empty, writes the corpus pin on run 1, and
-  refuses a later run whose fingerprint drifted.
-- **`test_feature_matrix_wrappers.sh`** — hermetic self-test (stubbed `docker`/`archi`,
-  temp stack), run by `scripts/gate.sh`.
+  document and chunk counts, scored counts recomputed from finite values. Refuses an
+  artifact already in the ledger or older than the stack's latest `ragas-start`, a run
+  whose `divergence_from_selected_file` is non-empty, and a later run whose fingerprint
+  drifted; writes the corpus pin on run 1.
+- **`test_feature_matrix_wrappers.sh`** — hermetic 17-check self-test (stubbed
+  `docker`/`archi`, temp stack), run by `scripts/gate.sh`.
 
 ## Analysis and run helpers
 
