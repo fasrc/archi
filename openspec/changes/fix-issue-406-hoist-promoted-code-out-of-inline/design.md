@@ -137,9 +137,14 @@ trimmed the last text node of the whole half and so dropped the space in
 
 One line, `_hoist_out_of_inline(pre, soup)`, directly after `processing.py:349`. The helper
 runs inside `_worker()` for free, so the #40 guard covers it. It is a `while` loop, not
-recursion. A second promoted block inside the same ancestor lands in the tail half of the
-first split and is split in its turn, in document order. Measured:
-`'*x*\n\n```\na\nb\n```\n\n*y*\n\n```\nc\nd\n```\n\n*z*'`.
+recursion. The promotion loop collects every new `<pre>` and a second pass hoists them
+last-to-first: with the later blocks already out of the ancestor, the tail half of each
+split holds only the nodes up to the next block, so every sibling moves once. Hoisting in
+document order, as the first version did, moved the whole remaining tail once per block —
+quadratic in the block count (Codex review on PR #414; measured on one `<em>` holding 2000
+multi-line `<code>` siblings: 10.6 s of hoist time before, 0.45 s after). The final tree is
+the same in either order, because each split partitions the ancestor's children the same
+way. Measured: `'*x*\n\n```\na\nb\n```\n\n*y*\n\n```\nc\nd\n```\n\n*z*'`.
 
 ### D8. Tests pin exact strings and the tree
 

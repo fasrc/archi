@@ -905,3 +905,48 @@ def test_hoist_trim_looks_through_a_comment_at_the_cut():
     """A comment renders nothing, so the text before it still touches the cut."""
     soup = _promote_block_code_soup("<p><em>x <!-- c --><code>a<br>b</code></em></p>")
     assert soup.find("em").contents[0] == "x"
+
+
+# --- hoist many blocks out of one ancestor in linear time (Codex review on PR #414) ---
+
+
+def test_hoist_many_blocks_in_one_ancestor_moves_each_sibling_once(monkeypatch):
+    """Split the shared tail once per block: the move count is linear in the block count.
+
+    ``Tag.append`` is the only bs4 call that moves a node into a split half (``wrap``
+    uses it once per promoted block; parsing does not use it at all), so its call
+    count is a deterministic proxy for the work. Hoisting the blocks first-to-last
+    moved every later sibling once per earlier block (about n**2 appends).
+    """
+    from bs4.element import Tag
+
+    n = 40
+    html = (
+        "<p><em>"
+        + "".join(f"t{i} <code>a<br>b</code> " for i in range(n))
+        + "</em></p>"
+    )
+    calls = {"append": 0}
+    original_append = Tag.append
+
+    def counting_append(self, node):
+        calls["append"] += 1
+        return original_append(self, node)
+
+    monkeypatch.setattr(Tag, "append", counting_append)
+    out = _promote_block_code(html)
+    assert out.count("<pre") == n
+    assert calls["append"] <= 3 * n, calls["append"]
+
+
+def test_hoist_many_blocks_in_one_ancestor_exact_output_head_and_tail():
+    n = 40
+    html = (
+        "<p><em>"
+        + "".join(f"t{i} <code>a<br>b</code> " for i in range(n))
+        + "</em></p>"
+    )
+    out = html_to_markdown(html)
+    assert out.startswith("*t0*\n\n```\na\nb\n```\n\n*t1*\n\n```\na\nb\n```")
+    assert out.endswith("*t39*\n\n```\na\nb\n```")
+    assert out.count("```") == 2 * n

@@ -15,7 +15,9 @@ the ancestor, rather than unwrapping it, keeps `Note:` bold in
 The split SHALL copy the ancestor's attributes onto both halves, SHALL drop a half that
 holds no tag and no non-blank text, and SHALL drop the whitespace of each half that touches
 the cut. The hoist SHALL run inside the deep-safe worker with the rest of the promotion, so a
-deeply nested page (issue #40) is converted, not failed, by the new code path.
+deeply nested page (issue #40) is converted, not failed, by the new code path. When several
+promoted blocks share one ancestor, the hoist SHALL move each sibling node at most once, so the
+work grows linearly, not quadratically, with the number of blocks.
 
 #### Scenario: An emphasized multi-line code element becomes a bare fence
 
@@ -72,6 +74,12 @@ deeply nested page (issue #40) is converted, not failed, by the new code path.
 
 - **WHEN** `html_to_markdown('<p><em>x <code>a<br>b</code> y <code>c<br>d</code> z</em></p>')` is called
 - **THEN** the output is exactly `` *x*\n\n```\na\nb\n```\n\n*y*\n\n```\nc\nd\n```\n\n*z* ``
+
+#### Scenario: Many promoted blocks in one ancestor move each sibling once
+
+- **WHEN** `_promote_block_code` runs on one `<em>` that holds 40 multi-line `<code>` elements separated by text
+- **THEN** the result holds 40 `<pre>` elements
+- **AND** the number of node moves (`Tag.append` calls) is at most three per block, not one per earlier block
 
 #### Scenario: Inline single-line code inside emphasis stays inline
 

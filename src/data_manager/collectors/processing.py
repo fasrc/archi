@@ -401,6 +401,7 @@ def _promote_block_code(html: str) -> str:
     marked with ``_PROMOTED_ATTR`` so ``_promoted_fence_language`` labels only it.
     """
     soup = BeautifulSoup(html, "html.parser")
+    promoted = []
     for code in soup.find_all("code"):
         if code.find_parent("pre") is not None:
             continue
@@ -420,6 +421,14 @@ def _promote_block_code(html: str) -> str:
         if code.get("class"):
             pre["class"] = code["class"]
         code.wrap(pre)
+        promoted.append(pre)
+    # Hoist last-to-first. Each split moves the siblings after the block into the tail
+    # half; with the later blocks already out of the ancestor, that tail holds only the
+    # nodes up to the next block, so every sibling moves once. First-to-last moved the
+    # whole remaining tail once per block: quadratic in the block count (Codex review on
+    # PR #414). The final tree is the same either way, because the split at each block
+    # partitions the ancestor's children the same way regardless of order.
+    for pre in reversed(promoted):
         _hoist_out_of_inline(pre, soup)
     return str(soup)
 
