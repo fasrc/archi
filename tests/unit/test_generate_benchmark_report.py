@@ -152,6 +152,46 @@ def test_html_renders_null_and_nan_question_cells_as_unscored():
     assert html.count("n/a (unscored)") >= 2
 
 
+def test_html_omits_the_retrieval_section_when_no_source_metrics_were_recorded():
+    """From #279's "also noticed": ``SOURCES`` in the run's modes with no source
+    metrics in ``total_results`` — every question degraded, or an artifact older
+    than the keys — reached ``int(ret_total * None)`` and killed the whole
+    report with ``TypeError``. The tally has nothing behind it, so the section
+    is omitted; the rest of the report still renders."""
+    totals = {"aggregate_answer_relevancy": 0.862}
+
+    html = format_html_output(
+        _CONFIG, "ragas-bench", "2026-09-03", {"question_1": _ok_row()}, totals
+    )
+
+    assert "Retrieval Accuracy" not in html
+    assert "Aggregate RAGAS Metrics" in html
+    assert "Question 1: question_1" in html
+
+
+def test_html_omits_the_retrieval_section_when_source_accuracy_is_unscored():
+    """The same guard has to cover NaN, which is what an in-memory unscored
+    aggregate still is: ``int(x * nan)`` raises ``ValueError``, not TypeError,
+    so a None-only check would have left half the bug in place."""
+    totals = dict(_TOTALS, source_accuracy=float("nan"))
+
+    html = format_html_output(
+        _CONFIG, "ragas-bench", "2026-09-03", {"question_1": _ok_row()}, totals
+    )
+
+    assert "Retrieval Accuracy" not in html
+
+
+def test_html_still_renders_the_retrieval_section_when_the_metrics_are_there():
+    """The guard must not swallow a real zero: 0.0 accuracy is a measured floor
+    result, not an absent one."""
+    html = format_html_output(
+        _CONFIG, "ragas-bench", "2026-09-03", {"question_1": _ok_row()}, _TOTALS
+    )
+
+    assert "Retrieval Accuracy" in html
+
+
 def test_html_keeps_a_scored_zero_visible_as_a_score():
     """The complement: 0.0 is a score, not an absence. It keeps its numeric cell
     and its red badge instead of being folded into "unscored"."""

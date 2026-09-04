@@ -248,6 +248,29 @@ def test_nan_scores_render_unscored_not_green():
     assert "n/a (unscored)" in md
 
 
+def test_markdown_omits_the_retrieval_section_when_no_source_metrics_were_recorded():
+    """The markdown mirror of the HTML retrieval guard (#279, "also noticed"):
+    ``SOURCES`` in the modes with no source metrics recorded reached
+    ``round(ret_total * None)`` and took the default report down with it."""
+    totals = {"aggregate_answer_relevancy": 0.862}
+
+    md = format_markdown_output(
+        _CONFIG, "bench", "2026-09-03", {"q": _ok_row()}, totals, None
+    )
+
+    assert "Retrieval Accuracy" not in md
+    assert "Aggregate RAGAS Metrics" in md
+
+
+def test_markdown_still_renders_the_retrieval_section_when_the_metrics_are_there():
+    """0.0 accuracy is a measured floor result; the guard must not hide it."""
+    md = format_markdown_output(
+        _CONFIG, "bench", "2026-09-03", {"q": _ok_row()}, _TOTALS, None
+    )
+
+    assert "Retrieval Accuracy" in md
+
+
 def test_null_question_score_renders_unscored_rather_than_vanishing():
     """#279 spells an unscored cell ``null`` on disk. The question card used to
     drop a ``None`` row entirely, which reads identically to a metric the config

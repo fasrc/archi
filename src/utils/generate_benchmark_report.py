@@ -404,9 +404,10 @@ def format_html_output(
     )
 
     # sources (retrieval accuracy) metrics
-    if "SOURCES" in config_data.get("services", {}).get("benchmarking", {}).get(
-        "modes", []
-    ):
+    sources_mode = "SOURCES" in config_data.get("services", {}).get(
+        "benchmarking", {}
+    ).get("modes", [])
+    if sources_mode and _has_source_tally(total_results):
 
         # Retrieval Accuracy
         ret_accuracy = total_results.get("source_accuracy", None)
@@ -857,6 +858,24 @@ def _is_scored(value):
 UNSCORED_CELL = "n/a (unscored)"
 
 
+def _has_source_tally(total_results):
+    """True when the retrieval-accuracy section can actually be computed.
+
+    Both rates are multiplied by ``source_scored_count`` to produce the three
+    counts the section shows, so either one missing makes the whole tally
+    unreportable. A run CAN declare ``SOURCES`` and record neither — every
+    question degraded, or an artifact older than the keys — and unguarded that
+    reached ``int(count * None)`` and took the report down with a ``TypeError``
+    after the scores had already been computed and dumped (#279).
+
+    A measured ``0.0`` is a real floor result and keeps its section; only an
+    absent or non-finite rate suppresses it.
+    """
+    return _is_scored(total_results.get("source_accuracy")) and _is_scored(
+        total_results.get("relative_source_accuracy")
+    )
+
+
 def _score_cell(value):
     """A score cell: badged when scored, plainly unscored when not."""
     if not _is_scored(value):
@@ -1039,7 +1058,7 @@ def format_markdown_output(
     if provenance_md:
         parts += ["", provenance_md]
 
-    if "SOURCES" in modes:
+    if "SOURCES" in modes and _has_source_tally(total_results):
         ret_accuracy = total_results.get("source_accuracy", None)
         # Same denominator caveat as the HTML report: the score was divided by
         # the SOURCE-SCORABLE question count, so derive the count from the same
