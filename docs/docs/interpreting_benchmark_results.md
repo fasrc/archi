@@ -488,8 +488,108 @@ pre-reg that the corpora differ by design. Worked example:
 
 ### Procedure C: compare two arms
 
-Until `compare_runs.py` exists ([Gap 1](#gap-1-no-comparison-tool)), paste this
-into a notebook. It implements G5 and G6.
+`scripts/benchmarking/compare_runs.py` does this. It implements G3–G8 in one
+tested place, so a comparison cannot skip a gate by accident:
+
+```bash
+python scripts/benchmarking/compare_runs.py \
+  bench_out/<baseline>.json bench_out/<treatment>.json \
+  --noise-floor answer_relevancy=0.025,faithfulness=0.027,context_precision=0.016,context_recall=0.021
+```
+
+A single `-cd` sweep file is already a comparison: pass it alone and every arm in
+it is compared against the first. `path@2` picks one arm out of a sweep, and
+`--baseline LABEL` chooses which arm is the reference.
+
+| Flag | What it is for |
+|---|---|
+| `--noise-floor METRIC=SIGMA,...` | the noise floor from [Procedure A](#procedure-a-measure-the-noise-floor). Without one, nothing is ever called SIGNIFICANT (G2) |
+| `--noise-runs FILE ...` | measure sigma here instead: every arm of every file is one replicate, and sigma is the standard deviation of the **recomputed** means (needs two or more). Replicates face the same bank, corpus, code/config identity and divergence checks as the arms, and sigma is measured over the *same* questions the paired table uses — sigma *is* the G7 threshold, so a stale or foreign replicate would move the bar rather than describe it |
+| `--corpus-differs-by-design` | the only way past the G3 corpus gate; prints both fingerprints and the Procedure B warning |
+| `--ignore-config-divergence` | the only way past a non-empty `divergence_from_selected_file` |
+| `--anchors PATH` | the anchors file (default `examples/benchmarking/anchor_questions.json`). Required: the default is tracked, so a missing file means a broken checkout rather than a run without anchors. For a deliberately anchor-free comparison, point it at a file holding `[]` |
+| `--include-anchors-in-bank` | average the five anchors into the bank aggregates. Off by default — see [Gap 3](#gap-3-anchors-are-averaged-into-the-bank-aggregates) |
+| `--qa-run LABEL=RUN_DIR` | join an `archi eval qa` run to an arm, by derived item id (repeatable). This is the one flag that needs the project's evaluation dependencies installed — the id is derived by the QA stack's own `derive_item_id`, so the two sides cannot drift apart |
+| `--json PATH` | write the same report as JSON |
+
+Exit codes: `0` ok, `1` usage or I/O, `2` a gate refused, `3` a config-divergence
+stop. A question-set mismatch (G4) has **no** override flag, on purpose.
+
+It reads finished artifacts and nothing else: no deployment, no database, and —
+apart from `--qa-run` — no project dependencies, so it runs wherever the JSON
+files are.
+
+**What it refuses.**
+
+- **The question sets differ, or the same questions were graded against a
+  different `reference_answer` or a different set of declared sources** — two
+  different banks measure two different things, and a bank is more than its
+  question texts: the reference is the ground truth the context metrics and
+  `answer_correctness` are scored against, and the declared sources are the
+  ground truth for source accuracy. A bank edit would otherwise read as a
+  system delta (G4). No flag overrides this.
+- **The corpus fingerprints differ, were never recorded, or an arm recorded
+  `corpus_unchanged_at_endpoints: false`** — retrieval metrics move for free
+  across corpora (G3), and an arm that straddled a re-ingest scored its
+  questions against two of them even when it started and finished on the same
+  one. `--corpus-differs-by-design` continues and prints the Procedure B
+  warning; it does not make the arms comparable.
+- **`divergence_from_selected_file` is non-empty** — the run did not use the
+  settings you selected (Procedure E), so its scores belong to neither arm.
+
+**What it prints.** Run provenance including the three question counts (asked /
+anchors / bank rows, so the denominator is visible); the gate results; the paired
+per-metric table with n, delta, SE, sigma and the verdict; scored counts
+**recomputed** from the finite values and flagged `OVER-REPORTED` wherever
+`<metric>_scored` disagrees (§3.4); source accuracy as reported and as
+recomputed; the anchor block; slices by any field both arms carry (small slices
+marked directional, and never called SIGNIFICANT); and per-question timing —
+mean, nearest-rank p90, and warm variants that drop the first question in run
+order.
+
+G8 is reported as a gate row rather than an exit code: an anchor failing means
+*do not ship the change*, not *this comparison is invalid*, and the report is the
+evidence for that call. When none of the anchor questions appear in the arms —
+a run from before the anchors existed — the row says `not evaluated` and points
+at re-baselining, because silence there would read as a pass.
+
+The row judges the **candidate** arms. A baseline that fails its own
+`should_refuse` anchor is reported beside the verdict but not counted against
+it, so a run that *repairs* a broken baseline is not told "do not ship" for the
+defect it fixed. An anchor the candidate could not score — a degraded row, or
+one whose every metric cell is non-finite — is reported as `unscored` rather
+than counted as held: a tripwire that raised no alarm because there was nothing
+to compare has not passed.
+
+Giving both `--noise-floor` and `--noise-runs` a sigma for the same metric is
+refused (exit 1) rather than resolved by precedence: sigma is the threshold, and
+a declared value silently replacing a measured one would move the bar with
+nothing in the report to show it. Naming one metric twice inside `--noise-floor`
+is refused for the same reason. Declaring a metric the replicates could not
+measure is fine.
+
+A **measured sigma of exactly zero is refused** (exit 2). Replicates whose
+recomputed means come out identical have measured no noise floor at all rather
+than a floor of zero, and a zero threshold makes the `2 x sigma` half of G7
+vacuous. Each metric's sigma is measured over the rows every arm *and* every
+replicate could score for that metric, so the threshold and the delta it judges
+describe the same population.
+
+!!! note "The `difficulty` slice needs a bank that reaches the artifact"
+    Procedure D lists `difficulty` as a row field, but the harness copies only
+    `anchor_type` from the bank into `single_question_results`
+    (`service_benchmark.py`, `_answer_and_score_question`). Artifacts written by
+    the current harness therefore carry no `difficulty`, and the slice is
+    skipped rather than shown empty. The tool supports the field for when the
+    harness propagates it; until then, the bank slice available in practice is
+    `anchor_type`.
+
+Two things the tool will not do for you. It never prints SIGNIFICANT without a
+noise floor, and it identifies the anchors by **question text** rather than by
+`anchor_type` — the FASRC bank sets `anchor_type` on all 109 rows, so that field
+selects the whole bank, not the five tripwires.
+
+The arithmetic underneath is the paired loop, which is worth reading once:
 
 ```python
 import json, math, statistics
@@ -693,13 +793,28 @@ necessarily what ran; the field says so.
 ## 6. Known gaps — NOT YET IMPLEMENTED
 
 Everything above works today. Everything below does **not** exist yet. Do not
-follow a step that silently does nothing.
+follow a step that silently does nothing. A gap marked **closed** is the
+exception: it stays here, saying what it did and did not change, so an older note
+pointing at it still lands somewhere truthful.
 
-### Gap 1: no comparison tool
+### Gap 1: no comparison tool — **closed** (2026-09, #419)
 
-Procedure C is a copy-paste snippet. It should be `scripts/benchmarking/compare_runs.py`,
-refusing to run when the corpus snapshots or bank hashes disagree, and printing the
-paired table, the difficulty slices, and the anchor pass/fail block.
+`scripts/benchmarking/compare_runs.py` exists. It refuses to run when the
+question sets differ (G4, with no override), when the corpus fingerprints differ
+or were never recorded (G3), or when `divergence_from_selected_file` is non-empty
+(Procedure E); and it prints the paired table, the slices, and the anchor
+pass/fail block. See [Procedure C](#procedure-c-compare-two-arms).
+
+Two limits are worth stating rather than discovering:
+
+- **The bank hash is still not checkable** ([Gap 2](#gap-2-the-question-bank-is-not-version-controlled)).
+  The tool compares the question *sets* the artifacts carry, which is as close to
+  G4 as the files allow — two runs of the same 109 texts against different
+  *reference answers* would still pass it.
+- **`corpus_fingerprint` is absent from every artifact written before it was
+  added**, so comparing the historical `bench_out/` runs needs
+  `--corpus-differs-by-design`. That flag prints a warning; it is not a verdict
+  that the corpora matched.
 
 ### Gap 2: the question bank is not version-controlled
 

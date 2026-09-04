@@ -132,8 +132,34 @@ One thin wrapper per step of the #396 campaign protocol
   an arm label that does not match the YAML's own `name`. The live fingerprint is the
   harness's own routine (`CORPUS_STATE_QUERY` + `corpus_fingerprint`), run inside the
   data-manager container.
-- **`test_feature_matrix_wrappers.sh`** — hermetic 44-check self-test (stubbed
+- **`test_feature_matrix_wrappers.sh`** — hermetic 45-check self-test (stubbed
   `docker`/`archi`, temp stack), run by `scripts/gate.sh`.
+
+## Comparing two runs
+
+- **`compare_runs.py`** — the paired, gated comparison of two or more benchmark
+  artifacts; the tool
+  [`interpreting_benchmark_results.md`](../../docs/docs/interpreting_benchmark_results.md)
+  calls **Procedure C**, and every flag is documented there. It pairs on question
+  **text**, never on the positional `question_<n>` key (the harness drops failed
+  rows, so the same key is not the same question), and it refuses to run when the
+  arms' question sets differ — with no override flag — when the corpus
+  fingerprints differ or were never recorded, or when the recorded configuration
+  diverged from the one that was selected. Every scored count is recomputed from
+  the finite values and flagged `OVER-REPORTED` where `<metric>_scored` disagrees,
+  and no delta is ever called SIGNIFICANT without a measured noise floor
+  (`--noise-floor`, which rejects a negative or non-finite sigma, or
+  `--noise-runs` over replicates held to the same bank, corpus and divergence
+  checks as the arms; giving both a sigma for one metric is refused rather than
+  resolved by precedence, because sigma *is* the significance threshold). The five
+  anchors are reported as their own track — matched by question text, because the
+  FASRC bank sets `anchor_type` on every row — and are kept out of the bank
+  aggregates. `--qa-run LABEL=DIR` optionally joins an `archi eval qa` run by
+  derived item id — the one path that needs the project's evaluation
+  dependencies, because the id comes from the QA stack's own `derive_item_id`.
+  Everything else is standard library and reads finished artifacts, so it runs on
+  any host that has the JSON files: no deployment, no database. Exit codes: 0 ok,
+  1 usage, 2 gate refusal, 3 config divergence.
 
 ## Analysis and run helpers
 
