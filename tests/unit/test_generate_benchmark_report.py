@@ -98,3 +98,70 @@ def test_report_renders_per_question_answer_correctness_score():
     assert "aggregate_answer_correctness" not in str(_TOTALS)
     assert "Answer Correctness" in html
     assert "0.420" in html
+
+
+# --- #279: unscored cells in the HTML report --------------------------------
+
+
+def test_html_renders_null_aggregate_as_unscored():
+    """From #279 on, an unscored metric is serialized as ``null``, so every
+    reader sees ``None`` where it used to see NaN. The HTML aggregate loop
+    compared the value against 0.5 with no guard, which raises ``TypeError:
+    '<' not supported between instances of 'NoneType' and 'float'`` and takes
+    the whole report down."""
+    totals = dict(_TOTALS, aggregate_context_recall=None)
+
+    html = format_html_output(
+        _CONFIG, "ragas-bench", "2026-09-03", {"question_1": _ok_row()}, totals
+    )
+
+    assert "Context Recall" in html
+    assert "n/a (unscored)" in html
+
+
+def test_html_renders_nan_aggregate_as_unscored_not_nan():
+    """The older artifacts still on disk carry NaN, and NaN fails both threshold
+    comparisons — so without a guard it wore the green ``score-high`` badge and
+    printed the literal ``nan`` as its value, reading as a success."""
+    totals = dict(_TOTALS, aggregate_context_recall=float("nan"))
+
+    html = format_html_output(
+        _CONFIG, "ragas-bench", "2026-09-03", {"question_1": _ok_row()}, totals
+    )
+
+    assert ">nan<" not in html
+    assert "n/a (unscored)" in html
+    # the unscored metric must not be badged as a high score
+    assert "nan</div>" not in html
+
+
+def test_html_renders_null_and_nan_question_cells_as_unscored():
+    """Same defect one level down: the per-question block skipped ``None`` but
+    formatted NaN with ``:.3f``, printing ``nan`` on the question card."""
+    row = _ok_row()
+    row["context_recall"] = float("nan")
+    row["context_precision"] = None
+
+    html = format_html_output(
+        _CONFIG, "ragas-bench", "2026-09-03", {"question_1": row}, _TOTALS
+    )
+
+    assert ">nan<" not in html
+    assert "Context Recall" in html
+    assert "Context Precision" in html
+    assert html.count("n/a (unscored)") >= 2
+
+
+def test_html_keeps_a_scored_zero_visible_as_a_score():
+    """The complement: 0.0 is a score, not an absence. It keeps its numeric cell
+    and its red badge instead of being folded into "unscored"."""
+    row = _ok_row()
+    row["context_recall"] = 0.0
+    totals = dict(_TOTALS, aggregate_context_recall=0.0)
+
+    html = format_html_output(
+        _CONFIG, "ragas-bench", "2026-09-03", {"question_1": row}, totals
+    )
+
+    assert "0.000" in html
+    assert "n/a (unscored)" not in html

@@ -381,6 +381,9 @@ def format_html_output(
             .score-low { color: #dc3545; }
             .score-medium { color: #ffc107; }
             .score-high { color: #28a745; }
+            /* Unscored: deliberately not on the red-amber-green scale — it is
+               the absence of a grade, not a bad one. */
+            .score-na { color: #6c757d; font-size: 0.6em; }
         </style>
     </head>
     <body>
@@ -485,15 +488,11 @@ def format_html_output(
                     clean_name = (
                         metric.replace("aggregate_", "").replace("_", " ").title()
                     )
-                    score_class = (
-                        "score-low"
-                        if value < 0.5
-                        else "score-medium" if value < 0.7 else "score-high"
-                    )
+                    score_class, display = _html_score_parts(value)
                     html_parts.append(
                         f"""
                     <div class="metric-item">
-                        <div class="metric-value {score_class}">{value:.3f}</div>
+                        <div class="metric-value {score_class}">{display}</div>
                         <div class="metric-label">{clean_name}</div>
                     </div>
                     """
@@ -729,18 +728,17 @@ def format_html_output(
             html_parts.append(f'<div class="section">')
             html_parts.append(f'<div class="section-title">📊 RAGAS Scores</div>')
             html_parts.append(f'<div class="metrics-grid">')
+            # Key PRESENT is the test, not key-present-and-not-None: the key is
+            # there because the run asked for the metric, so a null/NaN cell is
+            # a scoring failure worth showing. Dropping the tile instead made an
+            # unscored metric look identical to one the config never enabled.
             for metric_key, metric_name in ragas_metrics.items():
-                if metric_key in q_data and q_data[metric_key] is not None:
-                    value = q_data[metric_key]
-                    score_class = (
-                        "score-low"
-                        if value < 0.5
-                        else "score-medium" if value < 0.7 else "score-high"
-                    )
+                if metric_key in q_data:
+                    score_class, display = _html_score_parts(q_data[metric_key])
                     html_parts.append(
                         f"""
                     <div class="metric-item">
-                        <div class="metric-value {score_class}">{value:.3f}</div>
+                        <div class="metric-value {score_class}">{display}</div>
                         <div class="metric-label">{metric_name}</div>
                     </div>
                     """
@@ -843,16 +841,43 @@ def _score_badge(value):
     return "🟢"
 
 
-def _score_cell(value):
-    """A score cell: badged when finite, plainly unscored when not.
+def _is_scored(value):
+    """True when ``value`` is a number a reader may treat as a score.
 
-    ``build_ragas_aggregates`` emits ``float("nan")`` when nothing was
-    scorable; NaN fails both threshold comparisons, so without this check an
-    unscored run would wear the green badge and read as a success.
+    Two spellings of "unscored" reach the reports and both must land here.
+    ``build_ragas_aggregates`` emits ``float("nan")`` in memory, and NaN fails
+    BOTH threshold comparisons — so an unguarded cell wore the green badge and
+    printed a literal ``nan``, reading as a success. Since #279 the artifact
+    spells the same thing ``null``, and an unguarded ``None`` raises
+    ``TypeError`` on ``value < 0.5``, taking the whole report down.
     """
-    if not isinstance(value, (int, float)) or not math.isfinite(value):
-        return "n/a (unscored)"
+    return isinstance(value, (int, float)) and math.isfinite(value)
+
+
+UNSCORED_CELL = "n/a (unscored)"
+
+
+def _score_cell(value):
+    """A score cell: badged when scored, plainly unscored when not."""
+    if not _is_scored(value):
+        return UNSCORED_CELL
     return f"{value:.3f} {_score_badge(value)}"
+
+
+def _html_score_parts(value):
+    """``(css_class, display_text)`` for one HTML metric tile.
+
+    The HTML report paints its own tiles rather than reusing ``_score_cell``'s
+    text, so the unscored case needs the same decision in the colour it picks:
+    a neutral class, never the green one a NaN would otherwise fall into.
+    """
+    if not _is_scored(value):
+        return "score-na", UNSCORED_CELL
+    if value < 0.5:
+        return "score-low", f"{value:.3f}"
+    if value < 0.7:
+        return "score-medium", f"{value:.3f}"
+    return "score-high", f"{value:.3f}"
 
 
 def extract_context_text(ctx):
@@ -1190,10 +1215,13 @@ def format_markdown_output(
                 parts += ["", f"**{title}**", "", body]
 
         if "RAGAS" in modes:
+            # Key PRESENT is the test (see the HTML mirror): a null cell means
+            # the run asked for the metric and the judge produced nothing, which
+            # is exactly what a reader needs to see.
             score_rows = [
                 f"| {metric_name} | {_score_cell(q_data[metric_key])} |"
                 for metric_key, metric_name in ragas_metrics.items()
-                if metric_key in q_data and q_data[metric_key] is not None
+                if metric_key in q_data
             ]
             if score_rows:
                 parts += [

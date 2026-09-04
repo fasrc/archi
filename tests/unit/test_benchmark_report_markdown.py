@@ -248,6 +248,22 @@ def test_nan_scores_render_unscored_not_green():
     assert "n/a (unscored)" in md
 
 
+def test_null_question_score_renders_unscored_rather_than_vanishing():
+    """#279 spells an unscored cell ``null`` on disk. The question card used to
+    drop a ``None`` row entirely, which reads identically to a metric the config
+    never enabled — the exact confusion the scored denominator exists to stop."""
+    row = _ok_row()
+    row["context_recall"] = None
+
+    md = format_markdown_output(
+        _CONFIG, "bench", "2026-09-03", {"q": row}, _TOTALS, None
+    )
+
+    assert "| Context Recall | n/a (unscored) |" in md
+    # a metric the run never scored still has no row at all
+    assert "Answer Correctness" not in md
+
+
 def test_long_context_keeps_the_full_text_available():
     """The HTML report exposes the full document behind an expander; the
     markdown report must not permanently drop the evidence past the preview."""
