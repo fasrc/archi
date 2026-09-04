@@ -409,6 +409,13 @@ Human record (filled as arms complete; one row per arm, baseline first):
 - **Draft references.** The QA atoms derive from `reference` fields that no human has
   locked. Atom verdicts are therefore relative (arm vs. baseline on the same atoms), not
   absolute quality.
+- **The `easy_retrieve` alarm is a prompt to look, not a verdict.** Its threshold (a drop
+  larger than σ) applies a run-mean σ to a single question, whose score is far noisier
+  than a mean: `compare_runs.py` on two same-code 2026-08 runs raised it three times. The
+  tool prints the delta and the threshold beside every alarm; an alarm on its own never
+  changes a verdict, and a repeated alarm on one anchor across arms is the signal worth
+  chasing. Tightening the rule (a per-question threshold) is a change to this plan and to
+  the pre-registration, to be made before the campaign starts or not at all.
 
 ## 11. Out of scope
 
