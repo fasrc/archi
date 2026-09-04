@@ -153,7 +153,7 @@ Standing notes for every task:
 
 ## 3. Close out
 
-- [ ] 3.1 `model: sonnet` — Verify, push, and open the PR. Steps, in order:
+- [x] 3.1 `model: sonnet` — Verify, push, and open the PR. Steps, in order:
       1. `bash scripts/gate.sh` on the finished branch exits 0. `git status` is empty.
       2. `git diff origin/dev --stat` lists only `src/data_manager/collectors/processing.py`,
          `tests/unit/test_html_to_markdown_processor.py`, `docs/docs/configuration.md`, and
@@ -191,3 +191,7 @@ Standing notes for every task:
          branch pushed, do **not** open a PR on any other repository, and stop.
       6. Record the PR URL as a line under this task, tick the task, and commit that edit
          with the gate. Do not merge.
+
+      Branch pushed to fork (swinney/archi). `gh pr create --repo fasrc/archi` failed with
+      "Resource not accessible by personal access token"; PR not opened per the stop condition.
+      Gate: green (3685 passed). Live: 0 glued closers, 36,966 chars.
