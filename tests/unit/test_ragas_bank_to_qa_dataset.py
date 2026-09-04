@@ -182,9 +182,9 @@ def test_refuses_a_native_qa_dataset_as_not_a_ragas_bank(tmp_path, capsys):
 
 
 def test_refuses_a_headerless_native_dataset_as_not_a_ragas_bank(tmp_path, capsys):
-    # A native V1 array spells its question/answer the same way a LEGACY bank
-    # does; ``time_sensitive`` is mandatory on every native row and absent from
-    # every bank row, so it is what tells the two apart.
+    # A native V1 array spells its question/answer the way a LEGACY bank does.
+    # What separates them is the pair: a native row carries ``time_sensitive``
+    # and spells its question ``question``; a bank row spells it ``user_input``.
     native_rows = [
         {
             "id": "qa-native",
@@ -199,6 +199,35 @@ def test_refuses_a_headerless_native_dataset_as_not_a_ragas_bank(tmp_path, capsy
     assert code == 2
     error = capsys.readouterr().err
     assert "not a RAGAS bank" in error and "time_sensitive" in error
+    assert not out.exists()
+
+
+def test_a_bank_row_may_declare_time_sensitive(tmp_path):
+    # The shared adapter defaults ``time_sensitive`` only when it is ABSENT, so
+    # a bank row is allowed to declare it. Treating the field alone as a
+    # native-dataset marker would refuse a bank the console import accepts.
+    row = dict(BANK_ROW, time_sensitive=False)
+
+    code, out = _run(tmp_path, [row])
+
+    assert code == 0
+    (item,) = _items(out)
+    assert item.time_sensitive is False
+    assert item.id == derive_item_id(BANK_ROW["user_input"], BANK_ROW["reference"])
+
+
+def test_a_time_sensitive_bank_row_is_refused_because_v2_needs_an_oracle(
+    tmp_path, capsys
+):
+    # ``time_sensitive: true`` makes a V2 item live, and a live item without an
+    # oracle recipe has no V2 representation. The row is refused by name rather
+    # than written as a dataset the CLI would then reject.
+    row = dict(BANK_ROW, time_sensitive=True)
+
+    code, out = _run(tmp_path, [row])
+
+    assert code == 2
+    assert "oracle" in capsys.readouterr().err
     assert not out.exists()
 
 
@@ -241,29 +270,68 @@ def test_refuses_an_anchor_that_is_a_bank_row_up_to_line_endings(tmp_path, capsy
     assert not out.exists()
 
 
-def test_concurrent_runs_to_one_output_do_not_share_a_staging_file(
+def test_the_dataset_is_validated_elsewhere_and_published_atomically(
     tmp_path, monkeypatch
 ):
-    # A fixed staging name beside --out lets two conversions truncate each
-    # other's half-written file and publish the wrong bank's bytes, because the
-    # rename happens before anything re-reads the result.
-    real_document = converter.v2_json_document
-    staged = set()
+    # Publishing goes through the shared atomic copy, which stages under a
+    # uniquely named hidden sibling of --out: two conversions aimed at one
+    # output can neither truncate nor publish each other's bytes. The copied
+    # file is built and re-read somewhere else first, so nothing lands at --out
+    # until every item has been read back from the bytes on disk.
+    calls = []
+    real_copy = converter.copy_file_atomic
 
-    def spy(items):
-        for chunk in real_document(items):
-            staged.update(p.name for p in tmp_path.iterdir() if p.name.startswith("."))
-            yield chunk
+    def spy(source, target):
+        calls.append((Path(source), Path(target)))
+        real_copy(source, target)
 
-    monkeypatch.setattr(converter, "v2_json_document", spy)
+    monkeypatch.setattr(converter, "copy_file_atomic", spy)
 
-    first, out = _run(tmp_path, [BANK_ROW])
-    second, _again = _run(tmp_path, [BANK_ROW])
+    code, out = _run(tmp_path, [BANK_ROW])
 
-    assert (first, second) == (0, 0)
-    assert len(staged) == 2
-    assert all(name.startswith(".out.json") for name in staged)
+    assert code == 0
+    assert len(calls) == 1
+    source, target = calls[0]
+    assert target == out
+    assert source.parent != out.parent
     assert sorted(p.name for p in tmp_path.iterdir()) == ["bank.json", "out.json"]
+
+
+def test_a_refused_rerun_leaves_the_previous_dataset_intact(tmp_path):
+    good, out = _run(tmp_path, [BANK_ROW])
+    published = out.read_bytes()
+
+    refused, _same = _run(tmp_path, [BANK_ROW, dict(BANK_ROW)])
+
+    assert (good, refused) == (0, 2)
+    assert out.read_bytes() == published
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["bank.json", "out.json"]
+
+
+def test_refuses_to_overwrite_the_bank_it_reads(tmp_path, capsys):
+    bank = _write(tmp_path / "bank.json", [BANK_ROW])
+
+    code = converter.main([str(bank), "--no-anchors", "--out", str(bank)])
+
+    assert code == 1
+    assert "would overwrite" in capsys.readouterr().err
+    assert json.loads(bank.read_text(encoding="utf-8")) == [BANK_ROW]
+
+
+def test_refuses_to_overwrite_the_anchor_file_it_reads(tmp_path, capsys):
+    bank = _write(tmp_path / "bank.json", [BANK_ROW])
+    anchors = _write(tmp_path / "anchors.json", [SECOND_ROW])
+
+    # Spelled indirectly, so the guard has to compare resolved paths.
+    disguised = tmp_path / "sub" / ".." / "anchors.json"
+
+    code = converter.main(
+        [str(bank), "--anchors", str(anchors), "--out", str(disguised)]
+    )
+
+    assert code == 1
+    assert "would overwrite" in capsys.readouterr().err
+    assert json.loads(anchors.read_text(encoding="utf-8")) == [SECOND_ROW]
 
 
 def test_a_legacy_question_answer_bank_converts_to_the_same_ids(tmp_path):

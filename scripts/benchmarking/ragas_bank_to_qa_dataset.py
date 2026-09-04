@@ -62,6 +62,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.evaluation.qa.artifacts import (  # noqa: E402  # isort: skip
     AtomicTextWriter,
+    copy_file_atomic,
     sha256_file,
 )
 from src.evaluation.qa.catalog import (  # noqa: E402  # isort: skip
@@ -84,10 +85,16 @@ EXIT_OK = 0
 EXIT_USAGE = 1
 EXIT_REFUSED = 2
 
-# Mandatory on every native dataset row (``dataset._common_fields`` rejects a row
-# without it) and carried by no bank row. A legacy bank and a headerless native
-# dataset are otherwise spelled identically, so this is what tells them apart.
+# A headerless native dataset and a LEGACY bank are spelled alike, so one field
+# cannot separate them -- this PAIR does. ``time_sensitive`` is mandatory on
+# every native row (``dataset._common_fields`` rejects a row without it), and the
+# modern bank dialect always spells the question ``user_input``. A row that
+# declares ``time_sensitive`` while spelling its question anything else is a
+# native dataset row. A bank row MAY declare ``time_sensitive``: the shared
+# adapter defaults it only when absent, so the field alone must never be read as
+# a native marker.
 NATIVE_ONLY_FIELD = "time_sensitive"
+MODERN_QUESTION_FIELD = "user_input"
 
 DEFAULT_ANCHORS = Path(REPO_ROOT) / DEFAULT_ANCHOR_PATH
 
@@ -147,11 +154,16 @@ def load_bank(path: Path, *, what: str = "bank") -> List[Any]:
             "object with a schema_version)"
         )
     for index, row in enumerate(document, 1):
-        if isinstance(row, dict) and NATIVE_ONLY_FIELD in row:
+        if (
+            isinstance(row, dict)
+            and NATIVE_ONLY_FIELD in row
+            and MODERN_QUESTION_FIELD not in row
+        ):
             raise BankRefused(
                 f"{path} is not a RAGAS bank: row {index} carries "
-                f"'{NATIVE_ONLY_FIELD}', which every native dataset row must "
-                "have and no bank row has -- this file is already a QA dataset"
+                f"'{NATIVE_ONLY_FIELD}' but spells its question something other "
+                f"than '{MODERN_QUESTION_FIELD}' -- that is a native dataset "
+                "row, and this file is already a QA dataset"
             )
     return _modernized(document)
 
@@ -215,22 +227,23 @@ def normalize_rows(rows: List[Any], scratch: Path) -> Tuple[Path, Dict[str, Any]
     return destination, report
 
 
-def write_v2(normalized: Path, out: Path) -> int:
-    """Write the ``qa-dataset-v2`` envelope, then re-read it and count.
+def write_v2(normalized: Path, out: Path, scratch: Path) -> int:
+    """Build the ``qa-dataset-v2`` envelope in ``scratch``, then publish it.
 
-    The re-read is the check that the file on disk is one the CLI will accept:
-    every item is validated a second time by the same reader ``archi eval qa``
-    uses, from the bytes that were actually written.
+    The envelope is written and then re-read *in the scratch directory*, by the
+    same reader ``archi eval qa`` uses, from the bytes that were actually
+    written. Only a file that reads back cleanly is published, so a bank the
+    dataset reader refuses (a live row with no oracle, say) never lands at
+    ``--out`` and never replaces a good dataset from an earlier run.
 
-    ``AtomicTextWriter`` is the project's own atomic artifact writer: it stages
-    to a uniquely named hidden sibling in the destination directory, publishes by
-    rename only on a clean exit, and always removes the staging file. So a
-    refusal leaves nothing behind, an existing dataset survives a failed rerun,
-    and two conversions aimed at one ``--out`` cannot truncate or publish each
-    other's bytes.
+    Both writes go through the project's own atomic artifact helpers, which
+    stage under a uniquely named hidden sibling and rename into place only on a
+    clean exit: nothing is left behind by a refusal, and two conversions aimed
+    at one ``--out`` cannot truncate or publish each other's bytes.
     """
     if out.suffix.lower() != ".json":
         raise UsageError(f"--out must be a .json file, got {out.name}")
+    staged = scratch / out.name
     written = 0
 
     def counted() -> Iterator[DatasetItem]:
@@ -239,16 +252,39 @@ def write_v2(normalized: Path, out: Path) -> int:
             written += 1
             yield item
 
-    with AtomicTextWriter(out) as handle:
+    with AtomicTextWriter(staged) as handle:
         for chunk in v2_json_document(counted()):
             handle.write(chunk)
-    reread = sum(1 for _item in iter_dataset_items(out))
+    reread = sum(1 for _item in iter_dataset_items(staged))
     if reread != written:
         raise RuntimeError(
-            f"wrote {written} items to {out} but read back {reread}; "
+            f"wrote {written} items to {staged} but read back {reread}; "
             "the dataset was not written cleanly"
         )
+    copy_file_atomic(staged, out)
     return written
+
+
+def _refuse_to_clobber_an_input(
+    out: Path, bank_path: Path, anchors_path: Optional[Path]
+) -> None:
+    """Never let the dataset be written over a file it was converted from.
+
+    The bank is a maintained, human-authored artifact and the anchor file is
+    tracked in the repo; both are read into memory before anything is written,
+    so ``--out <bank>`` would replace the source with the dataset and lose it.
+    Compared resolved, so an indirect spelling of the same file is caught too.
+    """
+    destination = out.resolve()
+    inputs = [("bank", bank_path)]
+    if anchors_path is not None:
+        inputs.append(("anchor file", anchors_path))
+    for what, path in inputs:
+        if destination == path.resolve():
+            raise UsageError(
+                f"--out {out} would overwrite the {what} it reads ({path}); "
+                "write the dataset somewhere else"
+            )
 
 
 def convert(
@@ -258,6 +294,7 @@ def convert(
     statuses: Sequence[str],
 ) -> Dict[str, Any]:
     """Bank (+ anchors) -> a ``qa-dataset-v2`` file; returns the run report."""
+    _refuse_to_clobber_an_input(out, bank_path, anchors_path)
     bank = load_bank(bank_path)
     merged, added, skipped = list(bank), 0, 0
     if anchors_path is not None:
@@ -268,7 +305,7 @@ def convert(
     with tempfile.TemporaryDirectory(prefix="ragas-bank-to-qa-") as scratch:
         try:
             normalized, dialect = normalize_rows(selected, Path(scratch))
-            count = write_v2(normalized, out)
+            count = write_v2(normalized, out, Path(scratch))
         except ValueError as exc:
             # The adapter and the dataset reader both refuse by raising
             # ValueError with a message that names the row.

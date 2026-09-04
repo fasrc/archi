@@ -59,8 +59,11 @@ lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
   the counts, carried fields and output sha256 as a machine report. Refusals are
   loud and named: a row spelling one concept twice (`user_input` *and*
   `question`), duplicate rows, a row with no `reference`, or a file that is
-  already a QA dataset exit 2 instead of converting. Supports the #396 feature
-  matrix.
+  already a QA dataset exit 2 instead of converting, and an `--out` that
+  resolves to the bank or the anchor file exits 1 rather than replacing the
+  source. Nothing is published until the written bytes have been read back as a
+  dataset, so a refusal leaves any earlier output untouched. Supports the #396
+  feature matrix.
 
   ```bash
   python scripts/benchmarking/ragas_bank_to_qa_dataset.py \
