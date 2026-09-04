@@ -143,7 +143,7 @@ Make sure the `out_dir` exists before running.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the ingest last reported progress. It restarts on every poll that comes back `state=running`, so an ingest that is working is never cut off for taking a long time — only one that goes silent, or never starts, is. |
-| `BENCH_INGEST_MAX_WAIT` | `21600` | Absolute ceiling on the whole wait, in seconds — the backstop for an ingest that reports `running` forever without finishing. `0` disables it; the stall budget above still applies, so this is not a licence to hang. |
+| `BENCH_INGEST_MAX_WAIT` | `21600` | Absolute ceiling on the whole wait, in seconds — the backstop for an ingest that reports `running` forever without finishing. `0` disables it and logs a warning; prefer a large finite value for unattended runs. |
 | `BENCH_INGEST_POLL_INTERVAL` | `5` | Seconds between ingestion-status polls. |
 
 The two budgets answer three different failures, which is why neither one is a
@@ -160,7 +160,10 @@ plain "give up after N seconds":
 - **The ingest is alive but stuck.** Polls keep reporting `running` and the
   state never reaches `completed`. `BENCH_INGEST_MAX_WAIT` ends that, and the
   error reports the last observed `state` and `step` rather than a connection
-  problem.
+  problem. Only the ceiling can catch this one: the status payload carries just
+  `state`, `step` and `error`, with no counter or timestamp, so a wedged ingest
+  is byte-for-byte indistinguishable from a working one. Tightening it needs a
+  progress signal from the data-manager itself.
 
 A long-but-healthy ingest hits none of them. CPU-only ingest of the full FASRC
 corpus takes ~64 min; with `processing.categorization.enabled: true` it runs one
