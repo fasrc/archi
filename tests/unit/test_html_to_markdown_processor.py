@@ -873,3 +873,35 @@ def test_hoist_trim_img_space_before_cut_kept():
         html_to_markdown('<p><em>x <img src="i.png"/> <code>a<br>b</code></em></p>')
         == "*x ![](i.png)*\n\n```\na\nb\n```"
     )
+
+
+# --- trim only the text that touches the cut (Codex review on PR #414) ---
+
+
+def test_hoist_trim_void_tag_at_head_cut_keeps_space_before_it():
+    """A void tag at the cut has no text; the space before it does not touch the cut."""
+    assert (
+        html_to_markdown('<p><em>x <img src="i.png"/><code>a<br>b</code></em></p>')
+        == "*x ![](i.png)*\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_trim_void_tag_at_tail_cut_keeps_space_after_it():
+    assert (
+        html_to_markdown('<p><em><code>a<br>b</code><img src="i.png"/> y</em></p>')
+        == "```\na\nb\n```\n\n*![](i.png) y*"
+    )
+
+
+def test_hoist_trim_tree_text_inside_earlier_tag_untouched():
+    soup = _promote_block_code_soup(
+        '<p><em>x <b>y </b><img src="i.png"/><code>a<br>b</code></em></p>'
+    )
+    assert soup.find("b").string == "y "
+    assert soup.find("em").contents[0] == "x "
+
+
+def test_hoist_trim_looks_through_a_comment_at_the_cut():
+    """A comment renders nothing, so the text before it still touches the cut."""
+    soup = _promote_block_code_soup("<p><em>x <!-- c --><code>a<br>b</code></em></p>")
+    assert soup.find("em").contents[0] == "x"

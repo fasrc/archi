@@ -62,6 +62,12 @@ deeply nested page (issue #40) is converted, not failed, by the new code path.
 - **WHEN** `_promote_block_code('<p><a href="http://x"><img src="i.png"/><code>a<br>b</code></a></p>')` is called
 - **THEN** the result holds exactly one `<a>` element, it contains the `<img>`, and it precedes the `<pre>`
 
+#### Scenario: Whitespace behind a void tag at the cut is kept
+
+- **WHEN** `html_to_markdown('<p><em>x <img src="i.png"/><code>a<br>b</code></em></p>')` is called
+- **THEN** the output is exactly `` *x ![](i.png)*\n\n```\na\nb\n``` ``
+- **AND** the space after `x` is kept, because the `<img>` at the cut has no text to trim
+
 #### Scenario: Two promoted blocks in one ancestor are both hoisted
 
 - **WHEN** `html_to_markdown('<p><em>x <code>a<br>b</code> y <code>c<br>d</code> z</em></p>')` is called

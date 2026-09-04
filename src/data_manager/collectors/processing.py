@@ -330,12 +330,32 @@ def _has_content(tag) -> bool:
     return False
 
 
+def _cut_edge_text(half, *, trailing: bool):
+    """Return the exact ``NavigableString`` that touches the cut edge of *half*, or None.
+
+    Walk down from *half* along its edge child (the last child of the head half, the
+    first child of the tail half), looking through comments, which render nothing. A
+    tag with no children at the edge (``<img>``) ends the walk with None: whatever
+    text sits behind it does not touch the cut and must keep its whitespace.
+    """
+    node = half
+    while isinstance(node, Tag):
+        edge = [
+            child
+            for child in node.contents
+            if isinstance(child, Tag) or type(child) is NavigableString
+        ]
+        if not edge:
+            return None
+        node = edge[-1] if trailing else edge[0]
+    return node
+
+
 def _trim_cut_whitespace(half, *, trailing: bool) -> None:
-    """Strip leading or trailing whitespace from the NavigableString at the cut edge."""
-    strings = [n for n in half.descendants if type(n) is NavigableString]
-    if not strings:
+    """Strip leading or trailing whitespace from the text node at the cut edge."""
+    node = _cut_edge_text(half, trailing=trailing)
+    if node is None:
         return
-    node = strings[-1] if trailing else strings[0]
     stripped = str(node).rstrip() if trailing else str(node).lstrip()
     if stripped == str(node):
         return

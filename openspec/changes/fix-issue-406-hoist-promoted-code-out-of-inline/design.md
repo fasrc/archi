@@ -121,9 +121,14 @@ the markers, and `process_tag` collapses only newlines, so the output would be
 `'**Note:** \n\n```\na\nb\n```\n\n **done**'`: a trailing space on the line before the fence
 and a leading space on the line after it. Both are noise at a block boundary, and the
 converter already removes the same whitespace when the text is a direct sibling of the
-block. So the helper right-strips the last exact-`NavigableString` descendant of the head
-half and left-strips the first of the tail half, and extracts a node that becomes empty.
-Comments are skipped because they are not exact `NavigableString`s. Measured result:
+block. So the helper walks down each half along its edge child (the last child of the head
+half, the first child of the tail half) to the one text node that touches the cut,
+right-strips it on the head half or left-strips it on the tail half, and extracts a node that
+becomes empty. Comments are looked through because they are not exact `NavigableString`s. A
+tag with no children at the edge (`<img>`) ends the walk with nothing to trim: the text
+behind it does not touch the cut (Codex review on PR #414 caught the earlier form, which
+trimmed the last text node of the whole half and so dropped the space in
+`<em>x <img src="i.png"/><code>…`). Measured result:
 `'**Note:**\n\n```\na\nb\n```\n\n**done**'`. Whitespace that does not touch the cut is kept:
 `<em>x <img src="i.png"/> <code>a<br>b</code></em>` keeps the space after `x` (measured:
 `'*x ![](i.png)*\n\n```\na\nb\n```'`).
