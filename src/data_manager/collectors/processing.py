@@ -29,7 +29,7 @@ from typing import (
     runtime_checkable,
 )
 
-from bs4 import BeautifulSoup, NavigableString
+from bs4 import BeautifulSoup, Comment, Doctype, NavigableString, Tag
 from markdownify import markdownify
 
 from src.data_manager.collectors.resource_base import BaseResource
@@ -392,6 +392,83 @@ def _promoted_fence_language(pre) -> str:
     if not pre.has_attr(_PROMOTED_ATTR):
         return ""
     return _fence_language(pre)
+
+
+_SELF_SEPARATING_FOLLOWERS: frozenset = frozenset(
+    {
+        "article",
+        "blockquote",
+        "br",
+        "div",
+        "dl",
+        "dt",
+        "figcaption",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "hr",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "ul",
+    }
+)
+"""Block-level elements whose markdownify converter emits a leading newline (issue #410).
+
+Measured on markdownify 1.2.2: each element in this set already starts on a new line when
+it follows a nested list inside a list item, so no extra newline is needed.  ``ul`` and
+``ol`` both produce ``'\\n' + text.rstrip()`` for nested lists.  The failure direction is
+safe: an element missing from the set yields one extra blank line (harmless Markdown),
+while an element wrongly included would leave a glue join in place.
+"""
+
+
+def _next_content_sibling(el):
+    """Return the first meaningful sibling after *el* (issue #410).
+
+    Walks ``el.next_sibling`` and returns:
+    * the first ``Tag`` found, or
+    * the first ``NavigableString`` that is not a ``Comment`` or ``Doctype`` and has
+      at least one non-blank character.
+
+    Returns ``None`` when all remaining siblings are whitespace-only text nodes,
+    ``Comment`` nodes, or ``Doctype`` nodes.
+    """
+    sib = el.next_sibling
+    while sib is not None:
+        if isinstance(sib, Tag):
+            return sib
+        if isinstance(sib, NavigableString) and not isinstance(sib, (Comment, Doctype)):
+            if str(sib).strip():
+                return sib
+        sib = sib.next_sibling
+    return None
+
+
+def _nested_list_needs_break(el, text: str) -> bool:
+    """Return ``True`` when a trailing ``\\n`` must be appended to *el*'s output (issue #410).
+
+    The predicate is ``False`` when:
+    * ``text.strip()`` is empty — an empty nested list contributes nothing (design D4);
+    * there is no meaningful sibling after *el*; or
+    * the next content sibling is a ``Tag`` whose name is in ``_SELF_SEPARATING_FOLLOWERS``
+      — such elements already start on a new line in markdownify output.
+
+    Returns ``True`` for text nodes and inline elements (``a``, ``code``, ``span``, …)
+    and for tags with no markdownify converter (``figure``, ``nav``, …) because their
+    output is glued onto the nested list's last line without the extra newline.
+    """
+    if not text.strip():
+        return False
+    nxt = _next_content_sibling(el)
+    if nxt is None:
+        return False
+    return not (isinstance(nxt, Tag) and nxt.name in _SELF_SEPARATING_FOLLOWERS)
 
 
 def _markdownify_deep_safe(content: str) -> str:

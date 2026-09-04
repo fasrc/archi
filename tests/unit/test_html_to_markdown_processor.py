@@ -3,13 +3,18 @@
 import sys
 from pathlib import Path
 
+from bs4 import BeautifulSoup, Comment, Tag
+
 from src.data_manager.collectors.localfile_resource import LocalFileResource
 from src.data_manager.collectors.processing import (
     _FENCE_LANGUAGES,
     _PROMOTED_ATTR,
+    _SELF_SEPARATING_FOLLOWERS,
     HtmlToMarkdownProcessor,
     ResourcePipeline,
     _fence_language,
+    _nested_list_needs_break,
+    _next_content_sibling,
     _promote_block_code,
     _promoted_fence_language,
     _slice_kb_article,
@@ -611,3 +616,174 @@ def test_promote_block_code_drops_only_whitespace_beside_a_source_newline():
     # ('`cmd\n  \nnext`'). Whitespace with no newline beside it is payload and stays.
     assert _promoted_code_text("<p><code>cmd\t\n<br>next</code></p>") == "cmd\nnext"
     assert _promoted_code_text("<p><code>a\tb\t<br>c</code></p>") == "a\tb\t\nc"
+
+
+# --- issue #410: newline after a nested list ---
+
+
+def test_410_self_separating_followers_set():
+    # (a) The frozenset contains exactly the block-level elements that markdownify
+    # already emits with a leading newline when they follow a nested list, plus ul
+    # and ol (both list converters start with '\n' for nested lists).
+    assert _SELF_SEPARATING_FOLLOWERS == frozenset(
+        {
+            "article",
+            "blockquote",
+            "br",
+            "div",
+            "dl",
+            "dt",
+            "figcaption",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "hr",
+            "ol",
+            "p",
+            "pre",
+            "section",
+            "table",
+            "ul",
+        }
+    )
+
+
+def test_410_next_content_sibling_finds_text_and_tag():
+    # (b) Whitespace NavigableStrings and Comment nodes are skipped; the first
+    # non-blank NavigableString is returned as the content sibling.
+    html_b = "<li>Outer<ul><li>Inner</li></ul>   <!-- c -->tail</li>"
+    soup = BeautifulSoup(html_b, "html.parser")
+    ul = soup.find("ul")
+    nxt = _next_content_sibling(ul)
+    assert str(nxt) == "tail"
+    assert not isinstance(nxt, Tag)
+
+    # (c) A Tag is returned directly without inspecting its text.
+    html_c = "<li>Outer<ul><li>Inner</li></ul><p>Para</p></li>"
+    soup = BeautifulSoup(html_c, "html.parser")
+    ul = soup.find("ul")
+    nxt = _next_content_sibling(ul)
+    assert isinstance(nxt, Tag)
+    assert nxt.name == "p"
+
+
+def test_410_next_content_sibling_returns_none():
+    # (d) Whitespace-only or comment-only siblings yield None.
+    html_ws = "<li>Outer<ul><li>Inner</li></ul>  </li>"
+    soup = BeautifulSoup(html_ws, "html.parser")
+    ul = soup.find("ul")
+    assert _next_content_sibling(ul) is None
+
+    html_co = "<li>Outer<ul><li>Inner</li></ul><!-- only --></li>"
+    soup = BeautifulSoup(html_co, "html.parser")
+    ul = soup.find("ul")
+    assert _next_content_sibling(ul) is None
+
+
+def test_410_nested_list_needs_break_true():
+    # (e) Returns True when the follower is a text node, an inline element, or a
+    # sibling <li> — none of which start on a new line in markdownify output.
+    def _ul_for(html):
+        return BeautifulSoup(html, "html.parser").find("ul")
+
+    # text follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul>tail</li>"), "Inner"
+        )
+        is True
+    )
+
+    # inline <a> follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for('<li><ul><li>Inner</li></ul><a href="http://x">link</a></li>'),
+            "Inner",
+        )
+        is True
+    )
+
+    # inline <code> follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul><code>x</code></li>"), "Inner"
+        )
+        is True
+    )
+
+    # sibling <li> follower (inside a div so html.parser keeps the li as a sibling)
+    soup = BeautifulSoup(
+        "<div><ul><li>Inner</li></ul><li>Configure a bundle</li></div>", "html.parser"
+    )
+    ul = soup.find("ul")
+    assert _nested_list_needs_break(ul, "Inner") is True
+
+
+def test_410_nested_list_needs_break_false():
+    # (f) Returns False when the follower is a self-separating block element, another
+    # list, <br>, when there is no follower, or when the only sibling is a comment.
+    def _ul_for(html):
+        return BeautifulSoup(html, "html.parser").find("ul")
+
+    # <p> follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul><p>Para</p></li>"), "Inner"
+        )
+        is False
+    )
+
+    # <pre> follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul><pre>code</pre></li>"), "Inner"
+        )
+        is False
+    )
+
+    # <h3> follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul><h3>Head</h3></li>"), "Inner"
+        )
+        is False
+    )
+
+    # <ul> follower — a second nested list already starts with '\n' in markdownify output
+    soup = BeautifulSoup(
+        "<li><ul><li>Inner</li></ul><ul><li>Second</li></ul></li>", "html.parser"
+    )
+    uls = soup.find_all("ul")
+    assert _nested_list_needs_break(uls[0], "Inner") is False
+
+    # <br> follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul><br></li>"), "Inner"
+        )
+        is False
+    )
+
+    # no follower
+    assert (
+        _nested_list_needs_break(_ul_for("<li><ul><li>Inner</li></ul></li>"), "Inner")
+        is False
+    )
+
+    # comment-only follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul><!-- c --></li>"), "Inner"
+        )
+        is False
+    )
+
+
+def test_410_nested_list_needs_break_empty_text():
+    # (g) An empty nested list contributes nothing; the text guard fires first.
+    html = "<li><ul><li>Inner</li></ul>tail</li>"
+    ul = BeautifulSoup(html, "html.parser").find("ul")
+    assert _nested_list_needs_break(ul, "   ") is False
