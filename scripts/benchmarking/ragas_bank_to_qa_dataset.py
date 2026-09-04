@@ -11,7 +11,7 @@ the one adapter that maps the dialect lives behind the browser import path
 (``EvaluationCatalog.import_dataset``). This script is the CLI door to that same
 adapter.
 
-It reuses, and never reimplements, four library pieces:
+It reuses, and never reimplements, five library pieces:
 
 * ``benchmark_schema.normalize_bank`` -- legacy ``question``/``answer`` rows onto
   ragas 0.3.5's ``user_input``/``reference``, exactly as the harness loads a bank;
@@ -19,7 +19,9 @@ It reuses, and never reimplements, four library pieces:
   ``time_sensitive`` default, the content-derived ids, the alias+native refusal
   and the duplicate-row refusal;
 * ``dataset.iter_dataset_items`` -- the reader that validates every normalized row;
-* ``dataset.v2_json_document`` -- the ``qa-dataset-v2`` envelope the CLI reads.
+* ``dataset.v2_json_document`` -- the ``qa-dataset-v2`` envelope the CLI reads;
+* ``artifacts.AtomicTextWriter`` -- the staged, rename-on-success write every
+  other QA artifact already uses.
 
 The question set is the harness's own: bank rows plus the staged anchor file,
 deduped on exact ``user_input`` with the bank row winning
@@ -50,7 +52,6 @@ reader rejects).
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 import tempfile
@@ -59,6 +60,10 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tupl
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from src.evaluation.qa.artifacts import (  # noqa: E402  # isort: skip
+    AtomicTextWriter,
+    sha256_file,
+)
 from src.evaluation.qa.catalog import (  # noqa: E402  # isort: skip
     _normalize_import_dialect,
 )
@@ -93,15 +98,6 @@ class UsageError(Exception):
 
 class BankRefused(Exception):
     """The input cannot be converted honestly (exit 2)."""
-
-
-def sha256_file(path: Path) -> str:
-    """Digest of the written dataset, so a run can be pinned to its input."""
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _read_json(path: Path, *, what: str) -> Any:
@@ -224,13 +220,17 @@ def write_v2(normalized: Path, out: Path) -> int:
 
     The re-read is the check that the file on disk is one the CLI will accept:
     every item is validated a second time by the same reader ``archi eval qa``
-    uses, from the bytes that were actually written. A refusal part-way through
-    leaves no partial file behind.
+    uses, from the bytes that were actually written.
+
+    ``AtomicTextWriter`` is the project's own atomic artifact writer: it stages
+    to a uniquely named hidden sibling in the destination directory, publishes by
+    rename only on a clean exit, and always removes the staging file. So a
+    refusal leaves nothing behind, an existing dataset survives a failed rerun,
+    and two conversions aimed at one ``--out`` cannot truncate or publish each
+    other's bytes.
     """
     if out.suffix.lower() != ".json":
         raise UsageError(f"--out must be a .json file, got {out.name}")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    partial = out.with_name(out.name + ".partial")
     written = 0
 
     def counted() -> Iterator[DatasetItem]:
@@ -239,14 +239,9 @@ def write_v2(normalized: Path, out: Path) -> int:
             written += 1
             yield item
 
-    try:
-        with partial.open("w", encoding="utf-8") as handle:
-            for chunk in v2_json_document(counted()):
-                handle.write(chunk)
-        partial.replace(out)
-    except BaseException:
-        partial.unlink(missing_ok=True)
-        raise
+    with AtomicTextWriter(out) as handle:
+        for chunk in v2_json_document(counted()):
+            handle.write(chunk)
     reread = sum(1 for _item in iter_dataset_items(out))
     if reread != written:
         raise RuntimeError(

@@ -223,6 +223,49 @@ def test_a_row_without_a_reference_fails_loudly(tmp_path, capsys):
     assert list(tmp_path.glob("out.json*")) == []
 
 
+def test_refuses_an_anchor_that_is_a_bank_row_up_to_line_endings(tmp_path, capsys):
+    # The merge dedupes on RAW ``user_input`` because the harness does, but ids
+    # are derived from newline-normalized text. A bank and an anchor file that
+    # disagree only on CRLF/LF therefore reach the adapter as two rows with one
+    # id. Refusing by row number is the intended outcome: silently dropping one
+    # would give the QA run a different question set than the RAGAS run, and the
+    # dataset cannot hold two items with the same content id.
+    bank_row = dict(BANK_ROW, user_input="Which partition?\r\nAnd which flag?")
+    anchor = dict(BANK_ROW, user_input="Which partition?\nAnd which flag?")
+
+    code, out = _run(tmp_path, [bank_row], anchors=[anchor])
+
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "duplicate" in error and "1" in error and "2" in error
+    assert not out.exists()
+
+
+def test_concurrent_runs_to_one_output_do_not_share_a_staging_file(
+    tmp_path, monkeypatch
+):
+    # A fixed staging name beside --out lets two conversions truncate each
+    # other's half-written file and publish the wrong bank's bytes, because the
+    # rename happens before anything re-reads the result.
+    real_document = converter.v2_json_document
+    staged = set()
+
+    def spy(items):
+        for chunk in real_document(items):
+            staged.update(p.name for p in tmp_path.iterdir() if p.name.startswith("."))
+            yield chunk
+
+    monkeypatch.setattr(converter, "v2_json_document", spy)
+
+    first, out = _run(tmp_path, [BANK_ROW])
+    second, _again = _run(tmp_path, [BANK_ROW])
+
+    assert (first, second) == (0, 0)
+    assert len(staged) == 2
+    assert all(name.startswith(".out.json") for name in staged)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["bank.json", "out.json"]
+
+
 def test_a_legacy_question_answer_bank_converts_to_the_same_ids(tmp_path):
     legacy = {
         "question": BANK_ROW["user_input"],
