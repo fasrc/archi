@@ -1,7 +1,8 @@
 # Benchmarking scripts
 
-Helpers to run and analyze the `archi evaluate` benchmark, plus read-only
-maintenance for the RAGAS golden-set bank.
+Helpers to run and analyze the `archi evaluate` benchmark, read-only maintenance
+for the RAGAS golden-set bank, and one converter that hands the same bank to
+`archi eval qa`.
 
 ## Golden-set maintenance
 
@@ -38,6 +39,34 @@ lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
   live parents of the target collection only), and, for exact text, a copy of
   the data manager's data directory passed as `--data-root`. Supports the #396
   feature matrix and the `chunking.chunk_overlap` key (#403).
+
+## QA dataset conversion
+
+- **`ragas_bank_to_qa_dataset.py`** — converts the golden-set bank (plus the
+  anchor questions) into a `qa-dataset-v2` file that `archi eval qa --dataset`
+  accepts, so the gold-atoms QA evaluator and the RAGAS harness can score the
+  *same* questions on the same stack and be read side by side. The QA dataset
+  loader refuses RAGAS-dialect rows outright and only the browser import path
+  maps them; this script is the command-line door to that same adapter, so the
+  dialect mapping, the content-derived `qa-<sha256[:20]>` ids and the
+  alias/duplicate refusals come from the library rather than a second copy of the
+  rules. The question set is the harness's own — bank rows plus the anchor file,
+  deduped on exact `user_input` with the bank row winning (105 + 5 − 1 = 109 on
+  the FASRC bank) — which is what makes the ids recomputable from a RAGAS
+  artifact's `question` + `reference_answer`, and the two runs comparable
+  question for question. `--no-anchors` converts the bank alone, `--status
+  draft|locked` filters by confirmation state (repeatable), and `--json` prints
+  the counts, carried fields and output sha256 as a machine report. Refusals are
+  loud and named: a row spelling one concept twice (`user_input` *and*
+  `question`), duplicate rows, a row with no `reference`, or a file that is
+  already a QA dataset exit 2 instead of converting. Supports the #396 feature
+  matrix.
+
+  ```bash
+  python scripts/benchmarking/ragas_bank_to_qa_dataset.py \
+      config/benchmarking/fasrc_ragas_queries.json --out fasrc.qa-v2.json
+  archi eval qa --dataset fasrc.qa-v2.json --agent-config <agent.yaml> --output-dir <run>
+  ```
 
 ## Analysis and run helpers
 

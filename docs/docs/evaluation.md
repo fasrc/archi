@@ -693,6 +693,21 @@ a RAGAS 0.3.5 question bank and normalized at the import boundary:
 - Dataset V2 live items require the registry described in
   [Evaluator MCP registry](#evaluator-mcp-registry).
 
+The same adapter is reachable from the command line, for a bank you want to run
+through `archi eval qa` rather than upload:
+`scripts/benchmarking/ragas_bank_to_qa_dataset.py <bank.json> --out <dataset.json>`
+converts a bank — plus the anchor questions the RAGAS harness stages beside it on
+every run, deduped on exact `user_input` with the bank row winning — into a
+`qa-dataset-v2` file that `archi eval qa --dataset <dataset.json>` accepts. It
+calls this same normalizer, so the dialect mapping, the carried fields and the
+content-derived ids are identical whichever door the bank comes through; because
+those ids are derived from the question and reference text, a QA run and a RAGAS
+run over one bank can be joined question for question afterwards. `--no-anchors`
+converts the bank alone, `--status draft|locked` filters by confirmation state,
+and a bank that cannot be converted honestly (a row carrying both dialect
+spellings, duplicate rows, a row with no `reference`, or a file that is already a
+QA dataset) is refused by name rather than mapped.
+
 #### Chat-app evaluation configuration
 
 The evaluation console is opt-in. Enable it explicitly in the deployment
