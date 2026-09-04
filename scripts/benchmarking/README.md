@@ -45,6 +45,12 @@ One thin wrapper per step of the #396 campaign protocol
 ([`docs/docs/proposals/feature-matrix-campaign-2026.md`](../../docs/docs/proposals/feature-matrix-campaign-2026.md),
 §5); the arm configs live in archi-config under `config/benchmarking/feature_matrix/`.
 
+- **`lock_campaign.sh <00-baseline.yaml> --qa-dataset <qa-v2.json>`** — hashes every input
+  the pre-registration pins (bank, anchors, prompt, sources, QA dataset and profile) plus the
+  SUT and judge settings into `bench_out/feature_matrix/campaign.lock`. Every other wrapper
+  refuses an arm YAML, dataset, profile or spec whose content differs from the lock, so
+  acceptance depends on content, never on which file an operator named. Re-locking needs
+  `--relock` and is recorded in the ledger.
 - **`run_arm.sh <arm> <arm.yaml>`** — `archi evaluate -n fm-<arm> … --hostmode` (deploy,
   ingest, run). **`run_arm.sh <arm> --rerun`** re-runs only the benchmark container on the
   existing stack after proving the corpus fingerprint still equals the recorded pin.
@@ -64,10 +70,12 @@ One thin wrapper per step of the #396 campaign protocol
   artifact whose recorded running configuration is not the arm's, one already in the
   ledger or older than the stack's latest `ragas-start`, a run whose
   `divergence_from_selected_file` is non-empty, and a later run whose fingerprint
-  drifted; writes the corpus pin on run 1. Every wrapper refuses an arm label that does
-  not match the YAML's own `name`. The live fingerprint is the harness's own routine
-  (`CORPUS_STATE_QUERY` + `corpus_fingerprint`), run inside the data-manager container.
-- **`test_feature_matrix_wrappers.sh`** — hermetic 23-check self-test (stubbed
+  drifted; writes the corpus pin on run 1. The pin moves only for the closing baseline
+  (`--new-corpus`: arm 00, after a fresh deploy, old pin recorded). Every wrapper refuses
+  an arm label that does not match the YAML's own `name`. The live fingerprint is the
+  harness's own routine (`CORPUS_STATE_QUERY` + `corpus_fingerprint`), run inside the
+  data-manager container.
+- **`test_feature_matrix_wrappers.sh`** — hermetic 28-check self-test (stubbed
   `docker`/`archi`, temp stack), run by `scripts/gate.sh`.
 
 ## Analysis and run helpers

@@ -29,12 +29,13 @@ mkdir -p "$FM_OUT"
 if [ "$RERUN" = false ]; then
   [ -n "$YAML" ] || fm_die "usage: run_arm.sh <arm> <arm.yaml>  |  run_arm.sh <arm> --rerun [--stack <name>]"
   fm_require_arm_yaml "$ARM" "$YAML"
+  fm_require_lock "$YAML"
   ENV_FILE="${RAGAS_ENV_FILE:-}"
   [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] || fm_die "RAGAS_ENV_FILE must name the judge env file (HUIT_API_KEY); got '${ENV_FILE}'"
   [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "benchmarking-$STACK is still running"
   fm_log "arm $ARM: deploy + ingest + run as $STACK from $YAML"
   "$FM_ARCHI" evaluate --name "$STACK" --config "$YAML" --env-file "$ENV_FILE" --hostmode
-  fm_ledger_append "$(printf '{"arm":"%s","kind":"ragas-start","stack":"%s","config":"%s","started":"%s","rerun":false}' "$ARM" "$STACK" "$YAML" "$(fm_now)")"
+  fm_ledger_append "$(printf '{"arm":"%s","kind":"ragas-start","stack":"%s","config":"%s","started":"%s","rerun":false,"lock_sha256":"%s"}' "$ARM" "$STACK" "$YAML" "$(fm_now)" "$(fm_lock_sha)")"
   fm_log "stack $STACK is up; the run continues inside benchmarking-$STACK"
   fm_log "follow:  $FM_DOCKER logs -f benchmarking-$STACK"
   fm_log "then:    scripts/benchmarking/feature_matrix/archive_run.sh $ARM 1 --stack $STACK --wait"
@@ -45,12 +46,13 @@ fi
 # one before and after; recreate only the benchmark container (swap_arm.sh's pattern).
 STACK_DIR="$(fm_stack_dir "$STACK")"
 [ -f "$STACK_DIR/compose.yaml" ] || fm_die "no deployment at $STACK_DIR"
+[ -f "$(fm_lock_file)" ] || fm_die "no campaign lock at $(fm_lock_file) — run lock_campaign.sh first"
 fm_require_stack_up "$STACK"
 [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "a benchmark run is still in flight on $STACK"
 fm_require_pinned_corpus "$STACK"
 "$FM_DOCKER" rm -f "benchmarking-$STACK" >/dev/null 2>&1 || true
 "$FM_DOCKER" compose -f "$STACK_DIR/compose.yaml" up --no-deps -d benchmark
 fm_require_pinned_corpus "$STACK"
-fm_ledger_append "$(printf '{"arm":"%s","kind":"ragas-start","stack":"%s","started":"%s","rerun":true}' "$ARM" "$STACK" "$(fm_now)")"
+fm_ledger_append "$(printf '{"arm":"%s","kind":"ragas-start","stack":"%s","started":"%s","rerun":true,"lock_sha256":"%s"}' "$ARM" "$STACK" "$(fm_now)" "$(fm_lock_sha)")"
 fm_log "arm $ARM re-run started on $STACK (benchmark container only)"
 fm_log "follow:  $FM_DOCKER logs -f benchmarking-$STACK"

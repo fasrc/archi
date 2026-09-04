@@ -130,6 +130,75 @@ EOF
 
 fm_sha256() { sha256sum "$1" | cut -d' ' -f1; }
 
+# --- the campaign lock -------------------------------------------------------------------
+# The pre-registration fixes every input that is NOT an arm factor: the bank, the anchors,
+# the prompt, the sources list, the SUT and the judge settings (plan §2). lock_campaign.sh
+# hashes them once from the baseline arm YAML into $FM_OUT/campaign.lock (plan §6 step 3).
+# Every wrapper then refuses an arm YAML, dataset, profile or spec whose content differs
+# from the lock, so acceptance depends on content, never on which file an operator named.
+fm_lock_file() { printf '%s/campaign.lock\n' "$FM_OUT"; }
+
+# Prints the fixed factors an arm YAML pins, as JSON: the sha256 of each file it names and
+# the SUT/judge/metric settings. Paths resolve from the cwd, like `archi evaluate` does.
+fm_fixed_factors_json() { # $1 = arm YAML
+  FM_Y="$1" "$FM_PYTHON" - <<'EOF'
+import hashlib, json, os, sys, yaml
+cfg = yaml.safe_load(open(os.environ["FM_Y"])) or {}
+b = (cfg.get("services") or {}).get("benchmarking") or {}
+rs = (b.get("mode_settings") or {}).get("ragas_settings") or {}
+dm = cfg.get("data_manager") or {}
+provider = b.get("provider")
+prov_cfg = (((cfg.get("services") or {}).get("chat_app") or {}).get("providers") or {}).get(provider) or {}
+files = {"bank": b.get("queries_path"), "anchors": (b.get("anchors") or {}).get("path"), "prompt": b.get("agent_md_file")}
+for i, p in enumerate(((dm.get("sources") or {}).get("links") or {}).get("input_lists") or []):
+    files[f"sources[{i}]"] = p
+def sha(path):
+    if not path or not os.path.isfile(path):
+        sys.exit(f"pinned input not found: {path!r} (run from ~/Projects/archi so config/... resolves)")
+    return hashlib.sha256(open(path, "rb").read()).hexdigest()
+out = {"files": {k: {"path": v, "sha256": sha(v)} for k, v in files.items()},
+       "values": {"sut.provider": provider, "sut.model": b.get("model"), "modes": b.get("modes"),
+                  "judge.provider": rs.get("evaluator_provider"), "judge.model": rs.get("evaluator_model"),
+                  "metrics": rs.get("enabled_metrics"), "ragas.embedding_model": rs.get("embedding_model"),
+                  "embedding_name": dm.get("embedding_name"),
+                  "sut.base_url": prov_cfg.get("base_url"), "sut.extra_kwargs": prov_cfg.get("extra_kwargs")}}
+print(json.dumps(out, sort_keys=True))
+EOF
+}
+
+fm_require_lock() { # $1 = arm YAML → refuses unless its fixed factors equal the campaign lock's
+  local lock; lock="$(fm_lock_file)"
+  [ -f "$lock" ] || fm_die "no campaign lock at $lock — run lock_campaign.sh <00-baseline.yaml> first (plan §6 step 3)"
+  FM_LOCK="$lock" FM_NOW="$(fm_fixed_factors_json "$1")" "$FM_PYTHON" - <<'EOF' || fm_die "$1 does not match the campaign lock (see above); the pre-registration pins these inputs"
+import json, os, sys
+lock, now = json.load(open(os.environ["FM_LOCK"])), json.loads(os.environ["FM_NOW"])
+bad = []
+for key, want in lock["files"].items():
+    got = now["files"].get(key)
+    if got is None or got["sha256"] != want["sha256"]:
+        bad.append(f"{key}: locked sha256 {want['sha256'][:12]} ({want['path']}), arm names {got and got['path']!r} sha256 {got and got['sha256'][:12]}")
+for key in set(now["files"]) - set(lock["files"]):
+    bad.append(f"{key}: not in the lock (extra source list?)")
+for key, want in lock["values"].items():
+    if now["values"].get(key) != want:
+        bad.append(f"{key}: locked {want!r}, arm has {now['values'].get(key)!r}")
+for line in bad:
+    print("fixed factor " + line, file=sys.stderr)
+sys.exit(1 if bad else 0)
+EOF
+}
+
+fm_lock_sha() { fm_sha256 "$(fm_lock_file)"; }
+
+fm_lock_field() { # $1 = dotted key inside the lock, e.g. qa.dataset_sha256
+  FM_LOCK="$(fm_lock_file)" FM_KEY="$1" "$FM_PYTHON" -c '
+import json, os
+v = json.load(open(os.environ["FM_LOCK"]))
+for k in os.environ["FM_KEY"].split("."):
+    v = v.get(k) if isinstance(v, dict) else None
+print("" if v is None else v)'
+}
+
 fm_ledger_append() { # $1 = JSON object (one line); appends to the ledger array, creating it
   local ledger; ledger="$(fm_ledger)"
   mkdir -p "$(dirname "$ledger")"

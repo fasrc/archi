@@ -12,8 +12,11 @@
 #     `ragas-start` entry (a re-run that wrote nothing must not re-archive run 1 as run 2),
 #   - the artifact's config_version.divergence_from_selected_file is non-empty (the run
 #     did not use the settings you selected — Procedure E of interpreting_benchmark_results),
-#   - a corpus pin exists for the stack and the artifact's fingerprint differs (unless
-#     --new-corpus, for the closing baseline's fresh ingest on a reused stack name).
+#   - a corpus pin exists for the stack and the artifact's fingerprint differs. The one
+#     legitimate re-pin is the closing baseline (plan §6 step 7): --new-corpus is honoured
+#     only for arm 00, only when the stack's latest ragas-start was a fresh deploy (not a
+#     re-run or re-seed), and the old and new fingerprints are both recorded in the row.
+#   - the arm YAML's fixed factors differ from the campaign lock.
 # On run 1 of a stack it writes the corpus pin every later re-run and re-seed checks.
 # Appends: fingerprint, snapshot id, config + code digests, ingest_wall_seconds, live
 # document and chunk counts (from the stack's Postgres), per-metric scored counts
@@ -23,6 +26,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 ARM="${1:-}"; fm_require_arm "$ARM"; RUN="${2:-}"; [[ "$RUN" =~ ^[0-9]+$ ]] || fm_die "usage: archive_run.sh <arm> <run> <arm.yaml> [--stack <name>] [--wait] [--new-corpus]"
 YAML="${3:-}"; fm_require_arm_yaml "$ARM" "$YAML"; shift 3
+fm_require_lock "$YAML"
 STACK="fm-$ARM"; WAIT=false; NEW_CORPUS=false
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -65,6 +69,7 @@ CHUNKS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "se
 
 PIN_FILE="$(fm_pin_file "$STACK")"
 ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \
+  FM_LEDGER="$(fm_ledger)" FM_LOCK_SHA="$(fm_lock_sha)" \
   FM_PIN_FILE="$PIN_FILE" FM_NEW_CORPUS="$NEW_CORPUS" FM_FINISHED="$(fm_now)" "$FM_PYTHON" - <<'EOF'
 import json, math, os, sys, yaml
 p = os.environ["FM_ARTIFACT"]
@@ -103,11 +108,22 @@ fp = arm.get("corpus_fingerprint") or (d.get("metadata") or {}).get("corpus_fing
 if not isinstance(fp, str) or fp.startswith("<unavailable"):
     print(f"REFUSED: no usable corpus_fingerprint in {p} (got {fp!r})", file=sys.stderr); sys.exit(2)
 pin_file, run = os.environ["FM_PIN_FILE"], int(os.environ["FM_RUN"])
+previous_pin = None
 if os.path.exists(pin_file):
     pin = open(pin_file).read().strip()
-    if fp != pin and os.environ["FM_NEW_CORPUS"] != "true":
-        print(f"REFUSED: fingerprint {fp} != pin {pin} for this stack (pass --new-corpus only for a deliberate fresh ingest)", file=sys.stderr); sys.exit(2)
     if fp != pin:
+        if os.environ["FM_NEW_CORPUS"] != "true":
+            print(f"REFUSED: fingerprint {fp} != pin {pin} for this stack (a re-pin is only the closing baseline: arm 00, fresh deploy, --new-corpus)", file=sys.stderr); sys.exit(2)
+        # --new-corpus is structural, not a bare flag: only the baseline arm, and only when
+        # this stack's latest ragas-start was a fresh deploy, may move the pin.
+        if os.environ["FM_ARM"] != "00":
+            print(f"REFUSED: --new-corpus is only valid for arm 00 (the closing baseline), not arm {os.environ['FM_ARM']}", file=sys.stderr); sys.exit(2)
+        ledger_path = os.environ["FM_LEDGER"]
+        rows = json.load(open(ledger_path)) if os.path.exists(ledger_path) else []
+        starts = [r for r in rows if r.get("kind") == "ragas-start" and r.get("stack") == os.environ["FM_STACK"]]
+        if not starts or starts[-1].get("rerun") is not False:
+            print("REFUSED: --new-corpus needs a fresh deploy (run_arm.sh <arm> <yaml>) as this stack's latest ragas-start; the latest was a re-run or re-seed", file=sys.stderr); sys.exit(2)
+        previous_pin = pin
         open(pin_file, "w").write(fp + "\n")
 else:
     open(pin_file, "w").write(fp + "\n")
@@ -122,7 +138,8 @@ entry = {
     "arm": os.environ["FM_ARM"], "kind": "ragas", "run": run, "stack": os.environ["FM_STACK"],
     "finished": os.environ["FM_FINISHED"], "artifact": p,
     "arm_config": os.environ["FM_ARM_YAML"], "configuration_file": arm.get("configuration_file"),
-    "corpus_fingerprint": fp, "fingerprint_source": "artifact",
+    "corpus_fingerprint": fp, "fingerprint_source": "artifact", "repinned_from": previous_pin,
+    "lock_sha256": os.environ["FM_LOCK_SHA"],
     "corpus_snapshot_id": (d.get("metadata") or {}).get("corpus_snapshot_id"),
     "config_digest": cv.get("digest"), "code_digest": ((d.get("metadata") or {}).get("code_version") or {}).get("digest"),
     "ingest_wall_seconds": arm.get("ingest_wall_seconds", "not recorded"),

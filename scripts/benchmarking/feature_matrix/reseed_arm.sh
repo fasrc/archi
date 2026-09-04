@@ -26,6 +26,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 fm_require_arm_yaml "$ARM" "$YAML"
+fm_require_lock "$YAML"
 STACK_DIR="$(fm_stack_dir "$STACK")"
 RENDERED="$STACK_DIR/configs/config.yaml"
 [ -f "$RENDERED" ] || fm_die "no rendered config at $RENDERED"
@@ -72,5 +73,5 @@ fm_log "re-seeding static_config for $STACK"
 "$FM_DOCKER" rm -f "benchmarking-$STACK" >/dev/null 2>&1 || true
 "$FM_DOCKER" compose -f "$STACK_DIR/compose.yaml" up --no-deps -d benchmark
 fm_require_pinned_corpus "$STACK"
-fm_ledger_append "$(printf '{"arm":"%s","kind":"ragas-start","stack":"%s","config":"%s","started":"%s","rerun":true,"reseed":true}' "$ARM" "$STACK" "$YAML" "$(fm_now)")"
+fm_ledger_append "$(printf '{"arm":"%s","kind":"ragas-start","stack":"%s","config":"%s","started":"%s","rerun":true,"reseed":true,"lock_sha256":"%s"}' "$ARM" "$STACK" "$YAML" "$(fm_now)" "$(fm_lock_sha)")"
 fm_log "arm $ARM running on $STACK after re-seed; follow: $FM_DOCKER logs -f benchmarking-$STACK"

@@ -18,8 +18,8 @@
 #   11. qa_arm.sh overwrites chat_app's SUT fields from services.benchmarking, drops the
 #       evaluations block, and calls `archi eval qa` with one attempt and one run worker
 #   12. qa_arm.sh refuses when the converted QA dataset is missing
-#   13. archive_run.sh refuses a later run whose fingerprint differs from the pin unless
-#       --new-corpus, which then rewrites the pin
+#   13. archive_run.sh refuses a later run whose fingerprint differs from the pin; --new-corpus
+#       is refused after a re-run and re-pins only after a fresh arm-00 deploy, recording the old pin
 #   14. qa_arm.sh refuses when the stack's rendered config is not on the requested arm
 #   15. qa_arm.sh records the rendered config's sha256 and the corpus fingerprint
 #   16. archive_run.sh refuses an artifact that is already in the ledger
@@ -30,6 +30,11 @@
 #   21. qa_arm.sh refuses a corpus that drifted from the stack's pin
 #   22. an arm YAML that lacks a factor key is refused (fail closed)
 #   23. archive_run.sh refuses an artifact without running_configuration
+#   24. nothing runs before lock_campaign.sh has written the campaign lock
+#   25. lock_campaign.sh records the pinned inputs once and refuses a silent re-lock
+#   26. a same-label arm YAML that names a different bank is refused by the lock
+#   27. qa_arm.sh refuses a dataset whose content differs from the lock
+#   28. --new-corpus is refused for a non-baseline arm (13 covers the re-run case)
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -111,41 +116,43 @@ printf 'running\n' > "$T/state/postgres-fm-00"; printf 'running\n' > "$T/state/d
 printf 'exited\n' > "$T/state/benchmarking-fm-00"
 
 # --- arm fixtures ------------------------------------------------------------------------
-mkdir -p "$T/arms" "$T/cfg/qa"
-cat > "$T/arms/00-baseline.yaml" <<'EOF'
-name: fm-00
+# Every arm YAML carries the same pinned inputs (bank, anchors, prompt, sources, SUT, judge)
+# and differs only in the factor keys, exactly like the real files in archi-config.
+mkdir -p "$T/arms" "$T/cfg/qa" "$FM_OUT/qa"
+printf '[{"user_input": "q1", "reference": "a1"}]\n' > "$T/cfg/bank.json"
+printf '[{"user_input": "anchor", "reference": "r", "anchor_type": "should_refuse"}]\n' > "$T/cfg/anchors.json"
+printf 'https://docs.example/kb/\n' > "$T/cfg/sources.list"
+printf -- '---\nname: x\ntools: []\n---\n' > "$T/cfg/spec.md"
+printf 'version: 1\n' > "$T/cfg/qa/profile.yaml"
+printf '{"format":"qa-dataset-v2","items":[]}\n' > "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
+mk_arm() { # path name strategy html categorization stemming rerank k [bank]
+  cat > "$1" <<EOF
+name: $2
 data_manager:
-  chunking: {strategy: sentence}
-  processing: {html_to_markdown: {enabled: true}, categorization: {enabled: true}}
-  stemming: {enabled: false}
-  retrievers: {hierarchical_rerank: {enabled: true, candidate_pool_size: 20, num_documents_to_retrieve: 5}}
+  sources: {links: {input_lists: [$T/cfg/sources.list]}}
+  embedding_name: HuggingFaceEmbeddings
+  chunking: {strategy: $3}
+  processing: {html_to_markdown: {enabled: $4}, categorization: {enabled: $5}}
+  stemming: {enabled: $6}
+  retrievers: {hierarchical_rerank: {enabled: $7, candidate_pool_size: 20, num_documents_to_retrieve: $8}}
+services:
+  benchmarking:
+    provider: openai
+    model: palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4
+    queries_path: ${9:-$T/cfg/bank.json}
+    agent_md_file: $T/cfg/spec.md
+    anchors: {enabled: true, path: $T/cfg/anchors.json}
+    modes: [RAGAS, SOURCES]
+    mode_settings: {ragas_settings: {embedding_model: HuggingFace, evaluator_provider: huit_bedrock, evaluator_model: sonnet-4-5, enabled_metrics: [answer_relevancy, faithfulness]}}
+  chat_app:
+    providers: {openai: {base_url: http://sut:8001/v1, extra_kwargs: {temperature: 0.3}}}
 EOF
-cat > "$T/arms/05a-k3.yaml" <<'EOF'
-name: fm-05a
-data_manager:
-  chunking: {strategy: sentence}
-  processing: {html_to_markdown: {enabled: true}, categorization: {enabled: true}}
-  stemming: {enabled: false}
-  retrievers: {hierarchical_rerank: {enabled: true, candidate_pool_size: 20, num_documents_to_retrieve: 3}}
-EOF
-cat > "$T/arms/01-rerank-off.yaml" <<'EOF'
-name: fm-01
-data_manager:
-  chunking: {strategy: sentence}
-  processing: {html_to_markdown: {enabled: true}, categorization: {enabled: true}}
-  stemming: {enabled: false}
-  retrievers: {hierarchical_rerank: {enabled: false, candidate_pool_size: 20, num_documents_to_retrieve: 5}}
-EOF
-cat > "$T/arms/02-chunking-character.yaml" <<'EOF'
-name: fm-02
-data_manager:
-  chunking: {strategy: character}
-  processing: {html_to_markdown: {enabled: true}, categorization: {enabled: true}}
-  stemming: {enabled: false}
-  retrievers: {hierarchical_rerank: {enabled: false, candidate_pool_size: 20, num_documents_to_retrieve: 5}}
-EOF
+}
+mk_arm "$T/arms/00-baseline.yaml"           fm-00  sentence  true true false true  5
+mk_arm "$T/arms/05a-k3.yaml"                fm-05a sentence  true true false true  3
+mk_arm "$T/arms/01-rerank-off.yaml"         fm-01  sentence  true true false false 5
+mk_arm "$T/arms/02-chunking-character.yaml" fm-02  character true true false false 5
 printf 'HUIT_API_KEY=x\n' > "$T/judge.env"
-printf 'version: 1\n' > "$T/cfg/qa/profile.yaml"; printf -- '---\nname: x\ntools: []\n---\n' > "$T/cfg/spec.md"
 
 artifact() { # $1 = path, $2 = divergence JSON, $3 = fingerprint, $4 = k in the recorded running configuration (default 5)
   cat > "$1" <<EOF
@@ -167,6 +174,17 @@ EOF
 }
 
 run() { set +e; "$@" >"$T/stdout" 2>"$T/stderr"; RC=$?; set -e; }
+
+# 24: nothing runs before the campaign is locked
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && grep -q "no campaign lock" "$T/stderr" && ok "run_arm refuses before the campaign is locked" || notok "lock precondition (rc=$RC: $(cat "$T/stderr"))"
+
+# 25: lock_campaign writes the lock once; a second lock needs --relock
+run bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --qa-dataset "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml"
+R1=$RC
+run bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --qa-dataset "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml"
+if [ "$R1" = 0 ] && [ "$RC" = 2 ] && grep -q "already locked" "$T/stderr" && "$FM_PYTHON" -c "import json,sys; l=json.load(open('$FM_OUT/campaign.lock')); sys.exit(0 if set(l['files'])=={'bank','anchors','prompt','sources[0]'} and l['values']['judge.model']=='sonnet-4-5' and l['qa']['dataset_sha256'] else 1)"; then ok "lock_campaign records the pinned inputs and refuses a silent re-lock"; else notok "lock_campaign (rc1=$R1 rc2=$RC: $(cat "$T/stderr"))"; fi
+rm -f "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"    # checks 12/14 expect it absent until they create it
 
 # 1
 run bash "$HERE/run_arm.sh" "0x" "$T/arms/01-rerank-off.yaml"
@@ -252,13 +270,19 @@ if [ "$RC" = 0 ] && grep -q -- "eval qa --dataset $FM_OUT/qa/fasrc_ragas_queries
 EXPECT_SHA="$(sha256sum "$S/configs/config.yaml" | cut -d' ' -f1)"
 if "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e.get('rendered_config_sha256')=='$EXPECT_SHA' and e.get('corpus_fingerprint')=='abc' and e.get('arm_config')=='$T/arms/01-rerank-off.yaml' else 1)"; then ok "qa_arm records the rendered config sha256, the arm config, and the corpus fingerprint"; else notok "qa_arm ledger identity fields"; fi
 
-# 13
+# 13: a drifted fingerprint is refused; --new-corpus is refused after a re-run, honoured only after a fresh deploy of arm 00
 rm -f "$FM_OUT"/benchmarking-fm-00-*.json
 artifact "$FM_OUT/benchmarking-fm-00-20260903_000003.json" '[]' def
 run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml"
 R1=$RC
 run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --new-corpus
-if [ "$R1" = 2 ] && [ "$RC" = 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-00")" = def ]; then ok "archive refuses a drifted fingerprint unless --new-corpus, which re-pins"; else notok "archive fingerprint gate (rc1=$R1 rc2=$RC: $(cat "$T/stderr"))"; fi
+R2=$RC; grep -q "needs a fresh deploy" "$T/stderr" && R2M=1 || R2M=0
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"   # a fresh deploy start for fm-00
+touch "$FM_OUT/benchmarking-fm-00-20260903_000003.json"                                          # the artifact that deploy wrote
+run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --new-corpus
+if [ "$R1" = 2 ] && [ "$R2" = 2 ] && [ "$R2M" = 1 ] && [ "$RC" = 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-00")" = def ] \
+   && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['repinned_from']=='abc' and e['corpus_fingerprint']=='def' else 1)"; then
+  ok "archive refuses a drifted fingerprint; --new-corpus re-pins only after a fresh arm-00 deploy and records the old pin"; else notok "archive fingerprint gate (rc1=$R1 rc2=$R2 m=$R2M rc3=$RC: $(cat "$T/stderr"))"; fi
 
 # 16: the same artifact again → refused, ledger unchanged
 BEFORE="$(ledger_rows)"
@@ -316,6 +340,24 @@ cat > "$FM_OUT/benchmarking-fm-00-20260903_000007.json" <<'EOF'
 EOF
 run bash "$HERE/archive_run.sh" 00 4 "$T/arms/00-baseline.yaml"
 [ "$RC" = 2 ] && grep -q "no running_configuration" "$T/stderr" && ok "archive refuses an artifact without running_configuration" || notok "archive legacy-artifact guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 26: a same-label YAML that names a different bank is refused by the lock
+printf '[{"user_input": "q1 changed", "reference": "a1"}]\n' > "$T/cfg/bank2.json"
+mk_arm "$T/arms/00-altbank.yaml" fm-00 sentence true true false true 5 "$T/cfg/bank2.json"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-altbank.yaml"
+[ "$RC" = 2 ] && grep -q "fixed factor bank: locked sha256" "$T/stderr" && ok "a same-label YAML with a different bank is refused by the lock" || notok "lock bank guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 27: qa_arm refuses a dataset whose content differs from the lock, even though the file exists
+printf 'abc\n' > "$T/fp"; printf 'abc\n' > "$FM_OUT/corpus-pin-fm-00"
+printf '{"format":"qa-dataset-v2","items":[{"id":"x"}]}\n' > "$T/cfg/other-dataset.json"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml" --dataset "$T/cfg/other-dataset.json" --run 3
+[ "$RC" = 2 ] && grep -q "does not match the campaign lock" "$T/stderr" && [ ! -e "$FM_OUT/qa/fm-00-arm01-r3" ] && ok "qa_arm refuses a dataset that differs from the lock" || notok "lock dataset guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 28: --new-corpus is never valid for a non-baseline arm
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000008.json" '[]' ghi 3
+run bash "$HERE/archive_run.sh" 05a 2 "$T/arms/05a-k3.yaml" --stack fm-00 --new-corpus
+[ "$RC" = 2 ] && grep -q "only valid for arm 00" "$T/stderr" && ok "--new-corpus is refused for a non-baseline arm" || notok "new-corpus arm guard (rc=$RC: $(cat "$T/stderr"))"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

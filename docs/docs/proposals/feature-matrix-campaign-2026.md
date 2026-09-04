@@ -260,14 +260,22 @@ What it does, and why each step exists:
    reclaimed, config checkout on the new pin, `~/Projects/archi` pulled to the campaign SHA.
 2. **Smoke**: `fm-smoke` with a 3-question bank copy through every wrapper, then
    `compare_runs.py` on its artifact against itself, then `archi delete --rmi --rmv`.
-3. **Lock**: commit the pre-registration with the hashes in [§2](#2-fixed-factors) and the
-   campaign SHA (G1). Nothing below runs before this commit exists.
+3. **Lock**: `lock_campaign.sh 00-baseline.yaml --qa-dataset <converted bank>` hashes every
+   pinned input (bank, anchors, prompt, sources, QA dataset and profile) and the SUT and
+   judge settings into `bench_out/feature_matrix/campaign.lock`; from then on every wrapper
+   refuses an arm YAML, dataset, profile or spec whose content differs from the lock, so
+   which file an operator names never decides acceptance. Commit the pre-registration with
+   the hashes in [§2](#2-fixed-factors), the lock's sha256, and the campaign SHA (G1).
+   Nothing below runs before this commit exists.
 4. **Opening baseline** `fm-00`: ingest; 3 RAGAS runs; 1 QA run. Its `corpus_fingerprint`
    becomes the pin for §5.2. σ for this corpus comes from the three runs.
 5. **Retrieval arms** on `fm-00`: 01, 05a, 05b (2 RAGAS + 1 QA each); restore 00 after.
 6. **Ingest arms**, one stack at a time: 02, 03, 04, 06, 07 (fresh stack; 2 RAGAS + 1 QA;
    delete).
-7. **Closing baseline**: fresh `fm-00` ingest; 1 RAGAS + 1 QA. Compare with the opening
+7. **Closing baseline**: fresh `fm-00` ingest; 1 RAGAS + 1 QA. Its archive is the one
+   place the corpus pin may move: `archive_run.sh 00 <run> 00-baseline.yaml --new-corpus`
+   is honoured only for arm 00 and only when the stack's latest `ragas-start` was a fresh
+   deploy, and the row records the old pin beside the new one. Compare with the opening
    baseline: a different `corpus_fingerprint` means the sources changed under the campaign
    (record which `documents` rows differ); a bank blob hash that changed voids the
    campaign's comparisons from that point.

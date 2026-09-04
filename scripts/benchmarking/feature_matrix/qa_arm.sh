@@ -45,6 +45,12 @@ RENDERED="$STACK_DIR/configs/config.yaml"
 [ -f "$SPEC" ] || fm_die "agent spec not found: $SPEC"
 [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "a RAGAS run is in flight on $STACK; QA runs are serial"
 [ -f "$STACK_DIR/secrets/pg_password.txt" ] || fm_die "no $STACK_DIR/secrets/pg_password.txt"
+# Content, not file names, decides: the dataset, the profile and the spec must hash to the
+# values the campaign lock recorded, whatever path they were given under.
+fm_require_lock "$YAML"
+[ "$(fm_sha256 "$DATASET")" = "$(fm_lock_field qa.dataset_sha256)" ] || fm_die "QA dataset $DATASET does not match the campaign lock (locked: $(fm_lock_field qa.dataset))"
+[ "$(fm_sha256 "$PROFILE")" = "$(fm_lock_field qa.profile_sha256)" ] || fm_die "evaluator profile $PROFILE does not match the campaign lock (locked: $(fm_lock_field qa.profile))"
+[ "$(fm_sha256 "$SPEC")" = "$(fm_lock_field files.prompt.sha256)" ] || fm_die "agent spec $SPEC does not match the locked prompt ($(fm_lock_field files.prompt.path))"
 fm_verify_stack_matches_arm "$STACK" "$YAML"
 fm_require_pinned_corpus "$STACK"        # the QA run must score the SAME corpus the RAGAS runs pinned
 CFG_SHA="$(fm_sha256 "$RENDERED")"
@@ -82,6 +88,7 @@ OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
   --evaluator-profile "$PROFILE" \
   --output-dir "$OUT_DIR" \
   --attempts 1 --run-workers 1 --score-workers "${FM_SCORE_WORKERS:-4}"
-fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s","fingerprint_source":"live-stack-equals-pin"}' \
-  "$ARM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$DATASET" "$PROFILE" "$SPEC" "$YAML" "$CFG_SHA" "$FINGERPRINT")"
+fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s","fingerprint_source":"live-stack-equals-pin","dataset_sha256":"%s","profile_sha256":"%s","spec_sha256":"%s","lock_sha256":"%s"}' \
+  "$ARM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$DATASET" "$PROFILE" "$SPEC" "$YAML" "$CFG_SHA" "$FINGERPRINT" \
+  "$(fm_sha256 "$DATASET")" "$(fm_sha256 "$PROFILE")" "$(fm_sha256 "$SPEC")" "$(fm_lock_sha)")"
 fm_log "done; report: $OUT_DIR/report.md  summary: $OUT_DIR/summary.json"
