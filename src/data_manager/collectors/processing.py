@@ -303,8 +303,11 @@ def _edge_text(br, *, forward: bool, stop_at) -> NavigableString | None:
 
     Climbs through inline parent tags when the direct sibling is absent, stopping
     before ``stop_at`` (the containing ``<code>`` element).  If the first reachable
-    sibling is a ``Tag``, descends into it to reach the nearest text leaf on the
-    appropriate edge.
+    sibling is a ``Tag``, walks down its edge child chain (first child going forward,
+    last child going backward), looking through comments, to the one leaf that touches
+    the break.  A childless tag at the edge (``<img>``) ends the walk with None: the
+    text behind it does not touch the break, so its whitespace is code payload and
+    stays.
     """
     node = br
     while True:
@@ -315,15 +318,17 @@ def _edge_text(br, *, forward: bool, stop_at) -> NavigableString | None:
         if parent is None or parent is stop_at:
             return None
         node = parent
-    if type(sibling) is NavigableString:
-        return sibling
-    if isinstance(sibling, Tag):
-        strings = [
-            s for s in sibling.find_all(string=True) if type(s) is NavigableString
+    node = sibling
+    while isinstance(node, Tag):
+        edge = [
+            child
+            for child in node.contents
+            if isinstance(child, Tag) or type(child) is NavigableString
         ]
-        if strings:
-            return strings[0] if forward else strings[-1]
-    return None
+        if not edge:
+            return None
+        node = edge[0] if forward else edge[-1]
+    return node if type(node) is NavigableString else None
 
 
 def _strip_break_whitespace(br, *, stop_at) -> None:

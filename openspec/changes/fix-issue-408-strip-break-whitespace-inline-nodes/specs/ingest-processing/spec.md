@@ -11,8 +11,10 @@ survives and `<p><code>a<br><span>\nb</span></code></p>` converts to `` ```\na\n
 The source element is inline, so a browser collapses that newline; it is formatting, not
 content.
 
-The resolution SHALL look through a tag neighbour to its first (next side) or last
-(previous side) text node, SHALL skip an HTML comment inside that tag, SHALL climb to the
+The resolution SHALL look through a tag neighbour to the one text node that touches the
+break, by walking the tag's first children (next side) or last children (previous side), SHALL
+skip an HTML comment inside that tag, SHALL leave the whitespace behind a childless tag at
+the edge (such as `<img>`) untouched because it does not touch the break, SHALL climb to the
 parent's sibling when the break has no sibling on a side, and SHALL stop at the `<code>`
 element being promoted so that text after the element is never touched. Horizontal
 whitespace after the dropped newline SHALL be kept. The rule SHALL run in the same strip pass,
@@ -48,6 +50,12 @@ before any break is replaced, inside the deep-safe worker with the rest of the p
 
 - **WHEN** `html_to_markdown('<p><code>a<br><span><!-- c -->\nb</span></code></p>')` is called
 - **THEN** the output is exactly `` ```\na\nb\n``` ``
+
+#### Scenario: Whitespace behind a childless tag at the edge is kept
+
+- **WHEN** `html_to_markdown('<p><code>a<br><span><img src="i"/>\nb</span></code></p>')` is called
+- **THEN** the output is exactly `` ```\na\n![](i)\nb\n``` ``
+- **AND** `html_to_markdown('<p><code><span>a\n<img src="i"/></span><br>b</code></p>')` is exactly `` ```\na\n![](i)\nb\n``` ``
 
 #### Scenario: The climb never passes the code element
 

@@ -681,3 +681,34 @@ def test_promote_block_code_drops_only_whitespace_beside_a_source_newline():
     # ('`cmd\n  \nnext`'). Whitespace with no newline beside it is payload and stays.
     assert _promoted_code_text("<p><code>cmd\t\n<br>next</code></p>") == "cmd\nnext"
     assert _promoted_code_text("<p><code>a\tb\t<br>c</code></p>") == "a\tb\t\nc"
+
+
+# --- the neighbour is the text that touches the break, not the first text anywhere ---
+# (local adversarial review of PR #416, 2026-09-04)
+
+
+def test_strip_break_whitespace_childless_tag_at_forward_edge_keeps_newline_behind_it():
+    """An <img> touches the break; the newline behind it does not, so it stays."""
+    assert (
+        html_to_markdown('<p><code>a<br><span><img src="i"/>\nb</span></code></p>')
+        == "```\na\n![](i)\nb\n```"
+    )
+
+
+def test_strip_break_whitespace_childless_tag_at_backward_edge_keeps_newline_before_it():
+    assert (
+        html_to_markdown('<p><code><span>a\n<img src="i"/></span><br>b</code></p>')
+        == "```\na\n![](i)\nb\n```"
+    )
+
+
+def test_strip_break_whitespace_nested_tag_at_edge_is_the_neighbour():
+    """Text inside a nested tag at the edge is the neighbour; text behind it is untouched."""
+    assert (
+        html_to_markdown("<p><code>a<br><span><i>x</i>\n  b</span></code></p>")
+        == "```\na\nx\n  b\n```"
+    )
+    assert (
+        html_to_markdown("<p><code>a<br><span><i>\nx</i> b</span></code></p>")
+        == "```\na\nx b\n```"
+    )

@@ -69,14 +69,25 @@ and applies the same regex to the node it returns. The alternative, a second reg
 the serialized `<pre>` text after promotion, was rejected: by then the `"\n"` from each `<br>`
 is indistinguishable from a source newline, and the `<br><br>` blank line would be lost.
 
-### D2. A `Tag` neighbour contributes its first or last string descendant
+### D2. A `Tag` neighbour contributes the leaf that touches the break
 
-For the next side, `_edge_text` takes the first element of
-`[s for s in sibling.find_all(string=True) if type(s) is NavigableString]`; for the previous
-side, the last. The exact-type filter skips a `Comment` inside the tag, so
-`a<br><span><!-- c -->\nb</span>` strips the newline (measured: `` ```\na\nb\n``` ``). A
-`<br>` neighbour has no string descendants and contributes nothing, which is what keeps a
-`<br><br>` pair at one blank line: neither break sees text on the shared side.
+`_edge_text` walks down the sibling tag along its edge child chain: the first child going
+forward, the last child going backward, at each level considering only `Tag` children and
+exact `NavigableString` children, so a `Comment` is looked through
+(`a<br><span><!-- c -->\nb</span>` strips the newline; measured: `` ```\na\nb\n``` ``). The
+walk ends at the one leaf that touches the break. A tag with no children at the edge
+(`<img>`, or the `<br>` of a `<br><br>` pair) ends the walk with nothing: the text behind it
+does not touch the break, so its whitespace is code payload and stays
+(`a<br><span><img src="i"/>\nb</span>` keeps the newline; measured: `` ```\na\n![](i)\nb\n``` ``).
+That is also what keeps a `<br><br>` pair at one blank line: neither break sees text on the
+shared side.
+
+The first version took the first or last string descendant of the whole sibling subtree
+(`sibling.find_all(string=True)`), which for `<span><img src="i"/>\nb</span>` selected the
+`"\nb"` behind the image and glued `b` onto it (`![](i)b`). The local adversarial review of
+PR #416 on 2026-09-04 flagged the whole-subtree search; its cited example
+(`<span><i>x</i>\n  b</span>`) converts identically under both rules, because `x` is the leaf
+at the edge in both, but the childless-tag case above is where the rules differ.
 
 ### D3. No sibling means climb to the parent's sibling, and stop at the `<code>`
 
