@@ -452,6 +452,52 @@ def test_scored_count_excludes_infinities():
     assert out["aggregate_context_recall"] == 1.0
 
 
+def test_an_infinite_cell_is_recorded_as_nan_on_the_row():
+    """One definition of "unscored" for every reader.
+
+    NaN is the harness's existing marker: ``pair_ab_results`` and
+    ``build_leaderboard`` both test the live rows with ``math.isnan``. An
+    infinity left raw is excluded from the aggregate and the denominator here
+    and serialized as ``null`` — yet ``+inf > 0.9`` would still WIN an A/B
+    metric and count as a scored cell to the leaderboard. Folding a non-finite
+    cell onto NaN at the one point scores are attached closes that gap without
+    teaching every reader a second spelling.
+    """
+    rows = [
+        {"user_input": "q1", "reference": "r1"},
+        {"user_input": "q2", "reference": "r2"},
+        {"user_input": "q3", "reference": "r3"},
+    ]
+    keys = ["question_1", "question_2", "question_3"]
+    qwr = {k: {} for k in keys}
+
+    def score_fn(metric, eligible_rows):
+        return [0.4, math.inf, -math.inf]
+
+    score_metrics_per_eligibility(rows, keys, ["context_recall"], qwr, score_fn)
+    assert qwr["question_1"]["context_recall"] == 0.4
+    assert math.isnan(qwr["question_2"]["context_recall"])
+    assert math.isnan(qwr["question_3"]["context_recall"])
+
+
+def test_a_scored_cell_is_recorded_verbatim():
+    """The normalization touches non-finite cells only: a real score — 0.0
+    included — reaches the row exactly as the judge produced it."""
+    rows = [
+        {"user_input": "q1", "reference": "r1"},
+        {"user_input": "q2", "reference": "r2"},
+    ]
+    keys = ["question_1", "question_2"]
+    qwr = {k: {} for k in keys}
+
+    def score_fn(metric, eligible_rows):
+        return [0.0, 0.123456789]
+
+    score_metrics_per_eligibility(rows, keys, ["context_recall"], qwr, score_fn)
+    assert qwr["question_1"]["context_recall"] == 0.0
+    assert qwr["question_2"]["context_recall"] == 0.123456789
+
+
 # --- json_safe: the serialization boundary ----------------------------------
 
 

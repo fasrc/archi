@@ -505,6 +505,28 @@ def eligible_subset(
     return elig_rows, elig_keys
 
 
+def _as_score_cell(score: Any) -> Any:
+    """The value to record on a question row for one metric.
+
+    A non-finite number is not a score, and the harness already has ONE marker
+    for that: NaN. Every in-memory consumer tests for it —
+    ``ResultHandler.pair_ab_results`` and ``build_leaderboard`` both call
+    ``math.isnan``. An infinity left raw would be dropped from the aggregate and
+    the denominator here, and written to the artifact as ``null``, yet still
+    beat every real score in the A/B winner (``+inf > 0.9``) and count as a
+    scored cell on the leaderboard. Folding it onto NaN at the single point
+    scores are attached keeps one definition of "unscored" for every reader
+    instead of teaching each of them a second spelling.
+
+    Anything that is not a float passes through untouched: bools are not scores
+    to be rewritten into numbers, and a non-numeric cell belongs to the caller's
+    own dialect, not to this function's judgement.
+    """
+    if isinstance(score, float) and not math.isfinite(score):
+        return math.nan
+    return score
+
+
 def _finite_scores(scores: Sequence[Any]) -> List[float]:
     """The cells of ``scores`` that are usable numbers.
 
@@ -549,8 +571,10 @@ def score_metrics_per_eligibility(
     NaN was never averaged, so counting it inflated the very denominator §3.4 of
     the interpreting guide tells readers to check (#279). A cell that scored a
     genuine ``0.0`` still counts — "unscored" and "scored zero" stay distinct.
-    The per-question cell keeps its raw NaN either way, so the artifact still
-    shows WHICH row went unscored.
+    The per-question cell keeps NaN either way, so the artifact still shows
+    WHICH row went unscored; a non-finite cell of any other spelling is folded
+    onto NaN there (see ``_as_score_cell``) so every downstream reader applies
+    one rule.
 
     WARNING: mutates ``question_wise_results`` in place.
     """
@@ -566,7 +590,7 @@ def score_metrics_per_eligibility(
             continue
         scores = list(score_fn(metric, elig_rows))
         for key, score in zip(elig_keys, scores):
-            question_wise_results[key][metric] = score
+            question_wise_results[key][metric] = _as_score_cell(score)
         finite = _finite_scores(scores)
         out[agg_key] = sum(finite) / len(finite) if finite else math.nan
         out[scored_key] = f"{len(finite)} of {total}"
