@@ -31,6 +31,8 @@ while [ $# -gt 0 ]; do
 done
 fm_require_arm_yaml "$ARM" "$YAML"
 fm_require_lock "$YAML"
+fm_require_locked_arm "$ARM" "$YAML"
+fm_require_stack_lock "$STACK"
 STACK_DIR="$(fm_stack_dir "$STACK")"
 RENDERED="$STACK_DIR/configs/config.yaml"
 [ -f "$RENDERED" ] || fm_die "no rendered config at $RENDERED"

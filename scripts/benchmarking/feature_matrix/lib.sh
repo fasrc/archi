@@ -144,7 +144,7 @@ fm_lock_file() { printf '%s/campaign.lock\n' "$FM_OUT"; }
 # Prints the fixed factors an arm YAML pins, as JSON: the sha256 of each file it names and
 # the SUT/judge/metric settings. Paths resolve from the cwd, like `archi evaluate` does.
 fm_fixed_factors_json() { # $1 = arm YAML
-  FM_Y="$1" "$FM_PYTHON" - <<'EOF'
+  FM_Y="$1" FM_KEYS="$FM_FACTOR_KEYS" "$FM_PYTHON" - <<'EOF'
 import hashlib, json, os, sys, yaml
 cfg = yaml.safe_load(open(os.environ["FM_Y"])) or {}
 b = (cfg.get("services") or {}).get("benchmarking") or {}
@@ -159,7 +159,21 @@ def sha(path):
     if not path or not os.path.isfile(path):
         sys.exit(f"pinned input not found: {path!r} (run from ~/Projects/archi so config/... resolves)")
     return hashlib.sha256(open(path, "rb").read()).hexdigest()
+# Every data_manager setting that is NOT an arm factor is a fixed factor too (chunk sizes,
+# reranker model, hybrid weights, categorization provider/model/categories, scrape limits):
+# the whole block minus the factor keys is locked, so a nominal one-factor arm cannot
+# carry a second, undeclared change.
+rest = json.loads(json.dumps(dm))
+for key in os.environ["FM_KEYS"].split():
+    parts = key.split("."); cur = rest
+    for k in parts[:-1]:
+        cur = cur.get(k) if isinstance(cur, dict) else None
+        if cur is None:
+            break
+    if isinstance(cur, dict):
+        cur.pop(parts[-1], None)
 out = {"files": {k: {"path": v, "sha256": sha(v)} for k, v in files.items()},
+       "data_manager_rest": rest,
        "values": {"sut.agent_class": b.get("agent_class"), "sut.provider": provider, "sut.model": b.get("model"), "modes": b.get("modes"),
                   "judge.provider": rs.get("evaluator_provider"), "judge.model": rs.get("evaluator_model"),
                   "judge.timeout": rs.get("timeout"), "ragas.batch_size": rs.get("batch_size"),
@@ -188,10 +202,54 @@ for key in set(now["files"]) - set(lock["files"]):
 for key, want in lock["values"].items():
     if now["values"].get(key) != want:
         bad.append(f"{key}: locked {want!r}, arm has {now['values'].get(key)!r}")
+if lock.get("data_manager_rest") != now.get("data_manager_rest"):
+    def flat(d, prefix=""):
+        out = {}
+        for k, v in (d or {}).items():
+            out.update(flat(v, f"{prefix}{k}.") if isinstance(v, dict) else {f"{prefix}{k}": v})
+        return out
+    a, b = flat(lock.get("data_manager_rest")), flat(now.get("data_manager_rest"))
+    for k in sorted(set(a) | set(b)):
+        if a.get(k) != b.get(k):
+            bad.append(f"data_manager.{k}: locked {a.get(k)!r}, arm has {b.get(k)!r} (not an arm factor)")
 for line in bad:
     print("fixed factor " + line, file=sys.stderr)
 sys.exit(1 if bad else 0)
 EOF
+}
+
+# Each arm's treatment is pinned too: the lock carries the sha256 of every arm YAML in the
+# campaign directory, keyed by label, so `fm-05a` with k=4 or `fm-01` with the rerank still
+# on cannot pass as the pre-registered treatment.
+fm_require_locked_arm() { # $1 = arm label, $2 = arm YAML
+  local want have
+  want="$(fm_lock_field "arms.$1.sha256")"
+  [ -n "$want" ] || fm_die "arm $1 is not in the campaign lock's arm manifest (lock_campaign.sh --arms-dir pins every arm YAML)"
+  have="$(fm_sha256 "$2")"
+  [ "$have" = "$want" ] || fm_die "$2 is not the locked arm $1 config (sha256 ${have:0:12} != locked ${want:0:12}); the treatment differs from the pre-registered one"
+}
+
+# A stack is deployed under one lock and stays tied to it: run_arm.sh stamps the active
+# lock's sha256 into the deployment directory, and every later step on that stack (re-run,
+# re-seed, QA, archive) requires the stamp to equal the active lock. A --relock therefore
+# invalidates every existing stack instead of letting its pre-relock bank, prompt or judge
+# settings be recorded under the new lock.
+fm_stack_lock_file() { printf '%s/fm-lock.sha256\n' "$(fm_stack_dir "$1")"; }
+fm_stamp_stack_lock() { fm_lock_sha > "$(fm_stack_lock_file "$1")"; }
+fm_require_stack_lock() { # $1 = stack name
+  local f have want; f="$(fm_stack_lock_file "$1")"; want="$(fm_lock_sha)"
+  [ -f "$f" ] || fm_die "stack $1 carries no lock stamp ($f) — it was not deployed by run_arm.sh under a campaign lock; redeploy it"
+  have="$(tr -d '[:space:]' < "$f")"
+  [ "$have" = "$want" ] || fm_die "stack $1 was deployed under lock ${have:0:12}, the active lock is ${want:0:12} — a --relock happened since; redeploy the stack (archi delete + run_arm.sh) before using it"
+}
+
+fm_next_run() { # $1 = arm, $2 = stack → the next unused RAGAS run number in the ledger
+  FM_LEDGER="$(fm_ledger)" FM_ARM="$1" FM_STACK="$2" "$FM_PYTHON" -c '
+import json, os
+p = os.environ["FM_LEDGER"]
+rows = json.load(open(p)) if os.path.exists(p) else []
+runs = [int(r["run"]) for r in rows if r.get("kind") == "ragas" and r.get("arm") == os.environ["FM_ARM"] and r.get("stack") == os.environ["FM_STACK"] and str(r.get("run", "")).isdigit()]
+print(max(runs, default=0) + 1)'
 }
 
 fm_lock_sha() { fm_sha256 "$(fm_lock_file)"; }
@@ -202,10 +260,12 @@ fm_lock_sha() { fm_sha256 "$(fm_lock_file)"; }
 # wrapper still succeeded. What is pinned is the RUNTIME tree — the git tree ids of src/,
 # scripts/ and deploy/ — not HEAD itself: the pre-registration is committed AFTER the lock
 # (plan §6 step 3) and that docs-only commit must not invalidate the campaign. src/,
-# scripts/ and deploy/ must also carry no tracked modification.
-fm_code_tree() { # the tree ids the campaign runs; "-" for a path HEAD does not carry
+# scripts/ and deploy/ must also carry no tracked modification. pyproject.toml and
+# requirements/ are build inputs too: a deployment stages pyproject.toml and the image runs
+# `pip install .` from it, so a dependency change is a runtime change.
+fm_code_tree() { # the tree/blob ids the campaign runs; "-" for a path HEAD does not carry
   local p ids=""
-  for p in src scripts deploy; do
+  for p in src scripts deploy pyproject.toml requirements; do
     ids="$ids ${p}=$("$FM_GIT" rev-parse "HEAD:$p" 2>/dev/null || echo -)"
   done
   printf '%s\n' "${ids# }"
@@ -215,7 +275,7 @@ fm_require_code_lock() {
   want="$(fm_lock_field code_tree)"
   have="$(fm_code_tree)"
   [ -n "$want" ] && [ "$have" = "$want" ] || fm_die "the checkout's src/scripts/deploy trees ($have) are not the locked campaign code ($want); check out the locked commit ($(fm_lock_field code_sha)), or re-lock deliberately with lock_campaign.sh --relock"
-  dirty="$("$FM_GIT" status --porcelain --untracked-files=no -- src scripts deploy 2>/dev/null || true)"
+  dirty="$("$FM_GIT" status --porcelain --untracked-files=no -- src scripts deploy pyproject.toml requirements 2>/dev/null || true)"
   [ -z "$dirty" ] || fm_die "uncommitted source changes would run unlocked code:
 $dirty"
 }

@@ -45,16 +45,19 @@ One thin wrapper per step of the #396 campaign protocol
 ([`docs/docs/proposals/feature-matrix-campaign-2026.md`](../../docs/docs/proposals/feature-matrix-campaign-2026.md),
 §5); the arm configs live in archi-config under `config/benchmarking/feature_matrix/`.
 
-- **`lock_campaign.sh <00-baseline.yaml> --qa-dataset <qa-v2.json>`** — hashes every input
-  the pre-registration pins (bank, anchors, prompt, sources, QA dataset and profile) plus the
+- **`lock_campaign.sh <00-baseline.yaml> --arms-dir <dir> --qa-dataset <qa-v2.json>`** — hashes every input
+  the pre-registration pins (bank, anchors, prompt, sources, QA dataset and profile), the
   SUT and judge settings (agent class, model, base URL, sampling kwargs, context window, judge
-  model and timeout, metrics) and the runtime code (the git tree ids of `src/`, `scripts/`,
-  `deploy/`) into `bench_out/feature_matrix/campaign.lock`. Every other wrapper refuses an
-  arm YAML, dataset, profile or spec whose content differs from the lock, a checkout whose
-  runtime trees differ from the locked ones or that carries uncommitted source changes, and
-  an artifact whose run started under an earlier lock — so acceptance depends on content,
-  never on which file an operator named. A docs-only commit (the pre-registration) does
-  not move the locked trees. Re-locking needs
+  model and timeout, metrics), every non-factor `data_manager` setting, the sha256 of every
+  arm YAML in `--arms-dir` keyed by label (each arm's treatment value is pinned), and the
+  runtime code (git ids of `src/`, `scripts/`, `deploy/`, `pyproject.toml`, `requirements/`)
+  into `bench_out/feature_matrix/campaign.lock`. Every other wrapper refuses an arm YAML,
+  dataset, profile or spec whose content differs from the lock, a checkout whose runtime
+  trees differ from the locked ones or that carries uncommitted source changes, an artifact
+  whose run started under an earlier lock, and a stack deployed under an earlier lock
+  (`run_arm.sh` stamps the lock into the deployment directory) — so acceptance depends on
+  content, never on which file an operator named. A docs-only commit (the pre-registration)
+  does not move the locked trees. Re-locking needs
   `--relock` and is recorded in the ledger.
 - **`run_arm.sh <arm> <arm.yaml>`** — `archi evaluate -n fm-<arm> … --hostmode` (deploy,
   ingest, run). **`run_arm.sh <arm> --rerun`** re-runs only the benchmark container on the
@@ -81,7 +84,7 @@ One thin wrapper per step of the #396 campaign protocol
   an arm label that does not match the YAML's own `name`. The live fingerprint is the
   harness's own routine (`CORPUS_STATE_QUERY` + `corpus_fingerprint`), run inside the
   data-manager container.
-- **`test_feature_matrix_wrappers.sh`** — hermetic 38-check self-test (stubbed
+- **`test_feature_matrix_wrappers.sh`** — hermetic 44-check self-test (stubbed
   `docker`/`archi`, temp stack), run by `scripts/gate.sh`.
 
 ## Analysis and run helpers

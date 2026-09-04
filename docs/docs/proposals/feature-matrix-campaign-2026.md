@@ -183,9 +183,10 @@ archi delete --name fm-$ARM --rmi --rmv                              # after arc
 
 **Arm 00 is the exception to this block.** The opening baseline gets THREE RAGAS runs
 (`run_arm.sh 00 --rerun` and `archive_run.sh 00 3 …` once more after run 2) because those
-three runs are the campaign's σ (§4.3), and `fm-00` is **not deleted** afterwards: the
-retrieval arms (§5.2) run on that very stack and corpus. It is deleted only in §6 step 7,
-immediately before the closing baseline's fresh deploy.
+three runs are the campaign's σ (§4.3), and `fm-00` is **not deleted** right after them:
+the retrieval arms (§5.2) run on that very stack and corpus. It is deleted at the end of
+§6 step 5, after the retrieval arms and before the first ingest arm, because every stack
+binds the same host ports.
 
 `archive_run.sh` refuses when the artifact's recorded running configuration disagrees with
 the arm YAML on any factor key (the artifact, not the operator's label, proves which arm
@@ -275,25 +276,34 @@ What it does, and why each step exists:
    then run `fm-smoke` through every wrapper, `compare_runs.py` on its artifact against
    itself, and `archi delete --name fm-smoke --rmi --rmv`. The smoke rows in the ledger
    carry the smoke lock's hash and are separated from the campaign by the re-lock below.
-3. **Lock**: `lock_campaign.sh 00-baseline.yaml --qa-dataset <converted bank> --relock`
-   hashes every pinned input (bank, anchors, prompt, sources, QA dataset and profile), the
-   SUT and judge settings (agent class, model, base URL, sampling kwargs, context window,
-   judge model and timeout, metrics), and the runtime code — the git tree ids of `src/`,
-   `scripts/` and `deploy/` — into `bench_out/feature_matrix/campaign.lock`; from then on
-   every wrapper refuses an arm YAML, dataset, profile or spec whose content differs from
-   the lock, a checkout whose runtime trees differ, and an artifact whose run started under
-   an earlier lock. Then commit the pre-registration with the hashes in
+3. **Lock**: `lock_campaign.sh 00-baseline.yaml --arms-dir config/benchmarking/feature_matrix
+   --qa-dataset <converted bank> --relock` hashes every pinned input (bank, anchors, prompt,
+   sources, QA dataset and profile), the SUT and judge settings (agent class, model, base
+   URL, sampling kwargs, context window, judge model and timeout, metrics), every
+   `data_manager` setting that is not an arm factor (chunk sizes, reranker model, hybrid
+   weights, categorization provider and categories, scrape limits), the sha256 of every arm
+   YAML keyed by its label (so each arm's treatment value is pinned), and the runtime code
+   — the git ids of `src/`, `scripts/`, `deploy/`, `pyproject.toml` and `requirements/` —
+   into `bench_out/feature_matrix/campaign.lock`. From then on every wrapper refuses an arm
+   YAML, dataset, profile or spec whose content differs from the lock, a checkout whose
+   runtime trees differ, an artifact whose run started under an earlier lock, and a stack
+   deployed under an earlier lock (`run_arm.sh` stamps the lock into the deployment
+   directory; a re-lock means redeploying every stack). Then commit the pre-registration
+   with the hashes in
    [§2](#2-fixed-factors), the lock's sha256, and the campaign SHA (G1). That docs-only
    commit moves `HEAD` but not the locked trees, so it does not invalidate the lock.
    Nothing below runs before this commit exists.
 4. **Opening baseline** `fm-00`: ingest; 3 RAGAS runs; 1 QA run. Its `corpus_fingerprint`
    becomes the pin for §5.2. σ for this corpus comes from the three runs.
-5. **Retrieval arms** on `fm-00`: 01, 05a, 05b (2 RAGAS + 1 QA each); restore 00 after.
+5. **Retrieval arms** on `fm-00`: 01, 05a, 05b (2 RAGAS + 1 QA each); restore 00 after
+   (`reseed_arm.sh 00 … --no-run`), then **delete `fm-00`** (`archi delete --name fm-00
+   --rmi --rmv`): every stack binds the same host ports (5434 / 7882), so the first ingest
+   stack cannot deploy while the baseline is up.
 6. **Ingest arms**, one stack at a time: 02, 03, 04, 06, 07 (fresh stack; 2 RAGAS + 1 QA;
    delete).
-7. **Closing baseline**: `archi delete --name fm-00 --rmi --rmv` first (the retrieval arms
-   left that stack up, and `archi evaluate` refuses an existing deployment without
-   `--force`), then a fresh `fm-00` ingest; 1 RAGAS + 1 QA. Its archive is the one
+7. **Closing baseline**: a fresh `fm-00` ingest (the stack was deleted at the end of step 5);
+   1 RAGAS + 1 QA. `run_arm.sh` prints the next archive number for the reused label
+   (run 4), and `qa_arm.sh` takes the next QA number (r2). Its archive is the one
    place the corpus pin may move: `archive_run.sh 00 <run> 00-baseline.yaml --new-corpus`
    is honoured only for arm 00 and only when the stack's latest `ragas-start` was a fresh
    deploy, and the row records the old pin beside the new one. Compare with the opening
@@ -324,6 +334,10 @@ time of day across arms where possible, and the ledger records start and end tim
 | Honest denominators | #279 | scored counts recomputed from finite values, printed per metric per arm; arms whose ok-row counts differ by more than 5 are flagged |
 | Anchors are tripwires, not bank rows | Gap 3 | the 5 anchors identified by question text, reported in their own block, excluded from bank aggregates |
 | A verdict needs a noise floor | G2, G7 | SIGNIFICANT only with σ known and \|Δ\| > max(2·SE, 2·σ) |
+| The stack belongs to the active lock | lock | `run_arm.sh` stamps the lock's sha256 into the deployment directory at deploy; re-run, re-seed, QA and archive refuse a stack stamped with another lock |
+| The arm is the pre-registered treatment | lock | the arm YAML's sha256 equals the lock's per-arm manifest entry for its label |
+| A run is tied to a start | provenance | archive refuses when the ledger holds no `ragas-start` row for the stack; the live document/chunk counts must be readable (the stack is deleted right after) |
+| The QA corpus held for the whole run | G3 | `qa_arm.sh` re-reads the fingerprint after `archi eval qa` returns and writes no row if it moved |
 
 ## 8. Budget
 

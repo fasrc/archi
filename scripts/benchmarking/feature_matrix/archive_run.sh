@@ -21,7 +21,10 @@
 #     legitimate re-pin is the closing baseline (plan §6 step 7): --new-corpus is honoured
 #     only for arm 00, only when the stack's latest ragas-start was a fresh deploy (not a
 #     re-run or re-seed), and the old and new fingerprints are both recorded in the row.
-#   - the arm YAML's fixed factors differ from the campaign lock.
+#   - the arm YAML's fixed factors differ from the campaign lock, the YAML is not the locked
+#     file for that arm label, or the stack was deployed under a different lock,
+#   - no ragas-start row exists for the stack (nothing ties the artifact to a lock or a
+#     start time), or the live document/chunk counts cannot be read.
 # On run 1 of a stack it writes the corpus pin every later re-run and re-seed checks.
 # Appends: fingerprint, snapshot id, config + code digests, ingest_wall_seconds, live
 # document and chunk counts (from the stack's Postgres), per-metric scored counts
@@ -32,6 +35,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 ARM="${1:-}"; fm_require_arm "$ARM"; RUN="${2:-}"; [ -n "$RUN" ] || fm_die "usage: archive_run.sh <arm> <run> <arm.yaml> [--stack <name>] [--wait] [--new-corpus]"; fm_require_run_number "$RUN"
 YAML="${3:-}"; fm_require_arm_yaml "$ARM" "$YAML"; shift 3
 fm_require_lock "$YAML"
+fm_require_locked_arm "$ARM" "$YAML"
 STACK="fm-$ARM"; WAIT=false; NEW_CORPUS=false
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -43,6 +47,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+fm_require_stack_lock "$STACK"          # the artifact comes from a stack deployed under the ACTIVE lock
 if [ "$WAIT" = true ]; then
   while [ "$(fm_container_state "benchmarking-$STACK")" = "running" ]; do sleep "${FM_POLL_SECONDS:-30}"; done
 fi
@@ -69,7 +74,11 @@ if same:
 if not os.path.exists(os.environ["FM_PIN_FILE"]) and run != 1:
     print(f"no corpus pin for {stack} yet — archive run 1 first (got run {run})", file=sys.stderr); sys.exit(1)
 start_rows = [r for r in rows if r.get("kind") == "ragas-start" and r.get("stack") == stack and r.get("started")]
-if start_rows:
+if not start_rows:
+    # No wrapper started a run on this stack: nothing ties the artifact to a lock or a
+    # start time, so the age and lock checks below would be skipped. Not optional.
+    print(f"no ragas-start row for {stack} in the ledger — the run was not started by run_arm.sh/reseed_arm.sh under the campaign lock; it cannot be archived", file=sys.stderr); sys.exit(1)
+if True:
     latest_row = max(start_rows, key=lambda r: r["started"])
     latest = dt.datetime.fromisoformat(latest_row["started"].replace("Z", "+00:00"))
     mtime = dt.datetime.fromtimestamp(os.path.getmtime(artifact), tz=dt.timezone.utc)
@@ -81,9 +90,11 @@ if start_rows:
         print(f"the run that produced this artifact started under lock {str(latest_row.get('lock_sha256'))[:12]}, not the active lock {os.environ['FM_ACTIVE_LOCK_SHA'][:12]} — re-run it under the current lock", file=sys.stderr); sys.exit(1)
 EOF
 
-DOCS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "select count(*) from documents where is_deleted is not true;" 2>/dev/null | tr -d '[:space:]' || echo null)"
-CHUNKS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "select count(*) from document_chunks;" 2>/dev/null | tr -d '[:space:]' || echo null)"
-[ -n "$DOCS" ] || DOCS=null; [ -n "$CHUNKS" ] || CHUNKS=null
+# The live document and chunk counts are part of every arm's cost report and the stack is
+# deleted right after archiving, so they must be read NOW or never: refuse on failure.
+DOCS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "select count(*) from documents where is_deleted is not true;" 2>/dev/null | tr -d '[:space:]' || true)"
+CHUNKS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "select count(*) from document_chunks;" 2>/dev/null | tr -d '[:space:]' || true)"
+[[ "$DOCS" =~ ^[0-9]+$ && "$CHUNKS" =~ ^[0-9]+$ ]] || fm_die "could not read the live document/chunk counts from postgres-$STACK (got docs='${DOCS}' chunks='${CHUNKS}'); the stack must be up when a run is archived"
 
 PIN_FILE="$(fm_pin_file "$STACK")"
 ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \

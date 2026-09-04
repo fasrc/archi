@@ -59,6 +59,8 @@ RENDERED="$STACK_DIR/configs/config.yaml"
 # Content, not file names, decides: the dataset, the profile and the spec must hash to the
 # values the campaign lock recorded, whatever path they were given under.
 fm_require_lock "$YAML"
+fm_require_locked_arm "$ARM" "$YAML"
+fm_require_stack_lock "$STACK"
 fm_require_code_lock                      # the QA agent runs THIS checkout's code in-process
 [ "$(fm_sha256 "$DATASET")" = "$(fm_lock_field qa.dataset_sha256)" ] || fm_die "QA dataset $DATASET does not match the campaign lock (locked: $(fm_lock_field qa.dataset))"
 [ "$(fm_sha256 "$PROFILE")" = "$(fm_lock_field qa.profile_sha256)" ] || fm_die "evaluator profile $PROFILE does not match the campaign lock (locked: $(fm_lock_field qa.profile))"
@@ -100,6 +102,11 @@ OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
   --evaluator-profile "$PROFILE" \
   --output-dir "$OUT_DIR" \
   --attempts 1 --run-workers 1 --score-workers "${FM_SCORE_WORKERS:-4}"
+# The QA run takes an hour or more and nothing samples the corpus for it the way the harness
+# does for RAGAS arms: prove it is still the pinned corpus AFTER the run, or the answers may
+# span two corpus states and the row must not be written.
+AFTER="$(fm_fingerprint "$STACK")"
+[ "$AFTER" = "$FINGERPRINT" ] || fm_die "corpus changed during the QA run (pin $FINGERPRINT, now $AFTER); output kept at $OUT_DIR but NOT recorded — the run is void"
 fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s","fingerprint_source":"live-stack-equals-pin","dataset_sha256":"%s","profile_sha256":"%s","spec_sha256":"%s","lock_sha256":"%s","code_sha":"%s"}' \
   "$ARM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$DATASET" "$PROFILE" "$SPEC" "$YAML" "$CFG_SHA" "$FINGERPRINT" \
   "$(fm_sha256 "$DATASET")" "$(fm_sha256 "$PROFILE")" "$(fm_sha256 "$SPEC")" "$(fm_lock_sha)" "$(fm_code_sha)")"

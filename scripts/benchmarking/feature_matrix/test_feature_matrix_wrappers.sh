@@ -44,7 +44,13 @@
 #   36. archive_run.sh accepts only run 1 while a stack has no pin
 #   37. the judge timeout is a locked fixed factor
 #   38. qa_arm.sh defaults --run to the next unused number for the stack and arm
-#   39. archive_run.sh refuses an artifact whose run started under an obsolete lock
+#   39. after a --relock, a stack deployed under the previous lock is refused by archive and re-run
+#   40. archive_run.sh refuses an artifact with no ragas-start row for its stack
+#   41. archive_run.sh refuses when the live document/chunk counts cannot be read
+#   42. qa_arm.sh refuses (no ledger row) when the corpus changed during the QA run
+#   43. a same-label YAML with a different treatment value is refused by the arm manifest
+#   44. a non-factor data_manager change is refused by the lock
+#   45. run_arm.sh prints the next unused run number in its archive hint
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -71,8 +77,8 @@ case "\$1" in
   exec)    sql="\$*"
            case "\$sql" in
              *benchmark_provenance*) cat "$T/fp" ;;
-             *document_chunks*)  echo 6096 ;;
-             *documents*)        echo 1132 ;;
+             *document_chunks*)  [ -f "$T/nocounts" ] || echo 6096 ;;
+             *documents*)        [ -f "$T/nocounts" ] || echo 1132 ;;
            esac ;;
   *) exit 0 ;;
 esac
@@ -82,6 +88,8 @@ cat > "$T/bin/archi" <<EOF
 printf '%s\n' "\$*" >> "$T/archi.calls"
 # like the real CLI, \`eval qa\` creates its --output-dir
 prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && mkdir -p "\$a"; prev="\$a"; done
+# a corpus that drifts WHILE the QA run is in flight
+[ "\$1 \$2" = "eval qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
 exit 0
 EOF
 cat > "$T/bin/git" <<EOF
@@ -140,7 +148,7 @@ printf 'exited\n' > "$T/state/benchmarking-fm-00"
 # --- arm fixtures ------------------------------------------------------------------------
 # Every arm YAML carries the same pinned inputs (bank, anchors, prompt, sources, SUT, judge)
 # and differs only in the factor keys, exactly like the real files in archi-config.
-mkdir -p "$T/arms" "$T/cfg/qa" "$FM_OUT/qa"
+mkdir -p "$T/arms" "$T/variants" "$T/cfg/qa" "$FM_OUT/qa"
 printf '[{"user_input": "q1", "reference": "a1"}]\n' > "$T/cfg/bank.json"
 printf '[{"user_input": "anchor", "reference": "r", "anchor_type": "should_refuse"}]\n' > "$T/cfg/anchors.json"
 printf 'https://docs.example/kb/\n' > "$T/cfg/sources.list"
@@ -175,6 +183,7 @@ mk_arm "$T/arms/00-baseline.yaml"           fm-00  sentence  true true false tru
 mk_arm "$T/arms/05a-k3.yaml"                fm-05a sentence  true true false true  3
 mk_arm "$T/arms/01-rerank-off.yaml"         fm-01  sentence  true true false false 5
 mk_arm "$T/arms/02-chunking-character.yaml" fm-02  character true true false false 5
+mk_arm "$T/arms/03-categorization-off.yaml" fm-03  sentence  true false false true 5
 printf 'HUIT_API_KEY=x\n' > "$T/judge.env"
 
 artifact() { # $1 = path, $2 = divergence JSON, $3 = fingerprint, $4 = k in the recorded running configuration (default 5), $5 = fingerprint BEFORE the run (default = $3)
@@ -203,10 +212,10 @@ run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-bas
 [ "$RC" = 2 ] && grep -q "no campaign lock" "$T/stderr" && ok "run_arm refuses before the campaign is locked" || notok "lock precondition (rc=$RC: $(cat "$T/stderr"))"
 
 # 25: lock_campaign writes the lock once; a second lock needs --relock
-run bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --qa-dataset "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml"
+run bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --arms-dir "$T/arms" --qa-dataset "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml"
 R1=$RC
-run bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --qa-dataset "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml"
-if [ "$R1" = 0 ] && [ "$RC" = 2 ] && grep -q "already locked" "$T/stderr" && "$FM_PYTHON" -c "import json,sys; l=json.load(open('$FM_OUT/campaign.lock')); sys.exit(0 if set(l['files'])=={'bank','anchors','prompt','sources[0]'} and l['values']['judge.model']=='sonnet-4-5' and l['values']['judge.timeout']==300 and l['code_tree'].startswith('src=c0ffee00') and l['qa']['dataset_sha256'] else 1)"; then ok "lock_campaign records the pinned inputs and refuses a silent re-lock"; else notok "lock_campaign (rc1=$R1 rc2=$RC: $(cat "$T/stderr"))"; fi
+run bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --arms-dir "$T/arms" --qa-dataset "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml"
+if [ "$R1" = 0 ] && [ "$RC" = 2 ] && grep -q "already locked" "$T/stderr" && "$FM_PYTHON" -c "import json,sys; l=json.load(open('$FM_OUT/campaign.lock')); sys.exit(0 if set(l['files'])=={'bank','anchors','prompt','sources[0]'} and l['values']['judge.model']=='sonnet-4-5' and l['values']['judge.timeout']==300 and l['code_tree'].startswith('src=c0ffee00') and 'pyproject.toml=c0ffee00' in l['code_tree'] and set(l['arms'])=={'00','01','02','03','05a'} and l['arms']['05a']['factors']['retrievers.hierarchical_rerank.num_documents_to_retrieve']==3 and 'data_manager_rest' in l and l['qa']['dataset_sha256'] else 1)"; then ok "lock_campaign records the pinned inputs and refuses a silent re-lock"; else notok "lock_campaign (rc1=$R1 rc2=$RC: $(cat "$T/stderr"))"; fi
 rm -f "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"    # checks 12/14 expect it absent until they create it
 
 # 1
@@ -343,14 +352,14 @@ run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rer
 [ "$RC" = 2 ] && grep -q "fingerprint sha256:abc != pin sha256:def" "$T/stderr" && [ ! -e "$FM_OUT/qa/fm-00-arm01-r2" ] && ok "qa_arm refuses a corpus that drifted from the pin" || notok "qa_arm pin guard (rc=$RC: $(cat "$T/stderr"))"
 
 # 22: a sparse arm YAML (no stemming key) is refused everywhere the YAML is accepted
-cat > "$T/arms/sparse.yaml" <<'EOF'
+cat > "$T/variants/sparse.yaml" <<'EOF'
 name: fm-00
 data_manager:
   chunking: {strategy: sentence}
   processing: {html_to_markdown: {enabled: true}, categorization: {enabled: true}}
   retrievers: {hierarchical_rerank: {enabled: true, candidate_pool_size: 20, num_documents_to_retrieve: 5}}
 EOF
-run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/sparse.yaml"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/variants/sparse.yaml"
 [ "$RC" = 2 ] && grep -q "lacks factor key(s): stemming.enabled" "$T/stderr" && ok "a sparse arm YAML is refused (fail closed)" || notok "sparse YAML guard (rc=$RC: $(cat "$T/stderr"))"
 
 # 23: an artifact without running_configuration (pre-#269) cannot prove an arm and is refused
@@ -366,8 +375,8 @@ run bash "$HERE/archive_run.sh" 00 4 "$T/arms/00-baseline.yaml"
 
 # 26: a same-label YAML that names a different bank is refused by the lock
 printf '[{"user_input": "q1 changed", "reference": "a1"}]\n' > "$T/cfg/bank2.json"
-mk_arm "$T/arms/00-altbank.yaml" fm-00 sentence true true false true 5 "$T/cfg/bank2.json"
-run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-altbank.yaml"
+mk_arm "$T/variants/00-altbank.yaml" fm-00 sentence true true false true 5 "$T/cfg/bank2.json"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/variants/00-altbank.yaml"
 [ "$RC" = 2 ] && grep -q "fixed factor bank: locked sha256" "$T/stderr" && ok "a same-label YAML with a different bank is refused by the lock" || notok "lock bank guard (rc=$RC: $(cat "$T/stderr"))"
 
 # 27: qa_arm refuses a dataset whose content differs from the lock, even though the file exists
@@ -389,8 +398,8 @@ run bash "$HERE/archive_run.sh" 00 5 "$T/arms/00-baseline.yaml"
 [ "$RC" = 2 ] && grep -q "corpus changed during the run" "$T/stderr" && ok "archive refuses an artifact whose corpus changed between its endpoints" || notok "endpoint fingerprint gate (rc=$RC: $(cat "$T/stderr"))"
 
 # 30: the agent class is a locked fixed factor
-sed 's/agent_class: FASRCDocsAgent/agent_class: CMSCompOpsAgent/' "$T/arms/00-baseline.yaml" > "$T/arms/00-otheragent.yaml"
-run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-otheragent.yaml"
+sed 's/agent_class: FASRCDocsAgent/agent_class: CMSCompOpsAgent/' "$T/arms/00-baseline.yaml" > "$T/variants/00-otheragent.yaml"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/variants/00-otheragent.yaml"
 [ "$RC" = 2 ] && grep -q "fixed factor sut.agent_class: locked 'FASRCDocsAgent'" "$T/stderr" && ok "a different agent class is refused by the lock" || notok "agent class lock (rc=$RC: $(cat "$T/stderr"))"
 
 # 31/32: the locked code revision is enforced for fresh deploys and QA runs
@@ -423,13 +432,13 @@ run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rer
 
 # 36: a stack with no pin accepts only run 1 first
 artifact "$FM_OUT/benchmarking-fm-03-20260903_000011.json" '[]' ggg 5
-mk_arm "$T/arms/03-categorization-off.yaml" fm-03 sentence true false false true 5
+mkdir -p "$ARCHI_DIR/archi-fm-03"; sha256sum "$FM_OUT/campaign.lock" | cut -d' ' -f1 > "$ARCHI_DIR/archi-fm-03/fm-lock.sha256"   # deployed under the active lock
 run bash "$HERE/archive_run.sh" 03 2 "$T/arms/03-categorization-off.yaml"
 [ "$RC" = 2 ] && grep -q "archive run 1 first" "$T/stderr" && [ ! -f "$FM_OUT/corpus-pin-fm-03" ] && ok "archive refuses run 2 before run 1 has pinned the stack" || notok "pin-by-run-1 gate (rc=$RC: $(cat "$T/stderr"))"
 
 # 37: a same-label YAML with a different judge timeout is refused by the lock
-sed 's/timeout: 300/timeout: 180/' "$T/arms/00-baseline.yaml" > "$T/arms/00-timeout.yaml"
-run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-timeout.yaml"
+sed 's/timeout: 300/timeout: 180/' "$T/arms/00-baseline.yaml" > "$T/variants/00-timeout.yaml"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/variants/00-timeout.yaml"
 [ "$RC" = 2 ] && grep -q "fixed factor judge.timeout: locked 300, arm has 180" "$T/stderr" && ok "a different judge timeout is refused by the lock" || notok "judge timeout lock (rc=$RC: $(cat "$T/stderr"))"
 
 # 38: qa_arm picks the next unused run number when --run is omitted (the stack is back on arm 00 since check 33)
@@ -442,12 +451,59 @@ if [ "$R1" = 0 ] && [ "$RC" = 0 ] && grep -q -- "--output-dir $FM_OUT/qa/fm-00-a
 run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"      # start under the current lock
 printf '{"format":"qa-dataset-v2","items":[]}\n' > "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
 sed -i 's/timeout: 300/timeout: 240/' "$T/arms/00-baseline.yaml"                                  # the campaign inputs change ...
-run bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --qa-dataset "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml" --relock
+run bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --arms-dir "$T/arms" --qa-dataset "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml" --relock
 R1=$RC
 rm -f "$FM_OUT"/benchmarking-fm-00-*.json
 artifact "$FM_OUT/benchmarking-fm-00-20260903_000012.json" '[]' def 5                            # ... and the old run's artifact lands
 run bash "$HERE/archive_run.sh" 00 6 "$T/arms/00-baseline.yaml"
-if [ "$R1" = 0 ] && [ "$RC" = 2 ] && grep -q "started under lock" "$T/stderr"; then ok "archive refuses an artifact whose run started under an obsolete lock"; else notok "obsolete-lock gate (rc1=$R1 rc=$RC: $(cat "$T/stderr"))"; fi
+R2=$RC; grep -q "was deployed under lock" "$T/stderr" && M2=1 || M2=0
+run bash "$HERE/run_arm.sh" 00 --rerun
+if [ "$R1" = 0 ] && [ "$R2" = 2 ] && [ "$M2" = 1 ] && [ "$RC" = 2 ] && grep -q "was deployed under lock" "$T/stderr"; then ok "after a --relock, archive and re-run refuse a stack deployed under the previous lock"; else notok "stack lock stamp gate (rc1=$R1 rc2=$R2 m2=$M2 rc3=$RC: $(cat "$T/stderr"))"; fi
+# restore the canonical baseline and lock so the remaining checks run under one consistent lock
+sed -i 's/timeout: 240/timeout: 300/' "$T/arms/00-baseline.yaml"
+run bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --arms-dir "$T/arms" --qa-dataset "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml" --relock
+[ "$RC" = 0 ] || notok "could not restore the canonical lock after check 39 ($(cat "$T/stderr"))"
+
+# 40: an artifact with no ragas-start row for its stack cannot be archived (nothing ties it to a lock or a time)
+mkdir -p "$ARCHI_DIR/archi-fm-01"; sha256sum "$FM_OUT/campaign.lock" | cut -d' ' -f1 > "$ARCHI_DIR/archi-fm-01/fm-lock.sha256"
+artifact "$FM_OUT/benchmarking-fm-01-20260903_000013.json" '[]' hhh 5
+sed -i 's/"enabled": true, "candidate_pool_size"/"enabled": false, "candidate_pool_size"/' "$FM_OUT/benchmarking-fm-01-20260903_000013.json"
+run bash "$HERE/archive_run.sh" 01 1 "$T/arms/01-rerank-off.yaml"
+[ "$RC" = 2 ] && grep -q "no ragas-start row for fm-01" "$T/stderr" && ok "archive refuses an artifact with no start row for its stack" || notok "start-row gate (rc=$RC: $(cat "$T/stderr"))"
+
+# 41: unreadable live counts refuse the archive (the stack is deleted right after, so now or never)
+# (the relock in 39 left fm-00 stamped with the OLD lock; re-stamp it to the active lock for the remaining checks)
+sha256sum "$FM_OUT/campaign.lock" | cut -d' ' -f1 > "$S/fm-lock.sha256"; printf 'sha256:def\n' > "$T/fp"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json; artifact "$FM_OUT/benchmarking-fm-00-20260903_000014.json" '[]' def 5
+touch "$T/nocounts"
+run bash "$HERE/archive_run.sh" 00 7 "$T/arms/00-baseline.yaml"
+R1=$RC; grep -q "could not read the live document/chunk counts" "$T/stderr" && M1=1 || M1=0
+rm -f "$T/nocounts"
+[ "$R1" = 2 ] && [ "$M1" = 1 ] && ok "archive refuses when the live counts cannot be read" || notok "count gate (rc=$R1 m=$M1: $(cat "$T/stderr"))"
+
+# 42: a corpus that drifts DURING the QA run voids it: no ledger row, output kept
+printf 'sha256:def\n' > "$T/fp"; printf 'sha256:def\n' > "$FM_OUT/corpus-pin-fm-00"; touch "$T/drift-after-qa"
+BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/drift-after-qa"; printf 'sha256:def\n' > "$T/fp"
+[ "$RC" = 2 ] && grep -q "corpus changed during the QA run" "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ] && ok "qa_arm refuses when the corpus changed during the run" || notok "qa post-run corpus check (rc=$RC: $(cat "$T/stderr"))"
+
+# 43: an arm YAML that is not the locked file for its label is refused (05a with k=4 is not the pre-registered k=3)
+mk_arm "$T/variants/05a-k4.yaml" fm-05a sentence true true false true 4
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 05a "$T/variants/05a-k4.yaml"
+[ "$RC" = 2 ] && grep -q "is not the locked arm 05a config" "$T/stderr" && ok "a same-label YAML with a different treatment value is refused by the arm manifest" || notok "arm manifest gate (rc=$RC: $(cat "$T/stderr"))"
+
+# 44: a non-factor data_manager setting (a chunk size) is a fixed factor too
+mk_arm "$T/variants/00-chunksize.yaml" fm-00 sentence true true false true 5
+sed -i 's/  chunking: {strategy: sentence}/  chunking: {strategy: sentence, parent_chunk_size: 1024}/' "$T/variants/00-chunksize.yaml"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/variants/00-chunksize.yaml"
+[ "$RC" = 2 ] && grep -q "data_manager.chunking.parent_chunk_size: locked None, arm has 1024 (not an arm factor)" "$T/stderr" && ok "a non-factor data_manager change is refused by the lock" || notok "data_manager rest gate (rc=$RC: $(cat "$T/stderr"))"
+
+# 45: the printed archive hint names the NEXT run number for a reused (arm, stack)
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+NEXT="$("$FM_PYTHON" -c "import json; r=[int(e['run']) for e in json.load(open('$FM_OUT/ledger.json')) if e.get('kind')=='ragas' and e.get('arm')=='00' and e.get('stack')=='fm-00']; print(max(r)+1)")"
+[ "$RC" = 0 ] && grep -q "archive_run.sh 00 $NEXT " "$T/stdout" && [ "$NEXT" -gt 1 ] && ok "run_arm prints the next unused run number in its archive hint" || notok "archive hint run number (rc=$RC next=$NEXT: $(cat "$T/stdout"))"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
