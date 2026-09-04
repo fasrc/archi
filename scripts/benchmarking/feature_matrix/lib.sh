@@ -25,13 +25,33 @@ fm_log() { printf '==> %s\n' "$*"; }
 # before it becomes a deployment name (the name reaches `archi delete --force` paths).
 fm_require_arm() { [[ "${1:-}" =~ ^[0-9]{2}[a-z]?$ ]] || fm_die "bad arm label '${1:-}' (want 00, 03, 05a ...)"; }
 
+# The factor keys every arm YAML must state (plan §3). The checks below fail CLOSED: a key
+# missing from the arm YAML or from the configuration it is compared with is a mismatch,
+# never "don't care" — a sparse YAML would otherwise certify the wrong stack or artifact.
+FM_FACTOR_KEYS='chunking.strategy processing.html_to_markdown.enabled processing.categorization.enabled stemming.enabled retrievers.hierarchical_rerank.enabled retrievers.hierarchical_rerank.candidate_pool_size retrievers.hierarchical_rerank.num_documents_to_retrieve'
+
 # An arm YAML self-identifies through its `name: fm-<arm>`; the label the operator typed
 # must agree with it, or a run, a re-seed, or an archive row is filed under the wrong arm.
+# It must also state every factor key, so the arm proofs below have something to compare.
 fm_require_arm_yaml() { # $1 = arm label, $2 = arm YAML
   [ -n "${2:-}" ] && [ -f "$2" ] || fm_die "arm config not found: '${2:-}' (run from ~/Projects/archi so config/... resolves)"
-  local name
-  name="$(FM_Y="$2" "$FM_PYTHON" -c 'import os,yaml; print(yaml.safe_load(open(os.environ["FM_Y"])).get("name",""))')"
-  [ "$name" = "fm-$1" ] || fm_die "arm label $1 does not match $2 (its name is '$name', expected 'fm-$1')"
+  FM_Y="$2" FM_ARM="$1" FM_KEYS="$FM_FACTOR_KEYS" "$FM_PYTHON" - <<'EOF' || fm_die "arm YAML $2 is not a complete arm $1 config (see above)"
+import os, sys, yaml
+cfg = yaml.safe_load(open(os.environ["FM_Y"])) or {}
+name, arm = cfg.get("name", ""), os.environ["FM_ARM"]
+if name != f"fm-{arm}":
+    sys.exit(f"arm label {arm} does not match the YAML (its name is '{name}', expected 'fm-{arm}')")
+dm = cfg.get("data_manager") or {}
+def get(m, path):
+    for k in path.split("."):
+        if not isinstance(m, dict) or k not in m:
+            return None
+        m = m[k]
+    return m
+missing = [k for k in os.environ["FM_KEYS"].split() if get(dm, k) is None]
+if missing:
+    sys.exit("arm YAML lacks factor key(s): " + ", ".join(missing))
+EOF
 }
 
 fm_stack_dir() { printf '%s/archi-%s\n' "$ARCHI_DIR" "$1"; }
@@ -85,27 +105,23 @@ fm_require_pinned_corpus() { # $1 = stack name → refuses unless the fingerprin
   fm_log "corpus fingerprint matches pin $pin"
 }
 
-# The factor keys every arm YAML states (plan §3). A stack "is on" an arm when its rendered
-# config agrees with the arm YAML on all of them.
-fm_verify_stack_matches_arm() { # $1 = stack name, $2 = arm YAML → refuses on any differing key
+# A stack "is on" an arm when its rendered config agrees with the arm YAML on EVERY
+# factor key; a key absent on either side is a mismatch (fail closed).
+fm_verify_stack_matches_arm() { # $1 = stack name, $2 = arm YAML → refuses on any differing or missing key
   local rendered; rendered="$(fm_stack_dir "$1")/configs/config.yaml"
   [ -f "$rendered" ] || fm_die "no rendered config at $rendered"
-  FM_ARM_YAML="$2" FM_RENDERED="$rendered" "$FM_PYTHON" - <<'EOF' || fm_die "stack $1 is not on the arm described by $2 (see above); re-seed or pick the right --stack"
+  FM_ARM_YAML="$2" FM_RENDERED="$rendered" FM_KEYS="$FM_FACTOR_KEYS" "$FM_PYTHON" - <<'EOF' || fm_die "stack $1 is not on the arm described by $2 (see above); re-seed or pick the right --stack"
 import os, sys, yaml
-arm = yaml.safe_load(open(os.environ["FM_ARM_YAML"]))["data_manager"]
-dm = yaml.safe_load(open(os.environ["FM_RENDERED"]))["data_manager"]
-KEYS = [("chunking", "strategy"), ("processing", "html_to_markdown", "enabled"),
-        ("processing", "categorization", "enabled"), ("stemming", "enabled"),
-        ("retrievers", "hierarchical_rerank", "enabled"),
-        ("retrievers", "hierarchical_rerank", "candidate_pool_size"),
-        ("retrievers", "hierarchical_rerank", "num_documents_to_retrieve")]
-def get(d, path):
-    for k in path:
-        if not isinstance(d, dict) or k not in d:
+arm = (yaml.safe_load(open(os.environ["FM_ARM_YAML"])) or {}).get("data_manager") or {}
+dm = (yaml.safe_load(open(os.environ["FM_RENDERED"])) or {}).get("data_manager") or {}
+def get(m, path):
+    for k in path.split("."):
+        if not isinstance(m, dict) or k not in m:
             return None
-        d = d[k]
-    return d
-bad = [(".".join(p), get(arm, p), get(dm, p)) for p in KEYS if get(arm, p) is not None and get(arm, p) != get(dm, p)]
+        m = m[k]
+    return m
+bad = [(k, get(arm, k), get(dm, k)) for k in os.environ["FM_KEYS"].split()
+       if get(arm, k) is None or get(dm, k) is None or get(arm, k) != get(dm, k)]
 for key, a, r in bad:
     print(f"factor {key}: arm={a!r} stack={r!r}", file=sys.stderr)
 sys.exit(1 if bad else 0)

@@ -6,8 +6,10 @@
 # 0. Proves the stack is on the requested arm: every factor key in the arm YAML must equal
 #    the stack's rendered config (chunking, processing, stemming, hierarchical_rerank), or
 #    it refuses — a retrieval arm left on fm-00 after a restore, or a wrong --stack, would
-#    otherwise yield a plausible QA record for the wrong configuration. The ledger entry
-#    records the rendered config's sha256 and the corpus fingerprint.
+#    otherwise yield a plausible QA record for the wrong configuration. Also proves the
+#    corpus still equals the stack's pin (the fingerprint the RAGAS runs were archived
+#    with), else refuses: a drifted corpus is not comparable. The ledger entry records the
+#    rendered config's sha256 and the pinned corpus fingerprint.
 # 1. Writes a secret-free agent config from the stack's rendered configs/config.yaml with
 #    services.chat_app.{agent_class,default_provider,default_model} overwritten from
 #    services.benchmarking.{agent_class,provider,model}. An evaluate stack renders the
@@ -44,9 +46,9 @@ RENDERED="$STACK_DIR/configs/config.yaml"
 [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "a RAGAS run is in flight on $STACK; QA runs are serial"
 [ -f "$STACK_DIR/secrets/pg_password.txt" ] || fm_die "no $STACK_DIR/secrets/pg_password.txt"
 fm_verify_stack_matches_arm "$STACK" "$YAML"
+fm_require_pinned_corpus "$STACK"        # the QA run must score the SAME corpus the RAGAS runs pinned
 CFG_SHA="$(fm_sha256 "$RENDERED")"
-FINGERPRINT="$(fm_fingerprint "$STACK")"
-[ -n "$FINGERPRINT" ] || fm_die "could not read the corpus fingerprint of $STACK"
+FINGERPRINT="$(tr -d '[:space:]' < "$(fm_pin_file "$STACK")")"
 fm_log "stack $STACK is on arm $ARM (config sha256 ${CFG_SHA:0:12}, corpus $FINGERPRINT)"
 
 mkdir -p "$FM_OUT/qa"
@@ -80,6 +82,6 @@ OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
   --evaluator-profile "$PROFILE" \
   --output-dir "$OUT_DIR" \
   --attempts 1 --run-workers 1 --score-workers "${FM_SCORE_WORKERS:-4}"
-fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s","fingerprint_source":"live-stack"}' \
+fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s","fingerprint_source":"live-stack-equals-pin"}' \
   "$ARM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$DATASET" "$PROFILE" "$SPEC" "$YAML" "$CFG_SHA" "$FINGERPRINT")"
 fm_log "done; report: $OUT_DIR/report.md  summary: $OUT_DIR/summary.json"

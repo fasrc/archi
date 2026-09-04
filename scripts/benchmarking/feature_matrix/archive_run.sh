@@ -64,7 +64,7 @@ CHUNKS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "se
 [ -n "$DOCS" ] || DOCS=null; [ -n "$CHUNKS" ] || CHUNKS=null
 
 PIN_FILE="$(fm_pin_file "$STACK")"
-ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" \
+ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \
   FM_PIN_FILE="$PIN_FILE" FM_NEW_CORPUS="$NEW_CORPUS" FM_FINISHED="$(fm_now)" "$FM_PYTHON" - <<'EOF'
 import json, math, os, sys, yaml
 p = os.environ["FM_ARTIFACT"]
@@ -74,22 +74,23 @@ if len(arms) != 1:
     print(f"expected one arm in {p}, found {len(arms)} — a stray file in the stack's configs/ ran as an arm", file=sys.stderr); sys.exit(2)
 arm = arms[0]
 # The artifact proves which arm ran: its recorded running configuration (what the agent
-# read from Postgres; pre-#269 artifacts carry only the disk copy) must agree with the arm
-# YAML on every factor key. A label typed by the operator never decides this.
-recorded = (arm.get("running_configuration") or arm.get("configuration") or {}).get("data_manager") or {}
-wanted = yaml.safe_load(open(os.environ["FM_ARM_YAML"]))["data_manager"]
-FACTORS = [("chunking", "strategy"), ("processing", "html_to_markdown", "enabled"),
-           ("processing", "categorization", "enabled"), ("stemming", "enabled"),
-           ("retrievers", "hierarchical_rerank", "enabled"),
-           ("retrievers", "hierarchical_rerank", "candidate_pool_size"),
-           ("retrievers", "hierarchical_rerank", "num_documents_to_retrieve")]
+# read from Postgres, #269) must agree with the arm YAML on EVERY factor key; a key missing
+# on either side is a mismatch. An artifact without running_configuration (pre-#269) cannot
+# prove anything — its `configuration` is a disk re-read — and is refused. A label typed by
+# the operator never decides this.
+running = arm.get("running_configuration")
+if not isinstance(running, dict):
+    print("REFUSED: artifact carries no running_configuration (pre-#269 harness); it cannot prove which arm ran", file=sys.stderr); sys.exit(2)
+recorded = running.get("data_manager") or {}
+wanted = (yaml.safe_load(open(os.environ["FM_ARM_YAML"])) or {}).get("data_manager") or {}
 def get(m, path):
-    for k in path:
+    for k in path.split("."):
         if not isinstance(m, dict) or k not in m:
             return None
         m = m[k]
     return m
-mismatch = [(".".join(f), get(wanted, f), get(recorded, f)) for f in FACTORS if get(wanted, f) is not None and get(wanted, f) != get(recorded, f)]
+mismatch = [(k, get(wanted, k), get(recorded, k)) for k in os.environ["FM_KEYS"].split()
+            if get(wanted, k) is None or get(recorded, k) is None or get(wanted, k) != get(recorded, k)]
 if mismatch:
     for key, w, r in mismatch:
         print(f"REFUSED: artifact ran factor {key}={r!r}, arm {os.environ['FM_ARM']} wants {w!r}", file=sys.stderr)

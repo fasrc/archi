@@ -67,7 +67,7 @@ One thin wrapper per step of the #396 campaign protocol
   drifted; writes the corpus pin on run 1. Every wrapper refuses an arm label that does
   not match the YAML's own `name`. The live fingerprint is the harness's own routine
   (`CORPUS_STATE_QUERY` + `corpus_fingerprint`), run inside the data-manager container.
-- **`test_feature_matrix_wrappers.sh`** — hermetic 20-check self-test (stubbed
+- **`test_feature_matrix_wrappers.sh`** — hermetic 23-check self-test (stubbed
   `docker`/`archi`, temp stack), run by `scripts/gate.sh`.
 
 ## Analysis and run helpers

@@ -27,6 +27,9 @@
 #   18. an arm label that does not match the YAML's own `name` is refused
 #   19. archive_run.sh refuses an artifact whose recorded running configuration is not the arm's
 #   20. archive_run.sh records the arm config, the selected file, and the fingerprint source
+#   21. qa_arm.sh refuses a corpus that drifted from the stack's pin
+#   22. an arm YAML that lacks a factor key is refused (fail closed)
+#   23. archive_run.sh refuses an artifact without running_configuration
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -286,6 +289,33 @@ rm -f "$FM_OUT"/benchmarking-fm-00-*.json
 artifact "$FM_OUT/benchmarking-fm-00-20260903_000006.json" '[]' def 3
 run bash "$HERE/archive_run.sh" 05a 1 "$T/arms/05a-k3.yaml" --stack fm-00
 if [ "$RC" = 0 ] && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['arm']=='05a' and e['arm_config']=='$T/arms/05a-k3.yaml' and e['configuration_file']=='configs/config.yaml' and e['fingerprint_source']=='artifact' else 1)"; then ok "archive records the arm config, the selected file, and the fingerprint source"; else notok "archive identity fields (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 21: qa_arm refuses a corpus that drifted from the pin (pin is now def, live is abc)
+printf 'abc\n' > "$T/fp"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml" --run 2
+[ "$RC" = 2 ] && grep -q "fingerprint abc != pin def" "$T/stderr" && [ ! -e "$FM_OUT/qa/fm-00-arm01-r2" ] && ok "qa_arm refuses a corpus that drifted from the pin" || notok "qa_arm pin guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 22: a sparse arm YAML (no stemming key) is refused everywhere the YAML is accepted
+cat > "$T/arms/sparse.yaml" <<'EOF'
+name: fm-00
+data_manager:
+  chunking: {strategy: sentence}
+  processing: {html_to_markdown: {enabled: true}, categorization: {enabled: true}}
+  retrievers: {hierarchical_rerank: {enabled: true, candidate_pool_size: 20, num_documents_to_retrieve: 5}}
+EOF
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/sparse.yaml"
+[ "$RC" = 2 ] && grep -q "lacks factor key(s): stemming.enabled" "$T/stderr" && ok "a sparse arm YAML is refused (fail closed)" || notok "sparse YAML guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 23: an artifact without running_configuration (pre-#269) cannot prove an arm and is refused
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+cat > "$FM_OUT/benchmarking-fm-00-20260903_000007.json" <<'EOF'
+{"metadata": {"corpus_snapshot_id": "snap-1", "code_version": {"digest": "sha256:code"}},
+ "benchmarking_results": [{"configuration_file": "configs/config.yaml", "configuration": {"data_manager": {"chunking": {"strategy": "sentence"}}},
+   "config_version": {"digest": "sha256:cfg", "divergence_from_selected_file": null}, "corpus_fingerprint": "def",
+   "total_results": {}, "single_question_results": {"question_1": {"question": "q1", "status": "ok", "faithfulness": 0.5, "time_elapsed": 1}}}]}
+EOF
+run bash "$HERE/archive_run.sh" 00 4 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && grep -q "no running_configuration" "$T/stderr" && ok "archive refuses an artifact without running_configuration" || notok "archive legacy-artifact guard (rc=$RC: $(cat "$T/stderr"))"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
