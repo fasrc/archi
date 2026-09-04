@@ -51,6 +51,7 @@
 #   43. a same-label YAML with a different treatment value is refused by the arm manifest
 #   44. a non-factor data_manager change is refused by the lock
 #   45. run_arm.sh prints the next unused run number in its archive hint
+#   46. among ragas-start rows that share one UTC second, the LAST one is the run that started
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -504,6 +505,27 @@ run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/variants/00
 run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
 NEXT="$("$FM_PYTHON" -c "import json; r=[int(e['run']) for e in json.load(open('$FM_OUT/ledger.json')) if e.get('kind')=='ragas' and e.get('arm')=='00' and e.get('stack')=='fm-00']; print(max(r)+1)")"
 [ "$RC" = 0 ] && grep -q "archive_run.sh 00 $NEXT " "$T/stdout" && [ "$NEXT" -gt 1 ] && ok "run_arm prints the next unused run number in its archive hint" || notok "archive hint run number (rc=$RC next=$NEXT: $(cat "$T/stdout"))"
+
+# 46: two ragas-start rows for one stack can share a UTC second — fm_now has second
+# resolution. The run that started is the LAST of them, the way the --new-corpus check
+# already reads it (starts[-1]). Picking by timestamp alone returns the first row seen,
+# so a stale row from before a --relock would decide the lock check and refuse a run that
+# started under the active lock. This is how check 41 failed in CI on 2026-09-04 while
+# passing on a host whose checks 39 and 41 straddled a second boundary.
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+"$FM_PYTHON" - "$FM_OUT/ledger.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+rows = json.load(open(path))
+i = max(n for n, r in enumerate(rows) if r.get("kind") == "ragas-start" and r.get("stack") == "fm-00")
+stale = dict(rows[i]); stale["lock_sha256"] = "0" * 64   # a lock from before a --relock
+rows.insert(i, stale)                                    # same second, earlier position
+json.dump(rows, open(path, "w"))
+PY
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000015.json" '[]' def 5
+run bash "$HERE/archive_run.sh" 00 9 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 0 ] && ! grep -q "started under lock" "$T/stderr"; then ok "a stale ragas-start row sharing the newest second does not decide the lock check"; else notok "same-second start row (rc=$RC: $(cat "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

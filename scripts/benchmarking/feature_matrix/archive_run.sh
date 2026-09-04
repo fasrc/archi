@@ -79,7 +79,12 @@ if not start_rows:
     # start time, so the age and lock checks below would be skipped. Not optional.
     print(f"no ragas-start row for {stack} in the ledger — the run was not started by run_arm.sh/reseed_arm.sh under the campaign lock; it cannot be archived", file=sys.stderr); sys.exit(1)
 if True:
-    latest_row = max(start_rows, key=lambda r: r["started"])
+    # `started` has second resolution (fm_now), so several rows can share the newest
+    # second. Break that tie by ledger position: the ledger is append-ordered, so the
+    # last of them is the run that started — the same rule the --new-corpus check below
+    # applies with starts[-1]. Without the tie-break max() returns the first row it sees,
+    # which is the oldest, and a stale row from before a --relock decides the lock check.
+    latest_row = max(enumerate(start_rows), key=lambda p: (p[1]["started"], p[0]))[1]
     latest = dt.datetime.fromisoformat(latest_row["started"].replace("Z", "+00:00"))
     mtime = dt.datetime.fromtimestamp(os.path.getmtime(artifact), tz=dt.timezone.utc)
     if mtime < latest:
