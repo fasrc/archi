@@ -142,21 +142,27 @@ Make sure the `out_dir` exists before running.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the *last successful* ingestion-status poll. It restarts on every poll that answers, so an ingest reporting progress is never cut off for taking a long time — only one that goes silent is. |
-| `BENCH_INGEST_MAX_WAIT` | `21600` | Absolute ceiling on the whole wait, in seconds, for an ingest that keeps answering but never finishes. Set to `0` to disable it and wait indefinitely while polls keep succeeding. |
+| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the ingest last reported progress. It restarts on every poll that comes back `state=running`, so an ingest that is working is never cut off for taking a long time — only one that goes silent, or never starts, is. |
+| `BENCH_INGEST_MAX_WAIT` | `21600` | Absolute ceiling on the whole wait, in seconds — the backstop for an ingest that reports `running` forever without finishing. `0` disables it; the stall budget above still applies, so this is not a licence to hang. |
 | `BENCH_INGEST_POLL_INTERVAL` | `5` | Seconds between ingestion-status polls. |
 
-The two budgets answer two different failures, which is why neither one is a
+The two budgets answer three different failures, which is why neither one is a
 plain "give up after N seconds":
 
-- **The endpoint went away.** No status URL answers any more. `BENCH_INGEST_WAIT_TIMEOUT`
-  ends the run after that much silence, and the error names the last URL that
-  did answer plus the exception that is now being raised.
-- **The ingest is alive but stuck.** Polls keep succeeding and the state never
-  reaches `completed`. `BENCH_INGEST_MAX_WAIT` ends that, and the error reports
-  the last observed `state` and `step` rather than a connection problem.
+- **The endpoint went away.** No status URL answers any more.
+  `BENCH_INGEST_WAIT_TIMEOUT` ends the run after that much silence, and the
+  error names the last URL that *did* answer plus the exception now being
+  raised — never one from a candidate URL the harness already fell past.
+- **The ingest never started.** The endpoint answers, but with `state=pending`
+  (or a state the harness does not recognize) rather than `running`. That is
+  not progress, so it does not restart the stall budget either, and
+  `BENCH_INGEST_WAIT_TIMEOUT` ends it on the same schedule as a dead endpoint.
+- **The ingest is alive but stuck.** Polls keep reporting `running` and the
+  state never reaches `completed`. `BENCH_INGEST_MAX_WAIT` ends that, and the
+  error reports the last observed `state` and `step` rather than a connection
+  problem.
 
-A long-but-healthy ingest hits neither. CPU-only ingest of the full FASRC
+A long-but-healthy ingest hits none of them. CPU-only ingest of the full FASRC
 corpus takes ~64 min; with `processing.categorization.enabled: true` it runs one
 extra LLM call per document before embedding, and has been measured at over two
 hours on a loaded host. Under the old absolute deadline that run was killed at
