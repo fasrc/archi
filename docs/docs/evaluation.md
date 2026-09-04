@@ -723,6 +723,15 @@ RAGAS run over the same bank:
 - **An authored `id` is kept.** Such an item has no derived id to recompute and
   must be matched by question text instead; the run report counts those rows
   (`explicit_ids`) so the exception is visible rather than assumed.
+- **Identical text needs run order, not text.** Two items whose question *and*
+  reference are the same cannot be distinguished by text: a derived id refuses
+  that pair, but an authored `id` deliberately lets it coexist, and the artifact
+  carries no dataset id. Item order is preserved end to end — bank rows in file
+  order, then the anchors that were added — and that is the order the harness
+  asks its questions, so the Nth item is the artifact's `question_N`, provided
+  `--status` dropped nothing and the anchors match the run. The report counts
+  these as `text_duplicate_items`; when it is 0, a text or derived-id join is
+  unambiguous for every item.
 
 `--no-anchors` converts the bank alone, `--status draft|locked` filters by
 confirmation state, and a bank that cannot be converted honestly (a row carrying

@@ -42,6 +42,14 @@ Three caveats on that join, none of which bite the FASRC bank today:
 * a bank row that carries its own ``id`` keeps it, so its item id is authored
   rather than derived and the item has to be matched by question text instead --
   the run report counts those rows as ``explicit_ids``, and it is 0 here;
+* two items whose question AND reference text are identical cannot be told
+  apart by text at all. A derived id refuses that pair; an authored id lets it
+  coexist, deliberately (``catalog._normalize_dialect_row``). Only run order
+  separates them: item order is preserved end to end -- bank rows in file
+  order, then the anchors that were added -- which is the order the harness
+  asks its questions, so the Nth item is the artifact's ``question_N`` provided
+  ``--status`` dropped nothing and the anchors match the run. The report counts
+  these as ``text_duplicate_items``, and it is 0 here;
 * the anchors are whatever this command was told to use. It does not read the
   deployment configuration, so a run with ``services.benchmarking.anchors``
   disabled or repointed needs ``--no-anchors`` or ``--anchors <path>`` to match.
@@ -329,6 +337,31 @@ def write_v2(normalized: Path, out: Path, scratch: Path) -> Tuple[int, str]:
     return written, digest
 
 
+def _text_duplicate_count(rows: List[Any]) -> int:
+    """How many rows share their exact question and reference with another row.
+
+    Such items are indistinguishable in a RAGAS artifact, which stores both
+    fields verbatim and carries no dataset id: the question-text fallback for an
+    authored-id item cannot place their results, and only run order can. The
+    adapter already refuses text duplicates whose ids are derived, so these are
+    exactly the ones an authored ``id`` lets coexist -- deliberately, per
+    ``catalog._normalize_dialect_row``, which is why they are counted here
+    rather than refused. A row whose question or reference is not a string is
+    skipped; the dataset reader rejects it later by name.
+    """
+    counts: Dict[Tuple[str, str], int] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        question = row.get("user_input")
+        reference = row.get("reference")
+        if not isinstance(question, str) or not isinstance(reference, str):
+            continue
+        key = (question, reference)
+        counts[key] = counts.get(key, 0) + 1
+    return sum(count for count in counts.values() if count > 1)
+
+
 def _refuse_to_clobber_an_input(
     out: Path, bank_path: Path, anchors_path: Optional[Path]
 ) -> None:
@@ -374,6 +407,12 @@ def convert(
             # The adapter and the dataset reader both refuse by raising
             # ValueError with a message that names the row.
             raise BankRefused(str(exc)) from exc
+        except OSError as exc:
+            # A destination that cannot be created or replaced -- a read-only
+            # parent, a directory sitting where the file should go, a full disk
+            # -- is an ordinary filesystem mistake, not a bad bank. The
+            # exception text already names the path.
+            raise UsageError(f"cannot write the dataset: {exc}") from exc
     return {
         "bank": str(bank_path),
         "anchors": str(anchors_path) if anchors_path is not None else None,
@@ -391,6 +430,8 @@ def convert(
         "explicit_ids": sum(
             1 for row in selected if isinstance(row, dict) and row.get("id")
         ),
+        # Items only run order can tell apart (see _text_duplicate_count).
+        "text_duplicate_items": _text_duplicate_count(selected),
         "out": str(out),
         "sha256": digest,
     }
@@ -418,8 +459,10 @@ def format_report(report: Dict[str, Any]) -> str:
         )
     lines.append(f"items written: {report['items']}")
     lines.append(
-        f"rows carrying an authored id: {report['explicit_ids']} "
-        "(the rest join to a RAGAS run by derived id)"
+        f"join: {report['items'] - report['explicit_ids']} by derived id, "
+        f"{report['explicit_ids']} by authored id, "
+        f"{report['text_duplicate_items']} by run order only "
+        "(identical question and reference text)"
     )
     lines.append(f"out: {report['out']}")
     lines.append(f"sha256: {report['sha256']}")

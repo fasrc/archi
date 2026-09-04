@@ -545,6 +545,7 @@ def test_json_report_carries_the_counts_and_the_output_sha256(tmp_path, capsys):
     assert report["anchors_skipped"] == 1
     assert report["items"] == 2
     assert report["explicit_ids"] == 0
+    assert report["text_duplicate_items"] == 0
     assert report["sha256"] == converter.sha256_file(out)
 
 
@@ -562,6 +563,23 @@ def test_the_report_separates_unusable_anchors_from_duplicates(tmp_path, capsys)
     assert report["anchors_added"] == 1
     assert report["anchors_skipped"] == 1
     assert report["anchors_unusable"] == 1
+
+
+def test_the_report_counts_items_a_text_join_cannot_tell_apart(tmp_path, capsys):
+    # A derived id refuses two rows with the same question and reference; an
+    # authored id lets them coexist. Those items are indistinguishable in a
+    # RAGAS artifact, which stores the text verbatim and carries no dataset id,
+    # so the documented question-text fallback cannot place their results and
+    # only run order can. The report has to say so rather than convert quietly.
+    rows = [dict(BANK_ROW, id="qa-one"), dict(BANK_ROW, id="qa-two"), SECOND_ROW]
+
+    code, _out = _run(tmp_path, rows, extra=["--json"])
+
+    assert code == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["items"] == 3
+    assert report["explicit_ids"] == 2
+    assert report["text_duplicate_items"] == 2
 
 
 def test_the_report_counts_rows_that_carry_an_explicit_id(tmp_path, capsys):
@@ -591,6 +609,18 @@ def test_a_bad_flag_exits_with_the_usage_status(tmp_path):
         converter.main([str(tmp_path / "bank.json")])  # no --out
 
     assert excinfo.value.code == 1
+
+
+def test_a_destination_that_cannot_be_written_is_a_usage_error(tmp_path, capsys):
+    # An existing directory where the dataset should go is an ordinary
+    # filesystem mistake (so are a read-only parent and a full disk); the
+    # publish must report it, not raise through main.
+    (tmp_path / "out.json").mkdir()
+
+    code, _out = _run(tmp_path, [BANK_ROW])
+
+    assert code == 1
+    assert "cannot write the dataset" in capsys.readouterr().err
 
 
 def test_the_output_path_must_be_json(tmp_path, capsys):
