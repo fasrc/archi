@@ -30,7 +30,7 @@ from typing import (
 )
 
 from bs4 import BeautifulSoup, NavigableString, Tag
-from markdownify import markdownify
+from markdownify import STRIP, STRIP_ONE, MarkdownConverter, strip1_pre, strip_pre
 
 from src.data_manager.collectors.resource_base import BaseResource
 from src.utils.logging import get_logger
@@ -490,6 +490,44 @@ def _promoted_fence_language(pre) -> str:
     return _fence_language(pre)
 
 
+_BACKTICK_RUNS = re.compile(r"`+")
+
+
+class _ArchiMarkdownConverter(MarkdownConverter):
+    """The project's ``MarkdownConverter`` overrides (issue #407).
+
+    This is the one place project-specific ``MarkdownConverter`` overrides live;
+    issue #410 adds a ``convert_list`` override here alongside ``convert_pre``.
+    """
+
+    def convert_pre(self, el, text, parent_tags):
+        if not text:
+            return ""
+        code_language = self.options["code_language"]
+
+        if self.options["code_language_callback"]:
+            code_language = self.options["code_language_callback"](el) or code_language
+
+        mode = self.options["strip_pre"]
+        if mode == STRIP:
+            text = strip_pre(text)  # remove all leading/trailing newlines
+        elif mode == STRIP_ONE:
+            text = strip1_pre(text)  # remove one leading/trailing newline
+        elif mode is None:
+            pass  # leave leading and trailing newlines as-is
+        else:
+            raise ValueError("Invalid value for strip_pre: %s" % mode)
+
+        longest_run = max((len(m) for m in _BACKTICK_RUNS.findall(text)), default=0)
+        fence = "`" * max(3, longest_run + 1)
+        return "\n\n%s%s\n%s\n%s\n\n" % (fence, code_language, text, fence)
+
+
+def _markdownify(html: str, **options) -> str:
+    """Mirror the library's ``markdownify()`` using the project converter."""
+    return _ArchiMarkdownConverter(**options).convert(html)
+
+
 def _markdownify_deep_safe(content: str) -> str:
     """Convert HTML to Markdown with headroom for deeply-nested input.
 
@@ -504,7 +542,7 @@ def _markdownify_deep_safe(content: str) -> str:
 
     def _worker() -> None:
         try:
-            result["value"] = markdownify(
+            result["value"] = _markdownify(
                 _promote_block_code(content),
                 heading_style="ATX",
                 code_language_callback=_promoted_fence_language,
