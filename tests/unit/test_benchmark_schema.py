@@ -18,10 +18,12 @@ benchmark-only ragas dependency (absent from the unit-test env).
 
 from __future__ import annotations
 
+import json
 import math
 
 from src.utils.benchmark_schema import (
     bank_status_counts,
+    json_safe,
     metric_required_column,
     normalize_bank,
     normalize_record,
@@ -375,7 +377,151 @@ def test_aggregate_is_nan_when_every_eligible_cell_is_nan():
 
     out = score_metrics_per_eligibility(rows, keys, ["context_recall"], qwr, score_fn)
     assert math.isnan(out["aggregate_context_recall"])
-    assert out["context_recall_scored"] == "1 of 1"
+    # #279: the denominator counts what reached the aggregate. Nothing did, so
+    # this reads "0 of 1" — the same shape an ineligible subset already reports,
+    # and NOT "1 of 1", which claimed a scored row behind a NaN mean.
+    assert out["context_recall_scored"] == "0 of 1"
+
+
+def test_scored_count_excludes_nan_cells():
+    """#279: ``<metric>_scored`` is the number of values that CONTRIBUTED to the
+    aggregate, not the size of the eligible subset.
+
+    ``_mean_ignoring_nan`` already drops the NaN cell, so counting eligible rows
+    published a denominator the average never used — the artifact that prompted
+    this recorded ``context_precision_scored: "109 of 109"`` over 108 finite
+    scores, and §3.4 of the interpreting guide tells readers to trust exactly
+    that number as their defence against denominator drift.
+    """
+    rows = [
+        {"user_input": "q1", "reference": "r1"},
+        {"user_input": "q2", "reference": "r2"},
+        {"user_input": "q3", "reference": "r3"},
+    ]
+    keys = ["question_1", "question_2", "question_3"]
+    qwr = {k: {} for k in keys}
+
+    def score_fn(metric, eligible_rows):
+        return [0.5, math.nan, 1.0]
+
+    out = score_metrics_per_eligibility(
+        rows, keys, ["context_precision"], qwr, score_fn
+    )
+    assert out["context_precision_scored"] == "2 of 3"
+    assert out["aggregate_context_precision"] == 0.75
+    # The per-question cell keeps the NaN: the row WAS handed to the judge, and
+    # the artifact must still show which row went unscored.
+    assert math.isnan(qwr["question_2"]["context_precision"])
+
+
+def test_scored_zero_is_not_reported_as_unscored():
+    """The counterpart of the NaN case: a genuine 0.0 is a score. It counts
+    toward the denominator and keeps the aggregate at 0.0, so "scored zero"
+    never collapses into "unscored"."""
+    rows = [
+        {"user_input": "q1", "reference": "r1"},
+        {"user_input": "q2", "reference": "r2"},
+    ]
+    keys = ["question_1", "question_2"]
+    qwr = {k: {} for k in keys}
+
+    def score_fn(metric, eligible_rows):
+        return [0.0, 0.0]
+
+    out = score_metrics_per_eligibility(rows, keys, ["context_recall"], qwr, score_fn)
+    assert out["context_recall_scored"] == "2 of 2"
+    assert out["aggregate_context_recall"] == 0.0
+
+
+def test_scored_count_excludes_infinities():
+    """Non-finite covers more than NaN: an infinite cell is no more a usable
+    score than a NaN one, and it is what ``allow_nan=False`` would refuse to
+    serialize, so both must leave the numerator the same way."""
+    rows = [
+        {"user_input": "q1", "reference": "r1"},
+        {"user_input": "q2", "reference": "r2"},
+    ]
+    keys = ["question_1", "question_2"]
+    qwr = {k: {} for k in keys}
+
+    def score_fn(metric, eligible_rows):
+        return [1.0, math.inf]
+
+    out = score_metrics_per_eligibility(rows, keys, ["context_recall"], qwr, score_fn)
+    assert out["context_recall_scored"] == "1 of 2"
+    assert out["aggregate_context_recall"] == 1.0
+
+
+# --- json_safe: the serialization boundary ----------------------------------
+
+
+def test_json_safe_replaces_non_finite_with_none_and_does_not_mutate():
+    """#279: NaN/Infinity are not JSON. ``json_safe`` maps them to ``null`` in a
+    COPY — the in-memory results stay NaN because ``pair_ab_results`` and the
+    leaderboard both call ``math.isnan`` on them after the dump."""
+    original = {
+        "benchmarking_results": [
+            {
+                "total_results": {
+                    "aggregate_context_recall": math.nan,
+                    "aggregate_faithfulness": 0.0,
+                },
+                "single_question_results": {
+                    "question_1": {"context_recall": math.nan, "faithfulness": 0.0},
+                },
+                "notes": [1.0, math.inf, -math.inf, "ok", None],
+            }
+        ],
+        "metadata": {"time": "2026-09-03"},
+    }
+
+    safe = json_safe(original)
+
+    arm = safe["benchmarking_results"][0]
+    assert arm["total_results"]["aggregate_context_recall"] is None
+    assert arm["single_question_results"]["question_1"]["context_recall"] is None
+    assert arm["notes"] == [1.0, None, None, "ok", None]
+    # a scored zero survives as a number, never as null
+    assert arm["total_results"]["aggregate_faithfulness"] == 0.0
+    assert arm["single_question_results"]["question_1"]["faithfulness"] == 0.0
+    # strings, ints and metadata pass through untouched
+    assert safe["metadata"] == {"time": "2026-09-03"}
+
+    # the source is untouched, and every container is a fresh object
+    src_arm = original["benchmarking_results"][0]
+    assert math.isnan(src_arm["total_results"]["aggregate_context_recall"])
+    assert math.isnan(
+        src_arm["single_question_results"]["question_1"]["context_recall"]
+    )
+    assert math.isinf(src_arm["notes"][1])
+    assert safe is not original
+    assert safe["benchmarking_results"] is not original["benchmarking_results"]
+    assert src_arm["total_results"] is not arm["total_results"]
+
+
+def test_json_safe_output_serializes_with_allow_nan_false():
+    """The contract the writer depends on: whatever ``json_safe`` returns is
+    accepted by a strict serializer, so the harness can turn ``allow_nan`` off
+    and have an invalid artifact become impossible rather than merely unlikely."""
+    payload = {"a": math.nan, "b": [math.inf], "c": {"d": -math.inf}, "e": 0.0}
+
+    text = json.dumps(json_safe(payload), allow_nan=False)
+
+    assert json.loads(text) == {"a": None, "b": [None], "c": {"d": None}, "e": 0.0}
+
+
+def test_json_safe_normalizes_tuples_to_lists():
+    """``json.dump`` writes a tuple as an array anyway; the copy makes that
+    explicit so the returned structure is exactly what lands on disk."""
+    assert json_safe({"t": (1.0, math.nan)}) == {"t": [1.0, None]}
+
+
+def test_json_safe_leaves_bools_alone():
+    """``bool`` is a subclass of ``int``: a finite-number check written without
+    care would rewrite ``True`` into ``1`` and silently change the schema."""
+    out = json_safe({"matched": True, "missing": False})
+    assert out["matched"] is True
+    assert out["missing"] is False
 
 
 # --- answer_correctness eligibility (direct answer-vs-reference metric) ------

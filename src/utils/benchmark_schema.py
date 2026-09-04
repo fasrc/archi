@@ -32,6 +32,13 @@ Per-metric eligibility
     another row's score. The single ragas call is INJECTED as ``score_fn`` so all
     of this stays pure and fully unit-tested; the caller
     (``service_benchmark.get_ragas_results``) supplies the ragas-touching closure.
+
+Serialization boundary
+    ``json_safe`` is the one place NaN stops being a number. In memory an
+    unscored cell stays NaN (the leaderboard and the A/B pairing both test it
+    with ``math.isnan``); on disk it must be ``null``, because ``NaN`` is not
+    JSON. The conversion is a COPY made at dump time, so the two representations
+    never have to agree and the in-memory results are never edited by the write.
 """
 
 from __future__ import annotations
@@ -498,14 +505,24 @@ def eligible_subset(
     return elig_rows, elig_keys
 
 
-def _mean_ignoring_nan(scores: Sequence[float]) -> float:
-    """Mean over ``scores``, skipping any NaN cells ragas may emit for a row that
-    the judge could not score. NaN here is a per-cell scoring failure inside an
-    already-eligible subset, distinct from an ineligible (excluded) row."""
-    real = [s for s in scores if isinstance(s, (int, float)) and not math.isnan(s)]
-    if not real:
-        return math.nan
-    return sum(real) / len(real)
+def _finite_scores(scores: Sequence[Any]) -> List[float]:
+    """The cells of ``scores`` that are usable numbers.
+
+    ragas may emit NaN for a row the judge could not score — a per-cell scoring
+    failure inside an already-eligible subset, distinct from an ineligible
+    (excluded) row. Infinities are screened out for the same reason plus one
+    more: they are the other value ``json.dump(..., allow_nan=False)`` refuses,
+    so anything that survives this filter can be serialized.
+
+    The aggregate and the ``<metric>_scored`` denominator are BOTH derived from
+    this one list, which is the whole point: computing them separately is how
+    ``"109 of 109"`` came to be published over 108 finite scores (#279).
+    """
+    return [
+        s
+        for s in scores
+        if isinstance(s, (int, float)) and not isinstance(s, bool) and math.isfinite(s)
+    ]
 
 
 def score_metrics_per_eligibility(
@@ -527,6 +544,14 @@ def score_metrics_per_eligibility(
     on an empty dataset. Returns ``{aggregate_<metric>, <metric>_scored}`` for
     every metric.
 
+    ``<metric>_scored`` counts the values that CONTRIBUTED to the aggregate, not
+    the size of the eligible subset: a row handed to the judge that came back
+    NaN was never averaged, so counting it inflated the very denominator §3.4 of
+    the interpreting guide tells readers to check (#279). A cell that scored a
+    genuine ``0.0`` still counts — "unscored" and "scored zero" stay distinct.
+    The per-question cell keeps its raw NaN either way, so the artifact still
+    shows WHICH row went unscored.
+
     WARNING: mutates ``question_wise_results`` in place.
     """
     total = len(rows)
@@ -542,6 +567,37 @@ def score_metrics_per_eligibility(
         scores = list(score_fn(metric, elig_rows))
         for key, score in zip(elig_keys, scores):
             question_wise_results[key][metric] = score
-        out[agg_key] = _mean_ignoring_nan(scores)
-        out[scored_key] = f"{len(elig_rows)} of {total}"
+        finite = _finite_scores(scores)
+        out[agg_key] = sum(finite) / len(finite) if finite else math.nan
+        out[scored_key] = f"{len(finite)} of {total}"
     return out
+
+
+# --- serialization boundary -------------------------------------------------
+
+
+def json_safe(value: Any) -> Any:
+    """A deep COPY of ``value`` with every non-finite float replaced by ``None``.
+
+    ``NaN`` and ``Infinity`` are not JSON (RFC 8259). Python's ``json.dump``
+    writes them anyway as bare tokens, which every standards-compliant reader —
+    ``JSON.parse`` in a browser included — rejects, and which rendered as a
+    literal ``nan`` in the committed HTML reports (#279).
+
+    ``null`` rather than a raise, because the run's scores are worth keeping;
+    ``null`` rather than ``0.0``, because "the judge produced no score" and "the
+    judge scored it zero" are different findings and only one of them is bad
+    news. Booleans are left alone: ``bool`` is a subclass of ``int``, and a
+    careless numeric branch would rewrite ``matched: true`` into ``1``.
+
+    A COPY, never an in-place rewrite: ``ResultHandler.pair_ab_results`` and
+    ``build_leaderboard`` both read the live results with ``math.isnan`` after
+    the dump, and to them a ``None`` cell means "metric absent", not "unscored".
+    """
+    if isinstance(value, dict):
+        return {k: json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v) for v in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
