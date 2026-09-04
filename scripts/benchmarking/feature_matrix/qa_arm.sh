@@ -20,7 +20,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-ARM="${1:-}"; fm_require_arm "$ARM"; YAML="${2:-}"; [ -n "$YAML" ] && [ -f "$YAML" ] || fm_die "usage: qa_arm.sh <arm> <arm.yaml> [--stack <name>] ... (arm config not found: '${YAML}')"; shift 2
+ARM="${1:-}"; fm_require_arm "$ARM"; YAML="${2:-}"; fm_require_arm_yaml "$ARM" "$YAML"; shift 2
 STACK="fm-$ARM"; RUN=1
 DATASET="$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
 PROFILE="config/benchmarking/feature_matrix/qa/evaluator-profile.huit.yaml"
@@ -80,6 +80,6 @@ OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
   --evaluator-profile "$PROFILE" \
   --output-dir "$OUT_DIR" \
   --attempts 1 --run-workers 1 --score-workers "${FM_SCORE_WORKERS:-4}"
-fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s"}' \
+fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s","fingerprint_source":"live-stack"}' \
   "$ARM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$DATASET" "$PROFILE" "$SPEC" "$YAML" "$CFG_SHA" "$FINGERPRINT")"
 fm_log "done; report: $OUT_DIR/report.md  summary: $OUT_DIR/summary.json"

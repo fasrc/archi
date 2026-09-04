@@ -25,6 +25,15 @@ fm_log() { printf '==> %s\n' "$*"; }
 # before it becomes a deployment name (the name reaches `archi delete --force` paths).
 fm_require_arm() { [[ "${1:-}" =~ ^[0-9]{2}[a-z]?$ ]] || fm_die "bad arm label '${1:-}' (want 00, 03, 05a ...)"; }
 
+# An arm YAML self-identifies through its `name: fm-<arm>`; the label the operator typed
+# must agree with it, or a run, a re-seed, or an archive row is filed under the wrong arm.
+fm_require_arm_yaml() { # $1 = arm label, $2 = arm YAML
+  [ -n "${2:-}" ] && [ -f "$2" ] || fm_die "arm config not found: '${2:-}' (run from ~/Projects/archi so config/... resolves)"
+  local name
+  name="$(FM_Y="$2" "$FM_PYTHON" -c 'import os,yaml; print(yaml.safe_load(open(os.environ["FM_Y"])).get("name",""))')"
+  [ "$name" = "fm-$1" ] || fm_die "arm label $1 does not match $2 (its name is '$name', expected 'fm-$1')"
+}
+
 fm_stack_dir() { printf '%s/archi-%s\n' "$ARCHI_DIR" "$1"; }
 fm_pin_file()  { printf '%s/corpus-pin-%s\n' "$FM_OUT" "$1"; }
 fm_ledger()    { printf '%s/ledger.json\n' "$FM_OUT"; }
@@ -41,12 +50,26 @@ fm_require_stack_up() { # $1 = stack name; Postgres and the data-manager must st
   done
 }
 
-# The corpus fingerprint: the same query swap_arm.sh and the harness's corpus_fingerprint
-# use — every live document's identity and content hash, in a fixed order, md5'd.
+# The corpus fingerprint, computed EXACTLY as the benchmark artifact records it: the
+# harness's CORPUS_STATE_QUERY (documents, chunks and parent nodes — the retrievable
+# state, not just the document list) hashed by src.utils.benchmark_provenance
+# .corpus_fingerprint (sorted (key, value) rows, sha256). The pin archive_run.sh writes
+# comes from the artifact, so the live check must speak the same digest or every re-run
+# would refuse — or, worse, certify a stack whose chunks drifted under an unchanged
+# document list. The snippet runs inside the stack's data-manager container, which
+# carries the same source tree and the Postgres connection env; the query text is read
+# from the harness source (not re-typed here) so the two cannot drift apart.
 fm_fingerprint() { # $1 = stack name
-  "$FM_DOCKER" exec "postgres-$1" psql -U archi -d archi-db -tAc \
-    "select md5(string_agg(coalesce(url,file_path,'')||':'||coalesce(resource_hash,''), E'\n' order by coalesce(url,file_path,''), resource_hash)) from documents where is_deleted is not true;" \
-    | tr -d '[:space:]'
+  "$FM_DOCKER" exec -w /root/archi "data-manager-$1" python -c '
+import ast, pathlib
+src = pathlib.Path("src/bin/service_benchmark.py").read_text()
+query = next(node.value.value for node in ast.parse(src).body
+             if isinstance(node, ast.Assign)
+             and any(getattr(t, "id", None) == "CORPUS_STATE_QUERY" for t in node.targets))
+from src.utils.benchmark_provenance import corpus_fingerprint
+from src.utils.postgres_service_factory import PostgresServiceFactory
+print(corpus_fingerprint(PostgresServiceFactory.from_env().connection_pool.execute(query)))
+' | tr -d '[:space:]'
 }
 
 fm_require_pinned_corpus() { # $1 = stack name → refuses unless the fingerprint equals the recorded pin

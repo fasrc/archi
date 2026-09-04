@@ -28,7 +28,7 @@ mkdir -p "$FM_OUT"
 
 if [ "$RERUN" = false ]; then
   [ -n "$YAML" ] || fm_die "usage: run_arm.sh <arm> <arm.yaml>  |  run_arm.sh <arm> --rerun [--stack <name>]"
-  [ -f "$YAML" ] || fm_die "arm config not found: $YAML (run from ~/Projects/archi so config/... resolves)"
+  fm_require_arm_yaml "$ARM" "$YAML"
   ENV_FILE="${RAGAS_ENV_FILE:-}"
   [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] || fm_die "RAGAS_ENV_FILE must name the judge env file (HUIT_API_KEY); got '${ENV_FILE}'"
   [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "benchmarking-$STACK is still running"

@@ -25,7 +25,7 @@ while [ $# -gt 0 ]; do
     *) fm_die "unknown option $1" ;;
   esac
 done
-[ -f "$YAML" ] || fm_die "arm config not found: $YAML"
+fm_require_arm_yaml "$ARM" "$YAML"
 STACK_DIR="$(fm_stack_dir "$STACK")"
 RENDERED="$STACK_DIR/configs/config.yaml"
 [ -f "$RENDERED" ] || fm_die "no rendered config at $RENDERED"

@@ -174,17 +174,20 @@ file: `RAGAS_ENV_FILE=/home/austin/.archi/archi-ragas-205/.env`. The wrappers un
 ARM=03; YAML=config/benchmarking/feature_matrix/03-categorization-off.yaml
 scripts/benchmarking/feature_matrix/run_arm.sh $ARM $YAML            # archi evaluate -n fm-$ARM -c $YAML --hostmode
 #  → deploys postgres (5434) + data-manager (7882) + benchmarking; ingests; runs 109 questions; scores
-scripts/benchmarking/feature_matrix/archive_run.sh $ARM 1            # copies the artifact + report into bench_out/feature_matrix/, appends ledger.json
+scripts/benchmarking/feature_matrix/archive_run.sh $ARM 1 $YAML      # proves the artifact ran this arm; appends ledger.json, writes the corpus pin
 scripts/benchmarking/feature_matrix/run_arm.sh $ARM --rerun          # benchmark container only, same corpus → run 2
-scripts/benchmarking/feature_matrix/archive_run.sh $ARM 2
+scripts/benchmarking/feature_matrix/archive_run.sh $ARM 2 $YAML
 scripts/benchmarking/feature_matrix/qa_arm.sh $ARM $YAML             # archi eval qa against the same stack (§5.3)
 archi delete --name fm-$ARM --rmi --rmv                              # after archive_run.sh confirmed both artifacts
 ```
 
-`archive_run.sh` refuses when the artifact's `config_version.divergence_from_selected_file`
-is non-empty (the run did not use the settings you selected; Procedure E), when the
-artifact is already in the ledger, or when it predates the run's `ragas-start` entry (a
-re-run that wrote nothing must not re-archive run 1 as run 2), and records:
+`archive_run.sh` refuses when the artifact's recorded running configuration disagrees with
+the arm YAML on any factor key (the artifact, not the operator's label, proves which arm
+ran), when `config_version.divergence_from_selected_file` is non-empty (the run did not
+use the settings you selected; Procedure E), when the artifact is already in the ledger,
+or when it predates the run's `ragas-start` entry (a re-run that wrote nothing must not
+re-archive run 1 as run 2). Every wrapper also refuses an arm label that does not match
+the YAML's own `name: fm-<arm>`. It records:
 artifact path, `corpus_fingerprint`, `corpus_snapshot_id`, `config_version.digest`,
 `metadata.code_version.digest`, `ingest_wall_seconds`, the `documents` and
 `document_chunks` counts (queried from the stack), and the scored counts per metric.
@@ -197,9 +200,9 @@ scripts/benchmarking/feature_matrix/reseed_arm.sh 01 config/benchmarking/feature
 #  2. renders the arm's data_manager block into ~/.archi/archi-fm-00/configs/config.yaml (one key)
 #  3. docker compose up --force-recreate config-seed   (upserts static_config; the agent reads it at boot)
 #  4. docker compose up --no-deps -d benchmark          (run 1)
-scripts/benchmarking/feature_matrix/archive_run.sh 01 1
+scripts/benchmarking/feature_matrix/archive_run.sh 01 1 config/benchmarking/feature_matrix/01-rerank-off.yaml --stack fm-00
 scripts/benchmarking/feature_matrix/run_arm.sh 01 --rerun                  # run 2, still on fm-00
-scripts/benchmarking/feature_matrix/archive_run.sh 01 2
+scripts/benchmarking/feature_matrix/archive_run.sh 01 2 config/benchmarking/feature_matrix/01-rerank-off.yaml --stack fm-00
 scripts/benchmarking/feature_matrix/qa_arm.sh 01 config/benchmarking/feature_matrix/01-rerank-off.yaml --stack fm-00
 scripts/benchmarking/feature_matrix/reseed_arm.sh 00 config/benchmarking/feature_matrix/00-baseline.yaml   # restore
 ```
@@ -283,7 +286,7 @@ time of day across arms where possible, and the ledger records start and end tim
 | Invariant | Gate | Check |
 |---|---|---|
 | Same questions in both arms | G4 | question text sets equal; no override |
-| Same corpus for a retrieval arm | G3 | `corpus_fingerprint` equal to the baseline pin |
+| Same corpus for a retrieval arm | G3 | `corpus_fingerprint` equal to the baseline pin. The wrappers compute the live fingerprint with the harness's own `CORPUS_STATE_QUERY` and `corpus_fingerprint` routine (documents, chunks, parent nodes; sha256), run inside the stack's data-manager container, so the pin taken from an artifact and the live check are one digest |
 | Different corpus for an ingest arm is declared | G3 | `--corpus-differs-by-design`, with both fingerprints and the document/chunk counts printed |
 | The run used the selected settings | Procedure E | `divergence_from_selected_file` empty on every artifact |
 | Same code | Procedure E | `metadata.code_version.digest` equal across the campaign |

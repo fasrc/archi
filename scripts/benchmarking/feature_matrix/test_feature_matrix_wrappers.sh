@@ -24,6 +24,9 @@
 #   15. qa_arm.sh records the rendered config's sha256 and the corpus fingerprint
 #   16. archive_run.sh refuses an artifact that is already in the ledger
 #   17. archive_run.sh refuses an artifact older than the stack's latest ragas-start
+#   18. an arm label that does not match the YAML's own `name` is refused
+#   19. archive_run.sh refuses an artifact whose recorded running configuration is not the arm's
+#   20. archive_run.sh records the arm config, the selected file, and the fingerprint source
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -49,7 +52,7 @@ case "\$1" in
   inspect) [ -f "$T/state/\$2" ] && { cat "$T/state/\$2"; exit 0; } || exit 1 ;;
   exec)    sql="\$*"
            case "\$sql" in
-             *md5\(*)            cat "$T/fp" ;;
+             *benchmark_provenance*) cat "$T/fp" ;;
              *document_chunks*)  echo 6096 ;;
              *documents*)        echo 1132 ;;
            esac ;;
@@ -106,6 +109,22 @@ printf 'exited\n' > "$T/state/benchmarking-fm-00"
 
 # --- arm fixtures ------------------------------------------------------------------------
 mkdir -p "$T/arms" "$T/cfg/qa"
+cat > "$T/arms/00-baseline.yaml" <<'EOF'
+name: fm-00
+data_manager:
+  chunking: {strategy: sentence}
+  processing: {html_to_markdown: {enabled: true}, categorization: {enabled: true}}
+  stemming: {enabled: false}
+  retrievers: {hierarchical_rerank: {enabled: true, candidate_pool_size: 20, num_documents_to_retrieve: 5}}
+EOF
+cat > "$T/arms/05a-k3.yaml" <<'EOF'
+name: fm-05a
+data_manager:
+  chunking: {strategy: sentence}
+  processing: {html_to_markdown: {enabled: true}, categorization: {enabled: true}}
+  stemming: {enabled: false}
+  retrievers: {hierarchical_rerank: {enabled: true, candidate_pool_size: 20, num_documents_to_retrieve: 3}}
+EOF
 cat > "$T/arms/01-rerank-off.yaml" <<'EOF'
 name: fm-01
 data_manager:
@@ -125,11 +144,15 @@ EOF
 printf 'HUIT_API_KEY=x\n' > "$T/judge.env"
 printf 'version: 1\n' > "$T/cfg/qa/profile.yaml"; printf -- '---\nname: x\ntools: []\n---\n' > "$T/cfg/spec.md"
 
-artifact() { # $1 = path, $2 = divergence JSON, $3 = fingerprint
+artifact() { # $1 = path, $2 = divergence JSON, $3 = fingerprint, $4 = k in the recorded running configuration (default 5)
   cat > "$1" <<EOF
 {"metadata": {"corpus_snapshot_id": "snap-1", "code_version": {"digest": "sha256:code"}},
  "benchmarking_results": [{
    "configuration_file": "configs/config.yaml",
+   "running_configuration": {"data_manager": {"chunking": {"strategy": "sentence"},
+     "processing": {"html_to_markdown": {"enabled": true}, "categorization": {"enabled": true}},
+     "stemming": {"enabled": false},
+     "retrievers": {"hierarchical_rerank": {"enabled": true, "candidate_pool_size": 20, "num_documents_to_retrieve": ${4:-5}}}}},
    "config_version": {"digest": "sha256:cfg", "divergence_from_selected_file": $2},
    "corpus_fingerprint": "$3", "ingest_wall_seconds": 4321.0,
    "total_results": {"aggregate_context_precision": 0.5, "context_precision_scored": "3 of 3", "aggregate_faithfulness": 0.6},
@@ -148,11 +171,11 @@ run bash "$HERE/run_arm.sh" "0x" "$T/arms/01-rerank-off.yaml"
 
 # 2
 : > "$T/archi.calls"
-run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/01-rerank-off.yaml"
-if [ "$RC" = 0 ] && grep -qx "evaluate --name fm-00 --config $T/arms/01-rerank-off.yaml --env-file $T/judge.env --hostmode" "$T/archi.calls"; then ok "run_arm calls archi evaluate --hostmode"; else notok "run_arm calls archi evaluate --hostmode (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 0 ] && grep -qx "evaluate --name fm-00 --config $T/arms/00-baseline.yaml --env-file $T/judge.env --hostmode" "$T/archi.calls"; then ok "run_arm calls archi evaluate --hostmode"; else notok "run_arm calls archi evaluate --hostmode (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
 
 # 3
-run bash "$HERE/run_arm.sh" 00 "$T/arms/01-rerank-off.yaml"
+run bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
 [ "$RC" = 2 ] && grep -q "RAGAS_ENV_FILE" "$T/stderr" && ok "run_arm refuses without the judge env file" || notok "run_arm refuses without the judge env file (rc=$RC)"
 
 # 4
@@ -163,13 +186,13 @@ run bash "$HERE/run_arm.sh" 00 --rerun
 ledger_rows() { "$FM_PYTHON" -c "import json,sys; print(len(json.load(open(sys.argv[1]))) if __import__('os').path.exists(sys.argv[1]) else 0)" "$FM_OUT/ledger.json"; }
 artifact "$FM_OUT/benchmarking-fm-00-20260903_000001.json" '["data_manager.retrievers.hierarchical_rerank.enabled"]' abc
 BEFORE="$(ledger_rows)"
-run bash "$HERE/archive_run.sh" 00 1
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml"
 if [ "$RC" = 2 ] && grep -q "divergence_from_selected_file" "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ] && [ ! -f "$FM_OUT/corpus-pin-fm-00" ]; then ok "archive refuses a diverged run, writes nothing"; else notok "archive refuses a diverged run (rc=$RC: $(cat "$T/stderr"))"; fi
 rm -f "$FM_OUT"/benchmarking-fm-00-*.json
 
 # 6
 artifact "$FM_OUT/benchmarking-fm-00-20260903_000002.json" '[]' abc
-run bash "$HERE/archive_run.sh" 00 1
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml"
 if [ "$RC" = 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-00")" = abc ] && "$FM_PYTHON" - "$FM_OUT/ledger.json" <<'EOF'
 import json, sys
 rows = json.load(open(sys.argv[1])); e = rows[-1]
@@ -229,14 +252,14 @@ if "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1
 # 13
 rm -f "$FM_OUT"/benchmarking-fm-00-*.json
 artifact "$FM_OUT/benchmarking-fm-00-20260903_000003.json" '[]' def
-run bash "$HERE/archive_run.sh" 00 2
+run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml"
 R1=$RC
-run bash "$HERE/archive_run.sh" 00 2 --new-corpus
+run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --new-corpus
 if [ "$R1" = 2 ] && [ "$RC" = 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-00")" = def ]; then ok "archive refuses a drifted fingerprint unless --new-corpus, which re-pins"; else notok "archive fingerprint gate (rc1=$R1 rc2=$RC: $(cat "$T/stderr"))"; fi
 
 # 16: the same artifact again → refused, ledger unchanged
 BEFORE="$(ledger_rows)"
-run bash "$HERE/archive_run.sh" 00 3
+run bash "$HERE/archive_run.sh" 00 3 "$T/arms/00-baseline.yaml"
 if [ "$RC" = 2 ] && grep -q "already archived as arm 00 run 2" "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ]; then ok "archive refuses an artifact already in the ledger"; else notok "archive duplicate guard (rc=$RC: $(cat "$T/stderr"))"; fi
 
 # 17: a re-run that produced nothing leaves run 2's file as the newest; the file predates
@@ -245,8 +268,24 @@ rm -f "$FM_OUT"/benchmarking-fm-00-*.json
 artifact "$FM_OUT/benchmarking-fm-00-20260903_000004.json" '[]' def
 touch -d '2020-01-01T00:00:00Z' "$FM_OUT/benchmarking-fm-00-20260903_000004.json"
 run bash "$HERE/run_arm.sh" 00 --rerun          # appends a fresh ragas-start for fm-00
-run bash "$HERE/archive_run.sh" 00 3
+run bash "$HERE/archive_run.sh" 00 3 "$T/arms/00-baseline.yaml"
 if [ "$RC" = 2 ] && grep -q "before the latest ragas-start" "$T/stderr"; then ok "archive refuses an artifact older than the latest ragas-start"; else notok "archive stale-artifact guard (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 18: the operator's label must match the YAML's own name
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 01 "$T/arms/05a-k3.yaml"
+[ "$RC" = 2 ] && grep -q "arm label 01 does not match" "$T/stderr" && ok "run_arm refuses a label that does not match the YAML's name" || notok "label/YAML mismatch guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 19: the artifact proves which arm ran — a baseline artifact archived as arm 05a is refused
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000005.json" '[]' def 5
+run bash "$HERE/archive_run.sh" 05a 1 "$T/arms/05a-k3.yaml" --stack fm-00
+[ "$RC" = 2 ] && grep -q "artifact ran factor retrievers.hierarchical_rerank.num_documents_to_retrieve=5, arm 05a wants 3" "$T/stderr" && ok "archive refuses an artifact whose running configuration is not the arm's" || notok "archive running-configuration guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 20: the same artifact recorded with k=3 archives as 05a and carries the arm config + fingerprint source
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000006.json" '[]' def 3
+run bash "$HERE/archive_run.sh" 05a 1 "$T/arms/05a-k3.yaml" --stack fm-00
+if [ "$RC" = 0 ] && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['arm']=='05a' and e['arm_config']=='$T/arms/05a-k3.yaml' and e['configuration_file']=='configs/config.yaml' and e['fingerprint_source']=='artifact' else 1)"; then ok "archive records the arm config, the selected file, and the fingerprint source"; else notok "archive identity fields (rc=$RC: $(cat "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

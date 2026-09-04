@@ -58,13 +58,16 @@ One thin wrapper per step of the #396 campaign protocol
   overwrites the rendered config's `chat_app` SUT fields from `services.benchmarking` (an
   evaluate stack renders the template defaults there), uses the campaign judge profile,
   and records the rendered config's sha256 and the corpus fingerprint in the ledger.
-- **`archive_run.sh <arm> <run> [--wait]`** — records a finished run in
+- **`archive_run.sh <arm> <run> <arm.yaml> [--wait]`** — records a finished run in
   `bench_out/feature_matrix/ledger.json`: fingerprint, digests, ingest seconds, live
   document and chunk counts, scored counts recomputed from finite values. Refuses an
-  artifact already in the ledger or older than the stack's latest `ragas-start`, a run
-  whose `divergence_from_selected_file` is non-empty, and a later run whose fingerprint
-  drifted; writes the corpus pin on run 1.
-- **`test_feature_matrix_wrappers.sh`** — hermetic 17-check self-test (stubbed
+  artifact whose recorded running configuration is not the arm's, one already in the
+  ledger or older than the stack's latest `ragas-start`, a run whose
+  `divergence_from_selected_file` is non-empty, and a later run whose fingerprint
+  drifted; writes the corpus pin on run 1. Every wrapper refuses an arm label that does
+  not match the YAML's own `name`. The live fingerprint is the harness's own routine
+  (`CORPUS_STATE_QUERY` + `corpus_fingerprint`), run inside the data-manager container.
+- **`test_feature_matrix_wrappers.sh`** — hermetic 20-check self-test (stubbed
   `docker`/`archi`, temp stack), run by `scripts/gate.sh`.
 
 ## Analysis and run helpers

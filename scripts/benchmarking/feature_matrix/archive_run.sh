@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Record one finished RAGAS run in the campaign ledger (plan §5.1, §9).
 #
-#   archive_run.sh <arm> <run> [--stack <name>] [--wait] [--new-corpus]
+#   archive_run.sh <arm> <run> <arm.yaml> [--stack <name>] [--wait] [--new-corpus]
 #
 # Waits (with --wait) for benchmarking-<stack> to exit, takes the newest artifact
 # benchmarking-<stack>-*.json in FM_OUT, and REFUSES when
+#   - the arm YAML's `name` is not fm-<arm>, or the artifact's recorded running
+#     configuration disagrees with the arm YAML on any factor key (the artifact itself
+#     proves which arm ran — the operator's label alone never does),
 #   - the artifact is already in the ledger, or is older than the stack's latest
 #     `ragas-start` entry (a re-run that wrote nothing must not re-archive run 1 as run 2),
 #   - the artifact's config_version.divergence_from_selected_file is non-empty (the run
@@ -18,7 +21,8 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-ARM="${1:-}"; fm_require_arm "$ARM"; RUN="${2:-}"; [[ "$RUN" =~ ^[0-9]+$ ]] || fm_die "usage: archive_run.sh <arm> <run> [--stack <name>] [--wait] [--new-corpus]"; shift 2
+ARM="${1:-}"; fm_require_arm "$ARM"; RUN="${2:-}"; [[ "$RUN" =~ ^[0-9]+$ ]] || fm_die "usage: archive_run.sh <arm> <run> <arm.yaml> [--stack <name>] [--wait] [--new-corpus]"
+YAML="${3:-}"; fm_require_arm_yaml "$ARM" "$YAML"; shift 3
 STACK="fm-$ARM"; WAIT=false; NEW_CORPUS=false
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -60,15 +64,36 @@ CHUNKS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "se
 [ -n "$DOCS" ] || DOCS=null; [ -n "$CHUNKS" ] || CHUNKS=null
 
 PIN_FILE="$(fm_pin_file "$STACK")"
-ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" \
+ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" \
   FM_PIN_FILE="$PIN_FILE" FM_NEW_CORPUS="$NEW_CORPUS" FM_FINISHED="$(fm_now)" "$FM_PYTHON" - <<'EOF'
-import json, math, os, sys
+import json, math, os, sys, yaml
 p = os.environ["FM_ARTIFACT"]
 d = json.loads(open(p).read().replace("NaN", "null"))          # pre-#279 artifacts carry bare NaN
 arms = d["benchmarking_results"]
 if len(arms) != 1:
     print(f"expected one arm in {p}, found {len(arms)} — a stray file in the stack's configs/ ran as an arm", file=sys.stderr); sys.exit(2)
 arm = arms[0]
+# The artifact proves which arm ran: its recorded running configuration (what the agent
+# read from Postgres; pre-#269 artifacts carry only the disk copy) must agree with the arm
+# YAML on every factor key. A label typed by the operator never decides this.
+recorded = (arm.get("running_configuration") or arm.get("configuration") or {}).get("data_manager") or {}
+wanted = yaml.safe_load(open(os.environ["FM_ARM_YAML"]))["data_manager"]
+FACTORS = [("chunking", "strategy"), ("processing", "html_to_markdown", "enabled"),
+           ("processing", "categorization", "enabled"), ("stemming", "enabled"),
+           ("retrievers", "hierarchical_rerank", "enabled"),
+           ("retrievers", "hierarchical_rerank", "candidate_pool_size"),
+           ("retrievers", "hierarchical_rerank", "num_documents_to_retrieve")]
+def get(m, path):
+    for k in path:
+        if not isinstance(m, dict) or k not in m:
+            return None
+        m = m[k]
+    return m
+mismatch = [(".".join(f), get(wanted, f), get(recorded, f)) for f in FACTORS if get(wanted, f) is not None and get(wanted, f) != get(recorded, f)]
+if mismatch:
+    for key, w, r in mismatch:
+        print(f"REFUSED: artifact ran factor {key}={r!r}, arm {os.environ['FM_ARM']} wants {w!r}", file=sys.stderr)
+    sys.exit(2)
 cv = arm.get("config_version") or {}
 div = cv.get("divergence_from_selected_file")
 if div:
@@ -95,7 +120,9 @@ def num(s):
 entry = {
     "arm": os.environ["FM_ARM"], "kind": "ragas", "run": run, "stack": os.environ["FM_STACK"],
     "finished": os.environ["FM_FINISHED"], "artifact": p,
-    "corpus_fingerprint": fp, "corpus_snapshot_id": (d.get("metadata") or {}).get("corpus_snapshot_id"),
+    "arm_config": os.environ["FM_ARM_YAML"], "configuration_file": arm.get("configuration_file"),
+    "corpus_fingerprint": fp, "fingerprint_source": "artifact",
+    "corpus_snapshot_id": (d.get("metadata") or {}).get("corpus_snapshot_id"),
     "config_digest": cv.get("digest"), "code_digest": ((d.get("metadata") or {}).get("code_version") or {}).get("digest"),
     "ingest_wall_seconds": arm.get("ingest_wall_seconds", "not recorded"),
     "documents": num(os.environ["FM_DOCS"]), "chunks": num(os.environ["FM_CHUNKS"]),
