@@ -234,6 +234,45 @@ def test_pending_forever_still_trips_the_stall_budget(monkeypatch):
     assert "state=pending" in message
 
 
+def test_queued_behind_the_ingestion_lock_still_trips_the_stall_budget(monkeypatch):
+    """`running` + `initializing` means the ingest has NOT started yet.
+
+    `ingestion_status.py:46-48` publishes `state=running step=initializing`
+    *before* acquiring `ingestion_lock`, and other paths hold that same lock
+    without touching this status dict (`service_data_manager.py:70-83`,
+    `run_locked` / `trigger_update`). So a benchmark queued behind a scheduled
+    task sees `running` forever while nothing of its own is happening -- the
+    one `running` payload that must not restart the stall budget.
+    """
+    _budget_env(monkeypatch, stall="30", max_wait="600", poll="5")
+    clock = FakeClock()
+    fetch = _scripted([_running("initializing")])
+
+    with pytest.raises(TimeoutError) as excinfo:
+        _bench().wait_for_ingestion_completion(
+            fetch=fetch, clock=clock, sleep=clock.sleep
+        )
+
+    assert clock.now - 1000.0 <= 35, "the stall budget must end this, not the ceiling"
+    assert "step=initializing" in str(excinfo.value)
+
+
+def test_a_step_past_initializing_is_progress(monkeypatch):
+    """Every step after `initializing` is emitted from inside the lock."""
+    _budget_env(monkeypatch, stall="30", max_wait="600", poll="5")
+    clock = FakeClock()
+    # 3 polls queued, then work starts and stays on one step for a long time.
+    fetch = _scripted(
+        [_running("initializing")] * 3
+        + [_running("Fetching ticket data onto filesystem")] * 20
+        + [{"state": "completed", "step": "done"}]
+    )
+
+    _bench().wait_for_ingestion_completion(fetch=fetch, clock=clock, sleep=clock.sleep)
+
+    assert clock.now - 1000.0 > 30, "the post-lock steps must have reset the budget"
+
+
 def test_unknown_state_does_not_reset_the_stall_budget(monkeypatch):
     """A state the harness does not recognize is not evidence of progress."""
     _budget_env(monkeypatch, stall="30", max_wait="600", poll="5")
