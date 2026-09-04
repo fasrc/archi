@@ -34,11 +34,17 @@ the ids here recomputable from a RAGAS artifact's ``question`` +
 ``reference_answer`` later, and what keeps the two runs comparable question for
 question. On the FASRC bank it is 105 + 5 - 1 = 109 items.
 
-The one exception to that join: a bank row that carries its own ``id`` keeps it,
-so its item id is authored rather than derived, and a RAGAS result row carries
-the question and reference but not the bank's id -- such an item has to be
-matched by question text instead. The run report counts those rows
-(``explicit_ids``), and it is 0 for the FASRC bank, whose rows carry no ids.
+Three caveats on that join, none of which bite the FASRC bank today:
+
+* the derivation folds CRLF and bare CR to LF while a RAGAS artifact stores the
+  question and reference verbatim, so recompute the id from newline-normalized
+  text;
+* a bank row that carries its own ``id`` keeps it, so its item id is authored
+  rather than derived and the item has to be matched by question text instead --
+  the run report counts those rows as ``explicit_ids``, and it is 0 here;
+* the anchors are whatever this command was told to use. It does not read the
+  deployment configuration, so a run with ``services.benchmarking.anchors``
+  disabled or repointed needs ``--no-anchors`` or ``--anchors <path>`` to match.
 
 Refusals are loud on purpose. A bank that cannot be converted honestly -- a row
 spelling one concept twice, two rows that are the same question and answer, a row
@@ -90,6 +96,7 @@ from src.evaluation.qa.dataset import (  # noqa: E402  # isort: skip
     iter_dataset_items,
     v2_json_document,
 )
+from src.evaluation.qa.oracle import validate_json_value  # noqa: E402  # isort: skip
 from src.utils.benchmark_schema import (  # noqa: E402  # isort: skip
     DEFAULT_ANCHOR_PATH,
     LEGACY_TO_MODERN,
@@ -118,6 +125,21 @@ def _read_bytes(path: Path, *, what: str) -> bytes:
         return path.read_bytes()
     except OSError as exc:
         raise UsageError(f"cannot read {what} {path}: {exc}") from exc
+
+
+def _validated(row: Any, context: str) -> Any:
+    """One row, with the checks the adapter would apply -- applied earlier.
+
+    ``_exact_json_numbers`` refuses a number binary floats cannot hold, and
+    ``validate_json_value`` refuses a NUL or a lone surrogate. Both run in the
+    adapter too, but only after this script has re-encoded the merged rows as
+    UTF-8 -- and a lone surrogate crashes that encode first, with a codec error
+    that names a byte offset and no field. Running them here means the refusal
+    names the row and the key instead.
+    """
+    row = _exact_json_numbers(row, context)
+    validate_json_value(row, context)
+    return row
 
 
 def _refuse_double_spellings(rows: List[Any], what: str) -> None:
@@ -163,7 +185,7 @@ def load_bank(path: Path, *, what: str = "bank") -> List[Any]:
     _refuse_non_array_root(path)
     try:
         document = [
-            _exact_json_numbers(row, f"{what} row {index}")
+            _validated(row, f"{what} row {index}")
             for index, row in enumerate(_iter_json_array_rows(blob), 1)
         ]
     except ValueError as exc:
@@ -195,13 +217,22 @@ def _refuse_non_array_root(path: Path) -> None:
         )
 
 
-def merge_anchors(bank: List[Any], anchors: List[Any]) -> Tuple[List[Any], int, int]:
+def merge_anchors(
+    bank: List[Any], anchors: List[Any]
+) -> Tuple[List[Any], int, int, int]:
     """Splice the anchor rows into the bank the way the harness does.
 
     Mirrors ``Benchmarker._merge_anchor_questions``: dedupe on exact
     ``user_input`` against the bank, bank row wins, anchors keep their file
-    order. Returns the merged rows, how many anchors were added, and how many
-    were skipped (already in the bank, or carrying no question).
+    order. Returns the merged rows, how many anchors were added, how many were
+    already asked by the bank, and how many were unusable (not an object, or
+    carrying no question).
+
+    The harness skips an unusable anchor too, so tolerating it keeps the two
+    question sets identical -- but the two skip reasons are counted apart,
+    because a broken row in the anchor file and a deliberate duplicate look the
+    same in a total and mean very different things to whoever is auditing why
+    the question count moved.
     """
     existing = {
         row.get("user_input")
@@ -210,17 +241,18 @@ def merge_anchors(bank: List[Any], anchors: List[Any]) -> Tuple[List[Any], int, 
     }
     merged = list(bank)
     added = 0
-    skipped = 0
+    duplicate = 0
+    unusable = 0
     for anchor in anchors:
         if not isinstance(anchor, dict) or not anchor.get("user_input"):
-            skipped += 1
+            unusable += 1
             continue
         if anchor["user_input"] in existing:
-            skipped += 1
+            duplicate += 1
             continue
         merged.append(anchor)
         added += 1
-    return merged, added, skipped
+    return merged, added, duplicate, unusable
 
 
 def filter_status(rows: Iterable[Any], statuses: Sequence[str]) -> List[Any]:
@@ -328,9 +360,9 @@ def convert(
     """Bank (+ anchors) -> a ``qa-dataset-v2`` file; returns the run report."""
     _refuse_to_clobber_an_input(out, bank_path, anchors_path)
     bank = load_bank(bank_path)
-    merged, added, skipped = list(bank), 0, 0
+    merged, added, duplicate, unusable = list(bank), 0, 0, 0
     if anchors_path is not None:
-        merged, added, skipped = merge_anchors(
+        merged, added, duplicate, unusable = merge_anchors(
             bank, load_bank(anchors_path, what="anchor file")
         )
     selected = filter_status(merged, statuses)
@@ -349,7 +381,8 @@ def convert(
         "carried_fields": dialect["carried_fields"],
         "bank_rows": len(bank),
         "anchors_added": added,
-        "anchors_skipped": skipped,
+        "anchors_skipped": duplicate,
+        "anchors_unusable": unusable,
         "status_filter": list(statuses),
         "dropped_by_status": len(merged) - len(selected),
         "items": count,
@@ -374,7 +407,8 @@ def format_report(report: Dict[str, Any]) -> str:
     else:
         lines.append(
             f"anchors: {report['anchors_added']} added, "
-            f"{report['anchors_skipped']} already in the bank "
+            f"{report['anchors_skipped']} already in the bank, "
+            f"{report['anchors_unusable']} unusable "
             f"({report['anchors']})"
         )
     if report["status_filter"]:
@@ -414,7 +448,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--anchors",
         type=Path,
         default=DEFAULT_ANCHORS,
-        help=f"Anchor question file (default: {DEFAULT_ANCHOR_PATH}).",
+        help=(
+            f"Anchor question file (default: {DEFAULT_ANCHOR_PATH}). Mirror the "
+            "run's services.benchmarking.anchors setting; this script does not "
+            "read the deployment configuration."
+        ),
     )
     anchors.add_argument(
         "--no-anchors",

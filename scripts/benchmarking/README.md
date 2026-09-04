@@ -54,9 +54,14 @@ lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
   deduped on exact `user_input` with the bank row winning (105 + 5 − 1 = 109 on
   the FASRC bank) — which is what makes the ids recomputable from a RAGAS
   artifact's `question` + `reference_answer`, and the two runs comparable
-  question for question. A bank row that carries its own `id` keeps it, so that
-  item is matched by question text rather than by a recomputed id; the run
-  report counts those rows (`explicit_ids`, 0 on the FASRC bank). The bank is
+  question for question — recompute the id from newline-normalized text, since
+  the derivation folds CRLF to LF and the RAGAS artifact stores the fields
+  verbatim. A bank row that carries its own `id` keeps it, so that item is
+  matched by question text rather than by a recomputed id; the run report counts
+  those rows (`explicit_ids`, 0 on the FASRC bank). The script does not read the
+  deployment configuration, so pass `--no-anchors` or `--anchors <path>` to
+  mirror `services.benchmarking.anchors` when the run disables or relocates
+  them. The bank is
   read with the import path's strict parser, so a repeated object key or a
   number binary floats cannot hold is refused rather than silently collapsed or
   rounded. `--no-anchors` converts the bank alone, `--status

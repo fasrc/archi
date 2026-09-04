@@ -182,9 +182,7 @@ def test_refuses_a_native_qa_dataset_as_not_a_ragas_bank(tmp_path, capsys):
     assert not out.exists()
 
 
-def test_refuses_an_object_root_that_happens_to_carry_an_item_member(
-    tmp_path, capsys
-):
+def test_refuses_an_object_root_that_happens_to_carry_an_item_member(tmp_path, capsys):
     # The streaming row reader keys on the JSON path ``item``, which an object
     # member of that name also produces. Without a root check the envelope would
     # convert and every other field would be dropped without a word.
@@ -203,9 +201,7 @@ def test_refuses_an_object_root_that_happens_to_carry_an_item_member(
     assert not out.exists()
 
 
-def test_refuses_a_row_carrying_both_contexts_and_retrieved_contexts(
-    tmp_path, capsys
-):
+def test_refuses_a_row_carrying_both_contexts_and_retrieved_contexts(tmp_path, capsys):
     # The dialect adapter only knows the question and answer aliases, so it
     # would carry both spellings of the contexts field as extras -- while
     # ``normalize_bank`` in the harness silently drops the legacy one. The two
@@ -327,6 +323,26 @@ def test_refuses_a_carried_number_it_cannot_reproduce_exactly(tmp_path, capsys):
 
     assert code == 2
     assert "cannot be carried exactly" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_refuses_a_lone_surrogate_naming_the_row_and_the_field(tmp_path, capsys):
+    # A JSON-escaped lone surrogate parses fine and only fails at the UTF-8
+    # encode, where the codec names a byte offset and no field. The row
+    # validation the adapter applies later has to run before the re-encode so
+    # the refusal says which row and which key to fix.
+    bank = tmp_path / "bank.json"
+    bank.write_text(
+        '[{"user_input": "Q", "reference": "A", "notes": "\\ud800"}]',
+        encoding="utf-8",
+    )
+    out = tmp_path / "out.json"
+
+    code = converter.main([str(bank), "--no-anchors", "--out", str(out)])
+
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "row 1" in error and "notes" in error
     assert not out.exists()
 
 
@@ -530,6 +546,22 @@ def test_json_report_carries_the_counts_and_the_output_sha256(tmp_path, capsys):
     assert report["items"] == 2
     assert report["explicit_ids"] == 0
     assert report["sha256"] == converter.sha256_file(out)
+
+
+def test_the_report_separates_unusable_anchors_from_duplicates(tmp_path, capsys):
+    # Both are skipped, exactly as the harness skips them, but they mean
+    # different things: one anchor is already asked by the bank, the other is a
+    # broken row in the anchor file. Reporting both as duplicates would hide the
+    # second behind a successful run.
+    anchors = [dict(BANK_ROW), {"reference": "a row with no question"}, SECOND_ROW]
+
+    code, _out = _run(tmp_path, [BANK_ROW], anchors=anchors, extra=["--json"])
+
+    assert code == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["anchors_added"] == 1
+    assert report["anchors_skipped"] == 1
+    assert report["anchors_unusable"] == 1
 
 
 def test_the_report_counts_rows_that_carry_an_explicit_id(tmp_path, capsys):
