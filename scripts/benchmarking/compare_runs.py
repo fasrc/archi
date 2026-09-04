@@ -536,7 +536,10 @@ def verdict(summary: dict, sigma: Optional[float]) -> str:
     mean, se = summary.get("mean"), summary.get("se")
     if mean is None or se is None:
         return "too few paired rows"
-    if sigma is None:
+    # A negative sigma would make |mean| > 2*sigma trivially true and a NaN one
+    # would make it never true. Both are rejected at parse; this is the second
+    # lock, because the failure mode is a false SIGNIFICANT.
+    if sigma is None or not is_finite(sigma) or sigma < 0:
         return "noise floor not measured"
     if abs(mean) > 2 * se and abs(mean) > 2 * sigma:
         return "SIGNIFICANT"
@@ -562,11 +565,21 @@ def parse_noise_floor(text: str) -> Dict[str, float]:
                 f"choose from {', '.join(METRICS)}"
             )
         try:
-            sigmas[name] = float(value)
+            parsed = float(value)
         except ValueError:
             raise CompareError(
                 f"--noise-floor value for {name} is not a number: {value!r}"
             ) from None
+        # A standard deviation is finite and non-negative. Accepting anything
+        # else hands the G7 threshold to the caller: a negative sigma makes
+        # |mean| > 2*sigma always true (every delta past 2*SE becomes
+        # SIGNIFICANT), a NaN one makes it never true.
+        if not math.isfinite(parsed) or parsed < 0:
+            raise CompareError(
+                f"--noise-floor value for {name} must be a finite, non-negative "
+                f"standard deviation; got {value!r}"
+            )
+        sigmas[name] = parsed
     if not sigmas:
         raise CompareError("--noise-floor was empty")
     return sigmas
@@ -588,30 +601,108 @@ def recomputed_aggregate(
     }
 
 
-def noise_floor_from_runs(paths: Sequence[str]) -> Dict[str, float]:
+def check_noise_replicates(
+    replicates: Sequence[Arm],
+    baseline: Optional[Arm],
+    *,
+    allow_corpus_differs: bool,
+    ignore_divergence: bool,
+) -> None:
+    """Hold the replicates to the same bar as the arms they will judge.
+
+    sigma is not a number the report merely quotes: it *is* the G7 threshold.
+    Pooling a stale or foreign run into it moves the bar, so a real regression
+    can be talked down to "not distinguishable" (or a wobble talked up) by
+    choosing the wrong replicate set. The floor is defined for **this bank on
+    this corpus** (Procedure A), so that is what is checked.
+    """
+    if baseline is not None:
+        expected = set(baseline.rows)
+        for arm in replicates:
+            extra = sorted(set(arm.rows) - expected)
+            missing = sorted(expected - set(arm.rows))
+            if not extra and not missing:
+                continue
+            detail = []
+            if extra:
+                detail.append(f"{len(extra)} not in the bank, first {extra[0]!r}")
+            if missing:
+                detail.append(f"{len(missing)} missing, first {missing[0]!r}")
+            raise CompareError(
+                f"noise replicate {arm.source} asked a different question set "
+                f"than {baseline.label} ({'; '.join(detail)}). A noise floor is "
+                "measured for one bank (Procedure A); sigma from another bank "
+                "is not this comparison's threshold.",
+                EXIT_GATE,
+            )
+    scope = list(replicates) + ([baseline] if baseline is not None else [])
+    values = {arm.source: arm.corpus_fingerprint for arm in scope}
+    unrecorded = [source for source, value in values.items() if value is None]
+    distinct = {value for value in values.values() if value is not None}
+    if (unrecorded or len(distinct) > 1) and not allow_corpus_differs:
+        shown = ", ".join(
+            f"{source}={value or 'not recorded'}" for source, value in values.items()
+        )
+        raise CompareError(
+            "G3 refused for the noise replicates: they do not share one pinned "
+            f"corpus ({shown}). A noise floor measured on another corpus is not "
+            "this corpus's floor. Pass --corpus-differs-by-design to accept it "
+            "as an estimate (Procedure B).",
+            EXIT_GATE,
+        )
+    diverged = {
+        arm.source: arm.config_version.get("divergence_from_selected_file")
+        for arm in replicates
+        if arm.config_version.get("divergence_from_selected_file")
+    }
+    if diverged and not ignore_divergence:
+        shown = "; ".join(
+            f"{source}: {json.dumps(keys)}" for source, keys in diverged.items()
+        )
+        raise CompareError(
+            "Procedure E stop for the noise replicates: a run that did not use "
+            "the configuration it selected is not a replicate of anything "
+            f"({shown}). Pass --ignore-config-divergence to include it anyway.",
+            EXIT_DIVERGENCE,
+        )
+
+
+def noise_floor_from_runs(
+    paths: Sequence[str],
+    *,
+    baseline: Optional[Arm] = None,
+    allow_corpus_differs: bool = False,
+    ignore_divergence: bool = False,
+) -> Dict[str, float]:
     """sigma per metric from same-code replicates (Procedure A).
 
     Every arm of every file is one replicate, so a ``-cd`` sweep of the same
     config repeated N times works as well as N separate invocations. The means
     are **recomputed** rather than read from ``aggregate_<metric>``, because the
     recorded aggregate shares the denominator defect that ``<metric>_scored``
-    exposes.
+    exposes. ``check_noise_replicates`` gates the inputs first.
     """
-    per_metric: Dict[str, List[float]] = {metric: [] for metric in METRICS}
-    replicates = 0
+    replicates: List[Arm] = []
     for spec in paths:
-        for arm in load_arms([spec]):
-            replicates += 1
-            for metric in METRICS:
-                mean = recomputed_aggregate(arm, metric)["mean"]
-                if mean is not None:
-                    per_metric[metric].append(mean)
-    if replicates < 2:
+        replicates.extend(load_arms([spec]))
+    if len(replicates) < 2:
         raise CompareError(
             "--noise-runs needs at least two replicate arms to estimate sigma; "
-            f"found {replicates}",
+            f"found {len(replicates)}",
             EXIT_USAGE,
         )
+    check_noise_replicates(
+        replicates,
+        baseline,
+        allow_corpus_differs=allow_corpus_differs,
+        ignore_divergence=ignore_divergence,
+    )
+    per_metric: Dict[str, List[float]] = {metric: [] for metric in METRICS}
+    for arm in replicates:
+        for metric in METRICS:
+            mean = recomputed_aggregate(arm, metric)["mean"]
+            if mean is not None:
+                per_metric[metric].append(mean)
     return {
         metric: statistics.stdev(means)
         for metric, means in per_metric.items()
@@ -1758,7 +1849,25 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
 
     sigmas: Dict[str, float] = {}
     if args.noise_runs:
-        sigmas.update(noise_floor_from_runs(args.noise_runs))
+        sigmas.update(
+            noise_floor_from_runs(
+                args.noise_runs,
+                baseline=baseline,
+                allow_corpus_differs=args.corpus_differs_by_design,
+                ignore_divergence=args.ignore_config_divergence,
+            )
+        )
+        gates.append(
+            {
+                "id": "G2",
+                "name": "noise floor",
+                "status": "measured from replicates",
+                "detail": (
+                    f"{len(args.noise_runs)} file(s) of --noise-runs, held to the "
+                    "same bank, corpus and config-divergence checks as the arms"
+                ),
+            }
+        )
     if args.noise_floor:
         sigmas.update(parse_noise_floor(args.noise_floor))
 

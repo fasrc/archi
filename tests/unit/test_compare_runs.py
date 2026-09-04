@@ -367,16 +367,105 @@ def test_parse_noise_floor_reads_metric_sigma_pairs():
 def test_noise_floor_from_runs_uses_recomputed_means(_artifact):
     # Three replicates. The third file over-reports its aggregate; sigma must be
     # computed from the recomputed means, not from aggregate_<metric>.
-    a = _artifact([_row("q1", faithfulness=0.50), _row("q2", faithfulness=0.50)])
-    b = _artifact([_row("q1", faithfulness=0.60), _row("q2", faithfulness=0.60)])
+    a = _artifact(
+        [_row("q1", faithfulness=0.50), _row("q2", faithfulness=0.50)],
+        fingerprint="corpus-1",
+    )
+    b = _artifact(
+        [_row("q1", faithfulness=0.60), _row("q2", faithfulness=0.60)],
+        fingerprint="corpus-1",
+    )
     c = _artifact(
         [_row("q1", faithfulness=0.70), _row("q2", faithfulness=0.70)],
+        fingerprint="corpus-1",
         total={"aggregate_faithfulness": 0.99},
     )
 
     sigmas = cr.noise_floor_from_runs([str(a), str(b), str(c)])
 
     assert sigmas["faithfulness"] == pytest.approx(statistics.stdev([0.5, 0.6, 0.7]))
+
+
+def test_parse_noise_floor_rejects_a_sigma_that_is_not_a_usable_number():
+    # sigma is the guardrail against over-claiming. A negative one makes
+    # |mean| > 2*sigma trivially true, so every delta past 2*SE would be
+    # announced as SIGNIFICANT; a NaN one silently blocks every claim instead.
+    for bad in ("faithfulness=-0.01", "faithfulness=nan", "faithfulness=inf"):
+        with pytest.raises(cr.CompareError):
+            cr.parse_noise_floor(bad)
+
+    assert cr.parse_noise_floor("faithfulness=0") == {"faithfulness": 0.0}
+
+
+def test_verdict_treats_an_unusable_sigma_as_no_noise_floor():
+    tight = cr.summarize_deltas([0.20, 0.21, 0.19, 0.20])
+
+    for bad in (-1.0, float("nan"), float("inf")):
+        assert cr.verdict(tight, bad) == "noise floor not measured"
+
+
+def test_noise_runs_refuse_a_replicate_from_a_different_bank(_artifact):
+    baseline = cr.load_arms(
+        [
+            str(
+                _artifact(
+                    [_row("q1", faithfulness=0.5), _row("q2", faithfulness=0.5)],
+                    fingerprint="corpus-1",
+                )
+            )
+        ]
+    )[0]
+    same = _artifact(
+        [_row("q1", faithfulness=0.6), _row("q2", faithfulness=0.6)],
+        fingerprint="corpus-1",
+    )
+    other = _artifact(
+        [_row("q1", faithfulness=0.6), _row("q9", faithfulness=0.6)],
+        fingerprint="corpus-1",
+    )
+
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.noise_floor_from_runs([str(same), str(other)], baseline=baseline)
+
+    assert excinfo.value.code == cr.EXIT_GATE
+    assert "q9" in str(excinfo.value)
+
+
+def test_noise_runs_refuse_a_replicate_that_diverged_from_its_config(_artifact):
+    rows = [_row("q1", faithfulness=0.5)]
+    baseline = cr.load_arms([str(_artifact(rows, fingerprint="corpus-1"))])[0]
+    clean = _artifact([_row("q1", faithfulness=0.6)], fingerprint="corpus-1")
+    diverged = _artifact(
+        [_row("q1", faithfulness=0.7)],
+        fingerprint="corpus-1",
+        divergence=["services.chat_app.default_model"],
+    )
+
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.noise_floor_from_runs([str(clean), str(diverged)], baseline=baseline)
+    assert excinfo.value.code == cr.EXIT_DIVERGENCE
+
+    sigmas = cr.noise_floor_from_runs(
+        [str(clean), str(diverged)], baseline=baseline, ignore_divergence=True
+    )
+    assert sigmas["faithfulness"] == pytest.approx(statistics.stdev([0.6, 0.7]))
+
+
+def test_noise_runs_refuse_replicates_from_different_corpora_unless_flagged(_artifact):
+    rows = [_row("q1", faithfulness=0.5)]
+    baseline = cr.load_arms([str(_artifact(rows, fingerprint="corpus-1"))])[0]
+    one = _artifact([_row("q1", faithfulness=0.6)], fingerprint="corpus-1")
+    other = _artifact([_row("q1", faithfulness=0.7)], fingerprint="corpus-2")
+
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.noise_floor_from_runs([str(one), str(other)], baseline=baseline)
+    assert excinfo.value.code == cr.EXIT_GATE
+    assert "corpus-2" in str(excinfo.value)
+
+    sigmas = cr.noise_floor_from_runs(
+        [str(one), str(other)], baseline=baseline, allow_corpus_differs=True
+    )
+    assert sigmas["faithfulness"] == pytest.approx(statistics.stdev([0.6, 0.7]))
 
 
 def test_noise_floor_from_runs_needs_at_least_two_replicates(_artifact):
@@ -391,7 +480,8 @@ def test_noise_floor_from_runs_treats_every_arm_as_a_replicate(_artifact):
         arms=[
             [_row("q1", faithfulness=0.50)],
             [_row("q1", faithfulness=0.60)],
-        ]
+        ],
+        fingerprint="corpus-1",
     )
 
     sigmas = cr.noise_floor_from_runs([str(sweep)])

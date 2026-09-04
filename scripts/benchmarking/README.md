@@ -52,7 +52,9 @@ lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
   diverged from the one that was selected. Every scored count is recomputed from
   the finite values and flagged `OVER-REPORTED` where `<metric>_scored` disagrees,
   and no delta is ever called SIGNIFICANT without a measured noise floor
-  (`--noise-floor`, or `--noise-runs` over same-code replicates). The five
+  (`--noise-floor`, which rejects a negative or non-finite sigma, or
+  `--noise-runs` over replicates held to the same bank, corpus and divergence
+  checks as the arms — sigma *is* the significance threshold, not a footnote). The five
   anchors are reported as their own track — matched by question text, because the
   FASRC bank sets `anchor_type` on every row — and are kept out of the bank
   aggregates. `--qa-run LABEL=DIR` optionally joins an `archi eval qa` run by
