@@ -39,6 +39,26 @@ lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
   the data manager's data directory passed as `--data-root`. Supports the #396
   feature matrix and the `chunking.chunk_overlap` key (#403).
 
+## Comparing two runs
+
+- **`compare_runs.py`** — the paired, gated comparison of two or more benchmark
+  artifacts; the tool
+  [`interpreting_benchmark_results.md`](../../docs/docs/interpreting_benchmark_results.md)
+  calls **Procedure C**, and every flag is documented there. It pairs on question
+  **text**, never on the positional `question_<n>` key (the harness drops failed
+  rows, so the same key is not the same question), and it refuses to run when the
+  arms' question sets differ — with no override flag — when the corpus
+  fingerprints differ or were never recorded, or when the recorded configuration
+  diverged from the one that was selected. Every scored count is recomputed from
+  the finite values and flagged `OVER-REPORTED` where `<metric>_scored` disagrees,
+  and no delta is ever called SIGNIFICANT without a measured noise floor
+  (`--noise-floor`, or `--noise-runs` over same-code replicates). The five
+  anchors are reported as their own track — matched by question text, because the
+  FASRC bank sets `anchor_type` on every row — and are kept out of the bank
+  aggregates. `--qa-run LABEL=DIR` optionally joins an `archi eval qa` run by
+  derived item id. Standard library only; reads finished artifacts, so it needs
+  no deployment. Exit codes: 0 ok, 1 usage, 2 gate refusal, 3 config divergence.
+
 ## Analysis and run helpers
 
 The remaining scripts (notebooks, prompt-sweep generation, the Argilla push/reset
