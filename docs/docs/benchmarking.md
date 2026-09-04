@@ -153,10 +153,14 @@ plain "give up after N seconds":
   `BENCH_INGEST_WAIT_TIMEOUT` ends the run after that much silence, and the
   error names the last URL that *did* answer plus the exception now being
   raised — never one from a candidate URL the harness already fell past.
-- **The ingest never started.** The endpoint answers, but with `state=pending`
-  (or a state the harness does not recognize) rather than `running`. That is
-  not progress, so it does not restart the stall budget either, and
-  `BENCH_INGEST_WAIT_TIMEOUT` ends it on the same schedule as a dead endpoint.
+- **The ingest never started.** The endpoint answers, but with `state=pending`,
+  with a state the harness does not recognize, or with `state=running
+  step=initializing` — the last of which means this ingest is queued behind
+  something else holding the data-manager's ingestion lock (a scheduled source
+  refresh, or a vectorstore update triggered by an upload). None of those is
+  progress, so none restarts the stall budget, and `BENCH_INGEST_WAIT_TIMEOUT`
+  ends the wait on the same schedule as a dead endpoint — naming the state and
+  step, so the queued case is obvious from the error alone.
 - **The ingest is alive but stuck.** Polls keep reporting `running` and the
   state never reaches `completed`. `BENCH_INGEST_MAX_WAIT` ends that, and the
   error reports the last observed `state` and `step` rather than a connection
