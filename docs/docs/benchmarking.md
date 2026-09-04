@@ -142,8 +142,26 @@ Make sure the `out_dir` exists before running.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | Seconds the benchmark container waits for the data-manager's ingestion to complete before giving up. CPU-only ingest of the full FASRC corpus takes ~64 min (3840s); the default allows headroom for larger corpora. |
+| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the *last successful* ingestion-status poll. It restarts on every poll that answers, so an ingest reporting progress is never cut off for taking a long time — only one that goes silent is. |
+| `BENCH_INGEST_MAX_WAIT` | `21600` | Absolute ceiling on the whole wait, in seconds, for an ingest that keeps answering but never finishes. Set to `0` to disable it and wait indefinitely while polls keep succeeding. |
 | `BENCH_INGEST_POLL_INTERVAL` | `5` | Seconds between ingestion-status polls. |
+
+The two budgets answer two different failures, which is why neither one is a
+plain "give up after N seconds":
+
+- **The endpoint went away.** No status URL answers any more. `BENCH_INGEST_WAIT_TIMEOUT`
+  ends the run after that much silence, and the error names the last URL that
+  did answer plus the exception that is now being raised.
+- **The ingest is alive but stuck.** Polls keep succeeding and the state never
+  reaches `completed`. `BENCH_INGEST_MAX_WAIT` ends that, and the error reports
+  the last observed `state` and `step` rather than a connection problem.
+
+A long-but-healthy ingest hits neither. CPU-only ingest of the full FASRC
+corpus takes ~64 min; with `processing.categorization.enabled: true` it runs one
+extra LLM call per document before embedding, and has been measured at over two
+hours on a loaded host. Under the old absolute deadline that run was killed at
+exactly 7200s while every one of its 1433 status polls was succeeding, two
+minutes short of finishing (issue #378).
 
 ---
 
