@@ -32,9 +32,11 @@ question. On the FASRC bank it is 105 + 5 - 1 = 109 items.
 
 Refusals are loud on purpose. A bank that cannot be converted honestly -- a row
 spelling one concept twice, two rows that are the same question and answer, a row
-with no reference, a file that is already a QA dataset -- is refused by name and
-row number rather than mapped into a dataset that would score something nobody
-authored.
+with no reference, a file that is already a QA dataset container -- is refused by
+name and row number rather than mapped into a dataset that would score something
+nobody authored. Refusals are also narrow: where a file is genuinely ambiguous
+(a headerless array is a legacy bank and a V1 dataset at once) it is converted,
+because guessing could only refuse valid input.
 
 Usage:
     python scripts/benchmarking/ragas_bank_to_qa_dataset.py <bank.json> \\
@@ -85,17 +87,6 @@ EXIT_OK = 0
 EXIT_USAGE = 1
 EXIT_REFUSED = 2
 
-# A headerless native dataset and a LEGACY bank are spelled alike, so one field
-# cannot separate them -- this PAIR does. ``time_sensitive`` is mandatory on
-# every native row (``dataset._common_fields`` rejects a row without it), and the
-# modern bank dialect always spells the question ``user_input``. A row that
-# declares ``time_sensitive`` while spelling its question anything else is a
-# native dataset row. A bank row MAY declare ``time_sensitive``: the shared
-# adapter defaults it only when absent, so the field alone must never be read as
-# a native marker.
-NATIVE_ONLY_FIELD = "time_sensitive"
-MODERN_QUESTION_FIELD = "user_input"
-
 DEFAULT_ANCHORS = Path(REPO_ROOT) / DEFAULT_ANCHOR_PATH
 
 
@@ -145,7 +136,16 @@ def _modernized(rows: List[Any]) -> List[Any]:
 
 
 def load_bank(path: Path, *, what: str = "bank") -> List[Any]:
-    """Read a bank (or anchor) file and put every row in the modern dialect."""
+    """Read a bank (or anchor) file and put every row in the modern dialect.
+
+    Only an unambiguously native container is refused: a bank is a top-level
+    JSON array, so an object with a ``schema_version`` -- the shape this script
+    itself writes, and the file an operator is most likely to hand back by
+    mistake -- is not one. A headerless array is NOT second-guessed: a legacy
+    bank and a V1 dataset are the same bytes (``question``/``answer``, no schema
+    version), nothing in the file separates them, and converting reproduces a
+    native row exactly, so guessing could only ever refuse valid input.
+    """
     document = _read_json(path, what=what)
     if not isinstance(document, list):
         raise BankRefused(
@@ -153,18 +153,6 @@ def load_bank(path: Path, *, what: str = "bank") -> List[Any]:
             "rows, and this file is not one (a qa-dataset-v1/v2 document is an "
             "object with a schema_version)"
         )
-    for index, row in enumerate(document, 1):
-        if (
-            isinstance(row, dict)
-            and NATIVE_ONLY_FIELD in row
-            and MODERN_QUESTION_FIELD not in row
-        ):
-            raise BankRefused(
-                f"{path} is not a RAGAS bank: row {index} carries "
-                f"'{NATIVE_ONLY_FIELD}' but spells its question something other "
-                f"than '{MODERN_QUESTION_FIELD}' -- that is a native dataset "
-                "row, and this file is already a QA dataset"
-            )
     return _modernized(document)
 
 

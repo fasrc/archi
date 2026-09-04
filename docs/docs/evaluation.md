@@ -706,7 +706,7 @@ run over one bank can be joined question for question afterwards. `--no-anchors`
 converts the bank alone, `--status draft|locked` filters by confirmation state,
 and a bank that cannot be converted honestly (a row carrying both dialect
 spellings, duplicate rows, a row with no `reference`, or a file that is already a
-QA dataset) is refused by name rather than mapped.
+QA dataset container) is refused by name rather than mapped.
 
 #### Chat-app evaluation configuration
 

@@ -181,10 +181,13 @@ def test_refuses_a_native_qa_dataset_as_not_a_ragas_bank(tmp_path, capsys):
     assert not out.exists()
 
 
-def test_refuses_a_headerless_native_dataset_as_not_a_ragas_bank(tmp_path, capsys):
-    # A native V1 array spells its question/answer the way a LEGACY bank does.
-    # What separates them is the pair: a native row carries ``time_sensitive``
-    # and spells its question ``question``; a bank row spells it ``user_input``.
+def test_a_headerless_native_array_is_converted_rather_than_guessed_at(tmp_path):
+    # A headerless V1 array and a LEGACY bank are the same bytes: both spell the
+    # pair ``question``/``answer`` and neither declares a schema version. There
+    # is nothing in the file to tell them apart, so the script does not guess --
+    # it converts, which reproduces the native rows exactly (explicit id kept,
+    # question and answer unchanged). Only an unambiguous native container (an
+    # object with a schema_version) is refused.
     native_rows = [
         {
             "id": "qa-native",
@@ -196,10 +199,13 @@ def test_refuses_a_headerless_native_dataset_as_not_a_ragas_bank(tmp_path, capsy
 
     code, out = _run(tmp_path, native_rows)
 
-    assert code == 2
-    error = capsys.readouterr().err
-    assert "not a RAGAS bank" in error and "time_sensitive" in error
-    assert not out.exists()
+    assert code == 0
+    (item,) = _items(out)
+    assert item.id == "qa-native"
+    assert (item.question, item.answer) == (
+        BANK_ROW["user_input"],
+        BANK_ROW["reference"],
+    )
 
 
 def test_a_bank_row_may_declare_time_sensitive(tmp_path):
@@ -207,6 +213,24 @@ def test_a_bank_row_may_declare_time_sensitive(tmp_path):
     # a bank row is allowed to declare it. Treating the field alone as a
     # native-dataset marker would refuse a bank the console import accepts.
     row = dict(BANK_ROW, time_sensitive=False)
+
+    code, out = _run(tmp_path, [row])
+
+    assert code == 0
+    (item,) = _items(out)
+    assert item.time_sensitive is False
+    assert item.id == derive_item_id(BANK_ROW["user_input"], BANK_ROW["reference"])
+
+
+def test_a_legacy_bank_row_may_declare_time_sensitive(tmp_path):
+    # The legacy spelling of the same row: ``question``/``answer`` plus an
+    # explicit ``time_sensitive``. It must convert like its modern twin.
+    row = {
+        "question": BANK_ROW["user_input"],
+        "answer": BANK_ROW["reference"],
+        "sources": BANK_ROW["sources"],
+        "time_sensitive": False,
+    }
 
     code, out = _run(tmp_path, [row])
 
