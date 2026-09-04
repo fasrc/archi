@@ -571,6 +571,76 @@ def test_wire_fenced_block_wpautop_newlines_have_no_blank_lines():
     assert html_to_markdown(html) == "```bash\n#!/bin/bash\n# comment\necho hi\n```"
 
 
+# --- break whitespace through inline nodes beside a promoted <br> (issue #408) ---
+
+
+def test_promote_block_code_drops_newline_inside_inline_tag_after_br():
+    assert _promoted_code_text("<p><code>a<br><span>\nb</span></code></p>") == "a\nb"
+
+
+def test_promote_block_code_drops_newline_after_inline_tag_that_ends_with_br():
+    assert _promoted_code_text("<p><code><span>a<br></span>\nb</code></p>") == "a\nb"
+
+
+def test_promote_block_code_keeps_indentation_inside_inline_tag_after_br():
+    assert (
+        _promoted_code_text("<p><code>a<br><span>\n    b</span></code></p>")
+        == "a\n    b"
+    )
+
+
+def test_promote_block_code_drops_newline_inside_inline_tag_before_br():
+    assert _promoted_code_text("<p><code><span>a\n</span><br>b</code></p>") == "a\nb"
+
+
+def test_promote_block_code_drops_newline_before_inline_tag_that_starts_with_br():
+    assert _promoted_code_text("<p><code>a\n<span><br>b</span></code></p>") == "a\nb"
+
+
+def test_promote_block_code_climbs_through_nested_inline_tags():
+    assert (
+        _promoted_code_text("<p><code><span><em>a<br></em></span>\nb</code></p>")
+        == "a\nb"
+    )
+
+
+def test_promote_block_code_never_climbs_past_the_code_element():
+    from bs4 import BeautifulSoup
+
+    result = _promote_block_code("<p><code>a<br></code>\nmore</p>")
+    soup = BeautifulSoup(result, "html.parser")
+    assert soup.p.contents[-1] == "\nmore"
+
+
+def test_wire_inline_child_newlines_have_no_blank_lines():
+    assert (
+        html_to_markdown("<p><code>a<br><span>\nb</span></code></p>")
+        == "```\na\nb\n```"
+    )
+    assert (
+        html_to_markdown("<p><code><span>a<br></span>\nb</code></p>")
+        == "```\na\nb\n```"
+    )
+    assert (
+        html_to_markdown("<p><code>a<br><span>\n    b</span></code></p>")
+        == "```\na\n    b\n```"
+    )
+
+
+def test_wire_comment_inside_inline_tag_is_skipped():
+    assert (
+        html_to_markdown("<p><code>a<br><span><!-- c -->\nb</span></code></p>")
+        == "```\na\nb\n```"
+    )
+
+
+def test_wire_two_breaks_keep_one_blank_line_through_the_tag_branch():
+    assert html_to_markdown("<p><code>a<br><br>b</code></p>") == "```\na\n\nb\n```"
+    assert (
+        html_to_markdown("<p><code>a<br />\n<br />\nb</code></p>") == "```\na\n\nb\n```"
+    )
+
+
 # --- fence language only for promoted blocks (issue #399, Codex review) -------
 # markdownify calls code_language_callback for every <pre>. A native
 # <pre class="bash"> must keep converting to a bare fence, byte-identical to the
@@ -1045,3 +1115,34 @@ def test_cut_edge_text_reads_only_the_edge_children():
     edge = _cut_edge_text(em, trailing=True)
     assert str(edge) == " tail  "
     assert em.contents.iterations == 0
+
+
+# --- the neighbour is the text that touches the break, not the first text anywhere ---
+# (local adversarial review of PR #416, 2026-09-04)
+
+
+def test_strip_break_whitespace_childless_tag_at_forward_edge_keeps_newline_behind_it():
+    """An <img> touches the break; the newline behind it does not, so it stays."""
+    assert (
+        html_to_markdown('<p><code>a<br><span><img src="i"/>\nb</span></code></p>')
+        == "```\na\n![](i)\nb\n```"
+    )
+
+
+def test_strip_break_whitespace_childless_tag_at_backward_edge_keeps_newline_before_it():
+    assert (
+        html_to_markdown('<p><code><span>a\n<img src="i"/></span><br>b</code></p>')
+        == "```\na\n![](i)\nb\n```"
+    )
+
+
+def test_strip_break_whitespace_nested_tag_at_edge_is_the_neighbour():
+    """Text inside a nested tag at the edge is the neighbour; text behind it is untouched."""
+    assert (
+        html_to_markdown("<p><code>a<br><span><i>x</i>\n  b</span></code></p>")
+        == "```\na\nx\n  b\n```"
+    )
+    assert (
+        html_to_markdown("<p><code>a<br><span><i>\nx</i> b</span></code></p>")
+        == "```\na\nx b\n```"
+    )
