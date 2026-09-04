@@ -533,6 +533,17 @@ data_manager:
   single-line inline `<code>` convert as before. Like the body slice, the change reaches
   disk only for new or force-overwritten documents — see *Applying to an existing
   corpus* below.
+- **A promoted block leaves its inline ancestors.** When that multi-line `<code>` sits
+  inside `<a>`, `<b>`, `<strong>`, `<em>`, `<i>`, `<del>`, `<s>`, `<kbd>`, `<samp>`,
+  `<sub>` or `<sup>`, the conversion splits the ancestor around the block instead of
+  leaving the fence inside its markers (issue #406): the text before the block keeps its
+  markup, the fence stands on its own, and the text after the block continues in a fresh
+  copy of the same tag with the same attributes. A link therefore renders as two links
+  with the same `href` around the fence, a bold or italic run resumes after it, and an
+  ancestor left with no content is dropped. Whitespace that touches the cut is removed,
+  so no line beside the fence begins or ends with a stray space. The shape is rare in the
+  FASRC KB (0 of 25 sampled multi-line code elements) and, like every item in this list,
+  it reaches disk only for new or force-overwritten documents.
 - **Content after a nested list starts on its own line.** `markdownify` drops the newline
   after a list nested inside a list item, so the text, inline element, or sibling item
   that followed it was glued onto the nested list's last line — onto a closing code fence

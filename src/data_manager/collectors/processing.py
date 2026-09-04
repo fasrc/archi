@@ -30,7 +30,7 @@ from typing import (
 )
 
 from bs4 import BeautifulSoup, Comment, Doctype, NavigableString, Tag
-from markdownify import MarkdownConverter
+from markdownify import STRIP, STRIP_ONE, MarkdownConverter, strip1_pre, strip_pre
 
 from src.data_manager.collectors.resource_base import BaseResource
 from src.utils.logging import get_logger
@@ -298,13 +298,49 @@ _BR_LEADING_WS = re.compile(r"^(?:[ \t]*\r?\n)+")
 _PROMOTED_ATTR = "data-archi-promoted"
 
 
-def _strip_break_whitespace(br) -> None:
-    """Drop the source newlines that sit beside a ``<br>`` about to become ``"\\n"``."""
-    for node, pattern in (
-        (br.previous_sibling, _BR_TRAILING_WS),
-        (br.next_sibling, _BR_LEADING_WS),
-    ):
-        if type(node) is not NavigableString:
+def _edge_text(br, *, forward: bool, stop_at) -> NavigableString | None:
+    """Return the text node that logically neighbours ``br`` on one side (issue #408).
+
+    Climbs through inline parent tags when the direct sibling is absent, stopping
+    before ``stop_at`` (the containing ``<code>`` element).  If the first reachable
+    sibling is a ``Tag``, walks down its edge child chain (first child going forward,
+    last child going backward), looking through comments, to the one leaf that touches
+    the break.  A childless tag at the edge (``<img>``) ends the walk with None: the
+    text behind it does not touch the break, so its whitespace is code payload and
+    stays.
+    """
+    node = br
+    while True:
+        sibling = node.next_sibling if forward else node.previous_sibling
+        if sibling is not None:
+            break
+        parent = node.parent
+        if parent is None or parent is stop_at:
+            return None
+        node = parent
+    node = sibling
+    while isinstance(node, Tag):
+        edge = [
+            child
+            for child in node.contents
+            if isinstance(child, Tag) or type(child) is NavigableString
+        ]
+        if not edge:
+            return None
+        node = edge[0] if forward else edge[-1]
+    return node if type(node) is NavigableString else None
+
+
+def _strip_break_whitespace(br, *, stop_at) -> None:
+    """Drop the source newlines beside a ``<br>`` about to become ``"\\n"``.
+
+    The neighbour is resolved through inline nodes (issue #408): when the
+    direct sibling is absent the search climbs through inline parent tags,
+    stopping at ``stop_at`` (the containing ``<code>``).
+    """
+    for forward, pattern in ((False, _BR_TRAILING_WS), (True, _BR_LEADING_WS)):
+        node = _edge_text(br, forward=forward, stop_at=stop_at)
+        if node is None:
             continue
         stripped = pattern.sub("", str(node))
         if stripped == str(node):
@@ -313,6 +349,92 @@ def _strip_break_whitespace(br) -> None:
             node.replace_with(stripped)
         else:
             node.extract()
+
+
+_INLINE_MARKUP_TAGS: frozenset = frozenset(
+    {"a", "b", "strong", "em", "i", "del", "s", "kbd", "samp", "sub", "sup"}
+)
+
+
+def _has_content(tag) -> bool:
+    """True when *tag* has at least one Tag child or one non-whitespace text child."""
+    for node in tag.children:
+        if isinstance(node, Tag):
+            return True
+        if type(node) is NavigableString and str(node).strip():
+            return True
+    return False
+
+
+def _cut_edge_text(half, *, trailing: bool):
+    """Return the exact ``NavigableString`` that touches the cut edge of *half*, or None.
+
+    Walk down from *half* along its edge child (the last child of the head half, the
+    first child of the tail half), stepping inward past comments, which render nothing.
+    A tag with no children at the edge (``<img>``) ends the walk with None: whatever
+    text sits behind it does not touch the cut and must keep its whitespace.
+
+    Only the edge is read. The head half is re-trimmed once per split when several
+    blocks share one ancestor, so scanning its whole child list here would cost O(n)
+    per split and O(n^2) for the hoist (Codex review on PR #414).
+    """
+    node = half
+    while isinstance(node, Tag):
+        contents = node.contents
+        if not contents:
+            return None
+        edge = contents[-1] if trailing else contents[0]
+        while edge is not None and not (
+            isinstance(edge, Tag) or type(edge) is NavigableString
+        ):
+            edge = edge.previous_sibling if trailing else edge.next_sibling
+        if edge is None:
+            return None
+        node = edge
+    return node
+
+
+def _trim_cut_whitespace(half, *, trailing: bool) -> None:
+    """Strip leading or trailing whitespace from the text at the cut edge of *half*.
+
+    A blank text node at the edge is removed and the walk repeats, so text that sits
+    behind it — past a comment, say (``" <!-- c -->    done"``) — is trimmed too. The
+    loop ends at the first non-blank text, at a childless tag, or when nothing is left.
+    """
+    while True:
+        node = _cut_edge_text(half, trailing=trailing)
+        if node is None:
+            return
+        text = str(node)
+        stripped = text.rstrip() if trailing else text.lstrip()
+        if stripped:
+            if stripped != text:
+                node.replace_with(stripped)
+            return
+        node.extract()
+
+
+def _hoist_out_of_inline(pre, soup) -> None:
+    """Lift *pre* out of any inline-markup ancestors (issue #406).
+
+    A promoted ``<pre>`` nested inside ``<em>``, ``<strong>``, ``<a>``, etc. would render
+    wrapped in the inline markers.  Walk up the parent chain while the parent is one of
+    the eleven inline tags; at each level split the parent around *pre*: re-append the
+    siblings that follow *pre* into a clone of the parent and insert that clone (and *pre*
+    itself) after the original parent, discarding the clone when it is empty.
+    """
+    while isinstance(pre.parent, Tag) and pre.parent.name in _INLINE_MARKUP_TAGS:
+        parent = pre.parent
+        tail = soup.new_tag(parent.name, attrs=dict(parent.attrs))
+        for node in list(pre.next_siblings):
+            tail.append(node)
+        parent.insert_after(pre)
+        _trim_cut_whitespace(parent, trailing=True)
+        _trim_cut_whitespace(tail, trailing=False)
+        if _has_content(tail):
+            pre.insert_after(tail)
+        if not _has_content(parent):
+            parent.decompose()
 
 
 def _promote_block_code(html: str) -> str:
@@ -328,6 +450,7 @@ def _promote_block_code(html: str) -> str:
     marked with ``_PROMOTED_ATTR`` so ``_promoted_fence_language`` labels only it.
     """
     soup = BeautifulSoup(html, "html.parser")
+    promoted = []
     for code in soup.find_all("code"):
         if code.find_parent("pre") is not None:
             continue
@@ -339,7 +462,7 @@ def _promote_block_code(html: str) -> str:
         # Interleaving would let the "\n" inserted for one break be read as source
         # whitespace of the next and stripped, collapsing an intended blank line.
         for br in brs:
-            _strip_break_whitespace(br)
+            _strip_break_whitespace(br, stop_at=code)
         for br in brs:
             br.replace_with("\n")
         pre = soup.new_tag("pre")
@@ -347,6 +470,15 @@ def _promote_block_code(html: str) -> str:
         if code.get("class"):
             pre["class"] = code["class"]
         code.wrap(pre)
+        promoted.append(pre)
+    # Hoist last-to-first. Each split moves the siblings after the block into the tail
+    # half; with the later blocks already out of the ancestor, that tail holds only the
+    # nodes up to the next block, so every sibling moves once. First-to-last moved the
+    # whole remaining tail once per block: quadratic in the block count (Codex review on
+    # PR #414). The final tree is the same either way, because the split at each block
+    # partitions the ancestor's children the same way regardless of order.
+    for pre in reversed(promoted):
+        _hoist_out_of_inline(pre, soup)
     return str(soup)
 
 
@@ -471,14 +603,44 @@ def _nested_list_needs_break(el, text: str) -> bool:
     return not (isinstance(nxt, Tag) and nxt.name in _SELF_SEPARATING_FOLLOWERS)
 
 
+_BACKTICK_RUNS = re.compile(r"`+")
+
+
 class _ArchiMarkdownConverter(MarkdownConverter):
-    """MarkdownConverter subclass with the nested-list newline fix (issue #410).
+    """The project's ``MarkdownConverter`` overrides (issues #407 and #410).
+
+    This is the one place project-specific ``MarkdownConverter`` overrides live.
+    ``convert_pre`` sizes the fence delimiter past any backtick run inside the
+    block (issue #407); ``convert_list`` keeps a newline after a nested list
+    (issue #410).
 
     markdownify binds ``convert_ul`` and ``convert_ol`` to the base
     ``convert_list`` at class-definition time, so overriding ``convert_list``
     alone would never be called for list elements.  The two class-level
     rebindings below re-point those attributes at this override (design D2).
     """
+
+    def convert_pre(self, el, text, parent_tags):
+        if not text:
+            return ""
+        code_language = self.options["code_language"]
+
+        if self.options["code_language_callback"]:
+            code_language = self.options["code_language_callback"](el) or code_language
+
+        mode = self.options["strip_pre"]
+        if mode == STRIP:
+            text = strip_pre(text)  # remove all leading/trailing newlines
+        elif mode == STRIP_ONE:
+            text = strip1_pre(text)  # remove one leading/trailing newline
+        elif mode is None:
+            pass  # leave leading and trailing newlines as-is
+        else:
+            raise ValueError("Invalid value for strip_pre: %s" % mode)
+
+        longest_run = max((len(m) for m in _BACKTICK_RUNS.findall(text)), default=0)
+        fence = "`" * max(3, longest_run + 1)
+        return "\n\n%s%s\n%s\n%s\n\n" % (fence, code_language, text, fence)
 
     def convert_list(self, el, text, parent_tags):
         """Append a trailing newline when inline content follows a nested list."""
@@ -491,14 +653,8 @@ class _ArchiMarkdownConverter(MarkdownConverter):
     convert_ol = convert_list
 
 
-def markdownify(html: str, **options) -> str:
-    """Convert *html* to Markdown via ``_ArchiMarkdownConverter`` (issue #410).
-
-    The function name is kept rather than delegating to ``MarkdownConverter``
-    directly because two existing tests monkeypatch
-    ``src.data_manager.collectors.processing.markdownify``; renaming would
-    silently break that patching.
-    """
+def _markdownify(html: str, **options) -> str:
+    """Mirror the library's ``markdownify()`` using the project converter."""
     return _ArchiMarkdownConverter(**options).convert(html)
 
 
@@ -516,7 +672,7 @@ def _markdownify_deep_safe(content: str) -> str:
 
     def _worker() -> None:
         try:
-            result["value"] = markdownify(
+            result["value"] = _markdownify(
                 _promote_block_code(content),
                 heading_style="ATX",
                 code_language_callback=_promoted_fence_language,

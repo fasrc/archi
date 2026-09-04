@@ -693,6 +693,51 @@ a RAGAS 0.3.5 question bank and normalized at the import boundary:
 - Dataset V2 live items require the registry described in
   [Evaluator MCP registry](#evaluator-mcp-registry).
 
+The same adapter is reachable from the command line, for a bank you want to run
+through `archi eval qa` rather than upload:
+`python scripts/benchmarking/ragas_bank_to_qa_dataset.py <bank.json> --out <dataset.json>`
+converts a bank — plus the anchor questions the RAGAS harness stages beside it on
+every run, deduped on exact `user_input` with the bank row winning — into a
+`qa-dataset-v2` file that `archi eval qa --dataset <dataset.json>` accepts. It
+calls this same normalizer and reads the bank with the same strict parser, so for
+a modern-dialect bank the mapping, the carried fields and the ids are identical
+whichever door it comes through. A **legacy** bank is the one difference: the
+converter first runs `normalize_bank`, exactly as the RAGAS harness does when it
+loads a bank, so `question`/`answer`/`contexts` become
+`user_input`/`reference`/`retrieved_contexts` — the browser import applies no
+such mapping and would carry `contexts` under its legacy name.
+
+Three things to keep in mind when the point is to compare a QA run against a
+RAGAS run over the same bank:
+
+- **Anchors must match the run.** The converter does not read the deployment
+  configuration, so pass `--no-anchors` when the benchmark run sets
+  `services.benchmarking.anchors.enabled: false`, and pass `--anchors <path>`
+  when it overrides `anchors.path`. Otherwise the two runs ask different
+  question sets.
+- **The id join needs newline normalization.** A row without its own `id` gets
+  the content-derived one, computed from the question and reference with CRLF
+  and bare CR folded to LF; a RAGAS artifact stores those fields verbatim. So
+  recompute the id from newline-normalized text, or rows authored with CRLF will
+  not match.
+- **An authored `id` is kept.** Such an item has no derived id to recompute and
+  must be matched by question text instead; the run report counts those rows
+  (`explicit_ids`) so the exception is visible rather than assumed.
+- **Identical text needs run order, not text.** Two items whose question *and*
+  reference are the same cannot be distinguished by text: a derived id refuses
+  that pair, but an authored `id` deliberately lets it coexist, and the artifact
+  carries no dataset id. Item order is preserved end to end — bank rows in file
+  order, then the anchors that were added — and that is the order the harness
+  asks its questions, so the Nth item is the artifact's `question_N`, provided
+  `--status` dropped nothing and the anchors match the run. The report counts
+  these as `text_duplicate_items`; when it is 0, a text or derived-id join is
+  unambiguous for every item.
+
+`--no-anchors` converts the bank alone, `--status draft|locked` filters by
+confirmation state, and a bank that cannot be converted honestly (a row carrying
+both dialect spellings, duplicate rows, a row with no `reference`, or a file that
+is already a QA dataset container) is refused by name rather than mapped.
+
 #### Chat-app evaluation configuration
 
 The evaluation console is opt-in. Enable it explicitly in the deployment
