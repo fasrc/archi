@@ -18,6 +18,7 @@ that make the two runs comparable:
 these named tests are the acceptance bar for the script, not the coverage line.
 """
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -178,6 +179,44 @@ def test_refuses_a_native_qa_dataset_as_not_a_ragas_bank(tmp_path, capsys):
 
     assert code == 2
     assert "not a RAGAS bank" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_refuses_an_object_root_that_happens_to_carry_an_item_member(
+    tmp_path, capsys
+):
+    # The streaming row reader keys on the JSON path ``item``, which an object
+    # member of that name also produces. Without a root check the envelope would
+    # convert and every other field would be dropped without a word.
+    bank = tmp_path / "bank.json"
+    bank.write_text(
+        '{"metadata": {"generated": "today"}, '
+        '"item": {"user_input": "Q", "reference": "A"}}',
+        encoding="utf-8",
+    )
+    out = tmp_path / "out.json"
+
+    code = converter.main([str(bank), "--no-anchors", "--out", str(out)])
+
+    assert code == 2
+    assert "not a RAGAS bank" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_refuses_a_row_carrying_both_contexts_and_retrieved_contexts(
+    tmp_path, capsys
+):
+    # The dialect adapter only knows the question and answer aliases, so it
+    # would carry both spellings of the contexts field as extras -- while
+    # ``normalize_bank`` in the harness silently drops the legacy one. The two
+    # stacks would then read different content from one row.
+    row = dict(BANK_ROW, contexts=["legacy"], retrieved_contexts=["modern"])
+
+    code, out = _run(tmp_path, [row])
+
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "'contexts'" in error and "'retrieved_contexts'" in error
     assert not out.exists()
 
 
@@ -363,6 +402,31 @@ def test_the_dataset_is_validated_elsewhere_and_published_atomically(
     assert target == out
     assert source.parent != out.parent
     assert sorted(p.name for p in tmp_path.iterdir()) == ["bank.json", "out.json"]
+
+
+def test_the_reported_digest_describes_the_bytes_this_run_wrote(
+    tmp_path, monkeypatch, capsys
+):
+    # Two conversions may target one --out. Hashing --out after publishing would
+    # let a run report its own counts and carried fields beside the digest of
+    # whichever file happened to land last.
+    real_copy = converter.copy_file_atomic
+    staged = {}
+
+    def spy(source, target):
+        staged["bytes"] = Path(source).read_bytes()
+        real_copy(source, target)
+        # A second conversion publishes to the same path right behind ours.
+        Path(target).write_bytes(b'{"schema_version":"qa-dataset-v2","items":[]}\n')
+
+    monkeypatch.setattr(converter, "copy_file_atomic", spy)
+
+    code, out = _run(tmp_path, [BANK_ROW], extra=["--json"])
+
+    assert code == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["sha256"] == hashlib.sha256(staged["bytes"]).hexdigest()
+    assert report["sha256"] != hashlib.sha256(out.read_bytes()).hexdigest()
 
 
 def test_a_refused_rerun_leaves_the_previous_dataset_intact(tmp_path):

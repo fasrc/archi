@@ -19,8 +19,9 @@ It reuses, and never reimplements, six library pieces:
   strict read: a repeated object key and a number binary floats cannot hold are
   refused instead of silently collapsed and rounded;
 * ``catalog._normalize_import_dialect`` -- the dialect mapping, the
-  ``time_sensitive`` default, the content-derived ids, the alias+native refusal
-  and the duplicate-row refusal;
+  ``time_sensitive`` default, the content-derived ids and the duplicate-row
+  refusal (the double-spelling refusal is raised here first, because the adapter
+  knows only the question and answer aliases);
 * ``dataset.iter_dataset_items`` -- the reader that validates every normalized row;
 * ``dataset.v2_json_document`` -- the ``qa-dataset-v2`` envelope the CLI reads;
 * ``artifacts.AtomicTextWriter`` -- the staged, rename-on-success write every
@@ -85,6 +86,7 @@ from src.evaluation.qa.catalog import (  # noqa: E402  # isort: skip
 )
 from src.evaluation.qa.dataset import (  # noqa: E402  # isort: skip
     DatasetItem,
+    _first_non_whitespace,
     iter_dataset_items,
     v2_json_document,
 )
@@ -118,30 +120,25 @@ def _read_bytes(path: Path, *, what: str) -> bytes:
         raise UsageError(f"cannot read {what} {path}: {exc}") from exc
 
 
-def _spells_one_concept_twice(row: Any) -> bool:
-    """True when a row carries a legacy key AND its modern counterpart.
+def _refuse_double_spellings(rows: List[Any], what: str) -> None:
+    """Refuse any row that carries a legacy key AND its modern counterpart.
 
-    ``normalize_record`` pops the legacy key and keeps the modern one, so this
-    collision would vanish on the way to the adapter whose job is to refuse it
-    by name. Detected from ``LEGACY_TO_MODERN`` itself, not from a second copy
-    of the mapping.
+    ``normalize_record`` pops the legacy key and keeps the modern one, so the
+    harness would score the row having silently discarded half of it. The
+    dialect adapter refuses the question and answer pair by name, but it knows
+    nothing of ``contexts``/``retrieved_contexts`` and would carry both as
+    extras -- so the check belongs here, over ``LEGACY_TO_MODERN`` itself rather
+    than a second copy of the mapping. Wording mirrors the adapter's.
     """
-    return isinstance(row, dict) and any(
-        legacy in row and modern in row for legacy, modern in LEGACY_TO_MODERN.items()
-    )
-
-
-def _modernized(rows: List[Any]) -> List[Any]:
-    """``normalize_bank``, minus its silent drop of a colliding legacy key.
-
-    A row spelling one concept twice is handed on verbatim for the dialect
-    adapter to judge, instead of being quietly repaired here.
-    """
-    normalized = normalize_bank(rows)
-    return [
-        row if _spells_one_concept_twice(row) else new
-        for row, new in zip(rows, normalized)
-    ]
+    for index, row in enumerate(rows, 1):
+        if not isinstance(row, dict):
+            continue
+        for legacy, modern in LEGACY_TO_MODERN.items():
+            if legacy in row and modern in row:
+                raise BankRefused(
+                    f"{what} row {index} carries both '{legacy}' and "
+                    f"'{modern}'; keep exactly one"
+                )
 
 
 def load_bank(path: Path, *, what: str = "bank") -> List[Any]:
@@ -163,6 +160,7 @@ def load_bank(path: Path, *, what: str = "bank") -> List[Any]:
     would stop carrying identical content.
     """
     blob = _read_bytes(path, what=what)
+    _refuse_non_array_root(path)
     try:
         document = [
             _exact_json_numbers(row, f"{what} row {index}")
@@ -171,12 +169,30 @@ def load_bank(path: Path, *, what: str = "bank") -> List[Any]:
     except ValueError as exc:
         raise BankRefused(f"{path}: {exc}") from exc
     if not document:
+        raise BankRefused(f"{path} is not a RAGAS bank: it has no rows")
+    _refuse_double_spellings(document, what)
+    return normalize_bank(document)
+
+
+def _refuse_non_array_root(path: Path) -> None:
+    """Refuse anything whose root token is not ``[``.
+
+    ``_iter_json_array_rows`` selects rows by the streaming path ``item``, which
+    a top-level OBJECT member named ``item`` also produces -- so without this
+    check ``{"metadata": ..., "item": {...}}`` would convert as a one-row bank
+    and every other field would vanish. The root token is read from the same
+    helper the dataset container check uses.
+    """
+    try:
+        root = _first_non_whitespace(path)
+    except ValueError as exc:
+        raise BankRefused(f"{path} is not a RAGAS bank: {exc}") from exc
+    if root != ord("["):
         raise BankRefused(
-            f"{path} is not a RAGAS bank: a bank is a non-empty top-level JSON "
-            "array of rows, and this file is not one (a qa-dataset-v1/v2 "
-            "document is an object with a schema_version)"
+            f"{path} is not a RAGAS bank: a bank is a top-level JSON array of "
+            "rows, and this file's root is not one (a qa-dataset-v1/v2 document "
+            "is an object with a schema_version)"
         )
-    return _modernized(document)
 
 
 def merge_anchors(bank: List[Any], anchors: List[Any]) -> Tuple[List[Any], int, int]:
@@ -238,8 +254,8 @@ def normalize_rows(rows: List[Any], scratch: Path) -> Tuple[Path, Dict[str, Any]
     return destination, report
 
 
-def write_v2(normalized: Path, out: Path, scratch: Path) -> int:
-    """Build the ``qa-dataset-v2`` envelope in ``scratch``, then publish it.
+def write_v2(normalized: Path, out: Path, scratch: Path) -> Tuple[int, str]:
+    """Build the envelope in ``scratch``, publish it, return (items, sha256).
 
     The envelope is written and then re-read *in the scratch directory*, by the
     same reader ``archi eval qa`` uses, from the bytes that were actually
@@ -272,8 +288,13 @@ def write_v2(normalized: Path, out: Path, scratch: Path) -> int:
             f"wrote {written} items to {staged} but read back {reread}; "
             "the dataset was not written cleanly"
         )
+    # Digest the staged file, not ``out``: with two conversions aimed at one
+    # output, a hash taken after publishing could describe whichever run
+    # published last, and the report would pair this run's counts with another
+    # run's bytes.
+    digest = sha256_file(staged)
     copy_file_atomic(staged, out)
-    return written
+    return written, digest
 
 
 def _refuse_to_clobber_an_input(
@@ -316,7 +337,7 @@ def convert(
     with tempfile.TemporaryDirectory(prefix="ragas-bank-to-qa-") as scratch:
         try:
             normalized, dialect = normalize_rows(selected, Path(scratch))
-            count = write_v2(normalized, out, Path(scratch))
+            count, digest = write_v2(normalized, out, Path(scratch))
         except ValueError as exc:
             # The adapter and the dataset reader both refuse by raising
             # ValueError with a message that names the row.
@@ -338,7 +359,7 @@ def convert(
             1 for row in selected if isinstance(row, dict) and row.get("id")
         ),
         "out": str(out),
-        "sha256": sha256_file(out),
+        "sha256": digest,
     }
 
 
