@@ -446,6 +446,97 @@ No arm runs before all of these are on `dev` and done:
 | 6 | Arm YAML files merged in archi-config and the deploy pin bumped (`deploy-pin-2026-09a`) | the on-pin checkout must carry the files `archi evaluate` reads |
 | 7 | Operator: reclaim disk; converge the config checkout to the required pin; pull `/home/a2rchi/archi-openai-compat` to the campaign SHA | see §10 |
 
+## 13. Operating log — what works, what does not
+
+Kept current as the campaign runs. The point of this section is reproducibility: someone
+re-running this campaign cold should hit none of the walls below twice. Every entry was
+observed on **holygpu7c0717** on the date given.
+
+### 13.1 Preconditions that must actually hold
+
+Checked before the 2026-09-04 lock; a failure in any of these is silent or misleading
+rather than loud, which is why they are listed.
+
+| # | Precondition | How to check | Why it bites |
+|---|---|---|---|
+| 1 | `config/` at the campaign pin | `git -C config rev-parse HEAD` = the `CONFIG_SHA` in `deploy/scripts/lib.sh` | `redeploy.sh` refuses an off-pin checkout with local edits — correctly, and it refuses *before* touching containers |
+| 2 | Checkout on the campaign code, runtime trees clean | `git status --porcelain --untracked-files=no -- src scripts deploy` empty | `lock_campaign.sh` and every wrapper refuse otherwise. Untracked files elsewhere (docs) are fine by design |
+| 3 | `RAGAS_ENV_FILE` exported | `[ -f "$RAGAS_ENV_FILE" ]` | `run_arm.sh` dies without it. It does **not** persist between shells — export it in every invocation |
+| 4 | Host conda env can build embeddings | `python -c "from langchain_huggingface import HuggingFaceEmbeddings"` | **`archi eval qa` runs in-process on the host**, not in a container. Drift here silently voids every QA run (§13.2 #5) |
+| 5 | ghcr.io login + `ijson` present | `grep ghcr.io ~/.docker/config.json`; `python -c "import ijson"` | Both fail the deploy before containers move |
+| 6 | Ports 5434 / 7882 free | `ss -ltn \| grep -E ':(5434\|7882)'` | Every stack binds the same pair, so only one arm can exist at a time |
+| 7 | Disk headroom | `df -h /scratch` (Docker root here) — ~10 GB per stack | The plan's "13 GB free" figure was claw's, not this host's |
+
+### 13.2 Defects found, and what to do about them
+
+| # | Symptom | Cause | Resolution | Status |
+|---|---|---|---|---|
+| 1 | §6 step 2 says run `fm-smoke` through every wrapper, but the wrappers reject the label | `fm_require_arm` is `^[0-9]{2}[a-z]?$` and `lock_campaign.sh` hardcodes `fm_require_arm_yaml 00` | Use `run_arm.sh 00 <yaml> --stack fm-smoke`; `--stack` is honoured on the deploy path too. Verified that `archi evaluate --name` drives the deployment dir and every `container_name`, while the YAML's own `name:` does not (live proof: `dev.yaml` says `name: archi_dev`, containers are `chatbot-dev`) | **works, doc corrected** |
+| 2 | §5 pointed at `~/Projects/archi` and `/home/austin/.archi/archi-ragas-205/.env` | Written on claw | Paths corrected to this checkout and `~/.archi/.env.benchmark` | **fixed** |
+| 3 | Pre-reg claimed the campaign prompt was byte-identical to the GPU host's production spec; that file did not exist | The host served `fasrc-v2.md` (name `FASRC`, `search_vectorstore_hybrid` only) | Production migrated to `config/agents/claw/fasrc-docs.md`; `fasrc-v2.md` retired to `agents/archive/`. Claim is now true rather than asserted | **fixed, verified live** |
+| 4 | Arms would run with **no in-loop context bound** while production has 32768 | Every arm YAML omitted `services.chat_app.context_editing`; `base-config.yaml` emits the block only when declared | Added to all nine arms, matching production byte for byte. The lock's `sut.context_editing` is the check — it read `null` before | **fixed pre-lock** |
+| 5 | QA run "completes", exits 0, and scores **nothing** | `archi eval qa` runs in-process on the host; the host env had `transformers` 5.9.0 against `huggingface_hub` 0.36.2 → `ImportError: cannot import name 'is_offline_mode'`, surfaced as the misleading `Could not import sentence_transformers` | `pip install "transformers==4.57.6" "sentence-transformers==5.1.2"` (the versions the benchmark image runs; the latter is also the repo pin). Re-run went from `execution_failed: 8` to `scored: 8` | **fixed** |
+| 6 | A QA run that scored nothing still gets a ledger row and exit 0 | `qa_arm.sh` does not fail closed on `scored: 0`, unlike `archive_run.sh` on the RAGAS side | **Open.** Until fixed, read `summary.json` → `attempt_lifecycle_counts.scored` after every QA run. A zero there with exit 0 is the silent-failure shape | **open — needs an issue** |
+| 7 | `archi delete --rmv` aborts non-interactively | It calls `click.confirm(..., abort=True)` and there is no `--force`/`--yes` | `printf 'y\n' \| archi delete --name <stack> --rmi --rmv` | **works** |
+| 8 | A retired agent spec survives a redeploy in the staged agents dir | `archi create --force` cannot remove `data/evaluations` (root-owned), so it abandons removal of the whole `data/` dir — the staged `data/agents/` keeps old files | Delete the retired spec from `~/.archi/archi-<name>/data/agents/` by hand after the redeploy, then restart the chatbot | **works, manual step** |
+| 9 | Commits intermittently blocked by a red gate | `tests/unit/evaluation/qa/test_jobs_history.py::test_job_manager_terminates_running_evaluation_process` is flaky on `dev` — 3 failures in 5 consecutive runs, and it passes on retry with no code change. Its own race: it waits for status `running`, then reads `manager._processes[job_id]`, which the reaper may already have removed | Retry the commit. **Never** `--no-verify` | **open — pre-existing, needs an issue** |
+
+### 13.3 Verified working (2026-09-04 smoke, `fm-smoke`, 3 URLs / 8 questions)
+
+The whole wrapper chain was exercised end to end before the campaign locked:
+
+- `lock_campaign.sh` — pins bank, anchors, prompt, sources, QA dataset and profile, SUT and
+  judge settings, every non-factor `data_manager` key, all nine arm sha256s, and the runtime
+  trees. Re-lock with `--relock`.
+- `run_arm.sh` → `archive_run.sh --wait` — artifact archived with
+  `divergence_from_selected_file: []`, corpus fingerprint pinned, `ingest_wall_seconds`
+  recorded (**Gap 1 closed**, 45.27 s on the smoke corpus), and scored counts recomputed
+  from finite values (**#279 working**: honest `7 of 8`, `degraded 1`).
+- `qa_arm.sh` — proves the stack is on the arm, rewrites the `chat_app` SUT fields from
+  `services.benchmarking`, and records the rendered config sha256 and fingerprint.
+- `compare_runs.py` — self-comparison gave `+0.0000` on every metric, evaluated G3/G4/
+  Procedure E as pass, raised an honest G8 alarm on an unscored anchor, excluded anchors
+  from the bank aggregate, and **refused to call anything SIGNIFICANT with no measured
+  noise floor** (G2).
+- A docs-only commit moves `HEAD` but not the locked trees — confirmed: `HEAD:src` equals
+  `3170498c:src`, and `run_arm.sh` passed `fm_require_code_lock` afterwards.
+
+### 13.4 The sequence that actually ran
+
+```bash
+export RAGAS_ENV_FILE=/home/a2rchi/.archi/.env.benchmark   # every shell
+W=scripts/benchmarking/feature_matrix
+
+# once per campaign: the QA dataset (105 bank + 5 anchors - 1 duplicate = 109 items)
+python scripts/benchmarking/ragas_bank_to_qa_dataset.py \
+    config/benchmarking/fasrc_ragas_queries.json \
+    --anchors examples/benchmarking/anchor_questions.json \
+    --out bench_out/feature_matrix/qa/fasrc_ragas_queries.qa-v2.json
+
+# smoke: a copy of 00-baseline.yaml (name STAYS fm-00) pointed at a 3-URL sources list and
+# a 3-row bank, in its own arms dir, then every wrapper against --stack fm-smoke
+$W/lock_campaign.sh bench_out/feature_matrix/smoke/00-baseline.yaml \
+    --arms-dir bench_out/feature_matrix/smoke \
+    --qa-dataset bench_out/feature_matrix/smoke/bank.smoke.qa-v2.json
+$W/run_arm.sh 00 bench_out/feature_matrix/smoke/00-baseline.yaml --stack fm-smoke
+$W/archive_run.sh 00 1 bench_out/feature_matrix/smoke/00-baseline.yaml --stack fm-smoke --wait
+$W/qa_arm.sh 00 bench_out/feature_matrix/smoke/00-baseline.yaml --stack fm-smoke \
+    --dataset bench_out/feature_matrix/smoke/bank.smoke.qa-v2.json
+python scripts/benchmarking/compare_runs.py <artifact> <artifact>
+printf 'y\n' | archi delete --name fm-smoke --rmi --rmv
+
+# campaign: re-lock on the real inputs, commit the pre-registration (G1), then arm 00
+$W/lock_campaign.sh config/benchmarking/feature_matrix/00-baseline.yaml \
+    --arms-dir config/benchmarking/feature_matrix \
+    --qa-dataset bench_out/feature_matrix/qa/fasrc_ragas_queries.qa-v2.json --relock
+git commit docs/eval/preregs/2026-09-feature-matrix.md     # G1; docs-only, lock survives
+$W/run_arm.sh 00 config/benchmarking/feature_matrix/00-baseline.yaml
+```
+
+Because the smoke stack is `fm-smoke` and not `fm-00`, its ledger rows and corpus pin sit
+under their own stack key: the campaign's `fm-00` still numbers its runs from 1 and pins its
+own corpus. Using `fm-00` for the smoke would have forced runs 2-4 and a stale pin.
+
 ## Appendix A — how to re-derive the numbers
 
 All from `~/Projects/archi-ragas-merge` (artifacts in `bench_out/` contain bare `NaN`;
