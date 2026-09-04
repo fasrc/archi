@@ -12,11 +12,12 @@ rules; the plan holds the protocol.
 |---|---|
 | Round ID | `2026-09-feature-matrix` |
 | Operator | Austin Swinney |
+| Host | `holygpu7c0717` (`archi.rc.fas.harvard.edu`), the production `dev` GPU host. Deviation from the plan's original claw pin, decided 2026-09-04 before the lock; recorded because benchmark artifacts do not carry the host ([#433](https://github.com/fasrc/archi/issues/433)) |
 | Date locked | _filled at lock, after Phase 0 (plan §6 step 3)_ |
 | Commit at lock | _filled at lock: the `dev` SHA every arm runs on_ |
 | Question bank | `config/benchmarking/fasrc_ragas_queries.json` (archi-config), 105 rows, all `status: draft`; git blob `99efd5b4d4f37dc696476be0f82113251987dc45`, sha256 `a116bd724d6f8ef99aeac96ff100ea63f72ee109dd048ffe86ebbe0dbffd4156` |
 | Anchors | `examples/benchmarking/anchor_questions.json`, 5 rows, sha256 `6b2fd99175b26011336a3159d23fa6991c90cfe51d1110067fbb890f8e80311e`; one `should_refuse` anchor duplicates a bank row → 109 questions asked |
-| Agent prompt | `config/agents/claw/fasrc-docs.md`, sha256 `ac22702ae6767c49ae7fdc65fb4c40211d97724c574585d1e321468377d64ce8` (byte-identical to the GPU host's `deploy/fasrc-dev/agents/fasrc-docs.md`) |
+| Agent prompt | `config/agents/claw/fasrc-docs.md`, sha256 `ac22702ae6767c49ae7fdc65fb4c40211d97724c574585d1e321468377d64ce8`, byte-identical to the GPU host's `deploy/fasrc-dev/agents/fasrc-docs.md`. **This was made true on 2026-09-04, not merely asserted:** the host served `fasrc-v2.md` (name `FASRC`, `search_vectorstore_hybrid` only) until that date, so the claim was false when this file was drafted. Production was migrated to this spec and the old one retired to `agents/archive/`; verified by a live cited chat answer. Consequence: the two extra tools (`search_local_files`, `search_metadata_index`) are now live in production and ride the still-open [#139](https://github.com/fasrc/archi/issues/139) context-budget gap — watch the degraded-row count |
 | Sources | `config/lists/sources.list`, sha256 `8d4590f4841a640f8bf32c413bc5cc189db338e4019cdcdbf795b633e0cb787f` |
 | Configs compared | `config/benchmarking/feature_matrix/00-baseline.yaml` vs each of `01-rerank-off`, `02-chunking-character`, `03-categorization-off`, `04-stemming-on`, `05a-k3`, `05b-k8`, `06-html-to-markdown-off`, `07-chunking-markdown` |
 | SUT | vLLM `palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4`, `temperature: 0.3`, `enable_thinking: false` |

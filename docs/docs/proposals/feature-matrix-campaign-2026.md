@@ -40,13 +40,13 @@ that the ledger records per run.
 |---|---|---|
 | Question bank | `config/benchmarking/fasrc_ragas_queries.json` (archi-config), 105 rows, all `status: draft` | git blob `99efd5b4d4f37dc696476be0f82113251987dc45`, sha256 `a116bd72…d4156` |
 | Anchors | `examples/benchmarking/anchor_questions.json`, 5 rows; one `should_refuse` row duplicates a bank row, so 109 questions are asked | sha256 `6b2fd991…0311e` |
-| Agent prompt | `config/agents/claw/fasrc-docs.md` — byte-identical to the GPU host's production spec (`deploy/fasrc-dev/agents/fasrc-docs.md`) | sha256 `ac22702a…4ce8` |
+| Agent prompt | `config/agents/claw/fasrc-docs.md` — byte-identical to the GPU host's production spec (`deploy/fasrc-dev/agents/fasrc-docs.md`). **Made true on 2026-09-04**: the host previously served `fasrc-v2.md` (name `FASRC`, `search_vectorstore_hybrid` only), which was retired to `agents/archive/`; production now serves this file, verified by a live cited answer | sha256 `ac22702a…4ce8` |
 | System under test | vLLM `palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4` at `http://archi.rc.fas.harvard.edu:8001/v1`, `temperature: 0.3`, `enable_thinking: false`, `context_window: 32768` | recorded in `config_version.key_settings` |
 | Judge, both evaluators | HUIT Bedrock `us.anthropic.claude-sonnet-4-5-20250929-v1:0`, timeout 300 s | recorded per artifact / QA profile snapshot |
 | Embedding | `HuggingFaceEmbeddings` → `sentence-transformers/all-MiniLM-L6-v2` | template default |
 | Sources | `config/lists/sources.list`, 152 non-comment lines | sha256 `8d4590f4…b787f` |
-| Code | one `dev` SHA for the whole campaign; `~/Projects/archi` is pulled to it before arm 00 | `metadata.code_version.digest`, identical on every artifact |
-| Host | this workstation (claw); every stack runs `--hostmode` on Postgres 5434 and data-manager 7882 | — |
+| Code | one `dev` SHA for the whole campaign; `/home/a2rchi/archi-openai-compat` is pulled to it before arm 00 | `metadata.code_version.digest`, identical on every artifact |
+| Host | **holygpu7c0717** (`archi.rc.fas.harvard.edu`), the production `dev` GPU host — operator decision 2026-09-04, a deviation from the original claw plan (§10). Every stack runs `--hostmode` on Postgres 5434 and data-manager 7882, which are free here; the production `dev` stack (7861) and both vLLM servers (8001/8002) stay up alongside | — |
 
 **Why this prompt.** Every goldenset run before this campaign used
 `config/agents/fasrc-inline-v1.md`. Its body is the same text, but its tool list lacks
@@ -163,9 +163,9 @@ For each feature (arm vs. baseline), in this order:
 
 ## 5. Protocol per arm
 
-All commands run from `~/Projects/archi` (so `config/...` and `examples/...` resolve),
+All commands run from `/home/a2rchi/archi-openai-compat` (so `config/...` and `examples/...` resolve),
 with `~/miniforge3/envs/archi` on `PATH`, the FASRC VPN up, and the judge key in the env
-file: `RAGAS_ENV_FILE=/home/austin/.archi/archi-ragas-205/.env`. The wrappers under
+file: `RAGAS_ENV_FILE=/home/a2rchi/.archi/.env.benchmark`. The wrappers under
 `scripts/benchmarking/feature_matrix/` are one step each; the runbook is this section.
 
 ### 5.1 Ingest arm (00, 02, 03, 04, 06, 07)
@@ -270,7 +270,7 @@ What it does, and why each step exists:
 ## 6. Order
 
 1. **Phase 0** ([§12](#12-prerequisites-phase-0)) complete: five PRs on `dev`, disk
-   reclaimed, config checkout on the new pin, `~/Projects/archi` pulled to the campaign SHA.
+   reclaimed, config checkout on the new pin, `/home/a2rchi/archi-openai-compat` pulled to the campaign SHA.
 2. **Smoke**: every wrapper requires a lock, so lock the smoke inputs first —
    `lock_campaign.sh <smoke copy of 00-baseline.yaml pointing at a 3-question bank> --qa-dataset <its converted bank>` —
    then run `fm-smoke` through every wrapper, `compare_runs.py` on its artifact against
@@ -396,6 +396,13 @@ Human record (filled as arms complete; one row per arm, baseline first):
   ingest stack before the next.
 - **Port collision.** The `archi-ragas-205` stack holds 5433/7881; the campaign uses
   5434/7882, so it can stay until the operator decides otherwise.
+- **Co-location with production (host deviation).** The arms share this box with the
+  production `dev` stack and both vLLM servers. Ingest and embedding are CPU-side and
+  the embedder is pinned `device: cpu`, so the GPUs stay with vLLM — but Time to Result
+  and Time to Ingest carry whatever else the host is doing. Latency is comparable
+  across arms only because every arm pays the same tax; it is not comparable with claw
+  numbers or with the 2026-08 runs. Artifacts do not record the host ([#433](https://github.com/fasrc/archi/issues/433)),
+  so the ledger records it by hand.
 - **Sources change under the campaign.** The closing baseline detects it via
   `corpus_fingerprint`; the pre-registration records the bank blob hash so bank edits are
   detectable too. All 105 bank rows are `draft` (no `source_hashes`), so the drift
@@ -403,7 +410,7 @@ Human record (filled as arms complete; one row per arm, baseline first):
 - **Parent-row accumulation** ([#411](https://github.com/fasrc/archi/issues/411)) does
   not apply: every ingest arm is a fresh stack with one ingest.
 - **The deploy clone is the code.** `~/miniforge3/envs/archi` is an editable install of
-  `~/Projects/archi`; `archi evaluate` builds images from that tree. It must sit on the
+  `/home/a2rchi/archi-openai-compat`; `archi evaluate` builds images from that tree. It must sit on the
   campaign SHA for the whole campaign, and `git_info`/`code_version.digest` prove it per
   artifact.
 - **Draft references.** The QA atoms derive from `reference` fields that no human has
@@ -437,7 +444,7 @@ No arm runs before all of these are on `dev` and done:
 | 4 | [#418](https://github.com/fasrc/archi/issues/418) — RAGAS bank → qa-dataset-v2 converter | the QA CLI refuses `user_input` rows; the atoms family cannot run on the bank |
 | 5 | [#419](https://github.com/fasrc/archi/issues/419) — `compare_runs.py` | every verdict in §4.4 is computed by it; a notebook snippet cannot enforce §7 |
 | 6 | Arm YAML files merged in archi-config and the deploy pin bumped (`deploy-pin-2026-09a`) | the on-pin checkout must carry the files `archi evaluate` reads |
-| 7 | Operator: reclaim disk; converge the config checkout to the required pin; pull `~/Projects/archi` to the campaign SHA | see §10 |
+| 7 | Operator: reclaim disk; converge the config checkout to the required pin; pull `/home/a2rchi/archi-openai-compat` to the campaign SHA | see §10 |
 
 ## Appendix A — how to re-derive the numbers
 
@@ -478,7 +485,7 @@ for i,j in ((0,1),(1,2),(0,2)):
 EOF
 ```
 
-Pins (§2), from `~/Projects/archi`:
+Pins (§2), from `/home/a2rchi/archi-openai-compat`:
 
 ```bash
 git -C config hash-object benchmarking/fasrc_ragas_queries.json
