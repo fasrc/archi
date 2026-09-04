@@ -1962,8 +1962,12 @@ class Benchmarker:
                 # questions ran -- not a fresh query, which would report the
                 # config as it stands now rather than as the arm used it.
                 running_config=getattr(self.chain, "config", None),
-                # Measured once, before the sweep, and stamped on every arm:
-                # all arms of one invocation share the corpus this built.
+                # Measured once, before the sweep, and stamped on every arm --
+                # there is one ingest wait per invocation, not one per arm.
+                # Ingestion can continue in the background, so a later arm may
+                # score a corpus this number did not build; that case is what
+                # `corpus_unchanged_at_endpoints` above reports, and both the
+                # reports and the docs say to read the two together.
                 ingest_wall_seconds=ingest_wall_seconds,
             )
             self.load_new_configuration()

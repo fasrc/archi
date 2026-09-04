@@ -406,6 +406,9 @@ def test_provenance_shows_time_to_ingest():
     assert "Time to ingest" in md
     assert "7351 s" in md
     assert "2h 2m 31s" in md
+    # The wait happens once, before the sweep, so a reader must not attribute
+    # the number to this arm's corpus in particular.
+    assert "every arm" in md
 
 
 def test_provenance_says_not_measured_for_a_reused_corpus():

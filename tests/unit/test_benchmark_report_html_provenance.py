@@ -191,6 +191,7 @@ def test_provenance_shows_time_to_ingest():
     assert "Time to ingest" in html
     assert "7351 s" in html
     assert "2h 2m 31s" in html
+    assert "every arm" in html
 
 
 def test_provenance_says_not_measured_for_a_reused_corpus():

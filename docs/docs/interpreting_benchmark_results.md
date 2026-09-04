@@ -612,7 +612,11 @@ Read them like this:
   progress to the one reporting `completed`. Time spent queued behind another
   data-manager task is therefore excluded, but everything after the ingest
   starts is included, so treat it as a ceiling on the ingest proper rather than
-  a phase-accurate figure.
+  a phase-accurate figure. There is **one ingest wait per invocation**, not one
+  per arm, so every arm of a `-cd` sweep carries the same number. Read it with
+  `corpus_unchanged_at_endpoints`: if that says the corpus changed mid-arm, a
+  background re-ingest landed after this measurement and the arm was not scored
+  against the corpus this figure paid for.
 
 Two caveats worth knowing:
 
