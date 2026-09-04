@@ -40,7 +40,7 @@ Standing notes for every task:
 
 ## 1. The helpers and the converter
 
-- [ ] 1.1 `model: opus` — Add the follower helpers to
+- [x] 1.1 `model: opus` — Add the follower helpers to
       `src/data_manager/collectors/processing.py`, placed directly above
       `_markdownify_deep_safe` and below `_promoted_fence_language`:
       `_SELF_SEPARATING_FOLLOWERS` (a `frozenset` of exactly `article`, `blockquote`, `br`,
