@@ -40,6 +40,7 @@ from src.utils.benchmark_resilience import (
 )
 from src.utils.benchmark_schema import (
     DEFAULT_ENABLED_METRICS,
+    json_safe,
     normalize_bank,
     required_fields_for_modes,
     score_metrics_per_eligibility,
@@ -535,7 +536,15 @@ class ResultHandler:
         if ResultHandler.leaderboard:
             output["leaderboard"] = ResultHandler.leaderboard
         with open(file_path, "w") as f:
-            json.dump(output, f, indent=4)
+            # An artifact that a standard JSON reader refuses to open is not
+            # usable as evidence, which is the whole point of the provenance
+            # work it carries. `json_safe` copies every non-finite float to
+            # `null`; `allow_nan=False` then makes a bare `NaN` impossible
+            # rather than merely unlikely — if anything ever slips past the
+            # copy, the harness raises here instead of writing invalid JSON.
+            # The copy is why `ResultHandler.results` is still NaN-bearing for
+            # `pair_ab_results` and `build_leaderboard` afterwards.
+            json.dump(json_safe(output), f, indent=4, allow_nan=False)
         return file_path
 
     @staticmethod
