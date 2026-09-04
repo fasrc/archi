@@ -539,6 +539,10 @@ bench_out/benchmarking-<name>-<timestamp>.json
 └── benchmarking_results[]     # one entry per config in a -cd sweep
     ├── configuration_file
     ├── config_version         # this arm's config identity (§5.E)
+    ├── ingest_wall_seconds    # cost of building this corpus (§5.E)
+    │                          #   float = seconds, harness-observed
+    │                          #   null  = no ingest seen (corpus reused)
+    │                          #   absent = artifact predates the field
     ├── total_results
     │   ├── aggregate_<metric>
     │   ├── <metric>_scored    # "71 of 73" — CHECK THIS (§3.4)
@@ -583,6 +587,7 @@ for Postgres or the config file to still exist.
 | `<arm>.config_version.key_settings` | per arm | Which settings define this arm? |
 | `<arm>.config_version.divergence_from_selected_file` | per arm | Did the run use the config you selected? |
 | `<arm>.corpus_fingerprint` | per arm | Did they see the same documents? (§3.3) |
+| `<arm>.ingest_wall_seconds` | per arm | What did building those documents cost? |
 
 Read them like this:
 
@@ -597,6 +602,15 @@ Read them like this:
   recorded configuration says `context_window: 32768`, because the agent reads
   Postgres while the harness wrote a YAML file. Its scores (relevancy 0.681,
   faithfulness 0.562) cannot be attributed to either setting.
+- **`ingest_wall_seconds`** → what the corpus above cost to build, in seconds.
+  Some settings — document categorization, chunking strategy — are paid for
+  almost entirely at ingest, and this is the only place that price is recorded.
+  Read the three states apart: a **float** is a measurement; **`null`** means no
+  ingest was observed, because the run found the corpus already built and
+  reused it; an **absent key** means the artifact predates the field. It is
+  *harness-observed* — the span from the benchmark's first ingestion-status
+  poll to the one reporting `completed` — so it includes data-manager start-up
+  and is a ceiling on the ingest proper, not a phase-accurate figure.
 
 Two caveats worth knowing:
 

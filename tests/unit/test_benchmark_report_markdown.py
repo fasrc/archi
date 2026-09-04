@@ -384,3 +384,44 @@ def test_markdown_renders_provenance_section():
     assert "matches" in md
     assert "cfg-digest-1" in md
     assert "code-digest-1" in md
+
+
+def _provenance_md(**overrides):
+    provenance = dict(_PROVENANCE)
+    provenance.update(overrides)
+    return format_markdown_output(
+        _CONFIG,
+        "ragas-bench",
+        "2026-08-28",
+        {"question_1": _ok_row()},
+        _TOTALS,
+        provenance,
+    )
+
+
+def test_provenance_shows_time_to_ingest():
+    """Seconds for arithmetic, h/m/s so a person can read it (#417)."""
+    md = _provenance_md(ingest_wall_seconds=7351.2)
+
+    assert "Time to ingest" in md
+    assert "7351 s" in md
+    assert "2h 2m 31s" in md
+
+
+def test_provenance_says_not_measured_for_a_reused_corpus():
+    """`null` = the run found the corpus already ingested. Not "0 seconds"."""
+    md = _provenance_md(ingest_wall_seconds=None)
+
+    assert "reused an existing corpus" in md
+    assert "not measured" in md
+    assert "0 s" not in md
+
+
+def test_provenance_says_not_recorded_for_an_older_artifact():
+    """Key absent = the artifact predates the field, which is a third thing."""
+    md = _provenance_md()
+
+    assert "ingest_wall_seconds" not in _PROVENANCE
+    assert "Time to ingest" in md
+    assert "predates the field" in md
+    assert "reused an existing corpus" not in md

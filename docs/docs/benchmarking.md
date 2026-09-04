@@ -183,6 +183,12 @@ hours on a loaded host. Under the old absolute deadline that run was killed at
 exactly 7200s while every one of its 1433 status polls was succeeding, two
 minutes short of finishing (issue #378).
 
+However long the wait turns out to be, it is recorded: every arm of the run
+carries `ingest_wall_seconds`, and both report formats show it in the **Run
+provenance** block as "Time to ingest". A run that finds the corpus already
+built records `null` there rather than `0` — see
+[Interpreting benchmark results](interpreting_benchmark_results.md).
+
 ---
 
 ## Results

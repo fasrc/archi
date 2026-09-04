@@ -274,3 +274,61 @@ def test_a_missing_prompt_file_is_left_as_its_path(tmp_path):
 
     recorded = ResultHandler.results[0]["configuration"]
     assert recorded["services"]["benchmarking"]["prompts"]["main"]["greet"] == missing
+
+
+def test_records_ingest_wall_seconds_on_the_arm(tmp_path, monkeypatch):
+    """The campaign's cost table reads this off the arm, beside the corpus id.
+
+    Two of the #396 toggles (`processing.categorization`, `chunking.strategy`)
+    are paid for almost entirely at ingest, so the arm record has to carry what
+    the ingest cost -- there is nowhere else to get it from a finished
+    artifact.
+    """
+    _pin_corpus(monkeypatch, "sha256:corpus")
+
+    ResultHandler.handle_results(
+        _write(tmp_path, FILE_CONFIG),
+        {},
+        {},
+        running_config=FILE_CONFIG,
+        ingest_wall_seconds=7351.2,
+    )
+
+    assert ResultHandler.results[0]["ingest_wall_seconds"] == 7351.2
+
+
+def test_records_null_not_zero_when_no_ingest_was_observed(tmp_path, monkeypatch):
+    """`null` says "no ingest was observed"; `0` would claim one took no time."""
+    _pin_corpus(monkeypatch, "sha256:corpus")
+
+    ResultHandler.handle_results(
+        _write(tmp_path, FILE_CONFIG),
+        {},
+        {},
+        running_config=FILE_CONFIG,
+        ingest_wall_seconds=None,
+    )
+
+    record = ResultHandler.results[0]
+    assert "ingest_wall_seconds" in record
+    assert record["ingest_wall_seconds"] is None
+
+
+def test_ingest_wall_seconds_is_not_copied_onto_the_run_metadata(tmp_path, monkeypatch):
+    """One source of truth. The value is per arm; a sweep runs several arms."""
+    _pin_corpus(monkeypatch, "sha256:corpus")
+    monkeypatch.setattr(
+        ResultHandler, "get_corpus_snapshot_id", staticmethod(lambda: "snap-1")
+    )
+    monkeypatch.setattr(ResultHandler, "metadata", {})
+
+    ResultHandler.handle_results(
+        _write(tmp_path, FILE_CONFIG),
+        {},
+        {},
+        running_config=FILE_CONFIG,
+        ingest_wall_seconds=7351.2,
+    )
+    ResultHandler.add_metadata()
+
+    assert "ingest_wall_seconds" not in ResultHandler.metadata

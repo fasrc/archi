@@ -344,6 +344,7 @@ class ResultHandler:
         *,
         running_config: Optional[Dict[str, Any]],
         corpus_before: Optional[str] = None,
+        ingest_wall_seconds: Optional[float] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -417,6 +418,13 @@ class ResultHandler:
             "corpus_fingerprint_before": corpus_before,
             "corpus_fingerprint": corpus_after,
             "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
+            # What the corpus above COST to build, in harness-observed seconds.
+            # Three readings, kept distinct on purpose: key absent = artifact
+            # predates the field; null = no ingest was observed (the run reused
+            # an existing corpus); a float = seconds. Never 0.0 for "not
+            # measured". Recorded per arm and nowhere else -- a sweep runs
+            # several arms, so a run-level copy would label them all with one.
+            "ingest_wall_seconds": ingest_wall_seconds,
             # Per arm, not per file. One invocation runs every config in the
             # sweep directory (the `while self.all_config_files` loop), so a
             # single version on the metadata block would label every arm with
@@ -1920,7 +1928,7 @@ class Benchmarker:
             }
 
     def run(self):
-        self.wait_for_ingestion_completion()
+        ingest_wall_seconds = self.wait_for_ingestion_completion()
 
         modes_being_run = set(self.benchmarking_configs["modes"])
 
@@ -1954,6 +1962,9 @@ class Benchmarker:
                 # questions ran -- not a fresh query, which would report the
                 # config as it stands now rather than as the arm used it.
                 running_config=getattr(self.chain, "config", None),
+                # Measured once, before the sweep, and stamped on every arm:
+                # all arms of one invocation share the corpus this built.
+                ingest_wall_seconds=ingest_wall_seconds,
             )
             self.load_new_configuration()
 
@@ -2212,8 +2223,17 @@ class Benchmarker:
         fetch: Optional[Callable[[str], Dict[str, Any]]] = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
-    ) -> None:
+    ) -> Optional[float]:
         """Block until the data-manager reports ingestion complete.
+
+        Returns the wall-clock seconds spent waiting, or `None` when no ingest
+        was observed at all -- the first *successful* poll already said
+        `completed`, so the run reused an existing corpus. Never `0.0`: that
+        would put a fabricated measurement where "not measured" belongs
+        (issue #417). The number is harness-observed, spanning the first poll
+        to the completed one, so it includes data-manager start-up; exact phase
+        timing needs `started_at`/`finished_at` in the status payload, which is
+        a data-manager change.
 
         `fetch`, `clock` and `sleep` are injection seams for the tests only;
         production calls this with no arguments.
@@ -2267,6 +2287,10 @@ class Benchmarker:
         last_state: Optional[str] = None
         last_step: Any = None
         last_error: Optional[BaseException] = None
+        # Whether any successful poll reported something other than "completed".
+        # False at the completed poll means the corpus was already ingested when
+        # this run started, so there is no ingest duration to report (#417).
+        observed_ingest = False
         attempt = 0
 
         logger.info(
@@ -2321,7 +2345,8 @@ class Benchmarker:
 
                 if state == "completed":
                     logger.info("Data-manager ingestion completed; starting benchmark.")
-                    return
+                    return clock() - start_time if observed_ingest else None
+                observed_ingest = True
                 if state == "error":
                     raise RuntimeError(
                         f"Data-manager ingestion failed at step '{step}': "
