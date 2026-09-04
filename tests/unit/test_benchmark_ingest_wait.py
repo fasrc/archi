@@ -192,6 +192,47 @@ def test_timeout_message_does_not_quote_a_fallen_through_url(monkeypatch):
     assert "Updating vectorstore" in message
 
 
+def test_the_timeout_names_the_error_from_the_url_that_had_been_serving(monkeypatch):
+    """Defect 2, second form: the LAST candidate tried is not the interesting one.
+
+    In `--hostmode` candidate #1 never resolves and #2 serves status. When #2
+    goes down, the loop falls through #3 and #4 as well, and a single
+    `last_error` ends up holding #4's DNS failure -- so the message names #2 as
+    the last good URL and then quotes an error from a host that was never
+    involved. That is the same misdiagnosis this issue exists to remove, one
+    layer down: the operator needs to know why *the URL that was working*
+    stopped.
+    """
+    _budget_env(monkeypatch, stall="30", max_wait="0", poll="5")
+    clock = FakeClock()
+    serving = {"n": 0}
+
+    def fetch(url):
+        if url == DM_INTERNAL:
+            raise url_error.URLError("DNS lookup failed for data-manager")
+        if url == LOCAL_INTERNAL:
+            serving["n"] += 1
+            if serving["n"] <= 3:
+                return _running()
+            raise url_error.URLError("[Errno 104] Connection reset by peer")
+        if url == "http://localhost:7881/api/ingestion/status":
+            raise url_error.URLError("[Errno 111] Connection refused")
+        raise url_error.URLError("Temporary failure in name resolution")
+
+    with pytest.raises(TimeoutError) as excinfo:
+        _bench().wait_for_ingestion_completion(
+            fetch=fetch, clock=clock, sleep=clock.sleep
+        )
+
+    message = str(excinfo.value)
+    assert LOCAL_INTERNAL in message
+    assert "Connection reset by peer" in message, "the serving URL's own failure"
+    # None of the three URLs the loop merely fell through may be quoted.
+    assert "Temporary failure in name resolution" not in message
+    assert "Connection refused" not in message
+    assert "DNS lookup failed" not in message
+
+
 def test_absolute_ceiling_stops_an_ingest_that_never_completes(monkeypatch):
     """ "Alive but stuck" still ends -- BENCH_INGEST_MAX_WAIT is the backstop."""
     _budget_env(monkeypatch, stall="3600", max_wait="100", poll="5")

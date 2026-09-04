@@ -150,9 +150,12 @@ The two budgets answer three different failures, which is why neither one is a
 plain "give up after N seconds":
 
 - **The endpoint went away.** No status URL answers any more.
-  `BENCH_INGEST_WAIT_TIMEOUT` ends the run after that much silence, and the
-  error names the last URL that *did* answer plus the exception now being
-  raised — never one from a candidate URL the harness already fell past.
+  `BENCH_INGEST_WAIT_TIMEOUT` ends the run after that much silence. Errors are
+  kept per candidate URL, so the message names the URL that *had* been serving
+  status and quotes **that URL's own** failure — never one from a candidate the
+  harness merely fell through on its way there, and never the last fallback's
+  unrelated DNS error. If nothing ever answered, each candidate is listed with
+  its own error instead, since then they are all separate facts.
 - **The ingest never started.** The endpoint answers, but with `state=pending`,
   with a state the harness does not recognize, or with `state=running
   step=initializing` — the last of which means this ingest is queued behind
