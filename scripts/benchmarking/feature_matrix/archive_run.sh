@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Record one finished RAGAS run in the campaign ledger (plan §5.1, §9).
+#
+#   archive_run.sh <arm> <run> [--stack <name>] [--wait] [--new-corpus]
+#
+# Waits (with --wait) for benchmarking-<stack> to exit, takes the newest artifact
+# benchmarking-<stack>-*.json in FM_OUT, and REFUSES when
+#   - the artifact's config_version.divergence_from_selected_file is non-empty (the run
+#     did not use the settings you selected — Procedure E of interpreting_benchmark_results),
+#   - a corpus pin exists for the stack and the artifact's fingerprint differs (unless
+#     --new-corpus, for the closing baseline's fresh ingest on a reused stack name).
+# On run 1 of a stack it writes the corpus pin every later re-run and re-seed checks.
+# Appends: fingerprint, snapshot id, config + code digests, ingest_wall_seconds, live
+# document and chunk counts (from the stack's Postgres), per-metric scored counts
+# recomputed from finite values (#279), and the degraded-row count.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+ARM="${1:-}"; fm_require_arm "$ARM"; RUN="${2:-}"; [[ "$RUN" =~ ^[0-9]+$ ]] || fm_die "usage: archive_run.sh <arm> <run> [--stack <name>] [--wait] [--new-corpus]"; shift 2
+STACK="fm-$ARM"; WAIT=false; NEW_CORPUS=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --stack) STACK="${2:?}"; shift 2 ;;
+    --wait) WAIT=true; shift ;;
+    --new-corpus) NEW_CORPUS=true; shift ;;
+    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) fm_die "unknown option $1" ;;
+  esac
+done
+
+if [ "$WAIT" = true ]; then
+  while [ "$(fm_container_state "benchmarking-$STACK")" = "running" ]; do sleep "${FM_POLL_SECONDS:-30}"; done
+fi
+[ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "benchmarking-$STACK is still running (use --wait)"
+
+ARTIFACT="$(ls -t "$FM_OUT"/benchmarking-"$STACK"-*.json 2>/dev/null | head -1 || true)"
+[ -n "$ARTIFACT" ] || fm_die "no artifact benchmarking-$STACK-*.json under $FM_OUT"
+
+DOCS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "select count(*) from documents where is_deleted is not true;" 2>/dev/null | tr -d '[:space:]' || echo null)"
+CHUNKS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "select count(*) from document_chunks;" 2>/dev/null | tr -d '[:space:]' || echo null)"
+[ -n "$DOCS" ] || DOCS=null; [ -n "$CHUNKS" ] || CHUNKS=null
+
+PIN_FILE="$(fm_pin_file "$STACK")"
+ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" \
+  FM_PIN_FILE="$PIN_FILE" FM_NEW_CORPUS="$NEW_CORPUS" FM_FINISHED="$(fm_now)" "$FM_PYTHON" - <<'EOF'
+import json, math, os, sys
+p = os.environ["FM_ARTIFACT"]
+d = json.loads(open(p).read().replace("NaN", "null"))          # pre-#279 artifacts carry bare NaN
+arms = d["benchmarking_results"]
+if len(arms) != 1:
+    print(f"expected one arm in {p}, found {len(arms)} — a stray file in the stack's configs/ ran as an arm", file=sys.stderr); sys.exit(2)
+arm = arms[0]
+cv = arm.get("config_version") or {}
+div = cv.get("divergence_from_selected_file")
+if div:
+    print(f"REFUSED: the run did not use the selected settings — divergence_from_selected_file = {div}", file=sys.stderr); sys.exit(2)
+fp = arm.get("corpus_fingerprint") or (d.get("metadata") or {}).get("corpus_fingerprint")
+if not isinstance(fp, str) or fp.startswith("<unavailable"):
+    print(f"REFUSED: no usable corpus_fingerprint in {p} (got {fp!r})", file=sys.stderr); sys.exit(2)
+pin_file, run = os.environ["FM_PIN_FILE"], int(os.environ["FM_RUN"])
+if os.path.exists(pin_file):
+    pin = open(pin_file).read().strip()
+    if fp != pin and os.environ["FM_NEW_CORPUS"] != "true":
+        print(f"REFUSED: fingerprint {fp} != pin {pin} for this stack (pass --new-corpus only for a deliberate fresh ingest)", file=sys.stderr); sys.exit(2)
+    if fp != pin:
+        open(pin_file, "w").write(fp + "\n")
+else:
+    open(pin_file, "w").write(fp + "\n")
+rows = arm.get("single_question_results") or {}
+def finite(x): return isinstance(x, (int, float)) and math.isfinite(x)
+metrics = sorted({k for r in rows.values() for k in r if k in ("answer_relevancy", "faithfulness", "context_precision", "context_recall", "answer_correctness")})
+scored = {m: f"{sum(1 for r in rows.values() if r.get('status', 'ok') == 'ok' and finite(r.get(m)))} of {len(rows)}" for m in metrics}
+def num(s):
+    try: return int(s)
+    except (TypeError, ValueError): return None
+entry = {
+    "arm": os.environ["FM_ARM"], "kind": "ragas", "run": run, "stack": os.environ["FM_STACK"],
+    "finished": os.environ["FM_FINISHED"], "artifact": p,
+    "corpus_fingerprint": fp, "corpus_snapshot_id": (d.get("metadata") or {}).get("corpus_snapshot_id"),
+    "config_digest": cv.get("digest"), "code_digest": ((d.get("metadata") or {}).get("code_version") or {}).get("digest"),
+    "ingest_wall_seconds": arm.get("ingest_wall_seconds", "not recorded"),
+    "documents": num(os.environ["FM_DOCS"]), "chunks": num(os.environ["FM_CHUNKS"]),
+    "questions": len(rows), "degraded": sum(1 for r in rows.values() if r.get("status") == "degraded"),
+    "scored": scored,
+    "aggregates": {m: arm.get("total_results", {}).get(f"aggregate_{m}") for m in metrics},
+}
+print(json.dumps(entry))
+EOF
+)"
+fm_ledger_append "$ENTRY"
+fm_log "archived arm $ARM run $RUN: $ARTIFACT"
+FM_ENTRY="$ENTRY" "$FM_PYTHON" - <<'EOF'
+import json, os
+e = json.loads(os.environ["FM_ENTRY"])
+print("    fingerprint %s  docs %s  chunks %s  degraded %s  ingest_s %s"
+      % (e["corpus_fingerprint"], e["documents"], e["chunks"], e["degraded"], e["ingest_wall_seconds"]))
+for m, v in e["scored"].items():
+    print("    %-18s %s   agg %s" % (m, v, e["aggregates"][m]))
+EOF

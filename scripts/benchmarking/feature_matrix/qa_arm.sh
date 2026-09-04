@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Run the QA (gold-atoms) evaluator against a feature-matrix stack (plan §5.3).
+#
+#   qa_arm.sh <arm> [--stack <name>] [--run N] [--dataset <qa-v2.json>] [--profile <yaml>]
+#
+# 1. Writes a secret-free agent config from the stack's rendered configs/config.yaml with
+#    services.chat_app.{agent_class,default_provider,default_model} overwritten from
+#    services.benchmarking.{agent_class,provider,model}. An evaluate stack renders the
+#    template defaults into chat_app (CMSCompOpsAgent / local / llama3.2); the QA CLI reads
+#    chat_app, so without this step it scores the wrong agent against a nonexistent Ollama.
+# 2. Runs `archi eval qa` against the stack's Postgres and data-manager (host network),
+#    with the production spec, the campaign judge profile, one attempt per question, one
+#    run worker (matches the harness's sequential calls, so duration_ms ~ time_elapsed).
+# Never run concurrently with a RAGAS run on the same stack: latency would be shared.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+ARM="${1:-}"; fm_require_arm "$ARM"; shift
+STACK="fm-$ARM"; RUN=1
+DATASET="$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
+PROFILE="config/benchmarking/feature_matrix/qa/evaluator-profile.huit.yaml"
+SPEC="${FM_AGENT_SPEC:-config/agents/claw/fasrc-docs.md}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --stack) STACK="${2:?}"; shift 2 ;;
+    --run) RUN="${2:?}"; shift 2 ;;
+    --dataset) DATASET="${2:?}"; shift 2 ;;
+    --profile) PROFILE="${2:?}"; shift 2 ;;
+    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) fm_die "unknown option $1" ;;
+  esac
+done
+STACK_DIR="$(fm_stack_dir "$STACK")"
+RENDERED="$STACK_DIR/configs/config.yaml"
+[ -f "$RENDERED" ] || fm_die "no rendered config at $RENDERED"
+[ -f "$DATASET" ] || fm_die "QA dataset not found: $DATASET — convert the bank first: scripts/benchmarking/ragas_bank_to_qa_dataset.py (fasrc/archi#418)"
+[ -f "$PROFILE" ] || fm_die "evaluator profile not found: $PROFILE"
+[ -f "$SPEC" ] || fm_die "agent spec not found: $SPEC"
+[ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "a RAGAS run is in flight on $STACK; QA runs are serial"
+[ -f "$STACK_DIR/secrets/pg_password.txt" ] || fm_die "no $STACK_DIR/secrets/pg_password.txt"
+
+mkdir -p "$FM_OUT/qa"
+AGENT_CFG="$FM_OUT/qa/$ARM.agent-config.yaml"
+FM_RENDERED="$RENDERED" FM_AGENT_CFG="$AGENT_CFG" "$FM_PYTHON" - <<'EOF'
+import os, yaml
+c = yaml.safe_load(open(os.environ["FM_RENDERED"]))
+b = c["services"]["benchmarking"]; ca = c["services"].setdefault("chat_app", {})
+ca["agent_class"] = b["agent_class"]
+ca["default_provider"] = b["provider"]
+ca["default_model"] = b["model"]
+# the console refuses a config that carries its own evaluations block; the CLI does not
+# need it either
+ca.pop("evaluations", None)
+with open(os.environ["FM_AGENT_CFG"], "w") as f:
+    yaml.safe_dump(c, f, sort_keys=False)
+print(f"agent config: {ca['agent_class']} / {ca['default_provider']} / {ca['default_model']}")
+EOF
+
+OUT_DIR="$FM_OUT/qa/$STACK-arm$ARM-r$RUN"
+[ ! -e "$OUT_DIR" ] || fm_die "output dir exists: $OUT_DIR (pick --run N+1)"
+STARTED="$(fm_now)"
+fm_log "QA run for arm $ARM on $STACK → $OUT_DIR"
+PG_PASSWORD_FILE="$STACK_DIR/secrets/pg_password.txt" \
+HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}" \
+OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
+"$FM_ARCHI" eval qa \
+  --dataset "$DATASET" \
+  --agent-config "$AGENT_CFG" \
+  --agent-spec "$SPEC" \
+  --evaluator-profile "$PROFILE" \
+  --output-dir "$OUT_DIR" \
+  --attempts 1 --run-workers 1 --score-workers "${FM_SCORE_WORKERS:-4}"
+fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s"}' \
+  "$ARM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$DATASET" "$PROFILE" "$SPEC")"
+fm_log "done; report: $OUT_DIR/report.md  summary: $OUT_DIR/summary.json"

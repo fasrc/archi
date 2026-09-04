@@ -138,6 +138,7 @@ _diff_is_formatting_only() {
 # scripts/ cannot silently enrol it in the gate.
 for _sh_suite in \
   scripts/benchmarking/test_goldenset_report_cron.sh \
+  scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh \
   scripts/ci/test_pr_readiness_labels.sh; do
   [ -f "$_sh_suite" ] && bash "$_sh_suite"
 done

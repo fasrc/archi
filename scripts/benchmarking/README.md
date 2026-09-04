@@ -39,6 +39,31 @@ lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
   the data manager's data directory passed as `--data-root`. Supports the #396
   feature matrix and the `chunking.chunk_overlap` key (#403).
 
+## Feature-matrix runbook wrappers (`feature_matrix/`)
+
+One thin wrapper per step of the #396 campaign protocol
+([`docs/docs/proposals/feature-matrix-campaign-2026.md`](../../docs/docs/proposals/feature-matrix-campaign-2026.md),
+§5); the arm configs live in archi-config under `config/benchmarking/feature_matrix/`.
+
+- **`run_arm.sh <arm> <arm.yaml>`** — `archi evaluate -n fm-<arm> … --hostmode` (deploy,
+  ingest, run). **`run_arm.sh <arm> --rerun`** re-runs only the benchmark container on the
+  existing stack after proving the corpus fingerprint still equals the recorded pin.
+- **`reseed_arm.sh <arm> <arm.yaml> [--stack fm-00]`** — switches a running stack to a
+  retrieval-side arm without re-ingesting: copies the arm's `hierarchical_rerank` keys into
+  the rendered config, re-runs `config-seed`, starts the benchmark container. Refuses an arm
+  whose change is ingest-side (chunking, processing, stemming) — a re-seed cannot re-chunk
+  what is already stored.
+- **`qa_arm.sh <arm> [--stack …]`** — `archi eval qa` against the same stack, with the
+  rendered config's `chat_app` SUT fields overwritten from `services.benchmarking` (an
+  evaluate stack renders the template defaults there) and the campaign judge profile.
+- **`archive_run.sh <arm> <run> [--wait]`** — records a finished run in
+  `bench_out/feature_matrix/ledger.json`: fingerprint, digests, ingest seconds, live
+  document and chunk counts, scored counts recomputed from finite values. Refuses a run
+  whose `divergence_from_selected_file` is non-empty, writes the corpus pin on run 1, and
+  refuses a later run whose fingerprint drifted.
+- **`test_feature_matrix_wrappers.sh`** — hermetic self-test (stubbed `docker`/`archi`,
+  temp stack), run by `scripts/gate.sh`.
+
 ## Analysis and run helpers
 
 The remaining scripts (notebooks, prompt-sweep generation, the Argilla push/reset
