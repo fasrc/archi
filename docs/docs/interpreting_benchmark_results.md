@@ -609,14 +609,23 @@ Read them like this:
   ingest was observed while the run waited, which normally means it found the
   corpus already built; an **absent key** means the artifact predates the field.
   It is *harness-observed* — the span from the first status poll reporting
-  progress to the one reporting `completed`. Time spent queued behind another
-  data-manager task is therefore excluded, but everything after the ingest
-  starts is included, so treat it as a ceiling on the ingest proper rather than
-  a phase-accurate figure. There is **one ingest wait per invocation**, not one
-  per arm, so every arm of a `-cd` sweep carries the same number. Read it with
-  `corpus_unchanged_at_endpoints`: if that says the corpus changed mid-arm, a
-  background re-ingest landed after this measurement and the arm was not scored
-  against the corpus this figure paid for.
+  progress to the one reporting `completed` — and it is an **approximation, not
+  a measurement**, with error in both directions. Ingestion that ran before the
+  benchmark container started polling is missing from it, because the harness
+  cannot see backwards; non-ingest time after polling began is included in it,
+  because a phase boundary is all the status payload reports. Time queued
+  behind another data-manager task is excluded. Use it to compare arms of the
+  same shape, not as the ingest's true duration; an exact figure needs
+  `started_at`/`finished_at` from the data-manager (#428).
+
+  There is **one ingest wait per invocation**, not one per arm, so every arm of
+  a `-cd` sweep carries the same number. The check that tells you whether it
+  applies to a given arm is comparing `corpus_fingerprint` **across arms** — if
+  they differ, a background re-ingest landed mid-sweep and this figure
+  describes only the first arm's corpus. Do **not** use
+  `corpus_unchanged_at_endpoints` for this: a re-ingest that lands wholly
+  between two arms leaves that boolean `true` on both sides, because each arm
+  samples the corpus only at its own two endpoints.
 
 Two caveats worth knowing:
 

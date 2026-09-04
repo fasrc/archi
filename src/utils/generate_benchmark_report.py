@@ -195,13 +195,15 @@ def format_provenance_html(provenance):
     else:
         ingest_line = (
             "<p class='provenance-ok'>Time to ingest: "
-            f"<strong>{_format_seconds(ingest)}</strong>, harness-observed "
-            "(first poll reporting progress to the one reporting completion, "
-            "so queue time is excluded but data-manager work either side of "
-            "the ingest is not). Measured once before the sweep, so every arm "
-            "of this run carries the same figure; if the corpus line above "
-            "says the corpus changed, this is not the ingest that built "
-            "it.</p>"
+            f"<strong>{_format_seconds(ingest)}</strong> &mdash; the span from "
+            "the first status poll reporting progress to the one reporting "
+            "completion. An <strong>approximation</strong>, not a measurement: "
+            "ingestion that ran before this benchmark began polling is "
+            "missing, and non-ingest time after it began is included. Measured "
+            "once before the sweep, so every arm of this run carries the same "
+            "figure &mdash; where arms report different "
+            "<code>corpus_fingerprint</code> values, it describes only the "
+            "first.</p>"
         )
 
     return (
@@ -1053,12 +1055,14 @@ def format_provenance_markdown(provenance):
         )
     else:
         lines.append(
-            f"⏱️ Time to ingest: **{_format_seconds(ingest)}**, "
-            "harness-observed (first poll reporting progress to the one "
-            "reporting completion, so queue time is excluded). Measured once "
-            "before the sweep, so every arm of this run carries the same "
-            "figure; if the corpus line above says the corpus changed, this is "
-            "not the ingest that built it."
+            f"⏱️ Time to ingest: **{_format_seconds(ingest)}** — the span from "
+            "the first status poll reporting progress to the one reporting "
+            "completion. An **approximation**, not a measurement: ingestion "
+            "that ran before this benchmark began polling is missing, and "
+            "non-ingest time after it began is included. Measured once before "
+            "the sweep, so every arm of this run carries the same figure — "
+            "where arms report different `corpus_fingerprint` values, it "
+            "describes only the first."
         )
 
     version_md = format_version_markdown(provenance)

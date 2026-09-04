@@ -407,8 +407,15 @@ def test_provenance_shows_time_to_ingest():
     assert "7351 s" in md
     assert "2h 2m 31s" in md
     # The wait happens once, before the sweep, so a reader must not attribute
-    # the number to this arm's corpus in particular.
+    # the number to this arm's corpus in particular. The check that catches
+    # that is comparing `corpus_fingerprint` across arms -- NOT
+    # `corpus_unchanged_at_endpoints`, which reads True on both sides of a
+    # re-ingest that lands wholly between two arms.
     assert "every arm" in md
+    assert "corpus_fingerprint" in md
+    # Nor is it a clean bound in either direction: work before the first poll
+    # is missing, non-ingest time after it is included.
+    assert "approximation" in md
 
 
 def test_provenance_says_not_measured_for_a_reused_corpus():

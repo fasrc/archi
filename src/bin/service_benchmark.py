@@ -1965,9 +1965,10 @@ class Benchmarker:
                 # Measured once, before the sweep, and stamped on every arm --
                 # there is one ingest wait per invocation, not one per arm.
                 # Ingestion can continue in the background, so a later arm may
-                # score a corpus this number did not build; that case is what
-                # `corpus_unchanged_at_endpoints` above reports, and both the
-                # reports and the docs say to read the two together.
+                # score a corpus this number did not build. The signal for that
+                # is `corpus_fingerprint` differing ACROSS arms, not
+                # `corpus_unchanged_at_endpoints`: a re-ingest landing wholly
+                # between two arms leaves that boolean True on both sides.
                 ingest_wall_seconds=ingest_wall_seconds,
             )
             self.load_new_configuration()
@@ -2238,9 +2239,11 @@ class Benchmarker:
         The span runs from the first poll `_ingest_is_progressing` accepts to
         the one reporting `completed`, so queue time behind another holder of
         `ingestion_lock` is excluded but everything after work starts is
-        included. It is still harness-observed and therefore a ceiling on the
-        ingest proper; exact phase timing needs `started_at`/`finished_at` in
-        the status payload, which is a data-manager change.
+        included. It approximates the ingest rather than measuring it, and errs
+        in both directions: ingestion that ran before this container started
+        polling cannot be seen at all, and non-ingest time after polling began
+        is counted. An exact figure needs `started_at`/`finished_at` in the
+        status payload, which is a data-manager change (#428).
 
         `fetch`, `clock` and `sleep` are injection seams for the tests only;
         production calls this with no arguments.
