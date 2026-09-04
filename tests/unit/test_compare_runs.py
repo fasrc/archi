@@ -26,6 +26,7 @@ answer would silently pass*, not to decorate the implementation:
 import itertools
 import json
 import math
+import re
 import statistics
 import sys
 
@@ -558,23 +559,23 @@ def test_measured_sigma_covers_the_same_questions_as_the_paired_table(_artifact)
     # The bank table excludes anchors by default, so a sigma measured over the
     # full arm describes a different population than the deltas it judges: a
     # noisy anchor would widen the threshold and hide a real bank regression.
-    def replicate(anchor_score):
+    def replicate(bank_score, anchor_score):
         return _artifact(
             [
-                _row("bank a", faithfulness=0.50),
-                _row("bank b", faithfulness=0.50),
+                _row("bank a", faithfulness=bank_score),
+                _row("bank b", faithfulness=bank_score),
                 _row("tripwire", faithfulness=anchor_score),
             ],
             fingerprint="corpus-1",
         )
 
-    files = [str(replicate(0.0)), str(replicate(1.0))]
+    files = [str(replicate(0.50, 0.0)), str(replicate(0.52, 1.0))]
 
     over_bank = cr.noise_floor_from_runs(files, questions=["bank a", "bank b"])
     over_everything = cr.noise_floor_from_runs(files)
 
-    assert over_bank["faithfulness"] == pytest.approx(0.0)
-    assert over_everything["faithfulness"] > 0.2
+    assert over_bank["faithfulness"] == pytest.approx(statistics.stdev([0.50, 0.52]))
+    assert over_everything["faithfulness"] > 5 * over_bank["faithfulness"]
 
 
 def test_noise_floor_from_runs_needs_at_least_two_replicates(_artifact):
@@ -1233,27 +1234,6 @@ def test_scored_counts_flag_a_wrong_denominator(_artifact):
     assert "DENOMINATOR" in row["flag"]
 
 
-def test_recomputed_source_accuracy_skips_degraded_rows(_artifact):
-    # The harness deliberately does not run source matching on a degraded row,
-    # so its sources carry no `matched` key. Counting it would read as a miss
-    # and drag the recomputation below the number it is meant to check.
-    rows = [
-        _row("hit", sources=[{"url": "u1", "matched": True}]),
-        _row(
-            "degraded",
-            status="degraded",
-            sources=[{"url": "u2"}],
-        ),
-    ]
-    arm = cr.load_arms([str(_artifact(rows))])[0]
-
-    recomputed = cr.recomputed_source_accuracy(arm)
-
-    assert recomputed["scored"] == 1
-    assert recomputed["hits"] == 1
-    assert recomputed["accuracy"] == pytest.approx(1.0)
-
-
 def test_percentile_uses_nearest_rank():
     values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
 
@@ -1692,3 +1672,223 @@ def test_refusal_heuristic_reads_the_real_no_coverage_phrasings():
 
     assert cr.refusal_verdict(first_person)[0] == "PASS"
     assert cr.refusal_verdict(impersonal)[0] == "PASS"
+
+
+def test_a_degraded_source_bearing_row_is_a_miss_not_an_exclusion(_artifact):
+    # Reversal of an earlier review round. The producer's denominator is
+    # `_source_scorable_count` — "questions that declare expected sources",
+    # counted from the bank regardless of status, whose docstring says "a failed
+    # retrieval still registers as a miss rather than quietly vanishing from the
+    # average" — and `source_hits(None, ...)` contributes zero hits for a
+    # degraded row. Excluding such a row reports 1/1 where the artifact says 1/2.
+    rows = [
+        _row("hit", sources=[{"url": "u1", "matched": True}]),
+        _row("degraded", status="degraded", sources=[{"url": "u2"}]),
+        _row("declares nothing"),
+    ]
+    arm = cr.load_arms([str(_artifact(rows))])[0]
+
+    recomputed = cr.recomputed_source_accuracy(arm)
+
+    assert recomputed["scored"] == 2  # the zero-source row stays out
+    assert recomputed["hits"] == 1
+    assert recomputed["accuracy"] == pytest.approx(0.5)
+
+
+def test_noise_replicates_refuse_the_same_file_under_two_spellings(
+    _artifact, tmp_path, monkeypatch
+):
+    # A duplicate guard that keys on the caller's path spelling is bypassed by a
+    # relative path, or a symlink, and the identical run is counted twice.
+    path = _artifact([_row("q1", faithfulness=0.5)], fingerprint="corpus-1")
+    link = tmp_path / "same_run.json"
+    link.symlink_to(path)
+
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.noise_floor_from_runs([str(path), str(link)])
+
+    assert "twice" in str(excinfo.value)
+
+
+def test_g8_does_not_call_an_unscored_anchor_held(_artifact, anchors_file, capsys):
+    # A tripwire that could not be scored is not a tripwire that held. An
+    # easy_retrieve anchor whose candidate row is degraded produces no metrics,
+    # so it raised no alarm and used to read as a pass.
+    base = str(
+        _artifact(
+            [_row("tripwire", context_recall=0.95), _row("bank a", faithfulness=0.5)],
+            fingerprint="corpus-1",
+        )
+    )
+    treat = str(
+        _artifact(
+            [
+                _row("tripwire", status="degraded"),
+                _row("bank a", faithfulness=0.5),
+            ],
+            fingerprint="corpus-1",
+        )
+    )
+    anchors = anchors_file([_anchor("tripwire", "easy_retrieve")])
+
+    assert cr.main([base, treat, "--anchors", anchors]) == cr.EXIT_OK
+
+    line = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("| G8 ")
+    ][0]
+    assert "| pass |" not in line
+    assert "unscored" in line
+
+
+def test_g4_refuses_arms_graded_against_a_different_reference(_artifact, capsys):
+    # Same question texts, different ground truth: answer_correctness and both
+    # context metrics were graded against different truth, so a bank edit would
+    # read as a system delta. G4 is about the graded set, not the key set.
+    base = str(
+        _artifact(
+            [_row("q1", reference="use --gres=gpu:1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", reference="use --gpus-per-node=1", faithfulness=0.9)],
+            fingerprint="corpus-1",
+        )
+    )
+
+    assert cr.main([base, treat]) == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "reference_answer" in err
+    assert "G4" in err
+
+
+def test_g4_refuses_arms_whose_declared_sources_differ(_artifact, capsys):
+    # The declared sources are the source-accuracy ground truth.
+    base = str(
+        _artifact(
+            [_row("q1", sources=[{"url": "u1", "matched": True}])],
+            fingerprint="corpus-1",
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", sources=[{"url": "u2", "matched": True}])],
+            fingerprint="corpus-1",
+        )
+    )
+
+    assert cr.main([base, treat]) == cr.EXIT_GATE
+    assert "declared source" in capsys.readouterr().err
+
+
+def test_parse_noise_floor_refuses_a_metric_named_twice():
+    # The later value silently won, so `faithfulness=0.2,faithfulness=0.001`
+    # lowered the G7 threshold with nothing saying the input was ambiguous.
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.parse_noise_floor("faithfulness=0.2,faithfulness=0.001")
+
+    assert "faithfulness" in str(excinfo.value)
+
+
+def test_a_measured_sigma_of_zero_is_refused(_artifact):
+    # Replicates that agree exactly do not prove zero run-to-run noise; they
+    # make the |mean| > 2*sigma half of G7 vacuous.
+    one = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="corpus-1"))
+    two = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="corpus-1"))
+
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.noise_floor_from_runs([one, two])
+
+    assert "0" in str(excinfo.value)
+    assert "faithfulness" in str(excinfo.value)
+
+
+def test_sigma_is_measured_on_rows_every_arm_and_replicate_could_score(_artifact):
+    # sigma must not be averaged over rows that never entered a paired delta.
+    base = str(
+        _artifact(
+            [_row("paired", faithfulness=0.50), _row("unpaired", faithfulness=0.50)],
+            fingerprint="corpus-1",
+        )
+    )
+    treat = str(
+        _artifact(
+            [
+                _row("paired", faithfulness=0.60),
+                _row("unpaired", faithfulness=float("nan")),
+            ],
+            fingerprint="corpus-1",
+        )
+    )
+    # Replicates agree on "paired" and differ wildly on "unpaired": a sigma that
+    # still covered "unpaired" would be large, one restricted to the compared
+    # population is not measurable at all here (it would be zero) and refused.
+    rep_a = str(
+        _artifact(
+            [_row("paired", faithfulness=0.55), _row("unpaired", faithfulness=0.00)],
+            fingerprint="corpus-1",
+        )
+    )
+    rep_b = str(
+        _artifact(
+            [_row("paired", faithfulness=0.55), _row("unpaired", faithfulness=1.00)],
+            fingerprint="corpus-1",
+        )
+    )
+    arms = cr.load_arms([base, treat])
+    replicates = cr.load_noise_replicates([rep_a, rep_b])
+
+    population = cr.sigma_population(
+        arms, replicates, "faithfulness", ["paired", "unpaired"]
+    )
+
+    assert population == ["paired"]
+
+
+def test_qa_run_refuses_two_directories_for_one_arm(_artifact, tmp_path):
+    # The QA item pass overrides the refusal heuristic and feeds G8, so a
+    # last-write-wins duplicate could flip a candidate from FAIL to PASS.
+    rows = [_row("q1", faithfulness=0.5)]
+    base = str(_artifact(rows, fingerprint="corpus-1"))
+    treat = str(_artifact(rows, fingerprint="corpus-1"))
+    first = _qa_run(tmp_path / "one", "qa-a")
+    second = _qa_run(tmp_path / "two", "qa-b")
+    arms = cr.load_arms([base, treat])
+
+    code = cr.main(
+        [
+            base,
+            treat,
+            "--qa-run",
+            f"{arms[0].label}={first}",
+            "--qa-run",
+            f"{arms[0].label}={second}",
+        ]
+    )
+
+    assert code == cr.EXIT_USAGE
+
+
+def test_table_cells_survive_a_pipe_and_a_newline(_artifact, anchors_file, capsys):
+    # A question containing `|` or a newline used to split into extra columns or
+    # physical rows, corrupting the evidence report. Multiline questions occur
+    # in the committed artifacts.
+    question = "what does `a | b` mean\nin a submit script?"
+    rows = [_row(question, faithfulness=0.5)]
+    base = str(_artifact(rows, fingerprint="corpus-1"))
+    treat = str(_artifact(rows, fingerprint="corpus-1"))
+    anchors = anchors_file([_anchor(question, "reasoning")])
+
+    assert cr.main([base, treat, "--anchors", anchors]) == cr.EXIT_OK
+
+    out = capsys.readouterr().out
+    anchor_rows = [line for line in out.splitlines() if "submit script" in line]
+    assert len(anchor_rows) == 2  # one row per arm, each on ONE physical line
+    for line in anchor_rows:
+        # the pipe inside the question is escaped, so the row still has exactly
+        # the six columns of the anchor table
+        assert "`a \\| b`" in line
+        assert len(re.findall(r"(?<!\\)\|", line)) == 7

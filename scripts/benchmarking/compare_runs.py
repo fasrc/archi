@@ -235,6 +235,21 @@ def load_artifact(path: Path) -> dict:
     return document
 
 
+def arm_identity(arm: "Arm") -> str:
+    """A replicate's identity by resolved file, not by how it was spelled.
+
+    ``arm.source`` keeps the caller's path so the report echoes what was typed;
+    the same file reached through a relative path or a symlink would otherwise
+    slip past the duplicate-replicate guard and be counted twice.
+    """
+    path, _, index = arm.source.rpartition("@")
+    try:
+        resolved = str(Path(path).resolve())
+    except OSError:  # pragma: no cover - unresolvable path
+        resolved = path
+    return f"{resolved}@{index}"
+
+
 def parse_arm_spec(spec: str) -> Tuple[Path, Optional[int]]:
     """Split ``path[@N]``. ``N`` is 1-based, matching the order the arms are
     written in and the ``config_versions`` list in the metadata."""
@@ -340,11 +355,65 @@ def question_set_diff(base: Arm, other: Arm) -> Dict[str, List[str]]:
     }
 
 
+def declared_sources(row: dict) -> Tuple[str, ...]:
+    """The URLs a row declares as its expected sources, in order."""
+    entries = row.get("reference_sources_metadata")
+    if not isinstance(entries, list):
+        return ()
+    return tuple(
+        str(entry.get("url"))
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("url") is not None
+    )
+
+
+def grading_input_diff(baseline: Arm, arm: Arm) -> List[str]:
+    """Questions the two arms graded against different ground truth.
+
+    G4 asks whether the arms used the identical question bank, and a bank is
+    more than its question texts: ``reference_answer`` is the ground truth that
+    ``answer_correctness`` and both context metrics are scored against, and the
+    declared sources are the ground truth for source accuracy. Two runs of the
+    same 109 texts against edited references measure different things, and the
+    edit would otherwise read as a system delta.
+    """
+    problems = []
+    for question in baseline.order:
+        other = arm.rows.get(question)
+        if other is None:
+            continue
+        mine = baseline.rows[question]
+        if mine.get("reference_answer") != other.get("reference_answer"):
+            problems.append(
+                f"{question!r}: reference_answer differs "
+                f"({str(mine.get('reference_answer'))[:60]!r} vs "
+                f"{str(other.get('reference_answer'))[:60]!r})"
+            )
+        elif declared_sources(mine) != declared_sources(other):
+            problems.append(
+                f"{question!r}: declared sources differ "
+                f"({list(declared_sources(mine))} vs "
+                f"{list(declared_sources(other))})"
+            )
+    return problems
+
+
 def require_same_question_sets(baseline: Arm, arms: Sequence[Arm]) -> None:
     """G4. No override exists on purpose."""
     for arm in arms:
         if arm is baseline:
             continue
+        graded = grading_input_diff(baseline, arm)
+        if graded:
+            shown = "\n".join(f"  {line}" for line in graded[:3])
+            more = f"\n  (+{len(graded) - 3} more)" if len(graded) > 3 else ""
+            raise CompareError(
+                f"G4 refused: {baseline.label} and {arm.label} asked the same "
+                "questions but graded them against different ground truth, so a "
+                "bank edit would read as a system delta. There is no override "
+                f"for this.\n{shown}{more}",
+                EXIT_GATE,
+            )
         diff = question_set_diff(baseline, arm)
         if not diff["only_in_base"] and not diff["only_in_other"]:
             continue
@@ -599,6 +668,12 @@ def parse_noise_floor(text: str) -> Dict[str, float]:
                 f"--noise-floor value for {name} must be a finite, non-negative "
                 f"standard deviation; got {value!r}"
             )
+        if name in sigmas:
+            raise CompareError(
+                f"--noise-floor names {name} more than once "
+                f"({sigmas[name]:g} then {parsed:g}). The later value would "
+                "silently become the G7 threshold; give it once."
+            )
         sigmas[name] = parsed
     if not sigmas:
         raise CompareError("--noise-floor was empty")
@@ -704,15 +779,19 @@ def check_noise_replicates(
     # Two copies of one run agree perfectly, so sigma comes out 0 and the
     # |mean| > 2*sigma half of G7 becomes vacuous. Distinct arms of one sweep
     # are still fine: they carry distinct `path@N` sources.
-    seen: Dict[str, int] = {}
+    seen: Dict[str, List[str]] = {}
     for arm in replicates:
-        seen[arm.source] = seen.get(arm.source, 0) + 1
-    repeated = sorted(source for source, count in seen.items() if count > 1)
+        seen.setdefault(arm_identity(arm), []).append(arm.source)
+    repeated = sorted(
+        (spellings for spellings in seen.values() if len(spellings) > 1),
+        key=lambda spellings: spellings[0],
+    )
     if repeated:
         raise CompareError(
-            f"--noise-runs was given {repeated[0]} twice. One run counted twice "
-            "is not two replicates: it would report sigma=0 and make the noise "
-            "floor vacuous.",
+            "--noise-runs was given the same run twice ("
+            + ", ".join(repeated[0])
+            + "). One run counted twice is not two replicates: it would report "
+            "sigma=0 and make the noise floor vacuous.",
             EXIT_USAGE,
         )
     scope = list(replicates) + ([baseline] if baseline is not None else [])
@@ -809,7 +888,9 @@ def noise_floor_from_runs(
         allow_corpus_differs=allow_corpus_differs,
         ignore_divergence=ignore_divergence,
     )
-    return noise_floor_from_arms(replicates, questions)
+    return noise_floor_from_arms(
+        replicates, questions, [baseline] if baseline is not None else []
+    )
 
 
 def load_noise_replicates(paths: Sequence[str]) -> List[Arm]:
@@ -826,21 +907,67 @@ def load_noise_replicates(paths: Sequence[str]) -> List[Arm]:
     return replicates
 
 
+def sigma_population(
+    arms: Sequence[Arm],
+    replicates: Sequence[Arm],
+    metric: str,
+    questions: Sequence[str],
+) -> List[str]:
+    """The rows sigma may be averaged over for one metric.
+
+    A replicate mean taken over its own finite subset describes a different
+    quantity from the delta it is the threshold for. Restricting to rows every
+    comparison arm *and* every replicate could score for this metric puts both
+    on one population, and does so conservatively: it is a subset of every
+    paired population, so no row that never entered a delta can widen or narrow
+    the bar.
+    """
+    scope = list(arms) + list(replicates)
+    return [
+        question
+        for question in questions
+        if all(arm.is_scorable(question, metric) for arm in scope)
+    ]
+
+
 def noise_floor_from_arms(
-    replicates: Sequence[Arm], questions: Optional[Sequence[str]] = None
+    replicates: Sequence[Arm],
+    questions: Optional[Sequence[str]] = None,
+    arms: Sequence[Arm] = (),
 ) -> Dict[str, float]:
     """sigma per metric over already-gated replicates."""
-    per_metric: Dict[str, List[float]] = {metric: [] for metric in METRICS}
-    for arm in replicates:
-        for metric in METRICS:
-            mean = recomputed_aggregate(arm, metric, questions)["mean"]
-            if mean is not None:
-                per_metric[metric].append(mean)
-    return {
-        metric: statistics.stdev(means)
-        for metric, means in per_metric.items()
-        if len(means) >= 2
-    }
+    sigmas: Dict[str, float] = {}
+    for metric in METRICS:
+        if questions is None:
+            population: Optional[Sequence[str]] = None
+        else:
+            population = sigma_population(arms, replicates, metric, questions)
+            if not population:
+                continue
+        means = [
+            mean
+            for mean in (
+                recomputed_aggregate(arm, metric, population)["mean"]
+                for arm in replicates
+            )
+            if mean is not None
+        ]
+        if len(means) < 2:
+            continue
+        sigma = statistics.stdev(means)
+        if sigma == 0:
+            # Identical replicate means are not evidence of zero run-to-run
+            # noise; they make the |mean| > 2*sigma half of G7 vacuous, so any
+            # delta clearing 2*SE would be announced as SIGNIFICANT.
+            raise CompareError(
+                f"the --noise-runs replicates give sigma = 0 for {metric}: "
+                "their recomputed means are identical, which measures no noise "
+                "floor at all rather than a floor of zero. Use replicates from "
+                "separate runs, or declare a floor with --noise-floor.",
+                EXIT_GATE,
+            )
+        sigmas[metric] = sigma
+    return sigmas
 
 
 def parse_scored(text: Any) -> Optional[Tuple[int, int]]:
@@ -904,11 +1031,18 @@ def recomputed_source_accuracy(arm: Arm) -> dict:
     ``all([])`` is vacuously true, which is how the ``should_refuse`` anchor used
     to book a free hit.
     """
+    # Every row that DECLARES a source is in the denominator, whatever its
+    # status. This mirrors the producer: `Benchmarker._source_scorable_count`
+    # counts bank rows with `sources` regardless of outcome ("a failed retrieval
+    # still registers as a miss rather than quietly vanishing from the
+    # average"), while `source_hits(None, ...)` contributes zero hits for a
+    # degraded row. A degraded row therefore carries no `matched` keys, and
+    # `all(...)` scores it as the miss the artifact already counted. Only a
+    # zero-source row (the should_refuse anchor) is excluded from both sides.
     scored = [
         row
         for row in arm.rows.values()
-        if row.get("status", "ok") == "ok"
-        and isinstance(row.get("reference_sources_metadata"), list)
+        if isinstance(row.get("reference_sources_metadata"), list)
         and row["reference_sources_metadata"]
     ]
     hits = sum(
@@ -1169,6 +1303,16 @@ def anchor_block(
                 "metrics": metrics,
                 "deltas": deltas,
                 "alarms": alarms,
+                # A tripwire that could not be scored is not a tripwire that
+                # held: a degraded or all-non-finite anchor row raises no alarm
+                # simply because there was nothing to compare, and G8 would
+                # otherwise report the anchors as holding.
+                "unscored": row.get("status", "ok") != "ok"
+                or (
+                    anchor_type != "should_refuse"
+                    and not metrics
+                    and arm is not baseline
+                ),
                 # The threshold that fired is printed with the alarm. sigma is a
                 # RUN-mean noise floor and this is ONE question, whose own
                 # spread is several times larger, so the bar is tight and an
@@ -1524,11 +1668,23 @@ def _signed(value: Any, digits: int = 4) -> str:
     return "n/a" if value is None else f"{value:+.{digits}f}"
 
 
+def _cell(value: str) -> str:
+    """One table cell that cannot break out of its row.
+
+    A question may legitimately contain a pipe (``a | b`` in a submit script) or
+    a newline — the committed artifacts hold multi-line questions — and either
+    one silently split the row into extra columns or extra physical lines,
+    corrupting the report a decision is read from.
+    """
+    text = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+
+
 def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> List[str]:
-    lines = ["| " + " | ".join(headers) + " |"]
+    lines = ["| " + " | ".join(_cell(h) for h in headers) + " |"]
     lines.append("|" + "|".join(["---"] * len(headers)) + "|")
     for row in rows:
-        lines.append("| " + " | ".join(row) + " |")
+        lines.append("| " + " | ".join(_cell(value) for value in row) + " |")
     return lines
 
 
@@ -1869,7 +2025,7 @@ def g8_gate(
                 "(G4/G6) — re-baseline rather than reading this as a pass."
             ),
         }
-    failures, alarms, baseline_failures = [], [], []
+    failures, alarms, baseline_failures, unscored = [], [], [], []
     for entry in anchor_entries:
         for label, arm_entry in entry["arms"].items():
             named = f"{label} on {entry['question'][:50]!r}"
@@ -1877,6 +2033,8 @@ def g8_gate(
                 (baseline_failures if label == baseline_label else failures).append(
                     named
                 )
+            if arm_entry.get("unscored"):
+                unscored.append(named)
             # `alarms` is only ever populated for a non-baseline arm (it is a
             # delta against the baseline), but the guard makes that explicit.
             if label == baseline_label:
@@ -1899,6 +2057,11 @@ def g8_gate(
         detail.append("easy_retrieve ALARM: " + "; ".join(alarms))
     if regressions:
         detail.append("regressed past one noise-floor unit: " + "; ".join(regressions))
+    if unscored:
+        detail.append(
+            "unscored anchor(s) — could not be checked, so not held: "
+            + "; ".join(unscored)
+        )
     if not detail:
         detail.append(
             f"{len(anchor_entries)} anchor(s) held and no metric regressed past "
@@ -1909,7 +2072,9 @@ def g8_gate(
             "not counted against this gate, but note the baseline itself fails "
             "should_refuse: " + "; ".join(baseline_failures)
         )
-    status = "FAIL" if failures else "ALARM" if alarms or regressions else "pass"
+    status = (
+        "FAIL" if failures else "ALARM" if alarms or regressions or unscored else "pass"
+    )
     return {
         "id": "G8",
         "name": "anchors and guard metrics",
@@ -2046,6 +2211,15 @@ def parse_qa_run_specs(specs: Sequence[str], arms: Sequence[Arm]) -> Dict[str, d
                 f"labels are {', '.join(sorted(labels))}",
                 EXIT_USAGE,
             )
+        if label in runs:
+            # The QA item pass overrides the refusal heuristic and feeds G8, so
+            # last-write-wins could flip a candidate from FAIL to PASS with
+            # nothing reporting the ambiguity.
+            raise CompareError(
+                f"--qa-run was given twice for {label!r} "
+                f"({runs[label]['path']} and {directory}); give one run per arm",
+                EXIT_USAGE,
+            )
         runs[label] = load_qa_run(directory)
     return runs
 
@@ -2103,7 +2277,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             allow_corpus_differs=args.corpus_differs_by_design,
             ignore_divergence=args.ignore_config_divergence,
         )
-        sigmas.update(noise_floor_from_arms(replicates, questions))
+        sigmas.update(noise_floor_from_arms(replicates, questions, arms))
         gates.append(noise_gate_row(replicates, arms, questions))
     if args.noise_floor:
         declared = parse_noise_floor(args.noise_floor)

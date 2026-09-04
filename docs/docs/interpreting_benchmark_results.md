@@ -507,8 +507,13 @@ files are.
 
 **What it refuses.**
 
-- **The question sets differ** — two different banks measure two different
-  things (G4). No flag overrides this.
+- **The question sets differ, or the same questions were graded against a
+  different `reference_answer` or a different set of declared sources** — two
+  different banks measure two different things, and a bank is more than its
+  question texts: the reference is the ground truth the context metrics and
+  `answer_correctness` are scored against, and the declared sources are the
+  ground truth for source accuracy. A bank edit would otherwise read as a
+  system delta (G4). No flag overrides this.
 - **The corpus fingerprints differ, were never recorded, or an arm recorded
   `corpus_unchanged_at_endpoints: false`** — retrieval metrics move for free
   across corpora (G3), and an arm that straddled a re-ingest scored its
@@ -537,13 +542,24 @@ at re-baselining, because silence there would read as a pass.
 The row judges the **candidate** arms. A baseline that fails its own
 `should_refuse` anchor is reported beside the verdict but not counted against
 it, so a run that *repairs* a broken baseline is not told "do not ship" for the
-defect it fixed.
+defect it fixed. An anchor the candidate could not score — a degraded row, or
+one whose every metric cell is non-finite — is reported as `unscored` rather
+than counted as held: a tripwire that raised no alarm because there was nothing
+to compare has not passed.
 
 Giving both `--noise-floor` and `--noise-runs` a sigma for the same metric is
 refused (exit 1) rather than resolved by precedence: sigma is the threshold, and
 a declared value silently replacing a measured one would move the bar with
-nothing in the report to show it. Declaring a metric the replicates could not
+nothing in the report to show it. Naming one metric twice inside `--noise-floor`
+is refused for the same reason. Declaring a metric the replicates could not
 measure is fine.
+
+A **measured sigma of exactly zero is refused** (exit 2). Replicates whose
+recomputed means come out identical have measured no noise floor at all rather
+than a floor of zero, and a zero threshold makes the `2 x sigma` half of G7
+vacuous. Each metric's sigma is measured over the rows every arm *and* every
+replicate could score for that metric, so the threshold and the delta it judges
+describe the same population.
 
 !!! note "The `difficulty` slice needs a bank that reaches the artifact"
     Procedure D lists `difficulty` as a row field, but the harness copies only
