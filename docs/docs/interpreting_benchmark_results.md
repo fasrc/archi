@@ -493,7 +493,7 @@ it is compared against the first. `path@2` picks one arm out of a sweep, and
 | `--noise-runs FILE ...` | measure sigma here instead: every arm of every file is one replicate, and sigma is the standard deviation of the **recomputed** means (needs two or more). Replicates face the same bank, corpus, code/config identity and divergence checks as the arms, and sigma is measured over the *same* questions the paired table uses — sigma *is* the G7 threshold, so a stale or foreign replicate would move the bar rather than describe it |
 | `--corpus-differs-by-design` | the only way past the G3 corpus gate; prints both fingerprints and the Procedure B warning |
 | `--ignore-config-divergence` | the only way past a non-empty `divergence_from_selected_file` |
-| `--anchors PATH` | the anchors file (default `examples/benchmarking/anchor_questions.json`) |
+| `--anchors PATH` | the anchors file (default `examples/benchmarking/anchor_questions.json`). Required: the default is tracked, so a missing file means a broken checkout rather than a run without anchors. For a deliberately anchor-free comparison, point it at a file holding `[]` |
 | `--include-anchors-in-bank` | average the five anchors into the bank aggregates. Off by default — see [Gap 3](#gap-3-anchors-are-averaged-into-the-bank-aggregates) |
 | `--qa-run LABEL=RUN_DIR` | join an `archi eval qa` run to an arm, by derived item id (repeatable). This is the one flag that needs the project's evaluation dependencies installed — the id is derived by the QA stack's own `derive_item_id`, so the two sides cannot drift apart |
 | `--json PATH` | write the same report as JSON |
@@ -533,6 +533,17 @@ G8 is reported as a gate row rather than an exit code: an anchor failing means
 evidence for that call. When none of the anchor questions appear in the arms —
 a run from before the anchors existed — the row says `not evaluated` and points
 at re-baselining, because silence there would read as a pass.
+
+The row judges the **candidate** arms. A baseline that fails its own
+`should_refuse` anchor is reported beside the verdict but not counted against
+it, so a run that *repairs* a broken baseline is not told "do not ship" for the
+defect it fixed.
+
+Giving both `--noise-floor` and `--noise-runs` a sigma for the same metric is
+refused (exit 1) rather than resolved by precedence: sigma is the threshold, and
+a declared value silently replacing a measured one would move the bar with
+nothing in the report to show it. Declaring a metric the replicates could not
+measure is fine.
 
 !!! note "The `difficulty` slice needs a bank that reaches the artifact"
     Procedure D lists `difficulty` as a row field, but the harness copies only

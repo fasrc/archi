@@ -54,7 +54,8 @@ lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
   and no delta is ever called SIGNIFICANT without a measured noise floor
   (`--noise-floor`, which rejects a negative or non-finite sigma, or
   `--noise-runs` over replicates held to the same bank, corpus and divergence
-  checks as the arms — sigma *is* the significance threshold, not a footnote). The five
+  checks as the arms; giving both a sigma for one metric is refused rather than
+  resolved by precedence, because sigma *is* the significance threshold). The five
   anchors are reported as their own track — matched by question text, because the
   FASRC bank sets `anchor_type` on every row — and are kept out of the bank
   aggregates. `--qa-run LABEL=DIR` optionally joins an `archi eval qa` run by

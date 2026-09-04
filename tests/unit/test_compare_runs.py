@@ -1046,6 +1046,81 @@ def test_g8_appears_in_the_gate_table_with_the_anchor_outcome(
     assert "FAIL" in run(invented, 0.95)
 
 
+def test_g8_ignores_a_refusal_failure_that_only_the_baseline_had(
+    _artifact, anchors_file, capsys
+):
+    # G8 gates the CANDIDATE. A run that repairs a broken baseline's refusal
+    # anchor must not be told "do not ship": that inverts the ship decision.
+    invented = "Its partitions are alpha, beta and gamma; use -p alpha there. " * 5
+    base = str(_artifact([_row("refuse me", answer=invented)], fingerprint="corpus-1"))
+    treat = str(
+        _artifact(
+            [_row("refuse me", answer="I don't have documentation for that.")],
+            fingerprint="corpus-1",
+        )
+    )
+    anchors = anchors_file([_anchor("refuse me", "should_refuse")])
+
+    assert cr.main([base, treat, "--anchors", anchors]) == cr.EXIT_OK
+
+    line = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("| G8 ")
+    ][0]
+    assert "FAIL" not in line
+    assert "baseline" in line  # the broken baseline is still reported
+
+
+def test_a_manual_sigma_may_not_silently_replace_a_measured_one(_artifact):
+    # sigma IS the G7 threshold. Letting a CLI value quietly overwrite a
+    # measured one lets an operator lower the bar after the fact.
+    rows_a = [_row("q1", faithfulness=0.50)]
+    rows_b = [_row("q1", faithfulness=0.60)]
+    one = str(_artifact(rows_a, fingerprint="corpus-1"))
+    two = str(_artifact(rows_b, fingerprint="corpus-1"))
+    base = str(_artifact(rows_a, fingerprint="corpus-1"))
+    treat = str(_artifact(rows_b, fingerprint="corpus-1"))
+    common = [base, treat, "--noise-runs", one, two]
+
+    assert cr.main(common + ["--noise-floor", "faithfulness=0.001"]) == cr.EXIT_USAGE
+    # A metric the replicates could not measure may still be declared.
+    assert cr.main(common + ["--noise-floor", "answer_correctness=0.02"]) == cr.EXIT_OK
+
+
+def test_a_missing_anchors_file_is_a_setup_error_even_at_the_default_path(
+    _artifact, tmp_path, monkeypatch, capsys
+):
+    # The anchors file is tracked. If it is missing, the checkout is broken, and
+    # continuing with G8 "not evaluated" quietly weakens the ship gate.
+    monkeypatch.setattr(cr, "DEFAULT_ANCHORS", tmp_path / "gone.json")
+    rows = [_row("q1", faithfulness=0.5)]
+    base = str(_artifact(rows, fingerprint="corpus-1"))
+    treat = str(_artifact(rows, fingerprint="corpus-1"))
+
+    assert cr.main([base, treat]) == cr.EXIT_USAGE
+    assert "anchors file not found" in capsys.readouterr().err
+
+
+def test_the_qa_join_matches_a_row_authored_with_crlf(_artifact, tmp_path):
+    # The bank-to-QA converter derives ids from newline-normalized text, so a
+    # CRLF-authored row must hash to the same id here or the join silently
+    # misses every such question.
+    question = "how do I request a GPU?\r\nAnd how many?"
+    reference = "use --gres=gpu:1\r\none per node"
+    rows = [_row(question, reference=reference, faithfulness=0.5)]
+    arm = cr.load_arms([str(_artifact(rows))])[0]
+    item_id = derive_item_id(
+        question.replace("\r\n", "\n"), reference.replace("\r\n", "\n")
+    )
+    run = _qa_run(tmp_path / "qa", item_id, item_pass_rate=1.0)
+
+    assert cr.qa_item_id(arm.rows[question]) == item_id
+
+    block = cr.qa_block(arm, [arm], {arm.label: cr.load_qa_run(run)})
+    assert block["arms"][0]["joined"] == 1
+
+
 def test_g8_says_not_evaluated_when_no_anchor_was_asked(
     _artifact, anchors_file, capsys
 ):

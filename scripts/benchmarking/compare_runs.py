@@ -1840,7 +1840,9 @@ def render_markdown(report: dict) -> str:
     return "\n".join(out).rstrip("\n")
 
 
-def g8_gate(anchor_entries: Sequence[dict], paired: Sequence[dict]) -> dict:
+def g8_gate(
+    anchor_entries: Sequence[dict], paired: Sequence[dict], baseline_label: str
+) -> dict:
     """G8 as a gate row, not just a section further down the page.
 
     G8 is "the anchors hold, and no other metric regressed by more than one
@@ -1849,6 +1851,12 @@ def g8_gate(anchor_entries: Sequence[dict], paired: Sequence[dict]) -> dict:
     silence and read it as a pass. It stays a *reported* verdict rather than a
     non-zero exit: an anchor failing means "do not ship the change", not "this
     comparison is invalid", and the report is the evidence for that call.
+
+    The gate judges the **candidate** arms only. Scoring the baseline's own
+    anchor failures into it inverts the decision it exists to support: a run
+    that repairs a broken baseline's refusal anchor would be told "do not ship"
+    for a defect it fixed. A failing baseline is still reported, separately,
+    because it changes how the deltas beside it should be read.
     """
     if not anchor_entries:
         return {
@@ -1861,11 +1869,18 @@ def g8_gate(anchor_entries: Sequence[dict], paired: Sequence[dict]) -> dict:
                 "(G4/G6) — re-baseline rather than reading this as a pass."
             ),
         }
-    failures, alarms = [], []
+    failures, alarms, baseline_failures = [], [], []
     for entry in anchor_entries:
         for label, arm_entry in entry["arms"].items():
+            named = f"{label} on {entry['question'][:50]!r}"
             if arm_entry.get("refusal") == "FAIL":
-                failures.append(f"{label} on {entry['question'][:50]!r}")
+                (baseline_failures if label == baseline_label else failures).append(
+                    named
+                )
+            # `alarms` is only ever populated for a non-baseline arm (it is a
+            # delta against the baseline), but the guard makes that explicit.
+            if label == baseline_label:
+                continue
             for metric in arm_entry["alarms"]:
                 alarms.append(f"{label} {entry['question'][:40]!r} {metric}")
     regressions = [
@@ -1888,6 +1903,11 @@ def g8_gate(anchor_entries: Sequence[dict], paired: Sequence[dict]) -> dict:
         detail.append(
             f"{len(anchor_entries)} anchor(s) held and no metric regressed past "
             "one noise-floor unit"
+        )
+    if baseline_failures:
+        detail.append(
+            "not counted against this gate, but note the baseline itself fails "
+            "should_refuse: " + "; ".join(baseline_failures)
         )
     status = "FAIL" if failures else "ALARM" if alarms or regressions else "pass"
     return {
@@ -1923,7 +1943,7 @@ def build_report(
         "anchors_path": anchors_path,
         "anchors_in_bank": anchors_in_bank,
         "provenance": provenance_rows(arms, anchors),
-        "gates": list(gates) + [g8_gate(anchor_entries, paired)],
+        "gates": list(gates) + [g8_gate(anchor_entries, paired, baseline.label)],
         "noise_floor": dict(sigmas),
         "paired": paired,
         "scored_counts": {arm.label: scored_counts(arm) for arm in arms},
@@ -2063,9 +2083,12 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         divergence_gate(arms, args.ignore_config_divergence),
     ]
 
-    anchors = anchor_questions(
-        args.anchors, required=args.anchors != str(DEFAULT_ANCHORS)
-    )
+    # The default anchors file is tracked in the repository. If it is absent the
+    # checkout or package is incomplete, and continuing with G8 reported as
+    # "not evaluated" would quietly weaken the ship gate on a broken
+    # environment. A deliberately anchor-free comparison passes --anchors at a
+    # file holding an empty list.
+    anchors = anchor_questions(args.anchors)
     qa_runs = parse_qa_run_specs(args.qa_run, arms)
     questions = bank_questions(
         baseline, anchors, include_anchors=args.include_anchors_in_bank
@@ -2083,7 +2106,25 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         sigmas.update(noise_floor_from_arms(replicates, questions))
         gates.append(noise_gate_row(replicates, arms, questions))
     if args.noise_floor:
-        sigmas.update(parse_noise_floor(args.noise_floor))
+        declared = parse_noise_floor(args.noise_floor)
+        # sigma IS the G7 threshold. Quietly letting a command-line value
+        # replace one the tool just measured would let the bar be lowered after
+        # the fact, with nothing in the report saying so. Declaring a metric the
+        # replicates could not measure is still allowed and useful.
+        collisions = sorted(set(declared) & set(sigmas))
+        if collisions:
+            raise CompareError(
+                "--noise-floor and --noise-runs both give a sigma for "
+                f"{', '.join(collisions)}. Measured: "
+                + ", ".join(f"{m}={sigmas[m]:.4f}" for m in collisions)
+                + "; declared: "
+                + ", ".join(f"{m}={declared[m]:.4f}" for m in collisions)
+                + ". Pick one — a declared value silently replacing a measured "
+                "one would move the significance threshold with nothing in the "
+                "report to show it.",
+                EXIT_USAGE,
+            )
+        sigmas.update(declared)
 
     report = build_report(
         arms,
