@@ -12,6 +12,7 @@ from src.data_manager.collectors.processing import (
     _SELF_SEPARATING_FOLLOWERS,
     HtmlToMarkdownProcessor,
     ResourcePipeline,
+    _ArchiMarkdownConverter,
     _fence_language,
     _nested_list_needs_break,
     _next_content_sibling,
@@ -787,3 +788,133 @@ def test_410_nested_list_needs_break_empty_text():
     html = "<li><ul><li>Inner</li></ul>tail</li>"
     ul = BeautifulSoup(html, "html.parser").find("ul")
     assert _nested_list_needs_break(ul, "   ") is False
+
+
+# --- issue #410: _ArchiMarkdownConverter and markdownify wrapper (task 1.2) ---
+
+
+def test_410_snippet_a_pre_after_nested_list():
+    # (a) Text after a nested list that ends in a code fence must start on its own line.
+    html = (
+        "<ul><li>Outer item"
+        "<ul><li>Inner: <pre>x = 1</pre></li></ul>"
+        "After the nested list.</li></ul>"
+    )
+    result = html_to_markdown(html)
+    assert result == (
+        "* Outer item\n  + Inner:\n\n    ```\n    x = 1\n    ```\n"
+        "  After the nested list."
+    )
+    assert "    ```" in result.splitlines()
+    assert "```After" not in result
+
+
+def test_410_snippet_c_prose_after_nested_list():
+    # (b) Plain text after a nested list must start on its own line.
+    result = html_to_markdown(
+        "<ul><li>Outer item"
+        "<ul><li>Inner ends in prose</li></ul>"
+        "After the nested list.</li></ul>"
+    )
+    assert result == "* Outer item\n  + Inner ends in prose\n  After the nested list."
+    assert "proseAfter" not in result
+
+
+def test_410_snippet_d_pre_sibling_li():
+    # (c) Nested list ending in a code fence, followed by a sibling <li>.
+    result = html_to_markdown(
+        "<ul><li>A"
+        "<ul><li><pre>docker rm alpine</pre></li></ul>"
+        "<li>Configure a bundle</li></li></ul>"
+    )
+    assert result == (
+        "* A\n  + ```\n    docker rm alpine\n    ```\n  * Configure a bundle"
+    )
+    assert "```*" not in result
+
+
+def test_410_ordered_list():
+    # (d) The fix applies to ordered nested lists as well.
+    result = html_to_markdown("<ol><li>Outer<ol><li>Inner</li></ol>After.</li></ol>")
+    assert result == "1. Outer\n   1. Inner\n   After."
+
+
+def test_410_inline_follower():
+    # (e) An inline element following a nested list gets its own line.
+    result = html_to_markdown(
+        '<ul><li>Outer<ul><li>Inner</li></ul><a href="http://x">link</a> tail</li></ul>'
+    )
+    assert result == "* Outer\n  + Inner\n  [link](http://x) tail"
+
+
+def test_410_comment_then_text():
+    # (f) A comment between the nested list and the text is skipped; text gets its line.
+    result = html_to_markdown(
+        "<ul><li>Outer<ul><li>Inner</li></ul><!-- c -->tail</li></ul>"
+    )
+    assert result == "* Outer\n  + Inner\n  tail"
+
+
+def test_410_dispatch_attributes():
+    # (g) convert_ul and convert_ol must be the same function object as convert_list.
+    assert _ArchiMarkdownConverter.convert_ul is _ArchiMarkdownConverter.convert_list
+    assert _ArchiMarkdownConverter.convert_ol is _ArchiMarkdownConverter.convert_list
+
+
+def test_410_processor_snippet_a():
+    # (h) HtmlToMarkdownProcessor round-trip for snippet A.
+    html = (
+        "<ul><li>Outer item"
+        "<ul><li>Inner: <pre>x = 1</pre></li></ul>"
+        "After the nested list.</li></ul>"
+    )
+    out = HtmlToMarkdownProcessor().process(_html_resource(content=html))
+    assert out.suffix == "md"
+    assert out.get_content() == html_to_markdown(html)
+    assert "```After" not in out.get_content()
+
+
+def test_410_guards():
+    # (i) Cases that pass today with stock markdownify and must keep passing.
+    assert (
+        html_to_markdown(
+            "<ul><li>Outer<ul><li>Inner</li></ul></li><li>Next outer</li></ul>"
+        )
+        == "* Outer\n  + Inner\n* Next outer"
+    )
+    assert (
+        html_to_markdown(
+            "<ul><li>Outer<ul><li>Inner</li></ul>\n  </li><li>Next outer</li></ul>"
+        )
+        == "* Outer\n  + Inner\n* Next outer"
+    )
+    assert (
+        html_to_markdown("<ul><li>Outer<ul><li>Inner</li></ul><p>Para</p></li></ul>")
+        == "* Outer\n  + Inner\n\n  Para"
+    )
+    assert (
+        html_to_markdown(
+            "<ul><li>Outer<ul><li>Inner</li></ul><pre>code</pre></li></ul>"
+        )
+        == "* Outer\n  + Inner\n\n  ```\n  code\n  ```"
+    )
+    assert (
+        html_to_markdown("<ul><li>Outer<ul><li>Inner</li></ul><h3>Head</h3></li></ul>")
+        == "* Outer\n  + Inner\n\n  ### Head"
+    )
+    assert (
+        html_to_markdown(
+            "<ul><li>Outer<ul><li>Inner</li></ul><ul><li>Second</li></ul></li></ul>"
+        )
+        == "* Outer\n  + Inner\n  + Second"
+    )
+    assert (
+        html_to_markdown("<ul><li>Outer<ul><li>Inner</li></ul><br>tail</li></ul>")
+        == "* Outer\n  + Inner  \n  tail"
+    )
+    assert html_to_markdown("<ul><li>Outer<ul></ul>tail</li></ul>") == "* Outer\n  tail"
+    assert (
+        html_to_markdown("<ul><li>Outer<ul><li>Inner</li></ul><!-- c --></li></ul>")
+        == "* Outer\n  + Inner"
+    )
+    assert html_to_markdown("<ul><li>a</li></ul>tail text") == "* a\n\ntail text"

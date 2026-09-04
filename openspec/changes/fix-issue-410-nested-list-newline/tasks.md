@@ -77,7 +77,7 @@ Standing notes for every task:
       else `None`; `_nested_list_needs_break` returns `False` when `text.strip()` is empty or
       there is no follower, and otherwise returns whether the follower is NOT a `Tag` whose
       `name` is in `_SELF_SEPARATING_FOLLOWERS`. Gate green; commit.
-- [ ] 1.2 `model: opus` — Add `_ArchiMarkdownConverter(MarkdownConverter)` and the wrapper
+- [x] 1.2 `model: opus` — Add `_ArchiMarkdownConverter(MarkdownConverter)` and the wrapper
       `markdownify(html: str, **options) -> str` to `processing.py`, directly below the
       helpers from 1.1, and change the import line `from markdownify import markdownify` to
       `from markdownify import MarkdownConverter`. RED tests first, appended after the 1.1

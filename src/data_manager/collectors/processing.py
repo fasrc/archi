@@ -30,7 +30,7 @@ from typing import (
 )
 
 from bs4 import BeautifulSoup, Comment, Doctype, NavigableString, Tag
-from markdownify import markdownify
+from markdownify import MarkdownConverter
 
 from src.data_manager.collectors.resource_base import BaseResource
 from src.utils.logging import get_logger
@@ -469,6 +469,37 @@ def _nested_list_needs_break(el, text: str) -> bool:
     if nxt is None:
         return False
     return not (isinstance(nxt, Tag) and nxt.name in _SELF_SEPARATING_FOLLOWERS)
+
+
+class _ArchiMarkdownConverter(MarkdownConverter):
+    """MarkdownConverter subclass with the nested-list newline fix (issue #410).
+
+    markdownify binds ``convert_ul`` and ``convert_ol`` to the base
+    ``convert_list`` at class-definition time, so overriding ``convert_list``
+    alone would never be called for list elements.  The two class-level
+    rebindings below re-point those attributes at this override (design D2).
+    """
+
+    def convert_list(self, el, text, parent_tags):
+        """Append a trailing newline when inline content follows a nested list."""
+        out = super().convert_list(el, text, parent_tags)
+        if "li" in parent_tags and _nested_list_needs_break(el, text):
+            return out + "\n"
+        return out
+
+    convert_ul = convert_list
+    convert_ol = convert_list
+
+
+def markdownify(html: str, **options) -> str:
+    """Convert *html* to Markdown via ``_ArchiMarkdownConverter`` (issue #410).
+
+    The function name is kept rather than delegating to ``MarkdownConverter``
+    directly because two existing tests monkeypatch
+    ``src.data_manager.collectors.processing.markdownify``; renaming would
+    silently break that patching.
+    """
+    return _ArchiMarkdownConverter(**options).convert(html)
 
 
 def _markdownify_deep_safe(content: str) -> str:
