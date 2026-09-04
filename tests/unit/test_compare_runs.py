@@ -312,6 +312,34 @@ def test_paired_deltas_drop_degraded_and_non_finite_rows(_artifact):
     assert deltas == pytest.approx([0.20])
 
 
+def test_paired_table_means_share_the_delta_denominator(_artifact):
+    # A mean averaged over rows the other arm could not score does not
+    # reconcile with the delta printed beside it, and can point the opposite way.
+    base = _artifact(
+        [_row("paired", faithfulness=0.2), _row("unpaired", faithfulness=0.8)],
+        fingerprint="corpus-1",
+    )
+    treat = _artifact(
+        [
+            _row("paired", faithfulness=0.6),
+            _row("unpaired", faithfulness=float("nan")),
+        ],
+        fingerprint="corpus-1",
+    )
+    arms = cr.load_arms([str(base), str(treat)])
+
+    row = [
+        entry
+        for entry in cr.paired_block(arms[0], arms, ["paired", "unpaired"], {})
+        if entry["metric"] == "faithfulness"
+    ][0]
+
+    assert row["n"] == 1
+    assert row["baseline_mean"] == pytest.approx(0.2)
+    assert row["arm_mean"] == pytest.approx(0.6)
+    assert row["arm_mean"] - row["baseline_mean"] == pytest.approx(row["mean"])
+
+
 def test_summarize_deltas_reports_n_mean_and_standard_error():
     summary = cr.summarize_deltas([0.1, 0.2, 0.3, 0.4])
 
@@ -466,6 +494,64 @@ def test_noise_runs_refuse_replicates_from_different_corpora_unless_flagged(_art
         [str(one), str(other)], baseline=baseline, allow_corpus_differs=True
     )
     assert sigmas["faithfulness"] == pytest.approx(statistics.stdev([0.6, 0.7]))
+
+
+def test_noise_runs_refuse_replicates_that_recorded_different_identities(_artifact):
+    # Replicates have to be replicates of each OTHER. Two runs that provably
+    # executed different code, or read a different configuration, describe two
+    # noise floors; pooling them produces a threshold that describes neither.
+    rows_a = [_row("q1", faithfulness=0.5)]
+    rows_b = [_row("q1", faithfulness=0.6)]
+    one = _artifact(rows_a, fingerprint="corpus-1", code="code-1")
+    other_code = _artifact(rows_b, fingerprint="corpus-1", code="code-2")
+    other_config = _artifact(
+        rows_b, fingerprint="corpus-1", code="code-1", digest="sha256:b"
+    )
+
+    with pytest.raises(cr.CompareError) as code_err:
+        cr.noise_floor_from_runs([str(one), str(other_code)])
+    assert code_err.value.code == cr.EXIT_GATE
+    assert "code-2" in str(code_err.value)
+
+    with pytest.raises(cr.CompareError) as config_err:
+        cr.noise_floor_from_runs([str(one), str(other_config)])
+    assert config_err.value.code == cr.EXIT_GATE
+    assert "sha256:b" in str(config_err.value)
+
+
+def test_unrecorded_identities_are_reported_rather_than_refused(_artifact):
+    # Every artifact written before code-version stamping records
+    # `code_version.digest: null`. That is unknowable, not a mismatch, so it must
+    # not block the documented comparison of the historical bench_out/ runs.
+    one = _artifact([_row("q1", faithfulness=0.5)], fingerprint="corpus-1", code=None)
+    other = _artifact([_row("q1", faithfulness=0.6)], fingerprint="corpus-1", code=None)
+
+    sigmas = cr.noise_floor_from_runs([str(one), str(other)])
+
+    assert sigmas["faithfulness"] == pytest.approx(statistics.stdev([0.5, 0.6]))
+
+
+def test_measured_sigma_covers_the_same_questions_as_the_paired_table(_artifact):
+    # The bank table excludes anchors by default, so a sigma measured over the
+    # full arm describes a different population than the deltas it judges: a
+    # noisy anchor would widen the threshold and hide a real bank regression.
+    def replicate(anchor_score):
+        return _artifact(
+            [
+                _row("bank a", faithfulness=0.50),
+                _row("bank b", faithfulness=0.50),
+                _row("tripwire", faithfulness=anchor_score),
+            ],
+            fingerprint="corpus-1",
+        )
+
+    files = [str(replicate(0.0)), str(replicate(1.0))]
+
+    over_bank = cr.noise_floor_from_runs(files, questions=["bank a", "bank b"])
+    over_everything = cr.noise_floor_from_runs(files)
+
+    assert over_bank["faithfulness"] == pytest.approx(0.0)
+    assert over_everything["faithfulness"] > 0.2
 
 
 def test_noise_floor_from_runs_needs_at_least_two_replicates(_artifact):

@@ -650,6 +650,30 @@ def check_noise_replicates(
             "as an estimate (Procedure B).",
             EXIT_GATE,
         )
+    # Replicates must be replicates of EACH OTHER. Two runs that provably
+    # executed different code, or read a different configuration, describe two
+    # different noise floors, and pooling them yields a threshold that describes
+    # neither. Only a *recorded* disagreement is a refusal: every artifact
+    # written before code-version stamping says `null` here, which is unknowable
+    # rather than mismatched, and the gate row says so. The baseline is
+    # deliberately outside this check — a floor measured on the baseline's config
+    # is legitimately a different digest from the treatment arm's.
+    for field, read in (
+        ("code_version.digest", lambda a: a.code_version_digest),
+        ("config_version.digest", lambda a: _recorded(a.config_version.get("digest"))),
+    ):
+        recorded = {read(arm) for arm in replicates if read(arm) is not None}
+        if len(recorded) > 1:
+            shown = ", ".join(
+                f"{arm.source}={read(arm) or 'not recorded'}" for arm in replicates
+            )
+            raise CompareError(
+                f"the noise replicates recorded more than one {field} "
+                f"({shown}). Replicates of different {field.split('.')[0]}s are "
+                "not replicates; measure the floor from repeats of one run "
+                "(Procedure A).",
+                EXIT_GATE,
+            )
     diverged = {
         arm.source: arm.config_version.get("divergence_from_selected_file")
         for arm in replicates
@@ -671,6 +695,7 @@ def noise_floor_from_runs(
     paths: Sequence[str],
     *,
     baseline: Optional[Arm] = None,
+    questions: Optional[Sequence[str]] = None,
     allow_corpus_differs: bool = False,
     ignore_divergence: bool = False,
 ) -> Dict[str, float]:
@@ -681,6 +706,12 @@ def noise_floor_from_runs(
     are **recomputed** rather than read from ``aggregate_<metric>``, because the
     recorded aggregate shares the denominator defect that ``<metric>_scored``
     exposes. ``check_noise_replicates`` gates the inputs first.
+
+    ``questions`` is the population the deltas will be measured over — the bank
+    rows, with the anchors excluded unless the caller asked for them. sigma has
+    to describe the *same* population: a floor that still carries anchor-row
+    variance would widen the threshold for a bank comparison that never included
+    those rows, and a real bank regression could hide behind it.
     """
     replicates: List[Arm] = []
     for spec in paths:
@@ -700,7 +731,7 @@ def noise_floor_from_runs(
     per_metric: Dict[str, List[float]] = {metric: [] for metric in METRICS}
     for arm in replicates:
         for metric in METRICS:
-            mean = recomputed_aggregate(arm, metric)["mean"]
+            mean = recomputed_aggregate(arm, metric, questions)["mean"]
             if mean is not None:
                 per_metric[metric].append(mean)
     return {
@@ -1335,6 +1366,15 @@ def paired_block(
         for metric in METRICS:
             if not (baseline.has_metric(metric) and arm.has_metric(metric)):
                 continue
+            # The two arm means sit beside the delta, so they must share its
+            # denominator: averaged over rows the other arm could not score they
+            # would not reconcile with it, and can point the other way.
+            paired = [
+                question
+                for question in questions
+                if baseline.is_scorable(question, metric)
+                and arm.is_scorable(question, metric)
+            ]
             summary = summarize_deltas(paired_deltas(baseline, arm, metric, questions))
             sigma = sigmas.get(metric)
             block.append(
@@ -1346,10 +1386,10 @@ def paired_block(
                     "mean": summary["mean"],
                     "se": summary["se"],
                     "sigma": sigma,
-                    "baseline_mean": recomputed_aggregate(baseline, metric, questions)[
+                    "baseline_mean": recomputed_aggregate(baseline, metric, paired)[
                         "mean"
                     ],
-                    "arm_mean": recomputed_aggregate(arm, metric, questions)["mean"],
+                    "arm_mean": recomputed_aggregate(arm, metric, paired)["mean"],
                     "verdict": verdict(summary, sigma),
                 }
             )
@@ -1847,12 +1887,21 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         divergence_gate(arms, args.ignore_config_divergence),
     ]
 
+    anchors = anchor_questions(
+        args.anchors, required=args.anchors != str(DEFAULT_ANCHORS)
+    )
+    qa_runs = parse_qa_run_specs(args.qa_run, arms)
+    questions = bank_questions(
+        baseline, anchors, include_anchors=args.include_anchors_in_bank
+    )
+
     sigmas: Dict[str, float] = {}
     if args.noise_runs:
         sigmas.update(
             noise_floor_from_runs(
                 args.noise_runs,
                 baseline=baseline,
+                questions=questions,
                 allow_corpus_differs=args.corpus_differs_by_design,
                 ignore_divergence=args.ignore_config_divergence,
             )
@@ -1863,21 +1912,16 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
                 "name": "noise floor",
                 "status": "measured from replicates",
                 "detail": (
-                    f"{len(args.noise_runs)} file(s) of --noise-runs, held to the "
-                    "same bank, corpus and config-divergence checks as the arms"
+                    f"{len(args.noise_runs)} file(s) of --noise-runs, measured "
+                    f"over the same {len(questions)} questions as the paired "
+                    "table, and held to the same bank, corpus, code/config "
+                    "identity and divergence checks as the arms"
                 ),
             }
         )
     if args.noise_floor:
         sigmas.update(parse_noise_floor(args.noise_floor))
 
-    anchors = anchor_questions(
-        args.anchors, required=args.anchors != str(DEFAULT_ANCHORS)
-    )
-    qa_runs = parse_qa_run_specs(args.qa_run, arms)
-    questions = bank_questions(
-        baseline, anchors, include_anchors=args.include_anchors_in_bank
-    )
     report = build_report(
         arms,
         baseline,
