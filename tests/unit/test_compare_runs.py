@@ -27,6 +27,7 @@ import itertools
 import json
 import math
 import statistics
+import sys
 
 import pytest
 
@@ -974,7 +975,7 @@ def test_qa_block_reports_rates_durations_and_paired_deltas(_artifact, tmp_path)
 
     by_arm = {entry["arm"]: entry for entry in block["arms"]}
     assert by_arm[arms[0].label]["joined"] == 1  # the "N/A" reference row is skipped
-    assert by_arm[arms[0].label]["macro_mean_item_pass_rate"] == pytest.approx(0.5)
+    assert by_arm[arms[0].label]["run_macro_mean_item_pass_rate"] == pytest.approx(0.5)
     assert by_arm[arms[0].label]["mean_duration_ms"] == pytest.approx(2000.0)
     assert by_arm[arms[0].label]["p90_duration_ms"] == pytest.approx(3000.0)
     assert block["paired"][0]["metric"] == "item_pass_rate"
@@ -1139,6 +1140,92 @@ def test_a_small_slice_is_never_called_significant(_artifact):
     assert entry["directional"] is True
     assert entry["verdict"] != "SIGNIFICANT"
     assert "directional" in entry["verdict"]
+
+
+def test_a_slice_drops_questions_whose_field_value_disagrees_between_arms(_artifact):
+    # G4 compares question TEXT, so a bank edit that re-labelled a question's
+    # difficulty between the two runs passes the gate. Grouping by the baseline's
+    # label alone would then file the treatment's `hard` row under `easy`.
+    base_rows = [
+        _row("agreed", difficulty="easy", faithfulness=0.5),
+        _row("relabelled", difficulty="easy", faithfulness=0.5),
+    ]
+    treat_rows = [
+        _row("agreed", difficulty="easy", faithfulness=0.7),
+        _row("relabelled", difficulty="hard", faithfulness=0.9),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["agreed", "relabelled"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert [row["value"] for row in rows] == ["easy"]
+    assert rows[0]["n"] == 1  # only the question both arms label "easy"
+    assert rows[0]["mean"] == pytest.approx(0.2)
+    assert rows[0]["excluded_mismatched"] == 1
+
+
+def test_the_anchors_reader_works_without_importing_the_src_package(
+    anchors_file, monkeypatch
+):
+    # `src/utils/__init__.py` imports the config service, which needs psycopg2.
+    # An analysis host reading finished artifacts must not need a database
+    # driver, so the bank normalizer is loaded from its own (pure stdlib) file.
+    monkeypatch.delitem(sys.modules, "src.utils.benchmark_schema", raising=False)
+    monkeypatch.setitem(sys.modules, "src.utils", None)
+    path = anchors_file([_anchor("tripwire", "easy_retrieve")])
+
+    assert list(cr.anchor_questions(path)) == ["tripwire"]
+
+
+def test_anchors_do_not_reach_the_qa_join_without_a_qa_run(
+    _artifact, anchors_file, monkeypatch
+):
+    # Deriving the item id imports the QA dataset module, which pulls the whole
+    # evaluation stack (mcp, ijson). A plain comparison must never trip that.
+    def explode(row):
+        raise AssertionError("qa_item_id must not run without a --qa-run")
+
+    monkeypatch.setattr(cr, "qa_item_id", explode)
+    rows = [_row("refuse me", answer="I don't have documentation for that.")]
+    arms = cr.load_arms([str(_artifact(rows)), str(_artifact(rows))])
+    anchors = cr.anchor_questions(anchors_file([_anchor("refuse me", "should_refuse")]))
+
+    entry = cr.anchor_block(arms[0], arms, anchors, {}, {})[0]
+
+    assert entry["arms"][arms[1].label]["refusal"] == "PASS"
+    assert entry["arms"][arms[1].label]["refusal_source"] == "heuristic"
+
+
+def test_qa_table_separates_whole_run_rates_from_the_joined_subset(_artifact, tmp_path):
+    # A QA run may cover more items than this benchmark arm asked. Presenting
+    # its headline rates beside a "joined" count invites reading them as the
+    # joined questions' rates, so the joined subset gets its own numbers.
+    question = "how do I request a GPU"
+    reference = "use --gres=gpu:1"
+    rows = [_row(question, reference=reference, faithfulness=0.5)]
+    arms = cr.load_arms([str(_artifact(rows)), str(_artifact(rows))])
+    item_id = derive_item_id(question, reference)
+    run = tmp_path / "qa"
+    _qa_run(run, item_id, item_pass_rate=1.0, atom_score=0.9)
+    # A second item the benchmark never asked, dragging the whole-run rates down.
+    summary = json.loads((run / "summary.json").read_text())
+    summary["items"].append({"item_id": "qa-unrelated", "k": 1, "item_pass_rate": 0.0})
+    summary["macro_mean_item_pass_rate"] = 0.5
+    summary["macro_mean_scored_attempt_atom_score"] = 0.45
+    (run / "summary.json").write_text(json.dumps(summary))
+
+    block = cr.qa_block(arms[0], arms, {arms[0].label: cr.load_qa_run(str(run))})
+    entry = block["arms"][0]
+
+    assert entry["joined"] == 1
+    assert entry["joined_mean_item_pass_rate"] == pytest.approx(1.0)
+    assert entry["mean_atom_score"] == pytest.approx(0.9)
+    assert entry["run_macro_mean_item_pass_rate"] == pytest.approx(0.5)
+    assert entry["run_macro_mean_scored_attempt_atom_score"] == pytest.approx(0.45)
 
 
 def test_refusal_heuristic_reads_the_real_no_coverage_phrasings():

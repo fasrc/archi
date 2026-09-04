@@ -62,6 +62,7 @@ Exit codes: 0 ok, 1 usage/IO, 2 gate refusal, 3 config-divergence stop.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import re
@@ -762,6 +763,37 @@ def _project_root_on_path() -> None:
         sys.path.insert(0, str(REPO_ROOT))
 
 
+def _normalize_bank():
+    """The harness's own bank normalizer, without the package side effects.
+
+    ``src/utils/__init__.py`` imports the config service, which imports
+    ``psycopg2`` — so the ordinary ``from src.utils.benchmark_schema import ...``
+    needs a database driver on a host that is only reading finished artifacts.
+    ``benchmark_schema.py`` is itself pure stdlib, so it is loaded straight from
+    its own file when the package import is unavailable. Same file, same
+    function: this is not a copy of the dialect rules.
+    """
+    _project_root_on_path()
+    try:
+        from src.utils.benchmark_schema import normalize_bank
+
+        return normalize_bank
+    except ImportError:
+        pass
+    source = REPO_ROOT / "src" / "utils" / "benchmark_schema.py"
+    spec = importlib.util.spec_from_file_location("archi_benchmark_schema", source)
+    if spec is None or spec.loader is None:  # pragma: no cover - unreachable
+        raise CompareError(f"cannot load the bank normalizer from {source}", EXIT_USAGE)
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:  # pragma: no cover - environment, not logic
+        raise CompareError(
+            f"cannot load the bank normalizer from {source}: {exc}", EXIT_USAGE
+        ) from None
+    return module.normalize_bank
+
+
 def anchor_questions(path: str, *, required: bool = True) -> Dict[str, dict]:
     """The anchors, keyed by question text.
 
@@ -772,13 +804,7 @@ def anchor_questions(path: str, *, required: bool = True) -> Dict[str, dict]:
     ``anchor_type`` on all 109 rows, so the field cannot tell an anchor from a
     bank question.
     """
-    _project_root_on_path()
-    try:
-        from src.utils.benchmark_schema import normalize_bank
-    except ImportError as exc:  # pragma: no cover - environment, not logic
-        raise CompareError(
-            f"the anchors reader needs the project importable: {exc}", EXIT_USAGE
-        ) from None
+    normalize_bank = _normalize_bank()
     file = Path(path)
     if not file.exists():
         if required:
@@ -922,7 +948,12 @@ def anchor_block(
                         "answer_snippet": snippet,
                     }
                 )
-                pass_rate = _qa_item_pass(qa_runs.get(arm.label), qa_item_id(row))
+                # Reach for the QA id only when a run could answer with it:
+                # deriving it imports the QA dataset module, which pulls the
+                # whole evaluation stack (mcp, ijson). A plain comparison must
+                # not need those installed.
+                run = qa_runs.get(arm.label)
+                pass_rate = _qa_item_pass(run, qa_item_id(row)) if run else None
                 if pass_rate is not None:
                     arm_entry["refusal"] = (
                         "PASS"
@@ -951,16 +982,28 @@ def slice_block(
     artifacts, so it is skipped rather than reported against a missing column.
     Slices below ``SMALL_SLICE`` rows are marked directional: at n=6 a single
     question swinging moves the mean by 0.17.
+
+    Membership needs **every** arm to give the question the same value. G4
+    compares question text, so a bank edit that re-labelled a question's
+    ``difficulty`` between the two runs passes the gate; grouping by the
+    baseline's label alone would then file the treatment's ``hard`` row under
+    ``easy``. Disagreeing questions are dropped from every slice of that field
+    and counted, so the loss is visible rather than silent.
     """
     block: List[dict] = []
     for field in SLICE_FIELDS:
         if not all(arm.has_metric(field) for arm in arms):
             continue
         groups: Dict[str, List[str]] = {}
+        mismatched = 0
         for question in questions:
             value = baseline.rows.get(question, {}).get(field)
-            if isinstance(value, str) and value:
-                groups.setdefault(value, []).append(question)
+            if not (isinstance(value, str) and value):
+                continue
+            if any(arm.rows.get(question, {}).get(field) != value for arm in arms):
+                mismatched += 1
+                continue
+            groups.setdefault(value, []).append(question)
         for value, members in sorted(groups.items()):
             for arm in arms:
                 if arm is baseline:
@@ -997,6 +1040,7 @@ def slice_block(
                                 else verdict(summary, sigma)
                             ),
                             "directional": directional,
+                            "excluded_mismatched": mismatched,
                         }
                     )
     return block
@@ -1124,20 +1168,33 @@ def qa_block(
             for facts in matched.values()
             if facts["atom_score"] is not None
         ]
+        item_rates = [
+            float(facts["item_pass_rate"])
+            for facts in matched.values()
+            if is_finite(facts["item_pass_rate"])
+        ]
         rows.append(
             {
                 "arm": arm.label,
                 "path": run["path"],
                 "joined": len(matched),
                 "asked": len(arm.order),
-                "overall_attempt_pass_rate": run["overall_attempt_pass_rate"],
-                "macro_mean_item_pass_rate": run["macro_mean_item_pass_rate"],
-                "macro_mean_scored_attempt_atom_score": run[
-                    "macro_mean_scored_attempt_atom_score"
-                ],
+                # Joined subset: these describe the questions this arm asked.
+                "joined_mean_item_pass_rate": (
+                    statistics.fmean(item_rates) if item_rates else None
+                ),
                 "mean_atom_score": statistics.fmean(scores) if scores else None,
                 "mean_duration_ms": statistics.fmean(durations) if durations else None,
                 "p90_duration_ms": percentile(durations, 90),
+                # Whole run, straight from summary.json. Kept because it is the
+                # run's own headline, and prefixed because a QA run may cover
+                # items this benchmark never asked — reading these as the joined
+                # questions' rates would attribute unrelated scores to the arm.
+                "run_overall_attempt_pass_rate": run["overall_attempt_pass_rate"],
+                "run_macro_mean_item_pass_rate": run["macro_mean_item_pass_rate"],
+                "run_macro_mean_scored_attempt_atom_score": run[
+                    "macro_mean_scored_attempt_atom_score"
+                ],
             }
         )
 
@@ -1434,6 +1491,18 @@ def render_markdown(report: dict) -> str:
                 for row in report["slices"]
             ],
         )
+        dropped = {
+            row["field"]: row["excluded_mismatched"]
+            for row in report["slices"]
+            if row["excluded_mismatched"]
+        }
+        for name, count in sorted(dropped.items()):
+            out.append("")
+            out.append(
+                f"{count} question(s) carry a different `{name}` in different "
+                "arms and were dropped from every slice of that field — the arms "
+                "were scored against different labels for the same question."
+            )
     else:
         out.append(
             "No slice field (`"
@@ -1474,23 +1543,33 @@ def render_markdown(report: dict) -> str:
                 f"questions, from `{row['path']}`"
             )
         out.append("")
+        out.append(
+            "The **joined** columns cover only the questions this arm asked; the "
+            "**whole-run** columns are `summary.json`'s own headline over every "
+            "item in the run, which may include items this benchmark never asked."
+        )
+        out.append("")
         out += _table(
             [
                 "arm",
-                "attempt pass rate",
-                "item pass rate",
-                "atom score",
-                "mean ms",
-                "p90 ms",
+                "joined item pass rate",
+                "joined atom score",
+                "joined mean ms",
+                "joined p90 ms",
+                "whole-run attempt pass rate",
+                "whole-run item pass rate",
+                "whole-run atom score",
             ],
             [
                 [
                     row["arm"],
-                    _fmt(row["overall_attempt_pass_rate"]),
-                    _fmt(row["macro_mean_item_pass_rate"]),
-                    _fmt(row["macro_mean_scored_attempt_atom_score"]),
+                    _fmt(row["joined_mean_item_pass_rate"]),
+                    _fmt(row["mean_atom_score"]),
                     _fmt(row["mean_duration_ms"], 0),
                     _fmt(row["p90_duration_ms"], 0),
+                    _fmt(row["run_overall_attempt_pass_rate"]),
+                    _fmt(row["run_macro_mean_item_pass_rate"]),
+                    _fmt(row["run_macro_mean_scored_attempt_atom_score"]),
                 ]
                 for row in report["qa"]["arms"]
             ],

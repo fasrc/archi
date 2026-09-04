@@ -56,8 +56,11 @@ lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
   anchors are reported as their own track — matched by question text, because the
   FASRC bank sets `anchor_type` on every row — and are kept out of the bank
   aggregates. `--qa-run LABEL=DIR` optionally joins an `archi eval qa` run by
-  derived item id. Standard library only; reads finished artifacts, so it needs
-  no deployment. Exit codes: 0 ok, 1 usage, 2 gate refusal, 3 config divergence.
+  derived item id — the one path that needs the project's evaluation
+  dependencies, because the id comes from the QA stack's own `derive_item_id`.
+  Everything else is standard library and reads finished artifacts, so it runs on
+  any host that has the JSON files: no deployment, no database. Exit codes: 0 ok,
+  1 usage, 2 gate refusal, 3 config divergence.
 
 ## Analysis and run helpers
 
