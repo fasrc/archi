@@ -270,8 +270,9 @@ ranking it would assert a controlled comparison that did not happen.
 The harness protects a run from a single bad question: if a question crashes or
 overflows the model's context window, it is marked `degraded` and excluded rather
 than aborting the run. Separately, the judge sometimes fails to score one cell.
-In the artifact that cell reads `null` — "asked for, not scored" — as distinct
-from `0.0`, which means the judge did score it and the score was zero.
+In the artifact that cell reads `null` (a bare `NaN` in older files) — "asked for,
+not scored" — as distinct from `0.0`, which means the judge did score it and the
+score was zero.
 
 Both behaviours are correct. Both are **silent**, and both change *which questions
 were averaged*.
@@ -280,11 +281,17 @@ So two runs reporting `faithfulness` may be averaging over different question
 sets. Comparing those two averages compares two different exams. Newer runs
 report a per-metric denominator (`<metric>_scored`, e.g. `"71 of 73"`) — check it.
 It counts the values that actually **reached the aggregate**, so an unscored cell
-lowers it. Runs before 2026-09-03 counted the rows *handed to the judge* instead,
-which over-reported coverage whenever a cell came back unscored: the 2026-08-17
-run published `context_precision_scored: "109 of 109"` over 108 real scores
-(archi#279). On an artifact from before that date, re-derive the count from the
-per-question cells rather than trusting the string.
+lowers it. Older harness code counted the rows *handed to the judge* instead,
+which over-reported coverage whenever a cell came back unscored: one run published
+`context_precision_scored: "109 of 109"` over 108 real scores (archi#279).
+
+Do not decide which behaviour an artifact has by its date. A run executes whatever
+code is baked into the deployed image, so a stale image writes the old numbers
+today (the same trap §5.E describes for `git_info.last_commit`). **Check the
+artifact instead:** count the per-question cells that are real numbers and compare
+that to the string. If they disagree, the denominator is the old inflated one and
+your count is the right one. `metadata.code_version` is what identifies the
+producing code when you need to say *which* runs share a behaviour.
 
 ### A worked example: the +0.017 that meant nothing
 
@@ -501,9 +508,9 @@ def load(path, arm=0):
     }
 
 def real(x):                        # a usable score: not null, not NaN
-    # Runs from 2026-09-03 write an unscored cell as `null`; older artifacts
-    # wrote a bare `NaN`. The isinstance check has to come FIRST — math.isnan
-    # raises on None. 0.0 passes both: it is a score, and a bad one.
+    # An unscored cell reads `null` in newer artifacts and a bare `NaN` in older
+    # ones; this accepts neither. The isinstance check has to come FIRST —
+    # math.isnan raises on None. 0.0 passes both: it is a score, and a bad one.
     return isinstance(x, (int, float)) and math.isfinite(x)
 
 baseline  = load("bench_out/<baseline>.json")
@@ -539,11 +546,13 @@ required, and they fail in different ways.
 
 ### Procedure D: reading the results file
 
-Runs from 2026-09-03 write strict JSON: an unscored cell is `null`, so any reader
-opens the file — `JSON.parse` in a browser included. Artifacts written before that
-contain the bare token `NaN`, which is **not** JSON; Python's `json.load` accepts
-it, so the snippets below work on both, but a stricter reader will refuse the older
-files (archi#279).
+Two artifact formats are in circulation, and the file tells you which one you have
+— its date does not, because a run executes whatever code the deployed image
+carries. Newer harness code writes strict JSON: an unscored cell is `null`, so any
+reader opens the file, `JSON.parse` in a browser included. Older artifacts contain
+the bare token `NaN`, which is **not** JSON (archi#279). `grep -c NaN <file>`
+settles it: a non-zero count means a strict reader will refuse the file. Python's
+`json.load` accepts both, so the snippets below work either way.
 
 ```
 bench_out/benchmarking-<name>-<timestamp>.json
@@ -559,7 +568,8 @@ bench_out/benchmarking-<name>-<timestamp>.json
     │   ├── aggregate_<metric>  # null when nothing was scored; 0.0 is a real score
     │   ├── <metric>_scored    # "71 of 73" — CHECK THIS (§3.4). Counts the values
     │   │                      # that reached the aggregate, not the rows judged;
-    │   │                      # over-reported before 2026-09-03 (archi#279)
+    │   │                      # older harness code over-reported it (archi#279),
+    │   │                      # so re-derive it from the cells, don't date it
     │   ├── source_accuracy
     │   ├── relative_source_accuracy
     │   └── source_scored_count # denominator of the two above; NOT the question count
