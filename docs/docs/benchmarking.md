@@ -169,6 +169,13 @@ plain "give up after N seconds":
   is byte-for-byte indistinguishable from a working one. Tightening it needs a
   progress signal from the data-manager itself.
 
+What this wait does **not** cover: a corpus change that starts *after* the
+initial ingest reports `completed` — a scheduled source refresh, or a
+vectorstore update triggered by an upload. Those hold the same lock but never
+touch this status endpoint, so the harness cannot block on them. It detects
+them after the fact instead, by fingerprinting the corpus on both sides of each
+arm and recording `corpus_unchanged_at_endpoints` in the results.
+
 A long-but-healthy ingest hits none of them. CPU-only ingest of the full FASRC
 corpus takes ~64 min; with `processing.categorization.enabled: true` it runs one
 extra LLM call per document before embedding, and has been measured at over two
