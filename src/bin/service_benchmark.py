@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
 from urllib.parse import urlsplit, urlunsplit
@@ -345,6 +345,7 @@ class ResultHandler:
         *,
         running_config: Optional[Dict[str, Any]],
         corpus_before: Optional[str] = None,
+        ingest_wall_seconds: Optional[float] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -418,6 +419,13 @@ class ResultHandler:
             "corpus_fingerprint_before": corpus_before,
             "corpus_fingerprint": corpus_after,
             "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
+            # What the corpus above COST to build, in harness-observed seconds.
+            # Three readings, kept distinct on purpose: key absent = artifact
+            # predates the field; null = no ingest was observed (the run reused
+            # an existing corpus); a float = seconds. Never 0.0 for "not
+            # measured". Recorded per arm and nowhere else -- a sweep runs
+            # several arms, so a run-level copy would label them all with one.
+            "ingest_wall_seconds": ingest_wall_seconds,
             # Per arm, not per file. One invocation runs every config in the
             # sweep directory (the `while self.all_config_files` loop), so a
             # single version on the metadata block would label every arm with
@@ -1021,6 +1029,110 @@ class ResultHandler:
             "rows": rows,
         }
         return ResultHandler.leaderboard
+
+
+class _IngestWaitBudgets(NamedTuple):
+    """The three knobs that bound the benchmark's wait for the data-manager.
+
+    ``stall_seconds`` is time since the *last successful* status poll, not total
+    runtime -- an ingest that keeps answering can take as long as it needs.
+    ``max_wait_seconds`` is the absolute backstop for an ingest that is alive
+    but stuck; ``0`` disables it.
+    """
+
+    stall_seconds: int
+    max_wait_seconds: int
+    poll_interval_seconds: int
+
+
+#: States that can count as evidence the ingest is working. Deliberately
+#: narrow: `ingestion_status.py:29-33` starts the endpoint at "pending" and
+#: only the ingestion thread moves it on, so an endpoint answering "pending"
+#: (or anything unrecognized) forever means the ingest never got going.
+_INGEST_PROGRESS_STATES = frozenset({"running"})
+
+#: The step published *before* `ingestion_lock` is acquired
+#: (`ingestion_status.py:46-48`). Every later step comes from inside the lock
+#: (`data_manager.py:90-109`), so this is the one step that proves work has NOT
+#: started.
+_INGEST_PRELOCK_STEP = "initializing"
+
+
+def _ingest_is_progressing(state: str, step: Any) -> bool:
+    """Is this status payload evidence the ingest is actually doing work?
+
+    Only payloads this accepts restart the stall budget. Two shapes are
+    excluded on purpose, because both are indistinguishable from a healthy
+    long run if you look only at "did the endpoint answer":
+
+    - any state but "running" -- notably the initial "pending", which persists
+      forever if the ingestion thread never starts;
+    - "running" at step "initializing" -- published before `ingestion_lock` is
+      taken, so it is also exactly what a benchmark sees while its own ingest
+      is queued behind a scheduled task or an upload-triggered vectorstore
+      update, neither of which touches this status dict
+      (`service_data_manager.py:70-83`).
+    """
+    if state not in _INGEST_PROGRESS_STATES:
+        return False
+    return str(step).strip().lower() != _INGEST_PRELOCK_STEP
+
+
+def _ingest_wait_budgets() -> _IngestWaitBudgets:
+    return _IngestWaitBudgets(
+        stall_seconds=int(os.environ.get("BENCH_INGEST_WAIT_TIMEOUT", "7200")),
+        max_wait_seconds=int(os.environ.get("BENCH_INGEST_MAX_WAIT", "21600")),
+        poll_interval_seconds=int(os.environ.get("BENCH_INGEST_POLL_INTERVAL", "5")),
+    )
+
+
+def _fetch_ingestion_status(url: str) -> Dict[str, Any]:
+    """Read one ingestion-status payload. The injection seam for the wait loop."""
+    with url_request.urlopen(url, timeout=5) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _ingest_wait_timeout_message(
+    reason: str,
+    *,
+    candidate_urls: List[str],
+    last_ok_url: Optional[str],
+    last_state: Optional[str],
+    last_step: Any,
+    errors_by_url: Dict[str, BaseException],
+) -> str:
+    """Explain an ingest timeout in terms of what the harness actually observed.
+
+    Errors are kept per URL and reported against the URL they belong to, which
+    is what issue #378's defect 2 needed in both its forms. The first form was
+    a single `last_error` surviving a later candidate's success, so a timeout
+    quoted a connection failure from a URL that was working around it. The
+    second is subtler: when the URL that *had* been serving status goes down,
+    the loop falls through the remaining candidates too, and one shared
+    `last_error` ends up holding whatever the final fallback raised -- often an
+    unrelated DNS failure for `host.containers.internal`. The operator needs
+    the failure of the endpoint that was working, so that is what this reports.
+    """
+    if last_ok_url is None:
+        # Nothing ever answered, so every candidate's error is current and each
+        # one is a distinct fact about a distinct host. Label them.
+        tried = "; ".join(
+            f"{url}: {errors_by_url[url]}"
+            for url in dict.fromkeys(candidate_urls)
+            if url in errors_by_url
+        )
+        observed = f"none of the candidate status URLs ever answered ({tried})"
+        return f"Timed out waiting for data-manager ingestion: {reason}. {observed}."
+
+    observed = (
+        f"last successful poll was {last_ok_url} -> "
+        f"state={last_state} step={last_step}"
+    )
+    message = f"Timed out waiting for data-manager ingestion: {reason}. {observed}."
+    serving_error = errors_by_url.get(last_ok_url)
+    if serving_error is not None:
+        message = f"{message} That URL now fails with: {serving_error}"
+    return message
 
 
 class Benchmarker:
@@ -1836,7 +1948,7 @@ class Benchmarker:
             }
 
     def run(self):
-        self.wait_for_ingestion_completion()
+        ingest_wall_seconds = self.wait_for_ingestion_completion()
 
         modes_being_run = set(self.benchmarking_configs["modes"])
 
@@ -1870,6 +1982,14 @@ class Benchmarker:
                 # questions ran -- not a fresh query, which would report the
                 # config as it stands now rather than as the arm used it.
                 running_config=getattr(self.chain, "config", None),
+                # Measured once, before the sweep, and stamped on every arm --
+                # there is one ingest wait per invocation, not one per arm.
+                # Ingestion can continue in the background, so a later arm may
+                # score a corpus this number did not build. The signal for that
+                # is `corpus_fingerprint` differing ACROSS arms, not
+                # `corpus_unchanged_at_endpoints`: a re-ingest landing wholly
+                # between two arms leaves that boolean True on both sides.
+                ingest_wall_seconds=ingest_wall_seconds,
             )
             self.load_new_configuration()
 
@@ -2122,9 +2242,58 @@ class Benchmarker:
             len(merged),
         )
 
-    def wait_for_ingestion_completion(self):
-        timeout_seconds = int(os.environ.get("BENCH_INGEST_WAIT_TIMEOUT", "7200"))
-        poll_interval_seconds = int(os.environ.get("BENCH_INGEST_POLL_INTERVAL", "5"))
+    def wait_for_ingestion_completion(
+        self,
+        *,
+        fetch: Optional[Callable[[str], Dict[str, Any]]] = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> Optional[float]:
+        """Block until the data-manager reports ingestion complete.
+
+        Returns the wall-clock seconds this ingest was observed working, or
+        `None` when it was never observed working at all -- the run found the
+        corpus already built. Never `0.0`: that would put a fabricated
+        measurement where "not measured" belongs (issue #417).
+
+        The span runs from the first poll `_ingest_is_progressing` accepts to
+        the one reporting `completed`, so queue time behind another holder of
+        `ingestion_lock` is excluded but everything after work starts is
+        included. It approximates the ingest rather than measuring it, and errs
+        in both directions: ingestion that ran before this container started
+        polling cannot be seen at all, and non-ingest time after polling began
+        is counted. An exact figure needs `started_at`/`finished_at` in the
+        status payload, which is a data-manager change (#428).
+
+        `fetch`, `clock` and `sleep` are injection seams for the tests only;
+        production calls this with no arguments.
+
+        Neither bound on this wait is a total-runtime deadline on a *healthy*
+        ingest. `BENCH_INGEST_WAIT_TIMEOUT` is a **stall** budget: it restarts
+        on every poll reporting `state=running`, so an ingest that keeps
+        reporting progress is never killed merely for being slow. That was
+        issue #378 -- a 106-minute embedding phase aborted at exactly 7200s
+        while all 1433 of its status polls were succeeding, two minutes short
+        of finishing. `BENCH_INGEST_MAX_WAIT` is the absolute backstop for the
+        other failure: an ingest that reports progress forever without ever
+        completing.
+
+        Two judgement calls, both deliberate:
+
+        - Restart on any *running* poll, not on a **changing `step`**.
+          `data_manager.py:108-109` emits "Updating vectorstore" once for the
+          whole embedding phase, so the step string is constant for hours on a
+          healthy run; a step-change rule would kill exactly the runs this
+          exists to protect.
+        - Restart on *progress* only, not on any **answered** poll --
+          `_ingest_is_progressing` decides. An endpoint stuck at `pending`, or
+          at `running`/`initializing` because this ingest is queued behind
+          another holder of `ingestion_lock`, is answering happily while
+          nothing of ours is happening; the stall budget must end those,
+          exactly as the old absolute deadline did.
+        """
+        budgets = _ingest_wait_budgets()
+        fetch = fetch or _fetch_ingestion_status
         dm_cfg = self.config.get("services", {}).get("data_manager", {})
         # external_port is the HOST-side mapping (e.g. 7881 for benchmarks);
         # internal_port is what the data-manager listens on INSIDE the compose
@@ -2142,59 +2311,119 @@ class Benchmarker:
             f"http://localhost:{dm_external_port}/api/ingestion/status",
             f"http://host.containers.internal:{dm_external_port}/api/ingestion/status",
         ]
-        start_time = time.monotonic()
+        start_time = clock()
+        last_ok_at = start_time
+        last_ok_url: Optional[str] = None
+        last_state: Optional[str] = None
+        last_step: Any = None
+        # Per URL, not one shared "last error": an error belongs to the host
+        # that raised it, and only the serving URL's failure explains a timeout.
+        errors_by_url: Dict[str, BaseException] = {}
+        # When this ingest was first seen actually working -- NOT when the
+        # waiting started. A run queued behind another holder of
+        # `ingestion_lock` sits at `running`/`initializing` while nothing of its
+        # own happens, and charging that queue time to the corpus would make the
+        # campaign's cost table depend on what else the data-manager was doing.
+        # Still None at the completed poll = no ingest was observed at all (#417).
+        ingest_started_at: Optional[float] = None
         attempt = 0
 
         logger.info(
             "Waiting for data-manager ingestion to complete before benchmarking..."
         )
+        if not budgets.max_wait_seconds:
+            # The status payload carries no progress counter (only state/step,
+            # `ingestion_status.py:29-33`), so an ingest wedged *inside*
+            # `update_vectorstore()` still answers "running" forever and only
+            # the ceiling can end it. Disabling the ceiling is a legitimate
+            # choice for a corpus larger than the default 6h -- but an
+            # unattended run that hangs silently burns its allocation, so it
+            # must not be a quiet one.
+            logger.warning(
+                "BENCH_INGEST_MAX_WAIT=0: no absolute ceiling on this wait. An "
+                "ingest that wedges while still reporting state=running will "
+                "block the benchmark indefinitely."
+            )
         while True:
             attempt += 1
-            last_error = None
             for status_url in status_urls:
                 try:
-                    with url_request.urlopen(status_url, timeout=5) as response:
-                        payload = json.loads(response.read().decode("utf-8"))
-                    state = str(payload.get("state", "")).lower()
-                    step = payload.get("step")
-                    err = payload.get("error")
-                    logger.info(
-                        "Ingestion status check #%s via %s -> state=%s step=%s",
-                        attempt,
-                        status_url,
-                        state,
-                        step,
-                    )
-                    if state == "completed":
-                        logger.info(
-                            "Data-manager ingestion completed; starting benchmark."
-                        )
-                        return
-                    if state == "error":
-                        raise RuntimeError(
-                            f"Data-manager ingestion failed at step '{step}': {err}"
-                        )
-                    break
+                    payload = fetch(status_url)
                 except (
                     url_error.URLError,
                     TimeoutError,
                     ValueError,
                     json.JSONDecodeError,
                 ) as exc:
-                    last_error = exc
+                    errors_by_url[status_url] = exc
                     continue
 
-            elapsed = time.monotonic() - start_time
-            if elapsed >= timeout_seconds:
-                if last_error:
-                    raise TimeoutError(
-                        f"Timed out after {timeout_seconds}s waiting for ingestion status endpoint. Last error: {last_error}"
+                state = str(payload.get("state", "")).lower()
+                step = payload.get("step")
+                logger.info(
+                    "Ingestion status check #%s via %s -> state=%s step=%s",
+                    attempt,
+                    status_url,
+                    state,
+                    step,
+                )
+                # THIS URL answered, so only ITS own recorded failure is stale.
+                # Another candidate's error is still that candidate's business
+                # and stays on the books against it (defect 2). Reachability
+                # facts update on any answer; the stall budget restarts only on
+                # evidence of actual progress.
+                errors_by_url.pop(status_url, None)
+                last_ok_url = status_url
+                last_state = state
+                last_step = step
+                if _ingest_is_progressing(state, step):
+                    last_ok_at = clock()
+                    if ingest_started_at is None:
+                        ingest_started_at = last_ok_at
+
+                if state == "completed":
+                    logger.info("Data-manager ingestion completed; starting benchmark.")
+                    if ingest_started_at is None:
+                        return None
+                    return clock() - ingest_started_at
+                if state == "error":
+                    raise RuntimeError(
+                        f"Data-manager ingestion failed at step '{step}': "
+                        f"{payload.get('error')}"
                     )
+                break
+
+            now = clock()
+            stalled_for = now - last_ok_at
+            elapsed = now - start_time
+            if stalled_for >= budgets.stall_seconds:
                 raise TimeoutError(
-                    f"Timed out after {timeout_seconds}s waiting for ingestion completion."
+                    _ingest_wait_timeout_message(
+                        f"no progress reported for {stalled_for:.0f}s "
+                        f"(BENCH_INGEST_WAIT_TIMEOUT={budgets.stall_seconds}s; "
+                        "the budget restarts whenever the ingest reports "
+                        "progress, never on total runtime)",
+                        candidate_urls=status_urls,
+                        last_ok_url=last_ok_url,
+                        last_state=last_state,
+                        last_step=last_step,
+                        errors_by_url=errors_by_url,
+                    )
+                )
+            if budgets.max_wait_seconds and elapsed >= budgets.max_wait_seconds:
+                raise TimeoutError(
+                    _ingest_wait_timeout_message(
+                        f"still not complete after {elapsed:.0f}s "
+                        f"(BENCH_INGEST_MAX_WAIT={budgets.max_wait_seconds}s)",
+                        candidate_urls=status_urls,
+                        last_ok_url=last_ok_url,
+                        last_state=last_state,
+                        last_step=last_step,
+                        errors_by_url=errors_by_url,
+                    )
                 )
 
-            time.sleep(poll_interval_seconds)
+            sleep(budgets.poll_interval_seconds)
 
 
 if __name__ == "__main__":

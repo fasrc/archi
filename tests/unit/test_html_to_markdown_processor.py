@@ -3,14 +3,24 @@
 import sys
 from pathlib import Path
 
+import pytest
+from bs4 import BeautifulSoup, Comment, Tag
+from markdownify import STRIP, STRIP_ONE
+from markdownify import markdownify as library_markdownify
+
 from src.data_manager.collectors.localfile_resource import LocalFileResource
 from src.data_manager.collectors.processing import (
     _FENCE_LANGUAGES,
     _INLINE_MARKUP_TAGS,
     _PROMOTED_ATTR,
+    _SELF_SEPARATING_FOLLOWERS,
     HtmlToMarkdownProcessor,
     ResourcePipeline,
+    _ArchiMarkdownConverter,
     _fence_language,
+    _markdownify,
+    _nested_list_needs_break,
+    _next_content_sibling,
     _promote_block_code,
     _promoted_fence_language,
     _slice_kb_article,
@@ -137,7 +147,7 @@ def test_converter_raises_keeps_original(monkeypatch):
     def _boom(*_a, **_k):
         raise RuntimeError("markdownify failed")
 
-    monkeypatch.setattr("src.data_manager.collectors.processing.markdownify", _boom)
+    monkeypatch.setattr("src.data_manager.collectors.processing._markdownify", _boom)
     resource = _html_resource(content="<h1>Title</h1>")
     out = HtmlToMarkdownProcessor().process(resource)
     assert out.content == "<h1>Title</h1>"
@@ -147,7 +157,7 @@ def test_converter_raises_keeps_original(monkeypatch):
 
 def test_blank_output_keeps_original(monkeypatch):
     monkeypatch.setattr(
-        "src.data_manager.collectors.processing.markdownify",
+        "src.data_manager.collectors.processing._markdownify",
         lambda *_a, **_k: "   \n  ",
     )
     resource = _html_resource(content="<script>noop()</script>")
@@ -566,6 +576,76 @@ def test_wire_fenced_block_wpautop_newlines_have_no_blank_lines():
     assert html_to_markdown(html) == "```bash\n#!/bin/bash\n# comment\necho hi\n```"
 
 
+# --- break whitespace through inline nodes beside a promoted <br> (issue #408) ---
+
+
+def test_promote_block_code_drops_newline_inside_inline_tag_after_br():
+    assert _promoted_code_text("<p><code>a<br><span>\nb</span></code></p>") == "a\nb"
+
+
+def test_promote_block_code_drops_newline_after_inline_tag_that_ends_with_br():
+    assert _promoted_code_text("<p><code><span>a<br></span>\nb</code></p>") == "a\nb"
+
+
+def test_promote_block_code_keeps_indentation_inside_inline_tag_after_br():
+    assert (
+        _promoted_code_text("<p><code>a<br><span>\n    b</span></code></p>")
+        == "a\n    b"
+    )
+
+
+def test_promote_block_code_drops_newline_inside_inline_tag_before_br():
+    assert _promoted_code_text("<p><code><span>a\n</span><br>b</code></p>") == "a\nb"
+
+
+def test_promote_block_code_drops_newline_before_inline_tag_that_starts_with_br():
+    assert _promoted_code_text("<p><code>a\n<span><br>b</span></code></p>") == "a\nb"
+
+
+def test_promote_block_code_climbs_through_nested_inline_tags():
+    assert (
+        _promoted_code_text("<p><code><span><em>a<br></em></span>\nb</code></p>")
+        == "a\nb"
+    )
+
+
+def test_promote_block_code_never_climbs_past_the_code_element():
+    from bs4 import BeautifulSoup
+
+    result = _promote_block_code("<p><code>a<br></code>\nmore</p>")
+    soup = BeautifulSoup(result, "html.parser")
+    assert soup.p.contents[-1] == "\nmore"
+
+
+def test_wire_inline_child_newlines_have_no_blank_lines():
+    assert (
+        html_to_markdown("<p><code>a<br><span>\nb</span></code></p>")
+        == "```\na\nb\n```"
+    )
+    assert (
+        html_to_markdown("<p><code><span>a<br></span>\nb</code></p>")
+        == "```\na\nb\n```"
+    )
+    assert (
+        html_to_markdown("<p><code>a<br><span>\n    b</span></code></p>")
+        == "```\na\n    b\n```"
+    )
+
+
+def test_wire_comment_inside_inline_tag_is_skipped():
+    assert (
+        html_to_markdown("<p><code>a<br><span><!-- c -->\nb</span></code></p>")
+        == "```\na\nb\n```"
+    )
+
+
+def test_wire_two_breaks_keep_one_blank_line_through_the_tag_branch():
+    assert html_to_markdown("<p><code>a<br><br>b</code></p>") == "```\na\n\nb\n```"
+    assert (
+        html_to_markdown("<p><code>a<br />\n<br />\nb</code></p>") == "```\na\n\nb\n```"
+    )
+
+
 # --- fence language only for promoted blocks (issue #399, Codex review) -------
 # markdownify calls code_language_callback for every <pre>. A native
 # <pre class="bash"> must keep converting to a bare fence, byte-identical to the
@@ -631,6 +711,52 @@ def test_promote_block_code_drops_only_whitespace_beside_a_source_newline():
     # ('`cmd\n  \nnext`'). Whitespace with no newline beside it is payload and stays.
     assert _promoted_code_text("<p><code>cmd\t\n<br>next</code></p>") == "cmd\nnext"
     assert _promoted_code_text("<p><code>a\tb\t<br>c</code></p>") == "a\tb\t\nc"
+
+
+# --- fence delimiter sized to the longest backtick run inside the block (#407) ---
+
+
+def test_fence_widens_past_an_embedded_triple_backtick_run():
+    html = "<p><code>a<br>```<br># heading</code></p>"
+    assert html_to_markdown(html) == "````\na\n```\n# heading\n````"
+
+
+def test_fence_widens_past_an_embedded_triple_backtick_run_in_a_native_pre():
+    html = "<pre>a\n```\nb</pre>"
+    assert html_to_markdown(html) == "````\na\n```\nb\n````"
+
+
+def test_fence_widens_past_a_four_backtick_run():
+    html = "<pre>a\n````\nb</pre>"
+    assert html_to_markdown(html) == "`````\na\n````\nb\n`````"
+
+
+def test_fence_widens_and_keeps_the_infostring():
+    html = '<p><code class="bash">x<br>```<br>y</code></p>'
+    assert html_to_markdown(html) == "````bash\nx\n```\ny\n````"
+
+
+def test_fence_widens_for_a_mid_line_backtick_run():
+    html = "<pre>use ``` inline</pre>"
+    assert html_to_markdown(html) == "````\nuse ``` inline\n````"
+
+
+def test_fence_empty_block_is_unaffected():
+    assert html_to_markdown("<p>x</p><pre></pre><p>y</p>") == "x\n\ny"
+    assert _markdownify("<pre></pre>") == ""
+
+
+@pytest.mark.parametrize("mode", [STRIP, STRIP_ONE, None])
+def test_markdownify_matches_the_library_for_every_strip_pre_mode(mode):
+    html = "<p>x</p><pre>\n\n  a\n\n</pre><p>y</p>"
+    assert _markdownify(html, strip_pre=mode) == library_markdownify(
+        html, strip_pre=mode
+    )
+
+
+def test_markdownify_rejects_an_invalid_strip_pre_mode():
+    with pytest.raises(ValueError):
+        _markdownify("<pre>x</pre>", strip_pre="bogus")
 
 
 # --- hoist a promoted block out of inline formatting ancestors (issue #406) ---
@@ -994,3 +1120,335 @@ def test_cut_edge_text_reads_only_the_edge_children():
     edge = _cut_edge_text(em, trailing=True)
     assert str(edge) == " tail  "
     assert em.contents.iterations == 0
+
+
+# --- the neighbour is the text that touches the break, not the first text anywhere ---
+# (local adversarial review of PR #416, 2026-09-04)
+
+
+def test_strip_break_whitespace_childless_tag_at_forward_edge_keeps_newline_behind_it():
+    """An <img> touches the break; the newline behind it does not, so it stays."""
+    assert (
+        html_to_markdown('<p><code>a<br><span><img src="i"/>\nb</span></code></p>')
+        == "```\na\n![](i)\nb\n```"
+    )
+
+
+def test_strip_break_whitespace_childless_tag_at_backward_edge_keeps_newline_before_it():
+    assert (
+        html_to_markdown('<p><code><span>a\n<img src="i"/></span><br>b</code></p>')
+        == "```\na\n![](i)\nb\n```"
+    )
+
+
+def test_strip_break_whitespace_nested_tag_at_edge_is_the_neighbour():
+    """Text inside a nested tag at the edge is the neighbour; text behind it is untouched."""
+    assert (
+        html_to_markdown("<p><code>a<br><span><i>x</i>\n  b</span></code></p>")
+        == "```\na\nx\n  b\n```"
+    )
+    assert (
+        html_to_markdown("<p><code>a<br><span><i>\nx</i> b</span></code></p>")
+        == "```\na\nx b\n```"
+    )
+
+
+# --- issue #410: newline after a nested list ---
+
+
+def test_410_self_separating_followers_set():
+    # (a) The frozenset contains exactly the block-level elements that markdownify
+    # already emits with a leading newline when they follow a nested list, plus ul
+    # and ol (both list converters start with '\n' for nested lists).
+    assert _SELF_SEPARATING_FOLLOWERS == frozenset(
+        {
+            "article",
+            "blockquote",
+            "br",
+            "div",
+            "dl",
+            "dt",
+            "figcaption",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "hr",
+            "ol",
+            "p",
+            "pre",
+            "section",
+            "table",
+            "ul",
+        }
+    )
+
+
+def test_410_next_content_sibling_finds_text_and_tag():
+    # (b) Whitespace NavigableStrings and Comment nodes are skipped; the first
+    # non-blank NavigableString is returned as the content sibling.
+    html_b = "<li>Outer<ul><li>Inner</li></ul>   <!-- c -->tail</li>"
+    soup = BeautifulSoup(html_b, "html.parser")
+    ul = soup.find("ul")
+    nxt = _next_content_sibling(ul)
+    assert str(nxt) == "tail"
+    assert not isinstance(nxt, Tag)
+
+    # (c) A Tag is returned directly without inspecting its text.
+    html_c = "<li>Outer<ul><li>Inner</li></ul><p>Para</p></li>"
+    soup = BeautifulSoup(html_c, "html.parser")
+    ul = soup.find("ul")
+    nxt = _next_content_sibling(ul)
+    assert isinstance(nxt, Tag)
+    assert nxt.name == "p"
+
+
+def test_410_next_content_sibling_returns_none():
+    # (d) Whitespace-only or comment-only siblings yield None.
+    html_ws = "<li>Outer<ul><li>Inner</li></ul>  </li>"
+    soup = BeautifulSoup(html_ws, "html.parser")
+    ul = soup.find("ul")
+    assert _next_content_sibling(ul) is None
+
+    html_co = "<li>Outer<ul><li>Inner</li></ul><!-- only --></li>"
+    soup = BeautifulSoup(html_co, "html.parser")
+    ul = soup.find("ul")
+    assert _next_content_sibling(ul) is None
+
+
+def test_410_nested_list_needs_break_true():
+    # (e) Returns True when the follower is a text node, an inline element, or a
+    # sibling <li> — none of which start on a new line in markdownify output.
+    def _ul_for(html):
+        return BeautifulSoup(html, "html.parser").find("ul")
+
+    # text follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul>tail</li>"), "Inner"
+        )
+        is True
+    )
+
+    # inline <a> follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for('<li><ul><li>Inner</li></ul><a href="http://x">link</a></li>'),
+            "Inner",
+        )
+        is True
+    )
+
+    # inline <code> follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul><code>x</code></li>"), "Inner"
+        )
+        is True
+    )
+
+    # sibling <li> follower (inside a div so html.parser keeps the li as a sibling)
+    soup = BeautifulSoup(
+        "<div><ul><li>Inner</li></ul><li>Configure a bundle</li></div>", "html.parser"
+    )
+    ul = soup.find("ul")
+    assert _nested_list_needs_break(ul, "Inner") is True
+
+
+def test_410_nested_list_needs_break_false():
+    # (f) Returns False when the follower is a self-separating block element, another
+    # list, <br>, when there is no follower, or when the only sibling is a comment.
+    def _ul_for(html):
+        return BeautifulSoup(html, "html.parser").find("ul")
+
+    # <p> follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul><p>Para</p></li>"), "Inner"
+        )
+        is False
+    )
+
+    # <pre> follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul><pre>code</pre></li>"), "Inner"
+        )
+        is False
+    )
+
+    # <h3> follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul><h3>Head</h3></li>"), "Inner"
+        )
+        is False
+    )
+
+    # <ul> follower — a second nested list already starts with '\n' in markdownify output
+    soup = BeautifulSoup(
+        "<li><ul><li>Inner</li></ul><ul><li>Second</li></ul></li>", "html.parser"
+    )
+    uls = soup.find_all("ul")
+    assert _nested_list_needs_break(uls[0], "Inner") is False
+
+    # <br> follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul><br></li>"), "Inner"
+        )
+        is False
+    )
+
+    # no follower
+    assert (
+        _nested_list_needs_break(_ul_for("<li><ul><li>Inner</li></ul></li>"), "Inner")
+        is False
+    )
+
+    # comment-only follower
+    assert (
+        _nested_list_needs_break(
+            _ul_for("<li><ul><li>Inner</li></ul><!-- c --></li>"), "Inner"
+        )
+        is False
+    )
+
+
+def test_410_nested_list_needs_break_empty_text():
+    # (g) An empty nested list contributes nothing; the text guard fires first.
+    html = "<li><ul><li>Inner</li></ul>tail</li>"
+    ul = BeautifulSoup(html, "html.parser").find("ul")
+    assert _nested_list_needs_break(ul, "   ") is False
+
+
+# --- issue #410: _ArchiMarkdownConverter and markdownify wrapper (task 1.2) ---
+
+
+def test_410_snippet_a_pre_after_nested_list():
+    # (a) Text after a nested list that ends in a code fence must start on its own line.
+    html = (
+        "<ul><li>Outer item"
+        "<ul><li>Inner: <pre>x = 1</pre></li></ul>"
+        "After the nested list.</li></ul>"
+    )
+    result = html_to_markdown(html)
+    assert result == (
+        "* Outer item\n  + Inner:\n\n    ```\n    x = 1\n    ```\n"
+        "  After the nested list."
+    )
+    assert "    ```" in result.splitlines()
+    assert "```After" not in result
+
+
+def test_410_snippet_c_prose_after_nested_list():
+    # (b) Plain text after a nested list must start on its own line.
+    result = html_to_markdown(
+        "<ul><li>Outer item"
+        "<ul><li>Inner ends in prose</li></ul>"
+        "After the nested list.</li></ul>"
+    )
+    assert result == "* Outer item\n  + Inner ends in prose\n  After the nested list."
+    assert "proseAfter" not in result
+
+
+def test_410_snippet_d_pre_sibling_li():
+    # (c) Nested list ending in a code fence, followed by a sibling <li>.
+    result = html_to_markdown(
+        "<ul><li>A"
+        "<ul><li><pre>docker rm alpine</pre></li></ul>"
+        "<li>Configure a bundle</li></li></ul>"
+    )
+    assert result == (
+        "* A\n  + ```\n    docker rm alpine\n    ```\n  * Configure a bundle"
+    )
+    assert "```*" not in result
+
+
+def test_410_ordered_list():
+    # (d) The fix applies to ordered nested lists as well.
+    result = html_to_markdown("<ol><li>Outer<ol><li>Inner</li></ol>After.</li></ol>")
+    assert result == "1. Outer\n   1. Inner\n   After."
+
+
+def test_410_inline_follower():
+    # (e) An inline element following a nested list gets its own line.
+    result = html_to_markdown(
+        '<ul><li>Outer<ul><li>Inner</li></ul><a href="http://x">link</a> tail</li></ul>'
+    )
+    assert result == "* Outer\n  + Inner\n  [link](http://x) tail"
+
+
+def test_410_comment_then_text():
+    # (f) A comment between the nested list and the text is skipped; text gets its line.
+    result = html_to_markdown(
+        "<ul><li>Outer<ul><li>Inner</li></ul><!-- c -->tail</li></ul>"
+    )
+    assert result == "* Outer\n  + Inner\n  tail"
+
+
+def test_410_dispatch_attributes():
+    # (g) convert_ul and convert_ol must be the same function object as convert_list.
+    assert _ArchiMarkdownConverter.convert_ul is _ArchiMarkdownConverter.convert_list
+    assert _ArchiMarkdownConverter.convert_ol is _ArchiMarkdownConverter.convert_list
+
+
+def test_410_processor_snippet_a():
+    # (h) HtmlToMarkdownProcessor round-trip for snippet A.
+    html = (
+        "<ul><li>Outer item"
+        "<ul><li>Inner: <pre>x = 1</pre></li></ul>"
+        "After the nested list.</li></ul>"
+    )
+    out = HtmlToMarkdownProcessor().process(_html_resource(content=html))
+    assert out.suffix == "md"
+    assert out.get_content() == html_to_markdown(html)
+    assert "```After" not in out.get_content()
+
+
+def test_410_guards():
+    # (i) Cases that pass today with stock markdownify and must keep passing.
+    assert (
+        html_to_markdown(
+            "<ul><li>Outer<ul><li>Inner</li></ul></li><li>Next outer</li></ul>"
+        )
+        == "* Outer\n  + Inner\n* Next outer"
+    )
+    assert (
+        html_to_markdown(
+            "<ul><li>Outer<ul><li>Inner</li></ul>\n  </li><li>Next outer</li></ul>"
+        )
+        == "* Outer\n  + Inner\n* Next outer"
+    )
+    assert (
+        html_to_markdown("<ul><li>Outer<ul><li>Inner</li></ul><p>Para</p></li></ul>")
+        == "* Outer\n  + Inner\n\n  Para"
+    )
+    assert (
+        html_to_markdown(
+            "<ul><li>Outer<ul><li>Inner</li></ul><pre>code</pre></li></ul>"
+        )
+        == "* Outer\n  + Inner\n\n  ```\n  code\n  ```"
+    )
+    assert (
+        html_to_markdown("<ul><li>Outer<ul><li>Inner</li></ul><h3>Head</h3></li></ul>")
+        == "* Outer\n  + Inner\n\n  ### Head"
+    )
+    assert (
+        html_to_markdown(
+            "<ul><li>Outer<ul><li>Inner</li></ul><ul><li>Second</li></ul></li></ul>"
+        )
+        == "* Outer\n  + Inner\n  + Second"
+    )
+    assert (
+        html_to_markdown("<ul><li>Outer<ul><li>Inner</li></ul><br>tail</li></ul>")
+        == "* Outer\n  + Inner  \n  tail"
+    )
+    assert html_to_markdown("<ul><li>Outer<ul></ul>tail</li></ul>") == "* Outer\n  tail"
+    assert (
+        html_to_markdown("<ul><li>Outer<ul><li>Inner</li></ul><!-- c --></li></ul>")
+        == "* Outer\n  + Inner"
+    )
+    assert html_to_markdown("<ul><li>a</li></ul>tail text") == "* a\n\ntail text"

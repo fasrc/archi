@@ -51,6 +51,30 @@ def load_benchmark_results(filepath):
     return data["benchmarking_results"], data["metadata"]
 
 
+#: Distinguishes "this artifact was written before ingest timing existed" from
+#: "no ingest was observed" (``None``). Both would read as a missing number
+#: through a plain ``.get``, but they are different facts about the run and the
+#: reports say so differently.
+_INGEST_NOT_RECORDED = object()
+
+
+def _format_seconds(seconds):
+    """Seconds for arithmetic, h/m/s so a person can read it.
+
+    An ingest is reported in seconds because that is what gets compared across
+    campaign arms -- but "7351" is not a duration anyone can feel, and
+    "2h 2m 31s" is.
+    """
+    total = int(round(seconds))
+    if total < 60:
+        return f"{total} s"
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{total} s ({hours}h {minutes}m {secs}s)"
+    return f"{total} s ({minutes}m {secs}s)"
+
+
 def parse_benchmark_results(results, metadata):
     """Parse benchmark results JSON"""
 
@@ -84,6 +108,11 @@ def parse_benchmark_results(results, metadata):
         # record; `code_version` is per invocation and comes off the metadata.
         "config_version": result.get("config_version"),
         "code_version": metadata.get("code_version"),
+        # Three readings, and the renderers keep them apart: the sentinel means
+        # the artifact predates the field, None means no ingest was observed
+        # while the run waited, a float means seconds. A plain .get() would
+        # collapse the first two into one wrong claim.
+        "ingest_wall_seconds": result.get("ingest_wall_seconds", _INGEST_NOT_RECORDED),
     }
 
     return config_data, config_name, timestamp, questions, total_results, provenance
@@ -151,10 +180,37 @@ def format_provenance_html(provenance):
             "</p>"
         )
 
+    ingest = provenance.get("ingest_wall_seconds", _INGEST_NOT_RECORDED)
+    if ingest is _INGEST_NOT_RECORDED:
+        ingest_line = (
+            "<p class='provenance-alert'>Time to ingest is <strong>not "
+            "recorded</strong>: this artifact predates the field.</p>"
+        )
+    elif ingest is None:
+        ingest_line = (
+            "<p class='provenance-ok'>Time to ingest: <strong>not "
+            "measured</strong> &mdash; no ingest was observed while this run "
+            "waited, which normally means it reused an existing corpus.</p>"
+        )
+    else:
+        ingest_line = (
+            "<p class='provenance-ok'>Time to ingest: "
+            f"<strong>{_format_seconds(ingest)}</strong> &mdash; the span from "
+            "the first status poll reporting progress to the one reporting "
+            "completion. An <strong>approximation</strong>, not a measurement: "
+            "ingestion that ran before this benchmark began polling is "
+            "missing, and non-ingest time after it began is included. Measured "
+            "once before the sweep, so every arm of this run carries the same "
+            "figure &mdash; where arms report different "
+            "<code>corpus_fingerprint</code> values, it describes only the "
+            "first.</p>"
+        )
+
     return (
         "<div class='provenance'><h2>Run provenance</h2>"
         + config_line
         + corpus_line
+        + ingest_line
         + format_version_html(provenance)
         + "</div>"
     )
@@ -1047,6 +1103,30 @@ def format_provenance_markdown(provenance):
         lines.append(
             "⚠️ Corpus stability is **unknown**: it was not observed both before "
             f"and after the run ({code_span(before)} → {code_span(after)})."
+        )
+
+    ingest = provenance.get("ingest_wall_seconds", _INGEST_NOT_RECORDED)
+    lines.append("")
+    if ingest is _INGEST_NOT_RECORDED:
+        lines.append(
+            "⏱️ Time to ingest is **not recorded**: this artifact predates the field."
+        )
+    elif ingest is None:
+        lines.append(
+            "⏱️ Time to ingest: **not measured** — no ingest was observed while "
+            "this run waited, which normally means it reused an existing "
+            "corpus."
+        )
+    else:
+        lines.append(
+            f"⏱️ Time to ingest: **{_format_seconds(ingest)}** — the span from "
+            "the first status poll reporting progress to the one reporting "
+            "completion. An **approximation**, not a measurement: ingestion "
+            "that ran before this benchmark began polling is missing, and "
+            "non-ingest time after it began is included. Measured once before "
+            "the sweep, so every arm of this run carries the same figure — "
+            "where arms report different `corpus_fingerprint` values, it "
+            "describes only the first."
         )
 
     version_md = format_version_markdown(provenance)

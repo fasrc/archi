@@ -87,6 +87,54 @@ lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
   archi eval qa --dataset fasrc.qa-v2.json --agent-config <agent.yaml> --output-dir <run>
   ```
 
+## Feature-matrix runbook wrappers (`feature_matrix/`)
+
+One thin wrapper per step of the #396 campaign protocol
+([`docs/docs/proposals/feature-matrix-campaign-2026.md`](../../docs/docs/proposals/feature-matrix-campaign-2026.md),
+§5); the arm configs live in archi-config under `config/benchmarking/feature_matrix/`.
+
+- **`lock_campaign.sh <00-baseline.yaml> --arms-dir <dir> --qa-dataset <qa-v2.json>`** — hashes every input
+  the pre-registration pins (bank, anchors, prompt, sources, QA dataset and profile), the
+  SUT and judge settings (agent class, model, base URL, sampling kwargs, context window, judge
+  model and timeout, metrics), every non-factor `data_manager` setting, the sha256 of every
+  arm YAML in `--arms-dir` keyed by label (each arm's treatment value is pinned), and the
+  runtime code (git ids of `src/`, `scripts/`, `deploy/`, `pyproject.toml`, `requirements/`)
+  into `bench_out/feature_matrix/campaign.lock`. Every other wrapper refuses an arm YAML,
+  dataset, profile or spec whose content differs from the lock, a checkout whose runtime
+  trees differ from the locked ones or that carries uncommitted source changes, an artifact
+  whose run started under an earlier lock, and a stack deployed under an earlier lock
+  (`run_arm.sh` stamps the lock into the deployment directory) — so acceptance depends on
+  content, never on which file an operator named. A docs-only commit (the pre-registration)
+  does not move the locked trees. Re-locking needs
+  `--relock` and is recorded in the ledger.
+- **`run_arm.sh <arm> <arm.yaml>`** — `archi evaluate -n fm-<arm> … --hostmode` (deploy,
+  ingest, run). **`run_arm.sh <arm> --rerun`** re-runs only the benchmark container on the
+  existing stack after proving the corpus fingerprint still equals the recorded pin.
+- **`reseed_arm.sh <arm> <arm.yaml> [--stack fm-00] [--no-run]`** — switches a running stack
+  to a retrieval-side arm without re-ingesting: copies the arm's `hierarchical_rerank` keys
+  into the rendered config, re-runs `config-seed`, starts the benchmark container (`--no-run`
+  re-seeds only — the way to restore the baseline without an unplanned run). Refuses an arm
+  whose change is ingest-side (chunking, processing, stemming) — a re-seed cannot re-chunk
+  what is already stored.
+- **`qa_arm.sh <arm> <arm.yaml> [--stack …]`** — `archi eval qa` against the same stack.
+  Refuses unless the stack's rendered config agrees with the arm YAML on every factor key,
+  overwrites the rendered config's `chat_app` SUT fields from `services.benchmarking` (an
+  evaluate stack renders the template defaults there), uses the campaign judge profile,
+  and records the rendered config's sha256 and the corpus fingerprint in the ledger.
+- **`archive_run.sh <arm> <run> <arm.yaml> [--wait]`** — records a finished run in
+  `bench_out/feature_matrix/ledger.json`: fingerprint, digests, ingest seconds, live
+  document and chunk counts, scored counts recomputed from finite values. Refuses an
+  artifact whose recorded running configuration is not the arm's, one already in the
+  ledger or older than the stack's latest `ragas-start`, a run whose
+  `divergence_from_selected_file` is non-empty, and a later run whose fingerprint
+  drifted; writes the corpus pin on run 1. The pin moves only for the closing baseline
+  (`--new-corpus`: arm 00, after a fresh deploy, old pin recorded). Every wrapper refuses
+  an arm label that does not match the YAML's own `name`. The live fingerprint is the
+  harness's own routine (`CORPUS_STATE_QUERY` + `corpus_fingerprint`), run inside the
+  data-manager container.
+- **`test_feature_matrix_wrappers.sh`** — hermetic 45-check self-test (stubbed
+  `docker`/`archi`, temp stack), run by `scripts/gate.sh`.
+
 ## Comparing two runs
 
 - **`compare_runs.py`** — the paired, gated comparison of two or more benchmark

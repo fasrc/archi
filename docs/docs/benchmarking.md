@@ -142,8 +142,55 @@ Make sure the `out_dir` exists before running.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | Seconds the benchmark container waits for the data-manager's ingestion to complete before giving up. CPU-only ingest of the full FASRC corpus takes ~64 min (3840s); the default allows headroom for larger corpora. |
+| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the ingest last reported progress. It restarts on every poll reporting work in progress (`state=running` at any step past `initializing`), so an ingest that is working is never cut off for taking a long time — only one that goes silent, or never starts, is. |
+| `BENCH_INGEST_MAX_WAIT` | `21600` | Absolute ceiling on the whole wait, in seconds — the backstop for an ingest that reports `running` forever without finishing. `0` disables it and logs a warning; prefer a large finite value for unattended runs. |
 | `BENCH_INGEST_POLL_INTERVAL` | `5` | Seconds between ingestion-status polls. |
+
+The two budgets answer three different failures, which is why neither one is a
+plain "give up after N seconds":
+
+- **The endpoint went away.** No status URL answers any more.
+  `BENCH_INGEST_WAIT_TIMEOUT` ends the run after that much silence. Errors are
+  kept per candidate URL, so the message names the URL that *had* been serving
+  status and quotes **that URL's own** failure — never one from a candidate the
+  harness merely fell through on its way there, and never the last fallback's
+  unrelated DNS error. If nothing ever answered, each candidate is listed with
+  its own error instead, since then they are all separate facts.
+- **The ingest never started.** The endpoint answers, but with `state=pending`,
+  with a state the harness does not recognize, or with `state=running
+  step=initializing` — the last of which means this ingest is queued behind
+  something else holding the data-manager's ingestion lock (a scheduled source
+  refresh, or a vectorstore update triggered by an upload). None of those is
+  progress, so none restarts the stall budget, and `BENCH_INGEST_WAIT_TIMEOUT`
+  ends the wait on the same schedule as a dead endpoint — naming the state and
+  step, so the queued case is obvious from the error alone.
+- **The ingest is alive but stuck.** Polls keep reporting `running` and the
+  state never reaches `completed`. `BENCH_INGEST_MAX_WAIT` ends that, and the
+  error reports the last observed `state` and `step` rather than a connection
+  problem. Only the ceiling can catch this one: the status payload carries just
+  `state`, `step` and `error`, with no counter or timestamp, so a wedged ingest
+  is byte-for-byte indistinguishable from a working one. Tightening it needs a
+  progress signal from the data-manager itself (issue #428).
+
+What this wait does **not** cover: a corpus change that starts *after* the
+initial ingest reports `completed` — a scheduled source refresh, or a
+vectorstore update triggered by an upload. Those hold the same lock but never
+touch this status endpoint, so the harness cannot block on them. It detects
+them after the fact instead, by fingerprinting the corpus on both sides of each
+arm and recording `corpus_unchanged_at_endpoints` in the results.
+
+A long-but-healthy ingest hits none of them. CPU-only ingest of the full FASRC
+corpus takes ~64 min; with `processing.categorization.enabled: true` it runs one
+extra LLM call per document before embedding, and has been measured at over two
+hours on a loaded host. Under the old absolute deadline that run was killed at
+exactly 7200s while every one of its 1433 status polls was succeeding, two
+minutes short of finishing (issue #378).
+
+However long the wait turns out to be, it is recorded: every arm of the run
+carries `ingest_wall_seconds`, and both report formats show it in the **Run
+provenance** block as "Time to ingest". A run that finds the corpus already
+built records `null` there rather than `0` — see
+[Interpreting benchmark results](interpreting_benchmark_results.md).
 
 ---
 
