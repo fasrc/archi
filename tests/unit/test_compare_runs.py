@@ -132,6 +132,7 @@ def _artifact(tmp_path):
         code="c1",
         total=None,
         metadata=None,
+        corpus_unchanged="absent",
     ):
         arm_rows = arms if arms is not None else [rows or []]
         count = len(arm_rows)
@@ -159,6 +160,8 @@ def _artifact(tmp_path):
             }
             if fingerprints[index] is not None:
                 arm["corpus_fingerprint"] = fingerprints[index]
+            if corpus_unchanged != "absent":
+                arm["corpus_unchanged_at_endpoints"] = corpus_unchanged
             results.append(arm)
         document = {
             "benchmarking_results": results,
@@ -519,6 +522,26 @@ def test_noise_runs_refuse_replicates_that_recorded_different_identities(_artifa
     assert "sha256:b" in str(config_err.value)
 
 
+def test_the_noise_gate_row_states_what_it_could_not_check(_artifact):
+    # A provenance line that overstates its own coverage is worse than none:
+    # identity is compared among the replicates only, and an unrecorded digest
+    # cannot be compared at all.
+    arms = cr.load_arms(
+        [str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="corpus-1"))]
+    )
+    replicates = cr.load_noise_replicates(
+        [
+            str(_artifact([_row("q1", faithfulness=0.6)], fingerprint="c", code=None)),
+            str(_artifact([_row("q1", faithfulness=0.7)], fingerprint="c", code=None)),
+        ]
+    )
+
+    detail = cr.noise_gate_row(replicates, arms, ["q1"])["detail"]
+
+    assert "not recorded by any replicate, so it was not checked" in detail
+    assert "not against the comparison arms" in detail
+
+
 def test_unrecorded_identities_are_reported_rather_than_refused(_artifact):
     # Every artifact written before code-version stamping records
     # `code_version.digest: null`. That is unknowable, not a mismatch, so it must
@@ -638,6 +661,70 @@ def test_corpus_gate_flag_allows_the_run_and_prints_both_values(_artifact, capsy
     out = capsys.readouterr().out
     assert "corpus-1" in out and "corpus-2" in out
     assert "Procedure B" in out
+
+
+def test_corpus_gate_refuses_an_arm_whose_corpus_moved_mid_run(_artifact, capsys):
+    # The harness samples the fingerprint before AND after an arm because
+    # ingestion runs continuously here: an arm can straddle a re-ingest and
+    # score its questions against two different corpora. Equal end-state
+    # fingerprints do not rule that out; `corpus_unchanged_at_endpoints` does.
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            corpus_unchanged=False,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            corpus_unchanged=True,
+        )
+    )
+
+    assert cr.main([base, treat]) == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "corpus_unchanged_at_endpoints" in err
+
+    assert cr.main([base, treat, "--corpus-differs-by-design"]) == cr.EXIT_OK
+
+
+def test_a_legacy_artifact_without_the_stability_field_is_not_refused(_artifact):
+    # Every artifact predating the field omits it. Absent is unknowable, not a
+    # recorded instability, so it must not block the historical comparisons.
+    base = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="corpus-1"))
+    treat = str(_artifact([_row("q1", faithfulness=0.6)], fingerprint="corpus-1"))
+
+    assert cr.main([base, treat]) == cr.EXIT_OK
+
+
+def test_noise_replicates_refuse_an_arm_whose_corpus_moved_mid_run(_artifact):
+    baseline = cr.load_arms(
+        [str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="corpus-1"))]
+    )[0]
+    one = _artifact([_row("q1", faithfulness=0.6)], fingerprint="corpus-1")
+    moved = _artifact(
+        [_row("q1", faithfulness=0.7)], fingerprint="corpus-1", corpus_unchanged=False
+    )
+
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.noise_floor_from_runs([str(one), str(moved)], baseline=baseline)
+
+    assert excinfo.value.code == cr.EXIT_GATE
+    assert "corpus_unchanged_at_endpoints" in str(excinfo.value)
+
+
+def test_noise_runs_refuse_the_same_arm_twice(_artifact):
+    # Two copies of one run agree perfectly, so sigma comes out 0 and the
+    # |mean| > 2*sigma half of G7 becomes vacuous — a comparison would be
+    # announced SIGNIFICANT on a noise floor that was never measured twice.
+    only = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="corpus-1"))
+
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.noise_floor_from_runs([only, only])
+
+    assert "twice" in str(excinfo.value) or "duplicate" in str(excinfo.value)
 
 
 def test_corpus_fingerprint_falls_back_to_metadata(_artifact):
@@ -925,6 +1012,61 @@ def test_should_refuse_uses_the_qa_item_pass_when_a_run_covers_it(
 # --- slices ------------------------------------------------------------------
 
 
+def test_g8_appears_in_the_gate_table_with_the_anchor_outcome(
+    _artifact, anchors_file, capsys
+):
+    # The anchor verdicts used to live only in their own section. G8 is a gate,
+    # so it belongs in the gate table where a reader looks for the answer.
+    def run(answer, treat_score, extra=()):
+        rows_base = [
+            _row("tripwire", context_recall=0.95),
+            _row("refuse me", answer="I don't have documentation for that."),
+            _row("bank a", faithfulness=0.5),
+        ]
+        rows_treat = [
+            _row("tripwire", context_recall=treat_score),
+            _row("refuse me", answer=answer),
+            _row("bank a", faithfulness=0.5),
+        ]
+        base = str(_artifact(rows_base, fingerprint="corpus-1"))
+        treat = str(_artifact(rows_treat, fingerprint="corpus-1"))
+        anchors = anchors_file(
+            [
+                _anchor("tripwire", "easy_retrieve"),
+                _anchor("refuse me", "should_refuse"),
+            ]
+        )
+        assert cr.main([base, treat, "--anchors", anchors, *extra]) == cr.EXIT_OK
+        out = capsys.readouterr().out
+        return [line for line in out.splitlines() if line.startswith("| G8 ")][0]
+
+    assert "pass" in run("I don't have documentation for that.", 0.95)
+    assert "ALARM" in run("I don't have documentation for that.", 0.70)
+    invented = "Its partitions are alpha, beta and gamma; use -p alpha there. " * 5
+    assert "FAIL" in run(invented, 0.95)
+
+
+def test_g8_says_not_evaluated_when_no_anchor_was_asked(
+    _artifact, anchors_file, capsys
+):
+    # A pre-anchor baseline has none of the tripwires. Silence would read as a
+    # pass; the documented policy is to re-baseline.
+    rows = [_row("bank a", faithfulness=0.5)]
+    base = str(_artifact(rows, fingerprint="corpus-1"))
+    treat = str(_artifact(rows, fingerprint="corpus-1"))
+    anchors = anchors_file([_anchor("tripwire", "easy_retrieve")])
+
+    assert cr.main([base, treat, "--anchors", anchors]) == cr.EXIT_OK
+
+    line = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("| G8 ")
+    ][0]
+    assert "not evaluated" in line
+    assert "re-baseline" in line
+
+
 def test_slices_appear_only_for_fields_present_in_both_arms(_artifact):
     base_rows = [
         _row(f"q{i}", anchor_type="reasoning", difficulty="hard", faithfulness=0.5)
@@ -981,6 +1123,60 @@ def test_timing_reports_mean_p90_and_warm_variants(_artifact):
     assert block["warm_n"] == 3
     assert block["warm_mean"] == pytest.approx(2.0)
     assert block["warm_p90"] == pytest.approx(3.0)
+
+
+def test_warm_timing_drops_the_first_question_even_when_it_was_not_timed(_artifact):
+    # A failed first question carries no time_elapsed. Filtering before slicing
+    # would drop question 2 — the first genuinely warm request — instead.
+    rows = [
+        _row("q1", status="degraded", time_elapsed=None),
+        _row("q2", time_elapsed=100.0),
+        _row("q3", time_elapsed=2.0),
+    ]
+    arm = cr.load_arms([str(_artifact(rows))])[0]
+
+    block = cr.timing_block([arm])[0]
+
+    assert block["n"] == 2
+    assert block["warm_n"] == 2  # q2 and q3, not just q3
+    assert block["warm_mean"] == pytest.approx(51.0)
+
+
+def test_scored_counts_flag_a_wrong_denominator(_artifact):
+    # "1 of 109" against a two-row arm agrees on the numerator and lies about
+    # how much of the bank was ever eligible.
+    path = _artifact(
+        [_row("q1", faithfulness=0.5), _row("q2", faithfulness=float("nan"))],
+        total={"faithfulness_scored": "1 of 109"},
+    )
+    arm = cr.load_arms([str(path)])[0]
+
+    row = {entry["metric"]: entry for entry in cr.scored_counts(arm)}["faithfulness"]
+
+    assert row["finite"] == 1
+    assert row["total"] == 2
+    assert "DENOMINATOR" in row["flag"]
+
+
+def test_recomputed_source_accuracy_skips_degraded_rows(_artifact):
+    # The harness deliberately does not run source matching on a degraded row,
+    # so its sources carry no `matched` key. Counting it would read as a miss
+    # and drag the recomputation below the number it is meant to check.
+    rows = [
+        _row("hit", sources=[{"url": "u1", "matched": True}]),
+        _row(
+            "degraded",
+            status="degraded",
+            sources=[{"url": "u2"}],
+        ),
+    ]
+    arm = cr.load_arms([str(_artifact(rows))])[0]
+
+    recomputed = cr.recomputed_source_accuracy(arm)
+
+    assert recomputed["scored"] == 1
+    assert recomputed["hits"] == 1
+    assert recomputed["accuracy"] == pytest.approx(1.0)
 
 
 def test_percentile_uses_nearest_rank():

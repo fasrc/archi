@@ -509,9 +509,12 @@ files are.
 
 - **The question sets differ** — two different banks measure two different
   things (G4). No flag overrides this.
-- **The corpus fingerprints differ, or were never recorded** — retrieval metrics
-  move for free across corpora (G3). `--corpus-differs-by-design` continues and
-  prints the Procedure B warning; it does not make the arms comparable.
+- **The corpus fingerprints differ, were never recorded, or an arm recorded
+  `corpus_unchanged_at_endpoints: false`** — retrieval metrics move for free
+  across corpora (G3), and an arm that straddled a re-ingest scored its
+  questions against two of them even when it started and finished on the same
+  one. `--corpus-differs-by-design` continues and prints the Procedure B
+  warning; it does not make the arms comparable.
 - **`divergence_from_selected_file` is non-empty** — the run did not use the
   settings you selected (Procedure E), so its scores belong to neither arm.
 
@@ -524,6 +527,21 @@ recomputed; the anchor block; slices by any field both arms carry (small slices
 marked directional, and never called SIGNIFICANT); and per-question timing —
 mean, nearest-rank p90, and warm variants that drop the first question in run
 order.
+
+G8 is reported as a gate row rather than an exit code: an anchor failing means
+*do not ship the change*, not *this comparison is invalid*, and the report is the
+evidence for that call. When none of the anchor questions appear in the arms —
+a run from before the anchors existed — the row says `not evaluated` and points
+at re-baselining, because silence there would read as a pass.
+
+!!! note "The `difficulty` slice needs a bank that reaches the artifact"
+    Procedure D lists `difficulty` as a row field, but the harness copies only
+    `anchor_type` from the bank into `single_question_results`
+    (`service_benchmark.py`, `_answer_and_score_question`). Artifacts written by
+    the current harness therefore carry no `difficulty`, and the slice is
+    skipped rather than shown empty. The tool supports the field for when the
+    harness propagates it; until then, the bank slice available in practice is
+    `anchor_type`.
 
 Two things the tool will not do for you. It never prints SIGNIFICANT without a
 noise floor, and it identifies the anchors by **question text** rather than by

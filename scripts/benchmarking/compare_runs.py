@@ -193,6 +193,9 @@ class Arm:
     corpus_snapshot_id: Optional[str]
     code_version_digest: Optional[str]
     configuration_file: Optional[str]
+    #: ``corpus_unchanged_at_endpoints`` as recorded: True/False, or None when
+    #: the artifact predates the field (unknowable, not unstable).
+    corpus_unchanged: Optional[bool] = None
 
     def value(self, question: str, metric: str) -> Any:
         return self.rows.get(question, {}).get(metric)
@@ -293,6 +296,11 @@ def build_arm(document: dict, index: int, path: Path, label: str) -> Arm:
         corpus_snapshot_id=_recorded(metadata.get("corpus_snapshot_id")),
         code_version_digest=_recorded(code_version.get("digest")),
         configuration_file=raw.get("configuration_file"),
+        corpus_unchanged=(
+            bool(raw["corpus_unchanged_at_endpoints"])
+            if isinstance(raw.get("corpus_unchanged_at_endpoints"), bool)
+            else (None if "corpus_unchanged_at_endpoints" not in raw else False)
+        ),
     )
 
 
@@ -408,14 +416,26 @@ def corpus_gate(arms: Sequence[Arm], allow_differs: bool) -> dict:
     )
     unrecorded = [label for label, value in values.items() if value is None]
     distinct = {value for value in values.values() if value is not None}
-    if not unrecorded and len(distinct) <= 1:
+    # Equal end-state fingerprints do not prove one corpus. Ingestion runs
+    # continuously here, so an arm can straddle a re-ingest and score its
+    # questions against two corpora while starting and finishing on the same
+    # one; the harness records `corpus_unchanged_at_endpoints` for exactly that.
+    # Absent (a legacy artifact) is unknowable, not unstable, and is allowed.
+    unstable = [arm.label for arm in arms if arm.corpus_unchanged is False]
+    if not unrecorded and len(distinct) <= 1 and not unstable:
         return {
             "id": "G3",
             "name": "one pinned corpus",
             "status": "pass",
             "detail": f"corpus_fingerprint {shown}",
         }
-    if unrecorded:
+    if unstable:
+        reason = (
+            f"{', '.join(unstable)} recorded corpus_unchanged_at_endpoints as "
+            "false, so the arm straddled a re-ingest and its questions were not "
+            "all scored against the same documents"
+        )
+    elif unrecorded:
         reason = (
             "corpus_fingerprint was not recorded for "
             f"{', '.join(unrecorded)}; the artifacts cannot show the arms saw "
@@ -601,6 +621,52 @@ def recomputed_aggregate(
     }
 
 
+def noise_gate_row(
+    replicates: Sequence[Arm], arms: Sequence[Arm], questions: Sequence[str]
+) -> dict:
+    """Say what was actually checked about the replicates, and what was not.
+
+    An earlier version of this row claimed the replicates were held to the same
+    code and config identity "as the arms". They are not: identity is compared
+    among the replicates only (a floor measured on the baseline's config is
+    legitimately a different digest from the treatment arm's), and an unrecorded
+    digest cannot be compared at all. A provenance line that overstates its own
+    coverage is worse than none.
+    """
+    parts = [
+        f"{len(replicates)} replicate arm(s) over the same {len(questions)} "
+        "questions as the paired table; same bank, one corpus and no config "
+        "divergence enforced"
+    ]
+    for field, read in (
+        ("code_version.digest", lambda a: a.code_version_digest),
+        ("config_version.digest", lambda a: _recorded(a.config_version.get("digest"))),
+    ):
+        recorded = sorted({read(arm) for arm in replicates if read(arm) is not None})
+        missing = sum(1 for arm in replicates if read(arm) is None)
+        if recorded and not missing:
+            parts.append(f"one {field} across the replicates ({recorded[0]})")
+        elif recorded:
+            parts.append(
+                f"{field}: {recorded[0]} where recorded, {missing} replicate(s) "
+                "record none, so identity is unverified there"
+            )
+        else:
+            parts.append(
+                f"{field}: not recorded by any replicate, so it was not checked"
+            )
+    parts.append(
+        "identity is compared among the replicates only, not against the "
+        "comparison arms"
+    )
+    return {
+        "id": "G2",
+        "name": "noise floor",
+        "status": "measured from replicates",
+        "detail": ". ".join(parts),
+    }
+
+
 def check_noise_replicates(
     replicates: Sequence[Arm],
     baseline: Optional[Arm],
@@ -635,7 +701,30 @@ def check_noise_replicates(
                 "is not this comparison's threshold.",
                 EXIT_GATE,
             )
+    # Two copies of one run agree perfectly, so sigma comes out 0 and the
+    # |mean| > 2*sigma half of G7 becomes vacuous. Distinct arms of one sweep
+    # are still fine: they carry distinct `path@N` sources.
+    seen: Dict[str, int] = {}
+    for arm in replicates:
+        seen[arm.source] = seen.get(arm.source, 0) + 1
+    repeated = sorted(source for source, count in seen.items() if count > 1)
+    if repeated:
+        raise CompareError(
+            f"--noise-runs was given {repeated[0]} twice. One run counted twice "
+            "is not two replicates: it would report sigma=0 and make the noise "
+            "floor vacuous.",
+            EXIT_USAGE,
+        )
     scope = list(replicates) + ([baseline] if baseline is not None else [])
+    unstable = [arm.source for arm in scope if arm.corpus_unchanged is False]
+    if unstable and not allow_corpus_differs:
+        raise CompareError(
+            "G3 refused for the noise replicates: "
+            f"{', '.join(unstable)} recorded corpus_unchanged_at_endpoints as "
+            "false, so their questions were not all scored against one corpus. "
+            "Pass --corpus-differs-by-design to accept them as an estimate.",
+            EXIT_GATE,
+        )
     values = {arm.source: arm.corpus_fingerprint for arm in scope}
     unrecorded = [source for source, value in values.items() if value is None]
     distinct = {value for value in values.values() if value is not None}
@@ -713,6 +802,18 @@ def noise_floor_from_runs(
     variance would widen the threshold for a bank comparison that never included
     those rows, and a real bank regression could hide behind it.
     """
+    replicates = load_noise_replicates(paths)
+    check_noise_replicates(
+        replicates,
+        baseline,
+        allow_corpus_differs=allow_corpus_differs,
+        ignore_divergence=ignore_divergence,
+    )
+    return noise_floor_from_arms(replicates, questions)
+
+
+def load_noise_replicates(paths: Sequence[str]) -> List[Arm]:
+    """Every arm of every ``--noise-runs`` file, as one replicate list."""
     replicates: List[Arm] = []
     for spec in paths:
         replicates.extend(load_arms([spec]))
@@ -722,12 +823,13 @@ def noise_floor_from_runs(
             f"found {len(replicates)}",
             EXIT_USAGE,
         )
-    check_noise_replicates(
-        replicates,
-        baseline,
-        allow_corpus_differs=allow_corpus_differs,
-        ignore_divergence=ignore_divergence,
-    )
+    return replicates
+
+
+def noise_floor_from_arms(
+    replicates: Sequence[Arm], questions: Optional[Sequence[str]] = None
+) -> Dict[str, float]:
+    """sigma per metric over already-gated replicates."""
     per_metric: Dict[str, List[float]] = {metric: [] for metric in METRICS}
     for arm in replicates:
         for metric in METRICS:
@@ -764,13 +866,19 @@ def scored_counts(arm: Arm) -> List[dict]:
         counted = recomputed_aggregate(arm, metric)
         reported = arm.total_results.get(f"{metric}_scored")
         parsed = parse_scored(reported)
-        flag = "ok"
+        problems: List[str] = []
         if parsed is None:
-            flag = "not reported"
-        elif parsed[0] > counted["finite"]:
-            flag = "OVER-REPORTED"
-        elif parsed[0] < counted["finite"]:
-            flag = "UNDER-REPORTED"
+            problems.append("not reported")
+        else:
+            if parsed[0] > counted["finite"]:
+                problems.append("OVER-REPORTED")
+            elif parsed[0] < counted["finite"]:
+                problems.append("UNDER-REPORTED")
+            # The denominator says how much of the bank was ever eligible, so a
+            # wrong one misstates the coverage even when the numerator agrees.
+            if parsed[1] != counted["total"]:
+                problems.append("DENOMINATOR MISMATCH")
+        flag = "; ".join(problems) or "ok"
         rows.append(
             {
                 "metric": metric,
@@ -799,7 +907,8 @@ def recomputed_source_accuracy(arm: Arm) -> dict:
     scored = [
         row
         for row in arm.rows.values()
-        if isinstance(row.get("reference_sources_metadata"), list)
+        if row.get("status", "ok") == "ok"
+        and isinstance(row.get("reference_sources_metadata"), list)
         and row["reference_sources_metadata"]
     ]
     hits = sum(
@@ -851,12 +960,19 @@ def timing_block(arms: Sequence[Arm]) -> List[dict]:
     """
     block = []
     for arm in arms:
-        ordered = [
-            float(arm.rows[q]["time_elapsed"])
-            for q in arm.order
-            if is_finite(arm.rows[q].get("time_elapsed"))
-        ]
-        warm = ordered[1:]
+
+        def timings(questions: Sequence[str]) -> List[float]:
+            return [
+                float(arm.rows[q]["time_elapsed"])
+                for q in questions
+                if is_finite(arm.rows[q].get("time_elapsed"))
+            ]
+
+        ordered = timings(arm.order)
+        # Slice the RUN ORDER first, then keep the finite timings. A failed
+        # first question carries no time_elapsed, so filtering first would drop
+        # question 2 — the first genuinely warm request — instead of question 1.
+        warm = timings(arm.order[1:])
         block.append(
             {
                 "arm": arm.label,
@@ -1724,6 +1840,64 @@ def render_markdown(report: dict) -> str:
     return "\n".join(out).rstrip("\n")
 
 
+def g8_gate(anchor_entries: Sequence[dict], paired: Sequence[dict]) -> dict:
+    """G8 as a gate row, not just a section further down the page.
+
+    G8 is "the anchors hold, and no other metric regressed by more than one
+    noise-floor unit". Both halves were computed already but lived only in
+    disconnected sections, where a reader looking at the gate table would see
+    silence and read it as a pass. It stays a *reported* verdict rather than a
+    non-zero exit: an anchor failing means "do not ship the change", not "this
+    comparison is invalid", and the report is the evidence for that call.
+    """
+    if not anchor_entries:
+        return {
+            "id": "G8",
+            "name": "anchors and guard metrics",
+            "status": "not evaluated",
+            "detail": (
+                "none of the anchor questions were asked in these arms. A run "
+                "from before the anchors were added is a different graded set "
+                "(G4/G6) — re-baseline rather than reading this as a pass."
+            ),
+        }
+    failures, alarms = [], []
+    for entry in anchor_entries:
+        for label, arm_entry in entry["arms"].items():
+            if arm_entry.get("refusal") == "FAIL":
+                failures.append(f"{label} on {entry['question'][:50]!r}")
+            for metric in arm_entry["alarms"]:
+                alarms.append(f"{label} {entry['question'][:40]!r} {metric}")
+    regressions = [
+        f"{row['arm']} {row['metric']} {row['mean']:+.4f} past sigma "
+        f"{row['sigma']:.4f}"
+        for row in paired
+        if row["mean"] is not None
+        and row["sigma"] is not None
+        and row["mean"] < 0
+        and -row["mean"] > row["sigma"]
+    ]
+    detail = []
+    if failures:
+        detail.append("should_refuse FAIL: " + "; ".join(failures))
+    if alarms:
+        detail.append("easy_retrieve ALARM: " + "; ".join(alarms))
+    if regressions:
+        detail.append("regressed past one noise-floor unit: " + "; ".join(regressions))
+    if not detail:
+        detail.append(
+            f"{len(anchor_entries)} anchor(s) held and no metric regressed past "
+            "one noise-floor unit"
+        )
+    status = "FAIL" if failures else "ALARM" if alarms or regressions else "pass"
+    return {
+        "id": "G8",
+        "name": "anchors and guard metrics",
+        "status": status,
+        "detail": ". ".join(detail),
+    }
+
+
 def build_report(
     arms: Sequence[Arm],
     baseline: Arm,
@@ -1736,6 +1910,8 @@ def build_report(
     anchors_in_bank: bool,
     qa_runs: Optional[Dict[str, dict]] = None,
 ) -> dict:
+    paired = paired_block(baseline, arms, questions, sigmas)
+    anchor_entries = anchor_block(baseline, arms, anchors, sigmas, qa_runs or {})
     return {
         "baseline": baseline.label,
         "arms": [
@@ -1747,12 +1923,12 @@ def build_report(
         "anchors_path": anchors_path,
         "anchors_in_bank": anchors_in_bank,
         "provenance": provenance_rows(arms, anchors),
-        "gates": list(gates),
+        "gates": list(gates) + [g8_gate(anchor_entries, paired)],
         "noise_floor": dict(sigmas),
-        "paired": paired_block(baseline, arms, questions, sigmas),
+        "paired": paired,
         "scored_counts": {arm.label: scored_counts(arm) for arm in arms},
         "sources": source_block(arms),
-        "anchors": anchor_block(baseline, arms, anchors, sigmas, qa_runs or {}),
+        "anchors": anchor_entries,
         "slices": slice_block(baseline, arms, questions, sigmas),
         "timing": timing_block(arms),
         "qa": qa_block(baseline, arms, qa_runs or {}),
@@ -1897,28 +2073,15 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
 
     sigmas: Dict[str, float] = {}
     if args.noise_runs:
-        sigmas.update(
-            noise_floor_from_runs(
-                args.noise_runs,
-                baseline=baseline,
-                questions=questions,
-                allow_corpus_differs=args.corpus_differs_by_design,
-                ignore_divergence=args.ignore_config_divergence,
-            )
+        replicates = load_noise_replicates(args.noise_runs)
+        check_noise_replicates(
+            replicates,
+            baseline,
+            allow_corpus_differs=args.corpus_differs_by_design,
+            ignore_divergence=args.ignore_config_divergence,
         )
-        gates.append(
-            {
-                "id": "G2",
-                "name": "noise floor",
-                "status": "measured from replicates",
-                "detail": (
-                    f"{len(args.noise_runs)} file(s) of --noise-runs, measured "
-                    f"over the same {len(questions)} questions as the paired "
-                    "table, and held to the same bank, corpus, code/config "
-                    "identity and divergence checks as the arms"
-                ),
-            }
-        )
+        sigmas.update(noise_floor_from_arms(replicates, questions))
+        gates.append(noise_gate_row(replicates, arms, questions))
     if args.noise_floor:
         sigmas.update(parse_noise_floor(args.noise_floor))
 
