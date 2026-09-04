@@ -61,14 +61,17 @@ fm_require_stack_up() { # $1 = stack name; Postgres and the data-manager must st
 # from the harness source (not re-typed here) so the two cannot drift apart.
 fm_fingerprint() { # $1 = stack name
   "$FM_DOCKER" exec -w /root/archi "data-manager-$1" python -c '
-import ast, pathlib
+import ast, pathlib, sys
 src = pathlib.Path("src/bin/service_benchmark.py").read_text()
-query = next(node.value.value for node in ast.parse(src).body
-             if isinstance(node, ast.Assign)
-             and any(getattr(t, "id", None) == "CORPUS_STATE_QUERY" for t in node.targets))
+queries = [node.value.value for node in ast.parse(src).body
+           if isinstance(node, ast.Assign)
+           and any(getattr(t, "id", None) == "CORPUS_STATE_QUERY" for t in node.targets)]
+if not queries:
+    sys.exit("this image carries a harness with no CORPUS_STATE_QUERY (it predates the "
+             "corpus fingerprint); rebuild the stack from the campaign SHA")
 from src.utils.benchmark_provenance import corpus_fingerprint
 from src.utils.postgres_service_factory import PostgresServiceFactory
-print(corpus_fingerprint(PostgresServiceFactory.from_env().connection_pool.execute(query)))
+print(corpus_fingerprint(PostgresServiceFactory.from_env().connection_pool.execute(queries[0])))
 ' | tr -d '[:space:]'
 }
 
