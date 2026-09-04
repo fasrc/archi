@@ -142,7 +142,7 @@ Make sure the `out_dir` exists before running.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the ingest last reported progress. It restarts on every poll that comes back `state=running`, so an ingest that is working is never cut off for taking a long time — only one that goes silent, or never starts, is. |
+| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the ingest last reported progress. It restarts on every poll reporting work in progress (`state=running` at any step past `initializing`), so an ingest that is working is never cut off for taking a long time — only one that goes silent, or never starts, is. |
 | `BENCH_INGEST_MAX_WAIT` | `21600` | Absolute ceiling on the whole wait, in seconds — the backstop for an ingest that reports `running` forever without finishing. `0` disables it and logs a warning; prefer a large finite value for unattended runs. |
 | `BENCH_INGEST_POLL_INTERVAL` | `5` | Seconds between ingestion-status polls. |
 
@@ -167,7 +167,7 @@ plain "give up after N seconds":
   problem. Only the ceiling can catch this one: the status payload carries just
   `state`, `step` and `error`, with no counter or timestamp, so a wedged ingest
   is byte-for-byte indistinguishable from a working one. Tightening it needs a
-  progress signal from the data-manager itself.
+  progress signal from the data-manager itself (issue #428).
 
 What this wait does **not** cover: a corpus change that starts *after* the
 initial ingest reports `completed` — a scheduled source refresh, or a
