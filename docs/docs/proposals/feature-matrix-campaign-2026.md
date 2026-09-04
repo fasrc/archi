@@ -479,6 +479,9 @@ rather than loud, which is why they are listed.
 | 6 | A QA run that scored nothing still gets a ledger row and exit 0 | `qa_arm.sh` does not fail closed on `scored: 0`, unlike `archive_run.sh` on the RAGAS side | **Open.** Until fixed, read `summary.json` → `attempt_lifecycle_counts.scored` after every QA run. A zero there with exit 0 is the silent-failure shape | **open — needs an issue** |
 | 7 | `archi delete --rmv` aborts non-interactively | It calls `click.confirm(..., abort=True)` and there is no `--force`/`--yes` | `printf 'y\n' \| archi delete --name <stack> --rmi --rmv` | **works** |
 | 8 | A retired agent spec survives a redeploy in the staged agents dir | `archi create --force` cannot remove `data/evaluations` (root-owned), so it abandons removal of the whole `data/` dir — the staged `data/agents/` keeps old files | Delete the retired spec from `~/.archi/archi-<name>/data/agents/` by hand after the redeploy, then restart the chatbot | **works, manual step** |
+| 10 | Arm 00's ingest ran while the host was at load ~44 | **A `redeploy.sh` of production `dev` triggers a full re-ingest** (1145 files, ~30 min at ~26 cores). The agent migration on 2026-09-04 was redeployed minutes before arm 00 started, so the baseline ingest overlapped it | **Sequence any production deploy well BEFORE an arm, never during.** Arm 00 was torn down 7 min in and restarted once `data-manager-dev` went quiet (`bench_out/feature_matrix/fm00_start_when_quiet.sh` waits for 3 consecutive sub-100 % CPU reads). This matters because arm 00's `ingest_wall_seconds` is the reference all five ingest-side arms are compared against — a one-off production re-ingest is a tax only arm 00 would pay, breaking §10's "every arm pays the same tax" premise | **fixed by restart** |
+| 11 | A hung run would block the chain forever | `archive_run.sh --wait` is an unbounded poll — `while [ running ]; do sleep 30; done` — with no timeout and no stall detection (unlike the ingest wait, which got a stall budget in #378) | **Open.** There is no dead-man's switch: check that `bench_out/feature_matrix/fm00_baseline.log` has advanced. Budget ≈ 3 h for run 1 (ingest + 109 questions + judging) and ≈ 1.5 h per re-run | **open — operational check** |
+| 12 | Idle stacks still hold memory on the measuring host | `data-manager-ragas-0827` / `postgres-ragas-0827` have been up 7 days (~1.6 GB, ~0 % CPU). They publish no ports so they cannot collide | Operator's call before arm 01: take them down, or record them in the ledger as a constant part of the host tax | **open — operator decision** |
 | 9 | Commits intermittently blocked by a red gate | `tests/unit/evaluation/qa/test_jobs_history.py::test_job_manager_terminates_running_evaluation_process` is flaky on `dev` — 3 failures in 5 consecutive runs, and it passes on retry with no code change. Its own race: it waits for status `running`, then reads `manager._processes[job_id]`, which the reaper may already have removed | Retry the commit. **Never** `--no-verify` | **open — pre-existing, needs an issue** |
 
 ### 13.3 Verified working (2026-09-04 smoke, `fm-smoke`, 3 URLs / 8 questions)
@@ -536,6 +539,14 @@ $W/run_arm.sh 00 config/benchmarking/feature_matrix/00-baseline.yaml
 Because the smoke stack is `fm-smoke` and not `fm-00`, its ledger rows and corpus pin sit
 under their own stack key: the campaign's `fm-00` still numbers its runs from 1 and pins its
 own corpus. Using `fm-00` for the smoke would have forced runs 2-4 and a stale pin.
+
+### 13.5 Campaign run log
+
+| When (EDT) | Event |
+|---|---|
+| 2026-09-04 15:39 | Campaign locked (`3e07ae79…`) on the corrected arms; pre-registration committed (`c2deac32`) — gate G1 satisfied |
+| 2026-09-04 15:46 | Arm 00 started — **aborted 7 min in**: a production re-ingest triggered by that afternoon's dev redeploy was running concurrently (§13.2 #10). Stack deleted with its volumes; ledger keeps the orphan `ragas-start` row for arm 00 / `fm-00`, which is expected and harmless (`fm_next_run` counts archived `ragas` rows, not starts, so run numbering still begins at 1) |
+| 2026-09-04 16:13 | Watcher armed: waits for `data-manager-dev` to go quiet, then runs the opening baseline (3 RAGAS runs + 1 QA) and **stops before arm 01** for the pre-registered σ checkpoint |
 
 ## Appendix A — how to re-derive the numbers
 
