@@ -30,7 +30,7 @@ from typing import (
 )
 
 from bs4 import BeautifulSoup, NavigableString, Tag
-from markdownify import markdownify, STRIP, STRIP_ONE, MarkdownConverter, strip1_pre, strip_pre
+from markdownify import STRIP, STRIP_ONE, MarkdownConverter, strip1_pre, strip_pre
 
 from src.data_manager.collectors.resource_base import BaseResource
 from src.utils.logging import get_logger

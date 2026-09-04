@@ -682,6 +682,8 @@ def test_markdownify_matches_the_library_for_every_strip_pre_mode(mode):
 def test_markdownify_rejects_an_invalid_strip_pre_mode():
     with pytest.raises(ValueError):
         _markdownify("<pre>x</pre>", strip_pre="bogus")
+
+
 # --- hoist a promoted block out of inline formatting ancestors (issue #406) ---
 
 
