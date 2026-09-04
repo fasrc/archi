@@ -174,7 +174,7 @@ file: `RAGAS_ENV_FILE=/home/austin/.archi/archi-ragas-205/.env`. The wrappers un
 ARM=03; YAML=config/benchmarking/feature_matrix/03-categorization-off.yaml
 scripts/benchmarking/feature_matrix/run_arm.sh $ARM $YAML            # archi evaluate -n fm-$ARM -c $YAML --hostmode
 #  → deploys postgres (5434) + data-manager (7882) + benchmarking; ingests; runs 109 questions; scores
-scripts/benchmarking/feature_matrix/archive_run.sh $ARM 1 $YAML      # proves the artifact ran this arm; appends ledger.json, writes the corpus pin
+scripts/benchmarking/feature_matrix/archive_run.sh $ARM 1 $YAML --wait  # proves the artifact ran this arm on one corpus; appends ledger.json, writes the corpus pin
 scripts/benchmarking/feature_matrix/run_arm.sh $ARM --rerun          # benchmark container only, same corpus → run 2
 scripts/benchmarking/feature_matrix/archive_run.sh $ARM 2 $YAML
 scripts/benchmarking/feature_matrix/qa_arm.sh $ARM $YAML             # archi eval qa against the same stack (§5.3)
@@ -183,11 +183,15 @@ archi delete --name fm-$ARM --rmi --rmv                              # after arc
 
 `archive_run.sh` refuses when the artifact's recorded running configuration disagrees with
 the arm YAML on any factor key (the artifact, not the operator's label, proves which arm
-ran), when `config_version.divergence_from_selected_file` is non-empty (the run did not
-use the settings you selected; Procedure E), when the artifact is already in the ledger,
-or when it predates the run's `ragas-start` entry (a re-run that wrote nothing must not
-re-archive run 1 as run 2). Every wrapper also refuses an arm label that does not match
-the YAML's own `name: fm-<arm>`. It records:
+ran), when the corpus changed between the run's endpoints (`corpus_fingerprint_before`,
+`corpus_fingerprint`, `corpus_unchanged_at_endpoints` — questions scored across two corpora
+are not one observation), when `config_version.divergence_from_selected_file` is non-empty
+(the run did not use the settings you selected; Procedure E), when the artifact or the
+(arm, stack, run) identity is already in the ledger, when a run other than 1 arrives before
+the stack has a pin, or when the artifact predates the run's `ragas-start` entry (a re-run
+that wrote nothing must not re-archive run 1 as run 2). Every wrapper also refuses an arm
+label that does not match the YAML's own `name: fm-<arm>`, and a checkout whose HEAD is
+not the locked campaign code or that carries uncommitted source changes. It records:
 artifact path, `corpus_fingerprint`, `corpus_snapshot_id`, `config_version.digest`,
 `metadata.code_version.digest`, `ingest_wall_seconds`, the `documents` and
 `document_chunks` counts (queried from the stack), and the scored counts per metric.
@@ -201,10 +205,10 @@ scripts/benchmarking/feature_matrix/reseed_arm.sh 01 config/benchmarking/feature
 #  3. docker compose up --force-recreate config-seed   (upserts static_config; the agent reads it at boot)
 #  4. docker compose up --no-deps -d benchmark          (run 1)
 scripts/benchmarking/feature_matrix/archive_run.sh 01 1 config/benchmarking/feature_matrix/01-rerank-off.yaml --stack fm-00
-scripts/benchmarking/feature_matrix/run_arm.sh 01 --rerun                  # run 2, still on fm-00
+scripts/benchmarking/feature_matrix/run_arm.sh 01 --rerun --stack fm-00    # run 2, still on fm-00 (the wrapper would otherwise look for fm-01)
 scripts/benchmarking/feature_matrix/archive_run.sh 01 2 config/benchmarking/feature_matrix/01-rerank-off.yaml --stack fm-00
 scripts/benchmarking/feature_matrix/qa_arm.sh 01 config/benchmarking/feature_matrix/01-rerank-off.yaml --stack fm-00
-scripts/benchmarking/feature_matrix/reseed_arm.sh 00 config/benchmarking/feature_matrix/00-baseline.yaml   # restore
+scripts/benchmarking/feature_matrix/reseed_arm.sh 00 config/benchmarking/feature_matrix/00-baseline.yaml --no-run   # restore the config; --no-run starts no benchmark
 ```
 
 The mechanism is `~/.archi/bench-205/swap_arm.sh` generalized from "swap the code" to
@@ -272,7 +276,9 @@ What it does, and why each step exists:
 5. **Retrieval arms** on `fm-00`: 01, 05a, 05b (2 RAGAS + 1 QA each); restore 00 after.
 6. **Ingest arms**, one stack at a time: 02, 03, 04, 06, 07 (fresh stack; 2 RAGAS + 1 QA;
    delete).
-7. **Closing baseline**: fresh `fm-00` ingest; 1 RAGAS + 1 QA. Its archive is the one
+7. **Closing baseline**: `archi delete --name fm-00 --rmi --rmv` first (the retrieval arms
+   left that stack up, and `archi evaluate` refuses an existing deployment without
+   `--force`), then a fresh `fm-00` ingest; 1 RAGAS + 1 QA. Its archive is the one
    place the corpus pin may move: `archive_run.sh 00 <run> 00-baseline.yaml --new-corpus`
    is honoured only for arm 00 and only when the stack's latest `ragas-start` was a fresh
    deploy, and the row records the old pin beside the new one. Compare with the opening

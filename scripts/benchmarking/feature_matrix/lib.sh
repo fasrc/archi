@@ -17,6 +17,9 @@ ARCHI_DIR="${ARCHI_DIR:-$HOME/.archi}"
 FM_DOCKER="${FM_DOCKER:-docker}"
 FM_ARCHI="${FM_ARCHI:-archi}"
 FM_PYTHON="${FM_PYTHON:-python3}"
+FM_GIT="${FM_GIT:-git}"
+
+fm_require_run_number() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] || fm_die "run number must be a positive integer, got '${1:-}'"; }
 
 fm_die() { printf 'feature_matrix: %s\n' "$*" >&2; exit 2; }
 fm_log() { printf '==> %s\n' "$*"; }
@@ -157,7 +160,7 @@ def sha(path):
         sys.exit(f"pinned input not found: {path!r} (run from ~/Projects/archi so config/... resolves)")
     return hashlib.sha256(open(path, "rb").read()).hexdigest()
 out = {"files": {k: {"path": v, "sha256": sha(v)} for k, v in files.items()},
-       "values": {"sut.provider": provider, "sut.model": b.get("model"), "modes": b.get("modes"),
+       "values": {"sut.agent_class": b.get("agent_class"), "sut.provider": provider, "sut.model": b.get("model"), "modes": b.get("modes"),
                   "judge.provider": rs.get("evaluator_provider"), "judge.model": rs.get("evaluator_model"),
                   "metrics": rs.get("enabled_metrics"), "ragas.embedding_model": rs.get("embedding_model"),
                   "embedding_name": dm.get("embedding_name"),
@@ -189,6 +192,22 @@ EOF
 }
 
 fm_lock_sha() { fm_sha256 "$(fm_lock_file)"; }
+
+# The code the campaign runs is locked too: `archi evaluate` builds the stack images from
+# the cwd's tree and `archi eval qa` runs it in-process, so a checkout that advanced or
+# carries uncommitted source changes after the lock would run different code while every
+# wrapper still succeeded. HEAD must equal the locked code_sha and src/, scripts/, deploy/
+# must carry no tracked modification.
+fm_require_code_lock() {
+  local want have dirty
+  want="$(fm_lock_field code_sha)"
+  have="$("$FM_GIT" rev-parse HEAD 2>/dev/null || echo unknown)"
+  [ -n "$want" ] && [ "$have" = "$want" ] || fm_die "checkout HEAD $have is not the locked campaign code $want (git checkout it, or re-lock deliberately with lock_campaign.sh --relock)"
+  dirty="$("$FM_GIT" status --porcelain --untracked-files=no -- src scripts deploy 2>/dev/null || true)"
+  [ -z "$dirty" ] || fm_die "uncommitted source changes would run unlocked code:
+$dirty"
+}
+fm_code_sha() { "$FM_GIT" rev-parse HEAD 2>/dev/null || echo unknown; }
 
 fm_lock_field() { # $1 = dotted key inside the lock, e.g. qa.dataset_sha256
   FM_LOCK="$(fm_lock_file)" FM_KEY="$1" "$FM_PYTHON" -c '

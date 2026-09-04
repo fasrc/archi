@@ -8,8 +8,12 @@
 #   - the arm YAML's `name` is not fm-<arm>, or the artifact's recorded running
 #     configuration disagrees with the arm YAML on any factor key (the artifact itself
 #     proves which arm ran — the operator's label alone never does),
-#   - the artifact is already in the ledger, or is older than the stack's latest
-#     `ragas-start` entry (a re-run that wrote nothing must not re-archive run 1 as run 2),
+#   - the artifact is already in the ledger, the (arm, stack, run) identity is already
+#     archived, a run other than 1 arrives before the stack has a pin, or the artifact is
+#     older than the stack's latest `ragas-start` entry (a re-run that wrote nothing must
+#     not re-archive run 1 as run 2),
+#   - the corpus changed during the run: `corpus_fingerprint_before` must equal
+#     `corpus_fingerprint` and `corpus_unchanged_at_endpoints` must be true,
 #   - the artifact's config_version.divergence_from_selected_file is non-empty (the run
 #     did not use the settings you selected — Procedure E of interpreting_benchmark_results),
 #   - a corpus pin exists for the stack and the artifact's fingerprint differs. The one
@@ -24,7 +28,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-ARM="${1:-}"; fm_require_arm "$ARM"; RUN="${2:-}"; [[ "$RUN" =~ ^[0-9]+$ ]] || fm_die "usage: archive_run.sh <arm> <run> <arm.yaml> [--stack <name>] [--wait] [--new-corpus]"
+ARM="${1:-}"; fm_require_arm "$ARM"; RUN="${2:-}"; [ -n "$RUN" ] || fm_die "usage: archive_run.sh <arm> <run> <arm.yaml> [--stack <name>] [--wait] [--new-corpus]"; fm_require_run_number "$RUN"
 YAML="${3:-}"; fm_require_arm_yaml "$ARM" "$YAML"; shift 3
 fm_require_lock "$YAML"
 STACK="fm-$ARM"; WAIT=false; NEW_CORPUS=false
@@ -48,13 +52,21 @@ ARTIFACT="$(ls -t "$FM_OUT"/benchmarking-"$STACK"-*.json 2>/dev/null | head -1 |
 
 # One artifact, one ledger row: refuse a file already archived, and a file that predates
 # this stack's latest ragas-start (the re-run produced nothing; this is run 1's file).
-FM_LEDGER="$(fm_ledger)" FM_ARTIFACT="$ARTIFACT" FM_STACK="$STACK" "$FM_PYTHON" - <<'EOF' || fm_die "refusing to archive $ARTIFACT (see above)"
+FM_LEDGER="$(fm_ledger)" FM_ARTIFACT="$ARTIFACT" FM_STACK="$STACK" FM_ARM="$ARM" FM_RUN="$RUN" FM_PIN_FILE="$(fm_pin_file "$STACK")" "$FM_PYTHON" - <<'EOF' || fm_die "refusing to archive $ARTIFACT (see above)"
 import datetime as dt, json, os, sys
 ledger, artifact, stack = os.environ["FM_LEDGER"], os.environ["FM_ARTIFACT"], os.environ["FM_STACK"]
+arm, run = os.environ["FM_ARM"], int(os.environ["FM_RUN"])
 rows = json.load(open(ledger)) if os.path.exists(ledger) else []
 dup = [r for r in rows if r.get("artifact") == artifact]
 if dup:
     print(f"artifact already archived as arm {dup[0].get('arm')} run {dup[0].get('run')}", file=sys.stderr); sys.exit(1)
+same = [r for r in rows if r.get("kind") == "ragas" and r.get("arm") == arm and r.get("stack") == stack and r.get("run") == run]
+if same:
+    print(f"arm {arm} run {run} on {stack} is already archived ({same[0].get('artifact')}); pick the next run number", file=sys.stderr); sys.exit(1)
+# The corpus pin is established by run 1 and nothing else: a later run number archived
+# first would make an arbitrary artifact the reference corpus.
+if not os.path.exists(os.environ["FM_PIN_FILE"]) and run != 1:
+    print(f"no corpus pin for {stack} yet — archive run 1 first (got run {run})", file=sys.stderr); sys.exit(1)
 starts = [r["started"] for r in rows if r.get("kind") == "ragas-start" and r.get("stack") == stack and r.get("started")]
 if starts:
     latest = max(dt.datetime.fromisoformat(s.replace("Z", "+00:00")) for s in starts)
@@ -104,9 +116,15 @@ cv = arm.get("config_version") or {}
 div = cv.get("divergence_from_selected_file")
 if div:
     print(f"REFUSED: the run did not use the selected settings — divergence_from_selected_file = {div}", file=sys.stderr); sys.exit(2)
-fp = arm.get("corpus_fingerprint") or (d.get("metadata") or {}).get("corpus_fingerprint")
-if not isinstance(fp, str) or fp.startswith("<unavailable"):
-    print(f"REFUSED: no usable corpus_fingerprint in {p} (got {fp!r})", file=sys.stderr); sys.exit(2)
+fp = arm.get("corpus_fingerprint")
+fp_before = arm.get("corpus_fingerprint_before")
+def usable(x): return isinstance(x, str) and x.startswith("sha256:")
+if not usable(fp) or not usable(fp_before):
+    print(f"REFUSED: the artifact lacks usable endpoint fingerprints (before={fp_before!r}, after={fp!r})", file=sys.stderr); sys.exit(2)
+# The harness samples the corpus at both ends of the arm. Questions scored across two
+# corpora are not one observation; such an artifact must never become the pin.
+if fp != fp_before or arm.get("corpus_unchanged_at_endpoints") is not True:
+    print(f"REFUSED: the corpus changed during the run (before {fp_before}, after {fp}, unchanged={arm.get('corpus_unchanged_at_endpoints')!r}); the arm is void", file=sys.stderr); sys.exit(2)
 pin_file, run = os.environ["FM_PIN_FILE"], int(os.environ["FM_RUN"])
 previous_pin = None
 if os.path.exists(pin_file):
@@ -138,7 +156,7 @@ entry = {
     "arm": os.environ["FM_ARM"], "kind": "ragas", "run": run, "stack": os.environ["FM_STACK"],
     "finished": os.environ["FM_FINISHED"], "artifact": p,
     "arm_config": os.environ["FM_ARM_YAML"], "configuration_file": arm.get("configuration_file"),
-    "corpus_fingerprint": fp, "fingerprint_source": "artifact", "repinned_from": previous_pin,
+    "corpus_fingerprint": fp, "corpus_fingerprint_before": fp_before, "fingerprint_source": "artifact", "repinned_from": previous_pin,
     "lock_sha256": os.environ["FM_LOCK_SHA"],
     "corpus_snapshot_id": (d.get("metadata") or {}).get("corpus_snapshot_id"),
     "config_digest": cv.get("digest"), "code_digest": ((d.get("metadata") or {}).get("code_version") or {}).get("digest"),

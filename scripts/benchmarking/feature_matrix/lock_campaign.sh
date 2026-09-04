@@ -31,7 +31,11 @@ if [ -f "$LOCK" ] && [ "$RELOCK" != true ]; then
   fm_die "campaign already locked at $LOCK (pass --relock to replace it; the pre-registration must be re-locked too)"
 fi
 mkdir -p "$FM_OUT"
-CODE_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+CODE_SHA="$(fm_code_sha)"
+[ "$CODE_SHA" != unknown ] || fm_die "not inside a git checkout — the lock must pin the code revision the campaign runs"
+DIRTY="$("$FM_GIT" status --porcelain --untracked-files=no -- src scripts deploy 2>/dev/null || true)"
+[ -z "$DIRTY" ] || fm_die "commit or stash source changes before locking; the lock pins a commit, not a dirty tree:
+$DIRTY"
 FM_FACTORS="$(fm_fixed_factors_json "$YAML")" FM_LOCK="$LOCK" FM_QA_DATASET="$QA_DATASET" FM_QA_PROFILE="$QA_PROFILE" \
 FM_CODE_SHA="$CODE_SHA" FM_BASELINE="$YAML" FM_LOCKED="$(fm_now)" "$FM_PYTHON" - <<'EOF'
 import hashlib, json, os

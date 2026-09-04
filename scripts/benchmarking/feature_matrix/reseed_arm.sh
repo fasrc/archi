@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Switch a running stack to a RETRIEVAL-side arm without re-ingesting (plan §5.2).
 #
-#   reseed_arm.sh <arm> <arm.yaml> [--stack fm-00]
+#   reseed_arm.sh <arm> <arm.yaml> [--stack fm-00] [--no-run]
+#
+# --no-run re-seeds and stops: use it to RESTORE the baseline configuration after a
+# retrieval arm (plan §5.2) without launching an unplanned 109-question run.
 #
 # Copies the arm's retrieval keys (data_manager.retrievers.hierarchical_rerank.*) into the
 # stack's rendered configs/config.yaml, re-runs the one-shot config-seed container (which
@@ -17,11 +20,12 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 ARM="${1:-}"; fm_require_arm "$ARM"; YAML="${2:-}"; shift 2 || fm_die "usage: reseed_arm.sh <arm> <arm.yaml> [--stack <name>]"
-STACK="fm-00"
+STACK="fm-00"; NO_RUN=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --stack) STACK="${2:?--stack needs a name}"; shift 2 ;;
-    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --no-run) NO_RUN=true; shift ;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) fm_die "unknown option $1" ;;
   esac
 done
@@ -70,8 +74,14 @@ EOF
 
 fm_log "re-seeding static_config for $STACK"
 "$FM_DOCKER" compose -f "$STACK_DIR/compose.yaml" up --force-recreate config-seed
+if [ "$NO_RUN" = true ]; then
+  fm_require_pinned_corpus "$STACK"
+  fm_ledger_append "$(printf '{"arm":"%s","kind":"reseed","stack":"%s","config":"%s","at":"%s","lock_sha256":"%s"}' "$ARM" "$STACK" "$YAML" "$(fm_now)" "$(fm_lock_sha)")"
+  fm_log "$STACK re-seeded to arm $ARM; no run started (--no-run)"
+  exit 0
+fi
 "$FM_DOCKER" rm -f "benchmarking-$STACK" >/dev/null 2>&1 || true
 "$FM_DOCKER" compose -f "$STACK_DIR/compose.yaml" up --no-deps -d benchmark
 fm_require_pinned_corpus "$STACK"
-fm_ledger_append "$(printf '{"arm":"%s","kind":"ragas-start","stack":"%s","config":"%s","started":"%s","rerun":true,"reseed":true,"lock_sha256":"%s"}' "$ARM" "$STACK" "$YAML" "$(fm_now)" "$(fm_lock_sha)")"
+fm_ledger_append "$(printf '{"arm":"%s","kind":"ragas-start","stack":"%s","config":"%s","started":"%s","rerun":true,"reseed":true,"lock_sha256":"%s","code_sha":"%s"}' "$ARM" "$STACK" "$YAML" "$(fm_now)" "$(fm_lock_sha)" "$(fm_code_sha)")"
 fm_log "arm $ARM running on $STACK after re-seed; follow: $FM_DOCKER logs -f benchmarking-$STACK"
