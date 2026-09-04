@@ -2246,6 +2246,19 @@ class Benchmarker:
         logger.info(
             "Waiting for data-manager ingestion to complete before benchmarking..."
         )
+        if not budgets.max_wait_seconds:
+            # The status payload carries no progress counter (only state/step,
+            # `ingestion_status.py:29-33`), so an ingest wedged *inside*
+            # `update_vectorstore()` still answers "running" forever and only
+            # the ceiling can end it. Disabling the ceiling is a legitimate
+            # choice for a corpus larger than the default 6h -- but an
+            # unattended run that hangs silently burns its allocation, so it
+            # must not be a quiet one.
+            logger.warning(
+                "BENCH_INGEST_MAX_WAIT=0: no absolute ceiling on this wait. An "
+                "ingest that wedges while still reporting state=running will "
+                "block the benchmark indefinitely."
+            )
         while True:
             attempt += 1
             for status_url in status_urls:

@@ -249,6 +249,40 @@ def test_unknown_state_does_not_reset_the_stall_budget(monkeypatch):
     assert "state=quiescing" in str(excinfo.value)
 
 
+def test_disabling_the_ceiling_is_warned_about_loudly(monkeypatch, caplog):
+    """`BENCH_INGEST_MAX_WAIT=0` is an escape hatch, not a default worth hiding.
+
+    With the ceiling off, an ingest wedged inside `update_vectorstore()` keeps
+    answering `state=running` and nothing bounds the wait. That is a deliberate
+    operator choice for a corpus larger than six hours -- but an unattended run
+    that hangs silently burns an allocation, so say so at the top of the wait.
+    """
+    _budget_env(monkeypatch, stall="30", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted([_running(), {"state": "completed", "step": "done"}])
+
+    with caplog.at_level("WARNING", logger="src.bin.service_benchmark"):
+        _bench().wait_for_ingestion_completion(
+            fetch=fetch, clock=clock, sleep=clock.sleep
+        )
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("BENCH_INGEST_MAX_WAIT" in w for w in warnings), warnings
+
+
+def test_an_enabled_ceiling_is_not_warned_about(monkeypatch, caplog):
+    _budget_env(monkeypatch, stall="30", max_wait="600", poll="5")
+    clock = FakeClock()
+    fetch = _scripted([{"state": "completed", "step": "done"}])
+
+    with caplog.at_level("WARNING", logger="src.bin.service_benchmark"):
+        _bench().wait_for_ingestion_completion(
+            fetch=fetch, clock=clock, sleep=clock.sleep
+        )
+
+    assert [r.getMessage() for r in caplog.records if r.levelname == "WARNING"] == []
+
+
 def test_budgets_come_from_the_environment(monkeypatch):
     for name in (
         "BENCH_INGEST_WAIT_TIMEOUT",
