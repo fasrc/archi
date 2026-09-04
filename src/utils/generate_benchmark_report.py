@@ -189,15 +189,16 @@ def format_provenance_html(provenance):
     elif ingest is None:
         ingest_line = (
             "<p class='provenance-ok'>Time to ingest: <strong>not "
-            "measured</strong> &mdash; this run reused an existing corpus, so "
-            "no ingest was observed.</p>"
+            "measured</strong> &mdash; no ingest was observed while this run "
+            "waited, which normally means it reused an existing corpus.</p>"
         )
     else:
         ingest_line = (
             "<p class='provenance-ok'>Time to ingest: "
             f"<strong>{_format_seconds(ingest)}</strong>, harness-observed "
-            "(first status poll to completion, so it includes data-manager "
-            "start-up).</p>"
+            "(first poll reporting progress to the one reporting completion, "
+            "so queue time is excluded but data-manager work either side of "
+            "the ingest is not).</p>"
         )
 
     return (
@@ -1043,14 +1044,15 @@ def format_provenance_markdown(provenance):
         )
     elif ingest is None:
         lines.append(
-            "⏱️ Time to ingest: **not measured** — this run reused an existing "
-            "corpus, so no ingest was observed."
+            "⏱️ Time to ingest: **not measured** — no ingest was observed while "
+            "this run waited, which normally means it reused an existing "
+            "corpus."
         )
     else:
         lines.append(
             f"⏱️ Time to ingest: **{_format_seconds(ingest)}**, "
-            "harness-observed (first status poll to completion, so it includes "
-            "data-manager start-up)."
+            "harness-observed (first poll reporting progress to the one "
+            "reporting completion, so queue time is excluded)."
         )
 
     version_md = format_version_markdown(provenance)

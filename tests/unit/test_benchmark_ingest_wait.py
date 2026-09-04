@@ -382,6 +382,47 @@ def test_returns_none_not_zero_when_ingest_was_already_complete(monkeypatch):
     assert clock.slept == []
 
 
+def test_queue_time_is_not_counted_as_ingest_cost(monkeypatch):
+    """The clock starts when the ingest starts, not when the waiting starts.
+
+    A benchmark queued behind another holder of `ingestion_lock` sees
+    `running`/`initializing` while nothing of its own is happening. Counting
+    that as ingest cost would make the campaign's cost table depend on what
+    else the data-manager happened to be doing.
+    """
+    _budget_env(monkeypatch, stall="60", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted(
+        [_running("initializing")] * 3
+        + [_running()] * 2
+        + [{"state": "completed", "step": "done"}]
+    )
+
+    elapsed = _bench().wait_for_ingestion_completion(
+        fetch=fetch, clock=clock, sleep=clock.sleep
+    )
+
+    assert clock.now - 1000.0 == 25.0, "the whole wait was 25s"
+    assert elapsed == 10.0, "but only 10s of it was this ingest"
+
+
+def test_no_progressing_poll_means_no_observed_ingest(monkeypatch):
+    """Polls that never showed work cannot be turned into a measurement."""
+    _budget_env(monkeypatch, stall="60", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted(
+        [{"state": "pending", "step": None, "error": None}] * 2
+        + [{"state": "completed", "step": "done"}]
+    )
+
+    assert (
+        _bench().wait_for_ingestion_completion(
+            fetch=fetch, clock=clock, sleep=clock.sleep
+        )
+        is None
+    )
+
+
 def test_an_unreachable_first_url_does_not_count_as_an_observed_ingest(monkeypatch):
     """ "First successful poll" -- a candidate URL that raised is not a poll."""
     _budget_env(monkeypatch, stall="3600", max_wait="0", poll="5")

@@ -606,11 +606,13 @@ Read them like this:
   Some settings — document categorization, chunking strategy — are paid for
   almost entirely at ingest, and this is the only place that price is recorded.
   Read the three states apart: a **float** is a measurement; **`null`** means no
-  ingest was observed, because the run found the corpus already built and
-  reused it; an **absent key** means the artifact predates the field. It is
-  *harness-observed* — the span from the benchmark's first ingestion-status
-  poll to the one reporting `completed` — so it includes data-manager start-up
-  and is a ceiling on the ingest proper, not a phase-accurate figure.
+  ingest was observed while the run waited, which normally means it found the
+  corpus already built; an **absent key** means the artifact predates the field.
+  It is *harness-observed* — the span from the first status poll reporting
+  progress to the one reporting `completed`. Time spent queued behind another
+  data-manager task is therefore excluded, but everything after the ingest
+  starts is included, so treat it as a ceiling on the ingest proper rather than
+  a phase-accurate figure.
 
 Two caveats worth knowing:
 

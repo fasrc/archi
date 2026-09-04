@@ -2226,14 +2226,17 @@ class Benchmarker:
     ) -> Optional[float]:
         """Block until the data-manager reports ingestion complete.
 
-        Returns the wall-clock seconds spent waiting, or `None` when no ingest
-        was observed at all -- the first *successful* poll already said
-        `completed`, so the run reused an existing corpus. Never `0.0`: that
-        would put a fabricated measurement where "not measured" belongs
-        (issue #417). The number is harness-observed, spanning the first poll
-        to the completed one, so it includes data-manager start-up; exact phase
-        timing needs `started_at`/`finished_at` in the status payload, which is
-        a data-manager change.
+        Returns the wall-clock seconds this ingest was observed working, or
+        `None` when it was never observed working at all -- the run found the
+        corpus already built. Never `0.0`: that would put a fabricated
+        measurement where "not measured" belongs (issue #417).
+
+        The span runs from the first poll `_ingest_is_progressing` accepts to
+        the one reporting `completed`, so queue time behind another holder of
+        `ingestion_lock` is excluded but everything after work starts is
+        included. It is still harness-observed and therefore a ceiling on the
+        ingest proper; exact phase timing needs `started_at`/`finished_at` in
+        the status payload, which is a data-manager change.
 
         `fetch`, `clock` and `sleep` are injection seams for the tests only;
         production calls this with no arguments.
@@ -2287,10 +2290,13 @@ class Benchmarker:
         last_state: Optional[str] = None
         last_step: Any = None
         last_error: Optional[BaseException] = None
-        # Whether any successful poll reported something other than "completed".
-        # False at the completed poll means the corpus was already ingested when
-        # this run started, so there is no ingest duration to report (#417).
-        observed_ingest = False
+        # When this ingest was first seen actually working -- NOT when the
+        # waiting started. A run queued behind another holder of
+        # `ingestion_lock` sits at `running`/`initializing` while nothing of its
+        # own happens, and charging that queue time to the corpus would make the
+        # campaign's cost table depend on what else the data-manager was doing.
+        # Still None at the completed poll = no ingest was observed at all (#417).
+        ingest_started_at: Optional[float] = None
         attempt = 0
 
         logger.info(
@@ -2342,11 +2348,14 @@ class Benchmarker:
                 last_step = step
                 if _ingest_is_progressing(state, step):
                     last_ok_at = clock()
+                    if ingest_started_at is None:
+                        ingest_started_at = last_ok_at
 
                 if state == "completed":
                     logger.info("Data-manager ingestion completed; starting benchmark.")
-                    return clock() - start_time if observed_ingest else None
-                observed_ingest = True
+                    if ingest_started_at is None:
+                        return None
+                    return clock() - ingest_started_at
                 if state == "error":
                     raise RuntimeError(
                         f"Data-manager ingestion failed at step '{step}': "
