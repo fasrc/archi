@@ -184,3 +184,45 @@ def test_regenerate_html_still_never_creates(tmp_path):
 
     assert backfill.regenerate_html(json_path) is None
     assert not list(tmp_path.glob("*.html"))
+
+
+def test_rerenders_html_for_an_artifact_with_null_scores(tmp_path):
+    """#279 end to end: from now on an unscored metric is ``null`` on disk, and
+    the backfill script is the tool that re-renders old reports. The HTML
+    renderer compared the aggregate against 0.5 with no guard, so the first
+    ``null`` artifact fed through ``--regenerate-html`` raised ``TypeError`` and
+    aborted the bulk run part-way."""
+    payload = _artifact_payload()
+    arm = payload["benchmarking_results"][0]
+    arm["single_question_results"]["q1"]["context_recall"] = None
+    arm["total_results"]["aggregate_context_recall"] = None
+    json_path = tmp_path / "bench-20260828_120000.json"
+    json_path.write_text(json.dumps(payload))
+    html_path = tmp_path / "bench-20260828_120000_report.html"
+    html_path.write_text("stale report")
+
+    note = backfill.regenerate_html(json_path)
+
+    assert note == f"re-rendered {html_path.name}"
+    content = html_path.read_text()
+    assert "stale report" not in content
+    assert "n/a (unscored)" in content
+
+
+def test_rerenders_md_for_an_artifact_with_null_scores(tmp_path):
+    """The markdown path already routes scores through ``_score_cell``; this
+    pins that a ``null`` cell reads the same way there, so the two reports do
+    not disagree about what an unscored metric looks like."""
+    payload = _artifact_payload()
+    arm = payload["benchmarking_results"][0]
+    arm["single_question_results"]["q1"]["answer_relevancy"] = None
+    arm["total_results"]["aggregate_answer_relevancy"] = None
+    json_path = tmp_path / "bench-20260828_120000.json"
+    json_path.write_text(json.dumps(payload))
+
+    note = backfill.regenerate_md(json_path)
+
+    assert note == "created bench-20260828_120000_report.md"
+    assert (
+        "n/a (unscored)" in (tmp_path / "bench-20260828_120000_report.md").read_text()
+    )

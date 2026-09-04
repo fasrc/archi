@@ -8,7 +8,10 @@ for artifacts that predate provenance stamping.
 
 from __future__ import annotations
 
-from src.utils.generate_benchmark_report import format_markdown_output
+from src.utils.generate_benchmark_report import (
+    format_html_output,
+    format_markdown_output,
+)
 
 _CONFIG = {"services": {"benchmarking": {"modes": ["RAGAS", "SOURCES"]}}}
 
@@ -246,6 +249,81 @@ def test_nan_scores_render_unscored_not_green():
 
     assert "nan 🟢" not in md
     assert "n/a (unscored)" in md
+
+
+def test_markdown_omits_the_retrieval_section_when_no_source_metrics_were_recorded():
+    """The markdown mirror of the HTML retrieval guard (#279, "also noticed"):
+    ``SOURCES`` in the modes with no source metrics recorded reached
+    ``round(ret_total * None)`` and took the default report down with it."""
+    totals = {"aggregate_answer_relevancy": 0.862}
+
+    md = format_markdown_output(
+        _CONFIG, "bench", "2026-09-03", {"q": _ok_row()}, totals, None
+    )
+
+    assert "Retrieval Accuracy" not in md
+    assert "Aggregate RAGAS Metrics" in md
+
+
+def test_markdown_omits_the_retrieval_section_when_nothing_was_source_scorable():
+    """Mirror of the HTML case: ``source_scored_count: 0`` is an empty sample,
+    and "0/0 (0.0%)" reads as a measured retrieval collapse instead."""
+    totals = {
+        "source_accuracy": 0.0,
+        "relative_source_accuracy": 0.0,
+        "source_scored_count": 0,
+    }
+
+    md = format_markdown_output(
+        _CONFIG, "bench", "2026-09-03", {"q": _ok_row()}, totals, None
+    )
+
+    assert "Retrieval Accuracy" not in md
+
+
+def test_the_two_reports_agree_on_the_retrieval_tally():
+    """The HTML report reconstructed its counts with ``int()`` and the markdown
+    report with ``round()``, so one artifact yielded two different tallies. They
+    are rendered from the same numbers and must say the same thing."""
+    totals = {
+        "source_accuracy": 15 / 22,
+        "relative_source_accuracy": 17 / 22,
+        "source_scored_count": 22,
+    }
+    questions = {"q": _ok_row()}
+
+    md = format_markdown_output(_CONFIG, "bench", "2026-09-03", questions, totals, None)
+    html = format_html_output(_CONFIG, "bench", "2026-09-03", questions, totals)
+
+    assert "- **Fully Correct:** 15/22 (68.2%)" in md
+    assert "Fully Correct: 15/22" in html
+    assert "- **Partially Correct** (some expected sources retrieved): 2" in md
+    assert "- **Incorrect** (no expected sources retrieved): 5" in md
+
+
+def test_markdown_still_renders_the_retrieval_section_when_the_metrics_are_there():
+    """0.0 accuracy is a measured floor result; the guard must not hide it."""
+    md = format_markdown_output(
+        _CONFIG, "bench", "2026-09-03", {"q": _ok_row()}, _TOTALS, None
+    )
+
+    assert "Retrieval Accuracy" in md
+
+
+def test_null_question_score_renders_unscored_rather_than_vanishing():
+    """#279 spells an unscored cell ``null`` on disk. The question card used to
+    drop a ``None`` row entirely, which reads identically to a metric the config
+    never enabled — the exact confusion the scored denominator exists to stop."""
+    row = _ok_row()
+    row["context_recall"] = None
+
+    md = format_markdown_output(
+        _CONFIG, "bench", "2026-09-03", {"q": row}, _TOTALS, None
+    )
+
+    assert "| Context Recall | n/a (unscored) |" in md
+    # a metric the run never scored still has no row at all
+    assert "Answer Correctness" not in md
 
 
 def test_long_context_keeps_the_full_text_available():
