@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
 from urllib.parse import urlsplit, urlunsplit
@@ -1012,6 +1012,66 @@ class ResultHandler:
             "rows": rows,
         }
         return ResultHandler.leaderboard
+
+
+class _IngestWaitBudgets(NamedTuple):
+    """The three knobs that bound the benchmark's wait for the data-manager.
+
+    ``stall_seconds`` is time since the *last successful* status poll, not total
+    runtime -- an ingest that keeps answering can take as long as it needs.
+    ``max_wait_seconds`` is the absolute backstop for an ingest that is alive
+    but stuck; ``0`` disables it.
+    """
+
+    stall_seconds: int
+    max_wait_seconds: int
+    poll_interval_seconds: int
+
+
+def _ingest_wait_budgets() -> _IngestWaitBudgets:
+    return _IngestWaitBudgets(
+        stall_seconds=int(os.environ.get("BENCH_INGEST_WAIT_TIMEOUT", "7200")),
+        max_wait_seconds=int(os.environ.get("BENCH_INGEST_MAX_WAIT", "21600")),
+        poll_interval_seconds=int(os.environ.get("BENCH_INGEST_POLL_INTERVAL", "5")),
+    )
+
+
+def _fetch_ingestion_status(url: str) -> Dict[str, Any]:
+    """Read one ingestion-status payload. The injection seam for the wait loop."""
+    with url_request.urlopen(url, timeout=5) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _ingest_wait_timeout_message(
+    reason: str,
+    *,
+    candidate_urls: List[str],
+    last_ok_url: Optional[str],
+    last_state: Optional[str],
+    last_step: Any,
+    last_error: Optional[BaseException],
+) -> str:
+    """Explain an ingest timeout in terms of what the harness actually observed.
+
+    `last_error` only ever appears when it is still the live reason nothing is
+    answering: the wait loop clears it on every successful poll, so this can no
+    longer quote a connection failure from a candidate URL it fell past (issue
+    #378, defect 2).
+    """
+    if last_ok_url is None:
+        observed = (
+            "none of the candidate status URLs ever answered "
+            f"({', '.join(candidate_urls)})"
+        )
+    else:
+        observed = (
+            f"last successful poll was {last_ok_url} -> "
+            f"state={last_state} step={last_step}"
+        )
+    message = f"Timed out waiting for data-manager ingestion: {reason}. {observed}."
+    if last_error is not None:
+        message = f"{message} Last error: {last_error}"
+    return message
 
 
 class Benchmarker:
@@ -2113,9 +2173,36 @@ class Benchmarker:
             len(merged),
         )
 
-    def wait_for_ingestion_completion(self):
-        timeout_seconds = int(os.environ.get("BENCH_INGEST_WAIT_TIMEOUT", "7200"))
-        poll_interval_seconds = int(os.environ.get("BENCH_INGEST_POLL_INTERVAL", "5"))
+    def wait_for_ingestion_completion(
+        self,
+        *,
+        fetch: Optional[Callable[[str], Dict[str, Any]]] = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        """Block until the data-manager reports ingestion complete.
+
+        `fetch`, `clock` and `sleep` are injection seams for the tests only;
+        production calls this with no arguments.
+
+        Neither bound on this wait is a total-runtime deadline on a *healthy*
+        ingest. `BENCH_INGEST_WAIT_TIMEOUT` is a **stall** budget: it restarts
+        on every successful non-terminal poll, so an ingest that keeps
+        reporting progress is never killed merely for being slow. That was
+        issue #378 -- a 106-minute embedding phase aborted at exactly 7200s
+        while all 1433 of its status polls were succeeding, two minutes short
+        of finishing. `BENCH_INGEST_MAX_WAIT` is the absolute backstop for the
+        other failure: an endpoint that answers forever without ever
+        completing.
+
+        Restarting the budget on *any* successful poll, rather than on a
+        changing `step`, is deliberate. `data_manager.py:108-109` emits
+        "Updating vectorstore" once for the whole embedding phase, so the step
+        string is constant for hours on a healthy run; a step-change rule would
+        kill exactly the runs this exists to protect.
+        """
+        budgets = _ingest_wait_budgets()
+        fetch = fetch or _fetch_ingestion_status
         dm_cfg = self.config.get("services", {}).get("data_manager", {})
         # external_port is the HOST-side mapping (e.g. 7881 for benchmarks);
         # internal_port is what the data-manager listens on INSIDE the compose
@@ -2133,7 +2220,12 @@ class Benchmarker:
             f"http://localhost:{dm_external_port}/api/ingestion/status",
             f"http://host.containers.internal:{dm_external_port}/api/ingestion/status",
         ]
-        start_time = time.monotonic()
+        start_time = clock()
+        last_ok_at = start_time
+        last_ok_url: Optional[str] = None
+        last_state: Optional[str] = None
+        last_step: Any = None
+        last_error: Optional[BaseException] = None
         attempt = 0
 
         logger.info(
@@ -2141,31 +2233,9 @@ class Benchmarker:
         )
         while True:
             attempt += 1
-            last_error = None
             for status_url in status_urls:
                 try:
-                    with url_request.urlopen(status_url, timeout=5) as response:
-                        payload = json.loads(response.read().decode("utf-8"))
-                    state = str(payload.get("state", "")).lower()
-                    step = payload.get("step")
-                    err = payload.get("error")
-                    logger.info(
-                        "Ingestion status check #%s via %s -> state=%s step=%s",
-                        attempt,
-                        status_url,
-                        state,
-                        step,
-                    )
-                    if state == "completed":
-                        logger.info(
-                            "Data-manager ingestion completed; starting benchmark."
-                        )
-                        return
-                    if state == "error":
-                        raise RuntimeError(
-                            f"Data-manager ingestion failed at step '{step}': {err}"
-                        )
-                    break
+                    payload = fetch(status_url)
                 except (
                     url_error.URLError,
                     TimeoutError,
@@ -2175,17 +2245,63 @@ class Benchmarker:
                     last_error = exc
                     continue
 
-            elapsed = time.monotonic() - start_time
-            if elapsed >= timeout_seconds:
-                if last_error:
-                    raise TimeoutError(
-                        f"Timed out after {timeout_seconds}s waiting for ingestion status endpoint. Last error: {last_error}"
+                state = str(payload.get("state", "")).lower()
+                step = payload.get("step")
+                logger.info(
+                    "Ingestion status check #%s via %s -> state=%s step=%s",
+                    attempt,
+                    status_url,
+                    state,
+                    step,
+                )
+                # This URL answered, so whatever an earlier candidate raised is
+                # no longer the reason for anything -- drop it (defect 2).
+                last_error = None
+                last_ok_at = clock()
+                last_ok_url = status_url
+                last_state = state
+                last_step = step
+
+                if state == "completed":
+                    logger.info("Data-manager ingestion completed; starting benchmark.")
+                    return
+                if state == "error":
+                    raise RuntimeError(
+                        f"Data-manager ingestion failed at step '{step}': "
+                        f"{payload.get('error')}"
                     )
+                break
+
+            now = clock()
+            stalled_for = now - last_ok_at
+            elapsed = now - start_time
+            if stalled_for >= budgets.stall_seconds:
                 raise TimeoutError(
-                    f"Timed out after {timeout_seconds}s waiting for ingestion completion."
+                    _ingest_wait_timeout_message(
+                        f"no successful status poll for {stalled_for:.0f}s "
+                        f"(BENCH_INGEST_WAIT_TIMEOUT={budgets.stall_seconds}s, "
+                        "measured from the last good poll, not from the start)",
+                        candidate_urls=status_urls,
+                        last_ok_url=last_ok_url,
+                        last_state=last_state,
+                        last_step=last_step,
+                        last_error=last_error,
+                    )
+                )
+            if budgets.max_wait_seconds and elapsed >= budgets.max_wait_seconds:
+                raise TimeoutError(
+                    _ingest_wait_timeout_message(
+                        f"still not complete after {elapsed:.0f}s "
+                        f"(BENCH_INGEST_MAX_WAIT={budgets.max_wait_seconds}s)",
+                        candidate_urls=status_urls,
+                        last_ok_url=last_ok_url,
+                        last_state=last_state,
+                        last_step=last_step,
+                        last_error=last_error,
+                    )
                 )
 
-            time.sleep(poll_interval_seconds)
+            sleep(budgets.poll_interval_seconds)
 
 
 if __name__ == "__main__":
