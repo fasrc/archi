@@ -29,7 +29,7 @@ from typing import (
     runtime_checkable,
 )
 
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, Comment, Doctype, NavigableString, Tag
 from markdownify import STRIP, STRIP_ONE, MarkdownConverter, strip1_pre, strip_pre
 
 from src.data_manager.collectors.resource_base import BaseResource
@@ -526,14 +526,98 @@ def _promoted_fence_language(pre) -> str:
     return _fence_language(pre)
 
 
+_SELF_SEPARATING_FOLLOWERS: frozenset = frozenset(
+    {
+        "article",
+        "blockquote",
+        "br",
+        "div",
+        "dl",
+        "dt",
+        "figcaption",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "hr",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "ul",
+    }
+)
+"""Block-level elements whose markdownify converter emits a leading newline (issue #410).
+
+Measured on markdownify 1.2.2: each element in this set already starts on a new line when
+it follows a nested list inside a list item, so no extra newline is needed.  ``ul`` and
+``ol`` both produce ``'\\n' + text.rstrip()`` for nested lists.  The failure direction is
+safe: an element missing from the set yields one extra blank line (harmless Markdown),
+while an element wrongly included would leave a glue join in place.
+"""
+
+
+def _next_content_sibling(el):
+    """Return the first meaningful sibling after *el* (issue #410).
+
+    Walks ``el.next_sibling`` and returns:
+    * the first ``Tag`` found, or
+    * the first ``NavigableString`` that is not a ``Comment`` or ``Doctype`` and has
+      at least one non-blank character.
+
+    Returns ``None`` when all remaining siblings are whitespace-only text nodes,
+    ``Comment`` nodes, or ``Doctype`` nodes.
+    """
+    sib = el.next_sibling
+    while sib is not None:
+        if isinstance(sib, Tag):
+            return sib
+        if isinstance(sib, NavigableString) and not isinstance(sib, (Comment, Doctype)):
+            if str(sib).strip():
+                return sib
+        sib = sib.next_sibling
+    return None
+
+
+def _nested_list_needs_break(el, text: str) -> bool:
+    """Return ``True`` when a trailing ``\\n`` must be appended to *el*'s output (issue #410).
+
+    The predicate is ``False`` when:
+    * ``text.strip()`` is empty — an empty nested list contributes nothing (design D4);
+    * there is no meaningful sibling after *el*; or
+    * the next content sibling is a ``Tag`` whose name is in ``_SELF_SEPARATING_FOLLOWERS``
+      — such elements already start on a new line in markdownify output.
+
+    Returns ``True`` for text nodes and inline elements (``a``, ``code``, ``span``, …)
+    and for tags with no markdownify converter (``figure``, ``nav``, …) because their
+    output is glued onto the nested list's last line without the extra newline.
+    """
+    if not text.strip():
+        return False
+    nxt = _next_content_sibling(el)
+    if nxt is None:
+        return False
+    return not (isinstance(nxt, Tag) and nxt.name in _SELF_SEPARATING_FOLLOWERS)
+
+
 _BACKTICK_RUNS = re.compile(r"`+")
 
 
 class _ArchiMarkdownConverter(MarkdownConverter):
-    """The project's ``MarkdownConverter`` overrides (issue #407).
+    """The project's ``MarkdownConverter`` overrides (issues #407 and #410).
 
-    This is the one place project-specific ``MarkdownConverter`` overrides live;
-    issue #410 adds a ``convert_list`` override here alongside ``convert_pre``.
+    This is the one place project-specific ``MarkdownConverter`` overrides live.
+    ``convert_pre`` sizes the fence delimiter past any backtick run inside the
+    block (issue #407); ``convert_list`` keeps a newline after a nested list
+    (issue #410).
+
+    markdownify binds ``convert_ul`` and ``convert_ol`` to the base
+    ``convert_list`` at class-definition time, so overriding ``convert_list``
+    alone would never be called for list elements.  The two class-level
+    rebindings below re-point those attributes at this override (design D2).
     """
 
     def convert_pre(self, el, text, parent_tags):
@@ -557,6 +641,16 @@ class _ArchiMarkdownConverter(MarkdownConverter):
         longest_run = max((len(m) for m in _BACKTICK_RUNS.findall(text)), default=0)
         fence = "`" * max(3, longest_run + 1)
         return "\n\n%s%s\n%s\n%s\n\n" % (fence, code_language, text, fence)
+
+    def convert_list(self, el, text, parent_tags):
+        """Append a trailing newline when inline content follows a nested list."""
+        out = super().convert_list(el, text, parent_tags)
+        if "li" in parent_tags and _nested_list_needs_break(el, text):
+            return out + "\n"
+        return out
+
+    convert_ul = convert_list
+    convert_ol = convert_list
 
 
 def _markdownify(html: str, **options) -> str:

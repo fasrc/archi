@@ -544,6 +544,14 @@ data_manager:
   so no line beside the fence begins or ends with a stray space. The shape is rare in the
   FASRC KB (0 of 25 sampled multi-line code elements) and, like every item in this list,
   it reaches disk only for new or force-overwritten documents.
+- **Content after a nested list starts on its own line.** `markdownify` drops the newline
+  after a list nested inside a list item, so the text, inline element, or sibling item
+  that followed it was glued onto the nested list's last line — onto a closing code fence
+  when the last nested item ends in a code block (issue #410); the conversion puts that
+  newline back when the follower does not start a new line by itself, and a following
+  paragraph, code block, heading, or list is unchanged; like the body slice, the change
+  reaches disk only for new or force-overwritten documents — see *Applying to an existing
+  corpus* below.
 - **Cost.** Categorization issues one LLM call per document — expensive on large
   crawls, hence off by default.
 - **Local `.html` uploads are not converted.** Uploaded local files arrive as `bytes`
