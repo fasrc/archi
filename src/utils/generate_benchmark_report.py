@@ -381,6 +381,9 @@ def format_html_output(
             .score-low { color: #dc3545; }
             .score-medium { color: #ffc107; }
             .score-high { color: #28a745; }
+            /* Unscored: deliberately not on the red-amber-green scale — it is
+               the absence of a grade, not a bad one. */
+            .score-na { color: #6c757d; font-size: 0.6em; }
         </style>
     </head>
     <body>
@@ -401,23 +404,24 @@ def format_html_output(
     )
 
     # sources (retrieval accuracy) metrics
-    if "SOURCES" in config_data.get("services", {}).get("benchmarking", {}).get(
-        "modes", []
-    ):
+    sources_mode = "SOURCES" in config_data.get("services", {}).get(
+        "benchmarking", {}
+    ).get("modes", [])
+    if sources_mode and _has_source_tally(total_results, questions):
 
         # Retrieval Accuracy
         ret_accuracy = total_results.get("source_accuracy", None)
-        # The scores were divided by the SOURCE-SCORABLE question count, which
-        # excludes zero-source rows (e.g. the `should_refuse` anchor). Deriving the
-        # count from len(questions) would disagree with the score it is derived
-        # from. Older result files predate the key and used len(questions).
-        ret_total = total_results.get("source_scored_count", len(questions))
-        ret_correct = int(ret_total * ret_accuracy)
+        ret_total = source_scored_count(total_results, questions)
+        # round(), not int(): the count is reconstructed by multiplying the rate
+        # back out, and 22 * (15/22) == 14.999999999999998 in binary floating
+        # point, which int() truncates to 14 — moving a hit into the "Incorrect"
+        # bucket and disagreeing with the markdown report of the same artifact.
+        ret_correct = round(ret_total * ret_accuracy)
 
         if ret_accuracy:
             ret_accuracy *= 100
         ret_partial = total_results.get("relative_source_accuracy", None)
-        ret_partial = int(ret_total * ret_partial) - ret_correct
+        ret_partial = round(ret_total * ret_partial) - ret_correct
 
         html_parts.append('<div class="metrics">')
         html_parts.append("<h2>🎯 Retrieval Accuracy</h2>")
@@ -485,15 +489,11 @@ def format_html_output(
                     clean_name = (
                         metric.replace("aggregate_", "").replace("_", " ").title()
                     )
-                    score_class = (
-                        "score-low"
-                        if value < 0.5
-                        else "score-medium" if value < 0.7 else "score-high"
-                    )
+                    score_class, display = _html_score_parts(value)
                     html_parts.append(
                         f"""
                     <div class="metric-item">
-                        <div class="metric-value {score_class}">{value:.3f}</div>
+                        <div class="metric-value {score_class}">{display}</div>
                         <div class="metric-label">{clean_name}</div>
                     </div>
                     """
@@ -729,18 +729,17 @@ def format_html_output(
             html_parts.append(f'<div class="section">')
             html_parts.append(f'<div class="section-title">📊 RAGAS Scores</div>')
             html_parts.append(f'<div class="metrics-grid">')
+            # Key PRESENT is the test, not key-present-and-not-None: the key is
+            # there because the run asked for the metric, so a null/NaN cell is
+            # a scoring failure worth showing. Dropping the tile instead made an
+            # unscored metric look identical to one the config never enabled.
             for metric_key, metric_name in ragas_metrics.items():
-                if metric_key in q_data and q_data[metric_key] is not None:
-                    value = q_data[metric_key]
-                    score_class = (
-                        "score-low"
-                        if value < 0.5
-                        else "score-medium" if value < 0.7 else "score-high"
-                    )
+                if metric_key in q_data:
+                    score_class, display = _html_score_parts(q_data[metric_key])
                     html_parts.append(
                         f"""
                     <div class="metric-item">
-                        <div class="metric-value {score_class}">{value:.3f}</div>
+                        <div class="metric-value {score_class}">{display}</div>
                         <div class="metric-label">{metric_name}</div>
                     </div>
                     """
@@ -843,16 +842,81 @@ def _score_badge(value):
     return "🟢"
 
 
-def _score_cell(value):
-    """A score cell: badged when finite, plainly unscored when not.
+def _is_scored(value):
+    """True when ``value`` is a number a reader may treat as a score.
 
-    ``build_ragas_aggregates`` emits ``float("nan")`` when nothing was
-    scorable; NaN fails both threshold comparisons, so without this check an
-    unscored run would wear the green badge and read as a success.
+    Two spellings of "unscored" reach the reports and both must land here.
+    ``build_ragas_aggregates`` emits ``float("nan")`` in memory, and NaN fails
+    BOTH threshold comparisons — so an unguarded cell wore the green badge and
+    printed a literal ``nan``, reading as a success. Since #279 the artifact
+    spells the same thing ``null``, and an unguarded ``None`` raises
+    ``TypeError`` on ``value < 0.5``, taking the whole report down.
     """
-    if not isinstance(value, (int, float)) or not math.isfinite(value):
-        return "n/a (unscored)"
+    return isinstance(value, (int, float)) and math.isfinite(value)
+
+
+UNSCORED_CELL = "n/a (unscored)"
+
+
+def source_scored_count(total_results, questions):
+    """The retrieval-accuracy denominator.
+
+    The scores were divided by the SOURCE-SCORABLE question count, which excludes
+    zero-source rows (the ``should_refuse`` anchor is why this exists). Deriving
+    the count from ``len(questions)`` would disagree with the score it is derived
+    from; artifacts older than the key predate that fix and used ``len(questions)``.
+    """
+    return total_results.get("source_scored_count", len(questions))
+
+
+def _has_source_tally(total_results, questions):
+    """True when the retrieval-accuracy section can actually be computed.
+
+    Three things have to hold, and each of them failed differently in practice:
+
+    - Both rates present. A run CAN declare ``SOURCES`` and record neither —
+      every question degraded, or an artifact older than the keys — and
+      unguarded that reached ``int(count * None)`` and took the report down with
+      a ``TypeError`` after the scores had already been computed and dumped.
+    - Both rates finite, for the same reason a metric cell has to be (#279):
+      ``int(count * nan)`` raises ``ValueError``.
+    - A denominator above zero. ``build_source_aggregates`` emits
+      ``0.0 / 0.0 / 0`` when NO question declared an expected source, and
+      rendering that printed "Fully Correct: 0/0 (0.0%)" — an empty sample shown
+      as a total retrieval failure, which is the same "unscored read as a scored
+      zero" confusion this issue is about.
+
+    A measured ``0.0`` over a real denominator IS a floor result and keeps its
+    section; only an absent, non-finite or empty-sample tally suppresses it.
+    """
+    return (
+        _is_scored(total_results.get("source_accuracy"))
+        and _is_scored(total_results.get("relative_source_accuracy"))
+        and source_scored_count(total_results, questions) > 0
+    )
+
+
+def _score_cell(value):
+    """A score cell: badged when scored, plainly unscored when not."""
+    if not _is_scored(value):
+        return UNSCORED_CELL
     return f"{value:.3f} {_score_badge(value)}"
+
+
+def _html_score_parts(value):
+    """``(css_class, display_text)`` for one HTML metric tile.
+
+    The HTML report paints its own tiles rather than reusing ``_score_cell``'s
+    text, so the unscored case needs the same decision in the colour it picks:
+    a neutral class, never the green one a NaN would otherwise fall into.
+    """
+    if not _is_scored(value):
+        return "score-na", UNSCORED_CELL
+    if value < 0.5:
+        return "score-low", f"{value:.3f}"
+    if value < 0.7:
+        return "score-medium", f"{value:.3f}"
+    return "score-high", f"{value:.3f}"
 
 
 def extract_context_text(ctx):
@@ -1014,14 +1078,12 @@ def format_markdown_output(
     if provenance_md:
         parts += ["", provenance_md]
 
-    if "SOURCES" in modes:
+    if "SOURCES" in modes and _has_source_tally(total_results, questions):
         ret_accuracy = total_results.get("source_accuracy", None)
-        # Same denominator caveat as the HTML report: the score was divided by
-        # the SOURCE-SCORABLE question count, so derive the count from the same
-        # key (older artifacts predate it and used len(questions)).
-        ret_total = total_results.get("source_scored_count", len(questions))
-        # round(), not int(): the accuracy is stored as a float, and truncating
-        # 15/22*22 == 14.999… would report one hit fewer than the run scored.
+        # Same denominator and the same round()-not-int() reconstruction as the
+        # HTML report, from the same shared helper: the two reports render the
+        # same numbers and must not disagree about them.
+        ret_total = source_scored_count(total_results, questions)
         ret_correct = round(ret_total * ret_accuracy)
         if ret_accuracy:
             ret_accuracy *= 100
@@ -1190,10 +1252,13 @@ def format_markdown_output(
                 parts += ["", f"**{title}**", "", body]
 
         if "RAGAS" in modes:
+            # Key PRESENT is the test (see the HTML mirror): a null cell means
+            # the run asked for the metric and the judge produced nothing, which
+            # is exactly what a reader needs to see.
             score_rows = [
                 f"| {metric_name} | {_score_cell(q_data[metric_key])} |"
                 for metric_key, metric_name in ragas_metrics.items()
-                if metric_key in q_data and q_data[metric_key] is not None
+                if metric_key in q_data
             ]
             if score_rows:
                 parts += [
