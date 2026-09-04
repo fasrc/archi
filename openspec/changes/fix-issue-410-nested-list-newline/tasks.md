@@ -136,7 +136,7 @@ Standing notes for every task:
 
 ## 2. Docs
 
-- [ ] 2.1 `model: sonnet` — Add one bullet to `docs/docs/configuration.md` in the
+- [x] 2.1 `model: sonnet` — Add one bullet to `docs/docs/configuration.md` in the
       "Behavior and caveats" list of the Processing section, directly after the bullet that
       starts `**Multi-line code becomes a fenced block.**` and before the bullet that starts
       `**Cost.**`. Bold lead: `**Content after a nested list starts on its own line.**`. Body,
