@@ -187,3 +187,13 @@ Standing notes for every task:
       identical), pushed the same tip to `origin`, and opened the PR from the host, because the
       loop container's token lacks `createPullRequest` on `fasrc/archi`.
       PR: https://github.com/fasrc/archi/pull/414
+      Note (2026-09-04, review round 2): runtime validation, per the Deployment & Validation
+      Policy in `AGENTS.md`. The deployed data-manager on this host (`data-manager-claw`) runs
+      the baked pre-PR code, so the PR module was copied into that container and loaded in
+      its runtime (Python 3.11.16, markdownify 1.2.2, beautifulsoup4 4.12.3 — the pinned
+      versions the ingest actually imports): all six PR-body inputs and the round-2 comment
+      case render byte-identically to the unit tests' expectations. What this does NOT prove:
+      a forced ingest of a page with this shape through the running service. None of the 25
+      sampled multi-line code elements in the KB has the shape, and this PR ships no
+      redeploy or re-ingest by design; that check belongs to the next dev redeploy
+      (`archi-dev-deploy-verify`) with a synthetic page, and is recorded here as open.

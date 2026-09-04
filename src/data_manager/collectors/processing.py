@@ -334,34 +334,47 @@ def _cut_edge_text(half, *, trailing: bool):
     """Return the exact ``NavigableString`` that touches the cut edge of *half*, or None.
 
     Walk down from *half* along its edge child (the last child of the head half, the
-    first child of the tail half), looking through comments, which render nothing. A
-    tag with no children at the edge (``<img>``) ends the walk with None: whatever
+    first child of the tail half), stepping inward past comments, which render nothing.
+    A tag with no children at the edge (``<img>``) ends the walk with None: whatever
     text sits behind it does not touch the cut and must keep its whitespace.
+
+    Only the edge is read. The head half is re-trimmed once per split when several
+    blocks share one ancestor, so scanning its whole child list here would cost O(n)
+    per split and O(n^2) for the hoist (Codex review on PR #414).
     """
     node = half
     while isinstance(node, Tag):
-        edge = [
-            child
-            for child in node.contents
-            if isinstance(child, Tag) or type(child) is NavigableString
-        ]
-        if not edge:
+        contents = node.contents
+        if not contents:
             return None
-        node = edge[-1] if trailing else edge[0]
+        edge = contents[-1] if trailing else contents[0]
+        while edge is not None and not (
+            isinstance(edge, Tag) or type(edge) is NavigableString
+        ):
+            edge = edge.previous_sibling if trailing else edge.next_sibling
+        if edge is None:
+            return None
+        node = edge
     return node
 
 
 def _trim_cut_whitespace(half, *, trailing: bool) -> None:
-    """Strip leading or trailing whitespace from the text node at the cut edge."""
-    node = _cut_edge_text(half, trailing=trailing)
-    if node is None:
-        return
-    stripped = str(node).rstrip() if trailing else str(node).lstrip()
-    if stripped == str(node):
-        return
-    if stripped:
-        node.replace_with(stripped)
-    else:
+    """Strip leading or trailing whitespace from the text at the cut edge of *half*.
+
+    A blank text node at the edge is removed and the walk repeats, so text that sits
+    behind it — past a comment, say (``" <!-- c -->    done"``) — is trimmed too. The
+    loop ends at the first non-blank text, at a childless tag, or when nothing is left.
+    """
+    while True:
+        node = _cut_edge_text(half, trailing=trailing)
+        if node is None:
+            return
+        text = str(node)
+        stripped = text.rstrip() if trailing else text.lstrip()
+        if stripped:
+            if stripped != text:
+                node.replace_with(stripped)
+            return
         node.extract()
 
 

@@ -950,3 +950,47 @@ def test_hoist_many_blocks_in_one_ancestor_exact_output_head_and_tail():
     assert out.startswith("*t0*\n\n```\na\nb\n```\n\n*t1*\n\n```\na\nb\n```")
     assert out.endswith("*t39*\n\n```\na\nb\n```")
     assert out.count("```") == 2 * n
+
+
+def test_hoist_trim_continues_past_a_blank_node_and_a_comment():
+    # Codex round 2 on PR #414: a blank text node at the cut, then a comment (renders
+    # nothing), then text with leading whitespace. Removing the blank node must not end
+    # the trim, or the line after the fence starts with a space.
+    from bs4 import BeautifulSoup, NavigableString
+
+    html = "<p><em><code>a<br>b</code> <!-- c -->    done</em></p>"
+    assert html_to_markdown(html) == "```\na\nb\n```\n\n*done*"
+    em = BeautifulSoup(_promote_block_code(html), "html.parser").find("em")
+    assert [str(n) for n in em.contents if type(n) is NavigableString] == ["done"]
+
+
+def test_cut_edge_text_reads_only_the_edge_children():
+    # Codex round 2 on PR #414: the edge lookup must not scan every child of the half.
+    # With n blocks under one ancestor the head half is re-trimmed once per split, so a
+    # full scan there is O(n) per split and O(n^2) overall. Count list iterations on the
+    # lookup itself; the mutation that follows (replace_with/extract) is bs4's and pays
+    # its own Tag.index() scan, which this test does not measure.
+    from bs4 import BeautifulSoup
+
+    from src.data_manager.collectors.processing import _cut_edge_text
+
+    class CountingList(list):
+        def __init__(self, items):
+            super().__init__(items)
+            self.iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return super().__iter__()
+
+    soup = BeautifulSoup(
+        "<p><em>"
+        + "".join(f"<b>x{i}</b> " for i in range(50))
+        + "<!-- c --> tail  </em></p>",
+        "html.parser",
+    )
+    em = soup.find("em")
+    em.contents = CountingList(em.contents)
+    edge = _cut_edge_text(em, trailing=True)
+    assert str(edge) == " tail  "
+    assert em.contents.iterations == 0
