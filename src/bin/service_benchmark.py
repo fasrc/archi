@@ -1028,6 +1028,14 @@ class _IngestWaitBudgets(NamedTuple):
     poll_interval_seconds: int
 
 
+#: States that count as evidence the ingest is actually working, and so restart
+#: the stall budget. Deliberately narrow: `ingestion_status.py:29-33` starts the
+#: endpoint at "pending" and only the ingestion thread moves it on, so an
+#: endpoint answering "pending" (or anything unrecognized) forever means the
+#: ingest never got going -- that must trip the stall budget, not outlive it.
+_INGEST_PROGRESS_STATES = frozenset({"running"})
+
+
 def _ingest_wait_budgets() -> _IngestWaitBudgets:
     return _IngestWaitBudgets(
         stall_seconds=int(os.environ.get("BENCH_INGEST_WAIT_TIMEOUT", "7200")),
@@ -2187,19 +2195,26 @@ class Benchmarker:
 
         Neither bound on this wait is a total-runtime deadline on a *healthy*
         ingest. `BENCH_INGEST_WAIT_TIMEOUT` is a **stall** budget: it restarts
-        on every successful non-terminal poll, so an ingest that keeps
+        on every poll reporting `state=running`, so an ingest that keeps
         reporting progress is never killed merely for being slow. That was
         issue #378 -- a 106-minute embedding phase aborted at exactly 7200s
         while all 1433 of its status polls were succeeding, two minutes short
         of finishing. `BENCH_INGEST_MAX_WAIT` is the absolute backstop for the
-        other failure: an endpoint that answers forever without ever
+        other failure: an ingest that reports progress forever without ever
         completing.
 
-        Restarting the budget on *any* successful poll, rather than on a
-        changing `step`, is deliberate. `data_manager.py:108-109` emits
-        "Updating vectorstore" once for the whole embedding phase, so the step
-        string is constant for hours on a healthy run; a step-change rule would
-        kill exactly the runs this exists to protect.
+        Two judgement calls, both deliberate:
+
+        - Restart on any *running* poll, not on a **changing `step`**.
+          `data_manager.py:108-109` emits "Updating vectorstore" once for the
+          whole embedding phase, so the step string is constant for hours on a
+          healthy run; a step-change rule would kill exactly the runs this
+          exists to protect.
+        - Restart on *running* only, not on any **answered** poll. The endpoint
+          starts at `state=pending` and only the ingestion thread moves it on
+          (`ingestion_status.py:29-33`), so an endpoint answering `pending`
+          forever means the ingest never started -- the stall budget must end
+          that, exactly as the old absolute deadline did.
         """
         budgets = _ingest_wait_budgets()
         fetch = fetch or _fetch_ingestion_status
@@ -2256,11 +2271,14 @@ class Benchmarker:
                 )
                 # This URL answered, so whatever an earlier candidate raised is
                 # no longer the reason for anything -- drop it (defect 2).
+                # Reachability facts update on any answer; the stall budget
+                # restarts only on evidence of actual progress.
                 last_error = None
-                last_ok_at = clock()
                 last_ok_url = status_url
                 last_state = state
                 last_step = step
+                if state in _INGEST_PROGRESS_STATES:
+                    last_ok_at = clock()
 
                 if state == "completed":
                     logger.info("Data-manager ingestion completed; starting benchmark.")
@@ -2278,9 +2296,10 @@ class Benchmarker:
             if stalled_for >= budgets.stall_seconds:
                 raise TimeoutError(
                     _ingest_wait_timeout_message(
-                        f"no successful status poll for {stalled_for:.0f}s "
-                        f"(BENCH_INGEST_WAIT_TIMEOUT={budgets.stall_seconds}s, "
-                        "measured from the last good poll, not from the start)",
+                        f"no progress reported for {stalled_for:.0f}s "
+                        f"(BENCH_INGEST_WAIT_TIMEOUT={budgets.stall_seconds}s; "
+                        "the budget restarts on every poll reporting "
+                        "state=running, never on total runtime)",
                         candidate_urls=status_urls,
                         last_ok_url=last_ok_url,
                         last_state=last_state,

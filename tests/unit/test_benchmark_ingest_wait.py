@@ -209,6 +209,46 @@ def test_absolute_ceiling_stops_an_ingest_that_never_completes(monkeypatch):
     assert "state=running" in message
 
 
+def test_pending_forever_still_trips_the_stall_budget(monkeypatch):
+    """An endpoint that answers but never starts is not "progress".
+
+    `ingestion_status.py:29-33` initializes the endpoint to `state="pending"`
+    and only the ingestion thread advances it. If that thread dies before its
+    first line, the endpoint answers `pending` forever -- and treating "the URL
+    replied" as progress would hold the benchmark until the absolute ceiling,
+    or forever with `BENCH_INGEST_MAX_WAIT=0`.
+    """
+    # Ceiling is far away, so only the stall budget can end this.
+    _budget_env(monkeypatch, stall="30", max_wait="600", poll="5")
+    clock = FakeClock()
+    fetch = _scripted([{"state": "pending", "step": None, "error": None}])
+
+    with pytest.raises(TimeoutError) as excinfo:
+        _bench().wait_for_ingestion_completion(
+            fetch=fetch, clock=clock, sleep=clock.sleep
+        )
+
+    assert clock.now - 1000.0 <= 35, "the stall budget must end this, not the ceiling"
+    message = str(excinfo.value)
+    assert "BENCH_INGEST_WAIT_TIMEOUT" in message
+    assert "state=pending" in message
+
+
+def test_unknown_state_does_not_reset_the_stall_budget(monkeypatch):
+    """A state the harness does not recognize is not evidence of progress."""
+    _budget_env(monkeypatch, stall="30", max_wait="600", poll="5")
+    clock = FakeClock()
+    fetch = _scripted([{"state": "quiescing", "step": "who knows", "error": None}])
+
+    with pytest.raises(TimeoutError) as excinfo:
+        _bench().wait_for_ingestion_completion(
+            fetch=fetch, clock=clock, sleep=clock.sleep
+        )
+
+    assert clock.now - 1000.0 <= 35
+    assert "state=quiescing" in str(excinfo.value)
+
+
 def test_budgets_come_from_the_environment(monkeypatch):
     for name in (
         "BENCH_INGEST_WAIT_TIMEOUT",
