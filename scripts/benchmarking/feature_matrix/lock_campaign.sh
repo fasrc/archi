@@ -37,11 +37,12 @@ DIRTY="$("$FM_GIT" status --porcelain --untracked-files=no -- src scripts deploy
 [ -z "$DIRTY" ] || fm_die "commit or stash source changes before locking; the lock pins a commit, not a dirty tree:
 $DIRTY"
 FM_FACTORS="$(fm_fixed_factors_json "$YAML")" FM_LOCK="$LOCK" FM_QA_DATASET="$QA_DATASET" FM_QA_PROFILE="$QA_PROFILE" \
-FM_CODE_SHA="$CODE_SHA" FM_BASELINE="$YAML" FM_LOCKED="$(fm_now)" "$FM_PYTHON" - <<'EOF'
+FM_CODE_SHA="$CODE_SHA" FM_CODE_TREE="$(fm_code_tree)" FM_BASELINE="$YAML" FM_LOCKED="$(fm_now)" "$FM_PYTHON" - <<'EOF'
 import hashlib, json, os
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 lock = json.loads(os.environ["FM_FACTORS"])
-lock.update({"locked": os.environ["FM_LOCKED"], "baseline_yaml": os.environ["FM_BASELINE"], "code_sha": os.environ["FM_CODE_SHA"],
+lock.update({"locked": os.environ["FM_LOCKED"], "baseline_yaml": os.environ["FM_BASELINE"],
+             "code_sha": os.environ["FM_CODE_SHA"], "code_tree": os.environ["FM_CODE_TREE"],
              "cwd": os.getcwd(),
              "qa": {"dataset": os.environ["FM_QA_DATASET"], "dataset_sha256": sha(os.environ["FM_QA_DATASET"]),
                     "profile": os.environ["FM_QA_PROFILE"], "profile_sha256": sha(os.environ["FM_QA_PROFILE"])}})
@@ -54,6 +55,7 @@ for k, v in lock["values"].items():
     print(f"  {k:22s} {v!r}"[:110])
 print(f"  qa dataset   {lock['qa']['dataset_sha256'][:12]}  {lock['qa']['dataset']}")
 print(f"  qa profile   {lock['qa']['profile_sha256'][:12]}  {lock['qa']['profile']}")
+print(f"  code         HEAD {lock['code_sha'][:12]}; runtime trees {lock['code_tree']}")
 EOF
 fm_ledger_append "$(printf '{"kind":"lock","relock":%s,"locked":"%s","lock_sha256":"%s","baseline_yaml":"%s","code_sha":"%s"}' "$RELOCK" "$(fm_now)" "$(fm_lock_sha)" "$YAML" "$CODE_SHA")"
 fm_log "campaign lock written: $LOCK (sha256 $(fm_lock_sha | cut -c1-12)); record this hash in the pre-registration"

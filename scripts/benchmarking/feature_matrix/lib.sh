@@ -162,9 +162,12 @@ def sha(path):
 out = {"files": {k: {"path": v, "sha256": sha(v)} for k, v in files.items()},
        "values": {"sut.agent_class": b.get("agent_class"), "sut.provider": provider, "sut.model": b.get("model"), "modes": b.get("modes"),
                   "judge.provider": rs.get("evaluator_provider"), "judge.model": rs.get("evaluator_model"),
+                  "judge.timeout": rs.get("timeout"), "ragas.batch_size": rs.get("batch_size"),
                   "metrics": rs.get("enabled_metrics"), "ragas.embedding_model": rs.get("embedding_model"),
                   "embedding_name": dm.get("embedding_name"),
-                  "sut.base_url": prov_cfg.get("base_url"), "sut.extra_kwargs": prov_cfg.get("extra_kwargs")}}
+                  "sut.base_url": prov_cfg.get("base_url"), "sut.extra_kwargs": prov_cfg.get("extra_kwargs"),
+                  "sut.context_editing": ((cfg.get("services") or {}).get("chat_app") or {}).get("context_editing"),
+                  "sut.client_timeout_seconds": ((cfg.get("services") or {}).get("chat_app") or {}).get("client_timeout_seconds")}}
 print(json.dumps(out, sort_keys=True))
 EOF
 }
@@ -196,13 +199,22 @@ fm_lock_sha() { fm_sha256 "$(fm_lock_file)"; }
 # The code the campaign runs is locked too: `archi evaluate` builds the stack images from
 # the cwd's tree and `archi eval qa` runs it in-process, so a checkout that advanced or
 # carries uncommitted source changes after the lock would run different code while every
-# wrapper still succeeded. HEAD must equal the locked code_sha and src/, scripts/, deploy/
-# must carry no tracked modification.
+# wrapper still succeeded. What is pinned is the RUNTIME tree — the git tree ids of src/,
+# scripts/ and deploy/ — not HEAD itself: the pre-registration is committed AFTER the lock
+# (plan §6 step 3) and that docs-only commit must not invalidate the campaign. src/,
+# scripts/ and deploy/ must also carry no tracked modification.
+fm_code_tree() { # the tree ids the campaign runs; "-" for a path HEAD does not carry
+  local p ids=""
+  for p in src scripts deploy; do
+    ids="$ids ${p}=$("$FM_GIT" rev-parse "HEAD:$p" 2>/dev/null || echo -)"
+  done
+  printf '%s\n' "${ids# }"
+}
 fm_require_code_lock() {
   local want have dirty
-  want="$(fm_lock_field code_sha)"
-  have="$("$FM_GIT" rev-parse HEAD 2>/dev/null || echo unknown)"
-  [ -n "$want" ] && [ "$have" = "$want" ] || fm_die "checkout HEAD $have is not the locked campaign code $want (git checkout it, or re-lock deliberately with lock_campaign.sh --relock)"
+  want="$(fm_lock_field code_tree)"
+  have="$(fm_code_tree)"
+  [ -n "$want" ] && [ "$have" = "$want" ] || fm_die "the checkout's src/scripts/deploy trees ($have) are not the locked campaign code ($want); check out the locked commit ($(fm_lock_field code_sha)), or re-lock deliberately with lock_campaign.sh --relock"
   dirty="$("$FM_GIT" status --porcelain --untracked-files=no -- src scripts deploy 2>/dev/null || true)"
   [ -z "$dirty" ] || fm_die "uncommitted source changes would run unlocked code:
 $dirty"

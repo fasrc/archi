@@ -181,6 +181,12 @@ scripts/benchmarking/feature_matrix/qa_arm.sh $ARM $YAML             # archi eva
 archi delete --name fm-$ARM --rmi --rmv                              # after archive_run.sh confirmed both artifacts
 ```
 
+**Arm 00 is the exception to this block.** The opening baseline gets THREE RAGAS runs
+(`run_arm.sh 00 --rerun` and `archive_run.sh 00 3 …` once more after run 2) because those
+three runs are the campaign's σ (§4.3), and `fm-00` is **not deleted** afterwards: the
+retrieval arms (§5.2) run on that very stack and corpus. It is deleted only in §6 step 7,
+immediately before the closing baseline's fresh deploy.
+
 `archive_run.sh` refuses when the artifact's recorded running configuration disagrees with
 the arm YAML on any factor key (the artifact, not the operator's label, proves which arm
 ran), when the corpus changed between the run's endpoints (`corpus_fingerprint_before`,
@@ -251,7 +257,9 @@ What it does, and why each step exists:
    ```
 
    `--run-workers 1` matches the harness's sequential agent calls, so `duration_ms` and
-   `time_elapsed` are comparable. The dataset is the bank + anchors converted once per
+   `time_elapsed` are comparable. `--run` defaults to the next unused number for the stack
+   and arm, so the closing baseline's QA run lands as `fm-00-arm00-r2` beside the opening
+   `r1`. The dataset is the bank + anchors converted once per
    campaign with `ragas_bank_to_qa_dataset.py` ([#418](https://github.com/fasrc/archi/issues/418));
    its item ids are content-derived, and `compare_runs.py` joins them to the RAGAS rows.
 3. Optional, for the console's trend graphs: copy the run directory under claw's
@@ -262,14 +270,21 @@ What it does, and why each step exists:
 
 1. **Phase 0** ([§12](#12-prerequisites-phase-0)) complete: five PRs on `dev`, disk
    reclaimed, config checkout on the new pin, `~/Projects/archi` pulled to the campaign SHA.
-2. **Smoke**: `fm-smoke` with a 3-question bank copy through every wrapper, then
-   `compare_runs.py` on its artifact against itself, then `archi delete --rmi --rmv`.
-3. **Lock**: `lock_campaign.sh 00-baseline.yaml --qa-dataset <converted bank>` hashes every
-   pinned input (bank, anchors, prompt, sources, QA dataset and profile) and the SUT and
-   judge settings into `bench_out/feature_matrix/campaign.lock`; from then on every wrapper
-   refuses an arm YAML, dataset, profile or spec whose content differs from the lock, so
-   which file an operator names never decides acceptance. Commit the pre-registration with
-   the hashes in [§2](#2-fixed-factors), the lock's sha256, and the campaign SHA (G1).
+2. **Smoke**: every wrapper requires a lock, so lock the smoke inputs first —
+   `lock_campaign.sh <smoke copy of 00-baseline.yaml pointing at a 3-question bank> --qa-dataset <its converted bank>` —
+   then run `fm-smoke` through every wrapper, `compare_runs.py` on its artifact against
+   itself, and `archi delete --name fm-smoke --rmi --rmv`. The smoke rows in the ledger
+   carry the smoke lock's hash and are separated from the campaign by the re-lock below.
+3. **Lock**: `lock_campaign.sh 00-baseline.yaml --qa-dataset <converted bank> --relock`
+   hashes every pinned input (bank, anchors, prompt, sources, QA dataset and profile), the
+   SUT and judge settings (agent class, model, base URL, sampling kwargs, context window,
+   judge model and timeout, metrics), and the runtime code — the git tree ids of `src/`,
+   `scripts/` and `deploy/` — into `bench_out/feature_matrix/campaign.lock`; from then on
+   every wrapper refuses an arm YAML, dataset, profile or spec whose content differs from
+   the lock, a checkout whose runtime trees differ, and an artifact whose run started under
+   an earlier lock. Then commit the pre-registration with the hashes in
+   [§2](#2-fixed-factors), the lock's sha256, and the campaign SHA (G1). That docs-only
+   commit moves `HEAD` but not the locked trees, so it does not invalidate the lock.
    Nothing below runs before this commit exists.
 4. **Opening baseline** `fm-00`: ingest; 3 RAGAS runs; 1 QA run. Its `corpus_fingerprint`
    becomes the pin for §5.2. σ for this corpus comes from the three runs.

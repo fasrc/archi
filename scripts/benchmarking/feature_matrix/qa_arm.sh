@@ -3,6 +3,10 @@
 #
 #   qa_arm.sh <arm> <arm.yaml> [--stack <name>] [--run N] [--dataset <qa-v2.json>] [--profile <yaml>]
 #
+# --run defaults to the next unused number for this stack and arm (the closing baseline's
+# QA run becomes r2 next to the opening r1). Dataset and profile overrides must hash to the
+# campaign lock's values, so they exist for the smoke, not for changing inputs.
+#
 # 0. Proves the stack is on the requested arm: every factor key in the arm YAML must equal
 #    the stack's rendered config (chunking, processing, stemming, hierarchical_rerank), or
 #    it refuses — a retrieval arm left on fm-00 after a restore, or a wrong --stack, would
@@ -23,7 +27,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 ARM="${1:-}"; fm_require_arm "$ARM"; YAML="${2:-}"; fm_require_arm_yaml "$ARM" "$YAML"; shift 2
-STACK="fm-$ARM"; RUN=1
+STACK="fm-$ARM"; RUN=""
 DATASET="$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
 PROFILE="config/benchmarking/feature_matrix/qa/evaluator-profile.huit.yaml"
 SPEC="${FM_AGENT_SPEC:-config/agents/claw/fasrc-docs.md}"
@@ -37,6 +41,12 @@ while [ $# -gt 0 ]; do
     *) fm_die "unknown option $1" ;;
   esac
 done
+# Without --run, take the next unused run number for this stack+arm: the closing baseline's
+# QA run lands beside the opening one as r2 instead of refusing on an existing directory.
+if [ -z "$RUN" ]; then
+  RUN=1
+  while [ -e "$FM_OUT/qa/$STACK-arm$ARM-r$RUN" ]; do RUN=$((RUN + 1)); done
+fi
 fm_require_run_number "$RUN"
 STACK_DIR="$(fm_stack_dir "$STACK")"
 RENDERED="$STACK_DIR/configs/config.yaml"

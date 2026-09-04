@@ -9,9 +9,10 @@
 #     configuration disagrees with the arm YAML on any factor key (the artifact itself
 #     proves which arm ran — the operator's label alone never does),
 #   - the artifact is already in the ledger, the (arm, stack, run) identity is already
-#     archived, a run other than 1 arrives before the stack has a pin, or the artifact is
+#     archived, a run other than 1 arrives before the stack has a pin, the artifact is
 #     older than the stack's latest `ragas-start` entry (a re-run that wrote nothing must
-#     not re-archive run 1 as run 2),
+#     not re-archive run 1 as run 2), or that start row was made under a lock other than
+#     the active one (a --relock happened since the run started),
 #   - the corpus changed during the run: `corpus_fingerprint_before` must equal
 #     `corpus_fingerprint` and `corpus_unchanged_at_endpoints` must be true,
 #   - the artifact's config_version.divergence_from_selected_file is non-empty (the run
@@ -52,7 +53,7 @@ ARTIFACT="$(ls -t "$FM_OUT"/benchmarking-"$STACK"-*.json 2>/dev/null | head -1 |
 
 # One artifact, one ledger row: refuse a file already archived, and a file that predates
 # this stack's latest ragas-start (the re-run produced nothing; this is run 1's file).
-FM_LEDGER="$(fm_ledger)" FM_ARTIFACT="$ARTIFACT" FM_STACK="$STACK" FM_ARM="$ARM" FM_RUN="$RUN" FM_PIN_FILE="$(fm_pin_file "$STACK")" "$FM_PYTHON" - <<'EOF' || fm_die "refusing to archive $ARTIFACT (see above)"
+FM_LEDGER="$(fm_ledger)" FM_ARTIFACT="$ARTIFACT" FM_STACK="$STACK" FM_ARM="$ARM" FM_RUN="$RUN" FM_PIN_FILE="$(fm_pin_file "$STACK")" FM_ACTIVE_LOCK_SHA="$(fm_lock_sha)" "$FM_PYTHON" - <<'EOF' || fm_die "refusing to archive $ARTIFACT (see above)"
 import datetime as dt, json, os, sys
 ledger, artifact, stack = os.environ["FM_LEDGER"], os.environ["FM_ARTIFACT"], os.environ["FM_STACK"]
 arm, run = os.environ["FM_ARM"], int(os.environ["FM_RUN"])
@@ -67,12 +68,17 @@ if same:
 # first would make an arbitrary artifact the reference corpus.
 if not os.path.exists(os.environ["FM_PIN_FILE"]) and run != 1:
     print(f"no corpus pin for {stack} yet — archive run 1 first (got run {run})", file=sys.stderr); sys.exit(1)
-starts = [r["started"] for r in rows if r.get("kind") == "ragas-start" and r.get("stack") == stack and r.get("started")]
-if starts:
-    latest = max(dt.datetime.fromisoformat(s.replace("Z", "+00:00")) for s in starts)
+start_rows = [r for r in rows if r.get("kind") == "ragas-start" and r.get("stack") == stack and r.get("started")]
+if start_rows:
+    latest_row = max(start_rows, key=lambda r: r["started"])
+    latest = dt.datetime.fromisoformat(latest_row["started"].replace("Z", "+00:00"))
     mtime = dt.datetime.fromtimestamp(os.path.getmtime(artifact), tz=dt.timezone.utc)
     if mtime < latest:
         print(f"artifact written {mtime:%Y-%m-%dT%H:%M:%SZ}, before the latest ragas-start for {stack} at {latest:%Y-%m-%dT%H:%M:%SZ} — the run produced no new artifact", file=sys.stderr); sys.exit(1)
+    # A run started under an earlier lock (a --relock happened since) may have used the
+    # previous bank, prompt, SUT or judge; it is not evidence under the active lock.
+    if latest_row.get("lock_sha256") != os.environ["FM_ACTIVE_LOCK_SHA"]:
+        print(f"the run that produced this artifact started under lock {str(latest_row.get('lock_sha256'))[:12]}, not the active lock {os.environ['FM_ACTIVE_LOCK_SHA'][:12]} — re-run it under the current lock", file=sys.stderr); sys.exit(1)
 EOF
 
 DOCS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "select count(*) from documents where is_deleted is not true;" 2>/dev/null | tr -d '[:space:]' || echo null)"
