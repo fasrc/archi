@@ -1037,12 +1037,37 @@ class _IngestWaitBudgets(NamedTuple):
     poll_interval_seconds: int
 
 
-#: States that count as evidence the ingest is actually working, and so restart
-#: the stall budget. Deliberately narrow: `ingestion_status.py:29-33` starts the
-#: endpoint at "pending" and only the ingestion thread moves it on, so an
-#: endpoint answering "pending" (or anything unrecognized) forever means the
-#: ingest never got going -- that must trip the stall budget, not outlive it.
+#: States that can count as evidence the ingest is working. Deliberately
+#: narrow: `ingestion_status.py:29-33` starts the endpoint at "pending" and
+#: only the ingestion thread moves it on, so an endpoint answering "pending"
+#: (or anything unrecognized) forever means the ingest never got going.
 _INGEST_PROGRESS_STATES = frozenset({"running"})
+
+#: The step published *before* `ingestion_lock` is acquired
+#: (`ingestion_status.py:46-48`). Every later step comes from inside the lock
+#: (`data_manager.py:90-109`), so this is the one step that proves work has NOT
+#: started.
+_INGEST_PRELOCK_STEP = "initializing"
+
+
+def _ingest_is_progressing(state: str, step: Any) -> bool:
+    """Is this status payload evidence the ingest is actually doing work?
+
+    Only payloads this accepts restart the stall budget. Two shapes are
+    excluded on purpose, because both are indistinguishable from a healthy
+    long run if you look only at "did the endpoint answer":
+
+    - any state but "running" -- notably the initial "pending", which persists
+      forever if the ingestion thread never starts;
+    - "running" at step "initializing" -- published before `ingestion_lock` is
+      taken, so it is also exactly what a benchmark sees while its own ingest
+      is queued behind a scheduled task or an upload-triggered vectorstore
+      update, neither of which touches this status dict
+      (`service_data_manager.py:70-83`).
+    """
+    if state not in _INGEST_PROGRESS_STATES:
+        return False
+    return str(step).strip().lower() != _INGEST_PRELOCK_STEP
 
 
 def _ingest_wait_budgets() -> _IngestWaitBudgets:
@@ -2219,11 +2244,12 @@ class Benchmarker:
           whole embedding phase, so the step string is constant for hours on a
           healthy run; a step-change rule would kill exactly the runs this
           exists to protect.
-        - Restart on *running* only, not on any **answered** poll. The endpoint
-          starts at `state=pending` and only the ingestion thread moves it on
-          (`ingestion_status.py:29-33`), so an endpoint answering `pending`
-          forever means the ingest never started -- the stall budget must end
-          that, exactly as the old absolute deadline did.
+        - Restart on *progress* only, not on any **answered** poll --
+          `_ingest_is_progressing` decides. An endpoint stuck at `pending`, or
+          at `running`/`initializing` because this ingest is queued behind
+          another holder of `ingestion_lock`, is answering happily while
+          nothing of ours is happening; the stall budget must end those,
+          exactly as the old absolute deadline did.
         """
         budgets = _ingest_wait_budgets()
         fetch = fetch or _fetch_ingestion_status
@@ -2299,7 +2325,7 @@ class Benchmarker:
                 last_ok_url = status_url
                 last_state = state
                 last_step = step
-                if state in _INGEST_PROGRESS_STATES:
+                if _ingest_is_progressing(state, step):
                     last_ok_at = clock()
 
                 if state == "completed":
@@ -2320,8 +2346,8 @@ class Benchmarker:
                     _ingest_wait_timeout_message(
                         f"no progress reported for {stalled_for:.0f}s "
                         f"(BENCH_INGEST_WAIT_TIMEOUT={budgets.stall_seconds}s; "
-                        "the budget restarts on every poll reporting "
-                        "state=running, never on total runtime)",
+                        "the budget restarts whenever the ingest reports "
+                        "progress, never on total runtime)",
                         candidate_urls=status_urls,
                         last_ok_url=last_ok_url,
                         last_state=last_state,
