@@ -492,6 +492,18 @@ def provenance_rows(
     ]
 
 
+def host_mismatch_note(arms: Sequence[Arm]) -> Optional[str]:
+    """Return a warning when recorded arms ran on different hosts, else None."""
+    hostnames = {
+        arm.label: arm.host["hostname"] for arm in arms if arm.host is not None
+    }
+    distinct = set(hostnames.values())
+    if len(distinct) >= 2:
+        shown = ", ".join(f"{label}={h}" for label, h in hostnames.items())
+        return f"Warning: host mismatch — arms ran on different hosts ({shown})."
+    return None
+
+
 def corpus_gate(arms: Sequence[Arm], allow_differs: bool) -> dict:
     """G3: both arms must have run against one pinned corpus."""
     values = {arm.label: arm.corpus_fingerprint for arm in arms}
@@ -1724,6 +1736,9 @@ def render_markdown(report: dict) -> str:
         ],
     )
     out.append("")
+    if report.get("host_mismatch"):
+        out.append(report["host_mismatch"])
+        out.append("")
 
     out += ["## Gates", ""]
     out += _table(
@@ -2123,6 +2138,7 @@ def build_report(
         "anchors_path": anchors_path,
         "anchors_in_bank": anchors_in_bank,
         "provenance": provenance_rows(arms, anchors),
+        "host_mismatch": host_mismatch_note(arms),
         "gates": list(gates) + [g8_gate(anchor_entries, paired, baseline.label)],
         "noise_floor": dict(sigmas),
         "paired": paired,

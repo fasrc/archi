@@ -1963,3 +1963,50 @@ def test_provenance_rows_show_not_recorded_when_host_absent(_artifact):
     assert host_row is not None
     for value in host_row["values"].values():
         assert value == "not recorded"
+
+
+def test_flags_two_arms_that_ran_on_different_hosts(_artifact, anchors_file, capsys):
+    # Two arms with different hostnames → warning appears in output; exit code unchanged.
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            metadata={"host": {"hostname": "node-1.example.com", "cpu_model": "Intel"}},
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            metadata={"host": {"hostname": "node-2.example.com", "cpu_model": "Intel"}},
+        )
+    )
+    anchors = anchors_file([])
+    result = cr.main([base, treat, "--anchors", anchors])
+    out = capsys.readouterr().out
+    assert result == cr.EXIT_OK
+    assert "host mismatch" in out.lower()
+
+
+def test_one_recorded_and_one_unrecorded_host_prints_no_warning(
+    _artifact, anchors_file, capsys
+):
+    # One arm has a host, one has none — not enough recorded hosts to compare, no warning.
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            metadata={"host": {"hostname": "node-1.example.com", "cpu_model": "Intel"}},
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+        )
+    )
+    anchors = anchors_file([])
+    result = cr.main([base, treat, "--anchors", anchors])
+    out = capsys.readouterr().out
+    assert result == cr.EXIT_OK
+    assert "host mismatch" not in out.lower()
