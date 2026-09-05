@@ -157,7 +157,7 @@ Standing notes for every task:
       a `host` row to `provenance_rows` (`:441`) that renders
       `<hostname> (<cpu_model>)`, falls back to the hostname alone when `cpu_model` is
       `None`, and renders `not recorded` when the arm has no host. Gate green; commit.
-- [ ] 4.2 `model: opus` — RED test
+- [x] 4.2 `model: opus` — RED test
       `test_flags_two_arms_that_ran_on_different_hosts`: two arms with different hostnames
       make the report print a host-mismatch warning, and the exit code is unchanged from the
       same comparison with matching hosts. Add a sibling asserting that one arm with a host
