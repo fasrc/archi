@@ -149,7 +149,7 @@ Standing notes for every task:
 
 ## 4. Show the host in the comparison
 
-- [ ] 4.1 `model: sonnet` — RED test in `tests/unit/test_compare_runs.py`: a comparison of
+- [x] 4.1 `model: sonnet` — RED test in `tests/unit/test_compare_runs.py`: a comparison of
       two artifacts whose metadata name hosts prints a `host` row in the provenance table
       naming both. Watch it fail. Then add a `host: Optional[dict] = None` field to `Arm`
       (`scripts/benchmarking/compare_runs.py:183`), populate it from
