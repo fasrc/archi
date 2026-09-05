@@ -99,7 +99,7 @@ Standing notes for every task:
       only symptom is a test count that stops growing. Every test name added below is
       host-specific for exactly this reason.
 
-- [ ] 3.1 `model: opus` — RED tests in `tests/unit/test_benchmark_report_markdown.py`:
+- [x] 3.1 `model: opus` — RED tests in `tests/unit/test_benchmark_report_markdown.py`:
       `test_provenance_shows_the_host` (metadata with a host object → the markdown
       provenance block names the hostname) and
       `test_provenance_says_the_host_is_not_recorded_for_an_older_artifact` (metadata with
