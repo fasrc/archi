@@ -39,3 +39,22 @@ configs should be the `title_header.enabled` / `title_weight` / `filename_boost`
 knobs toggled off vs. on (see `add-title-aware-retrieval` design.md, Migration
 Plan step 4). Until resolved, tasks 5.2–5.4 (which depend on the recorded
 results) and the test/validation work in section 6 remain queued behind this.
+
+## Task 3.1 — "Push and open the PR"
+
+**Status: BLOCKED — PAT lacks `Contents: write` on `fasrc/archi`.**
+
+`git push -u origin fix/issue-426-bench-out-strict-json` returns HTTP 403
+("Permission to fasrc/archi.git denied to swinney.") every invocation. The
+ambient `GH_TOKEN` is a fine-grained PAT scoped to Contents: **read** only. The
+git-over-HTTPS push path requires Contents: **write**. A previous loop turn
+recorded the step-5 stop condition in `tasks.md` (commit `9870bf3c`) and pushed
+the branch to the fork (`swinney/archi` at `e18d6614`), but `fasrc/archi` still
+does not have the branch.
+
+**Decision needed from a human operator:** either push the branch to `fasrc/archi`
+directly (`git push fasrc/archi fix/issue-426-bench-out-strict-json`) and open the
+PR manually using the body described in task 3.1, OR grant the PAT Contents: write
+on `fasrc/archi` so the loop can complete step 6 (tick the task, record the PR URL,
+commit). The work itself (JSON migration, report re-renders, tests) is fully
+complete on local `HEAD` (`9870bf3c`) and on the fork.
