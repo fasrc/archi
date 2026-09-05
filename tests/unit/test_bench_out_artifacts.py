@@ -7,8 +7,17 @@ import pytest
 
 _BENCH_OUT_DIR = Path(__file__).resolve().parents[2] / "bench_out"
 
-if not _BENCH_OUT_DIR.is_dir():
-    pytest.skip("bench_out directory absent", allow_module_level=True)
+
+def _require_bench_out():
+    """Skip a check that reads the committed directory when it is absent.
+
+    Scoped to the tests that need the directory rather than applied to the
+    module: glob() on a missing directory yields nothing, so those checks would
+    pass over zero files and report a false green. The scanner's own tests build
+    their input under tmp_path and must still run in a checkout without it.
+    """
+    if not _BENCH_OUT_DIR.is_dir():
+        pytest.skip("bench_out directory absent")
 
 
 def _raise_on_constant(val):
@@ -31,10 +40,14 @@ def _scan_bench_out(directory):
     artifacts = []
     unparseable = []
     for path in sorted(Path(directory).glob("*.json")):
-        text = path.read_text()
+        # The read is inside the guard too: undecodable bytes and an unreadable
+        # path are the same fact to a caller -- a committed *.json this suite
+        # cannot check -- and both must name the file rather than raise out of
+        # the fixture and error every test that depends on it.
         try:
+            text = path.read_text()
             data = json.loads(text)
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
             unparseable.append((path, str(exc)))
             continue
         if not _is_artifact(data):
@@ -45,6 +58,7 @@ def _scan_bench_out(directory):
 
 @pytest.fixture(scope="module")
 def bench_out_scan():
+    _require_bench_out()
     return _scan_bench_out(_BENCH_OUT_DIR)
 
 
@@ -66,6 +80,7 @@ def test_all_artifacts_are_strict_json(bench_out_artifacts):
 
 
 def test_reports_contain_no_nan():
+    _require_bench_out()
     patterns = ["*_report.md", "*_report.html"]
     bad = []
     nan_re = re.compile(r"\bnan\b")
@@ -136,3 +151,21 @@ def test_every_committed_json_file_parses(bench_out_scan):
     ), f"{len(unparseable)} file(s) are not valid JSON:\n" + "\n".join(
         f"  {path.name}: {reason}" for path, reason in unparseable
     )
+
+
+def test_a_json_file_that_will_not_even_decode_is_reported_not_raised(tmp_path):
+    """Undecodable bytes are a read failure, not a parse failure, and escaped.
+
+    read_text() sat outside the handler, so a file holding a stray 0xff raised
+    UnicodeDecodeError out of the fixture and errored every test that depends
+    on it, instead of naming the one bad file. It failed closed, but it named
+    nothing -- and the helper's contract is that a file it cannot use is
+    reported.
+    """
+    (tmp_path / "artifact.json").write_text('{"benchmarking_results": []}')
+    (tmp_path / "binary.json").write_bytes(b'{"benchmarking_results": [\xff]}')
+
+    artifacts, unparseable = _scan_bench_out(tmp_path)
+
+    assert [path.name for path, _ in unparseable] == ["binary.json"]
+    assert [path.name for path, _, _ in artifacts] == ["artifact.json"]
