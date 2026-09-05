@@ -12,6 +12,7 @@ from src.utils.generate_benchmark_report import (
     _format_seconds,
     format_html_output,
     format_markdown_output,
+    format_version_markdown,
 )
 
 _CONFIG = {"services": {"benchmarking": {"modes": ["RAGAS", "SOURCES"]}}}
@@ -557,6 +558,24 @@ def test_a_host_without_a_processor_model_renders_no_none():
 
     assert "myhost.rc.fas.harvard.edu" in md
     assert "None" not in md
+
+
+def test_a_host_renders_without_any_version_digest():
+    """A host in provenance renders even when code_version and config_version are absent."""
+    provenance = {
+        "host": {"hostname": "myhost.rc.fas.harvard.edu", "cpu_model": "Intel Xeon E5"}
+    }
+    md = format_version_markdown(provenance)
+
+    assert "myhost.rc.fas.harvard.edu" in md
+
+
+def test_no_version_and_no_host_renders_empty_markdown():
+    """No code_version, no config_version, and no host key renders the empty string."""
+    provenance = {"running_configuration": None}
+    md = format_version_markdown(provenance)
+
+    assert md == ""
 
 
 def test_format_seconds_reads_at_every_scale():

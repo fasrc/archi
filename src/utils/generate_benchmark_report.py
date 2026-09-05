@@ -258,7 +258,8 @@ def format_version_html(provenance):
 
     code = provenance.get("code_version") or {}
     config = provenance.get("config_version") or {}
-    if not code and not config:
+    host = provenance.get("host", _HOST_NOT_RECORDED)
+    if not code and not config and host is _HOST_NOT_RECORDED:
         return ""
 
     rows = []
@@ -316,7 +317,6 @@ def format_version_html(provenance):
     else:
         settings_table = ""
 
-    host = provenance.get("host", _HOST_NOT_RECORDED)
     if host is _HOST_NOT_RECORDED:
         rows.append("<li>Host: " + _HTML_HOST_NOT_RECORDED + "</li>")
     elif host is None:
@@ -1039,7 +1039,8 @@ def format_version_markdown(provenance):
 
     code = provenance.get("code_version") or {}
     config = provenance.get("config_version") or {}
-    if not code and not config:
+    host = provenance.get("host", _HOST_NOT_RECORDED)
+    if not code and not config and host is _HOST_NOT_RECORDED:
         return ""
 
     lines = []
@@ -1083,7 +1084,6 @@ def format_version_markdown(provenance):
             )
             lines.append(f"| {md_escape(path)} | {md_escape(rendered)} |")
 
-    host = provenance.get("host", _HOST_NOT_RECORDED)
     if host is _HOST_NOT_RECORDED:
         lines.append("- Host: " + _MD_HOST_NOT_RECORDED)
     elif host is None:

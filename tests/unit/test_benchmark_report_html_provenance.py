@@ -291,3 +291,21 @@ def test_an_html_host_without_a_processor_model_renders_no_none():
 
     assert "myhost.rc.fas.harvard.edu" in html
     assert "None" not in html
+
+
+def test_a_host_renders_without_any_version_digest():
+    """A host in provenance renders even when code_version and config_version are absent."""
+    provenance = {
+        "host": {"hostname": "myhost.rc.fas.harvard.edu", "cpu_model": "Intel Xeon E5"}
+    }
+    html = format_version_html(provenance)
+
+    assert "myhost.rc.fas.harvard.edu" in html
+
+
+def test_no_version_and_no_host_renders_empty_html():
+    """No code_version, no config_version, and no host key renders the empty string."""
+    provenance = {"running_configuration": None}
+    html = format_version_html(provenance)
+
+    assert html == ""

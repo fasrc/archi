@@ -135,7 +135,7 @@ Standing notes for every task:
       the same "omit the processor model when it is `None`" rule as 3.1. Add the HTML twin
       of 3.1's `cpu_model is None` test, named
       `test_an_html_host_without_a_processor_model_renders_no_none`. Gate green; commit.
-- [ ] 3.3 `model: sonnet` — RED test, one per renderer, named
+- [x] 3.3 `model: sonnet` — RED test, one per renderer, named
       `test_a_host_renders_without_any_version_digest`: an artifact whose metadata carries a
       `host` object but **no** `code_version` and whose record carries no `config_version`
       must still render the host. Watch both fail — today
