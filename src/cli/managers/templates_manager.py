@@ -78,13 +78,19 @@ EVALUATION_MCP_RUNTIME_PATH = (
 
 
 def collect_host_information() -> Optional[Dict[str, Optional[str]]]:
-    hostname = socket.getfqdn()
+    try:
+        hostname = socket.getfqdn()
+    except Exception:
+        return None
     cpu_model = None
-    with open("/proc/cpuinfo") as f:
-        for line in f:
-            if line.startswith("model name"):
-                cpu_model = line.split(":", 1)[1].strip()
-                break
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    cpu_model = line.split(":", 1)[1].strip()
+                    break
+    except Exception:
+        pass
     if not cpu_model:
         fallback = platform.processor()
         cpu_model = fallback if fallback else None
