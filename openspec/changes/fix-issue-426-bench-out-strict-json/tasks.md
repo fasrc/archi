@@ -146,3 +146,12 @@ Four standing notes for every task:
          pushed, do **not** open a PR on any other repository, and stop.
       6. Record the PR URL as a line under this task, tick the task, and commit that edit with the
          gate. Do not merge.
+
+      **Outcome (step 5 stop condition hit):** `git push -u origin fix/issue-426-bench-out-strict-json`
+      returned HTTP 403 — "Permission to fasrc/archi.git denied to swinney." The ambient GH_TOKEN is
+      a fine-grained PAT scoped to Contents: read; it has API admin permissions on the repo but the
+      git-over-HTTPS push path requires Contents: write. Branch was pushed to the fork remote instead
+      (`swinney/archi`, commit `e18d6614`). `gh pr create --repo fasrc/archi` then failed: "Resource
+      not accessible by personal access token (createPullRequest)." Per step 5: branch is at
+      `swinney:fix/issue-426-bench-out-strict-json`; no PR was opened on any other repository;
+      stopping here for a human to push to `fasrc/archi` directly or grant the PAT Contents: write.
