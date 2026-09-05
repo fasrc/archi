@@ -61,7 +61,7 @@ Standing notes for every task:
 
 ## 2. Lift the host into the artifact's metadata
 
-- [ ] 2.1 `model: opus` — RED tests in `tests/unit/test_benchmark_host_provenance.py`, using
+- [x] 2.1 `model: opus` — RED tests in `tests/unit/test_benchmark_host_provenance.py`, using
       the loader shape the existing benchmark tests use for
       `src.bin.service_benchmark`. `test_metadata_records_the_host`: with an
       `EXTRA_METADATA_PATH` YAML carrying `host: {hostname: h1, cpu_model: c1}`,
