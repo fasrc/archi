@@ -660,6 +660,7 @@ bench_out/benchmarking-<name>-<timestamp>.json
 │   ├── corpus_snapshot_id     # shared => ran together (see §3.3)
 │   ├── git_info.last_commit   # the DEPLOY's commit, NOT this run's code (§5.E)
 │   ├── code_version           # which code produced this (§5.E)
+│   ├── host                   # machine that ran the deploy (§5.E)
 │   └── config_versions[]      # one config digest per arm, in run order
 └── benchmarking_results[]     # one entry per config in a -cd sweep
     ├── configuration_file
@@ -703,6 +704,9 @@ fields.
 and 2026-08-17 reports the same commit (`0a157cdce0`) with an empty diff, because
 they shared one deployment — even though they ran different code. The field names
 the deploy, not the image. It is kept, and labelled, for exactly that reason.
+`metadata.host` does not share this freeze trap: a container cannot move to another
+machine, so the host recorded at deploy is the host every run in that deployment
+used.
 
 Use the digests instead. Each is a content hash: **equal digest means equal
 input**, and the property is readable from the finished file forever, with no need
@@ -711,6 +715,7 @@ for Postgres or the config file to still exist.
 | Field | Scope | Answers |
 |---|---|---|
 | `metadata.code_version.digest` | per invocation | Did these runs execute the same code? |
+| `metadata.host` | per invocation | Did these runs execute on the same machine? |
 | `<arm>.config_version.digest` | per arm | Did these arms use the same settings? |
 | `<arm>.config_version.key_settings` | per arm | Which settings define this arm? |
 | `<arm>.config_version.divergence_from_selected_file` | per arm | Did the run use the config you selected? |

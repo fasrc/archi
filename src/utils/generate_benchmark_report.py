@@ -57,6 +57,27 @@ def load_benchmark_results(filepath):
 #: reports say so differently.
 _INGEST_NOT_RECORDED = object()
 
+#: Sentinel for ``provenance["host"]``: the artifact predates host stamping.
+#: ``None`` means the deploy recorded no host -- either the deploy predates the
+#: field, or capture ran and the hostname was unreadable. The two are not
+#: distinguishable from the artifact, so the null text names both rather than
+#: asserting a lookup that may never have run.
+_HOST_NOT_RECORDED = object()
+
+_MD_HOST_NOT_RECORDED = "*not recorded — this artifact predates host stamping*"
+_MD_HOST_NULL = (
+    "*not available — this deploy recorded no host"
+    " (it predates the field, or capture failed)*"
+)
+
+_HTML_HOST_NOT_RECORDED = (
+    "<em>not recorded &mdash; this artifact predates host stamping</em>"
+)
+_HTML_HOST_NULL = (
+    "<em>not available &mdash; this deploy recorded no host"
+    " (it predates the field, or capture failed)</em>"
+)
+
 
 def _format_seconds(seconds):
     """Seconds for arithmetic, h/m/s so a person can read it.
@@ -113,6 +134,11 @@ def parse_benchmark_results(results, metadata):
         # while the run waited, a float means seconds. A plain .get() would
         # collapse the first two into one wrong claim.
         "ingest_wall_seconds": result.get("ingest_wall_seconds", _INGEST_NOT_RECORDED),
+        # Same three-state distinction for host: sentinel = the artifact
+        # predates the field, None = the deploy recorded no host (an older
+        # deploy, or a failed capture), dict = recorded host.
+        "host": metadata.get("host", _HOST_NOT_RECORDED),
+        "host_captured_at": metadata.get("host_captured_at"),
     }
 
     return config_data, config_name, timestamp, questions, total_results, provenance
@@ -240,7 +266,8 @@ def format_version_html(provenance):
 
     code = provenance.get("code_version") or {}
     config = provenance.get("config_version") or {}
-    if not code and not config:
+    host = provenance.get("host", _HOST_NOT_RECORDED)
+    if not code and not config and host is _HOST_NOT_RECORDED:
         return ""
 
     rows = []
@@ -297,6 +324,21 @@ def format_version_html(provenance):
         )
     else:
         settings_table = ""
+
+    if host is _HOST_NOT_RECORDED:
+        rows.append("<li>Host: " + _HTML_HOST_NOT_RECORDED + "</li>")
+    elif host is None:
+        rows.append("<li>Host: " + _HTML_HOST_NULL + "</li>")
+    else:
+        hostname = host.get("hostname", "")
+        cpu_model = host.get("cpu_model")
+        host_str = f"<code>{html.escape(hostname)}</code>"
+        if cpu_model is not None:
+            host_str += f" ({html.escape(cpu_model)})"
+        captured_at = provenance.get("host_captured_at") or ""
+        if captured_at:
+            host_str += f" &mdash; {html.escape(captured_at)}"
+        rows.append(f"<li>Host: {host_str}</li>")
 
     return "<ul>" + "".join(rows) + "</ul>" + settings_table
 
@@ -1005,7 +1047,8 @@ def format_version_markdown(provenance):
 
     code = provenance.get("code_version") or {}
     config = provenance.get("config_version") or {}
-    if not code and not config:
+    host = provenance.get("host", _HOST_NOT_RECORDED)
+    if not code and not config and host is _HOST_NOT_RECORDED:
         return ""
 
     lines = []
@@ -1048,6 +1091,27 @@ def format_version_markdown(provenance):
                 else str(value)
             )
             lines.append(f"| {md_escape(path)} | {md_escape(rendered)} |")
+
+    if key_settings:
+        # A bullet touching the last table row is parsed as one more row by
+        # Python-Markdown's tables extension, which swallows the host line into
+        # the settings table. A blank line ends the table under every renderer.
+        lines.append("")
+
+    if host is _HOST_NOT_RECORDED:
+        lines.append("- Host: " + _MD_HOST_NOT_RECORDED)
+    elif host is None:
+        lines.append("- Host: " + _MD_HOST_NULL)
+    else:
+        hostname = host.get("hostname", "")
+        cpu_model = host.get("cpu_model")
+        host_str = code_span(hostname)
+        if cpu_model is not None:
+            host_str += f" ({md_escape(cpu_model)})"
+        captured_at = provenance.get("host_captured_at") or ""
+        if captured_at:
+            host_str += f" — {md_escape(captured_at)}"
+        lines.append(f"- Host: {host_str}")
 
     return "\n".join(lines)
 

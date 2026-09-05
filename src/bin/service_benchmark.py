@@ -453,6 +453,12 @@ class ResultHandler:
             logger.warning("Could not read %s: %s", EXTRA_METADATA_PATH, exc)
             additional_info = None
 
+        host = (
+            additional_info.pop("host", None)
+            if isinstance(additional_info, dict)
+            else None
+        )
+
         meta_data = {
             "time": str(datetime.now(timezone.utc)),
             "git_info": additional_info,
@@ -462,6 +468,14 @@ class ResultHandler:
             # -- every arm of a campaign reports the same commit even when the arms
             # ran different code. Say so in the artifact rather than in a comment.
             "git_info_captured_at": "deploy (`archi create`), not the running image",
+            "host": host,
+            # host is recorded at deploy time from the machine running `archi create`.
+            # A container cannot move to another host, so a --rerun necessarily ran
+            # on the same machine. Say so in the artifact rather than in a comment.
+            "host_captured_at": (
+                "deploy (`archi create`), on the machine this stack runs on"
+                " — a container cannot move hosts, so a --rerun ran here too"
+            ),
             # What the frozen commit above cannot provide: an identity for the
             # code this run actually executed. Digested from the `src` package
             # files in the image, so it is per invocation (one image runs every
