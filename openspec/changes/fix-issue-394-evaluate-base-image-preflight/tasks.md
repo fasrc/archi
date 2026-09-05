@@ -40,7 +40,7 @@ Standing notes for every task:
 
 ## 1. The ordering guarantee
 
-- [ ] 1.1 `model: sonnet` — Add the two evaluate-path ordering tests to
+- [x] 1.1 `model: sonnet` — Add the two evaluate-path ordering tests to
       `tests/unit/test_cli_create_dev_smoke.py`, watch both fail, then insert the one call in
       `src/cli/cli_main.py`.
 
