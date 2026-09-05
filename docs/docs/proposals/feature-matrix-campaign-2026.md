@@ -376,7 +376,7 @@ Human record (filled as arms complete; one row per arm, baseline first):
 
 | Arm | Runs | Fingerprint | Ingest (s) | Chunks | Primary Δ (MDE) | Verdict | Cost note | Artifacts |
 |---|---|---|---|---|---|---|---|---|
-| 00 | — | — | — | — | reference | — | — | — |
+| 00 | 3 RAGAS + 1 QA | `sha256:fc8ee1b5…` | 4959.9 | 6926 (1091 docs) | reference | — | ingest 82.7 min on a quiet host | `benchmarking-fm-00-20260905_{001802,024701,053600}.json`; QA `qa/fm-00-arm00-r1` |
 | 01 | | | | | | | | |
 | 02 | | | | | | | | |
 | 03 | | | | | | | | |
@@ -546,6 +546,8 @@ own corpus. Using `fm-00` for the smoke would have forced runs 2-4 and a stale p
 |---|---|
 | 2026-09-04 15:39 | Campaign locked (`3e07ae79…`) on the corrected arms; pre-registration committed (`c2deac32`) — gate G1 satisfied |
 | 2026-09-04 15:46 | Arm 00 started — **aborted 7 min in**: a production re-ingest triggered by that afternoon's dev redeploy was running concurrently (§13.2 #10). Stack deleted with its volumes; ledger keeps the orphan `ragas-start` row for arm 00 / `fm-00`, which is expected and harmless (`fm_next_run` counts archived `ragas` rows, not starts, so run numbering still begins at 1) |
+| 2026-09-05 03:07 | **Opening baseline complete.** 3 RAGAS runs + 1 QA run archived, `degraded = 0` on all three, QA `scored: 109/109`. Ingest 4959.9 s (82.7 min), 1091 docs / 6926 chunks, one corpus fingerprint across all three runs |
+| 2026-09-05 12:00 | **σ checkpoint PASSED — N = 2 stands, no re-lock needed.** Measured σ (paired, 104 questions, by `compare_runs.py --noise-runs`): `context_precision` **0.0040**, `context_recall` **0.0109**, `answer_relevancy` **0.0161**, `faithfulness` **0.0209**. Every value is *below* the planning prior (0.016 / 0.021 / 0.025 / 0.027), so the pre-registered escalation rule — σ on the primary metric more than 50 % above prior — did not trigger. MDE on `context_precision` ≈ 0.016 (2·SE dominates 2·σ). All three replicates were mutually "not distinguishable", which is the result you want from replicates |
 | 2026-09-04 16:13 | Watcher armed: waits for `data-manager-dev` to go quiet, then runs the opening baseline (3 RAGAS runs + 1 QA) and **stops before arm 01** for the pre-registered σ checkpoint |
 
 ## Appendix A — how to re-derive the numbers
