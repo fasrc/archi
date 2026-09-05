@@ -132,7 +132,7 @@ Standing notes for every task:
 
 ## 2. Close out
 
-- [ ] 2.1 `model: sonnet` — Verify, push, and open the PR. Steps, in order:
+- [x] 2.1 `model: sonnet` — Verify, push, and open the PR. Steps, in order:
 
       1. `bash scripts/gate.sh` on the finished branch exits 0, and `git status` is empty.
       2. `grep -n "remove_existing_deployment" src/cli/cli_main.py` still shows exactly two
@@ -172,3 +172,9 @@ Standing notes for every task:
          wrap-up opens it from the host.
       8. Record the PR URL as a line under this task, tick the task, and commit that edit
          with the gate. **Do not merge.**
+
+      **PR: https://github.com/fasrc/archi/pull/436** — opened from the host by the
+      nightly wrap-up under step 7: the loop container's token has no write scope on
+      `fasrc/archi`, so the loop pushed nothing and stopped, as the step instructs.
+      Host gate on the pushed tip: exit 0, `3897 passed, 2 skipped, 1 xfailed`,
+      diff coverage 100% (1/1 line).
