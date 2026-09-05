@@ -16,6 +16,7 @@ label for another; the provenance is shown alongside instead.
 
 from src.utils.generate_benchmark_report import (
     format_html_output,
+    format_version_html,
     parse_benchmark_results,
 )
 
@@ -223,3 +224,70 @@ def test_parse_carries_ingest_wall_seconds_through_to_provenance():
     _, _, _, _, _, provenance = parse_benchmark_results(results, metadata)
 
     assert provenance["ingest_wall_seconds"] == 7351.2
+
+
+def test_provenance_shows_the_host():
+    """A recorded host names the hostname and carries the deploy caveat."""
+    captured_at = (
+        "deploy (`archi create`), on the machine this stack runs on"
+        " — a container cannot move hosts, so a --rerun ran here too"
+    )
+    provenance = {
+        "code_version": {"digest": "code-digest-1"},
+        "config_version": {},
+        "host": {"hostname": "myhost.rc.fas.harvard.edu", "cpu_model": "Intel Xeon E5"},
+        "host_captured_at": captured_at,
+    }
+    html = format_version_html(provenance)
+
+    assert "myhost.rc.fas.harvard.edu" in html
+    assert "Intel Xeon E5" in html
+    assert "container cannot move hosts" in html
+
+    # All three host states render pairwise distinct output.
+    html_null = format_version_html(
+        {
+            "code_version": {"digest": "code-digest-1"},
+            "config_version": {},
+            "host": None,
+        }
+    )
+    html_not_recorded = format_version_html(
+        {"code_version": {"digest": "code-digest-1"}, "config_version": {}}
+    )
+    assert html != html_null
+    assert html != html_not_recorded
+    assert html_null != html_not_recorded
+
+
+def test_html_provenance_says_the_host_is_not_recorded_for_an_older_artifact():
+    """Key absent = the artifact predates host stamping, distinct from a null host."""
+    provenance_no_host = {
+        "code_version": {"digest": "code-digest-1"},
+        "config_version": {},
+    }
+    html = format_version_html(provenance_no_host)
+
+    assert "predates host stamping" in html
+
+    html_null = format_version_html(
+        {
+            "code_version": {"digest": "code-digest-1"},
+            "config_version": {},
+            "host": None,
+        }
+    )
+    assert "predates host stamping" not in html_null
+
+
+def test_an_html_host_without_a_processor_model_renders_no_none():
+    """cpu_model is None renders the hostname only, with no literal 'None'."""
+    provenance = {
+        "code_version": {"digest": "code-digest-1"},
+        "config_version": {},
+        "host": {"hostname": "myhost.rc.fas.harvard.edu", "cpu_model": None},
+    }
+    html = format_version_html(provenance)
+
+    assert "myhost.rc.fas.harvard.edu" in html
+    assert "None" not in html

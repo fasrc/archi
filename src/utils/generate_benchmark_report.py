@@ -64,6 +64,13 @@ _HOST_NOT_RECORDED = object()
 _MD_HOST_NOT_RECORDED = "*not recorded — this artifact predates host stamping*"
 _MD_HOST_NULL = "*not available — the machine could not report its hostname*"
 
+_HTML_HOST_NOT_RECORDED = (
+    "<em>not recorded &mdash; this artifact predates host stamping</em>"
+)
+_HTML_HOST_NULL = (
+    "<em>not available &mdash; the machine could not report its hostname</em>"
+)
+
 
 def _format_seconds(seconds):
     """Seconds for arithmetic, h/m/s so a person can read it.
@@ -308,6 +315,22 @@ def format_version_html(provenance):
         )
     else:
         settings_table = ""
+
+    host = provenance.get("host", _HOST_NOT_RECORDED)
+    if host is _HOST_NOT_RECORDED:
+        rows.append("<li>Host: " + _HTML_HOST_NOT_RECORDED + "</li>")
+    elif host is None:
+        rows.append("<li>Host: " + _HTML_HOST_NULL + "</li>")
+    else:
+        hostname = host.get("hostname", "")
+        cpu_model = host.get("cpu_model")
+        host_str = f"<code>{html.escape(hostname)}</code>"
+        if cpu_model is not None:
+            host_str += f" ({html.escape(cpu_model)})"
+        captured_at = provenance.get("host_captured_at") or ""
+        if captured_at:
+            host_str += f" &mdash; {html.escape(captured_at)}"
+        rows.append(f"<li>Host: {host_str}</li>")
 
     return "<ul>" + "".join(rows) + "</ul>" + settings_table
 

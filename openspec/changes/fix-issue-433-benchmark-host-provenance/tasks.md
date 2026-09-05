@@ -118,7 +118,7 @@ Standing notes for every task:
       test `test_a_host_without_a_processor_model_renders_no_none` asserting that a host
       whose `cpu_model` is `None` renders the hostname with no literal `None` beside it.
       Gate green; commit.
-- [ ] 3.2 `model: sonnet` — RED tests in
+- [x] 3.2 `model: sonnet` — RED tests in
       `tests/unit/test_benchmark_report_html_provenance.py` mirroring 3.1's two tests
       against the HTML renderer, named
       `test_provenance_shows_the_host` and
