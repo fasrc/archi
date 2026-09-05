@@ -107,7 +107,7 @@ Four standing notes for every task:
 
 ## 3. Publish
 
-- [ ] 3.1 Push and open the PR. Do **not** merge.
+- [x] 3.1 Push and open the PR. Do **not** merge.
 
       1. `git push -u origin fix/issue-426-bench-out-strict-json`. The `-u` matters: the branch was
          created from `origin/dev` and therefore tracks the trunk until this sets it.
@@ -147,11 +147,23 @@ Four standing notes for every task:
       6. Record the PR URL as a line under this task, tick the task, and commit that edit with the
          gate. Do not merge.
 
-      **Outcome (step 5 stop condition hit):** `git push -u origin fix/issue-426-bench-out-strict-json`
-      returned HTTP 403 — "Permission to fasrc/archi.git denied to swinney." The ambient GH_TOKEN is
-      a fine-grained PAT scoped to Contents: read; it has API admin permissions on the repo but the
-      git-over-HTTPS push path requires Contents: write. Branch was pushed to the fork remote instead
-      (`swinney/archi`, commit `e18d6614`). `gh pr create --repo fasrc/archi` then failed: "Resource
-      not accessible by personal access token (createPullRequest)." Per step 5: branch is at
-      `swinney:fix/issue-426-bench-out-strict-json`; no PR was opened on any other repository;
-      stopping here for a human to push to `fasrc/archi` directly or grant the PAT Contents: write.
+      **PR: https://github.com/fasrc/archi/pull/438** — open against `fasrc/archi:dev`, not merged.
+      The GraphQL `closingIssuesReferences` query names #426, so the link is confirmed rather than
+      inferred from the body.
+
+      **Outcome — the loop hit the step-5 stop condition; the host completed the publish.**
+      Inside the loop container, `git push -u origin fix/issue-426-bench-out-strict-json` returned
+      HTTP 403 ("Permission to fasrc/archi.git denied to swinney"). The ambient `GH_TOKEN` is a
+      fine-grained PAT scoped to Contents: read, and the git-over-HTTPS push path needs Contents:
+      write. The loop obeyed step 5 correctly: it left the branch on the fork (`swinney/archi` at
+      `e18d6614`), opened no PR anywhere else, and stopped.
+
+      The wrap-up phase runs on the host, where the `gh` keyring credential carries `repo` scope and
+      an SSH key is available. From there `git push -u origin` landed on `fasrc/archi` — the remote
+      SHA equals local `HEAD` (`4a9c9b7c`) — and `env -u GH_TOKEN gh pr create` opened PR #438. The
+      gate was re-run on the host before the push: black and isort clean, 3898 passed, 2 skipped,
+      1 xfailed, and `diff-cover` reports no lines with coverage information because the diff holds
+      no `src/` line.
+
+      **Standing note for a future loop turn:** the container credential cannot publish. Publishing
+      is a host step until someone grants the PAT Contents: write on `fasrc/archi`.
