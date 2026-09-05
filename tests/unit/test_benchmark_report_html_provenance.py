@@ -309,3 +309,18 @@ def test_no_version_and_no_host_renders_empty_html():
     html = format_version_html(provenance)
 
     assert html == ""
+
+
+def test_an_html_null_host_names_both_causes_rather_than_asserting_a_lookup_failed():
+    """HTML mirror: ``null`` is an older deploy or a failed capture, not only the latter."""
+    html_null = format_version_html(
+        {
+            "code_version": {"digest": "code-digest-1"},
+            "config_version": {},
+            "host": None,
+        }
+    )
+
+    assert "predates the field" in html_null
+    assert "capture failed" in html_null
+    assert "predates host stamping" not in html_null

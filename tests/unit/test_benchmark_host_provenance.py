@@ -103,3 +103,32 @@ def test_metadata_records_null_when_file_is_unreadable(
     ResultHandler.add_metadata()
 
     assert ResultHandler.metadata["host"] is None
+
+
+def test_cpu_model_is_none_when_platform_processor_itself_raises(monkeypatch):
+    """Capture never raises: the spec forbids a deploy failing for provenance.
+
+    ``platform.processor()`` reaches ``_Processor.from_subprocess``, which catches
+    only ``OSError``/``CalledProcessError`` -- a ``uname -p`` emitting undecodable
+    bytes raises ``UnicodeDecodeError`` straight through the helper.
+    """
+    real_open = builtins.open
+
+    def patched_open(file, *args, **kwargs):
+        if file == "/proc/cpuinfo":
+            raise OSError("mocked cpuinfo failure")
+        return real_open(file, *args, **kwargs)
+
+    def raise_unicode_error():
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(builtins, "open", patched_open)
+    monkeypatch.setattr(
+        "src.cli.managers.templates_manager.platform.processor", raise_unicode_error
+    )
+
+    result = collect_host_information()
+
+    assert result is not None
+    assert result["hostname"]
+    assert result["cpu_model"] is None

@@ -58,17 +58,24 @@ def load_benchmark_results(filepath):
 _INGEST_NOT_RECORDED = object()
 
 #: Sentinel for ``provenance["host"]``: the artifact predates host stamping.
-#: ``None`` means host capture was attempted but the hostname was unreadable.
+#: ``None`` means the deploy recorded no host -- either the deploy predates the
+#: field, or capture ran and the hostname was unreadable. The two are not
+#: distinguishable from the artifact, so the null text names both rather than
+#: asserting a lookup that may never have run.
 _HOST_NOT_RECORDED = object()
 
 _MD_HOST_NOT_RECORDED = "*not recorded — this artifact predates host stamping*"
-_MD_HOST_NULL = "*not available — the machine could not report its hostname*"
+_MD_HOST_NULL = (
+    "*not available — this deploy recorded no host"
+    " (it predates the field, or capture failed)*"
+)
 
 _HTML_HOST_NOT_RECORDED = (
     "<em>not recorded &mdash; this artifact predates host stamping</em>"
 )
 _HTML_HOST_NULL = (
-    "<em>not available &mdash; the machine could not report its hostname</em>"
+    "<em>not available &mdash; this deploy recorded no host"
+    " (it predates the field, or capture failed)</em>"
 )
 
 
@@ -127,8 +134,9 @@ def parse_benchmark_results(results, metadata):
         # while the run waited, a float means seconds. A plain .get() would
         # collapse the first two into one wrong claim.
         "ingest_wall_seconds": result.get("ingest_wall_seconds", _INGEST_NOT_RECORDED),
-        # Same three-state distinction for host: sentinel = predates the field,
-        # None = hostname was unreadable at deploy time, dict = recorded host.
+        # Same three-state distinction for host: sentinel = the artifact
+        # predates the field, None = the deploy recorded no host (an older
+        # deploy, or a failed capture), dict = recorded host.
         "host": metadata.get("host", _HOST_NOT_RECORDED),
         "host_captured_at": metadata.get("host_captured_at"),
     }
@@ -1084,6 +1092,12 @@ def format_version_markdown(provenance):
             )
             lines.append(f"| {md_escape(path)} | {md_escape(rendered)} |")
 
+    if key_settings:
+        # A bullet touching the last table row is parsed as one more row by
+        # Python-Markdown's tables extension, which swallows the host line into
+        # the settings table. A blank line ends the table under every renderer.
+        lines.append("")
+
     if host is _HOST_NOT_RECORDED:
         lines.append("- Host: " + _MD_HOST_NOT_RECORDED)
     elif host is None:
@@ -1091,7 +1105,7 @@ def format_version_markdown(provenance):
     else:
         hostname = host.get("hostname", "")
         cpu_model = host.get("cpu_model")
-        host_str = f"`{md_escape(hostname)}`"
+        host_str = code_span(hostname)
         if cpu_model is not None:
             host_str += f" ({md_escape(cpu_model)})"
         captured_at = provenance.get("host_captured_at") or ""

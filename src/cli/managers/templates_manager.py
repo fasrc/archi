@@ -92,7 +92,14 @@ def collect_host_information() -> Optional[Dict[str, Optional[str]]]:
     except Exception:
         pass
     if not cpu_model:
-        fallback = platform.processor()
+        # Guarded for the same reason the /proc/cpuinfo read is: the spec makes
+        # capture unconditionally non-fatal. platform.processor() falls back to
+        # `uname -p` and catches only OSError/CalledProcessError, so a decode
+        # failure would escape and abort `archi create` over a provenance field.
+        try:
+            fallback = platform.processor()
+        except Exception:
+            fallback = None
         cpu_model = fallback if fallback else None
     return {"hostname": hostname, "cpu_model": cpu_model}
 

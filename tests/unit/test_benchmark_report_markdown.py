@@ -587,3 +587,83 @@ def test_format_seconds_reads_at_every_scale():
     assert _format_seconds(42.4) == "42 s"
     assert _format_seconds(1832) == "1832 s (30m 32s)"
     assert _format_seconds(7351.2) == "7351 s (2h 2m 31s)"
+
+
+def test_a_null_host_names_both_causes_rather_than_asserting_a_lookup_failed():
+    """``null`` means the deploy predates the field OR capture failed.
+
+    The spec defines both readings for ``null``, so text naming only a failed
+    hostname lookup states a positive, false claim about the older-deploy case:
+    a benchmark image carrying this code, run against a deployment whose
+    ``git_info.yaml`` an earlier ``archi create`` wrote.
+    """
+    md_null = _provenance_md(host=None)
+
+    assert "predates the field" in md_null
+    assert "capture failed" in md_null
+    # The absent-key text stays its own distinct string.
+    assert "predates host stamping" not in md_null
+    assert md_null != _provenance_md()
+
+
+def test_a_hostname_renders_verbatim_in_a_code_span_it_cannot_close():
+    """The host row is artifact data, so it takes the same code_span() treatment.
+
+    md_escape() is useless inside a code span -- markdown does not process
+    backslashes there, so the backslashes render literally and the recorded
+    hostname stops matching the machine's real name. A backtick in the data
+    must also not terminate the span.
+    """
+    md = _provenance_md(
+        host={"hostname": "holy_gpu01.rc.fas.harvard.edu", "cpu_model": None}
+    )
+
+    assert "holy_gpu01.rc.fas.harvard.edu" in md
+    assert "holy\\_gpu01" not in md
+
+    md_www = _provenance_md(host={"hostname": "www.example.com", "cpu_model": None})
+    assert "www.example.com" in md_www
+    assert "www\\." not in md_www
+
+    md_tick = _provenance_md(host={"hostname": "a`b.example.com", "cpu_model": None})
+    assert "`` a`b.example.com ``" in md_tick
+
+
+def test_the_host_bullet_is_separated_from_the_settings_table():
+    """A bullet touching the last table row is read as one more table row.
+
+    Measured through Python-Markdown 3.10.2 with the ``tables`` extension --
+    mkdocs is a declared dependency -- the un-separated host line renders as a
+    one-cell ``<td>`` inside the settings table instead of as a bullet. A blank
+    line terminates the table under every renderer, so it is asserted here on
+    the emitted markdown rather than on any one renderer's output.
+    """
+    md = format_version_markdown(
+        {
+            "config_version": {
+                "digest": "cfg-digest-1",
+                "key_settings": {"a.b": 1, "c.d": 2},
+            },
+            "host": {"hostname": "h1.example.com", "cpu_model": "Intel Xeon E5"},
+        }
+    )
+
+    lines = md.splitlines()
+    host_index = next(i for i, line in enumerate(lines) if line.startswith("- Host:"))
+    assert lines[host_index - 1] == ""
+    # The table itself is still intact above the separator.
+    assert "| a.b | 1 |" in lines
+
+
+def test_no_blank_line_is_emitted_when_there_is_no_settings_table():
+    """Without a table the host bullet joins the bullet list it belongs to."""
+    md = format_version_markdown(
+        {
+            "config_version": {"digest": "cfg-digest-1"},
+            "host": {"hostname": "h1.example.com", "cpu_model": None},
+        }
+    )
+
+    lines = md.splitlines()
+    host_index = next(i for i, line in enumerate(lines) if line.startswith("- Host:"))
+    assert lines[host_index - 1].startswith("- ")
