@@ -24,7 +24,7 @@ Standing notes for every task:
 
 ## 1. Capture the host at deploy
 
-- [ ] 1.1 `model: opus` — Create `tests/unit/test_benchmark_host_provenance.py`. RED test
+- [x] 1.1 `model: opus` — Create `tests/unit/test_benchmark_host_provenance.py`. RED test
       `test_git_info_yaml_carries_the_host_block`: call
       `src.cli.managers.templates_manager.get_git_information()` and assert the returned
       mapping has a `host` entry that is a mapping holding the keys `hostname` and
@@ -39,7 +39,7 @@ Standing notes for every task:
       annotation alone — the existing "not a git repository" branch already stores a dict
       value under `git_info`, so the block adds no new violation, and rewriting the
       annotation would widen the diff for nothing. Gate green; commit.
-- [ ] 1.2 `model: sonnet` — Pin the two failure shapes, which are **not** symmetric. RED
+- [x] 1.2 `model: sonnet` — Pin the two failure shapes, which are **not** symmetric. RED
       tests in the same file: monkeypatch the `/proc/cpuinfo` read to raise **and**
       `platform.processor` to return `""`, and assert `collect_host_information()` returns a
       mapping whose `hostname` is intact and whose `cpu_model is None`; then monkeypatch
