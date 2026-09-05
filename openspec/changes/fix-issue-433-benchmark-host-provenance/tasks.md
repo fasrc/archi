@@ -182,7 +182,7 @@ Standing notes for every task:
       `docs/docs/benchmarking.md` if it lists the metadata fields; skip it if it does not.
       A documents-only diff reports no coverage data and passes the gate on that ground.
       Gate green; commit.
-- [ ] 5.2 `model: sonnet` — Verify the acceptance criteria end to end and open the PR.
+- [x] 5.2 `model: sonnet` — Verify the acceptance criteria end to end and open the PR.
       Run `git grep -n "getfqdn" -- 'src/*.py'` and confirm it is now non-empty.
 
       **Check for a shadowed test.** A duplicate top-level test name silently deletes the
