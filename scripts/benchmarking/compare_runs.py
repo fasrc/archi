@@ -196,6 +196,7 @@ class Arm:
     #: ``corpus_unchanged_at_endpoints`` as recorded: True/False, or None when
     #: the artifact predates the field (unknowable, not unstable).
     corpus_unchanged: Optional[bool] = None
+    host: Optional[dict] = None
 
     def value(self, question: str, metric: str) -> Any:
         return self.rows.get(question, {}).get(metric)
@@ -300,6 +301,7 @@ def build_arm(document: dict, index: int, path: Path, label: str) -> Arm:
         metadata.get("corpus_fingerprint")
     )
     code_version = metadata.get("code_version") or {}
+    host = metadata.get("host") if isinstance(metadata.get("host"), dict) else None
     return Arm(
         label=label,
         source=f"{path}@{index}",
@@ -316,6 +318,7 @@ def build_arm(document: dict, index: int, path: Path, label: str) -> Arm:
             if isinstance(raw.get("corpus_unchanged_at_endpoints"), bool)
             else (None if "corpus_unchanged_at_endpoints" not in raw else False)
         ),
+        host=host,
     )
 
 
@@ -470,6 +473,18 @@ def provenance_rows(
             ),
         ),
         ("configuration_file", lambda a: a.configuration_file or "not recorded"),
+        (
+            "host",
+            lambda a: (
+                "not recorded"
+                if a.host is None
+                else (
+                    f"{a.host['hostname']} ({a.host['cpu_model']})"
+                    if a.host.get("cpu_model") is not None
+                    else a.host["hostname"]
+                )
+            ),
+        ),
     ]
     return [
         {"field": name, "values": {arm.label: str(read(arm)) for arm in arms}}
