@@ -2867,7 +2867,7 @@
                         "#### [Step 2: New Account Sign-up Information](javascript:void(0))\n\n**Before You Begin**\n\n* **FAS Research Computing (FASRC) accounts are separate from other Harvard systems, including HarvardKey. You must set up an FASRC account with 2-Factor authentication** to have access to the FASRC or FASSE cl"
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.9166666666666666,
                     "context_precision": 0.94999999997625,
                     "context_recall": 1.0
@@ -3280,7 +3280,7 @@
                         "TensorFlow \u2013 FASRC DOCS\n\n\n\n\n|  |  |  |\n| --- | --- | --- |\n| |  |  | | --- | --- | | [Alternate Status Page Link](https://fasrc.instatus.com) | Friday July 3rd is a university holiday (Independence Day).  Monthly Maintenance Monday July 6th 9am-1pm [[details](https://dashboard.instatus.com/fasrc/fas"
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.5652173913043478,
                     "context_precision": 0.6178571428416965,
                     "context_recall": 1.0
@@ -3582,7 +3582,7 @@
                         "AI Extensions on FASRC Clusters \u2013 FASRC DOCS\n\n\n\n\n|  |  |  |\n| --- | --- | --- |\n| |  |  | | --- | --- | | [Alternate Status Page Link](https://fasrc.instatus.com) | Friday July 3rd is a university holiday (Independence Day).  Monthly Maintenance Monday July 6th 9am-1pm [[details](https://dashboard.i"
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.9523809523809523,
                     "context_precision": 0.2666666666577778,
                     "context_recall": 0.5
@@ -3868,7 +3868,7 @@
                         "### Restd Node\n\nThe [slurmrestd](slurmrestd.html) daemon can be deployed to\nprovide a [REST API](rest.html) that can be used to interact with the\nSlurm cluster programmatically. See detailed\n[prerequisite](rest_quickstart.html#prereq),\n[installation](rest_quickstart.html#quick_start), and\n[systemd c"
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.7894736842105263,
                     "context_precision": 0.62499999996875,
                     "context_recall": 1.0
@@ -4042,7 +4042,7 @@
                         "Globus File Transfer \u2013 FASRC DOCS\n\n\n\n\n|  |  |  |\n| --- | --- | --- |\n| |  |  | | --- | --- | | [Alternate Status Page Link](https://fasrc.instatus.com) | Friday July 3rd is a university holiday (Independence Day).  Monthly Maintenance Monday July 6th 9am-1pm [[details](https://dashboard.instatus.com"
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.21428571428571427,
                     "context_precision": 0.699999999965,
                     "context_recall": 1.0
@@ -8273,7 +8273,7 @@
                         "To allow the generation in such systems you usually must enable the\nsuid\\_dumpable kernel parameter:\n\nSet:  \n/proc/sys/fs/suid\\_dumpable to 2  \nor  \nsysctl fs.suid\\_dumpable=2  \n  \nor set it permanently in sysctl.conf  \nfs.suid\\_dumpable = 2  \n  \n\nThe value of 2, \"suidsafe\", makes any binary which n"
                     ],
                     "anchor_type": "easy_retrieve",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.25,
                     "context_precision": 0.49999999995,
                     "context_recall": 1.0
@@ -8581,7 +8581,7 @@
                         "# AlphaFold\n\n[See FASRC Docs](https://docs.rc.fas.harvard.edu/kb/alphafold/)\n\nThis document contains example scripts to run:\n* [Alphafold 3](#alphafold-3)\n* [Alphafold 2](#alphafold-2)\n\n## AlphaFold 3\n\nWe recommend running [Alphafold3](https://github.com/google-deepmind/alphafold3)\nin two steps to b"
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.4117647058823529,
                     "context_precision": 0.9999999999,
                     "context_recall": 1.0
@@ -13227,7 +13227,7 @@
                         "Acceptable Use \u2013 FASRC DOCS\n\n\n\n\n|  |  |  |\n| --- | --- | --- |\n| |  |  | | --- | --- | | [Alternate Status Page Link](https://fasrc.instatus.com) | Friday July 3rd is a university holiday (Independence Day).  Monthly Maintenance Monday July 6th 9am-1pm [[details](https://dashboard.instatus.com/fasrc"
                     ],
                     "anchor_type": "easy_retrieve",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.4,
                     "context_precision": 0.249999999975,
                     "context_recall": 0.3333333333333333
@@ -13398,7 +13398,7 @@
                         "Data Storage (Offerings, Workflow, Costs) \u2013 FASRC DOCS\n\n\n\n\n|  |  |  |\n| --- | --- | --- |\n| |  |  | | --- | --- | | [Alternate Status Page Link](https://fasrc.instatus.com) | Friday July 3rd is a university holiday (Independence Day).  Monthly Maintenance Monday July 6th 9am-1pm [[details](https://d"
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.5,
                     "context_precision": 0.99999999998,
                     "context_recall": 1.0
@@ -13617,7 +13617,7 @@
                         "Globus: Transfer Data to Tape \u2013 FASRC DOCS\n\n\n\n\n|  |  |  |\n| --- | --- | --- |\n| |  |  | | --- | --- | | [Alternate Status Page Link](https://fasrc.instatus.com) | Friday July 3rd is a university holiday (Independence Day).  Monthly Maintenance Monday July 6th 9am-1pm [[details](https://dashboard.ins"
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.875,
                     "context_precision": 0.249999999975,
                     "context_recall": 1.0
@@ -14271,7 +14271,7 @@
                     "anchor_type": "easy_retrieve",
                     "answer_relevancy": 0.872906280059726,
                     "faithfulness": 0.6153846153846154,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.0
                 },
                 "question_57": {
@@ -15589,7 +15589,7 @@
                     "anchor_type": "reasoning",
                     "answer_relevancy": 0.777500185001177,
                     "faithfulness": 0.9285714285714286,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 1.0
                 },
                 "question_59": {
@@ -19374,7 +19374,7 @@
                         "Cluster Account Signup \u2013 FASRC DOCS\n\n\n\n\n|  |  |  |\n| --- | --- | --- |\n| |  |  | | --- | --- | | [Alternate Status Page Link](https://fasrc.instatus.com) | Friday July 3rd is a university holiday (Independence Day).  Monthly Maintenance Monday July 6th 9am-1pm [[details](https://dashboard.instatus.c"
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.7647058823529411,
                     "context_precision": 0.8928571428348213,
                     "context_recall": 1.0
@@ -19656,7 +19656,7 @@
                         "Accounts and storage usage are billed to HLS at the school level.\u00a0 Additional dedicated data storage is available at a cost through our [Storage Service Center](https://www.rc.fas.harvard.edu/data-storage/).\n\n## UNAFFILIATED SCHOOLS\n\n* **HMS** \u2013 The Harvard Medical School maintains its own cluster ("
                     ],
                     "anchor_type": "easy_retrieve",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.6875,
                     "context_precision": 0.0,
                     "context_recall": 0.0
@@ -20202,7 +20202,7 @@
                         "Getting Started with FASRC Storage \u2013 FASRC DOCS\n\n\n\n\n|  |  |  |\n| --- | --- | --- |\n| |  |  | | --- | --- | | [Alternate Status Page Link](https://fasrc.instatus.com) | Friday July 3rd is a university holiday (Independence Day).  Monthly Maintenance Monday July 6th 9am-1pm [[details](https://dashboar"
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.6,
                     "context_precision": 0.3946428571329911,
                     "context_recall": 1.0
@@ -23906,7 +23906,7 @@
                         "We do not recommend using NFS to make the directory accessible to both\nhosts, but do recommend a shared mount that is accessible to the two\ncontrollers and allows low-latency reads and writes to the disk. If a\ncontroller comes up without access to the state information, queued and\nrunning jobs will "
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.5,
                     "context_precision": 0.49999999995,
                     "context_recall": 0.75
@@ -24186,7 +24186,7 @@
                         "**Returns**:   \nslurm.SUCCESS \u2014\nJob submission accepted by plugin.  \nslurm.FAILURE \u2014\nJob submission rejected due to error (Deprecated in 19.05).  \nslurm.ERROR \u2014\nJob submission rejected due to error.  \nslurm.ESLURM\\_\\* \u2014\nJob submission rejected due to error as defined by\n*slurm/slurm\\_errno.h* and *s"
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.0,
                     "context_precision": 0.0,
                     "context_recall": 0.0
@@ -24423,7 +24423,7 @@
                         "Slurm Workload Manager - salloc\n\n\n\n# [Slurm Workload Manager](/)\n\n[SchedMD](https://www.schedmd.com/)\n\n## Navigation\n\n[Slurm Workload Manager](/)\n\nVersion 26.05\n\n* About\n\n  + [Overview](overview.html)\n  + [Release Notes](release_notes.html)\n* Using\n\n  + [Documentation](documentation.html)\n  + [FAQ]("
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.18181818181818182,
                     "context_precision": 0.16666666665,
                     "context_recall": 1.0
@@ -25014,7 +25014,7 @@
                         "The following table shows a possible pattern of allocation\nfor this job.\n\n|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| **Nodename** | **n3** | | | | | | | | | | | | | | | |\n| **Socket id"
                     ],
                     "anchor_type": "reasoning",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.3333333333333333,
                     "context_precision": 0.249999999975,
                     "context_recall": 0.8
@@ -29290,11 +29290,11 @@
             },
             "total_results": {
                 "aggregate_answer_relevancy": 0.6825239547960595,
-                "answer_relevancy_scored": "106 of 106",
+                "answer_relevancy_scored": "89 of 106",
                 "aggregate_faithfulness": 0.5485412889747335,
                 "faithfulness_scored": "106 of 106",
                 "aggregate_context_precision": 0.6148806620906383,
-                "context_precision_scored": "106 of 106",
+                "context_precision_scored": "104 of 106",
                 "aggregate_context_recall": 0.7841194968553459,
                 "context_recall_scored": "106 of 106",
                 "relative_source_accuracy": 0.839622641509434,

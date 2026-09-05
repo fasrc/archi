@@ -2418,7 +2418,7 @@
                     "anchor_type": "hard",
                     "answer_relevancy": 0.9520602314311001,
                     "faithfulness": 0.5714285714285714,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.6666666666666666
                 },
                 "question_9": {
@@ -2888,7 +2888,7 @@
                     "anchor_type": "hard",
                     "answer_relevancy": 0.7190498169585752,
                     "faithfulness": 0.09523809523809523,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.3333333333333333
                 }
             },

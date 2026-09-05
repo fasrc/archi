@@ -3661,7 +3661,7 @@
                         "./clean.sh\nmodule load gcc/10.2.0-fasrc01 openmpi/4.1.1-fasrc01\nmake"
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.13333333333333333,
                     "context_precision": 0.0,
                     "context_recall": 0.0
@@ -3813,7 +3813,7 @@
                         "Globus File Transfer \u2013 FASRC DOCS\n\n\n\n\n|  |  |  |\n| --- | --- | --- |\n| |  |  | | --- | --- | | [Alternate Status Page Link](https://fasrc.instatus.com) | Friday July 3rd is a university holiday (Independence Day).  Monthly Maintenance Monday July 6th 9am-1pm [[details](https://dashboard.instatus.com"
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.0,
                     "context_precision": 0.0,
                     "context_recall": 0.0
@@ -4100,7 +4100,7 @@
                         "You will simply be asked for your password over and over. See [this doc](/kb/additional-groups/) for how to add cluster access as well as additional groups.\n\nFor command line access to the cluster, you will SSH to login.rc.fas.harvard.edu using your FASRC [username](https://docs.rc.fas.harvard.edu/k"
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.8947368421052632,
                     "context_precision": 0.0,
                     "context_recall": 0.5454545454545454
@@ -4488,7 +4488,7 @@
                         "* [Installing and using software on FASRC cluster](https://www.rc.fas.harvard.edu/upcoming-training/)\n* Attend FASRC introductory trainings\u00a0\n  + [Training calendar](https://www.rc.fas.harvard.edu/upcoming-training/)\n* Contact\u00a0\n  + Email [rchelp@fas.harvard.edu](mailto:rchelp@fas.harvard.edu) if you "
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.6363636363636364,
                     "context_precision": 0.0,
                     "context_recall": 0.2
@@ -4717,7 +4717,7 @@
                         "The nodes are interconnected with NDR Infiniband. This partition has a 3 day time limit.\n\n## Resource planning\n\nNote that it is relatively easy to overload the file storage system. Please use our [high-performance scratch storage filesystems](/kb/cluster-storage/) for high I/O jobs. Also, if you are"
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.4782608695652174,
                     "context_precision": 0.0,
                     "context_recall": 0.0
@@ -4870,7 +4870,7 @@
                         "OpenMP Software on the FASRC cluster \u2013 FASRC DOCS\n\n\n\n\n|  |  |  |\n| --- | --- | --- |\n| |  |  | | --- | --- | | [Alternate Status Page Link](https://fasrc.instatus.com) | Friday July 3rd is a university holiday (Independence Day).  Monthly Maintenance Monday July 6th 9am-1pm [[details](https://dashbo"
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.13636363636363635,
                     "context_precision": 0.9999999999,
                     "context_recall": 0.0
@@ -6471,7 +6471,7 @@
             },
             "total_results": {
                 "aggregate_answer_relevancy": 0.42421977210329026,
-                "answer_relevancy_scored": "26 of 26",
+                "answer_relevancy_scored": "20 of 26",
                 "aggregate_faithfulness": 0.2651694798873993,
                 "faithfulness_scored": "26 of 26",
                 "aggregate_context_precision": 0.14391025639626603,

@@ -3,10 +3,10 @@
         {
             "single_question_results": {},
             "total_results": {
-                "aggregate_answer_relevancy": NaN,
-                "aggregate_faithfulness": NaN,
-                "aggregate_context_precision": NaN,
-                "aggregate_context_recall": NaN,
+                "aggregate_answer_relevancy": null,
+                "aggregate_faithfulness": null,
+                "aggregate_context_precision": null,
+                "aggregate_context_recall": null,
                 "relative_source_accuracy": 0.0,
                 "source_accuracy": 0.0
             },
