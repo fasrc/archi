@@ -173,7 +173,7 @@ Standing notes for every task:
 
 ## 5. Documents and close-out
 
-- [ ] 5.1 `model: sonnet` — Edit `docs/docs/interpreting_benchmark_results.md`: add
+- [x] 5.1 `model: sonnet` — Edit `docs/docs/interpreting_benchmark_results.md`: add
       `host` to the results-file tree under `metadata` (`:659-663`), add a
       `metadata.host` row to the per-run provenance table (`:713-722`) answering "Did these
       runs execute on the same machine?", and add one sentence to §5.E saying that the host
