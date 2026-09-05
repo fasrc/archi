@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import platform
 import shutil
 import socket
 import subprocess
@@ -76,6 +77,20 @@ EVALUATION_MCP_RUNTIME_PATH = (
 )
 
 
+def collect_host_information() -> Optional[Dict[str, Optional[str]]]:
+    hostname = socket.getfqdn()
+    cpu_model = None
+    with open("/proc/cpuinfo") as f:
+        for line in f:
+            if line.startswith("model name"):
+                cpu_model = line.split(":", 1)[1].strip()
+                break
+    if not cpu_model:
+        fallback = platform.processor()
+        cpu_model = fallback if fallback else None
+    return {"hostname": hostname, "cpu_model": cpu_model}
+
+
 def get_git_information() -> Dict[str, str]:
 
     meta_data: Dict[str, str] = {}
@@ -102,6 +117,7 @@ def get_git_information() -> Dict[str, str]:
         meta_data["git_diff"] = subprocess.check_output(
             diff_comm, encoding="UTF-8", cwd=wd
         )
+    meta_data["host"] = collect_host_information()
     return meta_data
 
 
