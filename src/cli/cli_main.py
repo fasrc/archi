@@ -897,6 +897,12 @@ def evaluate(
             **other_flags,
         )
 
+        enforce_base_images(
+            compose_config,
+            use_podman=other_flags.get("podman", False),
+            dry=False,
+        )
+
         remove_existing_deployment(
             base_dir, name, force, False, other_flags.get("podman", False)
         )
