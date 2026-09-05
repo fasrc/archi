@@ -1,5 +1,6 @@
 import json
 import math
+import re
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,18 @@ def test_all_artifacts_are_strict_json(bench_out_artifacts):
     assert (
         not bad
     ), f"{len(bad)} file(s) contain non-JSON constants (NaN/Infinity): {bad}"
+
+
+def test_reports_contain_no_nan():
+    patterns = ["*_report.md", "*_report.html"]
+    bad = []
+    nan_re = re.compile(r"\bnan\b")
+    for pattern in patterns:
+        for path in sorted(_BENCH_OUT_DIR.glob(pattern)):
+            text = path.read_text(errors="replace")
+            if nan_re.search(text):
+                bad.append(path.name)
+    assert not bad, f"{len(bad)} report(s) contain \\bnan\\b: {bad}"
 
 
 def test_scored_strings_match_finite_counts(bench_out_artifacts):

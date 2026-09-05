@@ -75,7 +75,7 @@ Four standing notes for every task:
 
 ## 2. Re-render the reports
 
-- [ ] 2.1 Re-render the reports for the 10 migrated artifacts only. Pass the 10 paths
+- [x] 2.1 Re-render the reports for the 10 migrated artifacts only. Pass the 10 paths
       **explicitly** — the script's default glob covers all 18 and would create 8 more markdown
       reports for artifacts whose data did not change:
 
