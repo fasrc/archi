@@ -17,7 +17,7 @@ Four standing notes for every task:
 
 ## 1. Guard the invariant, then migrate the JSON
 
-- [ ] 1.1 Create `tests/unit/test_bench_out_artifacts.py`. It is a NEW file, so there is no
+- [x] 1.1 Create `tests/unit/test_bench_out_artifacts.py`. It is a NEW file, so there is no
       existing final assertion to displace and no existing `def test_...` name to collide with —
       but check both before writing if the file somehow already exists.
 
@@ -42,6 +42,8 @@ Four standing notes for every task:
 
       Run the two tests and **watch them fail on 10 and 4 files respectively.** Record the failure
       counts under this task.
+
+      **Observed RED failures:** test 1 failed on 10 files; test 2 failed on 5 strings across 4 files.
 
       **GREEN — migrate.** Write a throwaway script at `/tmp/migrate_bench_out.py` (outside the
       repository, per the issue). For each `bench_out/*.json`: load with plain `json.loads`,

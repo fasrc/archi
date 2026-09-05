@@ -765,7 +765,7 @@
                     "anchor_type": "easy",
                     "answer_relevancy": 0.837264545991351,
                     "faithfulness": 0.2857142857142857,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.5
                 },
                 "question_3": {
