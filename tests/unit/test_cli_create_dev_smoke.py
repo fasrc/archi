@@ -2189,3 +2189,101 @@ def test_force_create_with_enabled_evaluations_and_no_agent_config_path_keeps_ex
     assert (
         "services.chat_app.evaluations.agent_config_path" in result.output
     ), f"the error should name the missing key. output:\n{result.output}\n"
+
+
+# --- issue #394: the evaluate path runs the base-image preflight above the teardown ---
+
+
+def test_force_evaluate_with_unobtainable_base_image_keeps_existing_deployment(
+    archi_home, env_file, benchmark_config, monkeypatch
+):
+    """The ordering contract, applied to the base image, for evaluate (fasrc/archi#394).
+
+    Mirrors test_force_create_with_unobtainable_base_image_keeps_existing_deployment at
+    :1855, but through evaluate() rather than create(): a benchmarking run that cannot
+    obtain a base image was always going to fail, so it must not cost the operator a
+    running deployment first.
+    """
+    from src.cli import cli_main
+    from src.cli.managers import base_image_preflight
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+    _patch_probe(monkeypatch, fetch_error=base_image_preflight.Cause.UNAUTHORIZED)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, f"expected refusal. output:\n{result.output}"
+    assert teardowns == [], f"runtime was torn down before the refusal: {teardowns}"
+    assert (existing / "marker.txt").exists(), "existing runtime was destroyed"
+
+
+def test_force_evaluate_with_an_uncoverable_service_template_keeps_existing_deployment(
+    archi_home, env_file, benchmark_config, monkeypatch, tmp_path
+):
+    """The ordering contract, applied to the uncoverable-template refusal, for evaluate.
+
+    Mirrors test_force_create_with_an_uncoverable_service_template_keeps_existing_deployment
+    at :1897, but through evaluate() rather than create().
+    """
+    from src.cli import cli_main
+    from src.cli.managers import base_image_preflight
+
+    templates = tmp_path / "dockerfiles"
+    templates.mkdir()
+    (templates / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base"
+        "@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"
+    )
+    (templates / "Dockerfile-probe").write_text("FROM docker.io/library/python:3.11\n")
+    monkeypatch.setattr(base_image_preflight, "TEMPLATE_DIR", templates)
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+    record = _patch_probe(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, f"expected refusal. output:\n{result.output}"
+    assert "Dockerfile-probe" in result.output, (
+        "the refusal must name the uncoverable template, or the operator cannot act on it. "
+        f"output:\n{result.output}"
+    )
+    assert teardowns == [], f"runtime was torn down before the refusal: {teardowns}"
+    assert (existing / "marker.txt").exists(), "existing runtime was destroyed"
+    assert record["pulled"] == [], (
+        "the refusal must precede any image work, which is what puts it above the teardown; "
+        f"pulled {record['pulled']}"
+    )
