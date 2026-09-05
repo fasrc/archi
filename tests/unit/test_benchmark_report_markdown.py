@@ -516,6 +516,49 @@ def test_provenance_says_not_recorded_for_an_older_artifact():
     assert "reused an existing corpus" not in md
 
 
+def test_provenance_shows_the_host():
+    """A recorded host names the hostname and carries the deploy caveat."""
+    md = _provenance_md(
+        host={"hostname": "myhost.rc.fas.harvard.edu", "cpu_model": "Intel Xeon E5"},
+        host_captured_at=(
+            "deploy (`archi create`), on the machine this stack runs on"
+            " — a container cannot move hosts, so a --rerun ran here too"
+        ),
+    )
+
+    assert "myhost.rc.fas.harvard.edu" in md
+    assert "Intel Xeon E5" in md
+    assert "container cannot move hosts" in md
+
+    # All three host states render pairwise distinct output.
+    md_null = _provenance_md(host=None)
+    md_not_recorded = _provenance_md()
+    assert md != md_null
+    assert md != md_not_recorded
+    assert md_null != md_not_recorded
+
+
+def test_provenance_says_the_host_is_not_recorded_for_an_older_artifact():
+    """Key absent = the artifact predates host stamping, distinct from a null host."""
+    md = _provenance_md()
+
+    assert "host" not in _PROVENANCE
+    assert "predates host stamping" in md
+
+    md_null = _provenance_md(host=None)
+    assert "predates host stamping" not in md_null
+
+
+def test_a_host_without_a_processor_model_renders_no_none():
+    """cpu_model is None renders the hostname only, with no literal 'None'."""
+    md = _provenance_md(
+        host={"hostname": "myhost.rc.fas.harvard.edu", "cpu_model": None}
+    )
+
+    assert "myhost.rc.fas.harvard.edu" in md
+    assert "None" not in md
+
+
 def test_format_seconds_reads_at_every_scale():
     """Seconds always; the h/m/s gloss only where it adds something.
 

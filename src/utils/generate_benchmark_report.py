@@ -57,6 +57,13 @@ def load_benchmark_results(filepath):
 #: reports say so differently.
 _INGEST_NOT_RECORDED = object()
 
+#: Sentinel for ``provenance["host"]``: the artifact predates host stamping.
+#: ``None`` means host capture was attempted but the hostname was unreadable.
+_HOST_NOT_RECORDED = object()
+
+_MD_HOST_NOT_RECORDED = "*not recorded — this artifact predates host stamping*"
+_MD_HOST_NULL = "*not available — the machine could not report its hostname*"
+
 
 def _format_seconds(seconds):
     """Seconds for arithmetic, h/m/s so a person can read it.
@@ -113,6 +120,10 @@ def parse_benchmark_results(results, metadata):
         # while the run waited, a float means seconds. A plain .get() would
         # collapse the first two into one wrong claim.
         "ingest_wall_seconds": result.get("ingest_wall_seconds", _INGEST_NOT_RECORDED),
+        # Same three-state distinction for host: sentinel = predates the field,
+        # None = hostname was unreadable at deploy time, dict = recorded host.
+        "host": metadata.get("host", _HOST_NOT_RECORDED),
+        "host_captured_at": metadata.get("host_captured_at"),
     }
 
     return config_data, config_name, timestamp, questions, total_results, provenance
@@ -1048,6 +1059,22 @@ def format_version_markdown(provenance):
                 else str(value)
             )
             lines.append(f"| {md_escape(path)} | {md_escape(rendered)} |")
+
+    host = provenance.get("host", _HOST_NOT_RECORDED)
+    if host is _HOST_NOT_RECORDED:
+        lines.append("- Host: " + _MD_HOST_NOT_RECORDED)
+    elif host is None:
+        lines.append("- Host: " + _MD_HOST_NULL)
+    else:
+        hostname = host.get("hostname", "")
+        cpu_model = host.get("cpu_model")
+        host_str = f"`{md_escape(hostname)}`"
+        if cpu_model is not None:
+            host_str += f" ({md_escape(cpu_model)})"
+        captured_at = provenance.get("host_captured_at") or ""
+        if captured_at:
+            host_str += f" — {md_escape(captured_at)}"
+        lines.append(f"- Host: {host_str}")
 
     return "\n".join(lines)
 
