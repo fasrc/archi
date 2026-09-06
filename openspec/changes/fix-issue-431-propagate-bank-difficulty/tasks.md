@@ -56,7 +56,7 @@ Four standing notes for every task:
 
 ## 3. Correct the documentation that says the slice is unavailable
 
-- [ ] 3.1 `model: sonnet` — Docs only, one commit. Three edits, no code:
+- [x] 3.1 `model: sonnet` — Docs only, one commit. Three edits, no code:
       (a) `docs/docs/interpreting_benchmark_results.md:578-586` — the admonition titled
       "The `difficulty` slice needs a bank that reaches the artifact" currently states the
       harness copies only `anchor_type` and that artifacts carry no `difficulty`. That is
