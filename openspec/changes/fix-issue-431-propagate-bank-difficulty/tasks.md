@@ -23,7 +23,7 @@ Four standing notes for every task:
 
 ## 1. Copy the field
 
-- [ ] 1.1 `model: opus` — RED then GREEN, one commit. In
+- [x] 1.1 `model: opus` — RED then GREEN, one commit. In
       `tests/unit/test_benchmark_resilience.py`, beside the existing
       `_answer_and_score_question` tests (the `_StubBenchmarker` seam at :91, `_QITEM` at
       :109), add two tests: one runs a question item carrying `difficulty: "hard"` through
