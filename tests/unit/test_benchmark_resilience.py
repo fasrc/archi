@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 
+from scripts.benchmarking import compare_runs as cr
 from src.utils.benchmark_resilience import (
     DEGRADED,
     FAILED,
@@ -670,3 +671,17 @@ def test_answer_and_score_omits_difficulty_when_bank_row_lacks_it():
     agent = _StubBenchmarker(chain=lambda **kw: _result())
     bundle = agent._answer_and_score_question(_QITEM, 1, _MODES)
     assert "difficulty" not in bundle["q_results"]
+
+
+def test_difficulty_key_agrees_with_compare_runs_slice_fields():
+    item = {
+        "user_input": "how do I do X?",
+        "reference": "ref",
+        "sources": [],
+        "difficulty": "hard",
+    }
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(item, 1, _MODES)
+
+    assert "difficulty" in cr.SLICE_FIELDS
+    assert "difficulty" in bundle["q_results"]
