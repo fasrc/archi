@@ -374,18 +374,18 @@ Machine record: `bench_out/feature_matrix/ledger.json`, one entry per run, appen
 
 Human record (filled as arms complete; one row per arm, baseline first):
 
-| Arm | Runs | Fingerprint | Ingest (s) | Chunks | Primary Δ (MDE) | Verdict | Cost note | Artifacts |
-|---|---|---|---|---|---|---|---|---|
-| 00 | 3 RAGAS + 1 QA | `sha256:fc8ee1b5…` | 4959.9 | 6926 (1091 docs) | reference | — | ingest 82.7 min on a quiet host | `benchmarking-fm-00-20260905_{001802,024701,053600}.json`; QA `qa/fm-00-arm00-r1` |
-| 01 | 2 RAGAS + 1 QA | `sha256:fc8ee1b5…` (= 00) | n/a (re-seed) | 6926 | `context_precision` −0.0253 / −0.0095 (MDE 0.063) | **no measurable difference on the primary metric** — the ADR 0003 "+19 % RAGAS" claim is NOT reproduced. Trade-off: `context_recall` −0.072 / −0.052, consistent in both runs and opposite in sign to the baseline's own replicate spread (+0.021 / +0.016) | **latency ~halved**: 48.2 s → 24.2 / 28.8 s mean, p90 100.9 → 36.8 / 58.3 s. Gold atoms higher (atom score 0.499 → 0.591, required-atom recall 0.630 → 0.737) but from ONE QA run per arm, so no noise floor and no significance claim | `benchmarking-fm-00-20260906_{054238,073529}.json`; QA `qa/fm-00-arm01-r1`; report `reports/arm-01.md` |
-| 02 | | | | | | | | |
-| 03 | | | | | | | | |
-| 04 | | | | | | | | |
-| 05a | | | | | | | | |
-| 05b | | | | | | | | |
-| 06 | | | | | | | | |
-| 07 | | | | | | | | |
-| 00 (closing) | | | | | | drift check | | |
+| Arm | FUT — feature under test (`key: baseline → arm`) | Runs | Fingerprint | Ingest (s) | Chunks | Primary Δ (MDE) | Verdict | Cost note | Artifacts |
+|---|---|---|---|---|---|---|---|---|---|
+| 00 | — *(reference)* | 3 RAGAS + 1 QA | `sha256:fc8ee1b5…` | 4959.9 | 6926 (1091 docs) | reference | — | ingest 82.7 min on a quiet host | `benchmarking-fm-00-20260905_{001802,024701,053600}.json`; QA `qa/fm-00-arm00-r1` |
+| 01 | `retrievers.hierarchical_rerank.enabled: true → false` | 2 RAGAS + 1 QA | `sha256:fc8ee1b5…` (= 00) | n/a (re-seed) | 6926 | `context_precision` −0.0253 / −0.0095 (MDE 0.063) | **no measurable difference on the primary metric** — the ADR 0003 "+19 % RAGAS" claim is NOT reproduced. Trade-off: `context_recall` −0.072 / −0.052, consistent in both runs and opposite in sign to the baseline's own replicate spread (+0.021 / +0.016) | **latency ~halved**: 48.2 s → 24.2 / 28.8 s mean, p90 100.9 → 36.8 / 58.3 s. Gold atoms higher (atom score 0.499 → 0.591, required-atom recall 0.630 → 0.737) but from ONE QA run per arm, so no noise floor and no significance claim | `benchmarking-fm-00-20260906_{054238,073529}.json`; QA `qa/fm-00-arm01-r1`; report `reports/arm-01.md` |
+| 02 | `chunking.strategy: sentence → character` **+** `retrievers.hierarchical_rerank.enabled: true → false` (two keys, pre-registered: character chunks carry no `parent_id`) | | | | | | | | |
+| 03 | `processing.categorization.enabled: true → false` | | | | | | | | |
+| 04 | `retrievers.stemming.enabled: false → true` | | | | | | | | |
+| 05a | `retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 3` | 2 RAGAS + 1 QA | `sha256:fc8ee1b5…` (= 00) | n/a (re-seed) | 6926 | `context_precision` −0.0141 / −0.0054 (MDE 0.0225 / 0.0214) | **held constant on the primary metric, but the arm is worse.** `context_recall` −0.0872 / −0.0611 REGRESSED in both runs, against a baseline replicate spread of the opposite sign (+0.021 / +0.016); source accuracy 0.877 → 0.792 on both runs (106 scored). `faithfulness` −0.0513 / −0.0548 straddles its MDE (inside on run 1, outside on run 2) — reported as the null on run 1, so no faithfulness claim. Judged on `context_precision` alone this arm reads as a wash; it is not | **no latency payoff**: 48.2 s → 55.1 / 45.8 s mean (p90 100.9 → 149.9 / 113.7), i.e. retrieving fewer documents did not buy speed. Gold atoms slightly down (atom score 0.499 → 0.482, required-atom recall 0.630 → 0.622) from ONE QA run per arm, so no noise floor and no significance claim | `benchmarking-fm-00-20260906_{112444,134950}.json`; QA `qa/fm-00-arm05a-r1`; report `reports/arm-05a.md` |
+| 05b | `retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 8` | | | | | | | | |
+| 06 | `processing.html_to_markdown.enabled: true → false` | | | | | | | | |
+| 07 | `chunking.strategy: sentence → markdown` | | | | | | | | |
+| 00 (closing) | — *(reference, drift check)* | | | | | | drift check | | |
 
 ## 10. Risks
 
@@ -551,6 +551,10 @@ own corpus. Using `fm-00` for the smoke would have forced runs 2-4 and a stale p
 | 2026-09-05 14:56 | Retrieval arms **aborted on arm 01 run 1** — Procedure E refusal, root-caused to the baked benchmark config (§13.2 #13). ~2.5 h of compute discarded; the completed artifact `benchmarking-fm-00-20260905_185530.json` is left in place unarchived as evidence. Chain relaunched at 23:55 after mounting `./configs` into the benchmark service |
 | 2026-09-05 12:00 | **σ checkpoint PASSED — N = 2 stands, no re-lock needed.** Measured σ (paired, 104 questions, by `compare_runs.py --noise-runs`): `context_precision` **0.0040**, `context_recall` **0.0109**, `answer_relevancy` **0.0161**, `faithfulness` **0.0209**. Every value is *below* the planning prior (0.016 / 0.021 / 0.025 / 0.027), so the pre-registered escalation rule — σ on the primary metric more than 50 % above prior — did not trigger. MDE on `context_precision` ≈ 0.016 (2·SE dominates 2·σ). All three replicates were mutually "not distinguishable", which is the result you want from replicates |
 | 2026-09-04 16:13 | Watcher armed: waits for `data-manager-dev` to go quiet, then runs the opening baseline (3 RAGAS runs + 1 QA) and **stops before arm 01** for the pre-registered σ checkpoint |
+| 2026-09-05 23:55 | Retrieval-arm chain relaunched (`retrieval_arms.sh`, PID 3057809) after the `./configs` bind-mount fix. Chain order: 01 → 05a → 05b, then restore the baseline config and **stop before the ingest arms** (02/03/04/06/07), which need fresh stacks and operator go-ahead |
+| 2026-09-06 04:47 | **Arm 01 complete** (FUT `hierarchical_rerank.enabled: true → false`). Primary metric shows no measurable difference; the ADR 0003 "+19 % RAGAS" claim is not reproduced. `context_recall` regressed in both runs; latency roughly halved. Report `reports/arm-01.md` |
+| 2026-09-06 11:20 | **Arm 05a complete** (FUT `num_documents_to_retrieve: 5 → 3`). Primary metric held constant; `context_recall` regressed in both runs and source accuracy fell 0.877 → 0.792, with **no latency payoff**. Report `reports/arm-05a.md`. Arm 05b (`5 → 8`) started immediately |
+| 2026-09-06 11:20 | **G8 anchor gate is in ALARM and has been since the baseline replicates.** The `easy_retrieve` anchor ("Which SLURM partition on FASRC Cannon sh…") fails `faithfulness` in baseline runs `024701` and `053600` and in arm 05a's runs alike. Because it predates every arm it does not invalidate an arm comparison, but it does mean the anchor is not doing its job as a guard. **Open item — diagnose before the final report**: decide whether the anchor question, its ground truth, or the faithfulness judge is at fault. Do NOT edit the question bank mid-campaign (G4) |
 
 ## Appendix A — how to re-derive the numbers
 
