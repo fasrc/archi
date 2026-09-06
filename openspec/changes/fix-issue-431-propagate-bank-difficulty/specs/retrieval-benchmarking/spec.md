@@ -2,7 +2,7 @@
 
 ### Requirement: A bank row's difficulty reaches the per-question result
 
-The benchmark harness SHALL copy a bank row's `difficulty` value verbatim onto that question's `single_question_results` entry, and SHALL write no `difficulty` key at all when the row carries none.
+The benchmark harness SHALL copy a bank row's `difficulty` value verbatim onto that question's `single_question_results` entry, SHALL write no `difficulty` key at all when the row carries none, and SHALL do so whether the question was scored or failed in isolation.
 
 The analysis the project asks for depends on it. Procedure D
 (`docs/docs/interpreting_benchmark_results.md:690`) instructs a reader to "Report the bank
@@ -49,3 +49,18 @@ not police `anchor_type` values either.
 The producer and the consumer sit in two files with no shared import; the only thing
 joining them is the spelling of one string. A rename on either side would leave the slice
 silently skipped again, which is the state this requirement exists to end.
+
+#### Scenario: A question that failed in isolation keeps the bank's slice fields
+
+- **WHEN** a bank row carrying `difficulty: "hard"` raises during answering or scoring and is recorded as a failure entry
+- **THEN** that failure entry carries `difficulty` with the value `"hard"`
+- **AND** it carries the row's `anchor_type` on the same terms
+- **AND** a paired comparison in which that question failed in one arm only counts it in no field's `excluded_mismatched`
+
+The isolation handler builds its entry from scratch, so it did not reach the copy on the
+success path. That is not a cosmetic gap. `Arm.has_metric`
+(`scripts/benchmarking/compare_runs.py:209`) is true when *any* row carries the field, so a
+single failed question in the treatment arm made `slice_block` read the baseline's `"hard"`
+against an absent value and count it in `excluded_mismatched` — a number whose documented
+meaning is that the bank re-labelled that question between the two runs. A harness failure
+reported as bank drift sends the reader to diff a bank that never changed.

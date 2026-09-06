@@ -1944,6 +1944,7 @@ class Benchmarker:
                     question=question,
                     reference_answer=reference_answer,
                     error=exc,
+                    question_item=question_item,
                 ),
                 "dataset_result": None,
                 "matches": None,
