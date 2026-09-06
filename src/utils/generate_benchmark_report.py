@@ -58,16 +58,21 @@ def load_benchmark_results(filepath):
 _INGEST_NOT_RECORDED = object()
 
 #: Sentinel for ``provenance["host"]``: the artifact predates host stamping.
-#: ``None`` means the deploy recorded no host -- either the deploy predates the
-#: field, or capture ran and the hostname was unreadable. The two are not
-#: distinguishable from the artifact, so the null text names both rather than
-#: asserting a lookup that may never have run.
+#: ``None`` means no host reached this artifact, which has THREE causes: the
+#: deploy predates the field, capture ran and the hostname was unreadable, or the
+#: benchmark could not read ``git_info.yaml`` at all -- ``add_metadata`` catches
+#: ``OSError`` on that read and carries on with no host
+#: (``src/bin/service_benchmark.py:449-460``), so a missing mount or a permissions
+#: fault lands here even though capture succeeded on the deploy host. None of the
+#: three are distinguishable from this field alone, so the null text names all
+#: three rather than asserting a lookup that may never have run, or a capture that
+#: may never have been read.
 _HOST_NOT_RECORDED = object()
 
 _MD_HOST_NOT_RECORDED = "*not recorded — this artifact predates host stamping*"
 _MD_HOST_NULL = (
     "*not available — this deploy recorded no host"
-    " (it predates the field, or capture failed)*"
+    " (it predates the field, capture failed, or the metadata could not be read)*"
 )
 
 _HTML_HOST_NOT_RECORDED = (
@@ -75,7 +80,7 @@ _HTML_HOST_NOT_RECORDED = (
 )
 _HTML_HOST_NULL = (
     "<em>not available &mdash; this deploy recorded no host"
-    " (it predates the field, or capture failed)</em>"
+    " (it predates the field, capture failed, or the metadata could not be read)</em>"
 )
 
 
@@ -135,8 +140,9 @@ def parse_benchmark_results(results, metadata):
         # collapse the first two into one wrong claim.
         "ingest_wall_seconds": result.get("ingest_wall_seconds", _INGEST_NOT_RECORDED),
         # Same three-state distinction for host: sentinel = the artifact
-        # predates the field, None = the deploy recorded no host (an older
-        # deploy, or a failed capture), dict = recorded host.
+        # predates the field, None = no host reached the artifact (an older
+        # deploy, a failed capture, or an unreadable `git_info.yaml`), dict =
+        # recorded host.
         "host": metadata.get("host", _HOST_NOT_RECORDED),
         "host_captured_at": metadata.get("host_captured_at"),
     }

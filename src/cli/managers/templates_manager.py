@@ -82,6 +82,17 @@ def collect_host_information() -> Optional[Dict[str, Optional[str]]]:
         hostname = socket.getfqdn()
     except Exception:
         return None
+    # Guarded on the VALUE too, not only on the lookup raising. `socket.getfqdn()`
+    # falls back to `gethostname()` and returns that name unchanged when nothing
+    # resolves, so a machine with no hostname set yields "" rather than an error.
+    # The spec makes an unreadable hostname a `None` *block*: recording a mapping
+    # whose hostname is blank is the "recorded host named None" it refuses, and a
+    # blank identity would suppress the mismatch evidence the field exists to give.
+    # Trimmed rather than refused when the name itself is real -- a stray newline
+    # must not make the artifact's host stop matching the same machine elsewhere.
+    hostname = hostname.strip() if isinstance(hostname, str) else ""
+    if not hostname:
+        return None
     cpu_model = None
     try:
         with open("/proc/cpuinfo") as f:

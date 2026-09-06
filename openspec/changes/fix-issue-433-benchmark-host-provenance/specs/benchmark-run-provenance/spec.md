@@ -19,6 +19,13 @@ hostname. An unreadable **hostname** gives `None` for the **whole block**, becau
 that names no machine identifies nothing and would otherwise create a fourth state that
 every consumer below would read as a recorded host named `None`.
 
+"Unreadable" is a property of the value, not only of the lookup. `socket.getfqdn()` falls
+back to `gethostname()` and returns that name unchanged when nothing resolves, so a machine
+with no hostname set yields `""` rather than raising. A blank or whitespace-only hostname
+therefore SHALL give `None` for the whole block on the same terms as a lookup that raised.
+A hostname that is real but surrounded by whitespace SHALL be recorded trimmed rather than
+refused, so the recorded name still matches the same machine captured elsewhere.
+
 The block SHALL carry the hostname and the processor model only. No secret and no user path
 belongs in an artifact that is committed to the repository and read months later.
 
@@ -40,6 +47,16 @@ belongs in an artifact that is committed to the repository and read months later
 - **THEN** `get_git_information()` returns normally and raises nothing
 - **AND** the `host` entry is `None` rather than a mapping whose `hostname` is `None`
 
+#### Scenario: A blank hostname records no host at all
+
+- **WHEN** the hostname lookup returns an empty or whitespace-only value instead of raising
+- **THEN** the `host` entry is `None` rather than a mapping whose `hostname` is blank
+
+#### Scenario: A padded hostname is recorded trimmed
+
+- **WHEN** the hostname lookup returns a real name surrounded by whitespace
+- **THEN** the `host` entry names that hostname with the surrounding whitespace removed
+
 ### Requirement: Every artifact's metadata carries the host exactly once
 
 The benchmark harness SHALL write a `host` key into every artifact's `metadata`, holding either the recorded host object or `null`, and SHALL leave no second copy of that block inside `metadata.git_info`.
@@ -51,9 +68,18 @@ built. A lift performed afterwards would still read as correct while depending o
 order.
 
 The three states are distinct facts and SHALL stay distinct. The key is **absent** when the
-artifact predates this field. The value is **`null`** when the deploy predates the field or
-capture failed. The value is an **object** when the host is known. The harness SHALL never
-write an empty string and SHALL never write a placeholder such as `"unknown"`.
+artifact predates this field. The value is **`null`** when the deploy predates the field,
+capture failed, or the harness could not read `git_info.yaml` at all. The value is an
+**object** when the host is known. The harness SHALL never write an empty string and SHALL
+never write a placeholder such as `"unknown"`.
+
+That third cause is not a variant of the second. `add_metadata` catches `OSError` on the
+`git_info.yaml` read and carries on with no host, so a missing mount or a permissions fault
+produces `null` even though capture succeeded on the deploy host. Since the field alone
+cannot separate the three, any prose the reports render for `null` SHALL name all three
+causes. Naming a subset states a positive, false claim about the ones it omits, and would
+send an operator to diagnose a deploy age when the real fault is a broken provenance
+channel.
 
 The harness SHALL also write a `host_captured_at` string beside `host`, stating that the
 host was captured at deploy time and that a container cannot move machines. Issue #433 asks
@@ -110,6 +136,12 @@ already carries its own caveat (`src/utils/generate_benchmark_report.py:262` and
 - **WHEN** an artifact's `metadata` carries no `host` key
 - **THEN** each report renders its absent-key text
 - **AND** that text differs from the text each report renders for a `null` host
+
+#### Scenario: The null host text names every cause, including unreadable metadata
+
+- **WHEN** an artifact's `metadata.host` is `null` and each report renders its null text
+- **THEN** that text names the older-deploy cause, the failed-capture cause, and the unreadable-metadata cause
+- **AND** it does not claim that a hostname lookup failed
 
 #### Scenario: A host with no processor model renders no empty parenthesis
 

@@ -667,3 +667,23 @@ def test_no_blank_line_is_emitted_when_there_is_no_settings_table():
     lines = md.splitlines()
     host_index = next(i for i, line in enumerate(lines) if line.startswith("- Host:"))
     assert lines[host_index - 1].startswith("- ")
+
+
+def test_a_null_host_also_names_the_unreadable_metadata_cause():
+    """`null` has a THIRD cause the two-cause text still mis-diagnoses.
+
+    `ResultHandler.add_metadata` catches `OSError` reading `git_info.yaml` and
+    carries on with `additional_info = None`, so `metadata["host"]` is `null`
+    when the benchmark container could not read that file at all -- a missing
+    mount or a permissions fault. Capture may have succeeded perfectly on the
+    deploy host. Telling that operator the deploy "predates the field" points
+    them at the wrong thing and hides a broken provenance channel.
+    """
+    md_null = _provenance_md(host=None)
+
+    assert "predates the field" in md_null
+    assert "capture failed" in md_null
+    assert "metadata could not be read" in md_null
+    # Still not the absent-key text, and still distinct from it.
+    assert "predates host stamping" not in md_null
+    assert md_null != _provenance_md()

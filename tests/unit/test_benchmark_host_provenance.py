@@ -132,3 +132,49 @@ def test_cpu_model_is_none_when_platform_processor_itself_raises(monkeypatch):
     assert result is not None
     assert result["hostname"]
     assert result["cpu_model"] is None
+
+
+# --- an empty hostname is not a recorded host (#433 review round 2) ---------
+
+
+@pytest.mark.parametrize(
+    "returned",
+    ["", "   ", "\t\n"],
+    ids=["empty", "spaces", "whitespace"],
+)
+def test_a_blank_hostname_records_no_host_at_all(monkeypatch, returned):
+    """The spec's guard is on the VALUE, not only on the lookup raising.
+
+    > An unreadable hostname gives `None` for the whole block
+    > ... The harness SHALL never write an empty string
+
+    `socket.getfqdn()` returns a value rather than raising when the machine has
+    no hostname set: it falls back to `gethostname()`, and CPython's
+    `getfqdn` returns that name unchanged when no address resolves. So a blank
+    name reaches the block as data and every consumer downstream reads it as a
+    recorded host whose identity happens to be empty -- which is exactly the
+    "recorded host named None" the spec refuses. `cpu_model` already gets a
+    falsy check; the hostname did not.
+    """
+    monkeypatch.setattr(
+        "src.cli.managers.templates_manager.socket.getfqdn", lambda: returned
+    )
+
+    assert collect_host_information() is None
+
+
+def test_a_hostname_with_surrounding_whitespace_is_recorded_trimmed(monkeypatch):
+    """A real name padded by a stray newline is still a real name.
+
+    Refusing it would discard usable provenance; recording it verbatim would
+    make the artifact's host stop string-matching the same machine captured
+    elsewhere.
+    """
+    monkeypatch.setattr(
+        "src.cli.managers.templates_manager.socket.getfqdn", lambda: "  node01.fasrc  "
+    )
+
+    result = collect_host_information()
+
+    assert result is not None
+    assert result["hostname"] == "node01.fasrc"

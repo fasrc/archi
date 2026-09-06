@@ -324,3 +324,19 @@ def test_an_html_null_host_names_both_causes_rather_than_asserting_a_lookup_fail
     assert "predates the field" in html_null
     assert "capture failed" in html_null
     assert "predates host stamping" not in html_null
+
+
+def test_an_html_null_host_also_names_the_unreadable_metadata_cause():
+    """HTML mirror: `null` also covers an unreadable `git_info.yaml`."""
+    html_null = format_version_html(
+        {
+            "code_version": {"digest": "code-digest-1"},
+            "config_version": {},
+            "host": None,
+        }
+    )
+
+    assert "predates the field" in html_null
+    assert "capture failed" in html_null
+    assert "metadata could not be read" in html_null
+    assert "predates host stamping" not in html_null
