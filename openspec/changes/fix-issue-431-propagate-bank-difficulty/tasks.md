@@ -42,7 +42,7 @@ Four standing notes for every task:
 
 ## 2. Guard the producer/consumer key
 
-- [ ] 2.1 `model: sonnet` — Seam guard, one commit. Add a test asserting the key the
+- [x] 2.1 `model: sonnet` — Seam guard, one commit. Add a test asserting the key the
       harness writes is one of the paired-comparison tool's slice fields: run a
       `difficulty`-bearing item through `_answer_and_score_question`, then reach
       `SLICE_FIELDS` through the plain package import `tests/unit/test_compare_runs.py:35`
