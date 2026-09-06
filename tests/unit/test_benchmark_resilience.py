@@ -649,3 +649,24 @@ def test_pair_ab_results_still_ties_on_nan_both_sides(monkeypatch):
     paired = ResultHandler.pair_ab_results(0, 1)
 
     assert paired[0].winner_by_metric == {"faithfulness": "tie"}
+
+
+# --- _answer_and_score_question: bank `difficulty` propagation (#431) -------
+
+
+def test_answer_and_score_propagates_bank_difficulty():
+    item = {
+        "user_input": "how do I do X?",
+        "reference": "ref",
+        "sources": [],
+        "difficulty": "hard",
+    }
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(item, 1, _MODES)
+    assert bundle["q_results"]["difficulty"] == "hard"
+
+
+def test_answer_and_score_omits_difficulty_when_bank_row_lacks_it():
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(_QITEM, 1, _MODES)
+    assert "difficulty" not in bundle["q_results"]
