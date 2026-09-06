@@ -377,7 +377,7 @@ Human record (filled as arms complete; one row per arm, baseline first):
 | Arm | Runs | Fingerprint | Ingest (s) | Chunks | Primary Δ (MDE) | Verdict | Cost note | Artifacts |
 |---|---|---|---|---|---|---|---|---|
 | 00 | 3 RAGAS + 1 QA | `sha256:fc8ee1b5…` | 4959.9 | 6926 (1091 docs) | reference | — | ingest 82.7 min on a quiet host | `benchmarking-fm-00-20260905_{001802,024701,053600}.json`; QA `qa/fm-00-arm00-r1` |
-| 01 | | | | | | | | |
+| 01 | 2 RAGAS + 1 QA | `sha256:fc8ee1b5…` (= 00) | n/a (re-seed) | 6926 | `context_precision` −0.0253 / −0.0095 (MDE 0.063) | **no measurable difference on the primary metric** — the ADR 0003 "+19 % RAGAS" claim is NOT reproduced. Trade-off: `context_recall` −0.072 / −0.052, consistent in both runs and opposite in sign to the baseline's own replicate spread (+0.021 / +0.016) | **latency ~halved**: 48.2 s → 24.2 / 28.8 s mean, p90 100.9 → 36.8 / 58.3 s. Gold atoms higher (atom score 0.499 → 0.591, required-atom recall 0.630 → 0.737) but from ONE QA run per arm, so no noise floor and no significance claim | `benchmarking-fm-00-20260906_{054238,073529}.json`; QA `qa/fm-00-arm01-r1`; report `reports/arm-01.md` |
 | 02 | | | | | | | | |
 | 03 | | | | | | | | |
 | 04 | | | | | | | | |
