@@ -44,6 +44,12 @@ templates `evaluate` actually builds. Rejected for three reasons:
    happens **before** the teardown, which is the whole point, and it is the breadth `create`
    already carries.
 
+"Whole declared service set" here means the set `service_templates()` returns — it does not
+include the two templates `NON_SERVICE_TEMPLATES` excludes for building on third-party
+images. `docker.io/pgvector/pgvector:pg17` is therefore still unprobed even though every
+`evaluate` plan enables postgres. That gap is pre-existing and identical on `create`; it is
+tracked as `fasrc/archi#444`, not closed here.
+
 ### D2 — Discard the return value, and pass `dry=False` literally
 
 `create` binds `base_image_outcomes` only to feed `unverified_notes(...)` into
@@ -61,20 +67,26 @@ precisely so `cli_main` stays a thin call site.
 This is the risk the issue body does not name, so it was measured rather than argued.
 
 Five tests invoke `cli_main.evaluate` (`test_cli_create_dev_smoke.py:1091`, `:1152`,
-`:1213`, `:1259`, `:1312`). **None of them patches the container probe.** The new call sits
-above the teardown, so any test that reaches `:890` now constructs a real `ContainerProbe`.
+`:1213`, `:1259`, `:1312`). None of them patches the probe *itself* — but the file's
+**autouse** `satisfied_base_images` fixture (`test_cli_create_dev_smoke.py:23-53`) patches
+`base_image_preflight.ContainerProbe` for every test in the file, reporting an available
+runtime and locally present images. The new call sits above the teardown, so any test that
+reaches `:890` constructs that fake probe, not a real `ContainerProbe`.
 
 Measured on 2026-09-05 with the change applied: all five pass, in 0.83s. The full unit suite
 is green — 3897 passed, 2 skipped, 1 xfailed. Two of the five reach the new call; the other
 three refuse earlier, at secret validation or config validation, and never get there.
 
-Why the reaching tests stay green: `ContainerProbe` is constructed but `run_preflight`
-treats an unavailable runtime as *unverified*, not *refused*, and only a refused outcome
-raises. So a host with no container daemon does not turn these tests red.
+Why the reaching tests stay green: **the autouse fixture, and only the autouse fixture.**
+`decide_availability` on a real create (`dry=False`) returns `REFUSED`, not `UNVERIFIED`,
+when the runtime is unavailable (`base_image_preflight.py:589-594`), and a refused outcome
+raises. A host with no container daemon would therefore turn these tests red were the
+fixture not there. The tolerated-unavailable-runtime path is a *dry run* only (design D7).
 
-**What would change this.** If a future edit makes an unavailable runtime a refusal, these
-tests go red and the fix is to give each of them `_patch_probe(monkeypatch)`, not to move
-the call below the teardown. Moving it back is the defect.
+**What would change this.** Removing or narrowing `satisfied_base_images` turns these tests
+red on any host without a container daemon, and the fix is to give each test its own probe
+(`_patch_probe(monkeypatch)`), not to move the call below the teardown. Moving it back is
+the defect.
 
 ### D4 — Both new tests and the fix are one task
 

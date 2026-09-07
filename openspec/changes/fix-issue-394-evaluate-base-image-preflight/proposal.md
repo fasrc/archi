@@ -90,9 +90,10 @@ None.
   new statement in `src/` reports covered to `diff-cover` before the new tests are counted.
 - **The new call runs in every existing `evaluate` test.** All five invoke
   `cli_main.evaluate` (`test_cli_create_dev_smoke.py:1091`, `:1152`, `:1213`, `:1259`,
-  `:1312`) and none patches the container probe. Measured: all five still pass. The real
-  `ContainerProbe` is constructed but the run refuses or completes as before. Design D3
-  records why this is safe and what would change it.
+  `:1312`). Measured: all five still pass — because the file's autouse
+  `satisfied_base_images` fixture (`:23-53`) already patches
+  `base_image_preflight.ContainerProbe` to report a satisfied host. No real probe is
+  constructed. Design D3 records why this is safe and what would change it.
 - **Behaviour change for operators.** `archi evaluate --force` can now refuse before the
   teardown on a base image or a service template that this run would not build. That
   refusal is the point of the change and is the same breadth `create` already carries.

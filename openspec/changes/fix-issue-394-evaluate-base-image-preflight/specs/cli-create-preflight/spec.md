@@ -2,7 +2,7 @@
 
 ### Requirement: The benchmarking runtime is base-image safe before it is torn down
 
-`archi evaluate --force` SHALL establish base-image safety over its whole declared service set before it performs any destructive action against an existing benchmarking runtime.
+`archi evaluate --force` SHALL establish that every `a2rchi-*-base` image its declared service templates build FROM is obtainable, before it performs any destructive action against an existing benchmarking runtime.
 
 The guarantee `archi create` carries (`cli_main.py:282` above `cli_main.py:294`) did not
 extend to `evaluate`: the module had two teardown call sites and one `enforce_base_images`
@@ -10,14 +10,24 @@ call site, and nothing between the compose plan (`cli_main.py:890`) and the tear
 (`cli_main.py:900`) could refuse the run. A benchmarking run could therefore destroy a
 working runtime and only then fail on a base image the preflight would have refused.
 
-The scope is the whole declared service set, using the same call shape as `create`. The
-existing two-image rule already tracks what `evaluate` builds — `base-compose.yaml:675`
-selects the GPU benchmarking template when `gpu_ids` is truthy, and
-`required_base_image_names()` returns the pytorch base under exactly that condition — so no
-narrowing is needed to reach the right images. A refusal caused by a template this run would
-not build is acceptable and deliberate: it happens before the teardown, and it is the
-breadth `create` already carries. Narrowing `_refuse_uncoverable_templates` would re-open
-the fail-open that `fasrc/archi#381` closed.
+The scope is the declared service set as `enforce_base_images` already defines it, using the
+same call shape as `create`. The existing two-image rule already tracks what `evaluate`
+builds — `base-compose.yaml:675` selects the GPU benchmarking template when `gpu_ids` is
+truthy, and `required_base_image_names()` returns the pytorch base under exactly that
+condition — so no narrowing is needed to reach the right a2rchi images. A refusal caused by
+a template this run would not build is acceptable and deliberate: it happens before the
+teardown, and it is the breadth `create` already carries. Narrowing
+`_refuse_uncoverable_templates` would re-open the fail-open that `fasrc/archi#381` closed.
+
+**What this requirement deliberately does not cover.** `NON_SERVICE_TEMPLATES`
+(`base_image_preflight.py:43-51`) excludes `Dockerfile-postgres` and `Dockerfile-grafana`
+because they build on third-party images, so `docker.io/pgvector/pgvector:pg17` is never
+probed even though every `evaluate` plan enables postgres (`cli_main.py:855`). A host that
+cannot obtain that image therefore still reaches the teardown. That gap is pre-existing,
+identical on the `create` path, and closing it requires an availability-only probe class —
+`run_preflight` floor-checks every AVAILABLE reference (`base_image_preflight.py:935-938`),
+which a non-Python base cannot satisfy. It is tracked as `fasrc/archi#444` and is out of
+scope here; this requirement claims only the a2rchi bases.
 
 The operator-visible contract is that an `archi evaluate --force` which was always going to
 fail on a base image leaves the existing benchmarking runtime exactly as it found it.

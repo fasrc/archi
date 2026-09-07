@@ -37,6 +37,36 @@ PLACEABLE_BASES = frozenset({PYTHON_BASE, PYTORCH_BASE})
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "cli" / "templates" / "dockerfiles"
 
+_TEMPLATE_SUBPATH = ("src", "cli", "templates", "dockerfiles")
+
+
+def build_template_dir() -> Path:
+    """The template directory whose Dockerfiles this deployment will actually build.
+
+    ``TEMPLATE_DIR`` is derived from *this module's* location, which under a non-editable
+    ``pip install .`` is a site-packages copy. That is not the tree compose builds from:
+    ``base-compose.yaml`` names ``archi_code/cli/templates/dockerfiles/...``, and
+    ``archi_code`` is filled by ``TemplateManager.copy_source_code()`` from the checkout
+    ``setup.py`` recorded at install time (``templates_manager.py:1171-1173``). When the two
+    trees diverge -- an operator edits the checkout after installing -- probing the installed
+    copy establishes nothing about the build, and ``--force`` would remove a working
+    deployment on the strength of it (fasrc/archi#436 review).
+
+    Falls back to ``TEMPLATE_DIR`` whenever the recorded checkout cannot be read: an editable
+    install has no ``_repository_info`` to import, and a recorded checkout the operator has
+    since deleted must not be returned at all -- ``service_templates()`` globs the directory,
+    so a missing one yields an empty service set, which is the silent pass the governing
+    invariant forbids.
+    """
+    from src.cli.managers import source_version
+
+    try:
+        candidate = source_version._recorded_repo_root().joinpath(*_TEMPLATE_SUBPATH)
+    except Exception:
+        return TEMPLATE_DIR
+    return candidate if candidate.is_dir() else TEMPLATE_DIR
+
+
 # Templates excluded from the service set. Keys are relative paths from the template
 # directory root. Each value is the reason the file is not a service template, so a
 # reader can tell a base-defining template from a third-party-based one without opening it.
@@ -333,7 +363,7 @@ def service_templates(template_dir: Optional[Path] = None) -> List[Path]:
     Service templates build ``FROM`` an ``a2rchi-*-base`` image. The six excluded by
     ``NON_SERVICE_TEMPLATES`` define base images themselves or build on third-party images.
     """
-    directory = template_dir or TEMPLATE_DIR
+    directory = template_dir or build_template_dir()
     return sorted(
         p
         for p in directory.rglob("Dockerfile*")
@@ -347,7 +377,7 @@ def stale_template_exclusions(template_dir: Optional[Path] = None) -> List[str]:
     A non-empty return means the exclusion list names a template that no longer exists,
     so it excludes nothing and silently over-reports the service-template count.
     """
-    directory = template_dir or TEMPLATE_DIR
+    directory = template_dir or build_template_dir()
     return [name for name in NON_SERVICE_TEMPLATES if not (directory / name).exists()]
 
 
@@ -364,7 +394,7 @@ def nested_service_templates(template_dir: Optional[Path] = None) -> List[Path]:
     base deploys correctly. It is a repo-level guard, so that making the set recursive and
     making the rewriter recursive have to land together.
     """
-    directory = template_dir or TEMPLATE_DIR
+    directory = template_dir or build_template_dir()
     return [p for p in service_templates(directory) if p.parent != directory]
 
 
@@ -1020,7 +1050,8 @@ def enforce_base_images(
         raise BaseImagePreflightError(
             "Base image check failed:\n"
             f"  This deployment requires {', '.join(unresolved)}, but no service template "
-            f"under {template_dir or TEMPLATE_DIR} declares a FROM line for it.\n"
+            f"under {template_dir or build_template_dir()} declares a FROM line "
+            f"for it.\n"
             f"  The preflight cannot verify an image it cannot name, and will not proceed "
             f"as though there were nothing to check."
         )
