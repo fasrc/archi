@@ -1375,6 +1375,11 @@ def slice_block(
     baseline's label alone would then file the treatment's ``hard`` row under
     ``easy``. Disagreeing questions are dropped from every slice of that field
     and counted, so the loss is visible rather than silent.
+
+    A question any arm did not run to completion (non-"ok" ``status``) is
+    dropped from the field's slices and is **not** counted as a relabelling —
+    its own ``status`` is the evidence. Dropping it moves no slice number
+    because ``paired_deltas`` already requires both arms scorable.
     """
     block: List[dict] = []
     for field in SLICE_FIELDS:
@@ -1385,6 +1390,8 @@ def slice_block(
         for question in questions:
             value = baseline.rows.get(question, {}).get(field)
             if not (isinstance(value, str) and value):
+                continue
+            if not all(arm.has_clean_row(question) for arm in arms):
                 continue
             if any(arm.rows.get(question, {}).get(field) != value for arm in arms):
                 mismatched += 1

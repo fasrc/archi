@@ -1927,3 +1927,86 @@ def test_has_clean_row_is_the_status_half_of_is_scorable():
     assert arm.is_scorable("failed_q", "faithfulness") is False
     assert arm.is_scorable("degraded_q", "faithfulness") is False
     assert arm.is_scorable("absent_q", "faithfulness") is False
+
+
+def test_a_question_that_failed_in_one_arm_is_not_a_bank_relabelling(_artifact):
+    # A failed row has no bank fields, so None != "hard" was counting as a
+    # relabelling.  After the fix, has_clean_row drops the question before the
+    # field-mismatch check, leaving excluded_mismatched at 0.
+    base_rows = [
+        _row("ok1", anchor_type="reasoning", difficulty="easy", faithfulness=0.5),
+        _row("ok2", anchor_type="reasoning", difficulty="easy", faithfulness=0.5),
+        _row("bad", anchor_type="reasoning", difficulty="hard", faithfulness=0.5),
+    ]
+    treat_rows = [
+        _row("ok1", anchor_type="reasoning", difficulty="easy", faithfulness=0.6),
+        _row("ok2", anchor_type="reasoning", difficulty="easy", faithfulness=0.6),
+        _row("bad", status="failed"),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+    questions = ["ok1", "ok2", "bad"]
+
+    block = list(cr.slice_block(arms[0], arms, questions, {}))
+
+    for row in block:
+        assert (
+            row["excluded_mismatched"] == 0
+        ), f"field={row['field']!r} got excluded_mismatched={row['excluded_mismatched']}"
+    anchor_rows = [r for r in block if r["field"] == "anchor_type"]
+    difficulty_rows = [r for r in block if r["field"] == "difficulty"]
+    assert all(r["excluded_mismatched"] == 0 for r in anchor_rows)
+    assert all(r["excluded_mismatched"] == 0 for r in difficulty_rows)
+    easy_rows = [
+        r for r in block if r["field"] == "difficulty" and r["value"] == "easy"
+    ]
+    assert len(easy_rows) > 0
+    assert easy_rows[0]["n"] == 2
+
+
+def test_a_degraded_row_is_not_a_bank_relabelling(_artifact):
+    # Same as the failed-row case but with status="degraded"; has_clean_row
+    # treats both non-"ok" statuses identically.
+    base_rows = [
+        _row("ok1", anchor_type="reasoning", difficulty="easy", faithfulness=0.5),
+        _row("ok2", anchor_type="reasoning", difficulty="easy", faithfulness=0.5),
+        _row("bad", anchor_type="reasoning", difficulty="hard", faithfulness=0.5),
+    ]
+    treat_rows = [
+        _row("ok1", anchor_type="reasoning", difficulty="easy", faithfulness=0.6),
+        _row("ok2", anchor_type="reasoning", difficulty="easy", faithfulness=0.6),
+        _row("bad", status="degraded"),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+    questions = ["ok1", "ok2", "bad"]
+
+    block = list(cr.slice_block(arms[0], arms, questions, {}))
+
+    anchor_rows = [r for r in block if r["field"] == "anchor_type"]
+    difficulty_rows = [r for r in block if r["field"] == "difficulty"]
+    assert all(r["excluded_mismatched"] == 0 for r in anchor_rows)
+    assert all(r["excluded_mismatched"] == 0 for r in difficulty_rows)
+
+
+def test_a_relabelled_question_is_still_counted_when_both_arms_are_clean(_artifact):
+    # Both arms ran every question to completion.  A genuine bank relabelling
+    # (different field values in the two arms) must still be detected and counted.
+    # This test must pass both before and after the #441 fix.
+    base_rows = [
+        _row("agreed", difficulty="easy", faithfulness=0.5),
+        _row("relabelled", difficulty="easy", faithfulness=0.5),
+    ]
+    treat_rows = [
+        _row("agreed", difficulty="easy", faithfulness=0.7),
+        _row("relabelled", difficulty="hard", faithfulness=0.9),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["agreed", "relabelled"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert [row["value"] for row in rows] == ["easy"]
+    assert rows[0]["excluded_mismatched"] == 1
+    assert rows[0]["n"] == 1

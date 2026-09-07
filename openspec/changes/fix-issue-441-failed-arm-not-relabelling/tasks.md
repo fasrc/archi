@@ -65,7 +65,7 @@ Standing notes for every task:
       `python -m pytest tests/unit/test_compare_runs.py tests/unit/test_benchmark_resilience.py -q`
       and confirm 118 + your new tests pass. Gate green; commit.
 
-- [ ] 1.2 Skip an unclean question in `slice_block`'s membership loop, and document the rule.
+- [x] 1.2 Skip an unclean question in `slice_block`'s membership loop, and document the rule.
       RED first: append three tests after the 1.1 tests, each building arms with the
       `_artifact` fixture and calling `cr.slice_block(arms[0], arms, questions, {})` — read
       `test_a_slice_drops_questions_whose_field_value_disagrees_between_arms`
