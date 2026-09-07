@@ -20,6 +20,23 @@ def _require_bench_out():
         pytest.skip("bench_out directory absent")
 
 
+def _require_nonempty(found, directory, what):
+    """Refuse to report green on a check that examined nothing.
+
+    ``_require_bench_out`` guards the directory's existence; this guards its
+    *contents*. A present-but-empty ``bench_out/`` makes the checks below pass
+    over zero files, and the spec requires them to run "over every artifact
+    committed under ``bench_out/``" -- which enforcing nothing satisfies
+    vacuously. The value of this change is recurrence prevention, so a guard
+    that guarded nothing has to say so.
+    """
+    assert found, (
+        f"examined zero {what} under {directory}: the checks here would report "
+        f"green having verified nothing. Either the committed artifacts are "
+        f"missing, or the glob no longer matches them."
+    )
+
+
 def _raise_on_constant(val):
     raise ValueError(f"non-JSON constant: {val!r}")
 
@@ -68,6 +85,7 @@ def bench_out_artifacts(bench_out_scan):
 
 
 def test_all_artifacts_are_strict_json(bench_out_artifacts):
+    _require_nonempty(bench_out_artifacts, _BENCH_OUT_DIR, "artifacts")
     bad = []
     for path, text, _ in bench_out_artifacts:
         try:
@@ -83,16 +101,20 @@ def test_reports_contain_no_nan():
     _require_bench_out()
     patterns = ["*_report.md", "*_report.html"]
     bad = []
+    reports = []
     nan_re = re.compile(r"\bnan\b")
     for pattern in patterns:
         for path in sorted(_BENCH_OUT_DIR.glob(pattern)):
+            reports.append(path)
             text = path.read_text(errors="replace")
             if nan_re.search(text):
                 bad.append(path.name)
+    _require_nonempty(reports, _BENCH_OUT_DIR, "rendered reports")
     assert not bad, f"{len(bad)} report(s) contain \\bnan\\b: {bad}"
 
 
 def test_scored_strings_match_finite_counts(bench_out_artifacts):
+    _require_nonempty(bench_out_artifacts, _BENCH_OUT_DIR, "artifacts")
     bad = []
     for path, _, data in bench_out_artifacts:
         for arm in data["benchmarking_results"]:
@@ -169,3 +191,38 @@ def test_a_json_file_that_will_not_even_decode_is_reported_not_raised(tmp_path):
 
     assert [path.name for path, _ in unparseable] == ["binary.json"]
     assert [path.name for path, _, _ in artifacts] == ["artifact.json"]
+
+
+def test_an_empty_set_is_a_false_green_not_a_clean_one(tmp_path):
+    """A check that examined nothing has not passed, and must not report green.
+
+    `_require_bench_out` guards only the directory's *existence*, and its own
+    docstring names the hazard it leaves open: "glob() on a missing directory
+    yields nothing, so those checks would pass over zero files and report a
+    false green." A present-but-empty `bench_out/` reaches exactly that state --
+    `test_all_artifacts_are_strict_json`, `test_scored_strings_match_finite_counts`
+    and `test_reports_contain_no_nan` all pass having examined zero files.
+
+    The spec is explicit that this is not enough: the regression test asserts
+    "over **every** artifact committed under `bench_out/`". Enforcing nothing
+    satisfies that vacuously, and this change's whole value is recurrence
+    prevention, so the guard has to say when it guarded nothing.
+    """
+    with pytest.raises(AssertionError) as excinfo:
+        _require_nonempty([], tmp_path, "artifacts")
+
+    assert "zero" in str(excinfo.value), "the failure must say it examined nothing"
+    assert str(tmp_path) in str(
+        excinfo.value
+    ), "and must name the directory it found empty"
+
+    # A non-empty set is the normal case and must pass through untouched.
+    _require_nonempty(["something"], tmp_path, "artifacts")
+
+
+def test_the_committed_directory_is_not_empty(bench_out_artifacts):
+    """The live assertion the helper above exists to make.
+
+    Measured 2026-09-07: 18 `bench_out/*.json` files, all 18 of them artifacts.
+    """
+    _require_nonempty(bench_out_artifacts, _BENCH_OUT_DIR, "artifacts")

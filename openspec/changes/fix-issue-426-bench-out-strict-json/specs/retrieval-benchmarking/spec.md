@@ -61,3 +61,15 @@ a stale report the more misleading of the two.
 The migration alone is a one-time byte edit. Nothing would stop an artifact committed from an older
 harness, or a hand-corrected denominator, from reintroducing the defect — and nothing in the
 repository would report it, because every loader here reads the broken form without complaint.
+
+#### Scenario: A check that examined nothing does not report green
+
+- **WHEN** the unit-test suite runs against a `bench_out/` directory that exists but holds no
+  artifact, or holds no rendered report
+- **THEN** the strict-parse check, the denominator check and the report check each fail, naming
+  the directory they found empty
+- **AND** none of them reports green having verified zero files
+
+"Over every artifact committed" is satisfied vacuously by enforcing nothing, so an empty set has
+to be a failure rather than a pass. Skipping on the directory's *absence* does not cover this: a
+present-but-empty directory reaches the checks, and `glob()` then yields nothing.
