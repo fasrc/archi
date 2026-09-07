@@ -35,6 +35,12 @@ PYTORCH_BASE = "a2rchi-pytorch-base"
 # `test_every_placeable_base_is_reachable_from_the_two_image_rule`.
 PLACEABLE_BASES = frozenset({PYTHON_BASE, PYTORCH_BASE})
 
+# The *installed* template location, and only that. It is NOT the directory this
+# module reads -- that is `build_template_dir()`, which prefers the checkout the
+# build ships from and falls back here. Monkeypatching this constant alone does
+# not redirect the preflight wherever `_repository_info` exists (CI, and any real
+# install); patch `build_template_dir` instead. Pinned by
+# `test_build_template_dir_outranks_a_patched_template_dir`.
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "cli" / "templates" / "dockerfiles"
 
 _TEMPLATE_SUBPATH = ("src", "cli", "templates", "dockerfiles")

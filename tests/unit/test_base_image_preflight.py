@@ -2770,3 +2770,39 @@ def test_a_recorded_checkout_whose_template_dir_is_a_file_refuses(
 
     with pytest.raises(preflight.BaseImagePreflightError):
         preflight.build_template_dir()
+
+
+def test_build_template_dir_outranks_a_patched_template_dir(tmp_path, monkeypatch):
+    """`build_template_dir()` is the seam, and `TEMPLATE_DIR` alone is not.
+
+    This precedence is deliberate -- the recorded checkout is the tree the build
+    ships from -- but it is invisible, and it bit exactly once: two ordering
+    tests in `test_cli_create_dev_smoke.py` patched `TEMPLATE_DIR` and passed in
+    a bare worktree (no `_repository_info`, so the fallback returned the patched
+    constant) while failing in CI, where `pip install .` writes
+    `_repository_info` and the recorded checkout wins. They did not merely fail
+    there; the refusal never fired at all, so the tests were vacuous.
+
+    Pinning the precedence here means a future reader patching the constant
+    finds this test instead of an hour of local-versus-CI divergence.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    dockerfiles = checkout.joinpath("src", "cli", "templates", "dockerfiles")
+    (dockerfiles / "Dockerfile-from-the-checkout").write_text(_PINNED_FROM)
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    ignored = tmp_path / "ignored"
+    ignored.mkdir()
+    (ignored / "Dockerfile-from-the-patched-constant").write_text(_PINNED_FROM)
+    monkeypatch.setattr(preflight, "TEMPLATE_DIR", ignored)
+
+    assert [p.name for p in preflight.service_templates()] == [
+        "Dockerfile-from-the-checkout"
+    ], "the recorded checkout must win; patch build_template_dir to override it"
+
+    monkeypatch.setattr(preflight, "build_template_dir", lambda: ignored)
+    assert [p.name for p in preflight.service_templates()] == [
+        "Dockerfile-from-the-patched-constant"
+    ], "patching the resolver is the supported override"

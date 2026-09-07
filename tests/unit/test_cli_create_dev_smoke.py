@@ -1920,7 +1920,14 @@ def test_force_create_with_an_uncoverable_service_template_keeps_existing_deploy
         "@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"
     )
     (templates / "Dockerfile-probe").write_text("FROM docker.io/library/python:3.11\n")
-    monkeypatch.setattr(base_image_preflight, "TEMPLATE_DIR", templates)
+    # Patch the *resolver*, not TEMPLATE_DIR. TEMPLATE_DIR is only the installed
+    # location; the directory the preflight actually reads is
+    # build_template_dir(), which prefers the checkout the build ships from
+    # (fasrc/archi#436 review). Patching the constant alone is silently ignored
+    # wherever `_repository_info` exists -- i.e. in CI and in any real install,
+    # but not in a bare worktree -- which made this test pass locally and both
+    # vacuous and red in CI.
+    monkeypatch.setattr(base_image_preflight, "build_template_dir", lambda: templates)
 
     existing = _existing_deployment(archi_home)
     teardowns = _record_teardowns(monkeypatch)
@@ -2252,7 +2259,14 @@ def test_force_evaluate_with_an_uncoverable_service_template_keeps_existing_depl
         "@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"
     )
     (templates / "Dockerfile-probe").write_text("FROM docker.io/library/python:3.11\n")
-    monkeypatch.setattr(base_image_preflight, "TEMPLATE_DIR", templates)
+    # Patch the *resolver*, not TEMPLATE_DIR. TEMPLATE_DIR is only the installed
+    # location; the directory the preflight actually reads is
+    # build_template_dir(), which prefers the checkout the build ships from
+    # (fasrc/archi#436 review). Patching the constant alone is silently ignored
+    # wherever `_repository_info` exists -- i.e. in CI and in any real install,
+    # but not in a bare worktree -- which made this test pass locally and both
+    # vacuous and red in CI.
+    monkeypatch.setattr(base_image_preflight, "build_template_dir", lambda: templates)
 
     existing = _existing_deployment(archi_home)
     teardowns = _record_teardowns(monkeypatch)
