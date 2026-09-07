@@ -2010,3 +2010,90 @@ def test_a_relabelled_question_is_still_counted_when_both_arms_are_clean(_artifa
     assert [row["value"] for row in rows] == ["easy"]
     assert rows[0]["excluded_mismatched"] == 1
     assert rows[0]["n"] == 1
+
+
+def test_a_relabelling_survives_a_third_arm_failing_the_same_question(_artifact):
+    """One arm's failure must not hide a genuine relabelling in a different arm.
+
+    `specs` is `nargs="+"` and a bare `-cd` sweep expands into *all* of its arms
+    (`compare_runs.py:326-334`), so three or more arms is the normal Procedure B
+    shape, not an edge case. Gating the mismatch test on **every** arm having a
+    clean row means one unrelated failure suppresses the relabelling another arm
+    genuinely carries: `treat_a` is clean and disagrees with a clean baseline,
+    which is exactly what `excluded_mismatched` is documented to report.
+    """
+    base_rows = [
+        _row("agreed", difficulty="easy", faithfulness=0.5),
+        _row("relabelled", difficulty="easy", faithfulness=0.5),
+    ]
+    clean_relabeller = [
+        _row("agreed", difficulty="easy", faithfulness=0.7),
+        _row("relabelled", difficulty="hard", faithfulness=0.9),
+    ]
+    failed_the_question = [
+        _row("agreed", difficulty="easy", faithfulness=0.6),
+        _row("relabelled", status="failed"),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(base_rows)),
+            str(_artifact(clean_relabeller)),
+            str(_artifact(failed_the_question)),
+        ]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["agreed", "relabelled"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted"
+    assert all(
+        row["excluded_mismatched"] == 1 for row in rows
+    ), f"got {[row['excluded_mismatched'] for row in rows]}, want 1 in every row"
+
+
+def test_a_third_arms_failure_does_not_shrink_another_arms_slice(_artifact):
+    """A failure in one arm must not drop a question from another arm's pairing.
+
+    `paired_deltas(baseline, arm, ...)` requires the baseline and *that* arm to be
+    scorable (`compare_runs.py:594-605`); a third arm's status has no bearing on
+    that pair. So a question every arm labels identically, which `treat_b` merely
+    failed, must still contribute to `treat_a`'s slice. This is the shape #440
+    produces: a failure row that carries its `BANK_SLICE_FIELDS`.
+    """
+    base_rows = [
+        _row("q1", difficulty="hard", faithfulness=0.5),
+        _row("q2", difficulty="hard", faithfulness=0.5),
+    ]
+    clean_throughout = [
+        _row("q1", difficulty="hard", faithfulness=0.9),
+        _row("q2", difficulty="hard", faithfulness=0.9),
+    ]
+    failed_q2_but_kept_its_label = [
+        _row("q1", difficulty="hard", faithfulness=0.7),
+        _row("q2", status="failed", difficulty="hard"),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(base_rows)),
+            str(_artifact(clean_throughout)),
+            str(_artifact(failed_q2_but_kept_its_label)),
+        ]
+    )
+
+    by_arm = {
+        row["arm"]: row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty"
+        and row["value"] == "hard"
+        and row["metric"] == "faithfulness"
+    }
+
+    assert (
+        by_arm[arms[1].label]["n"] == 2
+    ), f"the clean arm must keep both questions, got n={by_arm[arms[1].label]['n']}"
+    assert (
+        by_arm[arms[2].label]["n"] == 1
+    ), "the arm that failed q2 legitimately pairs only q1"

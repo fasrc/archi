@@ -1376,10 +1376,16 @@ def slice_block(
     ``easy``. Disagreeing questions are dropped from every slice of that field
     and counted, so the loss is visible rather than silent.
 
-    A question any arm did not run to completion (non-"ok" ``status``) is
-    dropped from the field's slices and is **not** counted as a relabelling —
-    its own ``status`` is the evidence. Dropping it moves no slice number
-    because ``paired_deltas`` already requires both arms scorable.
+    An arm that did not run the question to completion (non-"ok" ``status``) is
+    **skipped** in that comparison rather than counted as a relabelling — its own
+    ``status`` is the evidence, not a changed label. The skip is per **arm**, not
+    per question, because a sweep expands into three or more arms
+    (``load_arms``): gating the question on *every* arm being clean would let one
+    unrelated failure both hide a relabelling another arm genuinely carries and
+    shrink that arm's slice, since ``paired_deltas`` pairs the baseline with one
+    arm at a time and a third arm's status has no bearing on that pair. A
+    question whose **baseline** row is unclean is dropped outright: its label is
+    the group key, and a key from a row that did not run establishes nothing.
     """
     block: List[dict] = []
     for field in SLICE_FIELDS:
@@ -1391,9 +1397,10 @@ def slice_block(
             value = baseline.rows.get(question, {}).get(field)
             if not (isinstance(value, str) and value):
                 continue
-            if not all(arm.has_clean_row(question) for arm in arms):
+            if not baseline.has_clean_row(question):
                 continue
-            if any(arm.rows.get(question, {}).get(field) != value for arm in arms):
+            ran_it = [arm for arm in arms if arm.has_clean_row(question)]
+            if any(arm.rows[question].get(field) != value for arm in ran_it):
                 mismatched += 1
                 continue
             groups.setdefault(value, []).append(question)
