@@ -110,7 +110,7 @@ Standing notes for every task:
 
 ## 2. Close out
 
-- [ ] 2.1 Verify, push, and open the PR. Steps, in order:
+- [x] 2.1 Verify, push, and open the PR. Steps, in order:
       1. `bash scripts/gate.sh` on the finished branch exits 0. `git status` is empty.
       2. `git diff origin/dev --stat` lists only `scripts/benchmarking/compare_runs.py`,
          `tests/unit/test_compare_runs.py`, and this change's
@@ -142,3 +142,11 @@ Standing notes for every task:
          branch pushed, do **not** open a PR on any other repository, and stop.
       6. Record the PR URL as a line under this task, tick the task, and commit that edit with
          the gate. Do not merge.
+
+      **PR:** https://github.com/fasrc/archi/pull/443 — base `dev`, closes #441.
+      Steps 1-4 ran in the loop; `gh pr create` (step 5) failed there with
+      `Resource not accessible by personal access token`, so the loop stopped as step 5
+      instructs. The nightly wrap-up re-verified steps 1-3 on the host
+      (gate green: 3899 passed, 2 skipped, 1 xfailed; diff scope as specified;
+      `openspec validate --strict` exits 0), pushed the branch to `origin` with a matching
+      remote SHA, and opened the PR from the host.
