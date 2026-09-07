@@ -39,6 +39,11 @@ TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "cli" / "templates" / "dock
 
 _TEMPLATE_SUBPATH = ("src", "cli", "templates", "dockerfiles")
 
+# What ``copy_source_code()`` copies out of the recorded checkout
+# (``templates_manager.py:1180-1184``). It raises on any one of them that is absent, and it
+# runs below the teardown, so the preflight pre-checks exactly this list.
+_COPIED_SOURCE_PATHS = ("src", "pyproject.toml", "LICENSE")
+
 
 def build_template_dir() -> Path:
     """The template directory whose Dockerfiles this deployment will actually build.
@@ -52,19 +57,47 @@ def build_template_dir() -> Path:
     copy establishes nothing about the build, and ``--force`` would remove a working
     deployment on the strength of it (fasrc/archi#436 review).
 
-    Falls back to ``TEMPLATE_DIR`` whenever the recorded checkout cannot be read: an editable
-    install has no ``_repository_info`` to import, and a recorded checkout the operator has
-    since deleted must not be returned at all -- ``service_templates()`` globs the directory,
-    so a missing one yields an empty service set, which is the silent pass the governing
-    invariant forbids.
+    Two outcomes, per the governing invariant -- and deliberately no third:
+
+    **No checkout recorded** -> ``TEMPLATE_DIR``. An editable install has no
+    ``_repository_info`` to import (``setup.py:12`` generates it, and it is absent from the
+    working tree), and in that case the installed location *is* the tree the build ships
+    from. This is an answer, not a fallback.
+
+    **A checkout recorded but unusable** -> refuse, here, above the teardown. Falling back to
+    the installed templates would be a fail-open of the worst kind: the build does not read
+    them. ``_stage_source_copy`` (``templates_manager.py:694``) copies from this same
+    recorded checkout and raises on a missing ``src``, ``pyproject.toml`` or ``LICENSE``
+    (``:1192-1198``) -- and that stage runs *below* ``remove_existing_deployment()``
+    (``cli_main.py:906`` then ``:923``). So a silent fallback would pass the preflight,
+    destroy the operator's runtime, and only then die copying a checkout that is not there.
+    Refusing first is the entire purpose of this module.
     """
     from src.cli.managers import source_version
 
     try:
-        candidate = source_version._recorded_repo_root().joinpath(*_TEMPLATE_SUBPATH)
+        recorded = source_version._recorded_repo_root()
     except Exception:
         return TEMPLATE_DIR
-    return candidate if candidate.is_dir() else TEMPLATE_DIR
+
+    dockerfiles = recorded.joinpath(*_TEMPLATE_SUBPATH)
+    unreadable = [
+        name for name in _COPIED_SOURCE_PATHS if not (recorded / name).exists()
+    ]
+    if not dockerfiles.is_dir():
+        unreadable.append(Path(*_TEMPLATE_SUBPATH).as_posix())
+    if unreadable:
+        raise BaseImagePreflightError(
+            "Base image check failed:\n"
+            f"  The checkout this install records at {recorded} is missing "
+            f"{', '.join(unreadable)}.\n"
+            f"  That is the tree the deployment builds from -- "
+            f"prepare_deployment_files() copies it below the teardown -- so the preflight "
+            f"cannot establish anything by reading the installed templates instead.\n"
+            f"  Re-run `pip install .` from the checkout you intend to deploy, or restore "
+            f"the recorded one."
+        )
+    return dockerfiles
 
 
 # Templates excluded from the service set. Keys are relative paths from the template

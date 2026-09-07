@@ -88,6 +88,27 @@ red on any host without a container daemon, and the fix is to give each test its
 (`_patch_probe(monkeypatch)`), not to move the call below the teardown. Moving it back is
 the defect.
 
+### D3a — The template directory is resolved from the recorded checkout, and fails closed
+
+Added in review. `TEMPLATE_DIR` is derived from this module's `__file__`, but nothing builds
+those files: `base-compose.yaml:30,93,132,675` name
+`archi_code/cli/templates/dockerfiles/...`, and `archi_code` is filled by
+`copy_source_code()` from `_repository_info.REPO_PATH` (`templates_manager.py:1171-1173`).
+Under a non-editable install those are different trees on every run, not only on drift, so
+the preflight was probing files the build never reads. `build_template_dir()` resolves the
+default from `source_version._recorded_repo_root()` — reused rather than re-derived, so the
+preflight and the source copy cannot disagree about which tree ships.
+
+The second decision is what to do when that checkout is unreadable. Falling back to the
+installed templates was the first attempt and is wrong: `_stage_source_copy`
+(`templates_manager.py:694`) copies from the same recorded checkout and raises on a missing
+`src`, `pyproject.toml` or `LICENSE` (`:1192-1198`), and it runs below the teardown
+(`cli_main.py:906` then `:923`). The fallback would therefore pass the preflight, destroy the
+runtime, and die copying a checkout that is not there — the exact failure this change exists
+to prevent, reintroduced by its own fix. So an unusable *recorded* checkout refuses, naming
+what is missing. The fallback survives only for "no checkout recorded at all" (an editable
+install, and the test environment), where the installed location genuinely is the build tree.
+
 ### D4 — Both new tests and the fix are one task
 
 The gate (`bash scripts/gate.sh`) runs on every commit and the loop commits at the end of

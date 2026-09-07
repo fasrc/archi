@@ -52,6 +52,23 @@ fail on a base image leaves the existing benchmarking runtime exactly as it foun
 - **AND** the existing runtime directory and its contents are left intact
 - **AND** no image was pulled, because the refusal precedes all image work
 
+#### Scenario: Forced evaluate whose recorded source checkout is unusable
+
+- **WHEN** `archi evaluate --force -n smoke` is invoked from a non-editable install whose
+  recorded checkout no longer holds the `src`, `pyproject.toml` and `LICENSE` that
+  `copy_source_code()` copies, or no longer holds the template directory
+- **THEN** the command exits non-zero
+- **AND** the error names the recorded checkout and what is missing from it
+- **AND** `delete_deployment()` is never called
+- **AND** the existing runtime directory and its contents are left intact
+
+This scenario exists because the preflight must read the tree the build reads. Resolving the
+template directory from the recorded checkout and then *falling back* to the installed
+templates when that checkout is unreadable would establish nothing: `_stage_source_copy`
+copies from the recorded checkout below the teardown and raises there. The fallback is
+therefore available only when no checkout is recorded at all, where the installed location is
+the build tree.
+
 #### Scenario: An evaluate that passes the preflight still tears down as before
 
 - **WHEN** `archi evaluate --force -n smoke` is invoked against an existing benchmarking

@@ -2643,6 +2643,20 @@ def test_a_quoted_delimiter_does_not_swallow_the_closing_quote(tmp_path):
     assert preflight.templates_missing_base_reference(tmp_path) == []
 
 
+def _recorded_checkout(tmp_path):
+    """A checkout shaped like the one `copy_source_code()` ships from.
+
+    It copies `src`, `pyproject.toml` and `LICENSE` from the recorded root
+    (`templates_manager.py:1180-1184`), so a checkout the preflight accepts must carry
+    all three plus the dockerfiles directory.
+    """
+    checkout = tmp_path / "checkout"
+    checkout.joinpath("src", "cli", "templates", "dockerfiles").mkdir(parents=True)
+    (checkout / "pyproject.toml").write_text('[project]\nname = "archi"\n')
+    (checkout / "LICENSE").write_text("MIT\n")
+    return checkout
+
+
 def test_the_default_template_dir_is_the_checkout_the_build_ships_from(
     tmp_path, monkeypatch
 ):
@@ -2659,9 +2673,8 @@ def test_the_default_template_dir_is_the_checkout_the_build_ships_from(
     """
     from src.cli.managers import source_version
 
-    checkout = tmp_path / "checkout"
-    dockerfiles = checkout / "src" / "cli" / "templates" / "dockerfiles"
-    dockerfiles.mkdir(parents=True)
+    checkout = _recorded_checkout(tmp_path)
+    dockerfiles = checkout.joinpath("src", "cli", "templates", "dockerfiles")
     (dockerfiles / "Dockerfile-only-in-the-checkout").write_text(_PINNED_FROM)
     monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
 
@@ -2690,19 +2703,70 @@ def test_the_default_template_dir_falls_back_to_the_installed_package(
     assert preflight.build_template_dir() == preflight.TEMPLATE_DIR
 
 
-def test_the_default_template_dir_ignores_a_recorded_checkout_that_is_gone(
+def test_a_recorded_checkout_that_is_gone_refuses_instead_of_falling_back(
     tmp_path, monkeypatch
 ):
-    """A recorded checkout the operator has since deleted must not blank the service set.
+    """A recorded checkout the operator deleted must refuse, not fall back.
 
-    `service_templates()` globs the directory; a missing one yields an empty list, and
-    an empty service set is a silent pass -- `enforce_base_images` would then find no
-    template declaring the required base and refuse for the wrong reason.
+    Falling back to the installed templates here is a fail-open, and the worst kind:
+    it establishes nothing about the build, because the build does not read them.
+    `_stage_source_copy` (`templates_manager.py:694`) calls `copy_source_code()`, which
+    copies from this same recorded checkout and raises `FileNotFoundError` when its
+    `src` tree is absent (`templates_manager.py:1192-1198`) -- and that stage runs
+    *below* the teardown (`cli_main.py:906` then `:923`). So the fallback would pass the
+    preflight, `--force` would destroy the operator's runtime, and the deploy would
+    then die copying a checkout that is not there. Refusing first is the whole point of
+    this module.
     """
     from src.cli.managers import source_version
 
-    monkeypatch.setattr(
-        source_version, "_recorded_repo_root", lambda: tmp_path / "deleted"
-    )
+    deleted = tmp_path / "deleted"
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: deleted)
 
-    assert preflight.build_template_dir() == preflight.TEMPLATE_DIR
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_template_dir()
+
+    assert str(deleted) in str(
+        excinfo.value
+    ), "the refusal must name the checkout it could not read, so the operator can act"
+
+
+def test_a_recorded_checkout_missing_what_the_source_copy_needs_refuses(
+    tmp_path, monkeypatch
+):
+    """A partially present checkout must refuse too, not pass on its Dockerfiles alone.
+
+    `is_dir()` on the dockerfiles directory is not enough: a checkout can hold a
+    complete template tree and still be missing something `copy_source_code()` demands.
+    It copies `src`, `pyproject.toml` and `LICENSE` (`templates_manager.py:1180-1184`)
+    and raises on any one of them, below the teardown. So the preflight refuses unless
+    all three are readable.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    (checkout / "pyproject.toml").unlink()
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_template_dir()
+
+    assert "pyproject.toml" in str(
+        excinfo.value
+    ), "the refusal must name what was missing, not just that something was"
+
+
+def test_a_recorded_checkout_whose_template_dir_is_a_file_refuses(
+    tmp_path, monkeypatch
+):
+    """A non-directory at the template path is a broken checkout, not a fallback cue."""
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    dockerfiles = checkout.joinpath("src", "cli", "templates", "dockerfiles")
+    shutil.rmtree(dockerfiles)
+    dockerfiles.write_text("not a directory\n")
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    with pytest.raises(preflight.BaseImagePreflightError):
+        preflight.build_template_dir()
