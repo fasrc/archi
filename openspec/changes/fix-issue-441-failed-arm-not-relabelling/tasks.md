@@ -37,7 +37,7 @@ Standing notes for every task:
 
 ## 1. The consumer fix
 
-- [ ] 1.1 Add `Arm.has_clean_row` and route `Arm.is_scorable` through it, in
+- [x] 1.1 Add `Arm.has_clean_row` and route `Arm.is_scorable` through it, in
       `scripts/benchmarking/compare_runs.py`. RED first: append to
       `tests/unit/test_compare_runs.py`, under a
       `# --- issue #441: a failed row is not a bank relabelling ---` banner, a test named
