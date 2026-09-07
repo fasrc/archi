@@ -1892,3 +1892,38 @@ def test_table_cells_survive_a_pipe_and_a_newline(_artifact, anchors_file, capsy
         # the six columns of the anchor table
         assert "`a \\| b`" in line
         assert len(re.findall(r"(?<!\\)\|", line)) == 7
+
+
+# --- issue #441: a failed row is not a bank relabelling ---
+
+
+def test_has_clean_row_is_the_status_half_of_is_scorable():
+    arm = cr.Arm(
+        label="test",
+        source="test",
+        rows={
+            "ok_q": {"status": "ok", "faithfulness": 0.5},
+            "no_status_q": {"faithfulness": 0.5},
+            "failed_q": {"status": "failed"},
+            "degraded_q": {"status": "degraded", "faithfulness": 0.9},
+        },
+        order=["ok_q", "no_status_q", "failed_q", "degraded_q"],
+        total_results={},
+        config_version={},
+        corpus_fingerprint=None,
+        corpus_snapshot_id=None,
+        code_version_digest=None,
+        configuration_file=None,
+    )
+
+    assert arm.has_clean_row("ok_q") is True
+    assert arm.has_clean_row("no_status_q") is True
+    assert arm.has_clean_row("failed_q") is False
+    assert arm.has_clean_row("degraded_q") is False
+    assert arm.has_clean_row("absent_q") is False
+
+    assert arm.is_scorable("ok_q", "faithfulness") is True
+    assert arm.is_scorable("no_status_q", "faithfulness") is True
+    assert arm.is_scorable("failed_q", "faithfulness") is False
+    assert arm.is_scorable("degraded_q", "faithfulness") is False
+    assert arm.is_scorable("absent_q", "faithfulness") is False

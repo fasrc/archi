@@ -200,11 +200,15 @@ class Arm:
     def value(self, question: str, metric: str) -> Any:
         return self.rows.get(question, {}).get(metric)
 
-    def is_scorable(self, question: str, metric: str) -> bool:
+    def has_clean_row(self, question: str) -> bool:
+        """Whether this arm ran the question to completion."""
         row = self.rows.get(question)
-        if row is None or row.get("status", "ok") != "ok":
+        return row is not None and row.get("status", "ok") == "ok"
+
+    def is_scorable(self, question: str, metric: str) -> bool:
+        if not self.has_clean_row(question):
             return False
-        return is_finite(row.get(metric))
+        return is_finite(self.rows[question].get(metric))
 
     def has_metric(self, metric: str) -> bool:
         return any(metric in row for row in self.rows.values())
