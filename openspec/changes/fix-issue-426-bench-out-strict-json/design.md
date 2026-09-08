@@ -75,8 +75,13 @@ Two details the test has to get right:
 
 - **Word boundaries on the `nan` search.** The reports contain the word "maintenance". A substring
   search reports 21 hits on a file whose real count is 0. Use `\bnan\b`. Verified: after the
-  re-render, `\bnan\b` matches 0 times across all 20 reports, and it already matches 0 times in the
-  8 reports belonging to clean artifacts, so a repository-wide assertion passes.
+  re-render, `\bnan\b` matches 0 times in each of the **19** reports this change touches (9
+  re-rendered HTML plus 10 created markdown), and 0 times in the **8** reports belonging to clean
+  artifacts, so the repository-wide assertion over all **27** passes. Counted on 2026-09-08:
+  `bench_out/` holds 17 HTML reports on `origin/dev` and 0 markdown; this change adds 10 markdown
+  and re-renders 9 of the 17, so nothing is added to the HTML count. One migrated artifact
+  (`benchmarking-ragas-bench-20260704_183010.json`) has no committed HTML sibling, which is why
+  the touched count is 19 rather than 20.
 - **Parse the 28 MB once.** `bench_out/` holds 28 MB of JSON. Parse it in a module-scoped fixture
   and share it, rather than re-reading per test. Resolve the directory from `__file__`, not from the
   process working directory, and skip cleanly if it is absent.
@@ -107,9 +112,12 @@ before the migration too.
 
 - **Delete the 10 artifacts.** They are the pre-campaign evidence record; the plan calls them
   non-comparable, not worthless.
-- **Fix the readers instead.** Every reader in the repository already tolerates both spellings. The
-  files are wrong, not the readers, and the external tools that reject them (`jq`, a browser) are
-  not ours to change.
+- **Fix the readers instead.** Every reader in the repository already tolerates both spellings —
+  and so, measured on 2026-09-08, do `jq-1.8.2` and `compare_runs.py`. There is no reader here
+  left to fix. The files are wrong, not the readers: they violate the format they claim, and a
+  tolerant reader hides that by turning a non-finite cell into a missing one without saying so.
+  The strict readers that do refuse them (a browser's `JSON.parse`, a `json.loads` with a raising
+  `parse_constant`) are not ours to change.
 - **Rewrite all 18 for uniformity.** The 8 clean files are already correct, byte for byte, under the
   same call. Rewriting them would add noise and prove nothing.
 - **Skip the markdown reports** to avoid 1.6 MB. This was weighed. Acceptance criterion 3 of the

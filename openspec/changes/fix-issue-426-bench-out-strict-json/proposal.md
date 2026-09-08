@@ -12,9 +12,23 @@ that actually reached an aggregate. None of that reached the artifacts already c
 Measured on `origin/dev` @ `3170498c` (2026-09-05):
 
 - **10 of the 18** committed JSON artifacts carry a bare `NaN`. `NaN` is not JSON (RFC 8259).
-  `compare_runs.py` (#419, merged `3170498c`), `jq`, a browser's `JSON.parse`, and any
-  `json.loads` with a raising `parse_constant` all refuse to open those files. The repository's
-  own loaders tolerate both spellings, so this migration changes bytes, not readers.
+  A browser's `JSON.parse` refuses those files outright, as does any `json.loads` given a
+  raising `parse_constant`. Two readers named in an earlier draft of this list do **not**,
+  and both were re-measured on 2026-09-08 rather than assumed:
+    - `compare_runs.py` (#419, merged `3170498c`) accepts them. `load_artifact`
+      (`compare_runs.py:213-223`) calls plain `json.loads` and its docstring says so: "Bare
+      ``NaN`` tokens are accepted (CPython reads them as ``float('nan')``); every consumer
+      here tests finiteness". Measured by running the CLI over
+      `benchmarking-ragas-kbingest-20260709_052330.json` (9 bare `NaN` tokens): it parses and
+      reaches the G3 gate.
+    - `jq` accepts them too — `jq-1.8.2` exits 0 on that same file and renders the cell as
+      `null`.
+
+  So this migration is **not** a fix for a reader that cannot open the data. It is a fix for
+  the data: the artifacts violate the format they claim, every reader that tolerates them does
+  so by extension rather than by spec, and the tolerant readers hide the second defect below
+  by treating a non-finite cell as missing without saying so. The repository's own loaders
+  tolerate both spellings, so this migration changes bytes, not readers.
 - **5 `<metric>_scored` strings across 4 artifacts overstate the scored count.** Each one claims
   every scorable row was scored while some rows hold a non-finite cell that never entered the
   aggregate. `benchmarking-ragas-205-20260817_040939.json` reports `context_precision_scored:
@@ -43,7 +57,10 @@ milestone.
   5 strings change. `source_scored_count` is not a `<metric>_scored` string and is left alone.
 - The 9 existing `_report.html` siblings are re-rendered and 10 `_report.md` siblings are created,
   both through `scripts/benchmarking/backfill_report_provenance.py`. After the re-render the word
-  `nan` appears **0 times** across all 20 reports.
+  `nan` appears **0 times** in each of the **19** reports this change touches, and 0 times in
+  the **8** it leaves alone — so the test's repository-wide glob over all **27** passes.
+  (19, not 20: one migrated artifact, `benchmarking-ragas-bench-20260704_183010.json`, has no
+  committed HTML sibling, so it gains a markdown report and re-renders no HTML.)
 - A new `tests/unit/test_bench_out_artifacts.py` asserts both invariants over every committed
   artifact, plus the absence of a literal `nan` in every committed report. Without it the migration
   is a one-time byte edit that the next hand-edited artifact silently undoes.
@@ -87,7 +104,9 @@ None.
   acceptance criterion 3 of issue #426 asks for the md siblings, so they are created here. A
   reviewer who would rather not carry 1.6 MB of derived markdown can drop those 10 files and the
   report half of the test; the JSON migration stands on its own.
-- Unblocks `compare_runs.py` and any strict parser against the pre-campaign artifacts.
+- Opens the pre-campaign artifacts to a strict parser — a browser's `JSON.parse`, or a
+  `json.loads` with a raising `parse_constant`. Not `compare_runs.py` or `jq`: both already
+  read them, so neither is unblocked by this change (measured 2026-09-08; see **Why**).
 - Coverage: the gate measures `--cov=src` only, and this diff contains no `src/` line, so
   `diff-cover` reports no lines with coverage information and passes. The new unit test and the
   before/after table in the PR body are the acceptance evidence, not a percentage.
