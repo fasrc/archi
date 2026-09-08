@@ -124,15 +124,16 @@ Rejected: a module-level function taking a row dict. `Arm` already owns row look
 `value`, `is_scorable`, and `has_metric`; a fourth accessor that takes a raw dict would split
 that ownership.
 
-### D3 — An unclean question is skipped, not counted
+### D3 — The unclean **arm** is skipped, not the whole question
 
-The new guard goes above the mismatch test, so a question that any arm did not run to
-completion never reaches it:
+The guard goes above the mismatch test, and it filters the arms that the mismatch test reads
+rather than gating the question on all of them:
 
 ```python
-if not all(arm.has_clean_row(question) for arm in arms):
+if not baseline.has_clean_row(question):
     continue
-if any(arm.rows.get(question, {}).get(field) != value for arm in arms):
+ran_it = [arm for arm in arms if arm.has_clean_row(question)]
+if any(arm.rows[question].get(field) != value for arm in ran_it):
     mismatched += 1
     continue
 ```
@@ -140,14 +141,26 @@ if any(arm.rows.get(question, {}).get(field) != value for arm in arms):
 Order matters. Below the mismatch test the guard would be dead code for the pre-#440 shape,
 because the mismatch test already fired.
 
-The question is also dropped from `groups`, which is the membership decision the issue asks to
-have decided and documented. It is free, by fact 3 in Context: `paired_deltas` filters it out
-and an empty group is dropped, so the slice numbers are identical either way. Dropping it is
-chosen over grouping it because the group would then contain a member that can never
-contribute, which reads as a bug to the next person to touch `slice_block`.
+The baseline gets the one per-question rule: a question whose **baseline** row is unclean is
+dropped outright, because the baseline's value is the group key and a key from a row that did
+not run establishes nothing. `ran_it` is never empty when the mismatch test reads it — the
+baseline guard above already proved the baseline has a clean row, and `baseline` is an element
+of `arms` (fact 2) — so `arm.rows[question]` is a safe subscript for every member.
+
+**Rejected: `if not all(arm.has_clean_row(question) for arm in arms): continue`.** This design
+first carried that form and `329b893a` shipped it. It is wrong, and the three-arm tests added
+in `d8155543` measure why. A sweep expands into three or more arms — `load_arms` treats one
+`-cd` invocation as the whole comparison — and `paired_deltas` joins the baseline with **one
+arm at a time**, so a third arm's `status` has no bearing on that pair. Gating the question on
+every arm therefore does two wrong things at once, both measured: it suppresses a re-labelling
+that another arm genuinely carries (`excluded_mismatched` 1 on `dev`, 0 under the `all(...)`
+form), and it removes the question from a clean arm's slice (`n` 2 on `dev`, 1 under the
+`all(...)` form). Fact 3 in Context — a question not scorable in every arm contributes nothing
+— holds only for a two-arm comparison, which is why the first version of this design read as
+free.
 
 Measured on 2026-09-07 by loading the current file and a patched copy side by side and
-comparing `slice_block` output key by key. In all five shapes every key except
+comparing `slice_block` output key by key. In all five **two-arm** shapes every key except
 `excluded_mismatched` was identical:
 
 | shape | `excluded_mismatched` | `difficulty` slices `(value, n)` |
@@ -158,12 +171,16 @@ comparing `slice_block` output key by key. In all five shapes every key except
 | `status: degraded` row | 1 → **0** | `(easy,2)` both runs |
 | the baseline arm is the one that failed | 0 → 0 | `(easy,2)` both runs |
 
-Two rows of that table are worth naming. A `degraded` row is caught by the same guard,
+Two rows of that table are worth naming. A `degraded` row is caught by the same predicate,
 because `has_clean_row` tests the status rather than listing failure names — the issue named
 only the raising case, and this covers it without a second rule. And the post-#440 row is the
 proof that the two changes compose: once the producer writes the field on a failure row, the
-values agree, the mismatch test never fires, and this guard is the only thing that changes,
-by removing a member that could not contribute.
+values agree and the mismatch test never fires.
+
+The table is two-arm only, and that is the limit of what it proves. The three-arm behaviour is
+measured by the two tests `d8155543` added —
+`test_a_relabelling_survives_a_third_arm_failing_the_same_question` and
+`test_a_third_arms_failure_does_not_shrink_another_arms_slice` — not by this table.
 
 ### D4 — `has_metric` keeps `any(...)`
 
@@ -184,14 +201,24 @@ loop already holds. Rewriting it to `not arm.has_clean_row(question)` would be a
 change on a path this issue's acceptance never exercises, on the file's most delicate gate
 (G8). Left for a separate change if anyone wants it.
 
-### D6 — No docs change
+### D6 — The operator-facing rule is documented in §3.2 of the interpretation page
 
-`docs/docs/interpreting_benchmark_results.md` is the page that documents the slice block. It
-never mentions `excluded_mismatched` or the dropped-question sentence — checked by grep across
-`docs/docs/` for `excluded_mismatched`, `relabell`, and `dropped from every slice`, which
-match nothing. There is no false sentence to correct, so the rule is documented where it is
-enforced: the `slice_block` docstring and the spec delta. This also keeps the diff off a file
-that open PR #440 edits at `:578-586` and `:683`.
+This decision was reversed. It first read "no docs change", on the ground that
+`docs/docs/interpreting_benchmark_results.md` never mentions `excluded_mismatched` or the
+dropped-question sentence — a grep across `docs/docs/` for `excluded_mismatched`, `relabell`,
+and `dropped from every slice` still matches nothing outside the paragraph this change adds.
+That ground was too narrow. Having no false sentence to correct is not the same as having no
+contract to state, and `AGENTS.md:54` asks for a docs update in the same change whenever
+user-visible behaviour moves. `excluded_mismatched` and the sentence it drives are what an
+operator reads, and this change makes the rule behind them subtler, not simpler: per-arm, not
+per-question, with a separate baseline rule and a three-arm case.
+
+So the rule is now stated in three places that each serve a different reader: the
+`slice_block` docstring for whoever edits the loop, the spec delta as the requirement, and
+**§3.2 "The question bank changed"** for the operator who is about to go and diff the bank on
+the strength of that number. §3.2 was chosen because it is the section about the bank moving
+under a comparison, and because it is ~350 lines away from the two regions that open PR #440
+edits (`:578-586` and `:683`), so the two changes do not conflict.
 
 ## Risks / Trade-offs
 

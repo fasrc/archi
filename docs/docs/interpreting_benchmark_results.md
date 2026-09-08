@@ -225,6 +225,30 @@ ServiceNow-ticket bank, and now the 73-question `ragas-jeopardy-master` bank.
 Numbers from different banks are **different measurements of different things**
 and must never be compared.
 
+**When the tool says a row was re-labelled.** `compare_runs.py` slices each
+metric by the bank fields the arms carry — `anchor_type` and `difficulty` —
+and files every question under the value the **baseline** arm recorded. A
+question the arms label differently belongs to no single value, so the tool
+drops it from every slice of that field and counts it in that field's
+`excluded_mismatched`. The report turns a non-zero count into a sentence that
+names a bank edit as the cause. That counter has a precise contract, and it is
+worth reading before you go and diff the bank:
+
+- The tool compares only an arm that **ran the question to completion**. It
+  skips a row whose `status` is anything other than `ok` — a failure or a
+  degraded row — and does not count it. A row that failed carries no bank
+  field at all, and its own `status` is the evidence for that. An absent label
+  is not a changed label.
+- The skip is per **arm**, never per question. A sweep expands into three or
+  more arms, and the tool pairs each arm with the baseline on its own. One arm
+  that fails a question therefore neither hides a re-labelling another arm
+  genuinely carries, nor removes that question from the other arms' slices.
+- The tool drops a question whose **baseline** row did not run to completion
+  from every slice of that field. The baseline's value is the group key, and a
+  key taken from a row that did not run establishes nothing.
+- So a non-zero `excluded_mismatched` means the label really moved between two
+  arms that both scored the question. Diff the bank.
+
 ### 3.3 The corpus changed
 
 If documents were re-ingested between two runs, retrieval had a different haystack

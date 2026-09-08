@@ -90,18 +90,33 @@ Standing notes for every task:
       `excluded_mismatched == 1` for `difficulty` and that the only reported value is `easy`
       with `n == 1`. This one **passes today** — it is the over-reach guard, so do not contrive
       a failure for it; state in its docstring that it must pass before and after.
-      Then implement per design D3: in `slice_block`, directly **above** the
-      `if any(arm.rows.get(question, {}).get(field) != value for arm in arms):` line, insert
+      Then implement per design D3: in `slice_block`, replace the
+      `if any(arm.rows.get(question, {}).get(field) != value for arm in arms):` line with
 
-          if not all(arm.has_clean_row(question) for arm in arms):
+          if not baseline.has_clean_row(question):
               continue
+          ran_it = [arm for arm in arms if arm.has_clean_row(question)]
+          if any(arm.rows[question].get(field) != value for arm in ran_it):
 
-      Order matters — below the mismatch test the guard is dead code. Add a paragraph to the
-      `slice_block` docstring, after the paragraph that begins "Membership needs **every**
-      arm", recording that a question any arm did not run to completion is dropped from the
-      field's slices and is **not** counted as a relabelling, that its own `status` is the
-      evidence, and that dropping it moves no slice number because `paired_deltas` already
-      requires both arms scorable. Run
+      Order matters — below the mismatch test the guard is dead code.
+
+      **Amended 2026-09-07 (`d8155543`), after `329b893a` shipped the wrong form.** This step
+      first said to insert `if not all(arm.has_clean_row(question) for arm in arms): continue`
+      above the mismatch test. That gates the whole question on every arm, which fixes the
+      two-arm case and breaks the sweep case: one unrelated arm failing then hides a
+      re-labelling another arm genuinely carries and shrinks that arm's slice `n`. Filter the
+      arms instead, and drop the question only when the **baseline** row is unclean, because
+      the baseline's value is the group key. Add the two three-arm tests named in design D3
+      (`test_a_relabelling_survives_a_third_arm_failing_the_same_question`,
+      `test_a_third_arms_failure_does_not_shrink_another_arms_slice`) — each one fails under
+      the `all(...)` form and passes under this one. Do not restore the `all(...)` form.
+
+      Add a paragraph to the `slice_block` docstring, after the paragraph that begins
+      "Membership needs **every** arm", recording that an arm which did not run the question to
+      completion is skipped in the comparison rather than counted as a re-labelling, that its
+      own `status` is the evidence, that the skip is per arm and not per question because a
+      sweep expands into three or more arms, and that a question whose baseline row is unclean
+      is dropped outright. Run
       `python -m pytest tests/unit/test_compare_runs.py tests/unit/test_benchmark_resilience.py -q`,
       confirm every test passes including
       `test_a_slice_drops_questions_whose_field_value_disagrees_between_arms` and
@@ -113,9 +128,11 @@ Standing notes for every task:
 - [x] 2.1 Verify, push, and open the PR. Steps, in order:
       1. `bash scripts/gate.sh` on the finished branch exits 0. `git status` is empty.
       2. `git diff origin/dev --stat` lists only `scripts/benchmarking/compare_runs.py`,
-         `tests/unit/test_compare_runs.py`, and this change's
-         `openspec/changes/fix-issue-441-failed-arm-not-relabelling/` files. Confirm
-         `git diff origin/dev -- src/ docs/ bench_out/` prints nothing.
+         `tests/unit/test_compare_runs.py`, `docs/docs/interpreting_benchmark_results.md`, and
+         this change's `openspec/changes/fix-issue-441-failed-arm-not-relabelling/` files.
+         Confirm `git diff origin/dev -- src/ bench_out/` prints nothing.
+         (Amended 2026-09-08: the docs page was added to the scope in review round 2, per
+         `AGENTS.md:54`. The step first required `docs/` to be empty.)
       3. `openspec validate fix-issue-441-failed-arm-not-relabelling --strict` exits 0. If the
          `openspec` CLI is not installed in this environment, skip this step and say so in the
          PR body — do not install anything.

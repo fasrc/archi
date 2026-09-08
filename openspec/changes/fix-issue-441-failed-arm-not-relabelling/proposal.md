@@ -59,14 +59,29 @@ against a post-#440 run reproduces the defect exactly. This change is the **cons
   status half of the rule `Arm.is_scorable` already encodes (`compare_runs.py:203-207`):
   a row exists and `row.get("status", "ok") == "ok"`. `is_scorable` is rewritten to call it,
   so the two share **one** definition of "failed" rather than gaining a second one.
-- One guard in `slice_block`'s membership loop, above the mismatch test: a question that any
-  arm did not run to completion is skipped — not grouped, and **not** counted as
-  `excluded_mismatched`. A failed row's own `status` says it is not evidence of a bank edit.
-- The `slice_block` docstring records the membership rule and why dropping such a question
-  from the group costs nothing.
+- One guard in `slice_block`'s membership loop, above the mismatch test. It skips the **arm**
+  that did not run the question to completion, rather than the whole question: that arm is
+  left out of the comparison and **not** counted as `excluded_mismatched`, because a failed
+  row's own `status` says it is not evidence of a bank edit. The skip must be per arm and not
+  per question, because a sweep expands into three or more arms and pairing joins the baseline
+  with one arm at a time — gating the question on every arm would hide a re-labelling another
+  arm genuinely carries and shrink that arm's slice `n` (both measured; see `design.md` D3).
+- One per-question rule, for the baseline only: a question whose baseline row did not run to
+  completion is dropped from every slice of that field, because the baseline's value is the
+  group key.
+- The `slice_block` docstring records the membership rule, the per-arm reason, and the
+  baseline rule.
 - New tests in `tests/unit/test_compare_runs.py`, appended at the end of the file: the
   pre-#440 failure shape, a `degraded` row, the genuine-relabelling case that must still
-  count, both `SLICE_FIELDS`, and the predicate itself.
+  count, both `SLICE_FIELDS`, the predicate itself, and two three-arm sweep cases — a
+  re-labelling that survives a third arm failing the same question, and a third arm's failure
+  not shrinking another arm's slice.
+- A paragraph in `docs/docs/interpreting_benchmark_results.md` §3.2 stating the
+  `excluded_mismatched` contract for the operator who reads the report: what the counter
+  counts, that an arm which did not run the question is skipped rather than counted, that the
+  skip is per arm, and the separate baseline rule. `AGENTS.md:54` asks for the docs update in
+  the same change as the user-visible behaviour. §3.2 is ~350 lines from the two regions open
+  PR #440 edits, so the two changes do not conflict.
 
 Genuine relabelling is untouched: a question that **is** a clean success in both arms and
 carries different values still increments the counter. The existing test
@@ -79,9 +94,6 @@ Not in this change, each with a reason in `design.md`:
   field the moment one row failed, deleting the honest slices with the false counter
   (measured: `('easy', n=2)` and `('hard', n=1)` both vanish).
 - `anchor_block`'s own inline status test (`compare_runs.py:1310`) stays as it is.
-- No docs page changes. No docs page mentions `excluded_mismatched` or the dropped-question
-  prose (checked across `docs/docs/`), and the file that covers slices,
-  `docs/docs/interpreting_benchmark_results.md`, is edited by open PR #440.
 - No producer-side change. `src/utils/benchmark_resilience.py` is #440's file.
 
 ## Capabilities
@@ -105,10 +117,13 @@ None.
   guard, one docstring paragraph.
 - `tests/unit/test_compare_runs.py` — tests appended; no existing test changed. The file has
   83 tests today and is 1894 lines.
-- **The fix changes exactly one number.** Measured across five arm shapes on 2026-09-07 by
-  loading the current file and a patched copy side by side and comparing `slice_block`
-  output field by field: every key except `excluded_mismatched` is identical in all five,
-  including every slice's `value`, `n`, `mean`, `se`, `verdict`, and `directional`.
+- `docs/docs/interpreting_benchmark_results.md` — one paragraph and a four-item list added to
+  §3.2. Prose only; no example, procedure, or number elsewhere on the page changes.
+- **In a two-arm comparison the fix changes exactly one number.** Measured across five arm
+  shapes on 2026-09-07 by loading the current file and a patched copy side by side and
+  comparing `slice_block` output field by field: every key except `excluded_mismatched` is
+  identical in all five, including every slice's `value`, `n`, `mean`, `se`, `verdict`, and
+  `directional`.
 
   | shape | `excluded_mismatched` before → after | `difficulty` slices before → after |
   |---|---|---|
@@ -118,22 +133,31 @@ None.
   | `status: degraded` row | 1 → **0** | `(easy,2)` → unchanged |
   | the baseline arm is the one that failed | 0 → 0 | `(easy,2)` → unchanged |
 
-  The slice numbers cannot move, because `paired_deltas` (`compare_runs.py:594-605`) already
-  requires both arms scorable and `summarize_deltas` drops an empty group at
-  `compare_runs.py:1399`. That is what makes the group membership of such a question free to
-  drop, and it is the argument the issue asks to have decided and written down.
-- **No merge conflict with the two open PRs on this subsystem**, checked by file list on
-  2026-09-07: PR #440 (head `239f1bbb`) touches `src/utils/benchmark_resilience.py`,
-  `src/bin/service_benchmark.py`, `tests/unit/test_benchmark_resilience.py`, two docs pages
-  and its own `openspec/changes/` directory; PR #438 (head `9184aa2d`) touches `bench_out/**`
-  only. Neither touches `scripts/benchmarking/compare_runs.py` or
+  In a two-arm comparison the slice numbers cannot move, because `paired_deltas`
+  (`compare_runs.py:594-605`) already requires both arms scorable and `summarize_deltas` drops
+  an empty group at `compare_runs.py:1399`.
+
+  **That argument does not extend to a sweep**, and the first version of this change assumed
+  it did. With three or more arms, pairing joins the baseline with one arm at a time, so
+  dropping the whole question does move another arm's slice `n`. That is why the shipped
+  guard filters per arm; the two three-arm tests in `d8155543` hold the line.
+- **One file is now shared with an open PR, and it does not conflict.** Checked by file list
+  and by hunk range on 2026-09-08: PR #440 (head `239f1bbb`) edits
+  `docs/docs/interpreting_benchmark_results.md` in two hunks, `:575-588` and `:683-688`; this
+  change inserts after `:227`, about 348 lines above the nearer of the two, so the hunks share
+  no line and no context. PR #440 otherwise touches `src/utils/benchmark_resilience.py`,
+  `src/bin/service_benchmark.py`, `tests/unit/test_benchmark_resilience.py`,
+  `docs/docs/benchmarking.md`, and its own `openspec/changes/` directory. PR #438 (head
+  `63786023`) touches `bench_out/**`, `tests/unit/test_bench_out_artifacts.py`, and its own
+  `openspec/changes/` directory. Neither touches `scripts/benchmarking/compare_runs.py` or
   `tests/unit/test_compare_runs.py`.
 - **Patch coverage does not protect this change.** The gate measures `--cov=src`
   (`scripts/gate.sh`), and neither changed path is under `src/`, so `diff-cover` reports no
   lines with coverage information and the 80% bar passes on an empty measurement. The named
   tests are the only protection; `tasks.md` requires running them by name and reading the
   count.
-- Both changed files are black 24.10.0 and isort 6.0.1 clean today (checked 2026-09-07), and
-  `scripts/*.py` is inside the gate's enforced format scope.
+- Both changed Python files are black 24.10.0 and isort 6.0.1 clean today (checked
+  2026-09-07), and `scripts/*.py` is inside the gate's enforced format scope. The docs page is
+  markdown and the gate does not lint it.
 - No behaviour change for any artifact whose failure rows carry the bank fields, so a fully
   post-#440 pair of runs compares byte-identically before and after this change.
