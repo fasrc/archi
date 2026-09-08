@@ -236,9 +236,11 @@ worth reading before you go and diff the bank:
 
 - The tool compares only an arm that **ran the question to completion**. It
   skips a row whose `status` is anything other than `ok` — a failure or a
-  degraded row — and does not count it. A row that failed carries no bank
-  field at all, and its own `status` is the evidence for that. An absent label
-  is not a changed label.
+  degraded row — and does not count it. A row that did not run is not evidence
+  of a bank edit either way: its own `status` says why it disagrees. Older
+  artifacts make this vivid, because a failure row written before the change
+  closing #431 carries no bank field at all, so an absent label used to read as
+  a changed label.
 - The skip is per **arm**, never per question. A sweep expands into three or
   more arms, and the tool pairs each arm with the baseline on its own. One arm
   that fails a question therefore neither hides a re-labelling another arm
@@ -247,7 +249,7 @@ worth reading before you go and diff the bank:
   from every slice of that field. The baseline's value is the group key, and a
   key taken from a row that did not run establishes nothing.
 - So a non-zero `excluded_mismatched` means the label really moved between two
-  arms that both scored the question. Diff the bank.
+  arms that both ran the question to completion. Diff the bank.
 
 ### 3.3 The corpus changed
 
