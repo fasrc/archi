@@ -5,13 +5,35 @@ tests, watch them fail for the stated reason, write the smallest fix, run
 `bash scripts/gate.sh`, commit. Never end a task with the suite red, and never use
 `--no-verify`.
 
+> **Scope amended 2026-09-07 and 2026-09-08 by review, after task 1.1 shipped.** The notes
+> below were written for the one-call change, and that change is what task 1.1 delivered
+> (`c9b422d5`). Review of PR #436 then found three defects that the one-call scope could not
+> fix, because each of them lives in the code that call invokes. The scope now includes
+> `src/cli/managers/base_image_preflight.py`, `src/cli/managers/templates_manager.py`,
+> `tests/unit/test_base_image_preflight.py` and `tests/unit/test_templates_source_commit.py`,
+> and the close-out check that the preflight diff be empty (step 2.1.3) no longer applies.
+> The `deploy/**`, `config/**`, `.github/workflows/**`, `scripts/gate.sh`, `ralph.conf`,
+> `PROMPT.md`, `Makefile` and `Containerfile` prohibitions stand unchanged.
+>
+> | round | defect | fixed in | files |
+> |---|---|---|---|
+> | 1 (2026-09-07) | the preflight probed the *installed* templates, not the checkout the build ships from | `4ec38373` | `base_image_preflight.py`, `test_base_image_preflight.py` |
+> | 2 (2026-09-07) | a recorded-but-unreadable checkout fell back instead of refusing | `cf528b96` | same |
+> | 2 (2026-09-07) | two ordering tests patched `TEMPLATE_DIR`, which the resolver outranks — green locally, vacuous and red in CI | `78c9c6fd` | same, plus `test_cli_create_dev_smoke.py` |
+> | 3 (2026-09-08) | the `requires-python` floor was read from the installed metadata while the Dockerfiles came from the checkout | see below | `base_image_preflight.py`, `test_base_image_preflight.py` |
+> | 3 (2026-09-08) | the source copy's no-recorded-checkout fallback resolved the module *file*, so `--force` tore down and then failed staging | see below | `templates_manager.py`, `test_templates_source_commit.py` |
+>
+> Read the notes below as the plan for task 1.1. Where one contradicts this block, this
+> block is current.
+
 Standing notes for every task:
 
 - **Scope.** The only production file to edit is `src/cli/cli_main.py`, and the only edit is
   one call. The only test file to edit is `tests/unit/test_cli_create_dev_smoke.py`. Do not
   touch `src/cli/managers/base_image_preflight.py`, `src/cli/templates/**`, `deploy/**`,
   `config/**`, `.github/workflows/**`, `scripts/gate.sh`, `ralph.conf`, `PROMPT.md`, the
-  `Makefile`, or the `Containerfile`.
+  `Makefile`, or the `Containerfile`. **(Superseded — see the amendment above. The
+  `base_image_preflight.py` prohibition no longer holds; the rest do.)**
 - **No decision logic in `cli_main.py`.** The call site only. `base_image_preflight.py`'s
   docstring (design D8) keeps the decision logic in that module on purpose.
 - **No import change.** `enforce_base_images` is already imported at `cli_main.py:12`. Do
@@ -86,7 +108,11 @@ Standing notes for every task:
       `templates.mkdir()`, write `Dockerfile-chat` with
       `"FROM ghcr.io/fasrc/a2rchi-python-base@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"`
       and `Dockerfile-probe` with `"FROM docker.io/library/python:3.11\n"`, then
-      `monkeypatch.setattr(base_image_preflight, "TEMPLATE_DIR", templates)`. Then the same
+      `monkeypatch.setattr(base_image_preflight, "build_template_dir", lambda: templates)`.
+      (**Amended 2026-09-07, `78c9c6fd`.** This step first said to patch `TEMPLATE_DIR`.
+      `build_template_dir()` outranks that constant wherever `_repository_info` exists — CI
+      and any real install, but not a bare worktree — so the test passed locally and was both
+      vacuous and red in CI. Patch the resolver.) Then the same
       four patches as Test A except the probe, which is `record = _patch_probe(monkeypatch)`
       with no `fetch_error`. Same `runner.invoke` shape. Assert, in this order:
       `result.exit_code != 0`; `"Dockerfile-probe" in result.output` with the message
@@ -143,6 +169,12 @@ Standing notes for every task:
          `tests/unit/test_cli_create_dev_smoke.py`, and this change's
          `openspec/changes/fix-issue-394-evaluate-base-image-preflight/` files.
          `git diff origin/dev -- src/cli/managers/base_image_preflight.py` prints nothing.
+         **(Superseded 2026-09-07/08 — see the amendment at the top. The review fixes are in
+         `base_image_preflight.py`, `templates_manager.py`, `test_base_image_preflight.py`
+         and `test_templates_source_commit.py`, plus `docs/docs/install.md` and
+         `docs/docs/cli_reference.md` from `f58a6b74`, so this diff is deliberately not
+         empty. `git diff origin/dev -- deploy/ config/ .github/ scripts/gate.sh` is the
+         check that still has to print nothing.)**
       4. `git diff origin/dev -- tests/unit/test_cli_create_dev_smoke.py` ends with the
          previous final line as unchanged trailing context, not as a removed line.
       5. Push: `git push -u origin fix/issue-394-evaluate-base-image-preflight`. The `-u` is

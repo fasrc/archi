@@ -51,6 +51,65 @@ _TEMPLATE_SUBPATH = ("src", "cli", "templates", "dockerfiles")
 _COPIED_SOURCE_PATHS = ("src", "pyproject.toml", "LICENSE")
 
 
+def build_source_root() -> Optional[Path]:
+    """The checkout root this deployment builds from, or ``None`` when there is none recorded.
+
+    Every question the preflight asks about "the tree being deployed" resolves through
+    here, so the answers cannot disagree with each other. There are two of them today --
+    which Dockerfiles will be built (``build_template_dir``) and which
+    ``requires-python`` the build will honour (``build_pyproject_path``) -- and they were
+    resolved independently until they were caught disagreeing (fasrc/archi#436 review).
+
+    ``None`` means no checkout is recorded, not that resolution failed. See
+    ``build_template_dir`` for why that is an answer rather than a fallback, and why a
+    checkout that *is* recorded but unreadable refuses instead.
+    """
+    from src.cli.managers import source_version
+
+    try:
+        recorded = source_version._recorded_repo_root()
+    except Exception:
+        return None
+
+    dockerfiles = recorded.joinpath(*_TEMPLATE_SUBPATH)
+    unreadable = [
+        name for name in _COPIED_SOURCE_PATHS if not (recorded / name).exists()
+    ]
+    if not dockerfiles.is_dir():
+        unreadable.append(Path(*_TEMPLATE_SUBPATH).as_posix())
+    if unreadable:
+        raise BaseImagePreflightError(
+            "Base image check failed:\n"
+            f"  The checkout this install records at {recorded} is missing "
+            f"{', '.join(unreadable)}.\n"
+            f"  That is the tree the deployment builds from -- "
+            f"prepare_deployment_files() copies it below the teardown -- so the preflight "
+            f"cannot establish anything by reading the installed templates instead.\n"
+            f"  Re-run `pip install .` from the checkout you intend to deploy, or restore "
+            f"the recorded one."
+        )
+    return recorded
+
+
+def build_pyproject_path() -> Optional[Path]:
+    """The ``pyproject.toml`` whose ``requires-python`` the build will actually honour.
+
+    The floor is not a property of the installed CLI; it is a property of the tree
+    ``pip install .`` runs inside the image, which is the recorded checkout. Reading it
+    from the installed distribution's metadata while reading the Dockerfiles from the
+    checkout let a base image pass against a floor the build would then reject -- below
+    the teardown (fasrc/archi#436 review). ``build_source_root`` has already established
+    that this file exists: ``pyproject.toml`` is one of ``_COPIED_SOURCE_PATHS``.
+
+    ``None`` when no checkout is recorded, which leaves ``declared_python_floor``'s own
+    resolution order intact. Returning a computed path here instead would assert a
+    ``pyproject.toml`` that a site-packages install does not ship, and turn that
+    documented metadata fallback into a hard failure on every ``archi create``.
+    """
+    root = build_source_root()
+    return None if root is None else root / "pyproject.toml"
+
+
 def build_template_dir() -> Path:
     """The template directory whose Dockerfiles this deployment will actually build.
 
@@ -78,32 +137,14 @@ def build_template_dir() -> Path:
     (``cli_main.py:906`` then ``:923``). So a silent fallback would pass the preflight,
     destroy the operator's runtime, and only then die copying a checkout that is not there.
     Refusing first is the entire purpose of this module.
+
+    ``TEMPLATE_DIR`` and ``templates_manager._package_repo_root()`` are two ``__file__``
+    derivations of the same root, and they must agree -- otherwise this returns a tree
+    the source copy does not ship. Pinned by
+    ``test_the_source_copy_fallback_agrees_with_the_preflight_template_dir``.
     """
-    from src.cli.managers import source_version
-
-    try:
-        recorded = source_version._recorded_repo_root()
-    except Exception:
-        return TEMPLATE_DIR
-
-    dockerfiles = recorded.joinpath(*_TEMPLATE_SUBPATH)
-    unreadable = [
-        name for name in _COPIED_SOURCE_PATHS if not (recorded / name).exists()
-    ]
-    if not dockerfiles.is_dir():
-        unreadable.append(Path(*_TEMPLATE_SUBPATH).as_posix())
-    if unreadable:
-        raise BaseImagePreflightError(
-            "Base image check failed:\n"
-            f"  The checkout this install records at {recorded} is missing "
-            f"{', '.join(unreadable)}.\n"
-            f"  That is the tree the deployment builds from -- "
-            f"prepare_deployment_files() copies it below the teardown -- so the preflight "
-            f"cannot establish anything by reading the installed templates instead.\n"
-            f"  Re-run `pip install .` from the checkout you intend to deploy, or restore "
-            f"the recorded one."
-        )
-    return dockerfiles
+    root = build_source_root()
+    return TEMPLATE_DIR if root is None else root.joinpath(*_TEMPLATE_SUBPATH)
 
 
 # Templates excluded from the service set. Keys are relative paths from the template
@@ -1094,6 +1135,14 @@ def enforce_base_images(
             f"  The preflight cannot verify an image it cannot name, and will not proceed "
             f"as though there were nothing to check."
         )
+
+    # The floor must come from the same tree the Dockerfiles above came from. When the
+    # caller pinned `template_dir`, it owns the tree and the pyproject default stays out
+    # of the way -- defaulting one and not the other would re-open the same split with
+    # the trees swapped. `build_pyproject_path()` is `None` when no checkout is recorded,
+    # which leaves `declared_python_floor`'s own resolution order untouched.
+    if pyproject_path is None and template_dir is None:
+        pyproject_path = build_pyproject_path()
 
     outcomes = run_preflight(
         references,

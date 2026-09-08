@@ -2806,3 +2806,101 @@ def test_build_template_dir_outranks_a_patched_template_dir(tmp_path, monkeypatc
     assert [p.name for p in preflight.service_templates()] == [
         "Dockerfile-from-the-patched-constant"
     ], "patching the resolver is the supported override"
+
+
+def test_the_python_floor_is_read_from_the_checkout_the_dockerfiles_came_from(
+    tmp_path, monkeypatch
+):
+    """One recorded root answers both questions, or the preflight passes on an assumption.
+
+    `build_template_dir()` reads the Dockerfiles from the recorded checkout, but
+    `declared_python_floor()` resolved `pyproject.toml` from *this module's* location
+    (`_source_pyproject`) and fell through to the installed distribution's metadata.
+    Under a non-editable `pip install .` those are different trees, and the metadata is
+    frozen at install time. So an operator who raises `requires-python` in the checkout
+    after installing got a preflight that read the checkout's Dockerfiles against the
+    *installed* floor: a Python 3.11 base passed, `--force` tore down the working
+    deployment, and the `pip install .` from the copied checkout then rejected the
+    interpreter (fasrc/archi#436 review).
+
+    Both arms below are driven by the temporary checkout's own `pyproject.toml`, so this
+    test does not depend on what the running environment's metadata happens to declare.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    dockerfiles = checkout.joinpath("src", "cli", "templates", "dockerfiles")
+    (dockerfiles / "Dockerfile-chat").write_text(_PINNED_FROM)
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    (checkout / "pyproject.toml").write_text(
+        '[project]\nname = "archi"\nrequires-python = ">=3.99"\n'
+    )
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.enforce_base_images(
+            _Plan(), probe=FakeProbe(present=(), version="Python 3.11.9")
+        )
+    assert "3.99" in str(
+        excinfo.value
+    ), "the floor must come from the recorded checkout, not the installed metadata"
+
+    (checkout / "pyproject.toml").write_text(
+        '[project]\nname = "archi"\nrequires-python = ">=3.0"\n'
+    )
+    outcomes = preflight.enforce_base_images(
+        _Plan(), probe=FakeProbe(present=(), version="Python 3.11.9")
+    )
+    assert all(
+        o.verdict is preflight.Verdict.AVAILABLE for o in outcomes
+    ), "the same checkout with a floor the image meets must pass"
+
+
+def test_an_explicit_template_dir_does_not_drag_in_the_recorded_pyproject(
+    tmp_path, monkeypatch
+):
+    """A caller that pins the tree pins both halves of it.
+
+    `template_dir` and `pyproject_path` are the two seams a caller uses to say "check
+    *this* tree". Defaulting the pyproject to the recorded checkout while honouring an
+    explicitly passed `template_dir` would recreate the very split this fix closes, just
+    with the trees swapped -- so the recorded-checkout default applies only when the
+    caller left both to the resolver.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    (checkout / "pyproject.toml").write_text(
+        '[project]\nname = "archi"\nrequires-python = ">=3.99"\n'
+    )
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    pinned = tmp_path / "pinned"
+    pinned.mkdir()
+    (pinned / "Dockerfile-chat").write_text(_PINNED_FROM)
+
+    outcomes = preflight.enforce_base_images(
+        _Plan(),
+        probe=FakeProbe(present=(), version="Python 3.11.9"),
+        template_dir=pinned,
+    )
+
+    assert all(
+        o.verdict is preflight.Verdict.AVAILABLE for o in outcomes
+    ), "an explicit template_dir must not pull the floor from the recorded checkout"
+
+
+def test_build_pyproject_path_is_none_without_a_recorded_checkout(monkeypatch):
+    """No recorded checkout means no override, and `declared_python_floor` keeps its order.
+
+    Returning `TEMPLATE_DIR`'s sibling here instead would make the resolver assert a
+    `pyproject.toml` that a site-packages install does not ship, turning the documented
+    metadata fallback into a hard failure on every `archi create`.
+    """
+    from src.cli.managers import source_version
+
+    def _no_recorded_checkout():
+        raise ModuleNotFoundError("no module named 'src.cli.utils._repository_info'")
+
+    monkeypatch.setattr(source_version, "_recorded_repo_root", _no_recorded_checkout)
+
+    assert preflight.build_pyproject_path() is None

@@ -69,6 +69,37 @@ copies from the recorded checkout below the teardown and raises there. The fallb
 therefore available only when no checkout is recorded at all, where the installed location is
 the build tree.
 
+#### Scenario: The Python floor is read from the tree the Dockerfiles came from
+
+- **WHEN** the preflight resolves the service Dockerfiles from a recorded source checkout,
+  and that checkout's `pyproject.toml` declares a `requires-python` floor above the Python
+  version the base image carries
+- **THEN** the command exits non-zero
+- **AND** the refusal names that floor, not the floor recorded in the installed
+  distribution's metadata
+- **AND** `delete_deployment()` is never called
+
+Every question the preflight asks about "the tree being deployed" SHALL resolve from one
+recorded root. Reading the Dockerfiles from the recorded checkout while reading
+`requires-python` from the installed distribution's metadata is a fail-open on the exact
+check this module performs: the metadata is frozen at install time, so an operator who
+raises the floor in the checkout afterwards gets a base image approved against the old
+floor, the teardown, and then a `pip install .` inside the image that rejects the
+interpreter. Where a caller pins the template directory explicitly, it owns both halves of
+that tree and the recorded checkout SHALL NOT supply the floor.
+
+#### Scenario: No recorded checkout resolves one package root, for both the probe and the copy
+
+- **WHEN** `archi evaluate --force` runs from a source tree that records no checkout, so the
+  preflight accepts the installed template location as the build tree
+- **THEN** the source copy that runs below the teardown resolves that same package root
+- **AND** the deployment does not fail staging its source after the existing runtime is gone
+
+The no-recorded-checkout answer is only sound if both halves agree on it. The source copy's
+fallback resolved the module *file* rather than a directory, so the path it looked for could
+never exist and `--force` destroyed the runtime and then failed deterministically. The
+preflight's fallback and the source copy's fallback SHALL derive the same root.
+
 #### Scenario: An evaluate that passes the preflight still tears down as before
 
 - **WHEN** `archi evaluate --force -n smoke` is invoked against an existing benchmarking
