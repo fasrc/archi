@@ -100,6 +100,24 @@ fallback resolved the module *file* rather than a directory, so the path it look
 never exist and `--force` destroyed the runtime and then failed deterministically. The
 preflight's fallback and the source copy's fallback SHALL derive the same root.
 
+#### Scenario: A package root that cannot ship its own source refuses too
+
+- **WHEN** no source checkout is recorded and the package root does not hold every path
+  `copy_source_code()` copies — for example a site-packages tree that ships the templates but
+  no `pyproject.toml` and no `LICENSE`
+- **THEN** the command exits non-zero
+- **AND** the error names the root it judged and every path missing from it
+- **AND** `delete_deployment()` is never called
+
+"No checkout recorded" SHALL be established rather than assumed. Accepting the installed
+template location because it happens to be readable is the same fail-open as accepting a
+recorded checkout that is not: the templates ship inside the package, so they are present
+exactly when the paths the source copy needs may not be, and the preflight would pass on the
+templates and reach the teardown anyway. The governing invariant admits establish, refuse, or
+say out loud that it could not tell; an unverified root is none of those. Both roots SHALL be
+judged against the same list, because `copy_source_code()` demands the same paths whichever
+one it resolves.
+
 #### Scenario: An evaluate that passes the preflight still tears down as before
 
 - **WHEN** `archi evaluate --force -n smoke` is invoked against an existing benchmarking

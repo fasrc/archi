@@ -2647,7 +2647,7 @@ def _recorded_checkout(tmp_path):
     """A checkout shaped like the one `copy_source_code()` ships from.
 
     It copies `src`, `pyproject.toml` and `LICENSE` from the recorded root
-    (`templates_manager.py:1180-1184`), so a checkout the preflight accepts must carry
+    (`templates_manager.py:1201-1205`), so a checkout the preflight accepts must carry
     all three plus the dockerfiles directory.
     """
     checkout = tmp_path / "checkout"
@@ -2665,7 +2665,7 @@ def test_the_default_template_dir_is_the_checkout_the_build_ships_from(
     `base-compose.yaml:675` builds the benchmarking service from
     `archi_code/cli/templates/dockerfiles/...`, and `archi_code` is what
     `TemplateManager.copy_source_code()` fills by copying `src` from the *recorded
-    checkout* (`templates_manager.py:1171-1173`). Under a non-editable `pip install .`
+    checkout* (`templates_manager.py:1191-1193`). Under a non-editable `pip install .`
     the installed module -- which is what `TEMPLATE_DIR` is derived from -- is a
     different tree. Checking the installed copy and then building the checkout's copy
     is the fail-open this module exists to remove: the preflight passes, `--force`
@@ -2710,9 +2710,9 @@ def test_a_recorded_checkout_that_is_gone_refuses_instead_of_falling_back(
 
     Falling back to the installed templates here is a fail-open, and the worst kind:
     it establishes nothing about the build, because the build does not read them.
-    `_stage_source_copy` (`templates_manager.py:694`) calls `copy_source_code()`, which
+    `_stage_source_copy` (`templates_manager.py:704`) calls `copy_source_code()`, which
     copies from this same recorded checkout and raises `FileNotFoundError` when its
-    `src` tree is absent (`templates_manager.py:1192-1198`) -- and that stage runs
+    `src` tree is absent (`templates_manager.py:1217-1220`) -- and that stage runs
     *below* the teardown (`cli_main.py:906` then `:923`). So the fallback would pass the
     preflight, `--force` would destroy the operator's runtime, and the deploy would
     then die copying a checkout that is not there. Refusing first is the whole point of
@@ -2738,7 +2738,7 @@ def test_a_recorded_checkout_missing_what_the_source_copy_needs_refuses(
 
     `is_dir()` on the dockerfiles directory is not enough: a checkout can hold a
     complete template tree and still be missing something `copy_source_code()` demands.
-    It copies `src`, `pyproject.toml` and `LICENSE` (`templates_manager.py:1180-1184`)
+    It copies `src`, `pyproject.toml` and `LICENSE` (`templates_manager.py:1201-1205`)
     and raises on any one of them, below the teardown. So the preflight refuses unless
     all three are readable.
     """
@@ -2904,3 +2904,77 @@ def test_build_pyproject_path_is_none_without_a_recorded_checkout(monkeypatch):
     monkeypatch.setattr(source_version, "_recorded_repo_root", _no_recorded_checkout)
 
     assert preflight.build_pyproject_path() is None
+
+
+def test_a_package_root_that_cannot_ship_its_source_refuses_too(tmp_path, monkeypatch):
+    """ "No checkout recorded" must be established, not assumed.
+
+    Round 3 taught the source copy to fall back to the package root, and taught this
+    module to accept `TEMPLATE_DIR` when no checkout is recorded. Together those close
+    the common case -- archi run from a source tree that was never installed, where the
+    package root really is the build tree. They leave one hole, found by attacking the
+    fix rather than by a reviewer: the fallback root is accepted *without being checked*.
+
+    Under a site-packages install whose `_repository_info` is absent, `TEMPLATE_DIR`
+    exists (the templates ship inside the package) while `pyproject.toml` and `LICENSE`
+    do not. So the preflight passed on templates it could read, `--force` removed the
+    runtime, and `copy_source_code` then raised on the very first path it could not find
+    -- the same teardown-then-fail, one branch over.
+
+    The governing invariant of this module admits no third option: establish, refuse, or
+    say out loud that it could not tell. Accepting an unverified root is none of those.
+    """
+    hollow = tmp_path / "site-packages"
+    hollow.joinpath("src", "cli", "templates", "dockerfiles").mkdir(parents=True)
+    monkeypatch.setattr(preflight, "PACKAGE_ROOT", hollow)
+
+    def _no_recorded_checkout():
+        raise ModuleNotFoundError("no module named 'src.cli.utils._repository_info'")
+
+    from src.cli.managers import source_version
+
+    monkeypatch.setattr(source_version, "_recorded_repo_root", _no_recorded_checkout)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_template_dir()
+
+    message = str(excinfo.value)
+    assert "pyproject.toml" in message and "LICENSE" in message, (
+        "the refusal must name every path the source copy will need, so the operator "
+        f"can act on it. got: {message}"
+    )
+    assert str(hollow) in message, "the refusal must name the root it judged"
+
+
+def test_a_complete_package_root_is_still_accepted_without_a_recorded_checkout(
+    monkeypatch,
+):
+    """The verification must not break the case it is guarding.
+
+    An archi run from a source tree that was never installed has no `_repository_info`
+    and a package root carrying `src`, `pyproject.toml` and `LICENSE` -- the shape this
+    repository itself has. That must keep resolving to `TEMPLATE_DIR`, or the new check
+    refuses every such run instead of the broken one.
+    """
+    from src.cli.managers import source_version
+
+    def _no_recorded_checkout():
+        raise ModuleNotFoundError("no module named 'src.cli.utils._repository_info'")
+
+    monkeypatch.setattr(source_version, "_recorded_repo_root", _no_recorded_checkout)
+
+    assert preflight.build_template_dir() == preflight.TEMPLATE_DIR
+    assert preflight.build_pyproject_path() is None
+
+
+def test_the_package_root_is_the_root_template_dir_is_derived_from(monkeypatch):
+    """`PACKAGE_ROOT` and `TEMPLATE_DIR` are two derivations that must not drift.
+
+    If they disagree, the check above judges one tree and the preflight then reads
+    another -- which is the failure this whole review round is about, reintroduced at
+    the level of the guard.
+    """
+    assert (
+        preflight.PACKAGE_ROOT.joinpath(*preflight._TEMPLATE_SUBPATH).resolve()
+        == preflight.TEMPLATE_DIR.resolve()
+    )

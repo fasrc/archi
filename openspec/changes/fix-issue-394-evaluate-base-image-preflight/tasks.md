@@ -20,8 +20,9 @@ tests, watch them fail for the stated reason, write the smallest fix, run
 > | 1 (2026-09-07) | the preflight probed the *installed* templates, not the checkout the build ships from | `4ec38373` | `base_image_preflight.py`, `test_base_image_preflight.py` |
 > | 2 (2026-09-07) | a recorded-but-unreadable checkout fell back instead of refusing | `cf528b96` | same |
 > | 2 (2026-09-07) | two ordering tests patched `TEMPLATE_DIR`, which the resolver outranks — green locally, vacuous and red in CI | `78c9c6fd` | same, plus `test_cli_create_dev_smoke.py` |
-> | 3 (2026-09-08) | the `requires-python` floor was read from the installed metadata while the Dockerfiles came from the checkout | see below | `base_image_preflight.py`, `test_base_image_preflight.py` |
-> | 3 (2026-09-08) | the source copy's no-recorded-checkout fallback resolved the module *file*, so `--force` tore down and then failed staging | see below | `templates_manager.py`, `test_templates_source_commit.py` |
+> | 3 (2026-09-08) | the `requires-python` floor was read from the installed metadata while the Dockerfiles came from the checkout | `de0e60b4` | `base_image_preflight.py`, `test_base_image_preflight.py` |
+> | 3 (2026-09-08) | the source copy's no-recorded-checkout fallback resolved the module *file*, so `--force` tore down and then failed staging | `de0e60b4` | `templates_manager.py`, `test_templates_source_commit.py` |
+> | 3 (2026-09-08) | the no-recorded-checkout root was accepted unverified — a site-packages tree ships the templates but not `pyproject.toml`/`LICENSE`, so the preflight passed and the copy still failed below the teardown. Found by attacking round 3's own fix, not by a reviewer | round 3 self-review — see the round-4 log on PR #436 | `base_image_preflight.py`, `test_base_image_preflight.py` |
 >
 > Read the notes below as the plan for task 1.1. Where one contradicts this block, this
 > block is current.
