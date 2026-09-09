@@ -189,7 +189,7 @@ Add one module, `src/utils/telemetry.py`, with one function
 | `setup_logging()` | `src/utils/logging.py:23-36` | one init point for all 9 `src/bin/service_*.py` processes; the format string gains trace-ID placeholders here |
 | Flask apps | `service_chat.py:41`, `service_grader.py:25`, `service_data_manager.py:189` | one server span per request |
 | Agent worker thread | `src/interfaces/chat_app/app.py:2245,2264` | no instrumentor. The stream copies the caller's context and advances the generator through `ctx.run`, so the request span is already active in the worker. A test pins it |
-| LangChain callbacks | `base_react.py:401-419` | LLM, tool, and graph spans with no edit inside the 2460-line file |
+| LangChain callbacks | `base_react.py:396-419` | LLM, tool and graph spans on the `invoke` path, with no edit inside the 2460-line file. **Not sufficient for chat**, which streams: `stream()` at `:518` and `astream()` at `:897` take `**kwargs` only and never forward `callbacks`. See 2.8 — either the global `LangChainInstrumentor`, or callback forwarding added to both, which *is* an edit to this file |
 | `ConnectionPool` | `src/utils/connection_pool.py:36` | database spans; the instrumentor must run before the pool is created |
 
 Rules:
@@ -316,9 +316,10 @@ Phase the work. Each phase is one PR.
    files from 2.3, rebuild the base image once, bump 15 digests. Under option B this
    PR also bumps protobuf. Validate through the preview deploy and the smoke suite
    before merge. No OpenTelemetry code yet.
-2. **Traces.** Bootstrap module, Flask, requests, httpx, urllib, psycopg2,
-   LangChain callbacks, log format. Default off. Content hidden. Exporter endpoint
-   from environment. Redaction tests green.
+2. **Traces.** Bootstrap module, Flask, requests, httpx, urllib, psycopg2, the LangChain
+   decision from 2.8 (callbacks alone cover `invoke` but not streamed chat, so this phase
+   picks the instrumentor or adds callback forwarding), log format. Default off. Content
+   hidden. Exporter endpoint from environment. Redaction tests green.
 3. **Receiver.** Phoenix as a compose service behind a flag like `grafana_enabled`.
    Point the claw stack at its own Phoenix only after a recorded probe.
 4. **Metrics.** MeterProvider, request and LLM histograms, Prometheus, Grafana
