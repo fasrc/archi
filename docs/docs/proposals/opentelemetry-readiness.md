@@ -11,11 +11,15 @@ plan decision can rest on evidence.
 
 ## TL;DR
 
-- archi has no OpenTelemetry today. No package, import, or config key mentions it.
-  Every grep hit for `otel`, `arize`, or `tracing` is the word "summarize" or archi's
-  own `agent_traces` table.
+- archi emits no OpenTelemetry today. No archi package, import, or config key enables
+  it. One exception to the categorical claim: the shipped Grafana config carries
+  upstream's own `[tracing.jaeger]` and `[tracing.opentelemetry]` sections, OTLP
+  exporter address included (`src/cli/templates/grafana/grafana.ini:1272-1322`). They
+  are commented out and are Grafana's internal tracing, not archi's — but they exist
+  under `src/`, so a grep does return them. Every other hit is the word "summarize" or
+  archi's own `agent_traces` table.
 - Six things are required, in this order: a plan decision, a version choice for the
-  OpenTelemetry suite, dependencies in two files with one base-image rebuild, one
+  OpenTelemetry suite, dependencies in **four** files with one base-image rebuild, one
   default-off bootstrap module at five seams, a receiver that stores traces, and
   redaction as a code default.
 - The base requirements pin `protobuf==4.25.8`. Two coherent choices exist. Pin the
@@ -49,8 +53,13 @@ no pre-fork hook problem. Containers start the script directly
 (`src/cli/templates/dockerfiles/Dockerfile-chat:49`).
 
 The chat stream runs the agent in a one-worker `ThreadPoolExecutor`
-(`src/interfaces/chat_app/app.py:2254`). OpenTelemetry context does not cross that
-boundary on its own. Section 2.4 covers the fix.
+(`src/interfaces/chat_app/app.py:2254`). A raw `executor.submit` would not carry
+OpenTelemetry context across that boundary — but this path does not use one. It
+snapshots the caller's context with `contextvars.copy_context()` and advances the
+generator through `ctx.run` (`src/interfaces/chat_app/app.py:2245,2264`).
+OpenTelemetry keeps its active context in a `ContextVar`, so the request span already
+crosses this executor. Section 2.4 covers what remains, which is a test rather than an
+instrumentor.
 
 ### 1.3 LLM and agent
 
@@ -132,11 +141,21 @@ Two coherent choices:
 
 Either way the suite must be pinned. Never leave it unpinned.
 
-### 2.3 Declare dependencies in two files
+### 2.3 Declare dependencies in four files
 
 Service images run `pip install .` on top of the base image. A package must be in both
 `pyproject.toml` and `requirements/requirements-base.txt` with the same pin.
-`pyproject.toml:38-58` records this rule. Any edit to `requirements-base.txt` triggers
+`pyproject.toml:38-58` records this rule.
+
+Two generated files travel with them. `scripts/dev/build_docker_images.sh:80-86`
+concatenates each header with `requirements-base.txt` to rewrite
+`src/cli/templates/dockerfiles/base-python-image/requirements.txt` and
+`base-pytorch-image/requirements.txt`, and
+`tests/unit/test_requirements_generated_in_sync.py` compares the tracked copies to
+that output **byte for byte**. Editing `requirements-base.txt` without regenerating
+both fails the unit suite, so phase 1 commits four files, not two.
+
+Any edit to `requirements-base.txt` triggers
 a base-image rebuild (`.github/workflows/publish-base-images.yml:43`), so one rebuild
 is unavoidable under either option in 2.2. After the rebuild,
 `scripts/dev/update_service_base_images.py` bumps the digest pin in 15 service
@@ -191,10 +210,20 @@ Rules:
   own `basicConfig` call is a no-op because `setup_logging()` already installed a
   handler with `force=True`. So `setup_logging()` must select a format string with
   `%(otelTraceID)s` and `%(otelSpanID)s` when telemetry is on, and the plain string
-  when it is off, or the plain path raises `KeyError` on every record. The
-  `hybrid_search` fallback warning fires inside the worker thread, so the threading
-  instrumentor is also required before the ID appears there. This work can close #258
-  and #227, but only after a captured-log test inside an active span proves it.
+  when it is off, or the plain path raises `KeyError` on every record.
+
+    **Order matters, and it is a fail-open requirement, not a preference.** Select the
+    trace-aware format only **after** `LoggingInstrumentor` has installed the record
+    fields, and restore the plain format if it did not. Choosing the format from the
+    *intent* to enable telemetry means that an import or init failure leaves
+    `%(otelTraceID)s` in a handler whose records never carry it — every subsequent
+    record then dies in formatting, including the one warning the fail-open rule above
+    requires. The failure would silence the log that was supposed to report it.
+
+    The `hybrid_search` fallback warning fires inside the worker thread. That thread
+    is entered through `ctx.run` on a copied context (1.2), so the trace ID reaches it
+    without a threading instrumentor; a captured-log test inside an active span is what
+    proves it. This work can close #258 and #227, but only after that test passes.
 
 ### 2.5 Instrumentation coverage
 
@@ -265,7 +294,15 @@ purpose, and the same rule must hold for spans. The bootstrap module must:
   any exported span with the default flags.
 - `src/interfaces/chat_app/app.py` is not imported by unit tests. Keep the call site
   there to one line, per `CLAUDE.md`.
-- Do not edit `base_react.py` for spans. The callbacks parameter is enough.
+- Do not edit `base_react.py` for spans **on the `invoke` path** — its `callbacks`
+  parameter (`base_react.py:396-419`) is enough there. It is not enough for chat.
+  Normal chat calls `stream()`, which takes `**kwargs` only, never forwards a
+  `callbacks` argument, and invokes LangGraph with `config={"recursion_limit":
+  recursion_limit}` (`base_react.py:518-557`); `astream()` at `:897` is the same shape.
+  So a callback handler alone instruments the QA evaluation and leaves streamed chat
+  with no LLM, tool or graph spans. Either use the global `LangChainInstrumentor`, or
+  add callback forwarding to `stream`/`astream` — and that second option *is* an edit
+  to `base_react.py`. Decide it in phase 2 rather than discovering it there.
 
 ---
 
@@ -286,8 +323,19 @@ Phase the work. Each phase is one PR.
    datasource. Only if someone asks for a metric the `timing` table cannot answer.
 
 The `timing` and `agent_traces` tables map almost one to one onto the OpenTelemetry
-GenAI semantic conventions. A span exporter can replace them later instead of a
-parallel store. Do not remove them in phase 2.
+GenAI semantic conventions, so a span exporter is a plausible eventual replacement
+rather than a parallel store. Do not remove them in phase 2 — and do not read
+"replace" as "drop in".
+
+Both tables are product surfaces with live consumers, not private span sinks. The chat
+history route batch-fetches `agent_traces` and attaches its `events`, status, tool
+count and duration to assistant messages
+(`src/interfaces/chat_app/app.py:5257-5300`), and the shipped Grafana dashboard runs
+SQL directly against `timing`
+(`src/cli/templates/grafana/archi-default-dashboard.json:105-210`). An OTLP exporter
+or a Phoenix store satisfies neither interface. Any replacement has to migrate both
+consumers and preserve the message linkage and the event schema, which is its own
+piece of work and is not costed here.
 
 ---
 
@@ -327,10 +375,20 @@ conda env, is what the images get.
 
 A repo-wide grep for
 `opentelemetry|otel|prometheus|langfuse|langsmith|phoenix|sentry|tracing|traceloop|arize`
-returns no vendor reference under `src/`. Every hit is the substring `arize` inside the
-ordinary English word "summarize" — in `src/archi/pipelines/agents/base_react.py` (nine
-occurrences, around the message-summarisation helpers at `:1924-1965` and the wrap-up at
-`:2329-2433`), in `src/cli/managers/base_image_preflight.py:1193` and `:1290`, and in
+returns one **real** vendor reference under `src/` and a crowd of false ones.
+
+The real hit is `src/cli/templates/grafana/grafana.ini`, which carries upstream
+Grafana's `[tracing.jaeger]` (`:1272`), `[tracing.opentelemetry]` (`:1295`) and
+`[tracing.opentelemetry.jaeger]` (`:1311`) sections, an OTLP exporter address
+(`:1317`) and a propagation setting (`:1314`). Every line is commented out, and all of
+it configures Grafana's own tracing, not archi's — so it does not weaken the "archi
+emits nothing today" finding. It does mean the categorical form of that claim is
+wrong, which is why this appendix now names it.
+
+Every other hit is the substring `arize` inside the ordinary English word
+"summarize" — in `src/archi/pipelines/agents/base_react.py` (nine occurrences, around
+the message-summarisation helpers at `:1924-1965` and the wrap-up at `:2329-2433`), in
+`src/cli/managers/base_image_preflight.py:1193` and `:1290`, and in
 `src/interfaces/chat_app/app.py:1364`. The Prometheus mentions in
 `docs/docs/fasrc_archi.md` describe vLLM's metrics middleware, not archi.
 
