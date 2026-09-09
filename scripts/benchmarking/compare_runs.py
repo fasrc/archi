@@ -1383,6 +1383,26 @@ def anchor_block(
 # --- slices ------------------------------------------------------------------
 
 
+def _label_key(label: Any) -> str:
+    """A bank label reduced to the JSON it came from, for equality only.
+
+    Two labels agree when the artifacts recorded the same JSON, not when Python
+    happens to call them equal. ``True == 1``, ``1 == 1.0``, and the coercion
+    recurs inside containers (``[True] == [1]``), so comparing the values directly
+    -- with or without a type guard on the outermost object -- reports agreement
+    between arms that recorded different things.
+
+    ``sort_keys`` makes dict labels order-independent, which is what "the same
+    label" means for a mapping. The input always came from ``json.loads``, so
+    ``dumps`` cannot fail on it; the fallback is there only so a comparison can
+    never abort a whole report, which is the failure mode a ``set`` once caused.
+    """
+    try:
+        return json.dumps(label, sort_keys=True)
+    except (TypeError, ValueError):
+        return f"{type(label).__name__}:{label!r}"
+
+
 def slice_block(
     baseline: Arm,
     arms: Sequence[Arm],
@@ -1451,15 +1471,19 @@ def slice_block(
             # An empty list never indexes -- the slice is empty, so `[0]` is not
             # evaluated inside the generator.
             #
-            # The type travels with the value because bare `!=` inherits Python's
-            # numeric tower: `True == 1` and `1 == 1.0`, so two arms holding the
-            # JSON values `true` and `1` would compare equal and the disagreement
-            # would go uncounted -- the same silent undercount `excluded_mismatched`
-            # exists to prevent. A tuple keeps the non-hashing property a `set`
-            # would lose: its `!=` compares element-wise, so a list or dict label
-            # still comes through.
+            # Compared as canonical JSON, because Python's `==` inherits the numeric
+            # tower and would call genuinely different artifacts equal: `True == 1`
+            # and `1 == 1.0`, and the same coercion recurs at any depth inside an
+            # accepted list or dict label, where `[True] == [1]`. Every such pair is
+            # a disagreement the artifacts recorded and `excluded_mismatched` exists
+            # to report.
+            #
+            # Canonicalising closes that whole class in one place instead of adding
+            # a type guard per nesting level. `json.dumps` cannot fail on a value
+            # that came out of `json.loads`, and it yields a string -- so the
+            # `unhashable type: 'list'` abort a `set` caused stays fixed.
             if any(
-                (type(label), label) != (type(ran_labels[0]), ran_labels[0])
+                _label_key(label) != _label_key(ran_labels[0])
                 for label in ran_labels[1:]
             ):
                 mismatched += 1

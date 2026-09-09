@@ -6,13 +6,18 @@ commit. Never end a task with the suite red, and never bypass the gate.
 
 Standing notes for every task:
 
-- **Scope.** The only production file to edit is `scripts/benchmarking/compare_runs.py`. The
-  only test file to edit is `tests/unit/test_compare_runs.py`. Do not edit
-  `src/utils/benchmark_resilience.py`, `src/bin/service_benchmark.py`,
-  `tests/unit/test_benchmark_resilience.py`, `bench_out/**`, or any page under `docs/` — the
-  first three belong to open PR #440 and the fourth to open PR #438, and no docs page mentions
-  this counter (design D6). Do not edit the control-plane or CI files the project rails
-  protect.
+- **Scope.** The production files to edit are `scripts/benchmarking/compare_runs.py` and
+  `docs/docs/interpreting_benchmark_results.md`. The only test file to edit is
+  `tests/unit/test_compare_runs.py`. Do not edit `src/utils/benchmark_resilience.py`,
+  `src/bin/service_benchmark.py`, `tests/unit/test_benchmark_resilience.py`, or
+  `bench_out/**` — the first three belong to PR #440 and the fourth to PR #438. Do not edit
+  the control-plane or CI files the project rails protect.
+
+    **D6 is reversed.** It originally said no docs change was needed, on the grounds that no
+    page mentioned this counter. Review showed the operator-facing page does describe the
+    slice rules this change alters, so the documentation update is now **required**, not
+    forbidden. An earlier draft of this note carried the old prohibition and contradicted the
+    work the tasks below ask for.
 - **Coverage will not catch you.** The gate measures `--cov=src`, and neither changed path is
   under `src/`, so `diff-cover` scores an empty measurement and the 80% bar passes whatever
   you do. The tests are the only protection. Write them first, and read the collected count.

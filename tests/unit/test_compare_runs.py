@@ -2263,6 +2263,51 @@ def test_a_non_string_bank_label_is_a_mismatch_and_never_an_exception(_artifact)
     ), f"only q2 is groupable, got {[(r['value'], r['n']) for r in rows]}"
 
 
+def test_nested_json_true_and_one_are_different_labels_too(_artifact):
+    """The coercion recurs inside containers, so the comparison canonicalises.
+
+    Guarding the top-level type only moves the bug one level down: `[True] == [1]`
+    is true because Python compares containers element-wise with `==`, and the outer
+    types are both `list`. The same holds at any depth, and for dict values.
+
+    Comparing canonical JSON closes the whole class in one place rather than adding
+    a layer per report. `json.dumps` on a value that came from `json.loads` cannot
+    fail, distinguishes `true` from `1` and `1` from `1.0`, and returns a string --
+    so no label is ever hashed and the unhashable-type abort stays fixed.
+    """
+    baseline_rows = [
+        _row("q1", status="failed", difficulty="hard"),
+        _row("q2", difficulty="hard", faithfulness=0.5),
+    ]
+    nested_bool = [
+        _row("q1", difficulty=[True], faithfulness=0.7),
+        _row("q2", difficulty="hard", faithfulness=0.7),
+    ]
+    nested_int = [
+        _row("q1", difficulty=[1], faithfulness=0.8),
+        _row("q2", difficulty="hard", faithfulness=0.8),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(baseline_rows)),
+            str(_artifact(nested_bool)),
+            str(_artifact(nested_int)),
+        ]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted for q2"
+    assert all(row["excluded_mismatched"] == 1 for row in rows), (
+        "`[true]` and `[1]` are different labels and q1 must count as a mismatch, got "
+        f"{[r['excluded_mismatched'] for r in rows]}"
+    )
+
+
 def test_json_true_and_one_are_different_labels_not_the_same_one(_artifact):
     """`True == 1` in Python, but `true` and `1` are different JSON values.
 
