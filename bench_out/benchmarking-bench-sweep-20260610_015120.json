@@ -492,7 +492,7 @@
                     "anchor_type": "easy",
                     "answer_relevancy": 0.9911548647039456,
                     "faithfulness": 0.5,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.0
                 },
                 "question_2": {
@@ -849,7 +849,7 @@
                     "anchor_type": "easy",
                     "answer_relevancy": 0.0,
                     "faithfulness": 0.0,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.0
                 },
                 "question_3": {
@@ -1783,7 +1783,7 @@
                     "anchor_type": "medium",
                     "answer_relevancy": 0.9999999999994852,
                     "faithfulness": 0.5,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.0
                 },
                 "question_7": {
@@ -2403,7 +2403,7 @@
                     "anchor_type": "hard",
                     "answer_relevancy": 0.9697036902521878,
                     "faithfulness": 0.3333333333333333,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.6666666666666666
                 },
                 "question_9": {
@@ -2871,7 +2871,7 @@
                     "anchor_type": "hard",
                     "answer_relevancy": 0.5604333261775641,
                     "faithfulness": 0.07692307692307693,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.3333333333333333
                 }
             },
@@ -5859,7 +5859,7 @@
                     "anchor_type": "easy",
                     "answer_relevancy": 0.9036372947891133,
                     "faithfulness": 0.15789473684210525,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.0
                 },
                 "question_2": {
@@ -6240,7 +6240,7 @@
                     "anchor_type": "easy",
                     "answer_relevancy": 0.837264545991351,
                     "faithfulness": 0.5454545454545454,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.5
                 },
                 "question_3": {
@@ -7008,7 +7008,7 @@
                     "anchor_type": "medium",
                     "answer_relevancy": 0.7808692387547445,
                     "faithfulness": 0.5675675675675675,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.6666666666666666
                 },
                 "question_6": {
@@ -8179,7 +8179,7 @@
                 "ragas_a": {
                     "answer_relevancy": 0.9911548647039456,
                     "faithfulness": 0.5,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.0
                 },
                 "ragas_b": {
@@ -8758,7 +8758,7 @@
                 "ragas_a": {
                     "answer_relevancy": 0.0,
                     "faithfulness": 0.0,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.0
                 },
                 "ragas_b": {
@@ -10438,7 +10438,7 @@
                 "ragas_a": {
                     "answer_relevancy": 0.9999999999994852,
                     "faithfulness": 0.5,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.0
                 },
                 "ragas_b": {
@@ -11168,7 +11168,7 @@
                 "ragas_a": {
                     "answer_relevancy": 0.9697036902521878,
                     "faithfulness": 0.3333333333333333,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.6666666666666666
                 },
                 "ragas_b": {
@@ -11729,7 +11729,7 @@
                 "ragas_a": {
                     "answer_relevancy": 0.5604333261775641,
                     "faithfulness": 0.07692307692307693,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.3333333333333333
                 },
                 "ragas_b": {
@@ -12316,7 +12316,7 @@
                     "ragas_a": {
                         "answer_relevancy": 0.9911548647039456,
                         "faithfulness": 0.5,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.0
                     },
                     "ragas_b": {
@@ -12895,7 +12895,7 @@
                     "ragas_a": {
                         "answer_relevancy": 0.0,
                         "faithfulness": 0.0,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.0
                     },
                     "ragas_b": {
@@ -14575,7 +14575,7 @@
                     "ragas_a": {
                         "answer_relevancy": 0.9999999999994852,
                         "faithfulness": 0.5,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.0
                     },
                     "ragas_b": {
@@ -15305,7 +15305,7 @@
                     "ragas_a": {
                         "answer_relevancy": 0.9697036902521878,
                         "faithfulness": 0.3333333333333333,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.6666666666666666
                     },
                     "ragas_b": {
@@ -15866,7 +15866,7 @@
                     "ragas_a": {
                         "answer_relevancy": 0.5604333261775641,
                         "faithfulness": 0.07692307692307693,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.3333333333333333
                     },
                     "ragas_b": {
@@ -16452,13 +16452,13 @@
                     "ragas_a": {
                         "answer_relevancy": 0.9911548647039456,
                         "faithfulness": 0.5,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.0
                     },
                     "ragas_b": {
                         "answer_relevancy": 0.9036372947891133,
                         "faithfulness": 0.15789473684210525,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.0
                     },
                     "sources_a": [
@@ -17333,13 +17333,13 @@
                     "ragas_a": {
                         "answer_relevancy": 0.0,
                         "faithfulness": 0.0,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.0
                     },
                     "ragas_b": {
                         "answer_relevancy": 0.837264545991351,
                         "faithfulness": 0.5454545454545454,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.5
                     },
                     "sources_a": [
@@ -18544,7 +18544,7 @@
                     "ragas_b": {
                         "answer_relevancy": 0.7808692387547445,
                         "faithfulness": 0.5675675675675675,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.6666666666666666
                     },
                     "sources_a": [
@@ -19259,7 +19259,7 @@
                     "ragas_a": {
                         "answer_relevancy": 0.9999999999994852,
                         "faithfulness": 0.5,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.0
                     },
                     "ragas_b": {
@@ -19989,7 +19989,7 @@
                     "ragas_a": {
                         "answer_relevancy": 0.9697036902521878,
                         "faithfulness": 0.3333333333333333,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.6666666666666666
                     },
                     "ragas_b": {
@@ -20604,7 +20604,7 @@
                     "ragas_a": {
                         "answer_relevancy": 0.5604333261775641,
                         "faithfulness": 0.07692307692307693,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.3333333333333333
                     },
                     "ragas_b": {
@@ -21196,7 +21196,7 @@
                     "ragas_b": {
                         "answer_relevancy": 0.9036372947891133,
                         "faithfulness": 0.15789473684210525,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.0
                     },
                     "sources_a": [
@@ -21737,7 +21737,7 @@
                     "ragas_b": {
                         "answer_relevancy": 0.837264545991351,
                         "faithfulness": 0.5454545454545454,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.5
                     },
                     "sources_a": [
@@ -22856,7 +22856,7 @@
                     "ragas_b": {
                         "answer_relevancy": 0.7808692387547445,
                         "faithfulness": 0.5675675675675675,
-                        "context_precision": NaN,
+                        "context_precision": null,
                         "context_recall": 0.6666666666666666
                     },
                     "sources_a": [

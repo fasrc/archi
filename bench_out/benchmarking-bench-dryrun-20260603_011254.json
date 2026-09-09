@@ -25,10 +25,10 @@
                     ],
                     "sources_metadata": [],
                     "sources_trunc_content": [],
-                    "answer_relevancy": NaN,
-                    "faithfulness": NaN,
+                    "answer_relevancy": null,
+                    "faithfulness": null,
                     "context_precision": 0.0,
-                    "context_recall": NaN
+                    "context_recall": null
                 },
                 "question_2": {
                     "time_elapsed": 7.2286868379451334,
@@ -176,10 +176,10 @@
                         "What is Slurm? \n\u25cfLeading HPC Workload Manager \n\u25cbWorkload Manager = Scheduler + Resource Manager \n\u25a0Roughly equivalent to \"Orchestrator\" \n\u25cbScheduler: \n\u25a0Prioritize and decide which jobs to run on which parts of the system \n\u25cbResource Manager: \n\u25a0Track node state and resources \n\u25a0Launch jobs \n\u25cfManages the ",
                         "Slurm Operator"
                     ],
-                    "answer_relevancy": NaN,
-                    "faithfulness": NaN,
-                    "context_precision": NaN,
-                    "context_recall": NaN
+                    "answer_relevancy": null,
+                    "faithfulness": null,
+                    "context_precision": null,
+                    "context_recall": null
                 },
                 "question_3": {
                     "time_elapsed": 5.814199053216726,
@@ -204,10 +204,10 @@
                     ],
                     "sources_metadata": [],
                     "sources_trunc_content": [],
-                    "answer_relevancy": NaN,
-                    "faithfulness": NaN,
+                    "answer_relevancy": null,
+                    "faithfulness": null,
                     "context_precision": 0.0,
-                    "context_recall": NaN
+                    "context_recall": null
                 },
                 "question_4": {
                     "time_elapsed": 3.5036196941509843,
@@ -232,10 +232,10 @@
                     ],
                     "sources_metadata": [],
                     "sources_trunc_content": [],
-                    "answer_relevancy": NaN,
-                    "faithfulness": NaN,
+                    "answer_relevancy": null,
+                    "faithfulness": null,
                     "context_precision": 0.0,
-                    "context_recall": NaN
+                    "context_recall": null
                 },
                 "question_5": {
                     "time_elapsed": 15.35723151313141,
@@ -369,17 +369,17 @@
                         "At job submission, Slurm performs basic directive validation and also runs a\nfunction in the burst buffer script. This function can perform validation of\nthe directives used in the job script. If Slurm determines options are invalid,\nor if the burst buffer script returns an error, the job will be re",
                         "SLURM_DEBUG_FLAGSSpecify debug flags for salloc to use. See DebugFlags in the\nslurm.conf(5) man page for a full list of flags. The environment\nvariable takes precedence over the setting in the slurm.conf.\n\n\nSLURM_EXIT_ERRORSpecifies the exit code generated when a Slurm error occurs\n(e.g. invalid opt"
                     ],
-                    "answer_relevancy": NaN,
-                    "faithfulness": NaN,
-                    "context_precision": NaN,
-                    "context_recall": NaN
+                    "answer_relevancy": null,
+                    "faithfulness": null,
+                    "context_precision": null,
+                    "context_recall": null
                 }
             },
             "total_results": {
-                "aggregate_answer_relevancy": NaN,
-                "aggregate_faithfulness": NaN,
+                "aggregate_answer_relevancy": null,
+                "aggregate_faithfulness": null,
                 "aggregate_context_precision": 0.0,
-                "aggregate_context_recall": NaN,
+                "aggregate_context_recall": null,
                 "relative_source_accuracy": 0.2,
                 "source_accuracy": 0.2
             },
