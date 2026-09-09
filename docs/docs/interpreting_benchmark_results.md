@@ -575,14 +575,14 @@ vacuous. Each metric's sigma is measured over the rows every arm *and* every
 replicate could score for that metric, so the threshold and the delta it judges
 describe the same population.
 
-!!! note "The `difficulty` slice needs a bank that reaches the artifact"
-    Procedure D lists `difficulty` as a row field, but the harness copies only
-    `anchor_type` from the bank into `single_question_results`
-    (`service_benchmark.py`, `_answer_and_score_question`). Artifacts written by
-    the current harness therefore carry no `difficulty`, and the slice is
-    skipped rather than shown empty. The tool supports the field for when the
-    harness propagates it; until then, the bank slice available in practice is
-    `anchor_type`.
+!!! note "The `difficulty` slice needs a bank that carries the field"
+    The harness propagates `difficulty` from the bank row into
+    `single_question_results` (`service_benchmark.py`,
+    `_answer_and_score_question`) when the row carries it. A bank without the
+    field still produces no `difficulty` key, so the slice is skipped rather
+    than shown empty, exactly as before. The FASRC bank
+    (`fasrc_ragas_queries.json`) has no `difficulty` today; `ragas-jeopardy-master.json`
+    does.
 
 Two things the tool will not do for you. It never prints SIGNIFICANT without a
 noise floor, and it identifies the anchors by **question text** rather than by
@@ -684,6 +684,7 @@ bench_out/benchmarking-<name>-<timestamp>.json
             ├── status         # "ok" | "degraded" | ...
             ├── anchor_type    # anchors only: easy_retrieve|reasoning|should_refuse
             ├── difficulty     # bank rows only: easy|medium|hard
+            │                  #   the harness started writing this in the change closing #431
             └── answer_relevancy, faithfulness, context_precision,
                 context_recall, answer_correctness  # last one: opt-in
 ```

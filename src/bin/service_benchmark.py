@@ -1927,6 +1927,8 @@ class Benchmarker:
                 if isinstance(question_item, dict)
                 else ""
             )
+            if isinstance(question_item, dict) and "difficulty" in question_item:
+                q_results["difficulty"] = question_item["difficulty"]
 
             dataset_result = None
             if "RAGAS" in modes_being_run and scorable:
@@ -1956,6 +1958,7 @@ class Benchmarker:
                     question=question,
                     reference_answer=reference_answer,
                     error=exc,
+                    question_item=question_item,
                 ),
                 "dataset_result": None,
                 "matches": None,
