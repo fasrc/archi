@@ -225,6 +225,47 @@ ServiceNow-ticket bank, and now the 73-question `ragas-jeopardy-master` bank.
 Numbers from different banks are **different measurements of different things**
 and must never be compared.
 
+**When the tool says a row was re-labelled.** `compare_runs.py` slices each
+metric by the bank fields the arms carry — `anchor_type` and `difficulty` —
+and files every question under the value the **baseline** arm recorded. A
+question the arms label differently belongs to no single value, so the tool
+drops it from every slice of that field and counts it in that field's
+`excluded_mismatched`. The report turns a non-zero count into a sentence that
+names a bank edit as the cause. That counter has a precise contract, and it is
+worth reading before you go and diff the bank:
+
+- The tool compares only an arm that **ran the question to completion**. It
+  skips a row whose `status` is anything other than `ok` — a failure or a
+  degraded row — and does not count it. A row that did not run is not evidence
+  of a bank edit either way: its own `status` says why it disagrees. Older
+  artifacts make this vivid, because a failure row written before the change
+  closing #431 carries no bank field at all, so an absent label used to read as
+  a changed label.
+- The skip is per **arm**, never per question. A sweep expands into three or
+  more arms, and the tool pairs each arm with the baseline on its own. One
+  **non-baseline** arm that fails a question therefore neither hides a
+  re-labelling another arm genuinely carries, nor removes that question from the
+  other arms' slices. The baseline is the exception, and the next bullet states
+  it: the baseline supplies the group key for every pair, so a baseline row that
+  did not run takes the question out of all of them.
+- The tool drops a question whose **baseline** row did not run to completion
+  from every slice of that field. The baseline's value is the group key, and a
+  key taken from a row that did not run establishes nothing. It is dropped from
+  the slices, not from the count: the count compares the arms that *did* run the
+  question against each other, so it still reports a re-labelling those arms
+  carry. That is deliberate — any arm can be the baseline, and a count that
+  moved when you passed a different `--baseline` would not be a fact about the
+  bank.
+- Two limits on that, both being tracked in issue #447. If the baseline arm
+  records **no value at all** for the field on a question, the tool skips that
+  question, so a disagreement between two other arms goes uncounted. And if
+  *every* question is re-labelled, no slice survives to carry the number, and the
+  report says no slice field is present instead. A zero is therefore weaker
+  evidence than a non-zero: read a count as a reason to diff the bank, never read
+  its absence as proof the bank held still.
+- So a non-zero `excluded_mismatched` means the label really moved between two
+  arms that both ran the question to completion. Diff the bank.
+
 ### 3.3 The corpus changed
 
 If documents were re-ingested between two runs, retrieval had a different haystack

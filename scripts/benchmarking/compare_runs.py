@@ -201,11 +201,15 @@ class Arm:
     def value(self, question: str, metric: str) -> Any:
         return self.rows.get(question, {}).get(metric)
 
-    def is_scorable(self, question: str, metric: str) -> bool:
+    def has_clean_row(self, question: str) -> bool:
+        """Whether this arm ran the question to completion."""
         row = self.rows.get(question)
-        if row is None or row.get("status", "ok") != "ok":
+        return row is not None and row.get("status", "ok") == "ok"
+
+    def is_scorable(self, question: str, metric: str) -> bool:
+        if not self.has_clean_row(question):
             return False
-        return is_finite(row.get(metric))
+        return is_finite(self.rows[question].get(metric))
 
     def has_metric(self, metric: str) -> bool:
         return any(metric in row for row in self.rows.values())
@@ -1379,6 +1383,26 @@ def anchor_block(
 # --- slices ------------------------------------------------------------------
 
 
+def _label_key(label: Any) -> str:
+    """A bank label reduced to the JSON it came from, for equality only.
+
+    Two labels agree when the artifacts recorded the same JSON, not when Python
+    happens to call them equal. ``True == 1``, ``1 == 1.0``, and the coercion
+    recurs inside containers (``[True] == [1]``), so comparing the values directly
+    -- with or without a type guard on the outermost object -- reports agreement
+    between arms that recorded different things.
+
+    ``sort_keys`` makes dict labels order-independent, which is what "the same
+    label" means for a mapping. The input always came from ``json.loads``, so
+    ``dumps`` cannot fail on it; the fallback is there only so a comparison can
+    never abort a whole report, which is the failure mode a ``set`` once caused.
+    """
+    try:
+        return json.dumps(label, sort_keys=True)
+    except (TypeError, ValueError):
+        return f"{type(label).__name__}:{label!r}"
+
+
 def slice_block(
     baseline: Arm,
     arms: Sequence[Arm],
@@ -1398,6 +1422,33 @@ def slice_block(
     baseline's label alone would then file the treatment's ``hard`` row under
     ``easy``. Disagreeing questions are dropped from every slice of that field
     and counted, so the loss is visible rather than silent.
+
+    An arm that did not run the question to completion (non-"ok" ``status``) is
+    **skipped** in that comparison rather than counted as a relabelling — its own
+    ``status`` is the evidence, not a changed label. The skip is per **arm**, not
+    per question, because a sweep expands into three or more arms
+    (``load_arms``): gating the question on *every* arm being clean would let one
+    unrelated failure both hide a relabelling another arm genuinely carries and
+    shrink that arm's slice, since ``paired_deltas`` pairs the baseline with one
+    arm at a time and a third arm's status has no bearing on that pair.
+
+    The count is therefore taken over the arms that ran the question: it fires
+    when those arms disagree among themselves, whether or not the baseline is one
+    of them. Any arm can be the baseline -- ``--baseline`` selects it, and a bare
+    ``-cd`` sweep orders the arms by directory -- so keying the count off the
+    baseline's **status** would make a claimed fact about the bank move with the
+    operator's choice of reference. A question whose **baseline** row is unclean
+    is still dropped from every *group*: its label is the group key, and a key
+    from a row that did not run establishes nothing. Dropped from the groups, not
+    from the count.
+
+    The count is **not** yet independent of the baseline's *label*. The loop
+    still reads the baseline's own value first and skips the question when that
+    value is not a non-empty string, so a disagreement between two other clean
+    arms goes uncounted when the baseline's row carries no label for the field.
+    That predates this rule and is tracked in **#447**, together with the count
+    being discarded outright when no group is emitted. Do not read the paragraph
+    above as a claim that the count is invariant under every baseline.
     """
     block: List[dict] = []
     for field in SLICE_FIELDS:
@@ -1409,8 +1460,35 @@ def slice_block(
             value = baseline.rows.get(question, {}).get(field)
             if not (isinstance(value, str) and value):
                 continue
-            if any(arm.rows.get(question, {}).get(field) != value for arm in arms):
+            ran_labels = [
+                arm.rows[question].get(field)
+                for arm in arms
+                if arm.has_clean_row(question)
+            ]
+            # `!=`, not a set: a bank label is whatever the JSON held, and a list
+            # or dict label would make a set raise `unhashable type` and abort the
+            # whole comparison. "Do they all agree" needs equality, not hashing.
+            # An empty list never indexes -- the slice is empty, so `[0]` is not
+            # evaluated inside the generator.
+            #
+            # Compared as canonical JSON, because Python's `==` inherits the numeric
+            # tower and would call genuinely different artifacts equal: `True == 1`
+            # and `1 == 1.0`, and the same coercion recurs at any depth inside an
+            # accepted list or dict label, where `[True] == [1]`. Every such pair is
+            # a disagreement the artifacts recorded and `excluded_mismatched` exists
+            # to report.
+            #
+            # Canonicalising closes that whole class in one place instead of adding
+            # a type guard per nesting level. `json.dumps` cannot fail on a value
+            # that came out of `json.loads`, and it yields a string -- so the
+            # `unhashable type: 'list'` abort a `set` caused stays fixed.
+            if any(
+                _label_key(label) != _label_key(ran_labels[0])
+                for label in ran_labels[1:]
+            ):
                 mismatched += 1
+                continue
+            if not baseline.has_clean_row(question):
                 continue
             groups.setdefault(value, []).append(question)
         for value, members in sorted(groups.items()):

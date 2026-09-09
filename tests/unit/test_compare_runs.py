@@ -1894,6 +1894,474 @@ def test_table_cells_survive_a_pipe_and_a_newline(_artifact, anchors_file, capsy
         assert len(re.findall(r"(?<!\\)\|", line)) == 7
 
 
+# --- issue #441: a failed row is not a bank relabelling ---
+
+
+def test_has_clean_row_is_the_status_half_of_is_scorable():
+    arm = cr.Arm(
+        label="test",
+        source="test",
+        rows={
+            "ok_q": {"status": "ok", "faithfulness": 0.5},
+            "no_status_q": {"faithfulness": 0.5},
+            "failed_q": {"status": "failed"},
+            "degraded_q": {"status": "degraded", "faithfulness": 0.9},
+        },
+        order=["ok_q", "no_status_q", "failed_q", "degraded_q"],
+        total_results={},
+        config_version={},
+        corpus_fingerprint=None,
+        corpus_snapshot_id=None,
+        code_version_digest=None,
+        configuration_file=None,
+    )
+
+    assert arm.has_clean_row("ok_q") is True
+    assert arm.has_clean_row("no_status_q") is True
+    assert arm.has_clean_row("failed_q") is False
+    assert arm.has_clean_row("degraded_q") is False
+    assert arm.has_clean_row("absent_q") is False
+
+    assert arm.is_scorable("ok_q", "faithfulness") is True
+    assert arm.is_scorable("no_status_q", "faithfulness") is True
+    assert arm.is_scorable("failed_q", "faithfulness") is False
+    assert arm.is_scorable("degraded_q", "faithfulness") is False
+    assert arm.is_scorable("absent_q", "faithfulness") is False
+
+
+def test_a_question_that_failed_in_one_arm_is_not_a_bank_relabelling(_artifact):
+    # A failed row has no bank fields, so None != "hard" was counting as a
+    # relabelling.  After the fix, has_clean_row drops the question before the
+    # field-mismatch check, leaving excluded_mismatched at 0.
+    base_rows = [
+        _row("ok1", anchor_type="reasoning", difficulty="easy", faithfulness=0.5),
+        _row("ok2", anchor_type="reasoning", difficulty="easy", faithfulness=0.5),
+        _row("bad", anchor_type="reasoning", difficulty="hard", faithfulness=0.5),
+    ]
+    treat_rows = [
+        _row("ok1", anchor_type="reasoning", difficulty="easy", faithfulness=0.6),
+        _row("ok2", anchor_type="reasoning", difficulty="easy", faithfulness=0.6),
+        _row("bad", status="failed"),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+    questions = ["ok1", "ok2", "bad"]
+
+    block = list(cr.slice_block(arms[0], arms, questions, {}))
+
+    for row in block:
+        assert (
+            row["excluded_mismatched"] == 0
+        ), f"field={row['field']!r} got excluded_mismatched={row['excluded_mismatched']}"
+    anchor_rows = [r for r in block if r["field"] == "anchor_type"]
+    difficulty_rows = [r for r in block if r["field"] == "difficulty"]
+    assert all(r["excluded_mismatched"] == 0 for r in anchor_rows)
+    assert all(r["excluded_mismatched"] == 0 for r in difficulty_rows)
+    easy_rows = [
+        r for r in block if r["field"] == "difficulty" and r["value"] == "easy"
+    ]
+    assert len(easy_rows) > 0
+    assert easy_rows[0]["n"] == 2
+
+
+def test_a_degraded_row_is_not_a_bank_relabelling(_artifact):
+    # Same as the failed-row case but with status="degraded"; has_clean_row
+    # treats both non-"ok" statuses identically.
+    base_rows = [
+        _row("ok1", anchor_type="reasoning", difficulty="easy", faithfulness=0.5),
+        _row("ok2", anchor_type="reasoning", difficulty="easy", faithfulness=0.5),
+        _row("bad", anchor_type="reasoning", difficulty="hard", faithfulness=0.5),
+    ]
+    treat_rows = [
+        _row("ok1", anchor_type="reasoning", difficulty="easy", faithfulness=0.6),
+        _row("ok2", anchor_type="reasoning", difficulty="easy", faithfulness=0.6),
+        _row("bad", status="degraded"),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+    questions = ["ok1", "ok2", "bad"]
+
+    block = list(cr.slice_block(arms[0], arms, questions, {}))
+
+    anchor_rows = [r for r in block if r["field"] == "anchor_type"]
+    difficulty_rows = [r for r in block if r["field"] == "difficulty"]
+    assert all(r["excluded_mismatched"] == 0 for r in anchor_rows)
+    assert all(r["excluded_mismatched"] == 0 for r in difficulty_rows)
+
+
+def test_a_relabelled_question_is_still_counted_when_both_arms_are_clean(_artifact):
+    # Both arms ran every question to completion.  A genuine bank relabelling
+    # (different field values in the two arms) must still be detected and counted.
+    # This test must pass both before and after the #441 fix.
+    base_rows = [
+        _row("agreed", difficulty="easy", faithfulness=0.5),
+        _row("relabelled", difficulty="easy", faithfulness=0.5),
+    ]
+    treat_rows = [
+        _row("agreed", difficulty="easy", faithfulness=0.7),
+        _row("relabelled", difficulty="hard", faithfulness=0.9),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["agreed", "relabelled"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert [row["value"] for row in rows] == ["easy"]
+    assert rows[0]["excluded_mismatched"] == 1
+    assert rows[0]["n"] == 1
+
+
+def test_a_relabelling_survives_a_third_arm_failing_the_same_question(_artifact):
+    """One arm's failure must not hide a genuine relabelling in a different arm.
+
+    `specs` is `nargs="+"` and a bare `-cd` sweep expands into *all* of its arms
+    (`compare_runs.py:326-334`), so three or more arms is the normal Procedure B
+    shape, not an edge case. Gating the mismatch test on **every** arm having a
+    clean row means one unrelated failure suppresses the relabelling another arm
+    genuinely carries: `treat_a` is clean and disagrees with a clean baseline,
+    which is exactly what `excluded_mismatched` is documented to report.
+    """
+    base_rows = [
+        _row("agreed", difficulty="easy", faithfulness=0.5),
+        _row("relabelled", difficulty="easy", faithfulness=0.5),
+    ]
+    clean_relabeller = [
+        _row("agreed", difficulty="easy", faithfulness=0.7),
+        _row("relabelled", difficulty="hard", faithfulness=0.9),
+    ]
+    failed_the_question = [
+        _row("agreed", difficulty="easy", faithfulness=0.6),
+        _row("relabelled", status="failed"),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(base_rows)),
+            str(_artifact(clean_relabeller)),
+            str(_artifact(failed_the_question)),
+        ]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["agreed", "relabelled"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted"
+    assert all(
+        row["excluded_mismatched"] == 1 for row in rows
+    ), f"got {[row['excluded_mismatched'] for row in rows]}, want 1 in every row"
+
+
+def test_a_third_arms_failure_does_not_shrink_another_arms_slice(_artifact):
+    """A failure in one arm must not drop a question from another arm's pairing.
+
+    `paired_deltas(baseline, arm, ...)` requires the baseline and *that* arm to be
+    scorable (`compare_runs.py:594-605`); a third arm's status has no bearing on
+    that pair. So a question every arm labels identically, which `treat_b` merely
+    failed, must still contribute to `treat_a`'s slice. This is the shape #440
+    produces: a failure row that carries its `BANK_SLICE_FIELDS`.
+    """
+    base_rows = [
+        _row("q1", difficulty="hard", faithfulness=0.5),
+        _row("q2", difficulty="hard", faithfulness=0.5),
+    ]
+    clean_throughout = [
+        _row("q1", difficulty="hard", faithfulness=0.9),
+        _row("q2", difficulty="hard", faithfulness=0.9),
+    ]
+    failed_q2_but_kept_its_label = [
+        _row("q1", difficulty="hard", faithfulness=0.7),
+        _row("q2", status="failed", difficulty="hard"),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(base_rows)),
+            str(_artifact(clean_throughout)),
+            str(_artifact(failed_q2_but_kept_its_label)),
+        ]
+    )
+
+    by_arm = {
+        row["arm"]: row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty"
+        and row["value"] == "hard"
+        and row["metric"] == "faithfulness"
+    }
+
+    assert (
+        by_arm[arms[1].label]["n"] == 2
+    ), f"the clean arm must keep both questions, got n={by_arm[arms[1].label]['n']}"
+    assert (
+        by_arm[arms[2].label]["n"] == 1
+    ), "the arm that failed q2 legitimately pairs only q1"
+
+
+def test_a_failed_baseline_row_does_not_hide_a_relabelling_between_clean_arms(
+    _artifact,
+):
+    """`excluded_mismatched` is a fact about the artifacts, not about `--baseline`.
+
+    The per-arm skip exists so one arm's failure cannot hide a relabelling another
+    arm genuinely carries -- and `interpreting_benchmark_results.md` now promises
+    exactly that: "One arm that fails a question therefore neither hides a
+    re-labelling another arm genuinely carries". Dropping the question whenever the
+    *baseline* row is unclean breaks that promise for the one arm the promise cannot
+    exclude, because any arm can be the baseline: `--baseline` selects it and a bare
+    `-cd` sweep orders the arms by their directory.
+
+    This shape only became reachable once #431 landed. Before it, a failed row
+    carried no bank field, so the `isinstance(value, str)` guard skipped the
+    question first; now a failed row keeps its label, the guard passes, and the
+    baseline-clean check is what drops it.
+
+    The group key still has to come from a clean baseline row -- a key from a row
+    that did not run establishes nothing -- so the question contributes to no
+    slice. Only the count is at stake, and the count must not move when the
+    operator points `--baseline` at a different arm.
+    """
+    agreed_and_failed_the_other = [
+        _row("agreed", difficulty="easy", faithfulness=0.5),
+        # #431's shape: the row failed but kept its bank fields.
+        _row("relabelled", status="failed", difficulty="easy"),
+    ]
+    clean_says_easy = [
+        _row("agreed", difficulty="easy", faithfulness=0.7),
+        _row("relabelled", difficulty="easy", faithfulness=0.7),
+    ]
+    clean_says_hard = [
+        _row("agreed", difficulty="easy", faithfulness=0.9),
+        _row("relabelled", difficulty="hard", faithfulness=0.9),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(agreed_and_failed_the_other)),
+            str(_artifact(clean_says_easy)),
+            str(_artifact(clean_says_hard)),
+        ]
+    )
+
+    counted = {}
+    for index, baseline in enumerate(arms):
+        rows = [
+            row
+            for row in cr.slice_block(baseline, arms, ["agreed", "relabelled"], {})
+            if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+        ]
+        assert rows, f"the difficulty slice must be emitted for baseline {index}"
+        counts = {row["excluded_mismatched"] for row in rows}
+        assert len(counts) == 1, f"baseline {index} reported {counts}, want one value"
+        counted[index] = counts.pop()
+
+    assert counted[0] == 1, (
+        "the failed baseline row hid the relabelling the two clean arms carry: "
+        f"got {counted[0]}, want 1"
+    )
+    assert len(set(counted.values())) == 1, (
+        "excluded_mismatched moved with the choice of baseline over identical "
+        f"artifacts: {counted}"
+    )
+
+
+def test_an_unclean_baseline_row_whose_arms_agree_is_dropped_without_a_count(
+    _artifact,
+):
+    """The other half of the baseline rule, and the branch reordering exposes.
+
+    This one **passes before and after** the count fix — it is the over-reach
+    guard for it, so it is not contrived to fail. Moving the baseline-clean check
+    below the mismatch test makes this the path that check now serves: a baseline
+    row that did not run but still carries its label (#431's shape), whose arms
+    all agree. There is no disagreement, so nothing may be counted; the group key
+    would come from a row that did not run, so nothing may be grouped either.
+
+    Both halves have to hold at once. A fix that counted this as a mismatch would
+    invent a bank edit out of a harness failure, which is the whole defect #441
+    exists to remove.
+    """
+    baseline_failed_q2_but_kept_its_label = [
+        _row("q1", difficulty="easy", faithfulness=0.5),
+        _row("q2", status="failed", difficulty="hard"),
+    ]
+    clean_agrees = [
+        _row("q1", difficulty="easy", faithfulness=0.7),
+        _row("q2", difficulty="hard", faithfulness=0.7),
+    ]
+    clean_agrees_too = [
+        _row("q1", difficulty="easy", faithfulness=0.9),
+        _row("q2", difficulty="hard", faithfulness=0.9),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(baseline_failed_q2_but_kept_its_label)),
+            str(_artifact(clean_agrees)),
+            str(_artifact(clean_agrees_too)),
+        ]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted for q1"
+    assert all(
+        row["excluded_mismatched"] == 0 for row in rows
+    ), f"agreeing arms are no bank edit, got {[r['excluded_mismatched'] for r in rows]}"
+    assert not [
+        row for row in rows if row["value"] == "hard"
+    ], "q2's group key came from a row that did not run"
+    assert all(
+        row["n"] == 1 for row in rows
+    ), f"only q1 is groupable, got {[(r['value'], r['n']) for r in rows]}"
+
+
+def test_a_non_string_bank_label_is_a_mismatch_and_never_an_exception(_artifact):
+    """A slice field holds whatever the bank put there, including unhashable JSON.
+
+    `load_artifact` parses the artifact with plain `json.loads` and validates only
+    the top-level shape, so a bank row's `difficulty` can arrive as a list, a dict
+    or a number. `compare_runs.py` is deliberately defensive about artifact
+    contents elsewhere -- it accepts bare `NaN` tokens and has every consumer test
+    finiteness -- and a comparison must not abort on a malformed label. Aborting is
+    strictly worse than counting the question as a mismatch, which is what an
+    unequal label is.
+
+    This is a regression guard: comparing labels through a `set` would raise
+    `TypeError: unhashable type: 'list'` here and take the whole comparison down.
+    Compare them with `!=` instead, which is what the artifact's own values
+    support.
+    """
+    baseline_rows = [
+        _row("q1", difficulty="hard", faithfulness=0.5),
+        _row("q2", difficulty="hard", faithfulness=0.5),
+    ]
+    unhashable_label = [
+        # The bank wrapped the label in a list. Still a clean, scored row.
+        _row("q1", difficulty=["hard"], faithfulness=0.7),
+        _row("q2", difficulty="hard", faithfulness=0.7),
+    ]
+    arms = cr.load_arms(
+        [str(_artifact(baseline_rows)), str(_artifact(unhashable_label))]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted for q2"
+    assert all(
+        row["excluded_mismatched"] == 1 for row in rows
+    ), f"a list label differs from 'hard', got {[r['excluded_mismatched'] for r in rows]}"
+    assert all(
+        row["value"] == "hard" and row["n"] == 1 for row in rows
+    ), f"only q2 is groupable, got {[(r['value'], r['n']) for r in rows]}"
+
+
+def test_nested_json_true_and_one_are_different_labels_too(_artifact):
+    """The coercion recurs inside containers, so the comparison canonicalises.
+
+    Guarding the top-level type only moves the bug one level down: `[True] == [1]`
+    is true because Python compares containers element-wise with `==`, and the outer
+    types are both `list`. The same holds at any depth, and for dict values.
+
+    Comparing canonical JSON closes the whole class in one place rather than adding
+    a layer per report. `json.dumps` on a value that came from `json.loads` cannot
+    fail, distinguishes `true` from `1` and `1` from `1.0`, and returns a string --
+    so no label is ever hashed and the unhashable-type abort stays fixed.
+    """
+    baseline_rows = [
+        _row("q1", status="failed", difficulty="hard"),
+        _row("q2", difficulty="hard", faithfulness=0.5),
+    ]
+    nested_bool = [
+        _row("q1", difficulty=[True], faithfulness=0.7),
+        _row("q2", difficulty="hard", faithfulness=0.7),
+    ]
+    nested_int = [
+        _row("q1", difficulty=[1], faithfulness=0.8),
+        _row("q2", difficulty="hard", faithfulness=0.8),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(baseline_rows)),
+            str(_artifact(nested_bool)),
+            str(_artifact(nested_int)),
+        ]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted for q2"
+    assert all(row["excluded_mismatched"] == 1 for row in rows), (
+        "`[true]` and `[1]` are different labels and q1 must count as a mismatch, got "
+        f"{[r['excluded_mismatched'] for r in rows]}"
+    )
+
+
+def test_json_true_and_one_are_different_labels_not_the_same_one(_artifact):
+    """`True == 1` in Python, but `true` and `1` are different JSON values.
+
+    Bare `!=` fixed the `unhashable type` abort the `set` caused, and brought
+    Python's numeric tower with it: `True == 1` and `1 == 1.0` are both true, so
+    two arms recording genuinely different JSON labels compare equal and the
+    disagreement goes uncounted. That is the same silent-undercount failure
+    `excluded_mismatched` exists to prevent, arriving through a different door.
+
+    Compare the type alongside the value. Not through a `set` -- hashing is what
+    the sibling test above rules out -- but with a tuple, whose `!=` compares
+    element-wise and never hashes, so a list or dict label still works.
+    """
+    # The baseline FAILED q1 but kept a string label, so it supplies the group key
+    # and is then excluded from the clean-arm comparison. That is what leaves the
+    # two clean arms alone on the `!=`, where the coercion can bite.
+    baseline_rows = [
+        _row("q1", status="failed", difficulty="hard"),
+        _row("q2", difficulty="hard", faithfulness=0.5),
+    ]
+    # Two clean arms whose q1 labels are `true` and `1`: equal under `==`,
+    # different in the artifacts on disk.
+    bool_label = [
+        _row("q1", difficulty=True, faithfulness=0.7),
+        _row("q2", difficulty="hard", faithfulness=0.7),
+    ]
+    int_label = [
+        _row("q1", difficulty=1, faithfulness=0.8),
+        _row("q2", difficulty="hard", faithfulness=0.8),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(baseline_rows)),
+            str(_artifact(bool_label)),
+            str(_artifact(int_label)),
+        ]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted for q2"
+    assert all(row["excluded_mismatched"] == 1 for row in rows), (
+        "`true` and `1` are different labels and q1 must count as a mismatch, got "
+        f"{[r['excluded_mismatched'] for r in rows]}"
+    )
+    assert all(
+        row["value"] == "hard" and row["n"] == 1 for row in rows
+    ), f"only q2 is groupable, got {[(r['value'], r['n']) for r in rows]}"
+
+
 # --- host provenance ---------------------------------------------------------
 
 
