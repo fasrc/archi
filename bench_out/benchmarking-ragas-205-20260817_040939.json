@@ -22152,7 +22152,7 @@
                     "anchor_type": "reasoning",
                     "answer_relevancy": 0.8452299555350166,
                     "faithfulness": 0.9545454545454546,
-                    "context_precision": NaN,
+                    "context_precision": null,
                     "context_recall": 0.3333333333333333
                 },
                 "question_90": {
@@ -28113,7 +28113,7 @@
                 "aggregate_faithfulness": 0.5874600230902703,
                 "faithfulness_scored": "109 of 109",
                 "aggregate_context_precision": 0.6124562328521779,
-                "context_precision_scored": "109 of 109",
+                "context_precision_scored": "108 of 109",
                 "aggregate_context_recall": 0.8507645259938836,
                 "context_recall_scored": "109 of 109",
                 "relative_source_accuracy": 0.8207547169811321,

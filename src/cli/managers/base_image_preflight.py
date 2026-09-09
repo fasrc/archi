@@ -35,7 +35,153 @@ PYTORCH_BASE = "a2rchi-pytorch-base"
 # `test_every_placeable_base_is_reachable_from_the_two_image_rule`.
 PLACEABLE_BASES = frozenset({PYTHON_BASE, PYTORCH_BASE})
 
+# The *installed* template location, and only that. It is NOT the directory this
+# module reads -- that is `build_template_dir()`, which prefers the checkout the
+# build ships from and falls back here. Monkeypatching this constant alone does
+# not redirect the preflight wherever `_repository_info` exists (CI, and any real
+# install); patch `build_template_dir` instead. Pinned by
+# `test_build_template_dir_outranks_a_patched_template_dir`.
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "cli" / "templates" / "dockerfiles"
+
+# The root TEMPLATE_DIR is derived from, and the same root
+# `templates_manager._package_repo_root()` falls back to when no checkout is recorded. The
+# two must not drift: this module judging one tree while the source copy ships another is the
+# fail-open it exists to remove. Pinned by
+# `test_the_package_root_is_the_root_template_dir_is_derived_from`.
+PACKAGE_ROOT = Path(__file__).resolve().parents[3]
+
+_TEMPLATE_SUBPATH = ("src", "cli", "templates", "dockerfiles")
+
+# What ``copy_source_code()`` copies out of the recorded checkout
+# (``templates_manager.py:1201-1205``). It raises on any one of them that is absent, and it
+# runs below the teardown, so the preflight pre-checks exactly this list.
+_COPIED_SOURCE_PATHS = ("src", "pyproject.toml", "LICENSE")
+
+
+def build_source_root() -> Optional[Path]:
+    """The checkout root this deployment builds from, or ``None`` when there is none recorded.
+
+    Every question the preflight asks about "the tree being deployed" resolves through
+    here, so the answers cannot disagree with each other. There are two of them today --
+    which Dockerfiles will be built (``build_template_dir``) and which
+    ``requires-python`` the build will honour (``build_pyproject_path``) -- and they were
+    resolved independently until they were caught disagreeing (fasrc/archi#436 review).
+
+    ``None`` means no checkout is recorded, not that resolution failed. See
+    ``build_template_dir`` for why that is an answer rather than a fallback, and why a
+    checkout that *is* recorded but unreadable refuses instead.
+    """
+    from src.cli.managers import source_version
+
+    try:
+        recorded = source_version._recorded_repo_root()
+    except Exception:
+        # No checkout recorded. `PACKAGE_ROOT` is then the tree the build ships -- but that
+        # is a claim, and this module may not pass on a claim, so check it too.
+        _refuse_a_root_the_source_copy_cannot_use(PACKAGE_ROOT, recorded=False)
+        return None
+
+    _refuse_a_root_the_source_copy_cannot_use(recorded, recorded=True)
+    return recorded
+
+
+def _refuse_a_root_the_source_copy_cannot_use(root: Path, *, recorded: bool) -> None:
+    """Raise unless ``root`` holds everything the build reads out of it.
+
+    One check for both roots, deliberately. ``copy_source_code`` demands the same three
+    paths whichever root it resolves (``templates_manager.py:1201-1205``, raising at
+    ``:1218``) and runs below ``remove_existing_deployment()`` either way, so a root that
+    is good enough for one branch and not the other cannot exist -- and two copies of this
+    rule would eventually disagree about it.
+    """
+    unreadable = [name for name in _COPIED_SOURCE_PATHS if not (root / name).exists()]
+    if not root.joinpath(*_TEMPLATE_SUBPATH).is_dir():
+        unreadable.append(Path(*_TEMPLATE_SUBPATH).as_posix())
+    if not unreadable:
+        return
+
+    if recorded:
+        remedy = (
+            "  Re-run `pip install .` from the checkout you intend to deploy, or restore "
+            "the recorded one."
+        )
+        whose = f"The checkout this install records at {root}"
+    else:
+        remedy = (
+            "  This install records no source checkout, so the package root is the only "
+            "tree the deployment could build from. Re-run `pip install .` from the "
+            "checkout you intend to deploy."
+        )
+        whose = f"This install records no checkout, and the package root {root}"
+
+    raise BaseImagePreflightError(
+        "Base image check failed:\n"
+        f"  {whose} is missing {', '.join(unreadable)}.\n"
+        f"  That is the tree the deployment builds from -- "
+        f"prepare_deployment_files() copies it below the teardown -- so the preflight "
+        f"cannot establish anything by reading the installed templates instead.\n"
+        + remedy
+    )
+
+
+def build_pyproject_path() -> Optional[Path]:
+    """The ``pyproject.toml`` whose ``requires-python`` the build will actually honour.
+
+    The floor is not a property of the installed CLI; it is a property of the tree
+    ``pip install .`` runs inside the image, which is the recorded checkout. Reading it
+    from the installed distribution's metadata while reading the Dockerfiles from the
+    checkout let a base image pass against a floor the build would then reject -- below
+    the teardown (fasrc/archi#436 review). ``build_source_root`` has already established
+    that this file exists: ``pyproject.toml`` is one of ``_COPIED_SOURCE_PATHS``.
+
+    ``None`` when no checkout is recorded, which leaves ``declared_python_floor``'s own
+    resolution order intact rather than reaching into it. That order then lands on
+    ``_source_pyproject()``, which is ``PACKAGE_ROOT / "pyproject.toml"`` -- and
+    ``build_source_root`` has already refused any package root that does not hold it. So
+    ``declared_python_floor``'s metadata fallback is now unreachable *through this entry
+    point*, which is the intent: metadata is frozen at install time, and every path here
+    that can read a real file does. It stays in place for a direct caller.
+    """
+    root = build_source_root()
+    return None if root is None else root / "pyproject.toml"
+
+
+def build_template_dir() -> Path:
+    """The template directory whose Dockerfiles this deployment will actually build.
+
+    ``TEMPLATE_DIR`` is derived from *this module's* location, which under a non-editable
+    ``pip install .`` is a site-packages copy. That is not the tree compose builds from:
+    ``base-compose.yaml`` names ``archi_code/cli/templates/dockerfiles/...``, and
+    ``archi_code`` is filled by ``TemplateManager.copy_source_code()`` from the checkout
+    ``setup.py`` recorded at install time (``templates_manager.py:1191-1193``). When the two
+    trees diverge -- an operator edits the checkout after installing -- probing the installed
+    copy establishes nothing about the build, and ``--force`` would remove a working
+    deployment on the strength of it (fasrc/archi#436 review).
+
+    Two outcomes, per the governing invariant -- and deliberately no third:
+
+    **No checkout recorded** -> ``TEMPLATE_DIR``. An editable install has no
+    ``_repository_info`` to import (``setup.py:12`` generates it, and it is absent from the
+    working tree), and in that case the installed location *is* the tree the build ships
+    from. This is an answer, not a fallback.
+
+    **A checkout recorded but unusable** -> refuse, here, above the teardown. Falling back to
+    the installed templates would be a fail-open of the worst kind: the build does not read
+    them. ``_stage_source_copy`` (``templates_manager.py:704``) copies from this same
+    recorded checkout and raises on a missing ``src``, ``pyproject.toml`` or ``LICENSE``
+    (``:1192-1198``) -- and that stage runs *below* ``remove_existing_deployment()``
+    (``cli_main.py:906`` then ``:923``). So a silent fallback would pass the preflight,
+    destroy the operator's runtime, and only then die copying a checkout that is not there.
+    Refusing first is the entire purpose of this module.
+
+    ``TEMPLATE_DIR`` and ``templates_manager._package_repo_root()`` are two ``__file__``
+    derivations of the same root, and they must agree -- otherwise this returns a tree
+    the source copy does not ship. Pinned by
+    ``test_the_source_copy_fallback_agrees_with_the_preflight_template_dir``.
+    """
+    root = build_source_root()
+    return TEMPLATE_DIR if root is None else root.joinpath(*_TEMPLATE_SUBPATH)
+
 
 # Templates excluded from the service set. Keys are relative paths from the template
 # directory root. Each value is the reason the file is not a service template, so a
@@ -333,7 +479,7 @@ def service_templates(template_dir: Optional[Path] = None) -> List[Path]:
     Service templates build ``FROM`` an ``a2rchi-*-base`` image. The six excluded by
     ``NON_SERVICE_TEMPLATES`` define base images themselves or build on third-party images.
     """
-    directory = template_dir or TEMPLATE_DIR
+    directory = template_dir or build_template_dir()
     return sorted(
         p
         for p in directory.rglob("Dockerfile*")
@@ -347,7 +493,7 @@ def stale_template_exclusions(template_dir: Optional[Path] = None) -> List[str]:
     A non-empty return means the exclusion list names a template that no longer exists,
     so it excludes nothing and silently over-reports the service-template count.
     """
-    directory = template_dir or TEMPLATE_DIR
+    directory = template_dir or build_template_dir()
     return [name for name in NON_SERVICE_TEMPLATES if not (directory / name).exists()]
 
 
@@ -364,7 +510,7 @@ def nested_service_templates(template_dir: Optional[Path] = None) -> List[Path]:
     base deploys correctly. It is a repo-level guard, so that making the set recursive and
     making the rewriter recursive have to land together.
     """
-    directory = template_dir or TEMPLATE_DIR
+    directory = template_dir or build_template_dir()
     return [p for p in service_templates(directory) if p.parent != directory]
 
 
@@ -1020,10 +1166,19 @@ def enforce_base_images(
         raise BaseImagePreflightError(
             "Base image check failed:\n"
             f"  This deployment requires {', '.join(unresolved)}, but no service template "
-            f"under {template_dir or TEMPLATE_DIR} declares a FROM line for it.\n"
+            f"under {template_dir or build_template_dir()} declares a FROM line "
+            f"for it.\n"
             f"  The preflight cannot verify an image it cannot name, and will not proceed "
             f"as though there were nothing to check."
         )
+
+    # The floor must come from the same tree the Dockerfiles above came from. When the
+    # caller pinned `template_dir`, it owns the tree and the pyproject default stays out
+    # of the way -- defaulting one and not the other would re-open the same split with
+    # the trees swapped. `build_pyproject_path()` is `None` when no checkout is recorded,
+    # which leaves `declared_python_floor`'s own resolution order untouched.
+    if pyproject_path is None and template_dir is None:
+        pyproject_path = build_pyproject_path()
 
     outcomes = run_preflight(
         references,

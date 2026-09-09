@@ -64,6 +64,7 @@ read (`question`→`user_input`, `answer`→`reference`, `contexts`→`retrieved
 | `sources` | SOURCES mode | List of source identifiers (URLs, ticket IDs, etc.) |
 | `reference` | No¹ | Ground-truth answer (ragas `reference`, used for RAGAS evaluation) |
 | `source_match_field` | No | Metadata fields to match sources against (defaults to config value) |
+| `difficulty` | No | Optional bank label; copied verbatim into `single_question_results` when present, so `compare_runs.py` can slice by it. |
 
 ¹ Only `user_input` is required at load (plus `sources` for SOURCES mode). An
 empty `reference` is a valid draft row: it is skipped by every metric that needs

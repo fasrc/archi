@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import platform
 import shutil
 import socket
 import subprocess
@@ -22,6 +23,21 @@ from src.utils.benchmark_schema import (
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _package_repo_root() -> Path:
+    """The checkout root derived from this file's location.
+
+    Used only when ``setup.py`` recorded no checkout — archi imported from a source tree
+    that was never installed. This file is ``<root>/src/cli/managers/templates_manager.py``,
+    so the root is three parents up from the file's own directory.
+
+    ``base_image_preflight.TEMPLATE_DIR`` derives the same root the same way, and the two
+    must not drift: the preflight probing one tree while the source copy ships another is
+    the fail-open that module exists to remove. Pinned by
+    ``test_the_source_copy_fallback_agrees_with_the_preflight_template_dir``.
+    """
+    return Path(__file__).resolve().parents[3]
 
 
 def _render_config_target_name(
@@ -76,6 +92,44 @@ EVALUATION_MCP_RUNTIME_PATH = (
 )
 
 
+def collect_host_information() -> Optional[Dict[str, Optional[str]]]:
+    try:
+        hostname = socket.getfqdn()
+    except Exception:
+        return None
+    # Guarded on the VALUE too, not only on the lookup raising. `socket.getfqdn()`
+    # falls back to `gethostname()` and returns that name unchanged when nothing
+    # resolves, so a machine with no hostname set yields "" rather than an error.
+    # The spec makes an unreadable hostname a `None` *block*: recording a mapping
+    # whose hostname is blank is the "recorded host named None" it refuses, and a
+    # blank identity would suppress the mismatch evidence the field exists to give.
+    # Trimmed rather than refused when the name itself is real -- a stray newline
+    # must not make the artifact's host stop matching the same machine elsewhere.
+    hostname = hostname.strip() if isinstance(hostname, str) else ""
+    if not hostname:
+        return None
+    cpu_model = None
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    cpu_model = line.split(":", 1)[1].strip()
+                    break
+    except Exception:
+        pass
+    if not cpu_model:
+        # Guarded for the same reason the /proc/cpuinfo read is: the spec makes
+        # capture unconditionally non-fatal. platform.processor() falls back to
+        # `uname -p` and catches only OSError/CalledProcessError, so a decode
+        # failure would escape and abort `archi create` over a provenance field.
+        try:
+            fallback = platform.processor()
+        except Exception:
+            fallback = None
+        cpu_model = fallback if fallback else None
+    return {"hostname": hostname, "cpu_model": cpu_model}
+
+
 def get_git_information() -> Dict[str, str]:
 
     meta_data: Dict[str, str] = {}
@@ -102,6 +156,7 @@ def get_git_information() -> Dict[str, str]:
         meta_data["git_diff"] = subprocess.check_output(
             diff_comm, encoding="UTF-8", cwd=wd
         )
+    meta_data["host"] = collect_host_information()
     return meta_data
 
 
@@ -1160,23 +1215,28 @@ class TemplateManager:
                 )
 
     def copy_source_code(self, base_dir: Path) -> None:
-        # Try to locate the repository root in a robust way. Prefer CWD when
-        # it contains expected marker files (pyproject.toml, LICENSE, .git)
-        # — this is what the template/preview code typically uses. If CWD
-        # doesn't look like the repo root, fall back to walking up from this
-        # file's location. Avoid assuming a fixed number of parent hops which
-        # breaks in PR-preview, installed-package, or temporary test layouts.
+        # Locate the tree this deployment ships. The checkout `setup.py` recorded at
+        # install time is the answer whenever there is one, because it is the tree the
+        # operator installed from. Without it — archi running from a source tree that
+        # was never installed — the package root derived from this file is that tree.
+        #
+        # This runs BELOW `remove_existing_deployment()` (`cli_main.py:906` then `:923`),
+        # so anything it cannot find is found after the operator's deployment is already
+        # gone. `base_image_preflight.build_template_dir()` refuses above the teardown on
+        # a recorded checkout that is unreadable, and it resolves the same package root
+        # this does when none is recorded — pinned by
+        # `test_the_source_copy_fallback_agrees_with_the_preflight_template_dir`.
 
         try:
             import src.cli.utils._repository_info
 
             repo_root = Path(src.cli.utils._repository_info.REPO_PATH)
         except Exception as e:
+            repo_root = _package_repo_root()
             logger.warning(
-                f"Could not import repository path information. {str(e)}",
-                "Falling back to current working directory.",
+                f"Could not import repository path information ({e}); "
+                f"falling back to the package root {repo_root}."
             )
-            repo_root = Path(__file__).resolve()
 
         source_files = [
             ("src", "archi_code"),

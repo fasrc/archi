@@ -231,7 +231,7 @@
                         "**Lab:**This directory is intended as the primary working directory. It is also the directory shared out via\u00a0[Globus](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/). By default, folders in this subdirectory are visible to the whole lab. Individual users may update their permissions to adj"
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.15384615384615385,
                     "context_precision": 0.0,
                     "context_recall": 0.0
@@ -2241,7 +2241,7 @@
                         "# SEAS Compute Resources\n\n* [Home](https://docs.rc.fas.harvard.edu/)\n* [Affiliates](https://docs.rc.fas.harvard.edu/kb/category/affiliates/)\n* SEAS Compute Resources\n\nThe [Harvard John A. Paulson School of Engineering and Applied Sciences](https://seas.harvard.edu/) (SEAS) has a number of compute re"
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.42857142857142855,
                     "context_precision": 0.0,
                     "context_recall": 0.0
@@ -2764,7 +2764,7 @@
                         "Only Slurm operators and administrators can set the priority of a job. : **--profile**={all|none|<*type*>[,<*type*>...]} : Enables detailed data collection by the acct\\_gather\\_profile plugin. Detailed data are typically time-series that are stored in an HDF5 file for the job or an InfluxDB database"
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.26666666666666666,
                     "context_precision": 0.0,
                     "context_recall": 0.0
@@ -3171,7 +3171,7 @@
                         "**MaxJobsPerUser**\n:   The maximum number of jobs a user can\n    have running at a given time.\n\n**MaxSubmitJobsPerAccount**\n:   The maximum number of jobs an account (or sub-account) can have running and\n    pending at a given time.\n\n**MaxSubmitJobsPerUser**\n:   The maximum number of jobs a user can"
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.3181818181818182,
                     "context_precision": 0.0,
                     "context_recall": 0.0
@@ -3440,7 +3440,7 @@
                         "# VSCode Remote Development via SSH and Tunnel\n\n* [Home](https://docs.rc.fas.harvard.edu/)\n* [AI](https://docs.rc.fas.harvard.edu/kb/category/ai/)\n* VSCode Remote Development via SSH and Tunnel\n\nThis document provides the necessary steps needed to setup a remote connection between your local VS Code"
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.12903225806451613,
                     "context_precision": 0.0,
                     "context_recall": 0.3333333333333333
@@ -3730,7 +3730,7 @@
                         "# MPI (Message Passing Interface) & OpenMPI\n\n* [Home](https://docs.rc.fas.harvard.edu/)\n* [Parallel Computing](https://docs.rc.fas.harvard.edu/kb/category/parallel-computing/)\n* MPI (Message Passing Interface) & OpenMPI\n\n## Introduction\n\nThe Message Passing Interface (MPI) library allows processes i"
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.1875,
                     "context_precision": 0.0,
                     "context_recall": 0.0
@@ -3886,7 +3886,7 @@
                         "# Globus File Transfer\n\n* [Home](https://docs.rc.fas.harvard.edu/)\n* [Data Transfer](https://docs.rc.fas.harvard.edu/kb/category/data-transfer/)\n* Globus File Transfer\n\n## Overview\n\n[Globus](http://www.globus.org) is a service enabling file sharing with external collaborators without requiring them "
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.0,
                     "context_precision": 0.0,
                     "context_recall": 0.0
@@ -4152,7 +4152,7 @@
                         "1. Set up a [Mapped Collection](https://docs.globus.org/guides/overviews/collections-and-endpoints/#mapped_collection) on it by installing [Globus Connect Personal](https://www.globus.org/globus-connect-personal) software  \n   Note: Premium Globus account is not required to transfer files between an"
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.631578947368421,
                     "context_precision": 0.249999999975,
                     "context_recall": 0.7333333333333333
@@ -4440,7 +4440,7 @@
                         "# Globus File Transfer\n\n* [Home](https://docs.rc.fas.harvard.edu/)\n* [Data Transfer](https://docs.rc.fas.harvard.edu/kb/category/data-transfer/)\n* Globus File Transfer\n\n## Overview\n\n[Globus](http://www.globus.org) is a service enabling file sharing with external collaborators without requiring them "
                     ],
                     "anchor_type": "",
-                    "answer_relevancy": NaN,
+                    "answer_relevancy": null,
                     "faithfulness": 0.125,
                     "context_precision": 0.0,
                     "context_recall": 0.2
@@ -6712,7 +6712,7 @@
             },
             "total_results": {
                 "aggregate_answer_relevancy": 0.4002802278436878,
-                "answer_relevancy_scored": "26 of 26",
+                "answer_relevancy_scored": "17 of 26",
                 "aggregate_faithfulness": 0.2907315238429694,
                 "faithfulness_scored": "26 of 26",
                 "aggregate_context_precision": 0.17729319290150097,

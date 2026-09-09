@@ -101,10 +101,11 @@ Two things commonly go wrong here:
 Do not add the `repo` scope. The container registry uses granular permissions and does not
 need it, and the token creation form will try to select it for you.
 
-`archi create` checks the base images before it changes anything, so a machine that is not
-logged in is told so up front — naming the image and the command to run — rather than failing
-part way through a build. Under `--force` this check runs before the existing deployment is
-removed, so a create that cannot obtain its base images leaves the running deployment alone.
+`archi create` and `archi evaluate` both check the base images before they change anything, so
+a machine that is not logged in is told so up front — naming the image and the command to run —
+rather than failing part way through a build. Under `--force` this check runs before the
+existing deployment is removed, so a run that cannot obtain its base images leaves the running
+deployment alone.
 
 If you already have the base images locally, no login is required: the check accepts an image
 that is present on the host without contacting any registry.

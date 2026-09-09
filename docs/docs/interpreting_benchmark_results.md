@@ -242,9 +242,12 @@ worth reading before you go and diff the bank:
   closing #431 carries no bank field at all, so an absent label used to read as
   a changed label.
 - The skip is per **arm**, never per question. A sweep expands into three or
-  more arms, and the tool pairs each arm with the baseline on its own. One arm
-  that fails a question therefore neither hides a re-labelling another arm
-  genuinely carries, nor removes that question from the other arms' slices.
+  more arms, and the tool pairs each arm with the baseline on its own. One
+  **non-baseline** arm that fails a question therefore neither hides a
+  re-labelling another arm genuinely carries, nor removes that question from the
+  other arms' slices. The baseline is the exception, and the next bullet states
+  it: the baseline supplies the group key for every pair, so a baseline row that
+  did not run takes the question out of all of them.
 - The tool drops a question whose **baseline** row did not run to completion
   from every slice of that field. The baseline's value is the group key, and a
   key taken from a row that did not run establishes nothing. It is dropped from
@@ -613,14 +616,14 @@ vacuous. Each metric's sigma is measured over the rows every arm *and* every
 replicate could score for that metric, so the threshold and the delta it judges
 describe the same population.
 
-!!! note "The `difficulty` slice needs a bank that reaches the artifact"
-    Procedure D lists `difficulty` as a row field, but the harness copies only
-    `anchor_type` from the bank into `single_question_results`
-    (`service_benchmark.py`, `_answer_and_score_question`). Artifacts written by
-    the current harness therefore carry no `difficulty`, and the slice is
-    skipped rather than shown empty. The tool supports the field for when the
-    harness propagates it; until then, the bank slice available in practice is
-    `anchor_type`.
+!!! note "The `difficulty` slice needs a bank that carries the field"
+    The harness propagates `difficulty` from the bank row into
+    `single_question_results` (`service_benchmark.py`,
+    `_answer_and_score_question`) when the row carries it. A bank without the
+    field still produces no `difficulty` key, so the slice is skipped rather
+    than shown empty, exactly as before. The FASRC bank
+    (`fasrc_ragas_queries.json`) has no `difficulty` today; `ragas-jeopardy-master.json`
+    does.
 
 Two things the tool will not do for you. It never prints SIGNIFICANT without a
 noise floor, and it identifies the anchors by **question text** rather than by
@@ -698,6 +701,7 @@ bench_out/benchmarking-<name>-<timestamp>.json
 │   ├── corpus_snapshot_id     # shared => ran together (see §3.3)
 │   ├── git_info.last_commit   # the DEPLOY's commit, NOT this run's code (§5.E)
 │   ├── code_version           # which code produced this (§5.E)
+│   ├── host                   # machine that ran the deploy (§5.E)
 │   └── config_versions[]      # one config digest per arm, in run order
 └── benchmarking_results[]     # one entry per config in a -cd sweep
     ├── configuration_file
@@ -721,6 +725,7 @@ bench_out/benchmarking-<name>-<timestamp>.json
             ├── status         # "ok" | "degraded" | ...
             ├── anchor_type    # anchors only: easy_retrieve|reasoning|should_refuse
             ├── difficulty     # bank rows only: easy|medium|hard
+            │                  #   the harness started writing this in the change closing #431
             └── answer_relevancy, faithfulness, context_precision,
                 context_recall, answer_correctness  # last one: opt-in
 ```
@@ -741,6 +746,9 @@ fields.
 and 2026-08-17 reports the same commit (`0a157cdce0`) with an empty diff, because
 they shared one deployment — even though they ran different code. The field names
 the deploy, not the image. It is kept, and labelled, for exactly that reason.
+`metadata.host` does not share this freeze trap: a container cannot move to another
+machine, so the host recorded at deploy is the host every run in that deployment
+used.
 
 Use the digests instead. Each is a content hash: **equal digest means equal
 input**, and the property is readable from the finished file forever, with no need
@@ -749,6 +757,7 @@ for Postgres or the config file to still exist.
 | Field | Scope | Answers |
 |---|---|---|
 | `metadata.code_version.digest` | per invocation | Did these runs execute the same code? |
+| `metadata.host` | per invocation | Did these runs execute on the same machine? |
 | `<arm>.config_version.digest` | per arm | Did these arms use the same settings? |
 | `<arm>.config_version.key_settings` | per arm | Which settings define this arm? |
 | `<arm>.config_version.divergence_from_selected_file` | per arm | Did the run use the config you selected? |

@@ -22,6 +22,12 @@ DEGRADED = "degraded"  # answered, but the agent marked a context-overflow degra
 # hard-failure fallback and ``context_overflow_retry=True`` on a recovered retry).
 _DEGRADED_ERROR_TYPES = {"context_overflow"}
 
+#: Bank-row fields the comparison tool slices paired deltas by. Duplicated from
+#: ``scripts/benchmarking/compare_runs.py`` (``SLICE_FIELDS``) rather than imported:
+#: ``src`` must not depend on ``scripts``. The copy is drift-guarded by
+#: ``test_failure_slice_fields_agree_with_compare_runs``.
+BANK_SLICE_FIELDS: Tuple[str, ...] = ("anchor_type", "difficulty")
+
 
 def classify_metadata(metadata: Optional[Dict[str, Any]]) -> str:
     """Return ``DEGRADED`` if the agent marked a context-overflow, else ``OK``.
@@ -38,16 +44,48 @@ def classify_metadata(metadata: Optional[Dict[str, Any]]) -> str:
     return OK
 
 
+def bank_slice_fields(question_item: Any) -> Dict[str, Any]:
+    """The ``BANK_SLICE_FIELDS`` a bank row actually states, copied off that row.
+
+    Only keys the row carries are returned. A default would be worse than an absence
+    here: ``slice_block`` skips a falsy baseline value, so a sentinel buys nothing,
+    while inventing a label the bank never stated would make a real relabelling
+    unreportable.
+    """
+    if not isinstance(question_item, dict):
+        return {}
+    return {
+        field: question_item[field]
+        for field in BANK_SLICE_FIELDS
+        if field in question_item
+    }
+
+
 def build_failure_entry(
-    *, question: str, reference_answer: str, error: BaseException
+    *,
+    question: str,
+    reference_answer: str,
+    error: BaseException,
+    question_item: Any = None,
 ) -> Dict[str, Any]:
-    """Build a marked failure entry for a question whose answering/scoring raised."""
+    """Build a marked failure entry for a question whose answering/scoring raised.
+
+    ``question_item`` is the bank row, carried so the entry keeps the fields the
+    comparison tool slices by. Without it a question that raised lands in
+    ``single_question_results`` with no ``difficulty``, and because
+    ``Arm.has_metric`` is true when *any* row carries the field,
+    ``compare_runs.slice_block`` reads the baseline's ``"hard"`` against this row's
+    absence and counts it in ``excluded_mismatched`` -- whose meaning is "the bank
+    re-labelled this question between the runs". A harness failure must not be
+    published as bank drift (#431 review round 1).
+    """
     return {
         "question": question,
         "reference_answer": reference_answer,
         "answer": "",
         "status": FAILED,
         "error": f"{type(error).__name__}: {error}",
+        **bank_slice_fields(question_item),
     }
 
 
