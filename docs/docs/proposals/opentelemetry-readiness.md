@@ -5,7 +5,7 @@
 **Status:** Assessment, not scheduled. Observability is parked under the
 [release plan](release-plan-2026.md). This document records what the work needs so a
 plan decision can rest on evidence.
-**Code anchors:** verified against `dev` at `3170498c` (2026-09-08)
+**Code anchors:** verified against `dev` at `85e93e3a` (2026-09-09)
 
 ---
 
@@ -73,7 +73,7 @@ psycopg2 is the only database driver. Most access goes through `ConnectionPool`
 (`src/utils/connection_pool.py:36`). 11 modules import `requests` directly. One module
 uses `httpx` directly, and the LangChain OpenAI, Anthropic, Gemini, and Ollama clients
 use it internally. `urllib.request` appears in `local_provider.py` and
-`src/bin/service_benchmark.py:1091`.
+`src/bin/service_benchmark.py:1105`.
 
 ### 1.5 Timing data already stored
 
@@ -327,6 +327,13 @@ conda env, is what the images get.
 
 A repo-wide grep for
 `opentelemetry|otel|prometheus|langfuse|langsmith|phoenix|sentry|tracing|traceloop|arize`
-hits `src/cli/managers/base_image_preflight.py:612` and
-`src/interfaces/chat_app/app.py:1364`. Both are the word "summarize". The Prometheus
-mentions in `docs/docs/fasrc_archi.md` describe vLLM's metrics middleware, not archi.
+returns no vendor reference under `src/`. Every hit is the substring `arize` inside the
+ordinary English word "summarize" — in `src/archi/pipelines/agents/base_react.py` (nine
+occurrences, around the message-summarisation helpers at `:1924-1965` and the wrap-up at
+`:2329-2433`), in `src/cli/managers/base_image_preflight.py:1193` and `:1290`, and in
+`src/interfaces/chat_app/app.py:1364`. The Prometheus mentions in
+`docs/docs/fasrc_archi.md` describe vLLM's metrics middleware, not archi.
+
+Line numbers in this appendix were re-derived against `origin/dev` at `85e93e3a`, after
+#436, #437 and #440 landed. The `base_image_preflight.py` and `base_react.py` anchors moved
+between the first draft and the merge, which is the reason this note records the revision.
