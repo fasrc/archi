@@ -687,3 +687,24 @@ def test_a_null_host_also_names_the_unreadable_metadata_cause():
     # Still not the absent-key text, and still distinct from it.
     assert "predates host stamping" not in md_null
     assert md_null != _provenance_md()
+
+
+def test_a_null_host_does_not_claim_the_deploy_recorded_no_host():
+    """The lead clause must not contradict the third cause it goes on to name.
+
+    ``add_metadata`` sets ``host`` to ``None`` when the ``git_info.yaml`` read
+    raises ``OSError`` (``src/bin/service_benchmark.py:449-460``). On that path
+    the deploy DID record a host -- the benchmark simply never read it. A lead
+    clause asserting "this deploy recorded no host" therefore states as fact the
+    one thing this field cannot establish, and points an operator at the capture
+    step instead of the mount or the permissions that actually broke. The field
+    supports a claim about the ARTIFACT, so make the claim about the artifact.
+    """
+    md_null = _provenance_md(host=None)
+
+    assert "recorded no host" not in md_null
+    assert "no host reached this artifact" in md_null
+    # The three causes it names are unchanged; only the lead assertion moves.
+    assert "predates the field" in md_null
+    assert "capture failed" in md_null
+    assert "metadata could not be read" in md_null

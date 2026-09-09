@@ -81,6 +81,11 @@ causes. Naming a subset states a positive, false claim about the ones it omits, 
 send an operator to diagnose a deploy age when the real fault is a broken provenance
 channel.
 
+That prose SHALL make its leading claim about the **artifact**, never about the deploy. On
+the unreadable-metadata path the deploy did record a host, so a lead clause such as "this
+deploy recorded no host" asserts the one thing this field cannot establish and contradicts
+the third cause the same sentence goes on to name.
+
 The harness SHALL also write a `host_captured_at` string beside `host`, stating that the
 host was captured at deploy time and that a container cannot move machines. Issue #433 asks
 for that caveat "in the artifact and in the docs", and the field is the only part of this
@@ -142,6 +147,7 @@ already carries its own caveat (`src/utils/generate_benchmark_report.py:262` and
 - **WHEN** an artifact's `metadata.host` is `null` and each report renders its null text
 - **THEN** that text names the older-deploy cause, the failed-capture cause, and the unreadable-metadata cause
 - **AND** it does not claim that a hostname lookup failed
+- **AND** it does not claim that the deploy recorded no host
 
 #### Scenario: A host with no processor model renders no empty parenthesis
 

@@ -66,21 +66,27 @@ _INGEST_NOT_RECORDED = object()
 #: fault lands here even though capture succeeded on the deploy host. None of the
 #: three are distinguishable from this field alone, so the null text names all
 #: three rather than asserting a lookup that may never have run, or a capture that
-#: may never have been read.
+#: may never have been read. Its lead clause claims only the ARTIFACT ("no host
+#: reached this artifact"), never the deploy: on the unreadable-metadata path the
+#: deploy did record a host, so "this deploy recorded no host" would state as
+#: fact the one thing this field cannot establish, and would send an operator to
+#: debug capture instead of the mount.
 _HOST_NOT_RECORDED = object()
 
 _MD_HOST_NOT_RECORDED = "*not recorded — this artifact predates host stamping*"
 _MD_HOST_NULL = (
-    "*not available — this deploy recorded no host"
-    " (it predates the field, capture failed, or the metadata could not be read)*"
+    "*not available — no host reached this artifact"
+    " (the deploy predates the field, capture failed, or the metadata could not"
+    " be read)*"
 )
 
 _HTML_HOST_NOT_RECORDED = (
     "<em>not recorded &mdash; this artifact predates host stamping</em>"
 )
 _HTML_HOST_NULL = (
-    "<em>not available &mdash; this deploy recorded no host"
-    " (it predates the field, capture failed, or the metadata could not be read)</em>"
+    "<em>not available &mdash; no host reached this artifact"
+    " (the deploy predates the field, capture failed, or the metadata could not"
+    " be read)</em>"
 )
 
 

@@ -340,3 +340,20 @@ def test_an_html_null_host_also_names_the_unreadable_metadata_cause():
     assert "capture failed" in html_null
     assert "metadata could not be read" in html_null
     assert "predates host stamping" not in html_null
+
+
+def test_an_html_null_host_does_not_claim_the_deploy_recorded_no_host():
+    """HTML mirror: the lead clause must not contradict the unreadable-metadata cause."""
+    html_null = format_version_html(
+        {
+            "code_version": {"digest": "code-digest-1"},
+            "config_version": {},
+            "host": None,
+        }
+    )
+
+    assert "recorded no host" not in html_null
+    assert "no host reached this artifact" in html_null
+    assert "predates the field" in html_null
+    assert "capture failed" in html_null
+    assert "metadata could not be read" in html_null
