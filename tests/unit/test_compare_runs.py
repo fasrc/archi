@@ -1892,3 +1892,121 @@ def test_table_cells_survive_a_pipe_and_a_newline(_artifact, anchors_file, capsy
         # the six columns of the anchor table
         assert "`a \\| b`" in line
         assert len(re.findall(r"(?<!\\)\|", line)) == 7
+
+
+# --- host provenance ---------------------------------------------------------
+
+
+def test_provenance_rows_show_host(_artifact):
+    # Two artifacts with recorded hosts — the provenance table names both.
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            metadata={
+                "host": {"hostname": "node-1.example.com", "cpu_model": "Intel Xeon"}
+            },
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            metadata={
+                "host": {"hostname": "node-2.example.com", "cpu_model": "AMD EPYC"}
+            },
+        )
+    )
+    arms = cr.load_arms([base, treat])
+    rows = cr.provenance_rows(arms)
+
+    host_row = next((r for r in rows if r["field"] == "host"), None)
+    assert host_row is not None, "provenance_rows must include a 'host' field"
+    values = list(host_row["values"].values())
+    assert "node-1.example.com" in values[0]
+    assert "node-2.example.com" in values[1]
+
+
+def test_provenance_rows_show_host_without_cpu_model(_artifact):
+    # When cpu_model is None the hostname renders alone, with no literal "None".
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            metadata={"host": {"hostname": "node-1.example.com", "cpu_model": None}},
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            metadata={"host": {"hostname": "node-2.example.com", "cpu_model": None}},
+        )
+    )
+    arms = cr.load_arms([base, treat])
+    rows = cr.provenance_rows(arms)
+
+    host_row = next((r for r in rows if r["field"] == "host"), None)
+    assert host_row is not None
+    for value in host_row["values"].values():
+        assert "None" not in value
+
+
+def test_provenance_rows_show_not_recorded_when_host_absent(_artifact):
+    # An arm with no host key renders "not recorded".
+    base = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="corpus-1"))
+    treat = str(_artifact([_row("q1", faithfulness=0.6)], fingerprint="corpus-1"))
+    arms = cr.load_arms([base, treat])
+    rows = cr.provenance_rows(arms)
+
+    host_row = next((r for r in rows if r["field"] == "host"), None)
+    assert host_row is not None
+    for value in host_row["values"].values():
+        assert value == "not recorded"
+
+
+def test_flags_two_arms_that_ran_on_different_hosts(_artifact, anchors_file, capsys):
+    # Two arms with different hostnames → warning appears in output; exit code unchanged.
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            metadata={"host": {"hostname": "node-1.example.com", "cpu_model": "Intel"}},
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            metadata={"host": {"hostname": "node-2.example.com", "cpu_model": "Intel"}},
+        )
+    )
+    anchors = anchors_file([])
+    result = cr.main([base, treat, "--anchors", anchors])
+    out = capsys.readouterr().out
+    assert result == cr.EXIT_OK
+    assert "host mismatch" in out.lower()
+
+
+def test_one_recorded_and_one_unrecorded_host_prints_no_warning(
+    _artifact, anchors_file, capsys
+):
+    # One arm has a host, one has none — not enough recorded hosts to compare, no warning.
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            metadata={"host": {"hostname": "node-1.example.com", "cpu_model": "Intel"}},
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+        )
+    )
+    anchors = anchors_file([])
+    result = cr.main([base, treat, "--anchors", anchors])
+    out = capsys.readouterr().out
+    assert result == cr.EXIT_OK
+    assert "host mismatch" not in out.lower()
