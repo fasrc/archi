@@ -87,6 +87,9 @@
             .score-low { color: #dc3545; }
             .score-medium { color: #ffc107; }
             .score-high { color: #28a745; }
+            /* Unscored: deliberately not on the red-amber-green scale — it is
+               the absence of a grade, not a bad one. */
+            .score-na { color: #6c757d; font-size: 0.6em; }
         </style>
     </head>
     <body>
@@ -98,7 +101,7 @@
         <p><strong>Timestamp:</strong> 2026-08-07 00:46:38.322992+00:00</p>
         <p><strong>Questions Processed:</strong> 109</p>
     </div>
-    <div class='provenance'><h2>Run provenance</h2><p class='provenance-alert'>Whether the run used the selected configuration was <strong>not recorded</strong>: this artifact predates configuration provenance, so no comparison was made.</p><p class='provenance-alert'>Corpus stability is <strong>unknown</strong>: it was not observed both before and after the run (<code>None</code> &rarr; <code>None</code>).</p><ul><li>Code version: <em>not recorded &mdash; this artifact predates version stamping</em></li><li>Deploy-time commit: <code>b1d10ba57a0ffbf667c99db018dbfa4d799295d6</code> &mdash; frozen by <code>archi create</code>; it identifies the deploy, not the image this run used</li><li>Config version: <code>sha256:9dd676871437e3bf5ee5726f31cfe1d00d234cda3d43aa96aacc78f9a402e6c3</code></li><li>Config basis: reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run</li></ul><p>Settings that define this arm:</p><table class='provenance-settings'><tr><th>Setting</th><th>Value</th></tr><tr><td><code>data_manager.chunk_overlap</code></td><td><code>0</code></td></tr><tr><td><code>data_manager.chunk_size</code></td><td><code>1000</code></td></tr><tr><td><code>data_manager.chunking</code></td><td><code>{&quot;strategy&quot;: &quot;sentence&quot;}</code></td></tr><tr><td><code>data_manager.distance_metric</code></td><td><code>cosine</code></td></tr><tr><td><code>data_manager.embedding_name</code></td><td><code>HuggingFaceEmbeddings</code></td></tr><tr><td><code>data_manager.retrievers</code></td><td><code>{&quot;bm25_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}, &quot;hierarchical_rerank&quot;: {&quot;candidate_pool_size&quot;: 20, &quot;enabled&quot;: true, &quot;num_documents_to_retrieve&quot;: 5, &quot;reranker&quot;: {&quot;model&quot;: &quot;ms-marco-MiniLM-L-12-v2&quot;}}, &quot;hybrid_retriever&quot;: {&quot;bm25_weight&quot;: 0.6, &quot;num_documents_to_retrieve&quot;: 5, &quot;semantic_weight&quot;: 0.4}, &quot;semantic_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}}</code></td></tr><tr><td><code>data_manager.stemming</code></td><td><code>{&quot;enabled&quot;: false}</code></td></tr><tr><td><code>services.benchmarking.agent_class</code></td><td><code>FASRCDocsAgent</code></td></tr><tr><td><code>services.benchmarking.agent_md_file</code></td><td><code>/root/archi/agents/fasrc-inline-v1.md</code></td></tr><tr><td><code>services.benchmarking.mode_settings</code></td><td><code>{&quot;ragas_settings&quot;: {&quot;batch_size&quot;: false, &quot;embedding_model&quot;: &quot;HuggingFace&quot;, &quot;enabled_metrics&quot;: [&quot;answer_relevancy&quot;, &quot;faithfulness&quot;, &quot;context_precision&quot;, &quot;context_recall&quot;], &quot;evaluator_model&quot;: &quot;us.anthropic.claude-sonnet-4-5-20250929-v1:0&quot;, &quot;evaluator_ollama_url&quot;: null, &quot;evaluator_provider&quot;: &quot;huit_bedrock&quot;, &quot;timeout&quot;: 300}, &quot;sources_settings&quot;: {&quot;default_match_field&quot;: &quot;url&quot;}}</code></td></tr><tr><td><code>services.benchmarking.model</code></td><td><code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code></td></tr><tr><td><code>services.benchmarking.modes</code></td><td><code>[&quot;RAGAS&quot;, &quot;SOURCES&quot;]</code></td></tr><tr><td><code>services.benchmarking.provider</code></td><td><code>openai</code></td></tr><tr><td><code>services.chat_app.agent_class</code></td><td><code>CMSCompOpsAgent</code></td></tr><tr><td><code>services.chat_app.default_model</code></td><td><code>llama3.2</code></td></tr><tr><td><code>services.chat_app.default_provider</code></td><td><code>local</code></td></tr><tr><td><code>services.chat_app.recursion_limit</code></td><td><code>50</code></td></tr><tr><td><code>services.vectorstore.backend</code></td><td><code>postgres</code></td></tr><tr><td><code>services.vectorstore.distance_metric</code></td><td><code>cosine</code></td></tr></table></div>
+    <div class='provenance'><h2>Run provenance</h2><p class='provenance-alert'>Whether the run used the selected configuration was <strong>not recorded</strong>: this artifact predates configuration provenance, so no comparison was made.</p><p class='provenance-alert'>Corpus stability is <strong>unknown</strong>: it was not observed both before and after the run (<code>None</code> &rarr; <code>None</code>).</p><p class='provenance-alert'>Time to ingest is <strong>not recorded</strong>: this artifact predates the field.</p><ul><li>Code version: <em>not recorded &mdash; this artifact predates version stamping</em></li><li>Deploy-time commit: <code>b1d10ba57a0ffbf667c99db018dbfa4d799295d6</code> &mdash; frozen by <code>archi create</code>; it identifies the deploy, not the image this run used</li><li>Config version: <code>sha256:9dd676871437e3bf5ee5726f31cfe1d00d234cda3d43aa96aacc78f9a402e6c3</code></li><li>Config basis: reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run</li></ul><p>Settings that define this arm:</p><table class='provenance-settings'><tr><th>Setting</th><th>Value</th></tr><tr><td><code>data_manager.chunk_overlap</code></td><td><code>0</code></td></tr><tr><td><code>data_manager.chunk_size</code></td><td><code>1000</code></td></tr><tr><td><code>data_manager.chunking</code></td><td><code>{&quot;strategy&quot;: &quot;sentence&quot;}</code></td></tr><tr><td><code>data_manager.distance_metric</code></td><td><code>cosine</code></td></tr><tr><td><code>data_manager.embedding_name</code></td><td><code>HuggingFaceEmbeddings</code></td></tr><tr><td><code>data_manager.retrievers</code></td><td><code>{&quot;bm25_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}, &quot;hierarchical_rerank&quot;: {&quot;candidate_pool_size&quot;: 20, &quot;enabled&quot;: true, &quot;num_documents_to_retrieve&quot;: 5, &quot;reranker&quot;: {&quot;model&quot;: &quot;ms-marco-MiniLM-L-12-v2&quot;}}, &quot;hybrid_retriever&quot;: {&quot;bm25_weight&quot;: 0.6, &quot;num_documents_to_retrieve&quot;: 5, &quot;semantic_weight&quot;: 0.4}, &quot;semantic_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}}</code></td></tr><tr><td><code>data_manager.stemming</code></td><td><code>{&quot;enabled&quot;: false}</code></td></tr><tr><td><code>services.benchmarking.agent_class</code></td><td><code>FASRCDocsAgent</code></td></tr><tr><td><code>services.benchmarking.agent_md_file</code></td><td><code>/root/archi/agents/fasrc-inline-v1.md</code></td></tr><tr><td><code>services.benchmarking.mode_settings</code></td><td><code>{&quot;ragas_settings&quot;: {&quot;batch_size&quot;: false, &quot;embedding_model&quot;: &quot;HuggingFace&quot;, &quot;enabled_metrics&quot;: [&quot;answer_relevancy&quot;, &quot;faithfulness&quot;, &quot;context_precision&quot;, &quot;context_recall&quot;], &quot;evaluator_model&quot;: &quot;us.anthropic.claude-sonnet-4-5-20250929-v1:0&quot;, &quot;evaluator_ollama_url&quot;: null, &quot;evaluator_provider&quot;: &quot;huit_bedrock&quot;, &quot;timeout&quot;: 300}, &quot;sources_settings&quot;: {&quot;default_match_field&quot;: &quot;url&quot;}}</code></td></tr><tr><td><code>services.benchmarking.model</code></td><td><code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code></td></tr><tr><td><code>services.benchmarking.modes</code></td><td><code>[&quot;RAGAS&quot;, &quot;SOURCES&quot;]</code></td></tr><tr><td><code>services.benchmarking.provider</code></td><td><code>openai</code></td></tr><tr><td><code>services.chat_app.agent_class</code></td><td><code>CMSCompOpsAgent</code></td></tr><tr><td><code>services.chat_app.default_model</code></td><td><code>llama3.2</code></td></tr><tr><td><code>services.chat_app.default_provider</code></td><td><code>local</code></td></tr><tr><td><code>services.chat_app.recursion_limit</code></td><td><code>50</code></td></tr><tr><td><code>services.vectorstore.backend</code></td><td><code>postgres</code></td></tr><tr><td><code>services.vectorstore.distance_metric</code></td><td><code>cosine</code></td></tr></table></div>
 
 <div class="metrics">
 <h2>🎯 Retrieval Accuracy</h2>
@@ -1388,7 +1391,7 @@ For more details, see the guide on [Using Duo Mobile to display your RC two-fact
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -1614,7 +1617,7 @@ This ensures your workflow uses the same version regardless of whether FASRC cha
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -1764,7 +1767,7 @@ Here&#x27;s the recommended approach:
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -1904,7 +1907,7 @@ Your job&#x27;s priority is primarily based on your lab&#x27;s **FairShare score
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -2010,7 +2013,7 @@ Would you like help setting up a Globus endpoint or finding your group&#x27;s sp
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -3942,7 +3945,7 @@ On FASRC clusters, the master is typically started on a CPU compute node, and se
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -4128,7 +4131,7 @@ You should **not** leave the `.bin.zst` file in `netscratch` for long-term use. 
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -6382,7 +6385,7 @@ Note that FASSE uses a proxy for internet access, so all outbound traffic from c
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -6486,7 +6489,7 @@ Would you like help identifying which storage options on FASSE support encryptio
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -6618,7 +6621,7 @@ Reach out to FASRC support to request the addition of your level 3 storage to Gl
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -6778,7 +6781,7 @@ For light use (just keeping shells open or running very small tasks), you likely
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Context Precision</div>
                     </div>
                     
@@ -7202,7 +7205,7 @@ When connecting to Cannon, you perform two distinct steps:
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Context Precision</div>
                     </div>
                     
@@ -9169,7 +9172,7 @@ Would you like help with the account request process or setting up the 90-day ex
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -9307,7 +9310,7 @@ Would you like help finding the right contact information for FASRC?</div>
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -9515,7 +9518,7 @@ Would you like more details on the tarring script or Globus setup?</div>
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -11687,7 +11690,7 @@ If you need to temporarily stop work and resume later, you would need to handle 
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -11809,7 +11812,7 @@ Would you like help with any of these recovery options?</div>
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -11933,7 +11936,7 @@ Note that detached allocations still consume your quota and will be terminated w
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
@@ -12113,7 +12116,7 @@ Would you like help checking your partition&#x27;s configuration or crafting a j
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     

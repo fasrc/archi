@@ -87,6 +87,9 @@
             .score-low { color: #dc3545; }
             .score-medium { color: #ffc107; }
             .score-high { color: #28a745; }
+            /* Unscored: deliberately not on the red-amber-green scale — it is
+               the absence of a grade, not a bad one. */
+            .score-na { color: #6c757d; font-size: 0.6em; }
         </style>
     </head>
     <body>
@@ -98,7 +101,7 @@
         <p><strong>Timestamp:</strong> 2026-06-03 01:12:53.977336+00:00</p>
         <p><strong>Questions Processed:</strong> 5</p>
     </div>
-    <div class='provenance'><h2>Run provenance</h2><p class='provenance-alert'>Whether the run used the selected configuration was <strong>not recorded</strong>: this artifact predates configuration provenance, so no comparison was made.</p><p class='provenance-alert'>Corpus stability is <strong>unknown</strong>: it was not observed both before and after the run (<code>None</code> &rarr; <code>None</code>).</p><ul><li>Code version: <em>not recorded &mdash; this artifact predates version stamping</em></li><li>Deploy-time commit: <code>b983f4dc8a83976f80abe4f0e5d55241b53c5686</code> &mdash; frozen by <code>archi create</code>; it identifies the deploy, not the image this run used</li><li>Config version: <code>sha256:f9193d184010792a25aa3f6f8ddf056c3cff9f03a2fb9f72402be3c2b9792de7</code></li><li>Config basis: reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run</li></ul><p>Settings that define this arm:</p><table class='provenance-settings'><tr><th>Setting</th><th>Value</th></tr><tr><td><code>data_manager.chunk_overlap</code></td><td><code>0</code></td></tr><tr><td><code>data_manager.chunk_size</code></td><td><code>1000</code></td></tr><tr><td><code>data_manager.distance_metric</code></td><td><code>cosine</code></td></tr><tr><td><code>data_manager.embedding_name</code></td><td><code>HuggingFaceEmbeddings</code></td></tr><tr><td><code>data_manager.retrievers</code></td><td><code>{&quot;bm25_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}, &quot;hybrid_retriever&quot;: {&quot;bm25_weight&quot;: 0.6, &quot;num_documents_to_retrieve&quot;: 5, &quot;semantic_weight&quot;: 0.4}, &quot;semantic_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}}</code></td></tr><tr><td><code>data_manager.stemming</code></td><td><code>{&quot;enabled&quot;: false}</code></td></tr><tr><td><code>services.benchmarking.agent_class</code></td><td><code>CMSCompOpsAgent</code></td></tr><tr><td><code>services.benchmarking.agent_md_file</code></td><td><code>/root/archi/agents/fasrc-cannon-v1-strict.md</code></td></tr><tr><td><code>services.benchmarking.mode_settings</code></td><td><code>{&quot;ragas_settings&quot;: {&quot;batch_size&quot;: false, &quot;embedding_model&quot;: &quot;HuggingFace&quot;, &quot;enabled_metrics&quot;: [&quot;answer_relevancy&quot;, &quot;faithfulness&quot;, &quot;context_precision&quot;, &quot;context_recall&quot;], &quot;timeout&quot;: 180}, &quot;sources_settings&quot;: {&quot;default_match_field&quot;: &quot;url&quot;}}</code></td></tr><tr><td><code>services.benchmarking.model</code></td><td><code>Qwen/Qwen3.5-35B-A3B-GPTQ-Int4</code></td></tr><tr><td><code>services.benchmarking.modes</code></td><td><code>[&quot;RAGAS&quot;, &quot;SOURCES&quot;]</code></td></tr><tr><td><code>services.benchmarking.provider</code></td><td><code>openai</code></td></tr><tr><td><code>services.chat_app.agent_class</code></td><td><code>CMSCompOpsAgent</code></td></tr><tr><td><code>services.chat_app.default_model</code></td><td><code>llama3.2</code></td></tr><tr><td><code>services.chat_app.default_provider</code></td><td><code>local</code></td></tr><tr><td><code>services.chat_app.recursion_limit</code></td><td><code>50</code></td></tr><tr><td><code>services.vectorstore.backend</code></td><td><code>postgres</code></td></tr><tr><td><code>services.vectorstore.distance_metric</code></td><td><code>cosine</code></td></tr></table></div>
+    <div class='provenance'><h2>Run provenance</h2><p class='provenance-alert'>Whether the run used the selected configuration was <strong>not recorded</strong>: this artifact predates configuration provenance, so no comparison was made.</p><p class='provenance-alert'>Corpus stability is <strong>unknown</strong>: it was not observed both before and after the run (<code>None</code> &rarr; <code>None</code>).</p><p class='provenance-alert'>Time to ingest is <strong>not recorded</strong>: this artifact predates the field.</p><ul><li>Code version: <em>not recorded &mdash; this artifact predates version stamping</em></li><li>Deploy-time commit: <code>b983f4dc8a83976f80abe4f0e5d55241b53c5686</code> &mdash; frozen by <code>archi create</code>; it identifies the deploy, not the image this run used</li><li>Config version: <code>sha256:f9193d184010792a25aa3f6f8ddf056c3cff9f03a2fb9f72402be3c2b9792de7</code></li><li>Config basis: reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run</li></ul><p>Settings that define this arm:</p><table class='provenance-settings'><tr><th>Setting</th><th>Value</th></tr><tr><td><code>data_manager.chunk_overlap</code></td><td><code>0</code></td></tr><tr><td><code>data_manager.chunk_size</code></td><td><code>1000</code></td></tr><tr><td><code>data_manager.distance_metric</code></td><td><code>cosine</code></td></tr><tr><td><code>data_manager.embedding_name</code></td><td><code>HuggingFaceEmbeddings</code></td></tr><tr><td><code>data_manager.retrievers</code></td><td><code>{&quot;bm25_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}, &quot;hybrid_retriever&quot;: {&quot;bm25_weight&quot;: 0.6, &quot;num_documents_to_retrieve&quot;: 5, &quot;semantic_weight&quot;: 0.4}, &quot;semantic_retriever&quot;: {&quot;num_documents_to_retrieve&quot;: 5}}</code></td></tr><tr><td><code>data_manager.stemming</code></td><td><code>{&quot;enabled&quot;: false}</code></td></tr><tr><td><code>services.benchmarking.agent_class</code></td><td><code>CMSCompOpsAgent</code></td></tr><tr><td><code>services.benchmarking.agent_md_file</code></td><td><code>/root/archi/agents/fasrc-cannon-v1-strict.md</code></td></tr><tr><td><code>services.benchmarking.mode_settings</code></td><td><code>{&quot;ragas_settings&quot;: {&quot;batch_size&quot;: false, &quot;embedding_model&quot;: &quot;HuggingFace&quot;, &quot;enabled_metrics&quot;: [&quot;answer_relevancy&quot;, &quot;faithfulness&quot;, &quot;context_precision&quot;, &quot;context_recall&quot;], &quot;timeout&quot;: 180}, &quot;sources_settings&quot;: {&quot;default_match_field&quot;: &quot;url&quot;}}</code></td></tr><tr><td><code>services.benchmarking.model</code></td><td><code>Qwen/Qwen3.5-35B-A3B-GPTQ-Int4</code></td></tr><tr><td><code>services.benchmarking.modes</code></td><td><code>[&quot;RAGAS&quot;, &quot;SOURCES&quot;]</code></td></tr><tr><td><code>services.benchmarking.provider</code></td><td><code>openai</code></td></tr><tr><td><code>services.chat_app.agent_class</code></td><td><code>CMSCompOpsAgent</code></td></tr><tr><td><code>services.chat_app.default_model</code></td><td><code>llama3.2</code></td></tr><tr><td><code>services.chat_app.default_provider</code></td><td><code>local</code></td></tr><tr><td><code>services.chat_app.recursion_limit</code></td><td><code>50</code></td></tr><tr><td><code>services.vectorstore.backend</code></td><td><code>postgres</code></td></tr><tr><td><code>services.vectorstore.distance_metric</code></td><td><code>cosine</code></td></tr></table></div>
 
 <div class="metrics">
 <h2>🎯 Retrieval Accuracy</h2>
@@ -121,13 +124,13 @@
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Faithfulness</div>
                     </div>
                     
@@ -139,7 +142,7 @@
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Context Recall</div>
                     </div>
                     
@@ -198,13 +201,13 @@ For general information about Annie Jump Cannon, I recommend checking external h
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Faithfulness</div>
                     </div>
                     
@@ -216,7 +219,7 @@ For general information about Annie Jump Cannon, I recommend checking external h
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Context Recall</div>
                     </div>
                     
@@ -314,25 +317,25 @@ This system allows FASRC to efficiently manage computational resources across th
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Faithfulness</div>
                     </div>
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Context Precision</div>
                     </div>
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Context Recall</div>
                     </div>
                     
@@ -442,13 +445,13 @@ Would you like help tailoring this to your specific use case (e.g., specific par
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Faithfulness</div>
                     </div>
                     
@@ -460,7 +463,7 @@ Would you like help tailoring this to your specific use case (e.g., specific par
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Context Recall</div>
                     </div>
                     
@@ -534,13 +537,13 @@ Would you like me to search for any specific information about account types, re
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Faithfulness</div>
                     </div>
                     
@@ -552,7 +555,7 @@ Would you like me to search for any specific information about account types, re
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Context Recall</div>
                     </div>
                     
@@ -680,25 +683,25 @@ The &quot;Reason&quot; column will show you why a job is pending.
 <div class="metrics-grid">
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Answer Relevancy</div>
                     </div>
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Faithfulness</div>
                     </div>
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Context Precision</div>
                     </div>
                     
 
                     <div class="metric-item">
-                        <div class="metric-value score-high">nan</div>
+                        <div class="metric-value score-na">n/a (unscored)</div>
                         <div class="metric-label">Context Recall</div>
                     </div>
                     

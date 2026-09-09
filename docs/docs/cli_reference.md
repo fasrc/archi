@@ -200,6 +200,8 @@ archi evaluate --name <name> --env-file <secrets.env> --config <config.yaml> [OP
 
 Supports the same flags as `create` (`--podman`, `--gpu-ids`, `--tag`, `--hostmode`, `--verbosity`, `--force`). Configuration files should define the `services.benchmarking` section.
 
+Like `create`, `evaluate` checks its base images before it changes anything. Under `--force` the check runs before the existing benchmarking runtime is removed, so a run that cannot obtain its base images leaves that runtime alone.
+
 **Example:**
 
 ```bash
