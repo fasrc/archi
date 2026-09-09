@@ -120,12 +120,28 @@ Standing notes for every task:
       mismatch test **first** and let it read only `ran_it`, comparing those arms against each
       other; put the baseline guard **below** it:
 
-          ran_it = [arm for arm in arms if arm.has_clean_row(question)]
-          if len({arm.rows[question].get(field) for arm in ran_it}) > 1:
+          ran_labels = [
+              arm.rows[question].get(field)
+              for arm in arms
+              if arm.has_clean_row(question)
+          ]
+          if any(
+              _label_key(label) != _label_key(ran_labels[0])
+              for label in ran_labels[1:]
+          ):
               mismatched += 1
               continue
           if not baseline.has_clean_row(question):
               continue
+
+      **Amended 2026-09-09, third review round.** The snippet above previously read
+      `if len({arm.rows[question].get(field) for arm in ran_it}) > 1:`. Do not restore that
+      form, in either artifact: a bank label is whatever the JSON held, so a list or dict
+      label makes the set raise `unhashable type` and abort the whole comparison. Replacing
+      the set with a bare `!=` is not enough either — Python's `==` coerces, so `true` and
+      `1` compare equal, and `[true]` and `[1]` do too. `_label_key()` reduces each label to
+      `json.dumps(label, sort_keys=True)` and compares that: one canonical form, correct at
+      every nesting depth, and a string, so nothing is hashed.
 
       The earlier order was dead code only for the pre-#440 shape. Once #431 lands a failed
       row keeps its bank fields, so an unclean *baseline* row carries a label, clears the

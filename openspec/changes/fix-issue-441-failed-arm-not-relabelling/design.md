@@ -137,13 +137,24 @@ The guard goes above the mismatch test, and it filters the arms that the mismatc
 rather than gating the question on all of them:
 
 ```python
-ran_it = [arm for arm in arms if arm.has_clean_row(question)]
-if len({arm.rows[question].get(field) for arm in ran_it}) > 1:
+ran_labels = [
+    arm.rows[question].get(field) for arm in arms if arm.has_clean_row(question)
+]
+if any(
+    _label_key(label) != _label_key(ran_labels[0]) for label in ran_labels[1:]
+):
     mismatched += 1
     continue
 if not baseline.has_clean_row(question):
     continue
 ```
+
+The comparison is `_label_key`, not a `set` and not a bare `!=`. A bank label is whatever the
+JSON held: a `set` raises `unhashable type` on a list or dict label and takes the whole
+comparison down, while `==` coerces, so `true` and `1` agree — and so do `[true]` and `[1]`,
+at any depth. `_label_key()` reduces a label to `json.dumps(label, sort_keys=True)`, which is
+one canonical form, correct at every nesting level, and a string, so nothing is ever hashed.
+Indexing stays inside the generator, so an empty `ran_labels` never evaluates `[0]`.
 
 The baseline gets the one per-question rule, and it governs **membership only**: a question
 whose **baseline** row is unclean is dropped from every group, because the baseline's value is
