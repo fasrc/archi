@@ -189,7 +189,7 @@ Add one module, `src/utils/telemetry.py`, with one function
 | `setup_logging()` | `src/utils/logging.py:23-36` | one init point for all 9 `src/bin/service_*.py` processes; the format string gains trace-ID placeholders here |
 | Flask apps | `service_chat.py:41`, `service_grader.py:25`, `service_data_manager.py:189` | one server span per request |
 | Agent worker thread | `src/interfaces/chat_app/app.py:2245,2264` | no instrumentor. The stream copies the caller's context and advances the generator through `ctx.run`, so the request span is already active in the worker. A test pins it |
-| LangChain callbacks | `base_react.py:396-419` | LLM, tool and graph spans on the `invoke` path, with no edit inside the 2460-line file. **Not sufficient for chat**, which streams: `stream()` at `:518` and `astream()` at `:897` take `**kwargs` only and never forward `callbacks`. See 2.8 — either the global `LangChainInstrumentor`, or callback forwarding added to both, which *is* an edit to this file |
+| LangChain callbacks | `base_react.py:396-419` | LLM, tool and graph spans on the `invoke` path, with no edit inside the 2460-line file. **Not sufficient for chat**, which streams: `stream()` at `:518` and `astream()` at `:897` take `**kwargs` only and never forward `callbacks`. See 2.8 — either the global `LangChainInstrumentor`, or callback forwarding, which is an edit to this file **and** to the chat call site at `chat_app/app.py:2233-2237`, which passes no callbacks today |
 | `ConnectionPool` | `src/utils/connection_pool.py:36` | database spans; the instrumentor must run before the pool is created |
 
 Rules:
@@ -302,9 +302,21 @@ purpose, and the same rule must hold for spans. The bootstrap module must:
   `callbacks` argument, and invokes LangGraph with `config={"recursion_limit":
   recursion_limit}` (`base_react.py:518-557`); `astream()` at `:897` is the same shape.
   So a callback handler alone instruments the QA evaluation and leaves streamed chat
-  with no LLM, tool or graph spans. Either use the global `LangChainInstrumentor`, or
-  add callback forwarding to `stream`/`astream` — and that second option *is* an edit
-  to `base_react.py`. Decide it in phase 2 rather than discovering it there.
+  with no LLM, tool or graph spans. Decide in phase 2, not while implementing it:
+
+    - **Global `LangChainInstrumentor`.** No edit to `base_react.py`, no edit to the chat
+      app.
+    - **Callback forwarding.** This is **two** edits, not one, and the second is easy to
+      miss. `stream()` and `astream()` must accept and forward `callbacks` — an edit to
+      `base_react.py` — *and* the chat call site must actually pass a handler.
+      `ChatWrapper` calls `self.archi.stream(history=..., conversation_id=...,
+      pipeline=...)` (`src/interfaces/chat_app/app.py:2233-2237`) and supplies no
+      callbacks, so forwarding alone would plumb an argument nobody sends and streamed
+      chat would still emit nothing. Note that `app.py` is not imported by unit tests, so
+      that second edit has to stay a thin call site per `CLAUDE.md`.
+
+    The global instrumentor is the cheaper of the two by some distance. Treat callback
+    forwarding as the option that has to justify itself.
 
 ---
 
