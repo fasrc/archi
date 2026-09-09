@@ -253,6 +253,13 @@ worth reading before you go and diff the bank:
   carry. That is deliberate — any arm can be the baseline, and a count that
   moved when you passed a different `--baseline` would not be a fact about the
   bank.
+- Two limits on that, both being tracked in issue #447. If the baseline arm
+  records **no value at all** for the field on a question, the tool skips that
+  question, so a disagreement between two other arms goes uncounted. And if
+  *every* question is re-labelled, no slice survives to carry the number, and the
+  report says no slice field is present instead. A zero is therefore weaker
+  evidence than a non-zero: read a count as a reason to diff the bank, never read
+  its absence as proof the bank held still.
 - So a non-zero `excluded_mismatched` means the label really moved between two
   arms that both ran the question to completion. Diff the bank.
 

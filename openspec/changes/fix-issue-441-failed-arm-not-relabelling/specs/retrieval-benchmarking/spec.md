@@ -27,8 +27,13 @@ did not run establishes nothing. That drop SHALL NOT suppress the count. The com
 the count over the arms that ran the question, so it fires when those arms disagree among
 themselves whether or not the baseline is one of them. Any arm can be the baseline —
 `--baseline` selects it and a bare `-cd` sweep orders the arms by directory — so a count keyed
-off the baseline's own status would make a claimed fact about the question bank move with the
-operator's choice of reference.
+off the baseline's own **status** would make a claimed fact about the question bank move with
+the operator's choice of reference.
+
+This requirement covers the baseline's status, not its label. A question the baseline carries
+no value for at all is still skipped before any comparison, so a disagreement between two
+other clean arms goes uncounted; and a count is still discarded when no group is emitted for
+the field. Both predate this requirement and are out of its scope — see #447.
 
 Skipping an arm SHALL NOT change any other arm's slice value, row count, mean, standard error,
 verdict, or directional flag, and SHALL NOT change the slice numbers of a two-arm comparison
@@ -72,7 +77,8 @@ further arm, **the baseline included**, failed that same question.
   that question carrying different `difficulty` values
 - **THEN** `excluded_mismatched` is 1 for `difficulty`
 - **AND** the question appears in no slice of that field
-- **AND** the count is the same for every choice of baseline over those same artifacts
+- **AND** the count is the same for every choice of baseline over those same artifacts, for
+  every baseline that carries a value for the field
 
 #### Scenario: A third arm's failure does not shrink another arm's slice
 

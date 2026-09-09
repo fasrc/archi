@@ -2217,3 +2217,47 @@ def test_an_unclean_baseline_row_whose_arms_agree_is_dropped_without_a_count(
     assert all(
         row["n"] == 1 for row in rows
     ), f"only q1 is groupable, got {[(r['value'], r['n']) for r in rows]}"
+
+
+def test_a_non_string_bank_label_is_a_mismatch_and_never_an_exception(_artifact):
+    """A slice field holds whatever the bank put there, including unhashable JSON.
+
+    `load_artifact` parses the artifact with plain `json.loads` and validates only
+    the top-level shape, so a bank row's `difficulty` can arrive as a list, a dict
+    or a number. `compare_runs.py` is deliberately defensive about artifact
+    contents elsewhere -- it accepts bare `NaN` tokens and has every consumer test
+    finiteness -- and a comparison must not abort on a malformed label. Aborting is
+    strictly worse than counting the question as a mismatch, which is what an
+    unequal label is.
+
+    This is a regression guard: comparing labels through a `set` would raise
+    `TypeError: unhashable type: 'list'` here and take the whole comparison down.
+    Compare them with `!=` instead, which is what the artifact's own values
+    support.
+    """
+    baseline_rows = [
+        _row("q1", difficulty="hard", faithfulness=0.5),
+        _row("q2", difficulty="hard", faithfulness=0.5),
+    ]
+    unhashable_label = [
+        # The bank wrapped the label in a list. Still a clean, scored row.
+        _row("q1", difficulty=["hard"], faithfulness=0.7),
+        _row("q2", difficulty="hard", faithfulness=0.7),
+    ]
+    arms = cr.load_arms(
+        [str(_artifact(baseline_rows)), str(_artifact(unhashable_label))]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted for q2"
+    assert all(
+        row["excluded_mismatched"] == 1 for row in rows
+    ), f"a list label differs from 'hard', got {[r['excluded_mismatched'] for r in rows]}"
+    assert all(
+        row["value"] == "hard" and row["n"] == 1 for row in rows
+    ), f"only q2 is groupable, got {[(r['value'], r['n']) for r in rows]}"

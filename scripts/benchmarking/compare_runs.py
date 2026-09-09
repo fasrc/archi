@@ -1385,15 +1385,23 @@ def slice_block(
     shrink that arm's slice, since ``paired_deltas`` pairs the baseline with one
     arm at a time and a third arm's status has no bearing on that pair.
 
-    The count is therefore taken over the arms that ran the question, and is
-    **independent of the baseline**: it fires when those arms disagree among
-    themselves, whether or not the baseline is one of them. Any arm can be the
-    baseline -- ``--baseline`` selects it, and a bare ``-cd`` sweep orders the
-    arms by directory -- so keying the count off the baseline's own status would
-    make a claimed fact about the bank move with the operator's choice of
-    reference. A question whose **baseline** row is unclean is still dropped from
-    every *group*: its label is the group key, and a key from a row that did not
-    run establishes nothing. Dropped from the groups, not from the count.
+    The count is therefore taken over the arms that ran the question: it fires
+    when those arms disagree among themselves, whether or not the baseline is one
+    of them. Any arm can be the baseline -- ``--baseline`` selects it, and a bare
+    ``-cd`` sweep orders the arms by directory -- so keying the count off the
+    baseline's **status** would make a claimed fact about the bank move with the
+    operator's choice of reference. A question whose **baseline** row is unclean
+    is still dropped from every *group*: its label is the group key, and a key
+    from a row that did not run establishes nothing. Dropped from the groups, not
+    from the count.
+
+    The count is **not** yet independent of the baseline's *label*. The loop
+    still reads the baseline's own value first and skips the question when that
+    value is not a non-empty string, so a disagreement between two other clean
+    arms goes uncounted when the baseline's row carries no label for the field.
+    That predates this rule and is tracked in **#447**, together with the count
+    being discarded outright when no group is emitted. Do not read the paragraph
+    above as a claim that the count is invariant under every baseline.
     """
     block: List[dict] = []
     for field in SLICE_FIELDS:
@@ -1405,8 +1413,17 @@ def slice_block(
             value = baseline.rows.get(question, {}).get(field)
             if not (isinstance(value, str) and value):
                 continue
-            ran_it = [arm for arm in arms if arm.has_clean_row(question)]
-            if len({arm.rows[question].get(field) for arm in ran_it}) > 1:
+            ran_labels = [
+                arm.rows[question].get(field)
+                for arm in arms
+                if arm.has_clean_row(question)
+            ]
+            # `!=`, not a set: a bank label is whatever the JSON held, and a list
+            # or dict label would make a set raise `unhashable type` and abort the
+            # whole comparison. "Do they all agree" needs equality, not hashing.
+            # An empty list never indexes -- the slice is empty, so `[0]` is not
+            # evaluated.
+            if any(label != ran_labels[0] for label in ran_labels[1:]):
                 mismatched += 1
                 continue
             if not baseline.has_clean_row(question):

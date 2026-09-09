@@ -70,7 +70,10 @@ against a post-#440 run reproduces the defect exactly. This change is the **cons
   count: a question whose baseline row did not run to completion is dropped from every slice
   of that field, because the baseline's value is the group key. The count is taken over the
   arms that ran the question and compares them against each other, so it does not move when
-  the operator points `--baseline` at a different arm.
+  the operator points `--baseline` at a different arm — as long as that arm carries a value
+  for the field. A baseline with no value for the field still skips the question before any
+  comparison, and a count is still discarded when no group is emitted; both predate this
+  change and are tracked in #447, not fixed here.
 - The `slice_block` docstring records the membership rule, the per-arm reason, and the
   baseline rule.
 - New tests in `tests/unit/test_compare_runs.py`, appended at the end of the file: the
