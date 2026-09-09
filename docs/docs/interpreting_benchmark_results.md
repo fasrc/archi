@@ -247,7 +247,12 @@ worth reading before you go and diff the bank:
   genuinely carries, nor removes that question from the other arms' slices.
 - The tool drops a question whose **baseline** row did not run to completion
   from every slice of that field. The baseline's value is the group key, and a
-  key taken from a row that did not run establishes nothing.
+  key taken from a row that did not run establishes nothing. It is dropped from
+  the slices, not from the count: the count compares the arms that *did* run the
+  question against each other, so it still reports a re-labelling those arms
+  carry. That is deliberate — any arm can be the baseline, and a count that
+  moved when you passed a different `--baseline` would not be a fact about the
+  bank.
 - So a non-zero `excluded_mismatched` means the label really moved between two
   arms that both ran the question to completion. Diff the bank.
 

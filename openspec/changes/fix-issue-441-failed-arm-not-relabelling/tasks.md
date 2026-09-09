@@ -111,6 +111,29 @@ Standing notes for every task:
       `test_a_third_arms_failure_does_not_shrink_another_arms_slice`) — each one fails under
       the `all(...)` form and passes under this one. Do not restore the `all(...)` form.
 
+      **Amended 2026-09-09, after `1e06a958` shipped the guard in the wrong order.** Put the
+      mismatch test **first** and let it read only `ran_it`, comparing those arms against each
+      other; put the baseline guard **below** it:
+
+          ran_it = [arm for arm in arms if arm.has_clean_row(question)]
+          if len({arm.rows[question].get(field) for arm in ran_it}) > 1:
+              mismatched += 1
+              continue
+          if not baseline.has_clean_row(question):
+              continue
+
+      The earlier order was dead code only for the pre-#440 shape. Once #431 lands a failed
+      row keeps its bank fields, so an unclean *baseline* row carries a label, clears the
+      `isinstance(value, str)` guard, and is dropped before any comparison — hiding a
+      relabelling two clean arms carry. Measured on `1e06a958`: `excluded_mismatched` was 0
+      with the failed arm as baseline and 1 with either clean arm as baseline, over identical
+      artifacts, so the count moved with `--baseline`. Add
+      `test_a_failed_baseline_row_does_not_hide_a_relabelling_between_clean_arms` (fails under
+      the earlier order) and
+      `test_an_unclean_baseline_row_whose_arms_agree_is_dropped_without_a_count` (the
+      over-reach guard — it must pass before and after; do not contrive a failure for it).
+      Do not restore the baseline guard above the mismatch test.
+
       Add a paragraph to the `slice_block` docstring, after the paragraph that begins
       "Membership needs **every** arm", recording that an arm which did not run the question to
       completion is skipped in the comparison rather than counted as a re-labelling, that its

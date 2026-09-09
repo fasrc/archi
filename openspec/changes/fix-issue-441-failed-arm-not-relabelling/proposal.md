@@ -66,9 +66,11 @@ against a post-#440 run reproduces the defect exactly. This change is the **cons
   per question, because a sweep expands into three or more arms and pairing joins the baseline
   with one arm at a time — gating the question on every arm would hide a re-labelling another
   arm genuinely carries and shrink that arm's slice `n` (both measured; see `design.md` D3).
-- One per-question rule, for the baseline only: a question whose baseline row did not run to
-  completion is dropped from every slice of that field, because the baseline's value is the
-  group key.
+- One per-question rule, for the baseline only, and it governs **membership** rather than the
+  count: a question whose baseline row did not run to completion is dropped from every slice
+  of that field, because the baseline's value is the group key. The count is taken over the
+  arms that ran the question and compares them against each other, so it does not move when
+  the operator points `--baseline` at a different arm.
 - The `slice_block` docstring records the membership rule, the per-arm reason, and the
   baseline rule.
 - New tests in `tests/unit/test_compare_runs.py`, appended at the end of the file: the

@@ -2097,3 +2097,123 @@ def test_a_third_arms_failure_does_not_shrink_another_arms_slice(_artifact):
     assert (
         by_arm[arms[2].label]["n"] == 1
     ), "the arm that failed q2 legitimately pairs only q1"
+
+
+def test_a_failed_baseline_row_does_not_hide_a_relabelling_between_clean_arms(
+    _artifact,
+):
+    """`excluded_mismatched` is a fact about the artifacts, not about `--baseline`.
+
+    The per-arm skip exists so one arm's failure cannot hide a relabelling another
+    arm genuinely carries -- and `interpreting_benchmark_results.md` now promises
+    exactly that: "One arm that fails a question therefore neither hides a
+    re-labelling another arm genuinely carries". Dropping the question whenever the
+    *baseline* row is unclean breaks that promise for the one arm the promise cannot
+    exclude, because any arm can be the baseline: `--baseline` selects it and a bare
+    `-cd` sweep orders the arms by their directory.
+
+    This shape only became reachable once #431 landed. Before it, a failed row
+    carried no bank field, so the `isinstance(value, str)` guard skipped the
+    question first; now a failed row keeps its label, the guard passes, and the
+    baseline-clean check is what drops it.
+
+    The group key still has to come from a clean baseline row -- a key from a row
+    that did not run establishes nothing -- so the question contributes to no
+    slice. Only the count is at stake, and the count must not move when the
+    operator points `--baseline` at a different arm.
+    """
+    agreed_and_failed_the_other = [
+        _row("agreed", difficulty="easy", faithfulness=0.5),
+        # #431's shape: the row failed but kept its bank fields.
+        _row("relabelled", status="failed", difficulty="easy"),
+    ]
+    clean_says_easy = [
+        _row("agreed", difficulty="easy", faithfulness=0.7),
+        _row("relabelled", difficulty="easy", faithfulness=0.7),
+    ]
+    clean_says_hard = [
+        _row("agreed", difficulty="easy", faithfulness=0.9),
+        _row("relabelled", difficulty="hard", faithfulness=0.9),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(agreed_and_failed_the_other)),
+            str(_artifact(clean_says_easy)),
+            str(_artifact(clean_says_hard)),
+        ]
+    )
+
+    counted = {}
+    for index, baseline in enumerate(arms):
+        rows = [
+            row
+            for row in cr.slice_block(baseline, arms, ["agreed", "relabelled"], {})
+            if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+        ]
+        assert rows, f"the difficulty slice must be emitted for baseline {index}"
+        counts = {row["excluded_mismatched"] for row in rows}
+        assert len(counts) == 1, f"baseline {index} reported {counts}, want one value"
+        counted[index] = counts.pop()
+
+    assert counted[0] == 1, (
+        "the failed baseline row hid the relabelling the two clean arms carry: "
+        f"got {counted[0]}, want 1"
+    )
+    assert len(set(counted.values())) == 1, (
+        "excluded_mismatched moved with the choice of baseline over identical "
+        f"artifacts: {counted}"
+    )
+
+
+def test_an_unclean_baseline_row_whose_arms_agree_is_dropped_without_a_count(
+    _artifact,
+):
+    """The other half of the baseline rule, and the branch reordering exposes.
+
+    This one **passes before and after** the count fix — it is the over-reach
+    guard for it, so it is not contrived to fail. Moving the baseline-clean check
+    below the mismatch test makes this the path that check now serves: a baseline
+    row that did not run but still carries its label (#431's shape), whose arms
+    all agree. There is no disagreement, so nothing may be counted; the group key
+    would come from a row that did not run, so nothing may be grouped either.
+
+    Both halves have to hold at once. A fix that counted this as a mismatch would
+    invent a bank edit out of a harness failure, which is the whole defect #441
+    exists to remove.
+    """
+    baseline_failed_q2_but_kept_its_label = [
+        _row("q1", difficulty="easy", faithfulness=0.5),
+        _row("q2", status="failed", difficulty="hard"),
+    ]
+    clean_agrees = [
+        _row("q1", difficulty="easy", faithfulness=0.7),
+        _row("q2", difficulty="hard", faithfulness=0.7),
+    ]
+    clean_agrees_too = [
+        _row("q1", difficulty="easy", faithfulness=0.9),
+        _row("q2", difficulty="hard", faithfulness=0.9),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(baseline_failed_q2_but_kept_its_label)),
+            str(_artifact(clean_agrees)),
+            str(_artifact(clean_agrees_too)),
+        ]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted for q1"
+    assert all(
+        row["excluded_mismatched"] == 0 for row in rows
+    ), f"agreeing arms are no bank edit, got {[r['excluded_mismatched'] for r in rows]}"
+    assert not [
+        row for row in rows if row["value"] == "hard"
+    ], "q2's group key came from a row that did not run"
+    assert all(
+        row["n"] == 1 for row in rows
+    ), f"only q1 is groupable, got {[(r['value'], r['n']) for r in rows]}"

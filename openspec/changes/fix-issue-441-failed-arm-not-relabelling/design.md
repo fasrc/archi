@@ -130,22 +130,43 @@ The guard goes above the mismatch test, and it filters the arms that the mismatc
 rather than gating the question on all of them:
 
 ```python
-if not baseline.has_clean_row(question):
-    continue
 ran_it = [arm for arm in arms if arm.has_clean_row(question)]
-if any(arm.rows[question].get(field) != value for arm in ran_it):
+if len({arm.rows[question].get(field) for arm in ran_it}) > 1:
     mismatched += 1
+    continue
+if not baseline.has_clean_row(question):
     continue
 ```
 
-Order matters. Below the mismatch test the guard would be dead code for the pre-#440 shape,
-because the mismatch test already fired.
+The baseline gets the one per-question rule, and it governs **membership only**: a question
+whose **baseline** row is unclean is dropped from every group, because the baseline's value is
+the group key and a key from a row that did not run establishes nothing. It does not govern
+the count.
 
-The baseline gets the one per-question rule: a question whose **baseline** row is unclean is
-dropped outright, because the baseline's value is the group key and a key from a row that did
-not run establishes nothing. `ran_it` is never empty when the mismatch test reads it — the
-baseline guard above already proved the baseline has a clean row, and `baseline` is an element
-of `arms` (fact 2) — so `arm.rows[question]` is a safe subscript for every member.
+**Amended 2026-09-09.** This section first put the baseline guard *above* the mismatch test,
+and argued that order the other way ("below the mismatch test the guard would be dead code for
+the pre-#440 shape, because the mismatch test already fired"). That argument holds only for
+the pre-#440 shape. Once #431 lands, a failed row keeps its bank fields, so an unclean
+baseline row carries a label, `value` passes the `isinstance(value, str)` guard, and the
+baseline guard above the mismatch test drops the question *before* any comparison happens —
+hiding a relabelling that two clean arms genuinely carry. Measured on `1e06a958` with a
+three-arm sweep whose baseline failed the question: `excluded_mismatched` was 0 with the
+failed arm as baseline and 1 with either clean arm as baseline, over the same three artifacts.
+
+That makes the count depend on `--baseline`, which contradicts this requirement's own leading
+SHALL ("two or more arms that each ran that question to completion recorded different values")
+and the per-arm rule's own reason: any arm can be the baseline, so "one arm's failure must not
+hide another arm's relabelling" cannot carve out the arm that happens to be selected.
+
+So the mismatch test comes **first** and reads only `ran_it`, comparing those arms against
+each other rather than against the baseline's value. When the baseline is clean it is a member
+of `ran_it`, so its own label is in the set and the test is equivalent to the old one. When it
+is unclean the test still fires on a disagreement among the arms that did run.
+
+`ran_it` may now be empty (no arm ran the question), which yields a set of size 0, no count,
+and then the baseline guard drops the question. `arm.rows[question]` remains a safe subscript
+regardless of the ordering: `has_clean_row` is what selects the members, and it is false when
+`self.rows.get(question)` is `None`.
 
 **Rejected: `if not all(arm.has_clean_row(question) for arm in arms): continue`.** This design
 first carried that form and `329b893a` shipped it. It is wrong, and the three-arm tests added

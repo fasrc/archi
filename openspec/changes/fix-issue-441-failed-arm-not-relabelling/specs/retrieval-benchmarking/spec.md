@@ -23,16 +23,21 @@ carries and shrink that arm's slice `n`.
 
 A question whose **baseline** row was not run to completion SHALL be dropped from every slice
 of that field, because the baseline's value is the group key and a key taken from a row that
-did not run establishes nothing.
+did not run establishes nothing. That drop SHALL NOT suppress the count. The comparison takes
+the count over the arms that ran the question, so it fires when those arms disagree among
+themselves whether or not the baseline is one of them. Any arm can be the baseline —
+`--baseline` selects it and a bare `-cd` sweep orders the arms by directory — so a count keyed
+off the baseline's own status would make a claimed fact about the question bank move with the
+operator's choice of reference.
 
 Skipping an arm SHALL NOT change any other arm's slice value, row count, mean, standard error,
 verdict, or directional flag, and SHALL NOT change the slice numbers of a two-arm comparison
 at all: pairing already requires the question to be scorable in both arms of the pair.
 
 The rule SHALL apply to every slice field, and SHALL leave genuine relabelling reportable: a
-question that is a clean success in the baseline and in at least one other arm, but carries
-different values for the field across those arms, still counts toward `excluded_mismatched` —
-whether or not some further arm failed that same question.
+question that is a clean success in two or more arms, but carries different values for the
+field across those arms, still counts toward `excluded_mismatched` — whether or not some
+further arm, **the baseline included**, failed that same question.
 
 #### Scenario: A question that failed in one arm, read from an artifact written before the producer fix
 
@@ -59,6 +64,15 @@ whether or not some further arm failed that same question.
   question records a failure
 - **THEN** `excluded_mismatched` is 1 for `difficulty`
 - **AND** the third arm's failure does not suppress the count
+
+#### Scenario: A relabelling survives the baseline itself failing the question
+
+- **WHEN** a three-arm sweep is compared, the selected baseline's row for a question records a
+  failure while still carrying its `difficulty`, and two other arms are clean successes on
+  that question carrying different `difficulty` values
+- **THEN** `excluded_mismatched` is 1 for `difficulty`
+- **AND** the question appears in no slice of that field
+- **AND** the count is the same for every choice of baseline over those same artifacts
 
 #### Scenario: A third arm's failure does not shrink another arm's slice
 

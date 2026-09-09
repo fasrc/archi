@@ -1383,9 +1383,17 @@ def slice_block(
     (``load_arms``): gating the question on *every* arm being clean would let one
     unrelated failure both hide a relabelling another arm genuinely carries and
     shrink that arm's slice, since ``paired_deltas`` pairs the baseline with one
-    arm at a time and a third arm's status has no bearing on that pair. A
-    question whose **baseline** row is unclean is dropped outright: its label is
-    the group key, and a key from a row that did not run establishes nothing.
+    arm at a time and a third arm's status has no bearing on that pair.
+
+    The count is therefore taken over the arms that ran the question, and is
+    **independent of the baseline**: it fires when those arms disagree among
+    themselves, whether or not the baseline is one of them. Any arm can be the
+    baseline -- ``--baseline`` selects it, and a bare ``-cd`` sweep orders the
+    arms by directory -- so keying the count off the baseline's own status would
+    make a claimed fact about the bank move with the operator's choice of
+    reference. A question whose **baseline** row is unclean is still dropped from
+    every *group*: its label is the group key, and a key from a row that did not
+    run establishes nothing. Dropped from the groups, not from the count.
     """
     block: List[dict] = []
     for field in SLICE_FIELDS:
@@ -1397,11 +1405,11 @@ def slice_block(
             value = baseline.rows.get(question, {}).get(field)
             if not (isinstance(value, str) and value):
                 continue
-            if not baseline.has_clean_row(question):
-                continue
             ran_it = [arm for arm in arms if arm.has_clean_row(question)]
-            if any(arm.rows[question].get(field) != value for arm in ran_it):
+            if len({arm.rows[question].get(field) for arm in ran_it}) > 1:
                 mismatched += 1
+                continue
+            if not baseline.has_clean_row(question):
                 continue
             groups.setdefault(value, []).append(question)
         for value, members in sorted(groups.items()):
