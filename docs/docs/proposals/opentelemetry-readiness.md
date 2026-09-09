@@ -171,12 +171,13 @@ Packages, all at one suite version:
 - `opentelemetry-instrumentation-httpx`
 - `opentelemetry-instrumentation-urllib`, for the `LocalProvider` model probes.
 - `opentelemetry-instrumentation-psycopg2`
-- `opentelemetry-instrumentation-threading`, so the request context reaches the agent
-  worker thread.
 - `opentelemetry-instrumentation-logging`
 - `openinference-instrumentation-langchain`, if Phoenix is the receiver. Phoenix
   classifies spans by the `openinference.span.kind` attribute (LLM, TOOL, RETRIEVER,
   CHAIN). Plain OpenTelemetry spans show as unknown kind.
+
+No threading instrumentor. The chat stream copies the caller's context and enters its
+worker through `ctx.run` (section 1.2), so the request span is already active there.
 
 ### 2.4 One bootstrap module at five seams
 
@@ -187,7 +188,7 @@ Add one module, `src/utils/telemetry.py`, with one function
 |---|---|---|
 | `setup_logging()` | `src/utils/logging.py:23-36` | one init point for all 9 `src/bin/service_*.py` processes; the format string gains trace-ID placeholders here |
 | Flask apps | `service_chat.py:41`, `service_grader.py:25`, `service_data_manager.py:189` | one server span per request |
-| Agent worker thread | `src/interfaces/chat_app/app.py:2254` | the threading instrumentor carries the request context into the stream worker |
+| Agent worker thread | `src/interfaces/chat_app/app.py:2245,2264` | no instrumentor. The stream copies the caller's context and advances the generator through `ctx.run`, so the request span is already active in the worker. A test pins it |
 | LangChain callbacks | `base_react.py:401-419` | LLM, tool, and graph spans with no edit inside the 2460-line file |
 | `ConnectionPool` | `src/utils/connection_pool.py:36` | database spans; the instrumentor must run before the pool is created |
 
@@ -230,7 +231,7 @@ Rules:
 | Traffic | Library | Instrumentor | Note |
 |---|---|---|---|
 | Inbound HTTP | Flask | flask | 3 app processes; exclude the SSO routes, see 2.7 |
-| Agent worker | `ThreadPoolExecutor` | threading | context propagation, `app.py:2254` |
+| Agent worker | `ThreadPoolExecutor` entered through `ctx.run` | none needed | context already propagates, `app.py:2245,2264`; a test covers it, see 2.8 |
 | LLM calls | LangChain: `ChatOpenAI`, `ChatAnthropic`, `ChatGoogleGenerativeAI`, `ChatOllama`, `HuitBedrockChat` | openinference-langchain, or a callback handler | all five are `BaseChatModel`, so callbacks cover them |
 | LLM egress | httpx inside langchain-openai, langchain-anthropic, langchain-google-genai, langchain-ollama | httpx | |
 | HUIT Bedrock, scrapers, Mattermost, Piazza | requests | requests | 11 modules |
@@ -286,7 +287,8 @@ purpose, and the same rule must hold for spans. The bootstrap module must:
 - Add `tests/unit/test_telemetry.py`, flat like the other `src/utils` tests. Use
   `monkeypatch.setenv` (pattern: `tests/unit/test_fasrc_docs_agent.py:109`).
 - Cover the off path, the fail-open path, and the on path with an in-memory span
-  exporter.
+  exporter. The fail-open test must induce an instrumentor failure after the enable
+  flag is set and assert that a later log record still renders in the plain format.
 - Assert spans for: one Flask request; the agent `invoke` and stream paths; one
   `HuitBedrockChat` call; one pooled psycopg2 call; and one captured log line with a
   trace ID, emitted from a worker thread inside an active span.
@@ -310,11 +312,11 @@ purpose, and the same rule must hold for spans. The bootstrap module must:
 
 Phase the work. Each phase is one PR.
 
-1. **Dependencies.** Pick option A or B from 2.2. Add the pinned packages to both
-   files, rebuild the base image once, bump 15 digests. Under option B this PR also
-   bumps protobuf. Validate through the preview deploy and the smoke suite before
-   merge. No OpenTelemetry code yet.
-2. **Traces.** Bootstrap module, Flask, threading, requests, httpx, urllib, psycopg2,
+1. **Dependencies.** Pick option A or B from 2.2. Add the pinned packages to all four
+   files from 2.3, rebuild the base image once, bump 15 digests. Under option B this
+   PR also bumps protobuf. Validate through the preview deploy and the smoke suite
+   before merge. No OpenTelemetry code yet.
+2. **Traces.** Bootstrap module, Flask, requests, httpx, urllib, psycopg2,
    LangChain callbacks, log format. Default off. Content hidden. Exporter endpoint
    from environment. Redaction tests green.
 3. **Receiver.** Phoenix as a compose service behind a flag like `grafana_enabled`.
