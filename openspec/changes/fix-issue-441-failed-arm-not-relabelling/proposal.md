@@ -164,5 +164,10 @@ None.
 - Both changed Python files are black 24.10.0 and isort 6.0.1 clean today (checked
   2026-09-07), and `scripts/*.py` is inside the gate's enforced format scope. The docs page is
   markdown and the gate does not lint it.
-- No behaviour change for any artifact whose failure rows carry the bank fields, so a fully
-  post-#440 pair of runs compares byte-identically before and after this change.
+- No behaviour change for a post-#440 artifact whose failure rows carry bank fields that
+  **agree** with the clean arms: such a pair of runs compares byte-identically before and
+  after this change. The claim stops there. When a failed row retains a label the clean arms
+  do not share — an emitted `easy` slice alongside a failed treatment row still carrying
+  `difficulty: "hard"` — the parent reports `excluded_mismatched == 1` and this change
+  reports `0`. That follows from the new rule that a failed arm supplies no relabelling
+  evidence, and it is a change, so it is stated rather than covered by the sentence above.

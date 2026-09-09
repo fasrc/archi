@@ -2263,6 +2263,60 @@ def test_a_non_string_bank_label_is_a_mismatch_and_never_an_exception(_artifact)
     ), f"only q2 is groupable, got {[(r['value'], r['n']) for r in rows]}"
 
 
+def test_json_true_and_one_are_different_labels_not_the_same_one(_artifact):
+    """`True == 1` in Python, but `true` and `1` are different JSON values.
+
+    Bare `!=` fixed the `unhashable type` abort the `set` caused, and brought
+    Python's numeric tower with it: `True == 1` and `1 == 1.0` are both true, so
+    two arms recording genuinely different JSON labels compare equal and the
+    disagreement goes uncounted. That is the same silent-undercount failure
+    `excluded_mismatched` exists to prevent, arriving through a different door.
+
+    Compare the type alongside the value. Not through a `set` -- hashing is what
+    the sibling test above rules out -- but with a tuple, whose `!=` compares
+    element-wise and never hashes, so a list or dict label still works.
+    """
+    # The baseline FAILED q1 but kept a string label, so it supplies the group key
+    # and is then excluded from the clean-arm comparison. That is what leaves the
+    # two clean arms alone on the `!=`, where the coercion can bite.
+    baseline_rows = [
+        _row("q1", status="failed", difficulty="hard"),
+        _row("q2", difficulty="hard", faithfulness=0.5),
+    ]
+    # Two clean arms whose q1 labels are `true` and `1`: equal under `==`,
+    # different in the artifacts on disk.
+    bool_label = [
+        _row("q1", difficulty=True, faithfulness=0.7),
+        _row("q2", difficulty="hard", faithfulness=0.7),
+    ]
+    int_label = [
+        _row("q1", difficulty=1, faithfulness=0.8),
+        _row("q2", difficulty="hard", faithfulness=0.8),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(baseline_rows)),
+            str(_artifact(bool_label)),
+            str(_artifact(int_label)),
+        ]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted for q2"
+    assert all(row["excluded_mismatched"] == 1 for row in rows), (
+        "`true` and `1` are different labels and q1 must count as a mismatch, got "
+        f"{[r['excluded_mismatched'] for r in rows]}"
+    )
+    assert all(
+        row["value"] == "hard" and row["n"] == 1 for row in rows
+    ), f"only q2 is groupable, got {[(r['value'], r['n']) for r in rows]}"
+
+
 # --- host provenance ---------------------------------------------------------
 
 

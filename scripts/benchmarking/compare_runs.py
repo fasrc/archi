@@ -1449,8 +1449,19 @@ def slice_block(
             # or dict label would make a set raise `unhashable type` and abort the
             # whole comparison. "Do they all agree" needs equality, not hashing.
             # An empty list never indexes -- the slice is empty, so `[0]` is not
-            # evaluated.
-            if any(label != ran_labels[0] for label in ran_labels[1:]):
+            # evaluated inside the generator.
+            #
+            # The type travels with the value because bare `!=` inherits Python's
+            # numeric tower: `True == 1` and `1 == 1.0`, so two arms holding the
+            # JSON values `true` and `1` would compare equal and the disagreement
+            # would go uncounted -- the same silent undercount `excluded_mismatched`
+            # exists to prevent. A tuple keeps the non-hashing property a `set`
+            # would lose: its `!=` compares element-wise, so a list or dict label
+            # still comes through.
+            if any(
+                (type(label), label) != (type(ran_labels[0]), ran_labels[0])
+                for label in ran_labels[1:]
+            ):
                 mismatched += 1
                 continue
             if not baseline.has_clean_row(question):

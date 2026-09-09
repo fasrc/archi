@@ -59,7 +59,14 @@ reason (`compare_runs.py:1150`, `compare_runs.py:1455`), and
 - Both `SLICE_FIELDS` behave the same way.
 - One definition of "this row failed" in `compare_runs.py`, not two.
 - Every slice number — `value`, `n`, `mean`, `se`, `sigma`, `verdict`, `directional` — is
-  unchanged for every input shape.
+  unchanged wherever a failed row was **not** miscounted: any two-arm comparison, and any
+  comparison whose failure rows carry their bank fields (the post-#440 shape).
+  Measured against `dev`, three arms and a **pre-#440** failure row is the one shape where
+  they move, and moving them is the point: with a baseline and a clean treatment both
+  labelling a question `hard`, and a third arm that failed it and recorded no label, the old
+  code counted the absence as a relabelling and dropped the question from every slice — the
+  clean treatment reported `n=1, se=null`. It now reports `n=2, se=0.0`, because the
+  question was never disputed. The old numbers described a bank edit that did not happen.
 - The pre-#440 artifacts already on disk read honestly, without being rewritten.
 
 **Non-Goals:**
