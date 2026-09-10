@@ -46,10 +46,14 @@ already active there. No threading instrumentor is involved.
 
 ## Service names
 
-Each service block in the compose file renders its own `OTEL_SERVICE_NAME`, so the
-receiver can tell the processes apart: `archi-chat`, `archi-data-manager`,
-`archi-grader`, `archi-piazza`, `archi-mattermost`, `archi-redmine`, `archi-mailbox`,
-`archi-benchmark` and `archi-config-seed`.
+Each long-running service block in the compose file renders its own
+`OTEL_SERVICE_NAME`, so the receiver can tell the processes apart: `archi-chat`,
+`archi-data-manager`, `archi-grader`, `archi-piazza`, `archi-mattermost`,
+`archi-redmine`, `archi-mailbox` and `archi-benchmark`.
+
+The `config-seed` block gets no name. It runs archi Python and talks to Postgres, but
+that module never calls `setup_logging()`, so nothing in it starts a tracer. A name
+there would advertise a traced service that emits nothing.
 
 A process that compose did not start derives its name from the entrypoint script, so
 `src/bin/service_chat.py` reports `archi-chat`. Anything that is not an entrypoint
@@ -57,8 +61,8 @@ reports `archi`. Set `OTEL_SERVICE_NAME` yourself to override either.
 
 ## Privacy
 
-**Spans carry no prompt, no completion, no retrieved document and no URL query
-string by default.** Four separate rules produce that result:
+**Spans carry no prompt, no completion, no retrieved document and no credential by
+default.** Five separate rules produce that result:
 
 1. The OpenInference config hides model inputs and outputs. Each field is named in
    code rather than left to an environment variable, because one variable an
@@ -70,13 +74,19 @@ string by default.** Four separate rules produce that result:
    otherwise carry the text of every chunk the knowledge base returned. archi
    enforces this at the exporter, which also keeps the guarantee independent of a
    table inside a dependency.
-3. Every URL attribute loses its query string before export, on every span.
-4. The SSO redirect route is excluded from spans entirely. It receives an OAuth
+3. Every URL loses its query string before export. This applies to URL attributes
+   and to URLs quoted inside exception messages, stack traces and status
+   descriptions, because a failed request names the URL it could not reach.
+4. A URL whose path is itself a credential is cut at the credential. archi posts to
+   two webhooks whose entire URL comes from a secret, Mattermost and Slack, and for
+   those there is nothing after the `?` to strip. The host and the marker segment
+   survive; the token does not. Ordinary paths are untouched.
+5. The SSO redirect route is excluded from spans entirely. It receives an OAuth
    authorization code, and a request that carries a credential is better off with no
    span than with one whose safety rests on a scrubber.
 
-`ARCHI_OTEL_CAPTURE_CONTENT=true` reverses rules 1 and 2. It never reverses rules 3
-and 4, because an authorization code is not model content and no flag releases one.
+`ARCHI_OTEL_CAPTURE_CONTENT=true` reverses rules 1 and 2. It never reverses rules 3,
+4 and 5, because a credential is not model content and no flag releases one.
 Treat turning it on as a privacy decision with an owner, not a debugging
 convenience.
 
@@ -87,6 +97,18 @@ what they said.
 Database spans carry the SQL text without its parameters. That is the psycopg2
 instrumentor's default and archi does not change it.
 
+## Known gaps
+
+**Streamed `/v1/chat/completions` requests do not produce one trace.**
+`_streaming_response()` returns its generator without `stream_with_context`, so Flask
+ends the request, and the server span, before the generator runs. The agent spans for
+that request become unparented roots and their log lines carry a different trace ID.
+The chat UI path does not have this problem: it wraps its generator. Tracked as
+issue #454, and not fixed here because it changes the request-context lifetime of a
+user-facing endpoint.
+
+**config-seed is not traced.** See the service names section above.
+
 ## Failure behaviour
 
 Telemetry never stops a service. A missing package, a failed instrumentor or a
@@ -95,7 +117,9 @@ bootstrap error logs one warning and leaves the service running with no tracing.
 An unreachable receiver is a different failure, and it happens later. The batch
 processor exports on its own thread and drops spans in silence when export fails, so
 archi logs one warning per run of failures. One broken receiver produces one warning,
-not one per batch.
+not one per batch. The OTLP exporter underneath logs its own error on every retry of
+every batch, so archi holds that logger back for the length of the failure streak and
+lets it speak again after the next successful export.
 
 If the logging instrumentor fails, the log keeps its plain format. The trace-aware
 format reads record fields that only that instrumentor installs, so archi selects it

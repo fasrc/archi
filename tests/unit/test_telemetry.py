@@ -664,6 +664,191 @@ def _document_key(index, leaf):
     return f"retrieval.documents.{index}.document.{leaf}"
 
 
+class TestCredentialsInUrlPathsAreRedacted:
+    """A webhook URL is the credential. There is nothing after the ``?`` to strip.
+
+    ``src/interfaces/mattermost.py:59`` and ``src/interfaces/piazza.py:88`` read the
+    whole URL from a secret and hand it to ``requests``. The requests instrumentor
+    then records it in ``http.url``. Stripping the query string does nothing for
+    these, because the token sits in the path.
+    """
+
+    def test_a_slack_webhook_url_loses_its_token(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("POST") as span:
+            span.set_attribute(
+                "http.url", "https://hooks.slack.com/services/T01/B02/Xy7SeCrEt"
+            )
+
+        (exported,) = memory.get_finished_spans()
+
+        assert "Xy7SeCrEt" not in exported.attributes["http.url"]
+        assert exported.attributes["http.url"].startswith("https://hooks.slack.com/")
+
+    def test_a_mattermost_webhook_url_loses_its_token(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("POST") as span:
+            span.set_attribute("url.full", "https://mm.example.edu/hooks/ab12cd34ef")
+
+        (exported,) = memory.get_finished_spans()
+
+        assert "ab12cd34ef" not in exported.attributes["url.full"]
+
+    def test_an_ordinary_url_path_is_left_alone(self):
+        """Redaction that eats every path would make the traces useless."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("GET") as span:
+            span.set_attribute("http.url", "https://api.openai.com/v1/chat/completions")
+
+        (exported,) = memory.get_finished_spans()
+
+        assert (
+            exported.attributes["http.url"]
+            == "https://api.openai.com/v1/chat/completions"
+        )
+
+
+class TestExceptionsAndStatusAreScrubbedToo:
+    """A span is not only its attributes.
+
+    A failed ``requests`` call records an exception event and a status description,
+    and both can quote the URL that failed. Scrubbing only ``span.attributes`` lets
+    the same secret out through a different door.
+    """
+
+    def test_an_exception_event_loses_the_query_string(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("GET") as span:
+            span.add_event(
+                "exception",
+                {
+                    "exception.type": "ConnectionError",
+                    "exception.message": (
+                        "failed to reach https://archi.example/redirect?code=s3cret"
+                    ),
+                },
+            )
+
+        (exported,) = memory.get_finished_spans()
+        (event,) = exported.events
+
+        assert "s3cret" not in event.attributes["exception.message"]
+        assert event.name == "exception"
+        assert event.attributes["exception.type"] == "ConnectionError"
+
+    def test_an_exception_event_loses_a_webhook_token(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("POST") as span:
+            span.add_event(
+                "exception",
+                {
+                    "exception.stacktrace": (
+                        "POST https://hooks.slack.com/services/T01/B02/Xy7SeCrEt "
+                        "raised ConnectionError"
+                    )
+                },
+            )
+
+        (exported,) = memory.get_finished_spans()
+        (event,) = exported.events
+
+        assert "Xy7SeCrEt" not in event.attributes["exception.stacktrace"]
+
+    def test_the_status_description_loses_the_query_string(self):
+        from opentelemetry.trace import Status, StatusCode
+
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("GET") as span:
+            span.set_status(
+                Status(
+                    StatusCode.ERROR,
+                    "GET https://archi.example/redirect?code=s3cret failed",
+                )
+            )
+
+        (exported,) = memory.get_finished_spans()
+
+        assert "s3cret" not in exported.status.description
+        assert exported.status.status_code.name == "ERROR"
+
+    def test_a_span_with_a_clean_event_is_passed_through(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("agent step") as span:
+            span.add_event("tool called", {"tool.name": "search"})
+
+        (exported,) = memory.get_finished_spans()
+        (event,) = exported.events
+
+        assert event.attributes["tool.name"] == "search"
+
+
+class TestTheInnerExporterDoesNotFloodTheLog:
+    """One broken receiver, one warning. The claim has to cover both loggers.
+
+    ``OTLPSpanExporter`` logs its own error on every retry of every batch. Reporting
+    once from this wrapper while the exporter underneath logs every attempt is not
+    the documented behaviour, it is the same flood with an extra line.
+    """
+
+    def test_the_inner_exporter_logger_is_quietened_during_a_streak(self, caplog):
+        inner_logger = logging.getLogger(
+            "opentelemetry.exporter.otlp.proto.http.trace_exporter"
+        )
+        exporter = telemetry.RedactingSpanExporter(_FailingExporter())
+
+        with caplog.at_level(logging.ERROR):
+            exporter.export([])
+            inner_logger.error("Failed to export batch code: 000")
+            inner_logger.error("Failed to export batch code: 000")
+
+        from_inner = [r for r in caplog.records if r.name == inner_logger.name]
+
+        assert from_inner == [], "the exporter's own errors must be held back too"
+
+    def test_the_inner_logger_speaks_again_after_a_success(self, caplog):
+        inner_logger = logging.getLogger(
+            "opentelemetry.exporter.otlp.proto.http.trace_exporter"
+        )
+        inner = _FailingExporter()
+        exporter = telemetry.RedactingSpanExporter(inner)
+
+        with caplog.at_level(logging.ERROR):
+            exporter.export([])
+            inner.succeed = True
+            exporter.export([])
+            inner_logger.error("Failed to export batch code: 000")
+
+        from_inner = [r for r in caplog.records if r.name == inner_logger.name]
+
+        assert len(from_inner) == 1
+
+    def test_shutdown_puts_the_inner_logger_back(self):
+        inner_logger = logging.getLogger(
+            "opentelemetry.exporter.otlp.proto.http.trace_exporter"
+        )
+        before = list(inner_logger.filters)
+
+        exporter = telemetry.RedactingSpanExporter(_FailingExporter())
+        exporter.export([])
+        exporter.shutdown()
+
+        assert list(inner_logger.filters) == before
+
+
 TELEMETRY_HELPERS = frozenset({"init_telemetry", "instrument_flask_app"})
 
 

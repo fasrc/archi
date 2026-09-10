@@ -28,8 +28,10 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import re
 import sys
 import threading
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Tuple
@@ -123,6 +125,27 @@ EXCLUDED_URLS = r"/redirect(\?|$)"
 # depend on a table inside a dependency.
 _DOCUMENT_CONTENT_SUFFIXES = ("document.content", "document.metadata")
 REDACTED_VALUE = "__REDACTED__"
+
+# Path markers after which a URL is a credential rather than a route. archi posts to
+# two webhooks whose whole URL comes out of a secret: Mattermost
+# (src/interfaces/mattermost.py:59) and Slack (src/interfaces/piazza.py:88). The
+# requests instrumentor records that URL in http.url, and stripping the query string
+# does nothing for either, because the token sits in the path.
+#
+# Everything up to and including the marker survives, so a reader still sees which
+# host was called. Ordinary paths are untouched: a rule that ate every path would
+# make the traces useless.
+_CREDENTIAL_PATH_MARKERS = ("/hooks/", "/services/")
+
+# Free-text fields that can quote a URL. An exception message and a stack trace are
+# not attributes, so scrubbing only span.attributes lets the same secret out through
+# a different door.
+_URL_IN_TEXT = re.compile(r"https?://[^\s\"'<>)\]]+")
+
+# The OTLP exporter logs its own error on every retry of every batch. Reporting once
+# from the wrapper while this logger repeats underneath is the same flood with an
+# extra line, so the wrapper holds this one back for the length of a failure streak.
+_INNER_EXPORTER_LOGGER = "opentelemetry.exporter.otlp.proto.http.trace_exporter"
 
 
 @dataclass(frozen=True)
@@ -305,6 +328,48 @@ def _set_global_tracer_provider(provider) -> None:
     trace.set_tracer_provider(provider)
 
 
+def _scrub_events(events):
+    """Return cleaned events, or None when no event quoted a URL.
+
+    An exception event carries ``exception.message`` and ``exception.stacktrace``,
+    and a failed request quotes the URL it could not reach in both.
+    """
+    if not events:
+        return None
+
+    from opentelemetry.sdk.trace import Event
+
+    rebuilt = []
+    changed = False
+    for event in events:
+        attributes = dict(event.attributes or {})
+        for key, value in attributes.items():
+            if isinstance(value, str):
+                scrubbed = _scrub_text(value)
+                if scrubbed != value:
+                    attributes[key] = scrubbed
+                    changed = True
+        rebuilt.append(
+            Event(name=event.name, attributes=attributes, timestamp=event.timestamp)
+        )
+    return rebuilt if changed else None
+
+
+def _scrub_status(status):
+    """Return a cleaned status, or None when its description quoted no URL."""
+    description = getattr(status, "description", None)
+    if not description:
+        return None
+
+    scrubbed = _scrub_text(description)
+    if scrubbed == description:
+        return None
+
+    from opentelemetry.trace import Status
+
+    return Status(status_code=status.status_code, description=scrubbed)
+
+
 def instrument_flask_app(app) -> bool:
     """Give one Flask application a server span per request, and never raise.
 
@@ -341,6 +406,21 @@ def _is_document_content(key: str) -> bool:
     return key.endswith(_DOCUMENT_CONTENT_SUFFIXES)
 
 
+def _scrub_url(value: str) -> str:
+    """Drop the query string, and drop a credential that sits in the path."""
+    cleaned = value.split("?", 1)[0]
+    for marker in _CREDENTIAL_PATH_MARKERS:
+        index = cleaned.find(marker)
+        if index != -1:
+            return cleaned[: index + len(marker)] + REDACTED_VALUE
+    return cleaned
+
+
+def _scrub_text(value: str) -> str:
+    """Apply the URL rules to every URL inside a free-text field."""
+    return _URL_IN_TEXT.sub(lambda match: _scrub_url(match.group(0)), value)
+
+
 def _scrub_attributes(attributes, redact_content: bool = True):
     """Return cleaned attributes, or None when nothing needed cleaning.
 
@@ -357,10 +437,12 @@ def _scrub_attributes(attributes, redact_content: bool = True):
         if key in _QUERY_ATTRIBUTES:
             changed = True
             continue
-        if key in _URL_ATTRIBUTES and isinstance(value, str) and "?" in value:
-            cleaned[key] = value.split("?", 1)[0]
-            changed = True
-            continue
+        if key in _URL_ATTRIBUTES and isinstance(value, str):
+            scrubbed = _scrub_url(value)
+            if scrubbed != value:
+                cleaned[key] = scrubbed
+                changed = True
+                continue
         if redact_content and _is_document_content(key):
             cleaned[key] = REDACTED_VALUE
             changed = True
@@ -388,6 +470,13 @@ class RedactingSpanExporter:
         self._redact_content = (
             not capture_content_enabled() if redact_content is None else redact_content
         )
+        self._inner_logger = logging.getLogger(_INNER_EXPORTER_LOGGER)
+        self._quiet_filter = _StreakFilter(self)
+
+    @property
+    def in_failure_streak(self) -> bool:
+        """Whether export is currently failing. Read by the streak filter."""
+        return self._failing
 
     def export(self, spans):
         from opentelemetry.sdk.trace.export import SpanExportResult
@@ -399,12 +488,13 @@ class RedactingSpanExporter:
             return SpanExportResult.FAILURE
 
         if result is SpanExportResult.SUCCESS:
-            self._failing = False
+            self._end_streak()
         else:
             self._report("the receiver did not accept the batch")
         return result
 
     def shutdown(self):
+        self._end_streak()
         return self._inner.shutdown()
 
     def force_flush(self, timeout_millis: int = 30000):
@@ -412,7 +502,9 @@ class RedactingSpanExporter:
 
     def _redact(self, span):
         cleaned = _scrub_attributes(span.attributes, self._redact_content)
-        if cleaned is None:
+        events = _scrub_events(span.events)
+        status = _scrub_status(span.status)
+        if cleaned is None and events is None and status is None:
             return span
 
         from opentelemetry.sdk.trace import ReadableSpan
@@ -422,11 +514,11 @@ class RedactingSpanExporter:
             context=span.get_span_context(),
             parent=span.parent,
             resource=span.resource,
-            attributes=cleaned,
-            events=span.events,
+            attributes=span.attributes if cleaned is None else cleaned,
+            events=span.events if events is None else events,
             links=span.links,
             kind=span.kind,
-            status=span.status,
+            status=span.status if status is None else status,
             start_time=span.start_time,
             end_time=span.end_time,
             instrumentation_scope=span.instrumentation_scope,
@@ -440,6 +532,42 @@ class RedactingSpanExporter:
         logger.warning(
             "OpenTelemetry span export failed and spans are being dropped: %s", reason
         )
+        # Hold back the exporter's own per-attempt errors for the rest of the streak.
+        # Without this, "one warning per failure streak" describes this module only,
+        # while the log fills up from the logger underneath it.
+        if self._quiet_filter not in self._inner_logger.filters:
+            self._inner_logger.addFilter(self._quiet_filter)
+
+    def _end_streak(self) -> None:
+        self._failing = False
+        if self._quiet_filter in self._inner_logger.filters:
+            self._inner_logger.removeFilter(self._quiet_filter)
+
+
+class _StreakFilter(logging.Filter):
+    """Drop the inner exporter's records while its owner is in a failure streak.
+
+    The owner is held weakly, and a filter whose owner is gone lets everything
+    through. A logger's filter list is global and outlives the exporter that added
+    it, so a strong reference here would let a discarded exporter silence the OTLP
+    logger for the life of the process.
+    """
+
+    def __init__(self, owner):
+        super().__init__()
+        self._owner_ref = weakref.ref(owner)
+
+    def filter(self, record):
+        owner = self._owner_ref()
+        return True if owner is None else not owner.in_failure_streak
+
+
+def _clear_streak_filters() -> None:
+    """Take every streak filter off the OTLP logger, whatever added it."""
+    inner_logger = logging.getLogger(_INNER_EXPORTER_LOGGER)
+    for existing in list(inner_logger.filters):
+        if isinstance(existing, _StreakFilter):
+            inner_logger.removeFilter(existing)
 
 
 def _install_instrumentors(provider) -> list:
@@ -480,6 +608,7 @@ def reset_telemetry() -> None:
                 instrumentor.uninstrument()
             except Exception as exc:  # noqa: BLE001 - teardown must not raise
                 logger.debug("Uninstrumenting %r failed: %s", instrumentor, exc)
+        _clear_streak_filters()
         if _STATUS is not None and _STATUS.tracer_provider is not None:
             try:
                 _STATUS.tracer_provider.shutdown()

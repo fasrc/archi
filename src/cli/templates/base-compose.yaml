@@ -143,10 +143,10 @@ services:
       db-migrate:
         condition: service_completed_successfully
     environment:
-      # One service name per process: the services share one .env file, so the
-      # name cannot live there. src/utils/telemetry.py falls back to the
-      # entrypoint script name for a process compose did not start.
-      OTEL_SERVICE_NAME: archi-config-seed
+      # No OTEL_SERVICE_NAME here on purpose. This block runs
+      # `python -m src.cli.tools.config_seed`, and that module never calls
+      # setup_logging() or init_telemetry(), so nothing in it would start a tracer.
+      # A name here would advertise a traced service that emits nothing.
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db

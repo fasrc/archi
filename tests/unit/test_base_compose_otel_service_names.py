@@ -31,10 +31,18 @@ EXPECTED_SERVICE_NAMES = {
     "redmine": "archi-redmine",
     "mailbox": "archi-mailbox",
     "benchmark": "archi-benchmark",
-    "config-seed": "archi-config-seed",
 }
 
-UNTRACED_BLOCKS = ("postgres", "grafana", "db-migrate")
+# Blocks that must NOT render a service name. postgres and grafana are third-party
+# images and db-migrate runs psql, so none of them is an archi process.
+#
+# config-seed is the one that needs explaining. It does run archi Python
+# (`python -m src.cli.tools.config_seed`) and it does talk to Postgres, but that
+# module never calls setup_logging() or init_telemetry(), so nothing there would
+# start a tracer. Rendering a name for it would advertise a traced service that
+# emits nothing. Tracing it means calling the bootstrap from config_seed, which is
+# a change to deploy-critical seeding code and belongs in its own PR.
+UNTRACED_BLOCKS = ("postgres", "grafana", "db-migrate", "config-seed")
 
 
 def _render_compose(tmp_path):
