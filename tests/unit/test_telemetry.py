@@ -559,6 +559,8 @@ class _ConfigCapturingInstrumentor:
 
     def uninstrument(self, **_kwargs):
         pass
+
+
 TELEMETRY_HELPERS = frozenset({"init_telemetry", "instrument_flask_app"})
 
 
