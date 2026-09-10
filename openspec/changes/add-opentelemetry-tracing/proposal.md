@@ -29,8 +29,24 @@ This change closes three of them and builds phases 1 and 2 of its recommendation
 archi emits no OpenTelemetry today. The `timing` and `agent_traces` tables hold span-shaped
 data, but only archi reads them, and only Grafana renders them. A request that crosses the
 chat app, the agent loop, an LLM provider and Postgres leaves no single record that ties the
-parts together. Issues #258 and #227 ask for exactly that tie: a correlation ID on the
-`hybrid_search` fallback warning. A trace ID in every log line answers both.
+parts together.
+
+**On #258 and #227.** Those two issues ask for a correlation ID on the `hybrid_search`
+fallback warning, and a trace ID in every log line would subsume what they ask for. They are
+**parked** — `docs/docs/proposals/release-plan-2026.md:213` rows them as
+"observability duplicate pair, diagnosability not correctness" — and this change does not
+un-park them, does not schedule them, and must not be read as implementing them. Raised in
+review, and the earlier wording here did read that way; corrected.
+
+The distinction is not cosmetic. Under the pinned release plan an issue leaves `parked` only
+when a human decides it gates a feature release, never as a side effect of other work. So:
+this change is driven by the readiness assessment in PR #446, the two issues keep their
+`parked` label, and whether to close them once a trace ID ships is a human call made on the
+issues themselves. Nothing here touches the `hybrid_search` warning's call site.
+
+This change also carries no milestone, and the release plan schedules no OpenTelemetry work.
+It lands as an operator decision to merge rather than as a milestone gate — recorded in
+`tasks.md` under "Scheduling" so the next reader does not have to infer it.
 
 ### The decisions this change closes
 

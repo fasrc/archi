@@ -1681,3 +1681,114 @@ class TestEntrypointsImportWhatTheyCall:
             f"{path.name} calls {sorted(missing)} without importing it. "
             "The module starts, reaches the call, and raises NameError."
         )
+
+
+class TestStreamingResponsesKeepTheRequestSpan:
+    """A streamed body must be consumed inside the request context.
+
+    Flask tears down the request -- and with it the instrumentor's active span
+    context -- when the view returns. A WSGI server pulls a streaming generator
+    *after* that, so any span the generator opens has no parent and starts a second
+    trace. The server span still exports, because the WSGI middleware ends it when
+    the iterable closes, so the symptom is not a missing span: it is a short server
+    span plus orphan roots, and log lines from the agent loop carrying the orphan
+    trace id instead of the request's. That defeats the trace-id correlation this
+    module exists to provide.
+
+    ``stream_with_context`` keeps the context alive for the generator's lifetime.
+    """
+
+    def test_a_bare_streaming_response_orphans_the_work_span(self):
+        """Pins the mechanism, so the fix below is not cargo-culted.
+
+        If a future Flask or instrumentor release parents these correctly on its own,
+        this test fails and the wrapper can be reconsidered on evidence.
+        """
+        spans = self._collect(wrap=False)
+        work = self._named(spans, "work")
+        server = self._named(spans, "GET /stream")
+        assert work.parent is None
+        assert work.context.trace_id != server.context.trace_id
+
+    def test_stream_with_context_parents_the_work_span(self):
+        spans = self._collect(wrap=True)
+        work = self._named(spans, "work")
+        server = self._named(spans, "GET /stream")
+        assert work.parent is not None
+        assert work.parent.span_id == server.context.span_id
+        assert work.context.trace_id == server.context.trace_id
+
+    def test_the_v1_streaming_response_wraps_its_generator(self):
+        """The real call site, read as source.
+
+        Asserting on `openai_compat._streaming_response` through a live request would
+        need the whole ChatWrapper; the property that matters is one call, so it is
+        checked where it is written. `app.py:4981` already uses the wrapper for
+        `/api/get_chat_response_stream`; this is the same requirement for `/v1`.
+        """
+        source = (
+            Path("src/interfaces/chat_app/openai_compat.py").read_text().splitlines()
+        )
+        start = next(
+            i for i, line in enumerate(source) if "def _streaming_response(" in line
+        )
+        body = "\n".join(source[start:])
+        assert (
+            "stream_with_context(" in body
+        ), "_streaming_response must consume its generator inside the request context"
+
+    # -- helpers ----------------------------------------------------------------
+
+    @staticmethod
+    def _named(spans, name):
+        matches = [s for s in spans if s.name == name]
+        assert len(matches) == 1, f"expected one {name!r} span, got {len(matches)}"
+        return matches[0]
+
+    @staticmethod
+    def _collect(wrap):
+        flask = pytest.importorskip("flask", reason="Flask not installed")
+        pytest.importorskip(
+            "opentelemetry.instrumentation.flask",
+            reason="Flask instrumentation not installed",
+        )
+        from opentelemetry import trace
+        from opentelemetry.instrumentation.flask import FlaskInstrumentor
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        # A local provider, never the global one: set_tracer_provider is
+        # process-wide and once-only, so setting it here would leak into the rest
+        # of the suite and could not be undone.
+        tracer = provider.get_tracer("test")
+
+        app = flask.Flask(__name__)
+        FlaskInstrumentor().instrument_app(app, tracer_provider=provider)
+
+        def body():
+            # Stands in for _chat_wrapper.stream(): span-creating work that the WSGI
+            # server drives after the view function has returned.
+            with trace.use_span(
+                tracer.start_span("work"), end_on_exit=True, record_exception=False
+            ):
+                yield "data: chunk\n\n"
+            yield "data: [DONE]\n\n"
+
+        @app.route("/stream")
+        def stream():
+            generated = flask.stream_with_context(body()) if wrap else body()
+            return flask.Response(generated, content_type="text/event-stream")
+
+        try:
+            response = app.test_client().get("/stream")
+            assert "[DONE]" in response.get_data(as_text=True)
+        finally:
+            FlaskInstrumentor().uninstrument_app(app)
+
+        return exporter.get_finished_spans()

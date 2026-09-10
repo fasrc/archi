@@ -133,3 +133,49 @@ expands the rows into the statement before sending it. The chunk insert leaked
 document text the same way, and carried an 8388 character embedding array besides.
 Fixed in `7d25a470` and re-checked on a rebuilt deployment: same request, same span
 tree, no conversation anywhere in the export.
+
+**What 5.2 did not cover.** The validated request went to
+`/api/get_chat_response_stream`, which wraps its generator in `stream_with_context`
+(`app.py:4981`). The `/v1/chat/completions` streaming path did not, and review found
+it — see task 5.3. One endpoint being correct is what hid the other.
+
+- [x] 5.3 `model: opus` — **Preserve the request span across a streamed `/v1` response.**
+
+      Review found `openai_compat._streaming_response()` returning
+      `Response(generate())` with no `stream_with_context`. Flask tears the request
+      down when the view returns, and the WSGI server pulls the generator after that,
+      so the instrumentor's active span context is gone by the time
+      `_chat_wrapper.stream()` runs.
+
+      **Measured**, with the Flask instrumentor and an in-memory exporter, on two
+      routes that differ only in the wrapper:
+
+      | Route | Spans | Distinct traces | `work` span |
+      |---|---|---|---|
+      | `stream_with_context(body())` | 2 | 1 | child of `GET /stream` |
+      | `Response(body())` | 2 | **2** | **ROOT, own trace** |
+
+      So the failure is not a missing span. The server span still exports — the WSGI
+      middleware ends it when the iterable closes — and the agent's work lands in a
+      *second* trace with no parent. Log lines emitted inside that work carry the
+      orphan trace id, which defeats the correlation this whole change is for, on the
+      one endpoint whose traces nobody had looked at.
+
+      Fixed by wrapping the generator. Three tests in `test_telemetry.py`
+      (`TestStreamingResponsesKeepTheRequestSpan`): two pin the mechanism in both
+      directions, so if a future Flask or instrumentor release parents these on its
+      own the wrapper can be reconsidered on evidence rather than removed on a hunch;
+      the third reads the real call site and requires the wrapper there.
+
+### Scheduling
+
+This change carries no milestone, and `docs/docs/proposals/release-plan-2026.md`
+schedules no OpenTelemetry work — its only observability row is the parked
+`#258, #227` pair. Its driver is PR #446, a merged readiness assessment, not a
+milestoned gating issue.
+
+So it merges as an explicit operator decision, not as a milestone gate. Review
+correctly flagged that the proposal's original wording read as though this change
+implemented the two parked issues; it does not, they keep their `parked` label, and
+nothing here touches the `hybrid_search` warning. See `proposal.md`, "On #258 and
+#227".
