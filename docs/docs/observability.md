@@ -66,7 +66,10 @@ default.** Seven separate rules produce that result:
 
 1. The OpenInference config hides model inputs and outputs. Each field is named in
    code rather than left to an environment variable, because one variable an
-   operator misses exports every prompt.
+   operator misses exports every prompt. The exporter then replaces `input.value`,
+   `output.value`, `llm.prompts` and the message and embedding text attributes a
+   second time, on its own. That is deliberate duplication: with the config working
+   it changes nothing, and the config has already been wrong here once — see rule 2.
 2. Retrieved document text and document metadata are replaced with `__REDACTED__`
    before export. This is a separate rule because the OpenInference config does not
    cover it: its mask table handles reranker documents and leaves

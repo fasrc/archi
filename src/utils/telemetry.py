@@ -123,7 +123,27 @@ EXCLUDED_URLS = r"/redirect(\?|$)"
 #
 # Enforcing it here rather than in the config also means the guarantee does not
 # depend on a table inside a dependency.
-_DOCUMENT_CONTENT_SUFFIXES = ("document.content", "document.metadata")
+_DOCUMENT_CONTENT_SUFFIXES = (
+    "document.content",
+    "document.metadata",
+    "message.content",
+    "message.contents",
+    "embedding.text",
+    "prompt.template",
+)
+
+# The two attributes that carry a whole prompt and a whole completion, and the reason
+# they are named here as well as hidden in the config above.
+#
+# On the deployed check both arrived already redacted, because the OpenInference
+# config did its job. That is the problem rather than the reassurance: the strongest
+# promise this feature makes would rest on a mask table inside a dependency, and that
+# table has been wrong here once already — it covers reranker documents and not
+# retrieval documents, which is why the suffixes above exist.
+#
+# Naming them here costs nothing when the config works and is the whole guarantee
+# when it does not.
+_CONTENT_ATTRIBUTES = frozenset({"input.value", "output.value", "llm.prompts"})
 REDACTED_VALUE = "__REDACTED__"
 
 # Path markers after which a URL is a credential rather than a route. archi posts to
@@ -503,7 +523,8 @@ def instrument_flask_app(app) -> bool:
 
 
 def _is_document_content(key: str) -> bool:
-    return key.endswith(_DOCUMENT_CONTENT_SUFFIXES)
+    """True for an attribute that carries model or document text."""
+    return key in _CONTENT_ATTRIBUTES or key.endswith(_DOCUMENT_CONTENT_SUFFIXES)
 
 
 def _scrub_url(value: str) -> str:

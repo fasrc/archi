@@ -1030,6 +1030,70 @@ class _LoggingFailingExporter:
         return True
 
 
+class TestThePromptGuaranteeDoesNotRestOnTheDependency:
+    """``input.value`` and ``output.value`` must go at the exporter as well.
+
+    Both arrive already redacted when the OpenInference config does its job, and on
+    the deployed check they did. That is the whole problem: the strongest promise
+    this feature makes rests on a mask table inside a dependency, and that table has
+    already been wrong once here — it covers reranker documents and not retrieval
+    documents, which is why rule 2 exists.
+
+    So the exporter redacts them itself. When the config works this changes nothing.
+    When it does not, it is the difference between a hole and a near miss.
+    """
+
+    def test_the_prompt_does_not_leave_even_with_no_config(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("ChatOpenAI") as span:
+            span.set_attribute("input.value", "the patient asked about a diagnosis")
+            span.set_attribute("output.value", "the model's whole answer")
+            span.set_attribute("llm.model_name", "qwen")
+
+        (exported,) = memory.get_finished_spans()
+
+        assert exported.attributes["input.value"] == "__REDACTED__"
+        assert exported.attributes["output.value"] == "__REDACTED__"
+        assert exported.attributes["llm.model_name"] == "qwen"
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "llm.input_messages.0.message.content",
+            "llm.output_messages.0.message.content",
+            "embedding.embeddings.0.embedding.text",
+            "llm.prompts",
+        ],
+    )
+    def test_the_other_openinference_content_keys_go_too(self, key):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("ChatOpenAI") as span:
+            span.set_attribute(key, "the patient asked about a diagnosis")
+
+        (exported,) = memory.get_finished_spans()
+
+        assert exported.attributes[key] == "__REDACTED__"
+
+    def test_the_content_flag_restores_them(self, monkeypatch):
+        monkeypatch.setenv(CONTENT, "true")
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("ChatOpenAI") as span:
+            span.set_attribute("input.value", "the patient asked about a diagnosis")
+
+        (exported,) = memory.get_finished_spans()
+
+        assert (
+            exported.attributes["input.value"]
+            == "the patient asked about a diagnosis"
+        )
+
+
 class TestTheDatabaseStatementIsNotAContentChannel:
     """A SQL statement can carry the conversation, and one of archi's does.
 
