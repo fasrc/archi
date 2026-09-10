@@ -1275,9 +1275,7 @@ class TestTheDatabaseStatementIsNotAContentChannel:
         memory, provider = _recording_provider()
         tracer = provider.get_tracer("test")
         statement = (
-            "INSERT INTO document_chunks (chunk_text) VALUES ('"
-            + ("a" * 8000)
-            + "')"
+            "INSERT INTO document_chunks (chunk_text) VALUES ('" + ("a" * 8000) + "')"
         )
 
         with tracer.start_as_current_span("archi-db") as span:
