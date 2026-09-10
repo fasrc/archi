@@ -262,3 +262,29 @@ def test_local_openai_compat_judge_without_a_url_still_inherits_ollama_host(
     )
     llm = bench.get_ragas_llm_evaluator()
     assert llm.openai_api_base == "http://sut-host:9000/v1"
+
+
+def test_judge_url_without_a_scheme_is_normalized(monkeypatch):
+    """The keyword override must not skip the normalization the provider applies.
+
+    `LocalProvider` prefixes a scheme-less base URL with `http://`. Passing the raw
+    value as a keyword lands it after that step, so `ChatOpenAI` receives an address
+    its transport cannot use and the first judge request fails.
+    """
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    for provider in ("local", "huggingface"):
+        bench = _bench(
+            {
+                "provider": "openai",
+                "model": "gpt-x",
+                "mode_settings": {
+                    "ragas_settings": {
+                        "evaluator_provider": provider,
+                        "evaluator_model": "judge-x",
+                        "evaluator_ollama_url": "judge-host:8001/v1",
+                    }
+                },
+            }
+        )
+        llm = bench.get_ragas_llm_evaluator()
+        assert llm.openai_api_base == "http://judge-host:8001/v1", provider

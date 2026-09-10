@@ -21,6 +21,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
+from src.archi.providers.local_provider import normalize_base_url
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
 from src.utils.benchmark_provenance import (
     asserted_config_divergence,
@@ -1405,7 +1406,11 @@ class Benchmarker:
                     # None would erase the provider's own local default and send the
                     # judge to the public OpenAI endpoint. An override with nothing
                     # to override with is not an override.
-                    override = {"base_url": ollama_url} if ollama_url else {}
+                    override = (
+                        {"base_url": normalize_base_url(ollama_url)}
+                        if ollama_url
+                        else {}
+                    )
                     return get_model(
                         "local",
                         model_name,
@@ -1430,7 +1435,7 @@ class Benchmarker:
                     "local",
                     model_name,
                     {"base_url": base_url, "mode": "openai_compat"},
-                    base_url=base_url,
+                    base_url=normalize_base_url(base_url),
                 )
             case "anthropic":
                 from langchain_anthropic import ChatAnthropic

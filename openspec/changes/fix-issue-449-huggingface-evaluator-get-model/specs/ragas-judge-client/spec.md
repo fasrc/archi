@@ -91,6 +91,12 @@ second outcome is the dangerous one, because it produces numbers rather than an 
 The endpoint SHALL therefore be supplied where the provider seam cannot rewrite it. This
 applies to every arm that builds its client through that seam, not only to `huggingface`.
 
+An override SHALL carry the same normalization the provider seam applies, so that a
+scheme-less endpoint such as `judge-host:8001/v1` still reaches the client as
+`http://judge-host:8001/v1`. Overriding past the seam skips its normalization step, and an
+address the transport cannot parse fails on the first judge request rather than at
+construction.
+
 An override SHALL be supplied only when an endpoint was resolved. Where no judge URL and no
 system-under-test URL are configured, the arm SHALL keep whatever endpoint the provider
 selects. Overriding with an empty value would erase the provider's local default and leave
@@ -107,6 +113,11 @@ state because it resolves a default of its own first, but the `local` arm can.
 
 - **WHEN** `OLLAMA_HOST` names the system-under-test endpoint and no judge URL and no system-under-test URL are configured
 - **THEN** the returned client's base URL is `http://localhost:8000/v1`
+
+#### Scenario: A judge endpoint with no scheme is normalized
+
+- **WHEN** the resolved judge endpoint is `judge-host:8001/v1`
+- **THEN** the returned client's base URL is `http://judge-host:8001/v1`
 
 #### Scenario: An arm with no default of its own keeps the provider's endpoint
 

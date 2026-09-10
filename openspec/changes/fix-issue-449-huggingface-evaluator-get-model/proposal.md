@@ -35,11 +35,18 @@ no url (default): TypeError: get_model() missing 1 required positional argument:
 SUT key fallback: TypeError: get_model() missing 1 required positional argument: 'provider_config'
 ```
 
-The routes are the two the arm reads at `service_benchmark.py:1371-1377`:
-`mode_settings.ragas_settings.evaluator_provider: huggingface`, and the SUT key
-`services.benchmarking.provider: huggingface` through the fallback. Neither is dead code —
-`src/cli/templates/base-config.yaml:64` renders `evaluator_provider` into every generated
-deployment config, so it is a supported operator surface.
+There is **one** reachable route: `mode_settings.ragas_settings.evaluator_provider:
+huggingface`. It is not dead code — `src/cli/templates/base-config.yaml:64` renders
+`evaluator_provider` into every generated deployment config, so it is a supported operator
+surface.
+
+The arm at `service_benchmark.py:1371-1377` also falls back to the system-under-test key
+`services.benchmarking.provider`, and an earlier draft of this proposal counted that as a
+second route. It is not one, for `huggingface`. `ProviderType` has no such member and
+`BaseReactAgent.__init__` calls `get_model` at construction, so
+`services.benchmarking.provider: huggingface` raises while `load_new_configuration` builds
+the system under test — before a judge exists. Caught in review round 1; the shared fallback
+stays as it is, because it is correct for every other evaluator provider.
 
 **The blast radius is latent, not live.** No shipped configuration selects `huggingface`:
 `docs/docs/benchmarking.md:449` and both files under
@@ -124,11 +131,15 @@ against it would not validate, so this change uses ADDED against a new capabilit
   |---|---|---|
   | `evaluator_ollama_url: http://judge-host:8001/v1` | `TypeError` | `ChatOpenAI` base `http://judge-host:8001/v1`, model `judge-x` |
   | no judge URL and no SUT URL | `TypeError` | `ChatOpenAI` base `http://localhost:8000/v1`, model `judge-x` |
-  | SUT key `provider: huggingface` only | `TypeError` | `ChatOpenAI` base `http://localhost:8000/v1`, model `qwen-x` |
-  | SUT `ollama_url: http://sut-host:9000/v1` inherited | `TypeError` | `ChatOpenAI` base `http://sut-host:9000/v1`, model `qwen-x` |
+  | SUT `ollama_url: http://sut-host:9000/v1` inherited, judge key set | `TypeError` | `ChatOpenAI` base `http://sut-host:9000/v1`, model `qwen-x` |
 
   The three existing tests in `tests/unit/test_ragas_evaluator_local_mode.py` pass unchanged
   against the patched file (`3 passed`), so no other arm moves.
+
+  A fourth row measured in the first draft — the system-under-test key on its own — has been
+  removed rather than corrected. It was taken through `object.__new__(Benchmarker)`, which
+  skips the construction that rejects the provider, so the number was real but the
+  configuration behind it was not.
 - **Patch coverage does protect this change.** The gate measures `--cov=src`
   (`scripts/gate.sh`) and the changed line is under `src/`, so `diff-cover` scores it. Every
   changed line is executed by the tests added in task 1.1.
