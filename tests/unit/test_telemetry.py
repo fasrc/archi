@@ -1248,6 +1248,46 @@ class TestTheDatabaseStatementIsNotAContentChannel:
 
         assert elapsed < 1.0, f"scrubbing took {elapsed:.2f}s"
 
+    def test_many_unmatched_dollar_tags_do_not_stall_the_export(self):
+        """Each dollar opener sends the lazy body scan to the end of the string.
+
+        With many distinct tags and no closer, that is quadratic: measured at about
+        0.8 seconds for 324 KB and rising with the square. ``export()`` calls this
+        on the batch processor's thread, so the cost is paid where spans are shipped.
+
+        A statement that large has no shape worth reading, so the size budget takes
+        it whole and the scan never starts.
+        """
+        import time
+
+        statement = "SELECT " + " ".join(f"$t{i}x$" for i in range(40000))
+        assert len(statement) > 300_000
+
+        start = time.monotonic()
+        scrubbed = telemetry._scrub_statement(statement)
+        elapsed = time.monotonic() - start
+
+        assert scrubbed == "__REDACTED__"
+        assert elapsed < 0.05, f"scrubbing took {elapsed:.2f}s"
+
+    def test_a_statement_inside_the_budget_still_keeps_its_shape(self):
+        """The budget must not swallow the statements this rule exists to keep."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+        statement = (
+            "INSERT INTO document_chunks (chunk_text) VALUES ('"
+            + ("a" * 8000)
+            + "')"
+        )
+
+        with tracer.start_as_current_span("archi-db") as span:
+            span.set_attribute("db.statement", statement)
+
+        (exported,) = memory.get_finished_spans()
+        scrubbed = exported.attributes["db.statement"]
+
+        assert scrubbed == "INSERT INTO document_chunks (chunk_text) VALUES ('?')"
+
     def test_the_legacy_string_mode_form_is_covered(self):
         """With ``standard_conforming_strings`` off psycopg2 doubles the backslash
         as well as the quote, so the same rule reads it correctly."""

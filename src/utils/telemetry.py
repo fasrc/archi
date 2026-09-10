@@ -181,6 +181,17 @@ _SQL_NUMBER_ARRAY = re.compile(r"ARRAY\s*\[[\s,]*[-+0-9][-+0-9.eE,\s]*\]")
 # The sequence no reader can settle from the text alone. See _scrub_statement().
 _AMBIGUOUS_QUOTE = "\\'"
 
+# How much statement the scrubber will read. Above this it redacts without scanning.
+#
+# The dollar-quote branch is quadratic on a statement carrying many distinct openers
+# that never close: each opener sends the lazy body scan to the end of the string.
+# Measured at 64 seconds for 40000 unmatched tags in 324 KB. export() runs on the
+# batch processor's thread, so that cost lands where spans are shipped.
+#
+# 32 KB is four times the largest statement the deployed check produced, a chunk
+# insert at 8388 characters, and a statement past it has no shape worth reading.
+_STATEMENT_BUDGET = 32768
+
 # Free-text fields that can quote a URL. An exception message and a stack trace are
 # not attributes, so scrubbing only span.attributes lets the same secret out through
 # a different door.
@@ -509,7 +520,11 @@ def _collapse_number_array(match) -> str:
 def _scrub_statement(value: str) -> str:
     """Replace every string literal and every numeric array, and keep the shape.
 
-    A backslash directly before a quote is the one sequence that reads two ways.
+    Two inputs get no scan at all. One is a statement past ``_STATEMENT_BUDGET``,
+    where the dollar-quote branch turns quadratic and the shape is unreadable anyway.
+
+    The other is a backslash directly before a quote, the one sequence that reads
+    two ways.
     With ``standard_conforming_strings`` on, the literal ends at that quote and the
     backslash is the value's last character; with it off, the backslash escapes the
     quote and the literal runs on. This function is handed a string, not a session,
@@ -520,7 +535,7 @@ def _scrub_statement(value: str) -> str:
     backslash, and archi's own SQL contains none, so this costs the shape of a
     statement archi is not expected to emit.
     """
-    if _AMBIGUOUS_QUOTE in value:
+    if len(value) > _STATEMENT_BUDGET or _AMBIGUOUS_QUOTE in value:
         return REDACTED_VALUE
     return _SQL_NUMBER_ARRAY.sub(_collapse_number_array, _SQL_LITERAL.sub("'?'", value))
 
