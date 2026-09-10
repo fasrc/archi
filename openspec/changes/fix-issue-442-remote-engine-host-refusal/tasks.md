@@ -146,7 +146,7 @@ Standing notes for every task:
 
 ## 4. Keep the spec and the documents agreeing
 
-- [ ] 4.1 Amend the requirement at
+- [x] 4.1 Amend the requirement at
       `openspec/changes/fix-issue-433-benchmark-host-provenance/specs/benchmark-run-provenance/spec.md:5`.
       It reads "`archi create` SHALL record the machine it runs on in `git_info.yaml`, as
       a `host` block holding a `hostname` and a `cpu_model`." Rewrite it so the obligation
