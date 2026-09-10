@@ -229,7 +229,10 @@ _STATEMENT_BUDGET = 32768
 # psycopg2 parameterises rather than commenting. So a statement holding one did not
 # come from a path this module has read, and the answer to a construct it cannot read
 # is to keep the statement rather than to export the parts it skipped.
-_UNREADABLE_CONSTRUCTS = ("--", "/*", '"', _AMBIGUOUS_QUOTE)
+#
+# Checked against the residue, never the raw statement: a marker inside a string
+# literal is text rather than syntax, and archi's own answers are full of them.
+_UNREADABLE_CONSTRUCTS = ("--", "/*", '"')
 
 # How many dollar signs the dollar-quote branch will consider. The size budget bounds
 # the input; this bounds the work. Each unmatched opener sends the lazy body scan to
@@ -594,17 +597,28 @@ def _scrub_statement(value: str) -> str:
         return REDACTED_VALUE
     if value.count("$") > _MAX_DOLLAR_SIGNS:
         return REDACTED_VALUE
-    if any(marker in value for marker in _UNREADABLE_CONSTRUCTS):
+    if _AMBIGUOUS_QUOTE in value:
         return REDACTED_VALUE
 
     scrubbed = _SQL_NUMBER_ARRAY.sub(
         _collapse_number_array, _SQL_LITERAL.sub("'?'", value)
     )
 
-    # A delimiter that never closed matches nothing, so the text after it came
-    # through untouched. Check the residue rather than trust the substitution.
+    # Everything else is decided on the residue: the statement with the markers this
+    # function wrote, and bound parameters, taken back out.
+    #
+    # A quote or a dollar sign left there means a delimiter never closed, so the text
+    # after it came through untouched. A comment or a delimited identifier left there
+    # is real syntax, because one inside a literal went with the literal.
+    #
+    # Reading the constructs off the residue rather than the raw statement is what
+    # keeps ordinary traffic readable. Measured on claw: archi ends every answer with
+    # a markdown '---' separator before its sources, so checking the raw statement
+    # dropped every conversation insert on a comment marker that was never a comment.
     residue = _SCRUB_RESIDUE.sub("", scrubbed)
     if "'" in residue or "$" in residue:
+        return REDACTED_VALUE
+    if any(marker in residue for marker in _UNREADABLE_CONSTRUCTS):
         return REDACTED_VALUE
     return scrubbed
 

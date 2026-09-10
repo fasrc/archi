@@ -111,9 +111,13 @@ default.** Seven separate rules produce that result:
    the other. The rule reads string literals and dollar-quoted bodies and fails
    closed on the rest: a statement carrying a comment, a quoted identifier, more than
    eight dollar signs, or more than 32 KB is dropped whole rather than exported with
-   the parts the rule skipped. On the deployed check all 27 statements kept their
-   shape, so this costs archi nothing and bounds what a statement from somewhere else
-   can do.
+   the parts the rule skipped.
+
+   Those constructs are judged on what is left after the literals come out, not on
+   the raw statement, and the difference is not academic. archi ends every answer
+   with a markdown `---` separator before its sources, so a rule reading the raw text
+   saw a comment marker in every conversation insert and dropped all of them. A
+   marker inside a literal is text; only one outside a literal is syntax.
 
 `ARCHI_OTEL_CAPTURE_CONTENT=true` reverses rules 1, 2, 5 and 7. It never reverses
 rules 3, 4 and 6, because a credential is not model content and no flag releases one: an

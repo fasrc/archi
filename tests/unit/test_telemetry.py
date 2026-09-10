@@ -1368,6 +1368,49 @@ class TestTheDatabaseStatementIsNotAContentChannel:
         assert "diagnosis" not in scrubbed, label
         assert scrubbed == "__REDACTED__", label
 
+    def test_a_comment_marker_inside_a_literal_is_just_text(self):
+        """Measured on claw: every archi answer trips the comment rule.
+
+        archi ends an answer with a markdown ``---`` separator before its sources
+        block, so the conversation insert carried ``--`` inside a string literal and
+        the whole statement was dropped. That is the safe direction and the wrong
+        reading: ``--`` opens a comment only outside a literal.
+
+        Checking the constructs against the residue rather than the raw statement
+        settles it. A marker inside a literal is gone by then, and a real comment
+        survives and still fails closed.
+        """
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("archi-db") as span:
+            span.set_attribute(
+                "db.statement",
+                "INSERT INTO conversations VALUES ('the answer --- sources follow')",
+            )
+
+        (exported,) = memory.get_finished_spans()
+        scrubbed = exported.attributes["db.statement"]
+
+        assert "sources follow" not in scrubbed
+        assert scrubbed == "INSERT INTO conversations VALUES ('?')"
+
+    def test_a_quote_character_inside_a_literal_is_just_text(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("archi-db") as span:
+            span.set_attribute(
+                "db.statement",
+                'INSERT INTO conversations VALUES (\'he said "hello there"\')',
+            )
+
+        (exported,) = memory.get_finished_spans()
+        scrubbed = exported.attributes["db.statement"]
+
+        assert "hello there" not in scrubbed
+        assert scrubbed == "INSERT INTO conversations VALUES ('?')"
+
     def test_many_dollar_signs_under_the_budget_do_not_stall_the_export(self):
         """The size budget bounds the input, not the work.
 
