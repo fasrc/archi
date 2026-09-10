@@ -126,7 +126,7 @@ Standing notes for every task:
 
 ## 3. Close out
 
-- [ ] 3.1 Verify, push, and open the PR. Steps, in order:
+- [x] 3.1 Verify, push, and open the PR. Steps, in order:
       1. `bash scripts/gate.sh` on the finished branch exits 0. `git status` is empty.
       2. `git diff origin/dev --stat` lists only `src/bin/service_benchmark.py`,
          `tests/unit/test_ragas_evaluator_local_mode.py`, `docs/docs/benchmarking.md`, and
@@ -162,3 +162,10 @@ Standing notes for every task:
          branch pushed, do **not** open a PR on any other repository, and stop.
       6. Record the PR URL as a line under this task, tick the task, and commit that edit with
          the gate. Do not merge.
+
+      **PR:** https://github.com/fasrc/archi/pull/457 — opened 2026-09-10 against
+      `fasrc/archi:dev`, closing-issue link to #449 confirmed via the GraphQL
+      `closingIssuesReferences` API. Steps 1-4 were run on the host: the loop container's
+      token returned `Resource not accessible by personal access token` on both the push
+      and `gh pr create`, which is the permissions stop condition in step 5, not a defect
+      in the change. Not merged.
