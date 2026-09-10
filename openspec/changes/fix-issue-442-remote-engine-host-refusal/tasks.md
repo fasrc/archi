@@ -93,7 +93,7 @@ Standing notes for every task:
 
 ## 2. Refuse the capture
 
-- [ ] 2.1 Add a RED test to `tests/unit/test_benchmark_host_provenance.py` (append after
+- [x] 2.1 Add a RED test to `tests/unit/test_benchmark_host_provenance.py` (append after
       the file's last line) named
       `test_collect_host_information_returns_none_for_a_remote_endpoint`: set
       `DOCKER_HOST=tcp://engine.example.edu:2376` with `monkeypatch.setenv`, call
@@ -124,7 +124,7 @@ Standing notes for every task:
 
 ## 3. Name the fourth cause in both reports
 
-- [ ] 3.1 Add RED tests for the report text. Append to
+- [x] 3.1 Add RED tests for the report text. Append to
       `tests/unit/test_benchmark_report_markdown.py` (38 tests before this change) and to
       `tests/unit/test_benchmark_report_html_provenance.py` (20 before). Each new test
       renders an artifact whose `metadata.host` is `None` and asserts the null text names

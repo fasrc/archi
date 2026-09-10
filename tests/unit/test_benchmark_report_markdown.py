@@ -708,3 +708,20 @@ def test_a_null_host_does_not_claim_the_deploy_recorded_no_host():
     assert "predates the field" in md_null
     assert "capture failed" in md_null
     assert "metadata could not be read" in md_null
+
+
+def test_a_null_host_names_the_remote_engine_refusal_cause():
+    """A null host must name the fourth cause: remote container engine refusal.
+
+    When ``collect_host_information`` returns ``None`` because the container
+    endpoint is not provably local, ``host`` is ``None`` in the artifact. The
+    null text must say so; a reader whose deployment uses a remote engine must
+    not be sent looking for a failed capture or a missing mount.
+    """
+    md_null = _provenance_md(host=None)
+
+    assert "container engine" in md_null
+    # All three previous causes remain.
+    assert "capture failed" in md_null
+    assert "metadata could not be read" in md_null
+    assert "predates the field" in md_null
