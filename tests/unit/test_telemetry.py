@@ -886,7 +886,9 @@ class TestRelativeUrlsInExceptionTextAreScrubbed:
         with tracer.start_as_current_span("POST") as span:
             span.add_event(
                 "note",
-                {"detail": "Max retries exceeded with url: /services/T01/B02/Xy7SeCrEt"},
+                {
+                    "detail": "Max retries exceeded with url: /services/T01/B02/Xy7SeCrEt"
+                },
             )
 
         (exported,) = memory.get_finished_spans()
