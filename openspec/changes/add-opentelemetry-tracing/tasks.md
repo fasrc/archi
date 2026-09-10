@@ -82,7 +82,7 @@ to one line and put the logic in `src/utils/telemetry.py`.
 
 ## 4. Documentation
 
-- [ ] 4.1 `model: sonnet` — **Write the operator page.**
+- [x] 4.1 `model: sonnet` — **Write the operator page.**
   Add `docs/docs/observability.md`: the two environment variables that turn tracing on, the
   content flag and its privacy meaning, the service names, and the statement that archi ships
   no receiver. Add it to `docs/mkdocs.yml` if the nav lists pages by hand.
