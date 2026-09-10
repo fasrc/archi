@@ -212,7 +212,8 @@ data_manager:
         model_kwargs:
           device: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.model_kwargs.device | default('cpu', true) }}
         encode_kwargs:
-          normalize_embeddings: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.encode_kwargs.normalize_embeddings | default(true, true) }}
+          {%- set v_normalize_embeddings = data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.encode_kwargs.normalize_embeddings %}
+          normalize_embeddings: {{ v_normalize_embeddings if v_normalize_embeddings is defined and v_normalize_embeddings is not none else true }}
       similarity_score_reference: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.similarity_score_reference | default(0.0, true) }}
       query_embedding_instructions: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.query_embedding_instructions | default("null", true) }}
   chunk_size: {{ data_manager.chunk_size | default(1000, true) }}
@@ -257,7 +258,8 @@ data_manager:
   # so a configured 0 would render as the default and never reach the runtime clamp.
   scrape_workers: {{ scrape_workers if scrape_workers is defined and scrape_workers is not none else 8 }}
   scrape_per_host_workers: {{ scrape_per_host_workers if scrape_per_host_workers is defined and scrape_per_host_workers is not none else 4 }}
-  reset_collection: {{ data_manager.reset_collection | default(true, true) }}
+  {%- set v_reset_collection = data_manager.reset_collection %}
+  reset_collection: {{ v_reset_collection if v_reset_collection is defined and v_reset_collection is not none else true }}
   stemming:
     enabled: {{ data_manager.stemming.enabled | default(false, true) }}
   distance_metric: {{ data_manager.distance_metric | default('cosine', true) }}
@@ -288,8 +290,10 @@ data_manager:
         model: {{ data_manager.retrievers.hierarchical_rerank.reranker.model | default('ms-marco-MiniLM-L-12-v2', true) }}
   sources:
     local_files:
-      enabled: {{ data_manager.sources.local_files.enabled | default(true, true) }}
-      visible: {{ data_manager.sources.local_files.visible | default(true, true) }}
+      {%- set v_local_files_enabled = data_manager.sources.local_files.enabled %}
+      enabled: {{ v_local_files_enabled if v_local_files_enabled is defined and v_local_files_enabled is not none else true }}
+      {%- set v_local_files_visible = data_manager.sources.local_files.visible %}
+      visible: {{ v_local_files_visible if v_local_files_visible is defined and v_local_files_visible is not none else true }}
       schedule: '{{ data_manager.sources.local_files.schedule | default("", true) }}'
       paths:
         {%- set paths = data_manager.sources.local_files.paths | default([], true) %}
@@ -299,8 +303,10 @@ data_manager:
     links:
       base_source_depth: {{ data_manager.sources.links.base_source_depth | default(1, true) }}
       max_pages: {{ data_manager.sources.links.max_pages | default(null, true) }}
-      enabled: {{ data_manager.sources.links.enabled | default(true, true) }}
-      visible: {{ data_manager.sources.links.visible | default(true, true) }}
+      {%- set v_links_enabled = data_manager.sources.links.enabled %}
+      enabled: {{ v_links_enabled if v_links_enabled is defined and v_links_enabled is not none else true }}
+      {%- set v_links_visible = data_manager.sources.links.visible %}
+      visible: {{ v_links_visible if v_links_visible is defined and v_links_visible is not none else true }}
       schedule: '{{ data_manager.sources.links.schedule | default("", true) }}'
       input_lists:
         {%- set link_lists = data_manager.sources.links.input_lists | default([], true) %}
@@ -308,7 +314,8 @@ data_manager:
         - {{ input_list }}
         {%- endfor %}
       html_scraper:
-        reset_data: {{ data_manager.sources.links.html_scraper.reset_data | default(true, true) }}
+        {%- set v_html_reset_data = data_manager.sources.links.html_scraper.reset_data %}
+        reset_data: {{ v_html_reset_data if v_html_reset_data is defined and v_html_reset_data is not none else true }}
         verify_urls: {{ data_manager.sources.links.html_scraper.verify_urls | default(false, true) }}
         enable_warnings: {{ data_manager.sources.links.html_scraper.enable_warnings | default(false, true) }}
       sitemap:
@@ -341,22 +348,27 @@ data_manager:
           CERNSSOScraper:
             class: {{ data_manager.sources.links.selenium_scraper.selenium_class_map.CERNSSOScraper.class | default('CERNSSOScraper', true) }}
             kwargs:
-              headless:  {{ data_manager.sources.links.selenium_scraper.selenium_class_map.CERNSSOScraper.kwargs.headless | default(true, true) }}
+              {%- set v_cernsso_headless = data_manager.sources.links.selenium_scraper.selenium_class_map.CERNSSOScraper.kwargs.headless %}
+              headless:  {{ v_cernsso_headless if v_cernsso_headless is defined and v_cernsso_headless is not none else true }}
     git:
       {%- set v_git_enabled = data_manager.sources.git.enabled %}
       enabled: {{ v_git_enabled if v_git_enabled is defined and v_git_enabled is not none else true }}
-      visible: {{ data_manager.sources.git.visible | default(true, true) }}
+      {%- set v_git_visible = data_manager.sources.git.visible %}
+      visible: {{ v_git_visible if v_git_visible is defined and v_git_visible is not none else true }}
       schedule: '{{ data_manager.sources.git.schedule | default("", true) }}'
       {% if data_manager.sources.git.code_suffixes is defined and data_manager.sources.git.code_suffixes is sequence and data_manager.sources.git.code_suffixes is not string -%}
       code_suffixes: {{ data_manager.sources.git.code_suffixes }}
       {% endif %}
     sso:
-      enabled: {{ data_manager.sources.sso.enabled | default(true, true) }}
-      visible: {{ data_manager.sources.sso.visible | default(true, true) }}
+      {%- set v_sso_enabled = data_manager.sources.sso.enabled %}
+      enabled: {{ v_sso_enabled if v_sso_enabled is defined and v_sso_enabled is not none else true }}
+      {%- set v_sso_visible = data_manager.sources.sso.visible %}
+      visible: {{ v_sso_visible if v_sso_visible is defined and v_sso_visible is not none else true }}
       schedule: '{{ data_manager.sources.sso.schedule | default("", true) }}'
     indico:
       enabled: {{ data_manager.sources.indico.enabled | default(false, true) }}
-      visible: {{ data_manager.sources.indico.visible | default(true, true) }}
+      {%- set v_indico_visible = data_manager.sources.indico.visible %}
+      visible: {{ v_indico_visible if v_indico_visible is defined and v_indico_visible is not none else true }}
       schedule: '{{ data_manager.sources.indico.schedule | default("", true) }}'
       base_url: {{ data_manager.sources.indico.base_url | default('https://indico.cern.ch', true) }}
       use_sso: {{ data_manager.sources.indico.use_sso | default(true) }}
@@ -374,7 +386,8 @@ data_manager:
       date_range: {{ data_manager.sources.indico.date_range | tojson }}
       {%- endif %}
       sso_kwargs:
-        headless: {{ data_manager.sources.indico.sso_kwargs.headless | default(true, true) }}
+        {%- set v_indico_sso_headless = data_manager.sources.indico.sso_kwargs.headless %}
+        headless: {{ v_indico_sso_headless if v_indico_sso_headless is defined and v_indico_sso_headless is not none else true }}
         site_type: {{ data_manager.sources.indico.sso_kwargs.site_type | default('generic', true) }}
       slide_conversion:
         enabled: {{ data_manager.sources.indico.slide_conversion.enabled | default(true) }}
@@ -389,9 +402,11 @@ data_manager:
       plot_extraction:
         enabled: {{ data_manager.sources.indico.plot_extraction.enabled | default(false, true) }}
     jira:
-      enabled: {{ data_manager.sources.jira.enabled | default(true, true) }}
+      {%- set v_jira_enabled = data_manager.sources.jira.enabled %}
+      enabled: {{ v_jira_enabled if v_jira_enabled is defined and v_jira_enabled is not none else true }}
       url: {{ data_manager.sources.jira.url | default('', true) }}
-      visible: {{ data_manager.sources.jira.visible | default(true, true) }}
+      {%- set v_jira_visible = data_manager.sources.jira.visible %}
+      visible: {{ v_jira_visible if v_jira_visible is defined and v_jira_visible is not none else true }}
       schedule: '{{ data_manager.sources.jira.schedule | default("", true) }}'
       projects:
         {%- for project in data_manager.sources.jira.projects | default([], true) %}
@@ -401,7 +416,8 @@ data_manager:
       max_tickets: {{ data_manager.sources.jira.max_tickets | default(1e10, true) }}
       cutoff_date: {{ data_manager.sources.jira.cutoff_date | default('', true) }}
     redmine:
-      enabled: {{ data_manager.sources.redmine.enabled | default(true, true) }}
+      {%- set v_redmine_enabled = data_manager.sources.redmine.enabled %}
+      enabled: {{ v_redmine_enabled if v_redmine_enabled is defined and v_redmine_enabled is not none else true }}
       url: {{ data_manager.sources.redmine.url | default('', true) }}
       projects:
         {%- for project in data_manager.sources.redmine.projects | default([], true) %}
@@ -409,13 +425,15 @@ data_manager:
         {%- endfor %}
       visible: {{ data_manager.sources.redmine.visible | default(false, true) }}
       schedule: '{{ data_manager.sources.redmine.schedule | default("", true) }}'
-      anonymize_data: {{ data_manager.sources.redmine.anonymize_data | default(true, true) }}
+      {%- set v_redmine_anonymize = data_manager.sources.redmine.anonymize_data %}
+      anonymize_data: {{ v_redmine_anonymize if v_redmine_anonymize is defined and v_redmine_anonymize is not none else true }}
     elog:
       enabled: {{ data_manager.sources.elog.enabled | default(false, true) }}
       visible: {{ data_manager.sources.elog.visible | default(false, true) }}
       url: '{{ data_manager.sources.elog.url | default('', true) }}'
       max_entries: {{ data_manager.sources.elog.max_entries | default(null, true) }}
-      verify_ssl: {{ data_manager.sources.elog.verify_ssl | default(true, true) }}
+      {%- set v_elog_verify_ssl = data_manager.sources.elog.verify_ssl %}
+      verify_ssl: {{ v_elog_verify_ssl if v_elog_verify_ssl is defined and v_elog_verify_ssl is not none else true }}
       schedule: '{{ data_manager.sources.elog.schedule | default("", true) }}'
   # Per-document processing stage applied at the persistence seam (before a resource
   # is written to disk), shared across scheduled ingest and the uploader UI.

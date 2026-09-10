@@ -1,12 +1,11 @@
 """Boolean flags in base-config.yaml must honour an explicitly configured
 ``false`` value rather than replacing it with the template default.
 
-Covers three keys proven by issue #448:
-  - data_manager.processing.html_to_markdown.enabled  (line :426)
-  - data_manager.sources.git.enabled                  (line :345)
-  - services.data_manager.enabled                     (line :164)
+Covers all 21 bug-class sites from the 28-conversion table in tasks.md.
+Three inputs per key: configured false → False, absent → True, explicit None → True.
 """
 
+import pytest
 import yaml
 from jinja2 import ChainableUndefined, Environment, PackageLoader, select_autoescape
 
@@ -44,66 +43,132 @@ def _get(cfg, dotted_path):
 
 
 # ---------------------------------------------------------------------------
-# data_manager.processing.html_to_markdown.enabled  (:426)
+# All 21 bug-class rows — (input_path, rendered_path, default)
+# Listed in template line order.
 # ---------------------------------------------------------------------------
 
-_HTML_MD = "data_manager.processing.html_to_markdown.enabled"
+_BUG_ROWS = [
+    (
+        "services.data_manager.enabled",
+        "services.data_manager.enabled",
+        True,
+    ),
+    (
+        "data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.encode_kwargs.normalize_embeddings",
+        "data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.encode_kwargs.normalize_embeddings",
+        True,
+    ),
+    (
+        "data_manager.reset_collection",
+        "data_manager.reset_collection",
+        True,
+    ),
+    (
+        "data_manager.sources.local_files.enabled",
+        "data_manager.sources.local_files.enabled",
+        True,
+    ),
+    (
+        "data_manager.sources.local_files.visible",
+        "data_manager.sources.local_files.visible",
+        True,
+    ),
+    (
+        "data_manager.sources.links.enabled",
+        "data_manager.sources.links.enabled",
+        True,
+    ),
+    (
+        "data_manager.sources.links.visible",
+        "data_manager.sources.links.visible",
+        True,
+    ),
+    (
+        "data_manager.sources.links.html_scraper.reset_data",
+        "data_manager.sources.links.html_scraper.reset_data",
+        True,
+    ),
+    (
+        "data_manager.sources.links.selenium_scraper.selenium_class_map.CERNSSOScraper.kwargs.headless",
+        "data_manager.sources.links.selenium_scraper.selenium_class_map.CERNSSOScraper.kwargs.headless",
+        True,
+    ),
+    (
+        "data_manager.sources.git.enabled",
+        "data_manager.sources.git.enabled",
+        True,
+    ),
+    (
+        "data_manager.sources.git.visible",
+        "data_manager.sources.git.visible",
+        True,
+    ),
+    (
+        "data_manager.sources.sso.enabled",
+        "data_manager.sources.sso.enabled",
+        True,
+    ),
+    (
+        "data_manager.sources.sso.visible",
+        "data_manager.sources.sso.visible",
+        True,
+    ),
+    (
+        "data_manager.sources.indico.visible",
+        "data_manager.sources.indico.visible",
+        True,
+    ),
+    (
+        "data_manager.sources.indico.sso_kwargs.headless",
+        "data_manager.sources.indico.sso_kwargs.headless",
+        True,
+    ),
+    (
+        "data_manager.sources.jira.enabled",
+        "data_manager.sources.jira.enabled",
+        True,
+    ),
+    (
+        "data_manager.sources.jira.visible",
+        "data_manager.sources.jira.visible",
+        True,
+    ),
+    (
+        "data_manager.sources.redmine.enabled",
+        "data_manager.sources.redmine.enabled",
+        True,
+    ),
+    (
+        "data_manager.sources.redmine.anonymize_data",
+        "data_manager.sources.redmine.anonymize_data",
+        True,
+    ),
+    (
+        "data_manager.sources.elog.verify_ssl",
+        "data_manager.sources.elog.verify_ssl",
+        True,
+    ),
+    (
+        "data_manager.processing.html_to_markdown.enabled",
+        "data_manager.processing.html_to_markdown.enabled",
+        True,
+    ),
+]
 
 
-def test_html_to_markdown_enabled_false_renders_false():
-    cfg = _render(**_expand(_HTML_MD, False))
-    assert _get(cfg, _HTML_MD) is False
+@pytest.mark.parametrize("input_path,rendered_path,default", _BUG_ROWS)
+def test_false_renders_false(input_path, rendered_path, default):
+    cfg = _render(**_expand(input_path, False))
+    assert _get(cfg, rendered_path) is False
 
 
-def test_html_to_markdown_enabled_absent_renders_true():
+@pytest.mark.parametrize("input_path,rendered_path,default", _BUG_ROWS)
+def test_absent_renders_default(input_path, rendered_path, default):
     cfg = _render()
-    assert _get(cfg, _HTML_MD) is True
+    assert _get(cfg, rendered_path) is default
 
 
-def test_html_to_markdown_enabled_none_renders_true():
-    cfg = _render(**_expand(_HTML_MD, None))
-    assert _get(cfg, _HTML_MD) is True
-
-
-# ---------------------------------------------------------------------------
-# data_manager.sources.git.enabled  (:345)
-# ---------------------------------------------------------------------------
-
-_GIT = "data_manager.sources.git.enabled"
-
-
-def test_git_enabled_false_renders_false():
-    cfg = _render(**_expand(_GIT, False))
-    assert _get(cfg, _GIT) is False
-
-
-def test_git_enabled_absent_renders_true():
-    cfg = _render()
-    assert _get(cfg, _GIT) is True
-
-
-def test_git_enabled_none_renders_true():
-    cfg = _render(**_expand(_GIT, None))
-    assert _get(cfg, _GIT) is True
-
-
-# ---------------------------------------------------------------------------
-# services.data_manager.enabled  (:164)
-# ---------------------------------------------------------------------------
-
-_SVC_DM = "services.data_manager.enabled"
-
-
-def test_services_data_manager_enabled_false_renders_false():
-    cfg = _render(**_expand(_SVC_DM, False))
-    assert _get(cfg, _SVC_DM) is False
-
-
-def test_services_data_manager_enabled_absent_renders_true():
-    cfg = _render()
-    assert _get(cfg, _SVC_DM) is True
-
-
-def test_services_data_manager_enabled_none_renders_true():
-    cfg = _render(**_expand(_SVC_DM, None))
-    assert _get(cfg, _SVC_DM) is True
+@pytest.mark.parametrize("input_path,rendered_path,default", _BUG_ROWS)
+def test_none_renders_default(input_path, rendered_path, default):
+    cfg = _render(**_expand(input_path, None))
+    assert _get(cfg, rendered_path) is default

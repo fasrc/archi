@@ -90,7 +90,7 @@ Two traps in that table:
 
 ## 2. The remaining 18 sites that hide an explicit false
 
-- [ ] 2.1 `model: opus` — Rewrite the three cases from 1.1 as one `pytest.mark.parametrize`
+- [x] 2.1 `model: opus` — Rewrite the three cases from 1.1 as one `pytest.mark.parametrize`
       table driven by `(input_path, rendered_path, default)` and extend it to all 21 **bug**
       rows above. Keep the three-input-per-key structure. Watch the 18 unconverted keys
       fail on the `false` case. Convert all 18 template sites to the same ternary form.
