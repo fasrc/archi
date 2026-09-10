@@ -32,25 +32,36 @@ def endpoint_is_local(endpoint: str | None) -> bool:
     return True
 
 
+def _docker_config_dir() -> pathlib.Path:
+    """Return the Docker client configuration directory.
+
+    ``DOCKER_CONFIG`` relocates both ``config.json`` and the context metadata store, so
+    reading ``~/.docker`` unconditionally would miss a remote context.
+    """
+    override = os.environ.get("DOCKER_CONFIG", "").strip()
+    if override:
+        return pathlib.Path(override)
+    return pathlib.Path.home() / ".docker"
+
+
 def _resolve_context_endpoint() -> str | None:
     """Return the active Docker context's Host endpoint, or None if unresolvable.
 
     Any exception is swallowed — an unreadable configuration is not evidence of a remote
-    engine.
+    engine, because Docker falls back to the local default context.
     """
     try:
+        config_dir = _docker_config_dir()
         context_name = os.environ.get("DOCKER_CONTEXT", "").strip()
         if not context_name:
-            home = pathlib.Path.home()
             try:
-                raw = (home / ".docker" / "config.json").read_text()
+                raw = (config_dir / "config.json").read_text()
                 context_name = json.loads(raw).get("currentContext", "").strip()
             except Exception:
                 return None
         if not context_name or context_name == "default":
             return None
-        home = pathlib.Path.home()
-        for meta_path in home.glob(".docker/contexts/meta/*/meta.json"):
+        for meta_path in config_dir.glob("contexts/meta/*/meta.json"):
             try:
                 meta = json.loads(meta_path.read_text())
             except Exception:
@@ -62,12 +73,26 @@ def _resolve_context_endpoint() -> str | None:
         return None
 
 
+def _resolve_podman_connection_uri(name: str) -> str | None:
+    """Return the URI of the named Podman connection, or None if unresolvable."""
+    try:
+        base = os.environ.get("XDG_CONFIG_HOME", "").strip()
+        root = pathlib.Path(base) if base else pathlib.Path.home() / ".config"
+        raw = (root / "containers" / "podman-connections.json").read_text()
+        entry = json.loads(raw).get("Connection", {}).get("Connections", {}).get(name)
+        if isinstance(entry, dict):
+            return entry.get("URI")
+        return None
+    except Exception:
+        return None
+
+
 def container_endpoint_is_provably_local() -> bool:
     """Return True when every container endpoint variable points to a local engine.
 
-    Checks DOCKER_HOST, CONTAINER_HOST, and the active Docker context; any refusing means
-    not provably local. DOCKER_HOST, when explicitly set, takes priority over context
-    resolution.
+    Checks DOCKER_HOST, CONTAINER_HOST, CONTAINER_CONNECTION, and the active Docker
+    context; any refusing means not provably local. DOCKER_HOST, when set and non-empty,
+    takes priority over context resolution.
     """
     docker_host = os.environ.get("DOCKER_HOST")
     container_host = os.environ.get("CONTAINER_HOST")
@@ -75,8 +100,16 @@ def container_endpoint_is_provably_local() -> bool:
     if not endpoint_is_local(docker_host) or not endpoint_is_local(container_host):
         return False
 
-    # DOCKER_HOST explicitly set and local — wins over context
-    if docker_host is not None:
+    # A named Podman connection routes the engine on its own, and outranks a local
+    # CONTAINER_HOST, so it is classified before any Docker variable can vouch for it.
+    connection = os.environ.get("CONTAINER_CONNECTION", "").strip()
+    if connection:
+        connection_uri = _resolve_podman_connection_uri(connection)
+        if connection_uri is None or not endpoint_is_local(connection_uri):
+            return False
+
+    # DOCKER_HOST set and non-empty and local — wins over context
+    if docker_host is not None and docker_host.strip():
         return True
 
     context_host = _resolve_context_endpoint()

@@ -23,10 +23,34 @@ cluster machines this field exists to identify.
 
 Podman does not read Docker contexts, so both variables SHALL be classified.
 
-`DOCKER_CONTEXT`, and `currentContext` in `~/.docker/config.json`, SHALL be resolved to an
-endpoint and classified by the same rule. A context **name** is not itself evidence of a
-remote engine. A set and non-empty `DOCKER_HOST` SHALL take precedence over both, because
-the Docker CLI itself routes to the default context whenever that variable is set.
+`DOCKER_CONTEXT`, and `currentContext` in the Docker configuration directory, SHALL be
+resolved to an endpoint and classified by the same rule. A context **name** is not itself
+evidence of a remote engine. A set and non-empty `DOCKER_HOST` SHALL take precedence over
+both, because the Docker CLI itself routes to the default context whenever that variable
+carries a value. An empty `DOCKER_HOST` SHALL NOT take that precedence: Docker treats it as
+absent and honors the context. Measured on Docker 29.7.2 — with a remote `DOCKER_CONTEXT`
+set, `docker context show` prints `default` for a non-empty `DOCKER_HOST` and prints the
+context name for an empty one.
+
+The Docker configuration directory SHALL be `DOCKER_CONFIG` when that variable is set and
+non-empty, and `~/.docker` otherwise. `DOCKER_CONFIG` relocates `config.json` **and** the
+`contexts/meta` store together, so reading `~/.docker` unconditionally would classify a
+relocated remote context as local.
+
+`CONTAINER_CONNECTION` SHALL be resolved through the Podman connection store and classified
+by the same rule. Setting it puts Podman in remote mode against the named destination, and
+it outranks `CONTAINER_HOST`, so no Docker or Podman host variable can vouch for locality on
+its behalf. Measured on Podman 6.1.0 — `CONTAINER_CONNECTION` naming an `ssh://` connection
+routes there even when `CONTAINER_HOST` names a local socket.
+
+A `CONTAINER_CONNECTION` that cannot be resolved to a URI SHALL be treated as not provably
+local. This is the opposite of the Docker rule above, and the asymmetry follows the default
+each tool falls back to: Docker with no readable context uses its local default socket,
+while Podman with a named connection is already pointed somewhere else. The store read is
+`$XDG_CONFIG_HOME/containers/podman-connections.json`, falling back to
+`~/.config/containers/podman-connections.json`; a connection recorded only in the legacy
+`containers.conf` destinations is therefore unresolvable, and refusing a host is the honest
+answer for it.
 
 The check SHALL be best-effort and SHALL never raise, on the same terms as the capture it
 guards. An unreadable or malformed Docker configuration means "no evidence of a remote
@@ -75,6 +99,31 @@ uses. No second field and no placeholder string is written.
 
 - **WHEN** `DOCKER_HOST` names a `unix://` socket and `DOCKER_CONTEXT` names a context whose stored endpoint is a `tcp://` address
 - **THEN** the `host` entry names the hostname of the machine running the CLI
+
+#### Scenario: An empty DOCKER_HOST does not outrank a remote context
+
+- **WHEN** `DOCKER_HOST` is set to the empty string and `DOCKER_CONTEXT` names a context whose stored endpoint is a `tcp://` address
+- **THEN** the `host` entry is `null`
+
+#### Scenario: A relocated Docker configuration directory is read
+
+- **WHEN** `DOCKER_CONFIG` names a directory whose context store holds a `tcp://` endpoint for the selected context
+- **THEN** the `host` entry is `null`
+
+#### Scenario: A remote Podman connection records no host
+
+- **WHEN** `CONTAINER_CONNECTION` names a stored connection whose URI is an `ssh://` address
+- **THEN** the `host` entry is `null`
+
+#### Scenario: A local Podman connection still records the host
+
+- **WHEN** `CONTAINER_CONNECTION` names a stored connection whose URI is a `unix://` socket
+- **THEN** the `host` entry names the hostname of the machine running the CLI
+
+#### Scenario: An unresolvable Podman connection records no host
+
+- **WHEN** `CONTAINER_CONNECTION` names a connection that the connection store does not hold
+- **THEN** the `host` entry is `null`
 
 #### Scenario: An unreadable Docker configuration is not evidence of a remote engine
 

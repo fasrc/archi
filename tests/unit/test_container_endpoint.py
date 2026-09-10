@@ -1,9 +1,32 @@
+import json
+
 import pytest
 
 from src.utils.container_endpoint import (
     container_endpoint_is_provably_local,
     endpoint_is_local,
 )
+
+_ENDPOINT_VARS = (
+    "DOCKER_HOST",
+    "DOCKER_CONTEXT",
+    "DOCKER_CONFIG",
+    "CONTAINER_HOST",
+    "CONTAINER_CONNECTION",
+    "XDG_CONFIG_HOME",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_endpoint_env(monkeypatch, tmp_path):
+    """Detach every test from the developer's own engine configuration.
+
+    Without this the suite reads whatever DOCKER_CONFIG or CONTAINER_CONNECTION the
+    machine running it happens to export, so a green run proves nothing.
+    """
+    for name in _ENDPOINT_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
 
 
 def test_unix_triple_slash_is_local():
@@ -197,3 +220,162 @@ def test_meta_json_no_matching_context_is_local(monkeypatch, tmp_path):
         tmp_path, "abc", "differentctx", "tcp://engine.example.edu:2376"
     )
     assert container_endpoint_is_provably_local() is True
+
+
+def _write_connections(root, entries, default=None):
+    """Write a Podman connection store under *root* and return its path."""
+    store_dir = root / "containers"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "Connection": {
+            "Default": default or next(iter(entries), ""),
+            "Connections": {name: {"URI": uri} for name, uri in entries.items()},
+        },
+        "Farm": {},
+    }
+    path = store_dir / "podman-connections.json"
+    path.write_text(json.dumps(payload))
+    return path
+
+
+# --- An empty DOCKER_HOST does not outrank a context (docker 29.7.2, measured) ---
+
+
+def test_empty_docker_host_does_not_outrank_remote_context(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOCKER_HOST", "")
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotectx")
+    _write_context_meta(tmp_path, "abc", "remotectx", "tcp://engine.example.edu:2376")
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_whitespace_docker_host_does_not_outrank_remote_context(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOCKER_HOST", "   ")
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotectx")
+    _write_context_meta(tmp_path, "abc", "remotectx", "tcp://engine.example.edu:2376")
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_empty_docker_host_with_local_context_is_local(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOCKER_HOST", "")
+    monkeypatch.setenv("DOCKER_CONTEXT", "localctx")
+    _write_context_meta(tmp_path, "abc", "localctx", "unix:///var/run/docker.sock")
+    assert container_endpoint_is_provably_local() is True
+
+
+# --- DOCKER_CONFIG roots the context store ---
+
+
+def test_docker_config_roots_the_context_store(monkeypatch, tmp_path):
+    alt = tmp_path / "altdocker"
+    monkeypatch.setenv("DOCKER_CONFIG", str(alt))
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotectx")
+    meta_dir = alt / "contexts" / "meta" / "abc"
+    meta_dir.mkdir(parents=True)
+    (meta_dir / "meta.json").write_text(
+        '{"Name": "remotectx", "Endpoints": {"docker": '
+        '{"Host": "tcp://engine.example.edu:2376"}}}'
+    )
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_docker_config_roots_current_context(monkeypatch, tmp_path):
+    alt = tmp_path / "altdocker"
+    (alt / "contexts" / "meta" / "abc").mkdir(parents=True)
+    (alt / "config.json").write_text('{"currentContext": "remotectx"}')
+    (alt / "contexts" / "meta" / "abc" / "meta.json").write_text(
+        '{"Name": "remotectx", "Endpoints": {"docker": '
+        '{"Host": "tcp://engine.example.edu:2376"}}}'
+    )
+    monkeypatch.setenv("DOCKER_CONFIG", str(alt))
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_docker_config_shadows_the_home_docker_directory(monkeypatch, tmp_path):
+    """A remote context under ~/.docker is ignored once DOCKER_CONFIG points elsewhere."""
+    docker_dir = tmp_path / ".docker"
+    docker_dir.mkdir()
+    (docker_dir / "config.json").write_text('{"currentContext": "remotectx"}')
+    _write_context_meta(tmp_path, "abc", "remotectx", "tcp://engine.example.edu:2376")
+    alt = tmp_path / "altdocker"
+    alt.mkdir()
+    (alt / "config.json").write_text("{}")
+    monkeypatch.setenv("DOCKER_CONFIG", str(alt))
+    assert container_endpoint_is_provably_local() is True
+
+
+# --- CONTAINER_CONNECTION selects a Podman destination (podman 6.1.0, measured) ---
+
+
+def test_container_connection_remote_uri_is_not_local(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    _write_connections(
+        tmp_path / "xdg", {"remotebox": "ssh://user@box.example.edu:22/run/podman.sock"}
+    )
+    monkeypatch.setenv("CONTAINER_CONNECTION", "remotebox")
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_container_connection_local_uri_is_local(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    _write_connections(
+        tmp_path / "xdg", {"localsock": "unix:///run/user/1000/podman/podman.sock"}
+    )
+    monkeypatch.setenv("CONTAINER_CONNECTION", "localsock")
+    assert container_endpoint_is_provably_local() is True
+
+
+def test_container_connection_falls_back_to_home_config(monkeypatch, tmp_path):
+    _write_connections(
+        tmp_path / ".config",
+        {"remotebox": "ssh://user@box.example.edu:22/run/podman.sock"},
+    )
+    monkeypatch.setenv("CONTAINER_CONNECTION", "remotebox")
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_container_connection_with_no_store_is_not_local(monkeypatch, tmp_path):
+    monkeypatch.setenv("CONTAINER_CONNECTION", "remotebox")
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_container_connection_unknown_name_is_not_local(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    _write_connections(
+        tmp_path / "xdg", {"othersock": "unix:///run/user/1000/podman/podman.sock"}
+    )
+    monkeypatch.setenv("CONTAINER_CONNECTION", "remotebox")
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_container_connection_malformed_store_is_not_local(monkeypatch, tmp_path):
+    store_dir = tmp_path / ".config" / "containers"
+    store_dir.mkdir(parents=True)
+    (store_dir / "podman-connections.json").write_text("not valid json {{{{")
+    monkeypatch.setenv("CONTAINER_CONNECTION", "remotebox")
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_container_connection_entry_without_uri_is_not_local(monkeypatch, tmp_path):
+    store_dir = tmp_path / ".config" / "containers"
+    store_dir.mkdir(parents=True)
+    (store_dir / "podman-connections.json").write_text(
+        '{"Connection": {"Connections": {"remotebox": "ssh://user@box/sock"}}}'
+    )
+    monkeypatch.setenv("CONTAINER_CONNECTION", "remotebox")
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_empty_container_connection_is_ignored(monkeypatch, tmp_path):
+    monkeypatch.setenv("CONTAINER_CONNECTION", "   ")
+    assert container_endpoint_is_provably_local() is True
+
+
+def test_container_connection_outranks_a_local_docker_host(monkeypatch, tmp_path):
+    """DOCKER_HOST cannot vouch for Podman: the named connection decides the endpoint."""
+    monkeypatch.setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    _write_connections(
+        tmp_path / "xdg", {"remotebox": "ssh://user@box.example.edu:22/run/podman.sock"}
+    )
+    monkeypatch.setenv("CONTAINER_CONNECTION", "remotebox")
+    assert container_endpoint_is_provably_local() is False
