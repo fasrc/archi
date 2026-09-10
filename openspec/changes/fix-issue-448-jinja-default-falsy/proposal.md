@@ -71,7 +71,8 @@ The 21 bug sites are `:164 :214 :259 :290 :291 :301 :302 :310 :343 :345 :346 :35
   `sitemap.max_pages` is already written that way — the two lines currently disagree with
   each other. The two nullable caps matter most: `LinkScraper` and `ElogScraper` stop at
   once for `0` and run uncapped for `null`, so rendering a configured `0` as null turns
-  "fetch nothing" into "fetch everything".
+  "fetch nothing" into "fetch everything". `sitemap.max_pages` is a validation ceiling
+  rather than a budget, so its `0` means "fail if any page is emitted"; see D3.
 - **A guard test freezes the pattern out.** Parsing the template's AST, it fails if any
   `default` call carries a boolean-literal default in any form other than
   `default(false, true)` — that covers `default(true, true)`, `default(true, True)`,

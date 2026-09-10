@@ -84,7 +84,15 @@ guard.
 `sources.links.base_source_depth` (default `1`), `sources.links.sitemap.max_pages`
 (default `20000`), `sources.links.max_pages` (default `null`) and
 `sources.elog.max_entries` (default `null`) take the same ternary. Each is a bound whose
-`0` an operator can mean, and none of the four is expressible today. The `min_pages` line
+`0` an operator can mean, and none of the four is expressible today.
+
+`sitemap.max_pages` is the odd one and an earlier draft described it wrongly as "no page
+budget". It is a validation ceiling checked after expansion, not a budget: `sitemap_source`
+raises when `count > max_pages` and raises again when `count < min_pages`. So `0` means
+"fail if this sitemap emits any page", and paired with `min_pages: 0` it asserts the
+sitemap is empty. Preserving the `0` still beats rewriting it to `20000`, which silently
+accepts twenty thousand pages from an operator who asked for none — but the meaning had to
+be stated correctly, in the design and in the operator docs. The `min_pages` line
 immediately above `sitemap.max_pages` is already a ternary, so those two adjacent lines
 currently implement opposite policies for the same block.
 

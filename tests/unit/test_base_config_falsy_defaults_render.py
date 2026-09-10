@@ -372,9 +372,13 @@ def _default_filter_signatures(source):
             continue
         first_arg = node.args[0]
         second_arg = node.args[1] if len(node.args) >= 2 else None
+        # Falsy non-boolean defaults are frozen alongside the truthy ones. They
+        # cannot substitute a truthy value, so they are not the bug class — but
+        # `default(0, true)` on a flag renders int 0 where the operator wrote
+        # `false`, and 0 is not a boolean literal, so the other guard is blind to
+        # it. Freezing every non-boolean literal leaves it nowhere to arrive.
         if not (
             isinstance(first_arg, nodes.Const)
-            and bool(first_arg.value)
             and not isinstance(first_arg.value, bool)
             and second_arg is not None
             and isinstance(second_arg, nodes.Const)
@@ -401,22 +405,27 @@ def test_guard_no_boolean_literal_defaults():
     )
 
 
-# Frozen call sites for the deprecated `default(<truthy non-bool>, true)` form.
-# The deprecated form may leave this list; nothing may join it. Removing a site means
-# deleting its line here in the same commit.
-_TRUTHY_NON_BOOL_BASELINE = [
+# Frozen call sites for `default(<non-boolean literal>, true)`, truthy and falsy alike.
+# The form may leave this list; nothing may join it. Removing a site means deleting its
+# line here in the same commit.
+_NON_BOOL_DEFAULT_BASELINE = [
     "collection_name='default_collection'",
+    "data_manager.chunk_overlap=0",
     "data_manager.chunk_size=1000",
     "data_manager.chunking.strategy='sentence'",
     "data_manager.distance_metric='cosine'",
     "data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.model_kwargs.device='cpu'",
     "data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.model_name='sentence-transformers/all-MiniLM-L6-v2'",
     "data_manager.embedding_class_map.HuggingFaceEmbeddings.query_embedding_instructions='null'",
+    "data_manager.embedding_class_map.HuggingFaceEmbeddings.similarity_score_reference=0.0",
     "data_manager.embedding_class_map.OpenAIEmbeddings.kwargs.model='text-embedding-3-small'",
+    "data_manager.embedding_class_map.OpenAIEmbeddings.similarity_score_reference=0.0",
     "data_manager.embedding_name='OpenAIEmbeddings'",
     "data_manager.parallel_workers=32",
     "data_manager.processing.categorization.max_chars=4000",
     "data_manager.processing.categorization.max_concurrency=1",
+    "data_manager.processing.categorization.model=''",
+    "data_manager.processing.categorization.provider=''",
     "data_manager.retrievers.bm25_retriever.num_documents_to_retrieve=5",
     "data_manager.retrievers.hierarchical_rerank.candidate_pool_size=20",
     "data_manager.retrievers.hierarchical_rerank.num_documents_to_retrieve=5",
@@ -425,29 +434,56 @@ _TRUTHY_NON_BOOL_BASELINE = [
     "data_manager.retrievers.hybrid_retriever.num_documents_to_retrieve=5",
     "data_manager.retrievers.hybrid_retriever.semantic_weight=0.4",
     "data_manager.retrievers.semantic_retriever.num_documents_to_retrieve=5",
+    "data_manager.sources.elog.schedule=''",
+    "data_manager.sources.elog.url=''",
+    "data_manager.sources.git.schedule=''",
     "data_manager.sources.indico.base_url='https://indico.cern.ch'",
+    "data_manager.sources.indico.schedule=''",
+    "data_manager.sources.indico.slide_conversion.llm_model=''",
     "data_manager.sources.indico.sso_kwargs.site_type='generic'",
+    "data_manager.sources.jira.cutoff_date=''",
     "data_manager.sources.jira.max_tickets=10000000000.0",
+    "data_manager.sources.jira.schedule=''",
+    "data_manager.sources.jira.url=''",
+    "data_manager.sources.links.schedule=''",
     "data_manager.sources.links.selenium_scraper.selenium_class='CERNSSOScraper'",
     "data_manager.sources.links.selenium_scraper.selenium_class_map.CERNSSOScraper.class='CERNSSOScraper'",
     "data_manager.sources.links.selenium_scraper.selenium_url='null'",
+    "data_manager.sources.local_files.schedule=''",
+    "data_manager.sources.redmine.schedule=''",
+    "data_manager.sources.redmine.url=''",
+    "data_manager.sources.sso.schedule=''",
     "data_manager.utils.anonymizer.nlp_model='en_core_web_sm'",
     "global.ACCOUNTS_PATH='/root/.accounts/'",
     "global.DATA_PATH='/root/data/'",
     "global.LOGGING.input_output_filename='chain_input_output.log'",
     "name='default'",
     "server_config.transport='streamable_http'",
+    "server_config.url=''",
+    "services.benchmarking.agent_class=''",
+    "services.benchmarking.agent_md_file=''",
     "services.benchmarking.anchors.path='examples/benchmarking/anchor_questions.json'",
     "services.benchmarking.mode_settings.ragas_settings.embedding_model='OpenAI'",
+    "services.benchmarking.mode_settings.ragas_settings.evaluator_model=''",
+    "services.benchmarking.mode_settings.ragas_settings.evaluator_ollama_url=''",
+    "services.benchmarking.mode_settings.ragas_settings.evaluator_provider=''",
     "services.benchmarking.mode_settings.ragas_settings.timeout=180",
     "services.benchmarking.mode_settings.sources_settings.default_match_field='file_name'",
+    "services.benchmarking.model=''",
+    "services.benchmarking.ollama_url=''",
     "services.benchmarking.out_dir='.'",
+    "services.benchmarking.provider=''",
     "services.benchmarking.queries_path='queries'",
     "services.chat_app.agent_class='CMSCompOpsAgent'",
+    "services.chat_app.agents_dir=''",
+    "services.chat_app.auth.sso.authorize_url=''",
     "services.chat_app.auth.sso.client_kwargs.scope='openid profile email'",
+    "services.chat_app.auth.sso.server_metadata_url=''",
     "services.chat_app.client_timeout_seconds=600",
     "services.chat_app.default_model='llama3.2'",
     "services.chat_app.default_provider='local'",
+    "services.chat_app.evaluations.agent_config_path=None",
+    "services.chat_app.evaluations.mcp_config_path=None",
     "services.chat_app.evaluations.root='/root/archi/evaluations'",
     "services.chat_app.external_port=7861",
     "services.chat_app.host='0.0.0.0'",
@@ -455,6 +491,7 @@ _TRUTHY_NON_BOOL_BASELINE = [
     "services.chat_app.num_responses_until_feedback=3",
     "services.chat_app.port=7861",
     "services.chat_app.recursion_limit=50",
+    "services.chat_app.skills_dir=''",
     "services.chat_app.static_folder='/root/archi/src/interfaces/chat_app/static'",
     "services.chat_app.template_folder='/root/archi/src/interfaces/chat_app/templates'",
     "services.chat_app.trained_on='No description provided.'",
@@ -478,10 +515,13 @@ _TRUTHY_NON_BOOL_BASELINE = [
     "services.postgres.port=5432",
     "services.postgres.user='archi'",
     "services.redmine_mailbox.agent_class='CMSCompOpsAgent'",
+    "services.redmine_mailbox.agents_dir=''",
     "services.redmine_mailbox.answer_tag='-- archi -- Resolving email was sent'",
     "services.redmine_mailbox.imap4_port=143",
     "services.redmine_mailbox.mailbox_update_time=10",
+    "services.redmine_mailbox.project=''",
     "services.redmine_mailbox.redmine_update_time=10",
+    "services.redmine_mailbox.url=''",
     "services.vectorstore.distance_metric='cosine'",
     "utils.postgres.host='postgres'",
 ]
@@ -494,7 +534,7 @@ def test_guard_default_filter_baseline_is_unchanged():
     deprecated form at a different key, and 79 still equals 79.
     """
     signatures = _default_filter_signatures(_get_template_source())
-    expected = sorted(_TRUTHY_NON_BOOL_BASELINE)
+    expected = sorted(_NON_BOOL_DEFAULT_BASELINE)
     added = sorted(set(signatures) - set(expected))
     removed = sorted(set(expected) - set(signatures))
     assert signatures == expected, (
@@ -503,7 +543,7 @@ def test_guard_default_filter_baseline_is_unchanged():
         "New boolean/numeric site: use the ternary "
         "({%- set v = <path> %}{{ v if v is defined and v is not none else <default> }}) "
         "rather than default(). Removed a converted site: delete its line from "
-        "_TRUTHY_NON_BOOL_BASELINE in this same commit."
+        "_NON_BOOL_DEFAULT_BASELINE in this same commit."
     )
 
 
@@ -548,7 +588,7 @@ def test_nullable_zero_caps_keep_a_configured_positive_value():
 def test_guard_signature_baseline_matches_the_template():
     """Every frozen call site is still the one that was frozen."""
     assert _default_filter_signatures(_get_template_source()) == sorted(
-        _TRUTHY_NON_BOOL_BASELINE
+        _NON_BOOL_DEFAULT_BASELINE
     )
 
 
@@ -571,12 +611,56 @@ def test_guard_detects_a_call_site_swapped_for_a_new_one():
         1,
     )
 
-    _, truthy_lines = _walk_default_filters(swapped)
-    assert len(truthy_lines) == len(
-        _TRUTHY_NON_BOOL_BASELINE
+    _, before = _walk_default_filters(source)
+    _, after = _walk_default_filters(swapped)
+    assert len(after) == len(
+        before
     ), "fixture no longer reproduces the balanced swap the guard must catch"
 
     signatures = _default_filter_signatures(swapped)
-    assert signatures != sorted(_TRUTHY_NON_BOOL_BASELINE)
+    assert signatures != sorted(_NON_BOOL_DEFAULT_BASELINE)
     assert "data_manager.smuggled_in=7" in signatures
     assert "data_manager.distance_metric='cosine'" not in signatures
+
+
+def test_guard_detects_a_new_zero_default():
+    """`default(0, true)` on a flag renders int 0 where the operator wrote `false`.
+
+    Round 1 froze only the truthy defaults, so a falsy non-boolean default could
+    arrive without changing the baseline: it is not a boolean literal, so the other
+    guard ignores it too. Every non-boolean literal default is frozen now.
+    """
+    source = _get_template_source()
+    anchor = "  chunk_size: {{ data_manager.chunk_size | default(1000, true) }}"
+    assert anchor in source, "anchor line moved; update this test's fixture"
+    smuggled = source.replace(
+        anchor,
+        anchor
+        + "\n  smuggled_flag: {{ data_manager.smuggled_flag | default(0, true) }}",
+        1,
+    )
+
+    bad_lines, _ = _walk_default_filters(smuggled)
+    assert (
+        bad_lines == []
+    ), "0 is not a boolean literal, so the other guard stays silent"
+
+    signatures = _default_filter_signatures(smuggled)
+    assert "data_manager.smuggled_flag=0" in signatures
+    assert signatures != sorted(_NON_BOOL_DEFAULT_BASELINE)
+
+
+def test_guard_freezes_the_falsy_scalar_defaults_too():
+    """The zero and empty-string defaults already in the file are frozen.
+
+    Scalar literals only. A `default([], true)` parses to a Jinja List node rather
+    than a Const, so it is outside this guard — and outside the bug class too, since
+    a list default can never stand in for a boolean.
+    """
+    signatures = _default_filter_signatures(_get_template_source())
+    assert "data_manager.chunk_overlap=0" in signatures
+    assert (
+        "data_manager.embedding_class_map.HuggingFaceEmbeddings."
+        "similarity_score_reference=0.0" in signatures
+    )
+    assert any(signature.endswith("=''") for signature in signatures)

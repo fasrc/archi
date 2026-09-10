@@ -52,12 +52,20 @@ widen what a reader can see, and both were silently ignored before.
 |---|---|---|
 | `data_manager.sources.links.base_source_depth` | crawl no page at all for this seed | `1` — the seed page alone |
 | `data_manager.sources.links.max_pages` | fetch no pages | no cap |
-| `data_manager.sources.links.sitemap.max_pages` | no page budget | `20000` |
+| `data_manager.sources.links.sitemap.max_pages` | fail the ingest if the sitemap emits any page | `20000` |
 | `data_manager.sources.elog.max_entries` | fetch no entries | no cap |
 
 Depth counts levels of pages, so `base_source_depth: 1` is the base page on its own and `0`
 is nothing. To index the base page only, write `1`. To turn a source off, prefer
 `enabled: false` over a zero bound — it says what you mean and it reads better in a diff.
+
+**CAUTION: `sitemap.max_pages` is a validation ceiling, not a crawl budget.** It is checked
+after expansion, and a sitemap that emits more pages than the ceiling fails the ingest
+rather than stopping at the limit. `sitemap.min_pages` is the matching floor and defaults to
+`1`. So `sitemap.max_pages: 0` on its own fails every expansion — a non-empty sitemap
+breaches the ceiling, and an empty one falls below the floor. If you mean "assert this
+sitemap is empty", set `min_pages: 0` alongside it. If you mean "crawl fewer pages", this is
+not the key: use `data_manager.sources.links.max_pages`, which is a real budget.
 
 ---
 
