@@ -10,7 +10,11 @@ from src.cli.managers.templates_manager import (
 )
 
 
-def test_git_info_yaml_carries_the_host_block():
+def test_git_info_yaml_carries_the_host_block(monkeypatch, tmp_path):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
     result = get_git_information()
     assert "host" in result
     host = result["host"]
@@ -20,7 +24,11 @@ def test_git_info_yaml_carries_the_host_block():
     assert host["hostname"]
 
 
-def test_cpu_model_is_none_when_cpuinfo_and_platform_both_fail(monkeypatch):
+def test_cpu_model_is_none_when_cpuinfo_and_platform_both_fail(monkeypatch, tmp_path):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
     real_open = builtins.open
 
     def patched_open(file, *args, **kwargs):
@@ -38,7 +46,14 @@ def test_cpu_model_is_none_when_cpuinfo_and_platform_both_fail(monkeypatch):
     assert result["cpu_model"] is None
 
 
-def test_collect_host_information_returns_none_when_hostname_unreadable(monkeypatch):
+def test_collect_host_information_returns_none_when_hostname_unreadable(
+    monkeypatch, tmp_path
+):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
     def raise_oserror():
         raise OSError("cannot resolve hostname")
 
@@ -105,13 +120,17 @@ def test_metadata_records_null_when_file_is_unreadable(
     assert ResultHandler.metadata["host"] is None
 
 
-def test_cpu_model_is_none_when_platform_processor_itself_raises(monkeypatch):
+def test_cpu_model_is_none_when_platform_processor_itself_raises(monkeypatch, tmp_path):
     """Capture never raises: the spec forbids a deploy failing for provenance.
 
     ``platform.processor()`` reaches ``_Processor.from_subprocess``, which catches
     only ``OSError``/``CalledProcessError`` -- a ``uname -p`` emitting undecodable
     bytes raises ``UnicodeDecodeError`` straight through the helper.
     """
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
     real_open = builtins.open
 
     def patched_open(file, *args, **kwargs):
@@ -142,7 +161,7 @@ def test_cpu_model_is_none_when_platform_processor_itself_raises(monkeypatch):
     ["", "   ", "\t\n"],
     ids=["empty", "spaces", "whitespace"],
 )
-def test_a_blank_hostname_records_no_host_at_all(monkeypatch, returned):
+def test_a_blank_hostname_records_no_host_at_all(monkeypatch, tmp_path, returned):
     """The spec's guard is on the VALUE, not only on the lookup raising.
 
     > An unreadable hostname gives `None` for the whole block
@@ -156,6 +175,10 @@ def test_a_blank_hostname_records_no_host_at_all(monkeypatch, returned):
     "recorded host named None" the spec refuses. `cpu_model` already gets a
     falsy check; the hostname did not.
     """
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(
         "src.cli.managers.templates_manager.socket.getfqdn", lambda: returned
     )
@@ -163,13 +186,19 @@ def test_a_blank_hostname_records_no_host_at_all(monkeypatch, returned):
     assert collect_host_information() is None
 
 
-def test_a_hostname_with_surrounding_whitespace_is_recorded_trimmed(monkeypatch):
+def test_a_hostname_with_surrounding_whitespace_is_recorded_trimmed(
+    monkeypatch, tmp_path
+):
     """A real name padded by a stray newline is still a real name.
 
     Refusing it would discard usable provenance; recording it verbatim would
     make the artifact's host stop string-matching the same machine captured
     elsewhere.
     """
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(
         "src.cli.managers.templates_manager.socket.getfqdn", lambda: "  node01.fasrc  "
     )
@@ -178,3 +207,24 @@ def test_a_hostname_with_surrounding_whitespace_is_recorded_trimmed(monkeypatch)
 
     assert result is not None
     assert result["hostname"] == "node01.fasrc"
+
+
+def test_collect_host_information_returns_none_for_a_remote_endpoint(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("DOCKER_HOST", "tcp://engine.example.edu:2376")
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = collect_host_information()
+    assert result is None
+
+
+def test_collect_host_information_still_records_a_local_endpoint(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = collect_host_information()
+    assert result is not None
+    assert result["hostname"]
