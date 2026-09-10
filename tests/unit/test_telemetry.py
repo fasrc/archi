@@ -561,6 +561,109 @@ class _ConfigCapturingInstrumentor:
         pass
 
 
+class TestRetrievedDocumentsNeverLeaveTheProcess:
+    """OpenInference hides model inputs and outputs. It does not hide documents.
+
+    Measured on 2026-09-09 with openinference-instrumentation 0.1.62:
+    ``TraceConfig(hide_inputs=True, hide_outputs=True).mask()`` returns
+    ``retrieval.documents.0.document.content`` unchanged. Its mask table
+    (``openinference/instrumentation/config.py:335-430``) has a case for reranker
+    documents and none for retrieval documents, so a retriever span carries the
+    text of every chunk the knowledge base returned.
+
+    A promise in a document is not a control. The exporter enforces this one, which
+    also means the guarantee does not depend on a table inside a dependency.
+    """
+
+    def test_document_content_is_redacted(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("retriever") as span:
+            span.set_attribute(_document_key(0, "content"), "the grant proposal text")
+            span.set_attribute(_document_key(1, "content"), "a second chunk")
+
+        (exported,) = memory.get_finished_spans()
+
+        assert exported.attributes[_document_key(0, "content")] == "__REDACTED__"
+        assert exported.attributes[_document_key(1, "content")] == "__REDACTED__"
+        assert "grant proposal" not in str(dict(exported.attributes))
+
+    def test_document_metadata_is_redacted(self):
+        """Metadata carries titles, paths and source URLs, which are content too."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("retriever") as span:
+            span.set_attribute(_document_key(0, "metadata"), '{"title": "payroll"}')
+
+        (exported,) = memory.get_finished_spans()
+
+        assert exported.attributes[_document_key(0, "metadata")] == "__REDACTED__"
+
+    def test_the_rest_of_the_document_attributes_survive(self):
+        """Redaction must leave enough to tell that retrieval happened, and how well."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("retriever") as span:
+            span.set_attribute(_document_key(0, "content"), "secret text")
+            span.set_attribute(_document_key(0, "id"), "doc-42")
+            span.set_attribute(_document_key(0, "score"), 0.87)
+
+        (exported,) = memory.get_finished_spans()
+
+        assert exported.attributes[_document_key(0, "id")] == "doc-42"
+        assert exported.attributes[_document_key(0, "score")] == 0.87
+
+    def test_reranker_documents_are_redacted_too(self):
+        """The same leaf name appears under the reranker attributes."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("reranker") as span:
+            span.set_attribute(
+                "reranker.input_documents.0.document.content", "secret text"
+            )
+
+        (exported,) = memory.get_finished_spans()
+
+        assert (
+            exported.attributes["reranker.input_documents.0.document.content"]
+            == "__REDACTED__"
+        )
+
+    def test_the_content_flag_releases_document_text(self, monkeypatch):
+        """One flag, one meaning: it releases model content and retrieved content."""
+        monkeypatch.setenv(CONTENT, "true")
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("retriever") as span:
+            span.set_attribute(_document_key(0, "content"), "the grant proposal text")
+
+        (exported,) = memory.get_finished_spans()
+
+        assert exported.attributes[_document_key(0, "content")] == (
+            "the grant proposal text"
+        )
+
+    def test_the_real_attribute_names_are_the_ones_guarded(self):
+        """Bind the guard to the package's own constants, not to a guess."""
+        from openinference.semconv.trace import DocumentAttributes, SpanAttributes
+
+        key = (
+            f"{SpanAttributes.RETRIEVAL_DOCUMENTS}.0."
+            f"{DocumentAttributes.DOCUMENT_CONTENT}"
+        )
+
+        assert key == _document_key(0, "content")
+
+
+def _document_key(index, leaf):
+    return f"retrieval.documents.{index}.document.{leaf}"
+
+
 TELEMETRY_HELPERS = frozenset({"init_telemetry", "instrument_flask_app"})
 
 

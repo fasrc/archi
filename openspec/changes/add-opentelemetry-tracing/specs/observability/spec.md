@@ -125,6 +125,20 @@ a span exporter wrapper drops the query string from every URL attribute of every
 The content flag does not reach the query string. `ARCHI_OTEL_CAPTURE_CONTENT` releases model
 inputs and outputs. It never releases an authorization code.
 
+Retrieved documents need their own rule, because the OpenInference config does not
+cover them. Measured on 2026-09-09 with openinference-instrumentation 0.1.62:
+`TraceConfig(hide_inputs=True, hide_outputs=True).mask()` returns
+`retrieval.documents.0.document.content` unchanged. Its mask table has a case for
+reranker documents and none for retrieval documents. archi redacts document content
+and document metadata at the exporter instead, which also keeps the guarantee
+independent of a table inside a dependency.
+
+#### Scenario: A retriever span carries the text of the chunks it returned
+
+- **WHEN** telemetry is on with default flags and a span carries a retrieval document content or metadata attribute
+- **THEN** the exported span carries a redaction marker in place of that text
+- **AND** the document identifier and the retrieval score are unchanged
+
 #### Scenario: Default flags on a traced LLM call
 
 - **WHEN** telemetry is on with default flags and an agent runs one LLM call

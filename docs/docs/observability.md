@@ -58,19 +58,31 @@ reports `archi`. Set `OTEL_SERVICE_NAME` yourself to override either.
 ## Privacy
 
 **Spans carry no prompt, no completion, no retrieved document and no URL query
-string by default.** Three separate rules produce that result:
+string by default.** Four separate rules produce that result:
 
 1. The OpenInference config hides model inputs and outputs. Each field is named in
    code rather than left to an environment variable, because one variable an
    operator misses exports every prompt.
-2. Every URL attribute loses its query string before export, on every span.
-3. The SSO redirect route is excluded from spans entirely. It receives an OAuth
+2. Retrieved document text and document metadata are replaced with `__REDACTED__`
+   before export. This is a separate rule because the OpenInference config does not
+   cover it: its mask table handles reranker documents and leaves
+   `retrieval.documents.0.document.content` untouched, so a retriever span would
+   otherwise carry the text of every chunk the knowledge base returned. archi
+   enforces this at the exporter, which also keeps the guarantee independent of a
+   table inside a dependency.
+3. Every URL attribute loses its query string before export, on every span.
+4. The SSO redirect route is excluded from spans entirely. It receives an OAuth
    authorization code, and a request that carries a credential is better off with no
    span than with one whose safety rests on a scrubber.
 
-`ARCHI_OTEL_CAPTURE_CONTENT=true` reverses rule 1 only. It never reverses rules 2 and
-3, because an authorization code is not model content. Treat turning it on as a
-privacy decision with an owner, not a debugging convenience.
+`ARCHI_OTEL_CAPTURE_CONTENT=true` reverses rules 1 and 2. It never reverses rules 3
+and 4, because an authorization code is not model content and no flag releases one.
+Treat turning it on as a privacy decision with an owner, not a debugging
+convenience.
+
+Document identifiers and retrieval scores survive redaction. You can still see that
+retrieval happened, how many chunks came back and how they ranked, without seeing
+what they said.
 
 Database spans carry the SQL text without its parameters. That is the psycopg2
 instrumentor's default and archi does not change it.

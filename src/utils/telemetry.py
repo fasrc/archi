@@ -108,6 +108,22 @@ _QUERY_ATTRIBUTES = frozenset({"url.query"})
 # one against the request URL.
 EXCLUDED_URLS = r"/redirect(\?|$)"
 
+# Attribute keys whose value is retrieved text rather than a measurement. The leaf
+# name is what identifies them, so this matches retrieval documents and reranker
+# documents alike.
+#
+# OpenInference does not cover these. Measured on 2026-09-09 with
+# openinference-instrumentation 0.1.62: TraceConfig(hide_inputs=True,
+# hide_outputs=True).mask() returns "retrieval.documents.0.document.content"
+# unchanged. Its mask table (openinference/instrumentation/config.py:335-430) has a
+# case for reranker documents and none for retrieval documents, so a retriever span
+# would otherwise carry the text of every chunk the knowledge base returned.
+#
+# Enforcing it here rather than in the config also means the guarantee does not
+# depend on a table inside a dependency.
+_DOCUMENT_CONTENT_SUFFIXES = ("document.content", "document.metadata")
+REDACTED_VALUE = "__REDACTED__"
+
 
 @dataclass(frozen=True)
 class TelemetryStatus:
@@ -321,8 +337,17 @@ def instrument_flask_app(app) -> bool:
         return False
 
 
-def _scrub_attributes(attributes):
-    """Return attributes with no query string, or None when nothing had one."""
+def _is_document_content(key: str) -> bool:
+    return key.endswith(_DOCUMENT_CONTENT_SUFFIXES)
+
+
+def _scrub_attributes(attributes, redact_content: bool = True):
+    """Return cleaned attributes, or None when nothing needed cleaning.
+
+    Two rules, and they answer to different switches. A query string comes off
+    always, because it can carry an authorization code. Document text comes off
+    unless the operator turned content capture on.
+    """
     if not attributes:
         return None
 
@@ -334,6 +359,10 @@ def _scrub_attributes(attributes):
             continue
         if key in _URL_ATTRIBUTES and isinstance(value, str) and "?" in value:
             cleaned[key] = value.split("?", 1)[0]
+            changed = True
+            continue
+        if redact_content and _is_document_content(key):
+            cleaned[key] = REDACTED_VALUE
             changed = True
             continue
         cleaned[key] = value
@@ -353,9 +382,12 @@ class RedactingSpanExporter:
     receiver must not turn one problem into a flood of log lines.
     """
 
-    def __init__(self, inner):
+    def __init__(self, inner, redact_content: Optional[bool] = None):
         self._inner = inner
         self._failing = False
+        self._redact_content = (
+            not capture_content_enabled() if redact_content is None else redact_content
+        )
 
     def export(self, spans):
         from opentelemetry.sdk.trace.export import SpanExportResult
@@ -379,7 +411,7 @@ class RedactingSpanExporter:
         return self._inner.force_flush(timeout_millis)
 
     def _redact(self, span):
-        cleaned = _scrub_attributes(span.attributes)
+        cleaned = _scrub_attributes(span.attributes, self._redact_content)
         if cleaned is None:
             return span
 
