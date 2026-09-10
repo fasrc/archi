@@ -52,9 +52,17 @@ never as the string `'None'` or the string `'False'`.
 ### Requirement: The truthiness-substituting default form cannot return to the template
 A test SHALL parse `base-config.yaml` with the Jinja parser and fail the build if any `default` filter call carries a boolean-literal default in any shape other than `default(false, true)`, in any arity and any capitalisation.
 
-The same test SHALL freeze the remaining truthy non-boolean `default(<value>, true)` call
-sites against a recorded baseline, so the deprecated form can be removed over time but
-never added. The baseline SHALL identify each call site by the configuration path it reads
+The same test SHALL freeze the remaining non-boolean `default(<value>, true)` call sites —
+falsy scalars as well as truthy ones — against a recorded baseline, so the deprecated form
+can be removed over time but never added. Freezing only the truthy ones leaves
+`default(0, true)` with nowhere to be caught: it substitutes for a configured `false` and
+renders the integer `0`, and it is not a boolean literal, so the rule above does not see it
+either.
+
+The test SHALL read the `boolean` argument in both spellings. `default(7, true)` and
+`default(7, boolean=true)` are the same call, and Jinja parks the keyword spelling in a
+different field of the parsed node, so reading only the positional form would admit the
+deprecated call under a new name and reject the one permitted form written that way. The baseline SHALL identify each call site by the configuration path it reads
 and the default it carries, not by a count and not by a line number. A count cannot see a
 swap — converting one frozen site while adding the deprecated form at another key leaves
 the total unchanged — and a line number renumbers on every edit above it. The failure

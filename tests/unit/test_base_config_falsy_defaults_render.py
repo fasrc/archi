@@ -294,6 +294,21 @@ def _get_template_source():
     return source
 
 
+def _boolean_argument(node):
+    """Return the filter's ``boolean`` argument, positional or keyword.
+
+    ``default(7, true)`` and ``default(7, boolean=true)`` are the same call. Jinja
+    parks the keyword spelling in ``node.kwargs``, so reading ``node.args`` alone
+    both lets the deprecated form back in and rejects the one permitted form.
+    """
+    if len(node.args) >= 2:
+        return node.args[1]
+    for keyword in node.kwargs or []:
+        if keyword.key == "boolean":
+            return keyword.value
+    return None
+
+
 def _walk_default_filters(source):
     """Walk the Jinja2 AST for ``| default(...)`` calls.
 
@@ -313,7 +328,7 @@ def _walk_default_filters(source):
         if not node.args:
             continue
         first_arg = node.args[0]
-        second_arg = node.args[1] if len(node.args) >= 2 else None
+        second_arg = _boolean_argument(node)
 
         if isinstance(first_arg, nodes.Const) and isinstance(first_arg.value, bool):
             is_allowed = (
@@ -371,7 +386,7 @@ def _default_filter_signatures(source):
         if node.name != "default" or not node.args:
             continue
         first_arg = node.args[0]
-        second_arg = node.args[1] if len(node.args) >= 2 else None
+        second_arg = _boolean_argument(node)
         # Falsy non-boolean defaults are frozen alongside the truthy ones. They
         # cannot substitute a truthy value, so they are not the bug class — but
         # `default(0, true)` on a flag renders int 0 where the operator wrote
@@ -664,3 +679,42 @@ def test_guard_freezes_the_falsy_scalar_defaults_too():
         "similarity_score_reference=0.0" in signatures
     )
     assert any(signature.endswith("=''") for signature in signatures)
+
+
+def test_guard_sees_the_keyword_boolean_form():
+    """`default(7, boolean=true)` is the same call, written differently.
+
+    Jinja stores the second argument in ``node.kwargs`` for the keyword spelling, so
+    a walker that reads ``node.args`` alone lets the deprecated form back in under a
+    new name — and rejects the one permitted form, ``default(false, boolean=true)``,
+    for the same reason.
+    """
+    source = _get_template_source()
+    anchor = "  chunk_size: {{ data_manager.chunk_size | default(1000, true) }}"
+    assert anchor in source, "anchor line moved; update this test's fixture"
+    smuggled = source.replace(
+        anchor,
+        anchor
+        + "\n  kw_smuggled: {{ data_manager.kw_smuggled | default(7, boolean=true) }}"
+        + "\n  kw_flag: {{ data_manager.kw_flag | default(true, boolean=true) }}",
+        1,
+    )
+
+    signatures = _default_filter_signatures(smuggled)
+    assert "data_manager.kw_smuggled=7" in signatures
+
+    bad_lines, _ = _walk_default_filters(smuggled)
+    assert bad_lines, "a boolean-literal default in keyword form must still be rejected"
+
+
+def test_guard_permits_the_keyword_spelling_of_the_allowed_form():
+    """``default(false, boolean=true)`` is the one permitted boolean use, in either spelling."""
+    source = _get_template_source()
+    anchor = "  chunk_size: {{ data_manager.chunk_size | default(1000, true) }}"
+    rewritten = source.replace(
+        anchor,
+        anchor + "\n  kw_ok: {{ data_manager.kw_ok | default(false, boolean=true) }}",
+        1,
+    )
+    bad_lines, _ = _walk_default_filters(rewritten)
+    assert bad_lines == []

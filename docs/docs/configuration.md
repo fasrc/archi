@@ -6,34 +6,40 @@ Archi deployments are configured via YAML files passed to the CLI with `--config
 
 ## Explicit `false`, `0`, and `null`
 
-A value you write is the value you get. `enabled: false` disables the thing, `0` is a
-budget of zero, and `null` means "use the documented default" — none of the three is read
-as "unset and therefore ignorable".
+A value you write reaches the deployed configuration. `enabled: false` renders as `false`,
+`0` renders as `0`, and `null` renders as that key's documented default — none of the three
+is read as "unset and therefore ignorable".
 
 This was not always true. Before the fix in issue #448, a set of boolean flags went through
 a Jinja filter that could not tell `false` from a missing key, so an explicit `false` was
 discarded and the default rendered in its place.
 
-**Read this before you upgrade.** If a deployment relies on one of the keys below being
-ignored, it will start taking effect.
+**Rendered is not the same as honored.** This change fixes the rendering. Whether a given
+consumer then acts on the value is a separate question, and for three keys the answer is
+still no — they are listed at the end of this section. Check that list before you rely on a
+flag.
 
 ### 21 flags where an explicit `false` was discarded
 
-`false` now disables what it names:
+`false` now reaches the deployed configuration for:
 
-- `services.data_manager.enabled` — the data-manager service is no longer deployed
-- `data_manager.reset_collection` — the existing collection is kept instead of reset
+- `services.data_manager.enabled` and `data_manager.reset_collection`
 - `data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.encode_kwargs.normalize_embeddings`
 - `data_manager.processing.html_to_markdown.enabled`
 - `enabled` and `visible` on the `local_files`, `links`, `git`, `sso`, `jira` and `redmine`
-  sources, and `visible` on `indico` — `enabled: false` skips the source, `visible: false`
-  keeps its content out of chat citations
+  sources, and `visible` on `indico`
 - `data_manager.sources.links.html_scraper.reset_data`
 - `data_manager.sources.redmine.anonymize_data` and `data_manager.sources.elog.verify_ssl`
 - the two `headless` flags, on the CERN SSO scraper and on `indico.sso_kwargs`
 
-The `visible: false` and `anonymize_data: false` rows are the ones to check first: both
-widen what a reader can see, and both were silently ignored before.
+Of these, `enabled: false` is acted on by the `git`, `sso`, `indico`, `jira`, `redmine` and
+`elog` collectors, and by the Selenium scraper — those sources are now genuinely skipped.
+
+**`anonymize_data: false` is the row to check first.** It was silently ignored before and is
+honored now, and it widens what a reader can see. `visible: false` moves the other way: it
+was ignored before, so content appeared in chat citations, and honoring it removes that
+content from citations. Neither direction is wrong, but they are opposite, and an upgrade
+changes both at once.
 
 ### 7 flags where an explicit `null` rendered as the string `'None'`
 
@@ -48,6 +54,11 @@ widen what a reader can see, and both were silently ignored before.
 
 ### 4 numeric bounds where `0` is a request, not an empty value
 
+These four, and only these four. Other numeric keys still run through the old filter, so a
+`0` written there is replaced by the default — `data_manager.sources.jira.max_tickets: 0`
+renders as `10000000000.0`, and `services.chat_app.num_responses_until_feedback: 0` renders
+as `3`.
+
 | Key | `0` means | Unset means |
 |---|---|---|
 | `data_manager.sources.links.base_source_depth` | crawl no page at all for this seed | `1` — the seed page alone |
@@ -56,8 +67,7 @@ widen what a reader can see, and both were silently ignored before.
 | `data_manager.sources.elog.max_entries` | fetch no entries | no cap |
 
 Depth counts levels of pages, so `base_source_depth: 1` is the base page on its own and `0`
-is nothing. To index the base page only, write `1`. To turn a source off, prefer
-`enabled: false` over a zero bound — it says what you mean and it reads better in a diff.
+is nothing. To index the base page only, write `1`.
 
 **CAUTION: `sitemap.max_pages` is a validation ceiling, not a crawl budget.** It is checked
 after expansion, and a sitemap that emits more pages than the ceiling fails the ingest
@@ -66,6 +76,20 @@ rather than stopping at the limit. `sitemap.min_pages` is the matching floor and
 breaches the ceiling, and an empty one falls below the floor. If you mean "assert this
 sitemap is empty", set `min_pages: 0` alongside it. If you mean "crawl fewer pages", this is
 not the key: use `data_manager.sources.links.max_pages`, which is a real budget.
+
+### Three flags that render but are not yet acted on
+
+The value reaches the deployed configuration and nothing reads it. Do not rely on these to
+turn anything off:
+
+| Key | What ignores it |
+|---|---|
+| `services.data_manager.enabled` | the data-manager service is registered `auto_enable=True`, and the service registry adds every auto-enable service unconditionally, so the container is deployed either way |
+| `data_manager.sources.links.enabled` | `ScraperManager` assigns `links_enabled = True` without reading the config, so link input lists are still crawled |
+| `data_manager.sources.local_files.enabled` | no consumer reads it |
+
+To keep a link source out of an ingest today, remove it from `input_lists` rather than
+setting `enabled: false`.
 
 ---
 
