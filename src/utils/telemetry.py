@@ -192,6 +192,22 @@ _AMBIGUOUS_QUOTE = "\\'"
 # insert at 8388 characters, and a statement past it has no shape worth reading.
 _STATEMENT_BUDGET = 32768
 
+# Constructs the literal rule does not model, each of which can hold any text at all.
+# A comment and a delimited identifier are not string literals, so the rule walks past
+# them and exports whatever they held.
+#
+# archi emits none of these: its SQL carries no comment and no quoted identifier, and
+# psycopg2 parameterises rather than commenting. So a statement holding one did not
+# come from a path this module has read, and the answer to a construct it cannot read
+# is to keep the statement rather than to export the parts it skipped.
+_UNREADABLE_CONSTRUCTS = ("--", "/*", '"', _AMBIGUOUS_QUOTE)
+
+# How many dollar signs the dollar-quote branch will consider. The size budget bounds
+# the input; this bounds the work. Each unmatched opener sends the lazy body scan to
+# the end of the string, so 4000 openers inside 35 KB still cost 0.59 seconds — on the
+# batch processor's thread, once per span. archi's statements carry none.
+_MAX_DOLLAR_SIGNS = 8
+
 # Free-text fields that can quote a URL. An exception message and a stack trace are
 # not attributes, so scrubbing only span.attributes lets the same secret out through
 # a different door.
@@ -520,11 +536,20 @@ def _collapse_number_array(match) -> str:
 def _scrub_statement(value: str) -> str:
     """Replace every string literal and every numeric array, and keep the shape.
 
-    Two inputs get no scan at all. One is a statement past ``_STATEMENT_BUDGET``,
-    where the dollar-quote branch turns quadratic and the shape is unreadable anyway.
+    The rule reads string literals and dollar-quoted bodies, and it fails closed on
+    everything else. Three checks come before the scan, and each answers a way the
+    scan could be wrong rather than slow-and-right:
 
-    The other is a backslash directly before a quote, the one sequence that reads
-    two ways.
+    * A statement past ``_STATEMENT_BUDGET``, where the shape is unreadable anyway.
+    * More than ``_MAX_DOLLAR_SIGNS``, which bounds the dollar branch's work.
+    * Any construct in ``_UNREADABLE_CONSTRUCTS``.
+
+    That last list is a denylist, and a denylist can be short by one. It is bounded
+    by what the rule claims: the parts of a statement it can read are scrubbed, and a
+    statement holding a part it cannot read does not go. Adding a construct to the
+    list makes the export more cautious, never less.
+
+    A backslash directly before a quote is on that list because it reads two ways.
     With ``standard_conforming_strings`` on, the literal ends at that quote and the
     backslash is the value's last character; with it off, the backslash escapes the
     quote and the literal runs on. This function is handed a string, not a session,
@@ -535,7 +560,11 @@ def _scrub_statement(value: str) -> str:
     backslash, and archi's own SQL contains none, so this costs the shape of a
     statement archi is not expected to emit.
     """
-    if len(value) > _STATEMENT_BUDGET or _AMBIGUOUS_QUOTE in value:
+    if len(value) > _STATEMENT_BUDGET:
+        return REDACTED_VALUE
+    if value.count("$") > _MAX_DOLLAR_SIGNS:
+        return REDACTED_VALUE
+    if any(marker in value for marker in _UNREADABLE_CONSTRUCTS):
         return REDACTED_VALUE
     return _SQL_NUMBER_ARRAY.sub(_collapse_number_array, _SQL_LITERAL.sub("'?'", value))
 

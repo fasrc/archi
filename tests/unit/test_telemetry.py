@@ -1270,6 +1270,61 @@ class TestTheDatabaseStatementIsNotAContentChannel:
         assert scrubbed == "__REDACTED__"
         assert elapsed < 0.05, f"scrubbing took {elapsed:.2f}s"
 
+    @pytest.mark.parametrize(
+        ("label", "statement"),
+        [
+            (
+                "block comment",
+                "SELECT 1 /* the patient asked about a diagnosis */ FROM t",
+            ),
+            ("line comment", "SELECT 1 FROM t -- the patient asked about a diagnosis"),
+            (
+                "quoted identifier",
+                'SELECT "the patient asked about a diagnosis" FROM t',
+            ),
+        ],
+    )
+    def test_text_outside_a_literal_takes_the_whole_statement(self, label, statement):
+        """A literal is not the only place text fits.
+
+        A comment and a delimited identifier both hold arbitrary characters, and
+        neither is a string literal, so the literal rule walks straight past them.
+        These are constructs the rule does not model, and the answer to a construct
+        it does not model is to keep the statement rather than to export what it
+        did not read.
+        """
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("SELECT") as span:
+            span.set_attribute("db.statement", statement)
+
+        (exported,) = memory.get_finished_spans()
+        scrubbed = exported.attributes["db.statement"]
+
+        assert "diagnosis" not in scrubbed, label
+        assert scrubbed == "__REDACTED__", label
+
+    def test_many_dollar_signs_under_the_budget_do_not_stall_the_export(self):
+        """The size budget bounds the input, not the work.
+
+        Each unmatched opener sends the lazy body scan to the end of the string, so
+        thousands of them inside 32 KB still cost about half a second per span —
+        measured at 0.59 seconds for 4000 tags in 35 KB. The count is what has to be
+        bounded, not only the length.
+        """
+        import time
+
+        statement = "SELECT " + " ".join(f"$t{i}x$" for i in range(3000))
+        assert len(statement) < telemetry._STATEMENT_BUDGET
+
+        start = time.monotonic()
+        scrubbed = telemetry._scrub_statement(statement)
+        elapsed = time.monotonic() - start
+
+        assert scrubbed == "__REDACTED__"
+        assert elapsed < 0.05, f"scrubbing took {elapsed:.2f}s"
+
     def test_a_statement_inside_the_budget_still_keeps_its_shape(self):
         """The budget must not swallow the statements this rule exists to keep."""
         memory, provider = _recording_provider()

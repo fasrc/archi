@@ -105,8 +105,12 @@ default.** Seven separate rules produce that result:
    directly before a quote is dropped whole: that sequence ends a literal on a
    server with `standard_conforming_strings` on and continues one with it off, the
    exporter is handed a string rather than a session, and either reading leaks under
-   the other. So is a statement over 32 KB, which is four times the largest one the
-   deployed check produced and past the size where reading the shape helps anyone.
+   the other. The rule reads string literals and dollar-quoted bodies and fails
+   closed on the rest: a statement carrying a comment, a quoted identifier, more than
+   eight dollar signs, or more than 32 KB is dropped whole rather than exported with
+   the parts the rule skipped. On the deployed check all 27 statements kept their
+   shape, so this costs archi nothing and bounds what a statement from somewhere else
+   can do.
 
 `ARCHI_OTEL_CAPTURE_CONTENT=true` reverses rules 1, 2, 5 and 7. It never reverses
 rules 3, 4 and 6, because a credential is not model content and no flag releases one: an
