@@ -178,6 +178,9 @@ _SQL_LITERAL = re.compile(
 # on its own — that one is an identifier or a limit.
 _SQL_NUMBER_ARRAY = re.compile(r"ARRAY\s*\[[\s,]*[-+0-9][-+0-9.eE,\s]*\]")
 
+# The sequence no reader can settle from the text alone. See _scrub_statement().
+_AMBIGUOUS_QUOTE = "\\'"
+
 # Free-text fields that can quote a URL. An exception message and a stack trace are
 # not attributes, so scrubbing only span.attributes lets the same secret out through
 # a different door.
@@ -504,7 +507,21 @@ def _collapse_number_array(match) -> str:
 
 
 def _scrub_statement(value: str) -> str:
-    """Replace every string literal and every numeric array, and keep the shape."""
+    """Replace every string literal and every numeric array, and keep the shape.
+
+    A backslash directly before a quote is the one sequence that reads two ways.
+    With ``standard_conforming_strings`` on, the literal ends at that quote and the
+    backslash is the value's last character; with it off, the backslash escapes the
+    quote and the literal runs on. This function is handed a string, not a session,
+    so it cannot know which server wrote it — and picking either reading leaks under
+    the other. So when the two disagree, the whole statement stays on the host.
+
+    psycopg2 produces the ambiguous sequence only for a value that ends in a
+    backslash, and archi's own SQL contains none, so this costs the shape of a
+    statement archi is not expected to emit.
+    """
+    if _AMBIGUOUS_QUOTE in value:
+        return REDACTED_VALUE
     return _SQL_NUMBER_ARRAY.sub(_collapse_number_array, _SQL_LITERAL.sub("'?'", value))
 
 

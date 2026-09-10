@@ -1166,9 +1166,12 @@ class TestTheDatabaseStatementIsNotAContentChannel:
               "back\\slash"          -> 'back\\\\slash'
 
         So a backslash inside a literal is data, and the closing quote is the first
-        single quote after it. Reading ``\\'`` as an escape instead would run past
-        that quote — this exact statement, with the shipped rule, redacts both values
-        and with an escape-aware rule leaks the second one.
+        single quote after it. An escape-aware rule reading ``\\'`` would run past
+        that quote and expose ``second value``.
+
+        This is the one statement psycopg2 does emit that carries the ambiguous
+        sequence, and it is why the escape-aware reading was refused. The exporter
+        takes the whole statement here rather than guess.
         """
         memory, provider = _recording_provider()
         tracer = provider.get_tracer("test")
@@ -1182,7 +1185,70 @@ class TestTheDatabaseStatementIsNotAContentChannel:
 
         assert "second value" not in scrubbed
         assert "ends with a backslash" not in scrubbed
-        assert scrubbed == "INSERT INTO t VALUES ('?', '?')"
+        assert scrubbed == "__REDACTED__"
+
+    def test_an_ambiguous_backslash_quote_takes_the_whole_statement(self):
+        """``\\'`` reads two ways, and the exporter cannot tell which is meant.
+
+        With ``standard_conforming_strings`` on, the literal ends at that quote and
+        the backslash is the last character of the value. With it off, the backslash
+        escapes the quote and the literal runs on. The exporter sees a string, not a
+        session, so it cannot know which server wrote it.
+
+        Reading it one way leaks under the other: an escape-aware rule run over
+        psycopg2's own default-mode output for a value ending in a backslash walks
+        past the real closing quote and exposes the next value. So when the two
+        readings disagree, nothing goes.
+        """
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("SELECT") as span:
+            span.set_attribute(
+                "db.statement",
+                "SELECT 'secret\\' leaked', 'second conversation'",
+            )
+
+        (exported,) = memory.get_finished_spans()
+        scrubbed = exported.attributes["db.statement"]
+
+        assert "leaked" not in scrubbed
+        assert "second conversation" not in scrubbed
+        assert scrubbed == "__REDACTED__"
+
+    def test_a_backslash_that_is_not_before_a_quote_keeps_the_shape(self):
+        """The ambiguity is the sequence, not the character. A backslash sitting in
+        the middle of a value reads the same either way, so the statement survives."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("INSERT") as span:
+            span.set_attribute(
+                "db.statement",
+                "INSERT INTO t VALUES ('back\\slash and more', 'next')",
+            )
+
+        (exported,) = memory.get_finished_spans()
+
+        assert (
+            exported.attributes["db.statement"] == "INSERT INTO t VALUES ('?', '?')"
+        )
+
+    def test_a_long_pathological_statement_scrubs_in_bounded_time(self):
+        """An unterminated dollar quote and an unterminated string, both long.
+
+        A rewrite that runs on every exported span must not become the reason a
+        service stalls.
+        """
+        import time
+
+        statement = "SELECT $tag$" + ("a" * 40000) + " and '" + ("b" * 40000)
+
+        start = time.monotonic()
+        telemetry._scrub_statement(statement)
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 1.0, f"scrubbing took {elapsed:.2f}s"
 
     def test_the_legacy_string_mode_form_is_covered(self):
         """With ``standard_conforming_strings`` off psycopg2 doubles the backslash
