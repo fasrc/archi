@@ -79,15 +79,33 @@ Note that `:278-279` documents bare `default(true)` as the correct pattern. That
 replaced by the file-level note (D5); leaving it would leave the file contradicting its own
 guard.
 
-## D3. The two numeric sites, and only those two
+## D3. The four numeric sites, and only those four
 
-`sources.links.base_source_depth` (`:299`, default `1`) and
-`sources.links.sitemap.max_pages` (`:332`, default `20000`) take the same ternary.
-`base_source_depth: 0` means "index the base page only" and `max_pages: 0` means "no page
-budget"; both are intents an operator can hold and neither is expressible today. `:331`
-immediately above `:332` is already a ternary, so the two adjacent lines currently
-implement opposite policies for the same block — fixing `:332` also removes that
-inconsistency.
+`sources.links.base_source_depth` (default `1`), `sources.links.sitemap.max_pages`
+(default `20000`), `sources.links.max_pages` (default `null`) and
+`sources.elog.max_entries` (default `null`) take the same ternary. Each is a bound whose
+`0` an operator can mean, and none of the four is expressible today. The `min_pages` line
+immediately above `sitemap.max_pages` is already a ternary, so those two adjacent lines
+currently implement opposite policies for the same block.
+
+**What `0` means at each site, measured against the consumer, not assumed.**
+`crawl_iter` starts at `depth = 0` and loops while `depth < max_depth`, so depth counts
+levels of pages: `1` is the seed page alone and `0` is no page at all. A configured
+`base_source_depth: 0` therefore switches that seed off; it does not shrink the crawl to
+the base page. An earlier draft of this document said it meant "index the base page only",
+which is what `1` already does — the sentence was wrong, not the conversion.
+
+Turning the seed off is a coherent thing to ask for, and it is the reading the number
+already carries. The alternative — keeping `default(1, true)` so a configured `0` is
+silently rewritten to `1` — is the exact failure this change exists to remove, and it
+would leave the operator with no way to tell that their value was discarded.
+
+The two nullable caps are the sharper case, because there `0` and `null` are *both*
+meaningful and they mean opposite things. `LinkScraper` stops as soon as
+`pages_visited >= max_pages` and treats `None` as no cap; `ElogScraper` reads
+`max_entries` the same way. `default(null, true)` renders a configured `0` as null, so an
+operator who asks for no pages gets an unbounded crawl — the largest possible distance
+from the request.
 
 The other 31 truthy numeric defaults (ports, timeouts, worker counts, `num_documents_to_
 retrieve`) have no meaningful `0`, and the issue says to leave them alone. They are frozen

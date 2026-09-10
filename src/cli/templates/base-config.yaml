@@ -326,8 +326,14 @@ data_manager:
         {%- endfor %}
     links:
       {%- set v_base_source_depth = data_manager.sources.links.base_source_depth %}
+      # Depth counts levels of pages, so 1 is the seed page alone and 0 is no page
+      # at all — a configured 0 turns this seed off, it does not shrink it to the
+      # base page. See crawl_iter's `depth < max_depth` loop.
       base_source_depth: {{ v_base_source_depth if v_base_source_depth is defined and v_base_source_depth is not none else 1 }}
-      max_pages: {{ data_manager.sources.links.max_pages | default(null, true) }}
+      # 0 is a real budget here, not "unset": LinkScraper stops at once for 0 and
+      # crawls without a cap for null, so the default filter would invert the request.
+      {%- set v_links_max_pages = data_manager.sources.links.max_pages %}
+      max_pages: {{ v_links_max_pages if v_links_max_pages is defined and v_links_max_pages is not none else "null" }}
       {%- set v_links_enabled = data_manager.sources.links.enabled %}
       enabled: {{ v_links_enabled if v_links_enabled is defined and v_links_enabled is not none else true }}
       {%- set v_links_visible = data_manager.sources.links.visible %}
@@ -459,7 +465,10 @@ data_manager:
       enabled: {{ data_manager.sources.elog.enabled | default(false, true) }}
       visible: {{ data_manager.sources.elog.visible | default(false, true) }}
       url: '{{ data_manager.sources.elog.url | default('', true) }}'
-      max_entries: {{ data_manager.sources.elog.max_entries | default(null, true) }}
+      # 0 caps the fetch at nothing; null means no cap. ElogScraper reads the two
+      # apart, so the configured 0 has to survive rendering.
+      {%- set v_elog_max_entries = data_manager.sources.elog.max_entries %}
+      max_entries: {{ v_elog_max_entries if v_elog_max_entries is defined and v_elog_max_entries is not none else "null" }}
       {%- set v_elog_verify_ssl = data_manager.sources.elog.verify_ssl %}
       verify_ssl: {{ v_elog_verify_ssl if v_elog_verify_ssl is defined and v_elog_verify_ssl is not none else true }}
       schedule: '{{ data_manager.sources.elog.schedule | default("", true) }}'

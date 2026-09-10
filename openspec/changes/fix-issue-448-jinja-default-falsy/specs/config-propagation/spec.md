@@ -42,12 +42,23 @@ never as the string `'None'` or the string `'False'`.
 - **THEN** the rendered config parses to the integer `0` at that key
 - **AND** with the same key unset the rendered config parses to `1` and `20000` respectively
 
+#### Scenario: A configured zero survives on a cap whose default is null
+- **WHEN** the input config sets `data_manager.sources.links.max_pages: 0` or
+  `data_manager.sources.elog.max_entries: 0`
+- **THEN** the rendered config parses to the integer `0` at that key
+- **AND** with the same key unset the rendered config parses to null at that key
+- **AND** the rendered value is never the string `'None'`
+
 ### Requirement: The truthiness-substituting default form cannot return to the template
 A test SHALL parse `base-config.yaml` with the Jinja parser and fail the build if any `default` filter call carries a boolean-literal default in any shape other than `default(false, true)`, in any arity and any capitalisation.
 
 The same test SHALL freeze the remaining truthy non-boolean `default(<value>, true)` call
-sites against a recorded baseline count, so the deprecated form can be removed over time
-but never added. The failure message SHALL name the offending line numbers and state the
+sites against a recorded baseline, so the deprecated form can be removed over time but
+never added. The baseline SHALL identify each call site by the configuration path it reads
+and the default it carries, not by a count and not by a line number. A count cannot see a
+swap — converting one frozen site while adding the deprecated form at another key leaves
+the total unchanged — and a line number renumbers on every edit above it. The failure
+message SHALL name the paths that arrived and the paths that left, and state the
 replacement form.
 
 The template SHALL state the rule once, near the top of the file: a boolean flag, and any

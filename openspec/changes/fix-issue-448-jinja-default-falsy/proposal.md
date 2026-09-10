@@ -64,10 +64,14 @@ The 21 bug sites are `:164 :214 :259 :290 :291 :301 :302 :310 :343 :345 :346 :35
   truthiness substitution maps every falsy input to `False`, which is the value the
   operator asked for, so that form cannot lie. It is the one permitted use of `default` on
   a boolean flag, and the guard encodes exactly that.
-- **Two numeric call sites where `0` is a plausible operator intent** move to the same
-  ternary: `sources.links.base_source_depth` (`:299`, default `1`) and
-  `sources.links.sitemap.max_pages` (`:332`, default `20000`). `:331`, immediately above
-  `:332`, is already written that way — the two lines currently disagree with each other.
+- **Four numeric call sites where `0` is a plausible operator intent** move to the same
+  ternary: `sources.links.base_source_depth` (default `1`),
+  `sources.links.sitemap.max_pages` (default `20000`), `sources.links.max_pages` and
+  `sources.elog.max_entries` (both default `null`). The `min_pages` line immediately above
+  `sitemap.max_pages` is already written that way — the two lines currently disagree with
+  each other. The two nullable caps matter most: `LinkScraper` and `ElogScraper` stop at
+  once for `0` and run uncapped for `null`, so rendering a configured `0` as null turns
+  "fetch nothing" into "fetch everything".
 - **A guard test freezes the pattern out.** Parsing the template's AST, it fails if any
   `default` call carries a boolean-literal default in any form other than
   `default(false, true)` — that covers `default(true, true)`, `default(true, True)`,
