@@ -90,7 +90,7 @@ to one line and put the logic in `src/utils/telemetry.py`.
 
 ## 5. Before merge
 
-- [ ] 5.1 `model: opus` — **Adversarial review loop.**
+- [x] 5.1 `model: opus` — **Adversarial review loop.**
   Run `/codex:adversarial-review --wait` on the branch. Verify each finding against the code.
   Fix what holds, push back on what does not, then run it again. Stop at a clean round or at
   nits, and file the nits as issues.
@@ -101,3 +101,21 @@ to one line and put the logic in `src/utils/telemetry.py`.
   span for that request, and the service log holds a line with the same trace ID.
   This task needs a receiver and a running deployment. It is the one task a reviewer must
   see evidence for before merge.
+
+### What 5.2 still needs, and what already ran
+
+An end-to-end export ran on 2026-09-09 against a local OTLP receiver, not against a
+deployment. One Flask request produced one span, the batch processor posted protobuf
+to the receiver, and the receiver decoded it. It confirmed:
+
+- the resource carries `service.name = archi-chat`
+- the span `GET /health` arrived, and its `http.target` is `/health` with the `?q=`
+  stripped
+- the SSO redirect request produced no span at all
+- neither the OAuth code nor the user query appears in any exported attribute
+- the log line written inside the request rendered with the same trace ID as the span
+
+That covers the wire, which the unit tests do not: they use an in-memory exporter.
+It does **not** cover a container, a real receiver, or the deployed configuration, so
+`AGENTS.md:61-63` is not satisfied. Task 5.2 stays open. A reviewer must see one
+streamed chat request against a running deployment before this merges.
