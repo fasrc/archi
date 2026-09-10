@@ -110,3 +110,90 @@ def test_env_docker_host_local_container_host_remote_is_not_local(
     monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     assert container_endpoint_is_provably_local() is False
+
+
+def _write_context_meta(tmp_path, dir_name, ctx_name, host):
+    meta_dir = tmp_path / ".docker" / "contexts" / "meta" / dir_name
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    (meta_dir / "meta.json").write_text(
+        f'{{"Name": "{ctx_name}", "Endpoints": {{"docker": {{"Host": "{host}"}}}}}}'
+    )
+
+
+def test_context_unix_host_is_local(monkeypatch, tmp_path):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.setenv("DOCKER_CONTEXT", "myctx")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_context_meta(tmp_path, "abc123", "myctx", "unix:///var/run/docker.sock")
+    assert container_endpoint_is_provably_local() is True
+
+
+def test_context_tcp_host_is_not_local(monkeypatch, tmp_path):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotectx")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_context_meta(
+        tmp_path, "deadbeef", "remotectx", "tcp://engine.example.edu:2376"
+    )
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_context_default_name_is_local(monkeypatch, tmp_path):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.setenv("DOCKER_CONTEXT", "default")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert container_endpoint_is_provably_local() is True
+
+
+def test_config_json_current_context_remote_is_not_local(monkeypatch, tmp_path):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    docker_dir = tmp_path / ".docker"
+    docker_dir.mkdir()
+    (docker_dir / "config.json").write_text('{"currentContext": "remotectx"}')
+    _write_context_meta(tmp_path, "abc", "remotectx", "tcp://engine.example.edu:2376")
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_docker_host_wins_over_tcp_context(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotectx")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_context_meta(tmp_path, "abc", "remotectx", "tcp://engine.example.edu:2376")
+    assert container_endpoint_is_provably_local() is True
+
+
+def test_malformed_config_json_is_local(monkeypatch, tmp_path):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    docker_dir = tmp_path / ".docker"
+    docker_dir.mkdir()
+    (docker_dir / "config.json").write_text("not valid json {{{{")
+    assert container_endpoint_is_provably_local() is True
+
+
+def test_missing_docker_dir_is_local(monkeypatch, tmp_path):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert container_endpoint_is_provably_local() is True
+
+
+def test_meta_json_no_matching_context_is_local(monkeypatch, tmp_path):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("CONTAINER_HOST", raising=False)
+    monkeypatch.setenv("DOCKER_CONTEXT", "myctx")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_context_meta(
+        tmp_path, "abc", "differentctx", "tcp://engine.example.edu:2376"
+    )
+    assert container_endpoint_is_provably_local() is True
