@@ -150,7 +150,7 @@ Two traps in that table:
 
 ## 7. Close out
 
-- [ ] 7.1 `model: haiku` — Run `bash scripts/gate.sh` once more on the finished change and
+- [x] 7.1 `model: haiku` — Run `bash scripts/gate.sh` once more on the finished change and
       confirm it exits 0. Confirm `git status --porcelain` is empty. Push with
       `git push -u origin fix/issue-448-jinja-default-falsy` — the branch tracks
       `origin/dev`, so `-u` is required. Open the PR with
