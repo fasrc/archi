@@ -18,9 +18,15 @@ _URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def endpoint_is_local(endpoint: str | None) -> bool:
-    """Return True when *endpoint* is provably local (or absent)."""
+    """Return True when *endpoint* is provably local (or absent).
+
+    A non-string endpoint is not provably local. A stored configuration can hold one —
+    ``{"Host": 1}`` is valid JSON — and the check must classify it rather than raise.
+    """
     if endpoint is None:
         return True
+    if not isinstance(endpoint, str):
+        return False
     value = endpoint.strip()
     if not value:
         return True
@@ -91,22 +97,29 @@ def container_endpoint_is_provably_local() -> bool:
     """Return True when every container endpoint variable points to a local engine.
 
     Checks DOCKER_HOST, CONTAINER_HOST, CONTAINER_CONNECTION, and the active Docker
-    context; any refusing means not provably local. DOCKER_HOST, when set and non-empty,
-    takes priority over context resolution.
+    context; any refusing means not provably local. Two precedence rules apply, and they
+    run opposite ways because the two engines do: DOCKER_HOST, when set and non-empty,
+    takes priority over the Docker context, while CONTAINER_CONNECTION takes priority
+    over CONTAINER_HOST.
     """
     docker_host = os.environ.get("DOCKER_HOST")
     container_host = os.environ.get("CONTAINER_HOST")
 
-    if not endpoint_is_local(docker_host) or not endpoint_is_local(container_host):
+    if not endpoint_is_local(docker_host):
         return False
 
-    # A named Podman connection routes the engine on its own, and outranks a local
-    # CONTAINER_HOST, so it is classified before any Docker variable can vouch for it.
+    # A named Podman connection decides the Podman endpoint on its own and outranks
+    # CONTAINER_HOST — measured on Podman 6.1.0, where CONTAINER_CONNECTION dials its
+    # own destination even when CONTAINER_HOST names a local socket. So it is
+    # classified INSTEAD of CONTAINER_HOST, not in addition to it: a stale remote
+    # CONTAINER_HOST must not refuse a deployment that podman routes locally.
     connection = os.environ.get("CONTAINER_CONNECTION", "").strip()
     if connection:
         connection_uri = _resolve_podman_connection_uri(connection)
         if connection_uri is None or not endpoint_is_local(connection_uri):
             return False
+    elif not endpoint_is_local(container_host):
+        return False
 
     # DOCKER_HOST set and non-empty and local — wins over context
     if docker_host is not None and docker_host.strip():

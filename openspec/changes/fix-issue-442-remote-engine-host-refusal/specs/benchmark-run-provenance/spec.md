@@ -38,10 +38,15 @@ non-empty, and `~/.docker` otherwise. `DOCKER_CONFIG` relocates `config.json` **
 relocated remote context as local.
 
 `CONTAINER_CONNECTION` SHALL be resolved through the Podman connection store and classified
-by the same rule. Setting it puts Podman in remote mode against the named destination, and
-it outranks `CONTAINER_HOST`, so no Docker or Podman host variable can vouch for locality on
-its behalf. Measured on Podman 6.1.0 — `CONTAINER_CONNECTION` naming an `ssh://` connection
-routes there even when `CONTAINER_HOST` names a local socket.
+by the same rule. Setting it puts Podman in remote mode against the named destination, and it
+outranks `CONTAINER_HOST`. Measured on Podman 6.1.0 — `CONTAINER_CONNECTION` naming an
+`ssh://` connection routes there even when `CONTAINER_HOST` names a local socket.
+
+Because it outranks `CONTAINER_HOST`, it SHALL be classified **instead of** that variable and
+not in addition to it. A stale remote `CONTAINER_HOST` left in the environment alongside a
+named local connection describes an endpoint Podman does not use, and refusing on it would
+drop the host of a deployment that is genuinely local. `CONTAINER_HOST` SHALL still be
+classified whenever no connection is named.
 
 A `CONTAINER_CONNECTION` that cannot be resolved to a URI SHALL be treated as not provably
 local. This is the opposite of the Docker rule above, and the asymmetry follows the default
@@ -55,6 +60,13 @@ answer for it.
 The check SHALL be best-effort and SHALL never raise, on the same terms as the capture it
 guards. An unreadable or malformed Docker configuration means "no evidence of a remote
 engine", never an abort and never a refusal.
+
+A stored endpoint that is not a string SHALL be classified as not provably local. `{"Host":
+1}` is valid JSON, so a resolver can return a non-string and the classifier must answer for
+it rather than raise: an abort here would fail an otherwise valid deployment over optional
+provenance, which the never-raise rule above exists to prevent. This is a refusal rather
+than "no evidence" because a malformed endpoint is a resolved value the check cannot read,
+not a missing one.
 
 The recorded value for a refusal SHALL be the same `null` that every other unrecorded host
 uses. No second field and no placeholder string is written.
@@ -124,6 +136,17 @@ uses. No second field and no placeholder string is written.
 
 - **WHEN** `CONTAINER_CONNECTION` names a connection that the connection store does not hold
 - **THEN** the `host` entry is `null`
+
+#### Scenario: A named local connection outranks a stale remote CONTAINER_HOST
+
+- **WHEN** `CONTAINER_CONNECTION` names a stored connection whose URI is a `unix://` socket and `CONTAINER_HOST` names an `ssh://` endpoint
+- **THEN** the `host` entry names the hostname of the machine running the CLI
+
+#### Scenario: A malformed stored endpoint records no host and raises nothing
+
+- **WHEN** the selected Docker context's stored `Host` is a number rather than a string
+- **THEN** the check returns normally and raises nothing
+- **AND** the `host` entry is `null`
 
 #### Scenario: An unreadable Docker configuration is not evidence of a remote engine
 

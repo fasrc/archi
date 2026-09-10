@@ -9,6 +9,28 @@ from src.cli.managers.templates_manager import (
     get_git_information,
 )
 
+_ENDPOINT_VARS = (
+    "DOCKER_HOST",
+    "DOCKER_CONTEXT",
+    "DOCKER_CONFIG",
+    "CONTAINER_HOST",
+    "CONTAINER_CONNECTION",
+    "XDG_CONFIG_HOME",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_endpoint_env(monkeypatch, tmp_path):
+    """Detach the capture tests from the developer's own engine configuration.
+
+    Host capture now refuses on CONTAINER_CONNECTION and reads DOCKER_CONFIG, so a
+    developer running Podman with a named connection fails every positive test here
+    for a reason that has nothing to do with the code under test.
+    """
+    for name in _ENDPOINT_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
 
 def test_git_info_yaml_carries_the_host_block(monkeypatch, tmp_path):
     monkeypatch.delenv("DOCKER_HOST", raising=False)

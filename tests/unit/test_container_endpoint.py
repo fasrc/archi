@@ -379,3 +379,57 @@ def test_container_connection_outranks_a_local_docker_host(monkeypatch, tmp_path
     )
     monkeypatch.setenv("CONTAINER_CONNECTION", "remotebox")
     assert container_endpoint_is_provably_local() is False
+
+
+# --- the never-raise contract holds for a malformed stored endpoint ---
+
+
+def test_non_string_context_endpoint_is_not_local(monkeypatch, tmp_path):
+    """A stored Host of the wrong type must not break the never-raise contract.
+
+    The spec says the check never raises. A syntactically valid meta.json can still
+    hold `"Host": 1`, and a type error there would abort an otherwise fine deploy.
+    """
+    monkeypatch.setenv("DOCKER_CONTEXT", "weirdctx")
+    meta_dir = tmp_path / ".docker" / "contexts" / "meta" / "abc"
+    meta_dir.mkdir(parents=True)
+    (meta_dir / "meta.json").write_text(
+        '{"Name": "weirdctx", "Endpoints": {"docker": {"Host": 1}}}'
+    )
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_non_string_endpoint_is_not_local():
+    assert endpoint_is_local(1) is False
+    assert endpoint_is_local(["unix:///var/run/docker.sock"]) is False
+
+
+def test_non_string_podman_connection_uri_is_not_local(monkeypatch, tmp_path):
+    store_dir = tmp_path / ".config" / "containers"
+    store_dir.mkdir(parents=True)
+    (store_dir / "podman-connections.json").write_text(
+        '{"Connection": {"Connections": {"remotebox": {"URI": 7}}}}'
+    )
+    monkeypatch.setenv("CONTAINER_CONNECTION", "remotebox")
+    assert container_endpoint_is_provably_local() is False
+
+
+# --- a named connection outranks CONTAINER_HOST (podman 6.1.0, measured) ---
+
+
+def test_local_connection_outranks_a_stale_remote_container_host(monkeypatch, tmp_path):
+    """CONTAINER_CONNECTION decides the podman endpoint, so CONTAINER_HOST cannot refuse for it."""
+    monkeypatch.setenv("CONTAINER_HOST", "ssh://user@stale/run/podman.sock")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    _write_connections(
+        tmp_path / "xdg", {"localsock": "unix:///run/user/1000/podman/podman.sock"}
+    )
+    monkeypatch.setenv("CONTAINER_CONNECTION", "localsock")
+    assert container_endpoint_is_provably_local() is True
+
+
+def test_remote_container_host_still_refuses_without_a_connection(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("CONTAINER_HOST", "ssh://user@box/run/podman.sock")
+    assert container_endpoint_is_provably_local() is False
