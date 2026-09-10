@@ -132,6 +132,32 @@ def test_metadata_records_null_when_the_deploy_predates_the_field(
     assert ResultHandler.metadata["host"] is None
 
 
+def test_no_host_means_no_same_machine_assertion(monkeypatch, tmp_path, _sb_isolate):
+    """`host_captured_at` must not claim a machine when no host was recorded.
+
+    The whole point of this change is to stop the artifact asserting that the
+    benchmark ran on the machine `archi create` ran on when that cannot be shown.
+    Writing `host: null` and leaving "on the machine this stack runs on" beside it
+    keeps the false assertion in the raw artifact -- the reports guard their host
+    line on `host`, so it is invisible there and survives in the JSON, which is what
+    a later reader and every downstream consumer actually parse.
+    """
+    git_info = tmp_path / "git_info.yaml"
+    git_info.write_text("last_commit: abc\n")
+    monkeypatch.setattr(sb, "EXTRA_METADATA_PATH", str(git_info))
+
+    ResultHandler.add_metadata()
+
+    assert ResultHandler.metadata["host"] is None
+    captured_at = ResultHandler.metadata["host_captured_at"]
+    assert captured_at != _HOST_CAPTURED_AT
+    assert "on the machine this stack runs on" not in captured_at
+    assert "ran here too" not in captured_at
+    # It still has to say something, or a reader cannot tell "old deploy" from
+    # "refused because the engine is remote".
+    assert "no host" in captured_at.lower()
+
+
 def test_metadata_records_null_when_file_is_unreadable(
     monkeypatch, tmp_path, _sb_isolate
 ):

@@ -42,6 +42,46 @@ def test_bare_path_no_scheme_is_local():
     assert endpoint_is_local("/var/run/docker.sock") is True
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "192.0.2.10:2375",
+        "127.0.0.1:19999",
+        "[::1]:19999",
+        "[2001:db8::1]:2376",
+        "engine.example.edu:2376",
+        "engine.example.edu",
+    ],
+)
+def test_schemeless_host_and_port_is_not_local(endpoint):
+    """Docker defaults a scheme-less DOCKER_HOST to TCP, not to a socket path.
+
+    Measured on Docker 29.7.2 -- `DOCKER_HOST=127.0.0.1:19999` reports
+    `Cannot connect to the Docker daemon at tcp://127.0.0.1:19999`, and
+    `somehost.example.edu:2375` resolves DNS for it. So a scheme-less
+    host-and-port is a remote daemon address, and reading it as a filesystem path
+    stamps the CLI hostname onto a remote deployment.
+    """
+    assert endpoint_is_local(endpoint) is False
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    ["/var/run/docker.sock", "/run/user/1000/podman/podman.sock", "./relative.sock"],
+)
+def test_schemeless_path_shaped_values_stay_local(endpoint):
+    """The path-shaped fallback survives, narrowed to values that look like paths.
+
+    Docker in fact prepends `tcp://` to these too --
+    `DOCKER_HOST=/var/run/docker.sock` dials
+    `tcp://localhost:2375/var/run/docker.sock` -- but that address is on this
+    machine, so classifying it local is right for the question this module asks.
+    Podman's `CONTAINER_HOST` does accept a socket path, and the FASRC command
+    produces `unix:/...`, which the scheme branch already accepts.
+    """
+    assert endpoint_is_local(endpoint) is True
+
+
 def test_empty_string_is_local():
     assert endpoint_is_local("") is True
 
@@ -134,6 +174,23 @@ def test_env_docker_host_local_container_host_remote_is_not_local(
     monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     assert container_endpoint_is_provably_local() is False
+
+
+def _pin_glob_order(monkeypatch, ordered):
+    """Make the context-store scan visit ``ordered`` in exactly that order.
+
+    `pathlib.Path.glob` yields `os.scandir` order and does not sort, so any test
+    about "which entry wins" passes or fails on filesystem luck otherwise. Every
+    such test here pins the order deliberately, worst case first.
+    """
+    real_glob = pathlib.Path.glob
+
+    def _ordered(self, pattern, *args, **kwargs):
+        if pattern == "contexts/meta/*/meta.json":
+            return iter(ordered)
+        return real_glob(self, pattern, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "glob", _ordered)
 
 
 def _write_context_meta(tmp_path, dir_name, ctx_name, host):
@@ -515,6 +572,37 @@ def test_unparseable_sibling_meta_json_does_not_hide_a_remote_context(
 
     monkeypatch.setattr(pathlib.Path, "glob", _stale_first)
     assert container_endpoint_is_provably_local() is False
+
+
+def test_conflicting_duplicate_context_entries_refuse(monkeypatch, tmp_path):
+    """Two entries claiming the selected name, disagreeing, must not resolve to either.
+
+    The scan matches on the `Name` a file states, and takes the first hit in
+    `os.scandir` order. A stale duplicate naming a local socket would therefore hide
+    the real remote entry and stamp the CLI machine -- the same fail-open the
+    malformed-sibling fix closed, reached by a different route.
+    """
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotebox")
+    _write_context_meta(tmp_path, "stale", "remotebox", "unix:///var/run/docker.sock")
+    _write_context_meta(tmp_path, "real", "remotebox", "ssh://user@remote.example.com")
+    # Order pinned local-first: glob() does not sort, so without this the test
+    # passes whenever the filesystem happens to yield the remote entry first.
+    _pin_glob_order(
+        monkeypatch,
+        [
+            tmp_path / ".docker" / "contexts" / "meta" / "stale" / "meta.json",
+            tmp_path / ".docker" / "contexts" / "meta" / "real" / "meta.json",
+        ],
+    )
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_agreeing_duplicate_context_entries_still_classify(monkeypatch, tmp_path):
+    """Duplicates that agree are not ambiguous, so they resolve normally."""
+    monkeypatch.setenv("DOCKER_CONTEXT", "myctx")
+    _write_context_meta(tmp_path, "a", "myctx", "unix:///var/run/docker.sock")
+    _write_context_meta(tmp_path, "b", "myctx", "unix:///var/run/docker.sock")
+    assert container_endpoint_is_provably_local() is True
 
 
 def test_a_raising_context_store_is_no_evidence_of_a_remote_engine(monkeypatch):

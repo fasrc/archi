@@ -2,7 +2,14 @@
 
 Rule: strip the value; an empty value is local; a value beginning ``unix:`` is local; a
 value carrying any other URI scheme (``^[A-Za-z][A-Za-z0-9+.-]*:``) is not provably local;
-a value with no scheme is a filesystem path and is local.
+a value with no scheme is local only when it is **path-shaped** (``/``, ``./``, ``../`` or
+``~``), and is otherwise not provably local.
+
+That last clause was wrong in an earlier draft, which called any scheme-less value a
+filesystem path. Docker's host parser prepends ``tcp://`` to a scheme-less
+``DOCKER_HOST`` instead — measured on Docker 29.7.2, ``127.0.0.1:19999`` dials
+``tcp://127.0.0.1:19999`` and ``somehost.example.edu:2375`` gets a DNS lookup — so
+``engine.example.edu:2376`` names a remote daemon, not a socket.
 
 A presence check (``bool(DOCKER_HOST)``) is wrong because FASRC uses
 ``export DOCKER_HOST=unix:/$(podman info --format '{{.Host.RemoteSocket.Path}}')`` which
@@ -15,6 +22,11 @@ import pathlib
 import re
 
 _URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+
+# Returned when the context store holds several entries claiming the selected context
+# name and they disagree about the endpoint. Distinct from None, which means "no
+# context configured" and is not evidence of a remote engine; this one is.
+_AMBIGUOUS = object()
 
 
 def endpoint_is_local(endpoint: str | None) -> bool:
@@ -34,8 +46,24 @@ def endpoint_is_local(endpoint: str | None) -> bool:
         return True
     if _URI_SCHEME_RE.match(value):
         return False
-    # No URI scheme — treat as a bare filesystem path, which is local.
-    return True
+    # No URI scheme. Docker does NOT read such a value as a filesystem path: its
+    # host parser prepends `tcp://`. Measured on Docker 29.7.2 —
+    # DOCKER_HOST=127.0.0.1:19999 reports "Cannot connect to the Docker daemon at
+    # tcp://127.0.0.1:19999", [::1]:19999 becomes tcp://[::1]:19999, and
+    # somehost.example.edu:2375 gets a DNS lookup. So a scheme-less host-and-port is
+    # a remote daemon address, and reading it as a socket path is a fail-open.
+    #
+    # A path-shaped value stays local. Docker prepends tcp:// to those too
+    # (/var/run/docker.sock dials tcp://localhost:2375/var/run/docker.sock), but that
+    # address is on this machine, so "local" is the right answer to the question this
+    # module asks. Podman's CONTAINER_HOST does accept a socket path, and the FASRC
+    # command produces `unix:/...`, which the scheme branch above already accepts.
+    if value.startswith(("/", "./", "../", "~")):
+        return True
+    # Anything else — a bare hostname, host:port, or a relative name that is not
+    # obviously a path — is not provably local. Fail closed: this helper decides
+    # whether it is safe to stamp this machine's name onto a deployment.
+    return False
 
 
 def _docker_config_dir() -> pathlib.Path:
@@ -50,12 +78,13 @@ def _docker_config_dir() -> pathlib.Path:
     return pathlib.Path.home() / ".docker"
 
 
-def _resolve_context_endpoint() -> str | None:
+def _resolve_context_endpoint() -> str | None | object:
     """Return the active Docker context's Host endpoint, or None if unresolvable.
 
     Any exception is swallowed — an unreadable configuration is not evidence of a remote
     engine, because Docker falls back to the local default context.
     """
+    matches: list = []
     try:
         config_dir = _docker_config_dir()
         context_name = os.environ.get("DOCKER_CONTEXT", "").strip()
@@ -87,8 +116,17 @@ def _resolve_context_endpoint() -> str | None:
             docker_endpoint = endpoints.get("docker")
             if not isinstance(docker_endpoint, dict):
                 return None
-            return docker_endpoint.get("Host")
-        return None
+            matches.append(docker_endpoint.get("Host"))
+
+        if not matches:
+            return None
+        # More than one entry claiming the selected name, disagreeing about the
+        # endpoint: taking the first is taking whichever the filesystem listed first,
+        # and a stale duplicate naming a local socket would hide the real remote one.
+        # Ambiguity is not evidence of a local engine, so refuse rather than pick.
+        if len({host for host in matches}) > 1:
+            return _AMBIGUOUS
+        return matches[0]
     except Exception:
         return None
 
@@ -140,6 +178,8 @@ def container_endpoint_is_provably_local() -> bool:
         return True
 
     context_host = _resolve_context_endpoint()
+    if context_host is _AMBIGUOUS:
+        return False
     if context_host is not None:
         return endpoint_is_local(context_host)
 

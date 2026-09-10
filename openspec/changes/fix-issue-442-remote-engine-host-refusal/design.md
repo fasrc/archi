@@ -224,6 +224,70 @@ by machine, which is worse than failing every time. Each parsed value is now che
 `Endpoints` and `Endpoints.docker` get the same check, because they were read with `.get`
 too and had the identical shape problem one level down.
 
+### 10. A scheme-less `DOCKER_HOST` is not a filesystem path
+
+Decision 1's table said a value with no scheme is a bare path and therefore local.
+Measured on Docker **29.7.2**, that is wrong — Docker's host parser prepends `tcp://`
+to every scheme-less value:
+
+| `DOCKER_HOST` | Docker dials |
+| --- | --- |
+| `127.0.0.1:19999` | `tcp://127.0.0.1:19999` |
+| `[::1]:19999` | `tcp://[::1]:19999` |
+| `somehost.example.edu:2375` | `tcp://somehost.example.edu:2375` (with a DNS lookup) |
+| `/var/run/docker.sock` | `tcp://localhost:2375/var/run/docker.sock` |
+
+So `engine.example.edu:2376` in `DOCKER_HOST` names a **remote daemon**, and the old
+rule classified it as a local socket path — a fail-open of exactly the kind this change
+exists to close. Found in review.
+
+The fallback is now narrowed rather than removed: a scheme-less value is local only when
+it is path-shaped (`/`, `./`, `../`, `~`), and anything else — a bare hostname, a
+host-and-port, a bracketed IPv6 address — is not provably local. The last row above shows
+Docker prepends `tcp://` to real paths too, but `tcp://localhost:2375/...` is on this
+machine, so "local" remains the right answer to the question this module asks. Path shapes
+are kept because Podman's `CONTAINER_HOST` does accept a socket path, and because the FASRC
+command produces `unix:/...`, which the scheme branch already handles — so decision 1's
+highest-cost case was never relying on this fallback in the first place.
+
+Anything unrecognised now fails **closed**. This helper decides whether it is safe to stamp
+this machine's name onto a deployment; an address it cannot classify is not evidence that
+the engine is here.
+
+### 11. Conflicting duplicate context entries refuse
+
+Decision 4 matches on the `Name` a `meta.json` states, and took the first hit. Review asked
+what happens when two entries claim the selected name and disagree: the answer was
+"whichever `os.scandir` listed first", so a stale duplicate naming a local socket could hide
+the real remote entry. Same fail-open as decision 9, reached by a different route, and with
+the same order-dependence — it would bite on some machines and not others.
+
+The scan now collects every match. One distinct endpoint resolves as before; more than one
+returns `_AMBIGUOUS`, which the caller reads as not provably local. Ambiguity is not
+evidence of a local engine. Agreeing duplicates are not ambiguous and still classify, so a
+harmless double entry does not cost a host stamp.
+
+`_AMBIGUOUS` is a sentinel distinct from `None` on purpose: `None` means "no context
+configured", which decision 6 defines as no evidence of a remote engine, and collapsing the
+two would make a conflict silently permissive.
+
+### 12. `host_captured_at` must not assert a machine it does not have
+
+`ResultHandler.add_metadata()` wrote `host_captured_at` unconditionally, saying the capture
+happened "on the machine this stack runs on — a container cannot move hosts, so a --rerun
+ran here too". When this change's guard refuses, `host` is `null` and that sentence sits
+next to it, still asserting the same machine. Found in review, and it is the change's own
+premise inverted: the refusal exists to stop the artifact making a claim it cannot support.
+
+It went unnoticed because both report renderers guard their host line on `host` being
+truthy, so the sentence never appears in the HTML or Markdown output. It survives in the raw
+JSON artifact — which is what a later reader, and every downstream consumer, actually parses.
+
+The field is now conditional. With no host it reads "no host recorded — either this
+deployment predates the field, or `archi create` refused to capture one because the container
+engine was not provably local", which keeps the field informative: a reader can still tell an
+old deploy from a refusal, which an empty string or a missing key would not.
+
 ## Risks / Trade-offs
 
 - **A false refusal on a local `DOCKER_HOST` form this table does not know.** Mitigated by

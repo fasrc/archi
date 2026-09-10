@@ -247,3 +247,35 @@ Standing notes for every task:
       podman routes locally — the false-refusal error decision 3 paid a cost to avoid.
       Reachable only through `podman --remote`, which archi never passes; decision 8
       records what would have to change first.
+
+- [x] 4.2 Three more findings after round 3's push. **All three taken** — every one a
+      fail-open in the direction this change exists to close. Design decisions 10, 11
+      and 12.
+
+      **A scheme-less `DOCKER_HOST` is not a filesystem path.** Decision 1's table said
+      it was. Measured on Docker 29.7.2, Docker prepends `tcp://` to every scheme-less
+      value: `127.0.0.1:19999` dials `tcp://127.0.0.1:19999`, `[::1]:19999` becomes
+      `tcp://[::1]:19999`, `somehost.example.edu:2375` gets a DNS lookup, and even
+      `/var/run/docker.sock` dials `tcp://localhost:2375/var/run/docker.sock`. So
+      `engine.example.edu:2376` named a remote daemon and was classified local. The
+      fallback is narrowed to path-shaped values and everything else fails closed.
+      Nine tests, six of them previously red.
+
+      **Conflicting duplicate context entries now refuse.** Two `meta.json` files
+      claiming the selected `Name` and disagreeing resolved to whichever `os.scandir`
+      listed first, so a stale local duplicate could hide the real remote entry —
+      decision 9's defect by a different route, and order-dependent the same way. The
+      scan collects all matches and returns `_AMBIGUOUS` when they disagree; agreeing
+      duplicates still classify. The test pins glob order local-first, because without
+      that it passed by luck.
+
+      **`host_captured_at` no longer asserts a machine it does not have.** It was
+      written unconditionally, so a refused capture produced `host: null` beside
+      "on the machine this stack runs on — a container cannot move hosts, so a --rerun
+      ran here too". That is this change's premise inverted. It hid because both report
+      renderers guard their host line on `host`, so the sentence never rendered and
+      survived only in the raw JSON that consumers parse. Now conditional, and still
+      informative: a reader can tell an old deploy from a refusal.
+
+      `test_container_endpoint.py` 52 -> 63 collected; the four provenance suites run
+      141 passed together. Gate green, 100% patch coverage.
