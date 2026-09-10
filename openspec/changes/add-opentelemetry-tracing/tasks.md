@@ -95,27 +95,41 @@ to one line and put the logic in `src/utils/telemetry.py`.
   Fix what holds, push back on what does not, then run it again. Stop at a clean round or at
   nits, and file the nits as issues.
 
-- [ ] 5.2 `model: opus` — **Deployed validation.** `AGENTS.md:61-63` requires it.
+- [x] 5.2 `model: opus` — **Deployed validation.** `AGENTS.md:61-63` requires it.
   Run one streamed chat request against the preview deploy or the dev stack with
   `OTEL_EXPORTER_OTLP_ENDPOINT` set at a receiver. Confirm two things: the receiver holds a
   span for that request, and the service log holds a line with the same trace ID.
-  This task needs a receiver and a running deployment. It is the one task a reviewer must
-  see evidence for before merge.
 
-### What 5.2 still needs, and what already ran
+### What 5.2 ran, and what it found
 
-An end-to-end export ran on 2026-09-09 against a local OTLP receiver, not against a
-deployment. One Flask request produced one span, the batch processor posted protobuf
-to the receiver, and the receiver decoded it. It confirmed:
+Ran on 2026-09-10 against a container deployment built from this branch
+(`SOURCE_COMMIT bd2ee627`), with Arize Phoenix 20.9.0 as the receiver at
+`http://192.168.1.128:6006`. Three containers: `chatbot-otelcheck`,
+`data-manager-otelcheck`, `postgres-otelcheck`. One streamed chat request to
+`/api/get_chat_response_stream`, answered by a real model server.
 
-- the resource carries `service.name = archi-chat`
-- the span `GET /health` arrived, and its `http.target` is `/health` with the `?q=`
-  stripped
-- the SSO redirect request produced no span at all
-- neither the OAuth code nor the user query appears in any exported attribute
-- the log line written inside the request rendered with the same trace ID as the span
+Both required results hold:
 
-That covers the wire, which the unit tests do not: they use an in-memory exporter.
-It does **not** cover a container, a real receiver, or the deployed configuration, so
-`AGENTS.md:61-63` is not satisfied. Task 5.2 stays open. A reviewer must see one
-streamed chat request against a running deployment before this merges.
+- **The receiver holds the trace.** 15 spans in one trace, rooted at
+  `POST /api/get_chat_response_stream` with no parent. Under it: `LangGraph`,
+  `model`, `ChatOpenAI`, `search_vectorstore_hybrid`, `HybridRetriever`, the outbound
+  `POST` to the model server, and the Postgres statements. The agent work runs in a
+  worker thread, and it is parented correctly, so the copied context reaches the
+  thread in a deployment and not only in a test.
+- **The log carries the same trace.** 37 lines in the chat container's log render
+  `trace_id=f9d0c0db783675f792e1cc53d92cf101`, matching the span, and the span id
+  alongside it.
+
+Also confirmed on the same run: the resource carries `service.name = archi-chat`;
+`input.value` and `output.value` are `__REDACTED__` on the LangGraph, ChatOpenAI and
+HybridRetriever spans; and the real OTLP HTTP exporter under `protobuf==7.36.1`
+serialises to a receiver that decodes it.
+
+**It found a defect no unit test had.** The first run exported the user's question and
+archi's whole reply to the receiver, inside `db.statement` on a Postgres span, with
+content capture off. Nearly every archi statement is parameterised, so its text is
+only shape; `SQL_INSERT_CONVO` goes through `psycopg2.extras.execute_values`, which
+expands the rows into the statement before sending it. The chunk insert leaked
+document text the same way, and carried an 8388 character embedding array besides.
+Fixed in `7d25a470` and re-checked on a rebuilt deployment: same request, same span
+tree, no conversation anywhere in the export.

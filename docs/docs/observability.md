@@ -62,7 +62,7 @@ reports `archi`. Set `OTEL_SERVICE_NAME` yourself to override either.
 ## Privacy
 
 **Spans carry no prompt, no completion, no retrieved document and no credential by
-default.** Six separate rules produce that result:
+default.** Seven separate rules produce that result:
 
 1. The OpenInference config hides model inputs and outputs. Each field is named in
    code rather than left to an environment variable, because one variable an
@@ -90,9 +90,19 @@ default.** Six separate rules produce that result:
 6. The SSO redirect route is excluded from spans entirely. It receives an OAuth
    authorization code, and a request that carries a credential is better off with no
    span than with one whose safety rests on a scrubber.
+7. Every string literal in a SQL statement is replaced before export. Nearly every
+   archi statement is parameterised, so its text is only shape and this rule changes
+   nothing. One statement is not: the insert that writes a conversation goes through
+   `psycopg2.extras.execute_values`, which expands the rows into the statement before
+   sending it, so the finished text holds the question and the whole answer. The
+   table, the columns and the kind of statement survive. A bare number survives too,
+   because it is an identifier or a limit and never the conversation, but an array of
+   nothing but numbers does not: the ingest writes each chunk embedding inline, and
+   an embedding is the chunk in another form. One chunk insert measured 8388
+   characters, nearly all of it that one array.
 
-`ARCHI_OTEL_CAPTURE_CONTENT=true` reverses rules 1, 2 and 5. It never reverses rules
-3, 4 and 6, because a credential is not model content and no flag releases one: an
+`ARCHI_OTEL_CAPTURE_CONTENT=true` reverses rules 1, 2, 5 and 7. It never reverses
+rules 3, 4 and 6, because a credential is not model content and no flag releases one: an
 exception message restored by that flag still loses the credentials in any URL it
 quotes.
 Treat turning it on as a privacy decision with an owner, not a debugging
@@ -102,8 +112,10 @@ Document identifiers and retrieval scores survive redaction. You can still see t
 retrieval happened, how many chunks came back and how they ranked, without seeing
 what they said.
 
-Database spans carry the SQL text without its parameters. That is the psycopg2
-instrumentor's default and archi does not change it.
+Database spans carry the shape of the statement, not the data in it. An earlier
+version of this page said the psycopg2 instrumentor already gave that for free. The
+deployed check refuted it: one streamed chat request exported a user's question and
+archi's whole reply inside `db.statement`. Rule 7 exists because of that measurement.
 
 ## Known gaps
 

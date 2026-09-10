@@ -1180,6 +1180,47 @@ class TestTheDatabaseStatementIsNotAContentChannel:
 
         assert exported.attributes["db.statement"] == self.STATEMENT
 
+    def test_an_embedding_vector_does_not_ride_along(self):
+        """The ingest writes one chunk embedding per row, inline.
+
+        Measured on the deployed check: the chunk insert carried an 8388 character
+        attribute, nearly all of it one float array. An embedding is the chunk in
+        another form, and the array costs every trace real bytes. The literal rule
+        does not reach it, because a number is not a quoted string.
+        """
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+        statement = (
+            "INSERT INTO document_chunks "
+            "(document_id, chunk_index, chunk_text, embedding, metadata)\n"
+            "VALUES (1, 0, 'the chunk text', ARRAY[ -0.044845741242170334,"
+            "0.049786292016506195, -0.06653116643428802,0.03228151053190231])"
+        )
+
+        with tracer.start_as_current_span("archi-db") as span:
+            span.set_attribute("db.statement", statement)
+
+        (exported,) = memory.get_finished_spans()
+        scrubbed = exported.attributes["db.statement"]
+
+        assert "0.044845741242170334" not in scrubbed
+        assert "the chunk text" not in scrubbed
+        assert "INSERT INTO document_chunks" in scrubbed
+        assert "ARRAY[?]" in scrubbed
+
+    def test_an_ordinary_number_is_left_alone(self):
+        """A number that is not a vector is an identifier or a limit."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+        statement = "SELECT sender FROM conversations WHERE id = 42 LIMIT 5;"
+
+        with tracer.start_as_current_span("SELECT") as span:
+            span.set_attribute("db.statement", statement)
+
+        (exported,) = memory.get_finished_spans()
+
+        assert exported.attributes["db.statement"] == statement
+
 
 TELEMETRY_HELPERS = frozenset({"init_telemetry", "instrument_flask_app"})
 

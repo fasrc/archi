@@ -163,6 +163,16 @@ _SQL_LITERAL = re.compile(
     re.DOTALL,
 )
 
+# An array of nothing but numbers, which in archi means one chunk embedding. The
+# ingest writes the vector inline: measured on the deployed check, one chunk insert
+# carried an 8388 character statement that was nearly all float array. The literal
+# rule cannot reach it, because a number is not a quoted string.
+#
+# An embedding is the chunk in another form, and it costs every ingest trace real
+# bytes. Arrays that are not all numbers are left alone, and so is a number standing
+# on its own — that one is an identifier or a limit.
+_SQL_NUMBER_ARRAY = re.compile(r"ARRAY\s*\[[\s,]*[-+0-9][-+0-9.eE,\s]*\]")
+
 # Free-text fields that can quote a URL. An exception message and a stack trace are
 # not attributes, so scrubbing only span.attributes lets the same secret out through
 # a different door.
@@ -477,8 +487,8 @@ def _scrub_text(value: str) -> str:
 
 
 def _scrub_statement(value: str) -> str:
-    """Replace every string literal in a SQL statement, and keep the shape."""
-    return _SQL_LITERAL.sub("'?'", value)
+    """Replace every string literal and every numeric array, and keep the shape."""
+    return _SQL_NUMBER_ARRAY.sub("ARRAY[?]", _SQL_LITERAL.sub("'?'", value))
 
 
 def _scrub_attributes(attributes, redact_content: bool = True):
