@@ -32,7 +32,7 @@ Standing notes for every task:
 
 ## 1. Classify a container endpoint
 
-- [ ] 1.1 Create `tests/unit/test_container_endpoint.py` with RED tests for a new pure
+- [x] 1.1 Create `tests/unit/test_container_endpoint.py` with RED tests for a new pure
       function `endpoint_is_local(endpoint)` in a new module
       `src/utils/container_endpoint.py`. Cases, one test each:
       `unix:///var/run/docker.sock` → `True`;
