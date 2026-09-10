@@ -127,6 +127,22 @@ routes to a local socket.
 `CONTAINER_HOST` is Podman's own variable and is classified independently. Podman does not
 consult Docker contexts, so no precedence question arises between them.
 
+**Confirmed at runtime**, because the CLI reference's environment-variable table states the
+opposite — that `DOCKER_CONTEXT` "overrides DOCKER_HOST env var and default context" — and
+review read it that way. Measured on Docker **29.7.2** in a throwaway `DOCKER_CONFIG`
+holding a real context `remotebox` at `tcp://127.0.0.1:19999`:
+
+| Environment | Endpoint dialed |
+| --- | --- |
+| `DOCKER_CONTEXT=remotebox` | `tcp://127.0.0.1:19999` — the context |
+| `DOCKER_CONTEXT=remotebox` and `DOCKER_HOST=tcp://127.0.0.1:9` | `tcp://127.0.0.1:9` — `DOCKER_HOST` |
+| `currentContext: remotebox` and `DOCKER_HOST=tcp://127.0.0.1:9` | `tcp://127.0.0.1:9` — `DOCKER_HOST` |
+
+A *nonexistent* `DOCKER_CONTEXT` does not even produce `context not found` while
+`DOCKER_HOST` is set, so the name is never resolved — matching the `cli.go` early return
+above. `docker context ls` describes the default context as "Current DOCKER_HOST based
+configuration", the same fact from the other side.
+
 ### 6. Every failure means "no evidence of a remote engine"
 
 The capture clause is absolute: it never raises and never fails a deploy. So the check
@@ -154,6 +170,59 @@ the sentinel comment at `:60-74` says "THREE". Both are corrected together.
 Cause 4 is not folded into cause 2. "Capture failed" sends an operator to debug
 `socket.getfqdn()` on a machine where nothing failed. The refusal is a decision the tool
 made, and the honest text says so.
+
+### 8. Podman's stored default connection is not read
+
+`podman system connection default` does set a default destination, and the store does
+carry it — measured on Podman **6.1.0**, an isolated `XDG_CONFIG_HOME` yields
+`podman-connections.json` =
+`{"Connection": {"Default": "remotebox", "Connections": {…}}, "Farm": {}}`. Review asked
+for `Connection.Default` to be resolved and classified when no environment variable names
+a connection. It is deliberately not.
+
+archi deploys with `podman compose`
+(`src/cli/managers/deployment_manager.py:29`), and `podman compose` ignores the stored
+default. With `remotebox` = `ssh://user@remote.example.com/run/podman/podman.sock` set as
+the default and neither `CONTAINER_CONNECTION` nor `CONTAINER_HOST` set:
+
+```
+$ podman --log-level=debug compose version
+… Executing compose provider (…/docker-compose version) with additional env
+  DOCKER_HOST=unix:///run/user/1000/podman/podman.sock …
+```
+
+The local socket, not the SSH destination. `podman --remote compose` does honour the
+stored default — it fails trying to reach `remote.example.com` — but archi never passes
+`--remote`, and `podman info` in local mode likewise reports the local host.
+
+Classifying the stored default would therefore refuse deployments that `podman compose`
+routes locally: the same false-refusal error decision 3 accepted a cost to avoid, and the
+one the `CONTAINER_CONNECTION`-outranks-`CONTAINER_HOST` rule exists to prevent. If archi
+grows a `--remote` podman path, or ships on a remote-only podman client, the stored default
+becomes reachable and must then be classified. It is reachable through no code path in the
+tree today.
+
+### 9. A stale context entry must not hide the selected one
+
+`_resolve_context_endpoint` globs every `contexts/meta/*/meta.json` and matches on `Name`
+(decision 4). Valid JSON is not necessarily an object: a stale `meta.json` holding `[]`
+parses cleanly, and the `.get("Name")` that follows raises `AttributeError` on a list. That
+escaped the per-file handler, reached the function's outer handler, and returned `None` for
+the **whole store** — which the caller reads as "no context configured", so a selected
+remote context went unseen and the CLI machine was stamped. Found in review; measured
+before the fix, with the stale entry visited first:
+
+```
+_resolve_context_endpoint()            -> None
+container_endpoint_is_provably_local() -> True     # remote context, stamped anyway
+```
+
+`pathlib.Path.glob` yields `os.scandir` order and does not sort, so whether the stale entry
+is visited before the selected one is filesystem luck — the defect appears and disappears
+by machine, which is worse than failing every time. Each parsed value is now checked with
+`isinstance(..., dict)` and an unreadable entry is skipped rather than ending the scan;
+`Endpoints` and `Endpoints.docker` get the same check, because they were read with `.get`
+too and had the identical shape problem one level down.
 
 ## Risks / Trade-offs
 

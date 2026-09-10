@@ -72,8 +72,22 @@ def _resolve_context_endpoint() -> str | None:
                 meta = json.loads(meta_path.read_text())
             except Exception:
                 continue
-            if meta.get("Name") == context_name:
-                return meta.get("Endpoints", {}).get("docker", {}).get("Host")
+            # Valid JSON is not necessarily an object: a stale `[]` parses fine and
+            # then raises on .get, which would escape to the outer handler and report
+            # "no context" for the whole store — hiding the selected remote context
+            # behind an unrelated entry. Docker addresses the selected context
+            # independently of stale siblings, so skip what cannot be read and keep
+            # scanning. glob() yields os.scandir order, so which entry comes first is
+            # filesystem luck; without this, the bug appears and disappears by machine.
+            if not isinstance(meta, dict) or meta.get("Name") != context_name:
+                continue
+            endpoints = meta.get("Endpoints")
+            if not isinstance(endpoints, dict):
+                return None
+            docker_endpoint = endpoints.get("docker")
+            if not isinstance(docker_endpoint, dict):
+                return None
+            return docker_endpoint.get("Host")
         return None
     except Exception:
         return None

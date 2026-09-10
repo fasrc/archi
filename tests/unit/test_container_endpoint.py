@@ -1,4 +1,5 @@
 import json
+import pathlib
 
 import pytest
 
@@ -402,6 +403,135 @@ def test_non_string_context_endpoint_is_not_local(monkeypatch, tmp_path):
 def test_non_string_endpoint_is_not_local():
     assert endpoint_is_local(1) is False
     assert endpoint_is_local(["unix:///var/run/docker.sock"]) is False
+
+
+def test_unrelated_non_object_meta_json_does_not_hide_a_remote_context(
+    monkeypatch, tmp_path
+):
+    """A stale sibling holding valid non-object JSON must not abort the scan.
+
+    `json.loads("[]")` succeeds, so the per-file guard passes it through, and the
+    `.get("Name")` that follows raises AttributeError on a list. That escapes to the
+    function's outer handler, which returns None -- and a None endpoint is read by the
+    caller as "no context configured", so the selected remote context is never seen
+    and the CLI machine gets stamped as the deployment host.
+
+    Docker addresses the selected context independently of an unrelated stale entry,
+    so this must refuse. `pathlib.Path.glob` yields os.scandir order and does not sort,
+    which makes the visit order filesystem luck; the order is pinned here so the test
+    cannot pass by finding the good entry first.
+    """
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotebox")
+    meta_root = tmp_path / ".docker" / "contexts" / "meta"
+
+    stale = meta_root / "stale"
+    stale.mkdir(parents=True)
+    (stale / "meta.json").write_text("[]")
+
+    selected = meta_root / "selected"
+    selected.mkdir(parents=True)
+    (selected / "meta.json").write_text(
+        json.dumps(
+            {
+                "Name": "remotebox",
+                "Endpoints": {"docker": {"Host": "ssh://user@remote.example.com"}},
+            }
+        )
+    )
+
+    ordered = [stale / "meta.json", selected / "meta.json"]
+    real_glob = pathlib.Path.glob
+
+    def _stale_first(self, pattern, *args, **kwargs):
+        if pattern == "contexts/meta/*/meta.json":
+            return iter(ordered)
+        return real_glob(self, pattern, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "glob", _stale_first)
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_non_object_endpoint_metadata_does_not_raise(monkeypatch, tmp_path):
+    """The nested lookups have the same shape problem as the top-level one.
+
+    `Endpoints` and `Endpoints.docker` are read with `.get` too, so valid JSON that
+    puts a list at either level would raise inside the loop and fail open the same way.
+    """
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotebox")
+    meta_dir = tmp_path / ".docker" / "contexts" / "meta" / "abc"
+    meta_dir.mkdir(parents=True)
+    (meta_dir / "meta.json").write_text(
+        json.dumps({"Name": "remotebox", "Endpoints": ["not", "a", "mapping"]})
+    )
+    # No endpoint can be read, and no exception escapes; with nothing else configured
+    # the absent endpoint is not evidence of a remote engine.
+    assert container_endpoint_is_provably_local() is True
+
+
+def test_non_object_docker_endpoint_does_not_raise(monkeypatch, tmp_path):
+    """`Endpoints.docker` is read with `.get` too and needs the same guard."""
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotebox")
+    meta_dir = tmp_path / ".docker" / "contexts" / "meta" / "abc"
+    meta_dir.mkdir(parents=True)
+    (meta_dir / "meta.json").write_text(
+        json.dumps({"Name": "remotebox", "Endpoints": {"docker": ["nope"]}})
+    )
+    assert container_endpoint_is_provably_local() is True
+
+
+def test_unparseable_sibling_meta_json_does_not_hide_a_remote_context(
+    monkeypatch, tmp_path
+):
+    """A sibling that is not JSON at all is skipped, not fatal to the scan.
+
+    Same failure shape as the non-object case, but caught one branch earlier. Pinned
+    separately because the two are guarded by different lines.
+    """
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotebox")
+    meta_root = tmp_path / ".docker" / "contexts" / "meta"
+
+    stale = meta_root / "stale"
+    stale.mkdir(parents=True)
+    (stale / "meta.json").write_text("not valid json {{{{")
+
+    selected = meta_root / "selected"
+    selected.mkdir(parents=True)
+    (selected / "meta.json").write_text(
+        json.dumps(
+            {
+                "Name": "remotebox",
+                "Endpoints": {"docker": {"Host": "ssh://user@remote.example.com"}},
+            }
+        )
+    )
+
+    ordered = [stale / "meta.json", selected / "meta.json"]
+    real_glob = pathlib.Path.glob
+
+    def _stale_first(self, pattern, *args, **kwargs):
+        if pattern == "contexts/meta/*/meta.json":
+            return iter(ordered)
+        return real_glob(self, pattern, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "glob", _stale_first)
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_a_raising_context_store_is_no_evidence_of_a_remote_engine(monkeypatch):
+    """The outer handler is the never-raise backstop and must stay reachable.
+
+    Every inner path is guarded now, so nothing in the loop is expected to raise. An
+    unreadable store still must not abort a deploy: the spec says an unresolvable
+    configuration is not evidence of a remote engine, because Docker falls back to the
+    local default context.
+    """
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotebox")
+
+    def _explode(self, pattern, *args, **kwargs):
+        raise OSError("context store unreadable")
+
+    monkeypatch.setattr(pathlib.Path, "glob", _explode)
+    assert container_endpoint_is_provably_local() is True
 
 
 def test_non_string_podman_connection_uri_is_not_local(monkeypatch, tmp_path):

@@ -207,3 +207,43 @@ Standing notes for every task:
       PR with `gh pr create --repo fasrc/archi --base dev`, and put `closes #442` in the
       PR **body**; a closing keyword in the title does not link the issue. Then stop. Do
       not merge.
+
+## 4. Review rounds
+
+- [x] 4.1 Four review findings on PR #455, all on `src/utils/container_endpoint.py`.
+      **One taken, three declined on measurement.** Reasoning recorded as design
+      decisions 5 (addendum), 8, and 9; the measurements are reproduced there so a later
+      reader does not have to re-derive them.
+
+      **Taken — a stale context entry hid the selected one.** A `meta.json` holding valid
+      non-object JSON (`[]`) parsed cleanly and then raised `AttributeError` on
+      `.get("Name")`, escaping to the outer handler, which returned `None` for the whole
+      store. The caller reads a `None` endpoint as "no context configured", so a selected
+      **remote** context went unseen and the CLI machine was stamped — fail-open, in the
+      helper whose entire job is to fail closed. `pathlib.Path.glob` does not sort, so it
+      bit only when the stale entry happened to be visited first. Every parsed value is
+      now `isinstance`-checked and an unreadable entry is skipped instead of ending the
+      scan; `Endpoints` and `Endpoints.docker` got the same guard, one level down. Five
+      tests added, covering the non-object sibling, the unparseable sibling, both nested
+      shapes, and the outer never-raise backstop. `test_container_endpoint.py` 49 -> 52
+      collected before the coverage additions, 52 after.
+
+      **Declined — "`DOCKER_CONTEXT` should outrank `DOCKER_HOST`."** The CLI reference's
+      environment-variable table does say so, and it does not match the binary. Measured
+      on Docker 29.7.2: with both set, the endpoint dialed is `DOCKER_HOST`, and a
+      nonexistent `DOCKER_CONTEXT` does not even raise `context not found` — the name is
+      never resolved. That matches the `cli.go` early return already cited in decision 5.
+      The implemented precedence and `test_docker_host_wins_over_tcp_context` are correct.
+
+      **Declined — "an empty-but-set `DOCKER_HOST` has the same problem."** It does not.
+      The branch tests `docker_host.strip()`, so empty and whitespace values fall through
+      to the context check; two tests already pin it.
+
+      **Declined (twice, same finding) — "honor Podman's stored default connection."** The
+      store does carry `Connection.Default` (measured, Podman 6.1.0), but archi deploys
+      with `podman compose` (`src/cli/managers/deployment_manager.py:29`), which ignores
+      it and exports `DOCKER_HOST=unix:///run/user/1000/podman/podman.sock` even with a
+      remote SSH connection set as the default. Classifying it would refuse deployments
+      podman routes locally — the false-refusal error decision 3 paid a cost to avoid.
+      Reachable only through `podman --remote`, which archi never passes; decision 8
+      records what would have to change first.
