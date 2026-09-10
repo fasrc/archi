@@ -1189,9 +1189,7 @@ class TestTheDatabaseStatementIsNotAContentChannel:
         as well as the quote, so the same rule reads it correctly."""
         memory, provider = _recording_provider()
         tracer = provider.get_tracer("test")
-        statement = (
-            "INSERT INTO t VALUES ('both \\\\ and ''quote'' together', 'next')"
-        )
+        statement = "INSERT INTO t VALUES ('both \\\\ and ''quote'' together', 'next')"
 
         with tracer.start_as_current_span("INSERT") as span:
             span.set_attribute("db.statement", statement)
