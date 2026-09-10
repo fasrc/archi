@@ -1402,7 +1402,7 @@ class TestTheDatabaseStatementIsNotAContentChannel:
         with tracer.start_as_current_span("archi-db") as span:
             span.set_attribute(
                 "db.statement",
-                'INSERT INTO conversations VALUES (\'he said "hello there"\')',
+                "INSERT INTO conversations VALUES ('he said \"hello there\"')",
             )
 
         (exported,) = memory.get_finished_spans()
