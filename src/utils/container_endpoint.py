@@ -9,6 +9,7 @@ A presence check (``bool(DOCKER_HOST)``) is wrong because FASRC uses
 produces a non-empty, non-remote value.
 """
 
+import os
 import re
 
 _URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
@@ -27,3 +28,13 @@ def endpoint_is_local(endpoint: str | None) -> bool:
         return False
     # No URI scheme — treat as a bare filesystem path, which is local.
     return True
+
+
+def container_endpoint_is_provably_local() -> bool:
+    """Return True when every container endpoint variable points to a local engine.
+
+    Checks DOCKER_HOST and CONTAINER_HOST; either refusing means not provably local.
+    """
+    return endpoint_is_local(os.environ.get("DOCKER_HOST")) and endpoint_is_local(
+        os.environ.get("CONTAINER_HOST")
+    )
