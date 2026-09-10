@@ -1154,6 +1154,44 @@ class TestTheDatabaseStatementIsNotAContentChannel:
 
         assert "the whole answer" not in statement
 
+    def test_a_dollar_tag_that_is_not_ascii_is_still_a_dollar_tag(self):
+        """PostgreSQL tags follow unquoted-identifier rules, which are not ASCII.
+
+        An identifier may hold any letter, not only ``[A-Za-z_]``, so ``$é$…$é$``
+        is a valid dollar-quoted string. archi writes no dollar-quoted SQL today, so
+        nothing reaches this path from this codebase — but that is the same argument
+        that left ``db.statement`` unscrubbed until a deployment proved otherwise,
+        and it is worth exactly as much here.
+        """
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("archi-db") as span:
+            span.set_attribute(
+                "db.statement",
+                "INSERT INTO conversations VALUES ($é$the whole answer$é$)",
+            )
+
+        (exported,) = memory.get_finished_spans()
+        statement = exported.attributes["db.statement"]
+
+        assert "the whole answer" not in statement
+        assert "INSERT INTO conversations VALUES" in statement
+
+    def test_a_numbered_placeholder_is_not_read_as_a_dollar_tag(self):
+        """``$1`` is a bound parameter. A tag may not start with a digit, so the
+        rule must not treat ``$1 … $1`` as a quoted body and eat the predicate."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+        statement = "SELECT sender FROM conversations WHERE id = $1 AND role = $2"
+
+        with tracer.start_as_current_span("SELECT") as span:
+            span.set_attribute("db.statement", statement)
+
+        (exported,) = memory.get_finished_spans()
+
+        assert exported.attributes["db.statement"] == statement
+
     def test_the_new_semantic_convention_key_is_covered(self):
         """Newer instrumentation writes ``db.query.text`` for the same thing."""
         memory, provider = _recording_provider()

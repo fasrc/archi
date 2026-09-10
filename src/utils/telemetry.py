@@ -156,8 +156,13 @@ _STATEMENT_ATTRIBUTES = frozenset({"db.statement", "db.query.text"})
 # body can hold anything including quotes; an E'' string escapes with a backslash; an
 # ordinary string escapes a quote by doubling it. A rule that knew only the last form
 # would stop early on the other two and leave the rest of the row in the clear.
+#
+# The dollar tag follows unquoted-identifier rules, which are not ASCII: any letter
+# will do. [^\W\d] is a word character that is not a digit, which is a letter or an
+# underscore in any script, and rejecting a leading digit is what keeps a bound
+# parameter like $1 from being read as the start of a quoted body.
 _SQL_LITERAL = re.compile(
-    r"\$(?P<tag>[A-Za-z_][A-Za-z0-9_]*|)\$.*?\$(?P=tag)\$"
+    r"\$(?P<tag>[^\W\d]\w*|)\$.*?\$(?P=tag)\$"
     r"|[Ee]'(?:[^'\\]|\\.|'')*'"
     r"|'(?:[^']|'')*'",
     re.DOTALL,

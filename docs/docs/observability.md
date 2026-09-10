@@ -117,6 +117,15 @@ version of this page said the psycopg2 instrumentor already gave that for free. 
 deployed check refuted it: one streamed chat request exported a user's question and
 archi's whole reply inside `db.statement`. Rule 7 exists because of that measurement.
 
+**What rule 7 costs you.** Every literal goes, not only the ones carrying a
+conversation. A predicate reads `status = '?'`, so a trace alone will not tell you
+which status a query filtered on, and the same is true of interval values, regular
+expressions and JSON paths written inline. That is deliberate: no rule can tell a
+literal that holds a status from one that holds an answer, and archi would rather
+lose the status. Two ways to get the value back — set
+`ARCHI_OTEL_CAPTURE_CONTENT=true` for a bounded investigation, or read the row in the
+database, which is where it actually lives.
+
 ## Known gaps
 
 **Streamed `/v1/chat/completions` requests do not produce one trace.**
