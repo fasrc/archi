@@ -172,6 +172,45 @@ _CREDENTIAL_PATH_MARKERS = ("/hooks/", "/services/")
 # limit, never the conversation, and losing them would cost real debugging value.
 _STATEMENT_ATTRIBUTES = frozenset({"db.statement", "db.query.text"})
 
+# Captured HTTP headers arrive as `http.request.header.<name>` /
+# `http.response.header.<name>`, and the instrumentations lower-case the name and
+# replace `-` with `_`. Only present at all when an operator sets
+# OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST and friends — but when
+# they do, these carry credentials, and a credential is not model content, so it is
+# scrubbed regardless of ARCHI_OTEL_CAPTURE_CONTENT. Same reasoning as `url.query`.
+_HEADER_ATTRIBUTE_PREFIXES = ("http.request.header.", "http.response.header.")
+_SENSITIVE_HEADER_MARKERS = (
+    "authorization",
+    "auth_token",
+    "authtoken",
+    "cookie",
+    "api_key",
+    "apikey",
+    "secret",
+    "token",
+    "password",
+    "session",
+    "credential",
+    "x_amz_security",
+    "x_csrf",
+    "x_xsrf",
+)
+
+
+def _is_sensitive_header(key: str) -> bool:
+    """True for a captured-header attribute whose name suggests a credential.
+
+    Substring matching, not an exact set: header names vary by deployment
+    (`x-api-key`, `x-auth-token`, `proxy-authorization`) and a name this misses
+    leaks a credential, while a name it over-matches costs one redacted attribute
+    nobody was reading. The asymmetry decides the rule.
+    """
+    lowered = key.lower()
+    if not lowered.startswith(_HEADER_ATTRIBUTE_PREFIXES):
+        return False
+    return any(marker in lowered for marker in _SENSITIVE_HEADER_MARKERS)
+
+
 # Three ways Postgres writes a string, in the order they must be tried. A dollar-quoted
 # body can hold anything including quotes; an E'' string escapes with a backslash; an
 # ordinary string escapes a quote by doubling it. A rule that knew only the last form
@@ -637,6 +676,17 @@ def _scrub_attributes(attributes, redact_content: bool = True):
     changed = False
     for key, value in attributes.items():
         if key in _QUERY_ATTRIBUTES:
+            changed = True
+            continue
+        if _is_sensitive_header(key):
+            # Replaced rather than dropped: a reader still needs to know the header
+            # was present. The value is a sequence in practice, so keep the shape --
+            # a consumer expecting a list must not get a bare string.
+            cleaned[key] = (
+                tuple(REDACTED_VALUE for _ in value)
+                if isinstance(value, (list, tuple))
+                else REDACTED_VALUE
+            )
             changed = True
             continue
         if key in _URL_ATTRIBUTES and isinstance(value, str):

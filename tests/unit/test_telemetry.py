@@ -236,6 +236,80 @@ class TestQueryStringsNeverLeaveTheProcess:
         assert "s3cret" not in str(dict(attributes))
         assert "payroll" not in str(dict(attributes))
 
+    def test_captured_authentication_headers_are_redacted(self):
+        """A captured `authorization` header is a credential, so it comes off always.
+
+        The OpenTelemetry HTTP instrumentations capture request and response headers
+        when `OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST` and friends
+        name them, and they store the values as sequences under
+        `http.request.header.<name>`. Nothing in the scrub recognised those keys, so
+        an operator who turned header capture on exported bearer tokens and session
+        cookies verbatim -- with `ARCHI_OTEL_CAPTURE_CONTENT` off, because a
+        credential is not model content and was never gated by that switch.
+
+        Upstream has `OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SANITIZE_FIELDS`, but
+        it is a second setting an operator has to get right independently. This module
+        promises the export carries no secret, so the promise is kept here.
+        """
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("GET /api/chat") as span:
+            # Sequence values, which is what the instrumentors actually write.
+            span.set_attribute(
+                "http.request.header.authorization", ("Bearer sk-live-t0ps3cret",)
+            )
+            span.set_attribute("http.request.header.cookie", ("session=abc123",))
+            span.set_attribute(
+                "http.response.header.set_cookie", ("session=def456; HttpOnly",)
+            )
+            span.set_attribute("http.request.header.x_api_key", ("key-9f8e7d",))
+            span.set_attribute(
+                "http.request.header.proxy_authorization", ("Basic Zm9v",)
+            )
+            # A scalar spelling must be covered too.
+            span.set_attribute(
+                "http.request.header.authorization_scalar", "Bearer nope"
+            )
+            # An innocuous header must survive, or the span stops being useful.
+            span.set_attribute(
+                "http.request.header.content_type", ("application/json",)
+            )
+            span.set_attribute("http.method", "POST")
+
+        (exported,) = memory.get_finished_spans()
+        attributes = exported.attributes
+        rendered = str(dict(attributes))
+
+        for secret in (
+            "sk-live-t0ps3cret",
+            "abc123",
+            "def456",
+            "key-9f8e7d",
+            "Zm9v",
+            "Bearer nope",
+        ):
+            assert secret not in rendered, f"{secret!r} reached the exporter"
+
+        assert attributes["http.request.header.content_type"] == ("application/json",)
+        assert attributes["http.method"] == "POST"
+
+    def test_authentication_headers_are_redacted_even_with_content_capture_on(
+        self, monkeypatch
+    ):
+        """Turning content capture on is consent to export prompts, not credentials."""
+        monkeypatch.setenv(CONTENT, "1")
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("GET /api/chat") as span:
+            span.set_attribute(
+                "http.request.header.authorization", ("Bearer sk-live-t0ps3cret",)
+            )
+
+        (exported,) = memory.get_finished_spans()
+        assert "sk-live-t0ps3cret" not in str(dict(exported.attributes))
+
     def test_the_rest_of_the_span_survives_the_scrub(self):
         """Rebuilding a span must not quietly drop what a reader needs."""
         memory, provider = _recording_provider()

@@ -146,15 +146,26 @@ database, which is where it actually lives.
 
 ## Known gaps
 
-**Streamed `/v1/chat/completions` requests do not produce one trace.**
-`_streaming_response()` returns its generator without `stream_with_context`, so Flask
-ends the request, and the server span, before the generator runs. The agent spans for
-that request become unparented roots and their log lines carry a different trace ID.
-The chat UI path does not have this problem: it wraps its generator. Tracked as
-issue #454, and not fixed here because it changes the request-context lifetime of a
-user-facing endpoint.
-
 **config-seed is not traced.** See the service names section above.
+
+## Captured HTTP headers
+
+The OpenTelemetry HTTP instrumentations can record request and response headers as
+span attributes, and archi does not turn that on. If you set
+`OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST` (or the response and client
+variants), the headers you name appear as `http.request.header.<name>`.
+
+Header names that look like credentials are redacted before export —
+`authorization`, `cookie`, `set-cookie`, `proxy-authorization`, anything containing
+`token`, `api_key`, `secret`, `password`, `session` or `credential`. The value is
+replaced with `__REDACTED__`, and the attribute stays so a reader can still see the
+header was present.
+
+That redaction is **not** governed by `ARCHI_OTEL_CAPTURE_CONTENT`. A bearer token is
+not model content, so turning content capture on for an investigation does not release
+it — the same rule query strings follow. Matching is on the header name as a substring,
+so an unusual name is more likely to be redacted than missed; if a header you needed
+comes back `__REDACTED__`, read it at its source rather than widening the rule.
 
 ## Failure behaviour
 
