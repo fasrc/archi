@@ -20,6 +20,7 @@ from src.utils.config_service import ConfigService
 from src.utils.env import read_secret
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
+from src.utils.telemetry import instrument_flask_app
 
 logger = get_logger(__name__)
 
@@ -191,6 +192,7 @@ def main() -> None:
         template_folder=data_manager_cfg.get("template_folder"),
         static_folder=data_manager_cfg.get("static_folder"),
     )
+    instrument_flask_app(app)
 
     from src.utils.ingestion_status import build_ingestion_helpers
 

@@ -22,10 +22,12 @@ plan decision can rest on evidence.
   OpenTelemetry suite, dependencies in **four** files with one base-image rebuild, one
   default-off bootstrap module at five seams, a receiver that stores traces, and
   redaction as a code default.
-- The base requirements pin `protobuf==4.25.8`. Two coherent choices exist. Pin the
-  OpenTelemetry suite at 1.27.0, which accepts that protobuf. Or bump protobuf to 7.x
-  and take the current 1.44.0 suite. An unpinned install picks neither: pip pairs the
-  1.44 SDK with a December 2022 exporter.
+- The base requirements pin `protobuf==4.25.8`. Two options looked coherent on
+  paper. Only one of them installs. **Correction, 2026-09-09: option A is dead** —
+  see 2.2. The suite that accepts protobuf 4 cannot import under a current
+  setuptools, so protobuf must move to 7.x and the suite to 1.44.0 / 0.65b0. An
+  unpinned install picks neither: pip pairs the 1.44 SDK with a December 2022
+  exporter.
 - Recommendation: traces first, exporter endpoint from environment variables, default
   off, fail open, content hidden unless a second flag turns it on. Metrics and a
   collector come later.
@@ -140,6 +142,29 @@ Two coherent choices:
   before it lands.
 
 Either way the suite must be pinned. Never leave it unpinned.
+
+**Correction, 2026-09-09. Option A is not installable, and this section recommended
+it.** The table above is a resolver result, and Appendix A already says a dry run
+proves only that the resolver is satisfied. A runtime probe closed that gap and
+refuted option A. `opentelemetry-instrumentation==0.48b0` imports `pkg_resources` at
+module scope (`dependencies.py:4`), and setuptools 82 removed that module. The package
+declares only `setuptools>=16.0`, so a fresh install takes the newest setuptools and
+every instrumentor import raises `ModuleNotFoundError`. Measured twice: in the conda
+`archi` environment at setuptools 82.0.1, and in a clean virtual environment that
+resolved setuptools 84.0.0. Under option A, archi would fail open on every start and
+emit nothing.
+
+No version between the two options exists. `opentelemetry-proto` needs protobuf 5 or
+newer from 1.28 onward, so 1.27.0 is the last core release that accepts protobuf 4.
+`opentelemetry-instrumentation` dropped `pkg_resources` in 0.50b0, which pairs with
+core 1.29.0. The ranges do not overlap. A working OTLP exporter therefore requires
+protobuf 5 or newer, which makes option B the only choice and the protobuf bump a
+prerequisite rather than a preference.
+
+The same probe installed all nine instrumentors and
+`openinference-instrumentation-langchain==0.1.74` at the 1.44.0 / 0.65b0 suite under
+setuptools 84 and imported every one. The implementation is
+`openspec/changes/add-opentelemetry-tracing/`.
 
 ### 2.3 Declare dependencies in four files
 
