@@ -354,7 +354,8 @@ services:
       VERBOSITY: {{ verbosity }}
     # CAUTION: this is the grader's SECOND `environment:` key. YAML keeps the last
     # one, so the block above -- PGHOST, PGPORT, PGDATABASE, PGUSER, PG_PASSWORD --
-    # is discarded when the compose file is parsed. That is a pre-existing defect
+    # is discarded when the compose file is parsed. That is a pre-existing defect,
+    # tracked as fasrc/archi#452,
     # and it is not fixed here, because restoring those variables changes how the
     # grader reaches Postgres and needs its own change and its own deploy check.
     # OTEL_SERVICE_NAME sits in this block because this is the block that survives.
