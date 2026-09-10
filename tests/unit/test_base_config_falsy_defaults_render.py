@@ -255,3 +255,23 @@ def test_absent_renders_default(input_path, rendered_path, default, absent_kwarg
 def test_none_renders_default(input_path, rendered_path, default, absent_kwargs):
     cfg = _render(**_expand(input_path, None))
     assert _get(cfg, rendered_path) is default
+
+
+def test_numeric_zero_not_replaced_by_default():
+    # base_source_depth: explicit 0 must render as integer 0, not the default 1, not False
+    cfg = _render(**_expand("data_manager.sources.links.base_source_depth", 0))
+    val = _get(cfg, "data_manager.sources.links.base_source_depth")
+    assert val == 0
+    assert val is not False
+    # absent -> default 1
+    cfg_absent = _render()
+    assert _get(cfg_absent, "data_manager.sources.links.base_source_depth") == 1
+
+    # sitemap.max_pages: explicit 0 must render as integer 0, not the default 20000, not False
+    cfg2 = _render(**_expand("data_manager.sources.links.sitemap.max_pages", 0))
+    val2 = _get(cfg2, "data_manager.sources.links.sitemap.max_pages")
+    assert val2 == 0
+    assert val2 is not False
+    # absent -> default 20000
+    cfg_absent2 = _render()
+    assert _get(cfg_absent2, "data_manager.sources.links.sitemap.max_pages") == 20000

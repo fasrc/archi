@@ -304,7 +304,8 @@ data_manager:
         - {{ path }}
         {%- endfor %}
     links:
-      base_source_depth: {{ data_manager.sources.links.base_source_depth | default(1, true) }}
+      {%- set v_base_source_depth = data_manager.sources.links.base_source_depth %}
+      base_source_depth: {{ v_base_source_depth if v_base_source_depth is defined and v_base_source_depth is not none else 1 }}
       max_pages: {{ data_manager.sources.links.max_pages | default(null, true) }}
       {%- set v_links_enabled = data_manager.sources.links.enabled %}
       enabled: {{ v_links_enabled if v_links_enabled is defined and v_links_enabled is not none else true }}
@@ -340,7 +341,8 @@ data_manager:
           {%- endif %}
         {%- set sitemap_min = data_manager.sources.links.sitemap.min_pages %}
         min_pages: {{ sitemap_min if sitemap_min is defined and sitemap_min is not none else 1 }}
-        max_pages: {{ data_manager.sources.links.sitemap.max_pages | default(20000, true) }}
+        {%- set sitemap_max = data_manager.sources.links.sitemap.max_pages %}
+        max_pages: {{ sitemap_max if sitemap_max is defined and sitemap_max is not none else 20000 }}
       selenium_scraper:
         enabled: {{ data_manager.sources.links.selenium_scraper.selenium_scraper.enabled | default(false, True) }}
         visible: {{ data_manager.sources.links.selenium_scraper.selenium_scraper.visible | default(false, true) }}

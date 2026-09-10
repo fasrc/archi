@@ -109,7 +109,7 @@ Two traps in that table:
 
 ## 4. The two numeric bounds where zero is meaningful
 
-- [ ] 4.1 `model: sonnet` — RED test, four assertions:
+- [x] 4.1 `model: sonnet` — RED test, four assertions:
       `data_manager.sources.links.base_source_depth: 0` renders the integer `0` and unset
       renders `1` (`:299`); `data_manager.sources.links.sitemap.max_pages: 0` renders `0`
       and unset renders `20000` (`:332`). Assert `== 0` **and** `is not False`, because
