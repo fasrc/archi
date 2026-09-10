@@ -73,7 +73,7 @@ Two traps in that table:
 
 ## 1. The three keys the issue proves
 
-- [ ] 1.1 `model: opus` — Create `tests/unit/test_base_config_falsy_defaults_render.py`.
+- [x] 1.1 `model: opus` — Create `tests/unit/test_base_config_falsy_defaults_render.py`.
       Copy the render harness shape from `tests/unit/test_base_config_sitemap_render.py:15-24`
       (`PackageLoader("src.cli")`, `select_autoescape()`, `ChainableUndefined`,
       `yaml.safe_load`) — do not re-implement rendering. Add a helper that expands a dotted
