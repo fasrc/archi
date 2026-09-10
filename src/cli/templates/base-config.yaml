@@ -161,7 +161,8 @@ services:
   data_manager:
     auth:
       enabled: {{ services.data_manager.auth.enabled | default(false) }}
-    enabled: {{ services.data_manager.enabled | default(true, true) }}
+    {%- set v_svc_dm_enabled = services.data_manager.enabled %}
+    enabled: {{ v_svc_dm_enabled if v_svc_dm_enabled is defined and v_svc_dm_enabled is not none else true }}
     port: {{ services.data_manager.port | default(7871, true) }}
     external_port: {{ services.data_manager.external_port | default(7871, true) }}
     host: {{ services.data_manager.host | default("0.0.0.0", true) }}
@@ -342,12 +343,13 @@ data_manager:
             kwargs:
               headless:  {{ data_manager.sources.links.selenium_scraper.selenium_class_map.CERNSSOScraper.kwargs.headless | default(true, true) }}
     git:
-      enabled: {{ data_manager.sources.git.enabled | default(true, true) }}
+      {%- set v_git_enabled = data_manager.sources.git.enabled %}
+      enabled: {{ v_git_enabled if v_git_enabled is defined and v_git_enabled is not none else true }}
       visible: {{ data_manager.sources.git.visible | default(true, true) }}
       schedule: '{{ data_manager.sources.git.schedule | default("", true) }}'
       {% if data_manager.sources.git.code_suffixes is defined and data_manager.sources.git.code_suffixes is sequence and data_manager.sources.git.code_suffixes is not string -%}
       code_suffixes: {{ data_manager.sources.git.code_suffixes }}
-      {% endif -%}
+      {% endif %}
     sso:
       enabled: {{ data_manager.sources.sso.enabled | default(true, true) }}
       visible: {{ data_manager.sources.sso.visible | default(true, true) }}
@@ -423,7 +425,8 @@ data_manager:
     # lists, tables, and links survive into chunks, and the persisted file becomes
     # .md (loaded via TextLoader instead of BSHTMLLoader).
     html_to_markdown:
-      enabled: {{ data_manager.processing.html_to_markdown.enabled | default(true, true) }}
+      {%- set v_html_md_enabled = data_manager.processing.html_to_markdown.enabled %}
+      enabled: {{ v_html_md_enabled if v_html_md_enabled is defined and v_html_md_enabled is not none else true }}
     # Optional LLM categorization. OFF by default (one LLM call per document). When
     # enabled, each document is tagged with one label from `categories`, stored under
     # metadata.llm_category (a key distinct from any source-provided `category`). The
