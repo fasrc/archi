@@ -211,3 +211,54 @@ def test_huggingface_is_not_a_system_under_test_provider():
     assert "huggingface" not in {member.value for member in ProviderType}
     with pytest.raises(ValueError, match="Invalid provider type 'huggingface'"):
         get_model("huggingface", "qwen-x", {})
+
+
+def test_local_openai_compat_judge_without_a_url_keeps_the_provider_default(
+    monkeypatch,
+):
+    """A missing judge URL must not blank out the endpoint.
+
+    Round 1 passed `base_url` as a keyword so it would outrank OLLAMA_HOST. An
+    unset URL made that keyword `None`, which lands last in ChatOpenAI's kwargs
+    and erases LocalProvider's own local default — sending judge prompts to the
+    public OpenAI endpoint. The keyword is an override, so it is only supplied
+    when there is something to override with.
+    """
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    bench = _bench(
+        {
+            "provider": "openai",
+            "model": "gpt-x",
+            "mode_settings": {
+                "ragas_settings": {
+                    "evaluator_provider": "local",
+                    "evaluator_model": "judge-x",
+                    "evaluator_provider_mode": "openai_compat",
+                }
+            },
+        }
+    )
+    llm = bench.get_ragas_llm_evaluator()
+    assert llm.openai_api_base == "http://localhost:11434"
+
+
+def test_local_openai_compat_judge_without_a_url_still_inherits_ollama_host(
+    monkeypatch,
+):
+    """With no judge URL configured, the exported host is the only signal left."""
+    monkeypatch.setenv("OLLAMA_HOST", "http://sut-host:9000/v1")
+    bench = _bench(
+        {
+            "provider": "openai",
+            "model": "gpt-x",
+            "mode_settings": {
+                "ragas_settings": {
+                    "evaluator_provider": "local",
+                    "evaluator_model": "judge-x",
+                    "evaluator_provider_mode": "openai_compat",
+                }
+            },
+        }
+    )
+    llm = bench.get_ragas_llm_evaluator()
+    assert llm.openai_api_base == "http://sut-host:9000/v1"

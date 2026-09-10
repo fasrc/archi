@@ -1401,11 +1401,16 @@ class Benchmarker:
                 if resolve_local_mode(ollama_url, explicit_mode) == "openai_compat":
                     # base_url twice: see the huggingface arm below — OLLAMA_HOST
                     # would otherwise redirect this judge to the system under test.
+                    # Only when there is one, though: the keyword lands last, so a
+                    # None would erase the provider's own local default and send the
+                    # judge to the public OpenAI endpoint. An override with nothing
+                    # to override with is not an override.
+                    override = {"base_url": ollama_url} if ollama_url else {}
                     return get_model(
                         "local",
                         model_name,
                         {"base_url": ollama_url, "mode": "openai_compat"},
-                        base_url=ollama_url,
+                        **override,
                     )
                 from langchain_ollama import ChatOllama
 

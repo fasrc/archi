@@ -91,6 +91,13 @@ second outcome is the dangerous one, because it produces numbers rather than an 
 The endpoint SHALL therefore be supplied where the provider seam cannot rewrite it. This
 applies to every arm that builds its client through that seam, not only to `huggingface`.
 
+An override SHALL be supplied only when an endpoint was resolved. Where no judge URL and no
+system-under-test URL are configured, the arm SHALL keep whatever endpoint the provider
+selects. Overriding with an empty value would erase the provider's local default and leave
+the client pointing at the public OpenAI endpoint, which is a worse outcome than the
+redirection this requirement exists to prevent: the `huggingface` arm cannot reach that
+state because it resolves a default of its own first, but the `local` arm can.
+
 #### Scenario: A configured judge endpoint outranks the exported system-under-test host
 
 - **WHEN** `OLLAMA_HOST` names the system-under-test endpoint and `evaluator_ollama_url` names a different judge endpoint
@@ -100,3 +107,9 @@ applies to every arm that builds its client through that seam, not only to `hugg
 
 - **WHEN** `OLLAMA_HOST` names the system-under-test endpoint and no judge URL and no system-under-test URL are configured
 - **THEN** the returned client's base URL is `http://localhost:8000/v1`
+
+#### Scenario: An arm with no default of its own keeps the provider's endpoint
+
+- **WHEN** the `local` arm resolves to `openai_compat` and no judge URL and no system-under-test URL are configured
+- **THEN** the returned client's base URL is the one the provider selects
+- **AND** the base URL is never empty
