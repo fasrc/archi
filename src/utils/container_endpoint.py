@@ -28,6 +28,10 @@ _URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 # context configured" and is not evidence of a remote engine; this one is.
 _AMBIGUOUS = object()
 
+# Collected for a matching context entry whose endpoint metadata cannot be read, so
+# the scan can carry on to its siblings instead of ending on it.
+_UNREADABLE_ENDPOINT = object()
+
 
 def endpoint_is_local(endpoint: str | None) -> bool:
     """Return True when *endpoint* is provably local (or absent).
@@ -110,16 +114,33 @@ def _resolve_context_endpoint() -> str | None | object:
             # filesystem luck; without this, the bug appears and disappears by machine.
             if not isinstance(meta, dict) or meta.get("Name") != context_name:
                 continue
+            # Unreadable endpoint metadata is COLLECTED, not returned on. An early
+            # return here discarded any match already found and stopped the scan, so
+            # a stale same-name entry visited first hid a valid remote sibling and
+            # the caller read "no context configured" — fail open, again.
             endpoints = meta.get("Endpoints")
             if not isinstance(endpoints, dict):
-                return None
+                matches.append(_UNREADABLE_ENDPOINT)
+                continue
             docker_endpoint = endpoints.get("docker")
             if not isinstance(docker_endpoint, dict):
-                return None
+                matches.append(_UNREADABLE_ENDPOINT)
+                continue
             matches.append(docker_endpoint.get("Host"))
 
         if not matches:
             return None
+        readable = [host for host in matches if host is not _UNREADABLE_ENDPOINT]
+        if not readable:
+            # Every entry claiming the selected name is unreadable, so Docker cannot
+            # resolve the context either and no deployment happens. Decision 6: a
+            # fault reading the store is not evidence of a remote engine.
+            return None
+        if len(readable) != len(matches):
+            # A readable and an unreadable entry both claim the name. Docker resolves
+            # one of them and this cannot tell which, so refuse rather than trust the
+            # half that happens to parse — that half may be the stale local one.
+            return _AMBIGUOUS
         # A `Host` that is neither a string nor absent cannot be classified, and it
         # cannot be deduplicated either: a list or dict is unhashable, so building a
         # set of the matches would raise and the outer handler would report "no

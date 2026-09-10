@@ -631,6 +631,62 @@ def test_an_unhashable_duplicate_host_does_not_abort_the_scan(
     assert container_endpoint_is_provably_local() is False
 
 
+@pytest.mark.parametrize(
+    "stale_meta",
+    [
+        '{"Name": "remotebox", "Endpoints": ["not", "a", "mapping"]}',
+        '{"Name": "remotebox", "Endpoints": {"docker": ["nope"]}}',
+    ],
+    ids=["endpoints-not-a-mapping", "docker-not-a-mapping"],
+)
+def test_a_malformed_match_does_not_end_the_scan(monkeypatch, tmp_path, stale_meta):
+    """A matching entry with unreadable endpoint metadata must not abort the scan.
+
+    The malformed-entry guards returned None from inside the loop, which discarded
+    any match already collected and stopped later entries from being inspected. So a
+    stale same-name entry visited first hid a valid remote sibling, the caller read
+    "no context configured", and the CLI machine was stamped -- while Docker could
+    still address the valid context.
+
+    Refusing rather than picking the readable one: two entries claim the name and
+    only one can be read, so which one Docker resolves is not determinable here.
+    """
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotebox")
+    meta_root = tmp_path / ".docker" / "contexts" / "meta"
+
+    stale = meta_root / "stale"
+    stale.mkdir(parents=True)
+    (stale / "meta.json").write_text(stale_meta)
+    _write_context_meta(tmp_path, "real", "remotebox", "ssh://user@remote.example.com")
+
+    _pin_glob_order(
+        monkeypatch, [stale / "meta.json", meta_root / "real" / "meta.json"]
+    )
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_a_malformed_match_still_refuses_when_visited_last(monkeypatch, tmp_path):
+    """Order must not decide it, so the mirror case is pinned too.
+
+    The readable sibling here names a LOCAL socket, so a scan that simply took the
+    readable match would answer True. Ambiguity is the answer, not the readable half.
+    """
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotebox")
+    meta_root = tmp_path / ".docker" / "contexts" / "meta"
+
+    stale = meta_root / "stale"
+    stale.mkdir(parents=True)
+    (stale / "meta.json").write_text(
+        '{"Name": "remotebox", "Endpoints": ["not", "a", "mapping"]}'
+    )
+    _write_context_meta(tmp_path, "real", "remotebox", "unix:///var/run/docker.sock")
+
+    _pin_glob_order(
+        monkeypatch, [meta_root / "real" / "meta.json", stale / "meta.json"]
+    )
+    assert container_endpoint_is_provably_local() is False
+
+
 def test_a_lone_unhashable_context_host_is_not_local(monkeypatch, tmp_path):
     """The same shape with no sibling: unclassifiable is not evidence of local."""
     monkeypatch.setenv("DOCKER_CONTEXT", "remotebox")

@@ -317,6 +317,25 @@ which one applied. So the text names all four and asserts none of them, and the 
 for each cause by name plus the absence of "either", so a later edit cannot quietly narrow
 it again.
 
+**And a third, found the round after.** Decision 9's malformed-metadata guards returned
+`None` from *inside* the loop. That discarded any match already collected and stopped the
+remaining entries from being inspected — so a stale same-name entry with an unreadable
+`Endpoints` visited first hid a valid remote sibling, and the caller read "no context
+configured". The third instance of the same mistake in three rounds: an early exit taken
+for a per-entry fault, where the loop should have carried on.
+
+Unreadable entries are now collected as a sentinel and the scan runs to the end, then:
+
+- **all matches unreadable** → `None`. Docker cannot resolve the context either, so no
+  deployment happens; decision 6's rule applies, and the existing single-malformed-entry
+  tests keep their answer.
+- **readable and unreadable both present** → `_AMBIGUOUS`. Docker resolves one and this
+  cannot tell which, so trusting the half that happens to parse is trusting a coin flip —
+  and the readable half may be the stale local one, which is the test with the local
+  sibling.
+
+Three tests, both visit orders, both malformed shapes.
+
 ## Risks / Trade-offs
 
 - **A false refusal on a local `DOCKER_HOST` form this table does not know.** Mitigated by
