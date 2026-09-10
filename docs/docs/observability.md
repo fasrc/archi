@@ -99,7 +99,9 @@ default.** Seven separate rules produce that result:
    because it is an identifier or a limit and never the conversation, but an array of
    nothing but numbers does not: the ingest writes each chunk embedding inline, and
    an embedding is the chunk in another form. One chunk insert measured 8388
-   characters, nearly all of it that one array.
+   characters, nearly all of it that one array. The length survives — the statement
+   reads `ARRAY[/* 384 numbers */]` — because a count is not content and the
+   dimension is most of what the array told you.
 
 `ARCHI_OTEL_CAPTURE_CONTENT=true` reverses rules 1, 2, 5 and 7. It never reverses
 rules 3, 4 and 6, because a credential is not model content and no flag releases one: an

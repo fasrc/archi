@@ -491,9 +491,21 @@ def _scrub_text(value: str) -> str:
     return _URL_IN_TEXT.sub(lambda match: _scrub_url(match.group(0)), value)
 
 
+def _collapse_number_array(match) -> str:
+    """Replace a numeric array with its own length.
+
+    A count is not content, and for an ingest failure the dimension is most of what
+    the array was telling you: 384 says which embedding model wrote the row.
+    """
+    body = match.group(0)
+    inner = body[body.index("[") + 1 : -1]
+    count = sum(1 for part in inner.split(",") if part.strip())
+    return f"ARRAY[/* {count} numbers */]"
+
+
 def _scrub_statement(value: str) -> str:
     """Replace every string literal and every numeric array, and keep the shape."""
-    return _SQL_NUMBER_ARRAY.sub("ARRAY[?]", _SQL_LITERAL.sub("'?'", value))
+    return _SQL_NUMBER_ARRAY.sub(_collapse_number_array, _SQL_LITERAL.sub("'?'", value))
 
 
 def _scrub_attributes(attributes, redact_content: bool = True):

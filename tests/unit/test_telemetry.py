@@ -1154,6 +1154,55 @@ class TestTheDatabaseStatementIsNotAContentChannel:
 
         assert "the whole answer" not in statement
 
+    def test_a_backslash_does_not_end_a_literal_early(self):
+        """psycopg2 ends a literal by doubling the quote, never by escaping it.
+
+        Measured against the driver on 2026-09-10, both server modes:
+
+            standard_conforming_strings = on
+              "it's a conversation"  -> 'it''s a conversation'
+              "back\\slash"          -> 'back\\slash'
+            standard_conforming_strings = off
+              "back\\slash"          -> 'back\\\\slash'
+
+        So a backslash inside a literal is data, and the closing quote is the first
+        single quote after it. Reading ``\\'`` as an escape instead would run past
+        that quote — this exact statement, with the shipped rule, redacts both values
+        and with an escape-aware rule leaks the second one.
+        """
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+        statement = "INSERT INTO t VALUES ('ends with a backslash \\', 'second value')"
+
+        with tracer.start_as_current_span("INSERT") as span:
+            span.set_attribute("db.statement", statement)
+
+        (exported,) = memory.get_finished_spans()
+        scrubbed = exported.attributes["db.statement"]
+
+        assert "second value" not in scrubbed
+        assert "ends with a backslash" not in scrubbed
+        assert scrubbed == "INSERT INTO t VALUES ('?', '?')"
+
+    def test_the_legacy_string_mode_form_is_covered(self):
+        """With ``standard_conforming_strings`` off psycopg2 doubles the backslash
+        as well as the quote, so the same rule reads it correctly."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+        statement = (
+            "INSERT INTO t VALUES ('both \\\\ and ''quote'' together', 'next')"
+        )
+
+        with tracer.start_as_current_span("INSERT") as span:
+            span.set_attribute("db.statement", statement)
+
+        (exported,) = memory.get_finished_spans()
+        scrubbed = exported.attributes["db.statement"]
+
+        assert "quote" not in scrubbed
+        assert "next" not in scrubbed
+        assert scrubbed == "INSERT INTO t VALUES ('?', '?')"
+
     def test_a_dollar_tag_that_is_not_ascii_is_still_a_dollar_tag(self):
         """PostgreSQL tags follow unquoted-identifier rules, which are not ASCII.
 
@@ -1244,7 +1293,10 @@ class TestTheDatabaseStatementIsNotAContentChannel:
         assert "0.044845741242170334" not in scrubbed
         assert "the chunk text" not in scrubbed
         assert "INSERT INTO document_chunks" in scrubbed
-        assert "ARRAY[?]" in scrubbed
+        assert "ARRAY[/* 4 numbers */]" in scrubbed, (
+            "the length is not content, and for an ingest failure the dimension is "
+            "most of what the array was telling you"
+        )
 
     def test_an_ordinary_number_is_left_alone(self):
         """A number that is not a vector is an identifier or a limit."""
