@@ -9,7 +9,13 @@ default, explicit None → default.
 
 import pytest
 import yaml
-from jinja2 import ChainableUndefined, Environment, PackageLoader, select_autoescape
+from jinja2 import (
+    ChainableUndefined,
+    Environment,
+    PackageLoader,
+    nodes,
+    select_autoescape,
+)
 
 
 def _render(**kwargs):
@@ -275,3 +281,89 @@ def test_numeric_zero_not_replaced_by_default():
     # absent -> default 20000
     cfg_absent2 = _render()
     assert _get(cfg_absent2, "data_manager.sources.links.sitemap.max_pages") == 20000
+
+
+# ---------------------------------------------------------------------------
+# AST guard — keeps the fixed pattern from regressing
+# ---------------------------------------------------------------------------
+
+
+def _get_template_source():
+    env = Environment(loader=PackageLoader("src.cli"))
+    source, _, _ = env.loader.get_source(env, "base-config.yaml")
+    return source
+
+
+def _walk_default_filters(source):
+    """Walk the Jinja2 AST for ``| default(...)`` calls.
+
+    Returns (bad_boolean_lines, truthy_non_bool_lines).
+    bad_boolean_lines: lines where a boolean literal is used as default, except
+        the permitted ``default(false, true)`` form.
+    truthy_non_bool_lines: lines where a truthy non-boolean Const is used as
+        default and true is the second argument.
+    """
+    ast = Environment().parse(source)
+    bad_boolean = []
+    truthy_non_bool = []
+
+    for node in ast.find_all(nodes.Filter):
+        if node.name != "default":
+            continue
+        if not node.args:
+            continue
+        first_arg = node.args[0]
+        second_arg = node.args[1] if len(node.args) >= 2 else None
+
+        if isinstance(first_arg, nodes.Const) and isinstance(first_arg.value, bool):
+            is_allowed = (
+                first_arg.value is False
+                and second_arg is not None
+                and isinstance(second_arg, nodes.Const)
+                and second_arg.value is True
+            )
+            if not is_allowed:
+                bad_boolean.append(node.lineno)
+        elif (
+            isinstance(first_arg, nodes.Const)
+            and bool(first_arg.value)
+            and not isinstance(first_arg.value, bool)
+            and second_arg is not None
+            and isinstance(second_arg, nodes.Const)
+            and second_arg.value is True
+        ):
+            truthy_non_bool.append(node.lineno)
+
+    return bad_boolean, truthy_non_bool
+
+
+def test_guard_no_boolean_literal_defaults():
+    """No default() call may use a boolean literal except the form default(false, true)."""
+    source = _get_template_source()
+    bad_lines, _ = _walk_default_filters(source)
+    assert bad_lines == [], (
+        f"Found default() calls with a boolean literal at lines {bad_lines}. "
+        "Replace each with the ternary: "
+        "{%- set v = <path> %}{{ v if v is defined and v is not none else <default> }}"
+    )
+
+
+_TRUTHY_NON_BOOL_BASELINE = 79
+
+
+def test_guard_default_filter_baseline_count():
+    """The count of default(<truthy non-bool literal>, true) calls is frozen at 79.
+
+    To add a new boolean or numeric site, use the ternary form instead of default().
+    To remove a converted site, lower the baseline in the same commit.
+    """
+    source = _get_template_source()
+    _, truthy_non_bool = _walk_default_filters(source)
+    count = len(truthy_non_bool)
+    assert count == _TRUTHY_NON_BOOL_BASELINE, (
+        f"Expected {_TRUTHY_NON_BOOL_BASELINE} default(<truthy non-bool literal>, true) "
+        f"calls but found {count} (lines {truthy_non_bool}). "
+        "New boolean/numeric site: use the ternary "
+        "({%- set v = <path> %}{{ v if v is defined and v is not none else <default> }}) "
+        "rather than default(). Removed a converted site: lower the baseline in this same commit."
+    )

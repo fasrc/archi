@@ -120,7 +120,7 @@ Two traps in that table:
 
 ## 5. The guard that stops the pattern coming back
 
-- [ ] 5.1 `model: opus` — Add a guard test to the same file that parses the template with
+- [x] 5.1 `model: opus` — Add a guard test to the same file that parses the template with
       `jinja2.Environment().parse(source)` and walks `nodes.Filter` nodes named `default`
       (the AST, not a regex: the template's own text is inconsistent — `:334` reads
       `default(false, True)` with a capital second argument — and a comment mentioning the
