@@ -1089,8 +1089,7 @@ class TestThePromptGuaranteeDoesNotRestOnTheDependency:
         (exported,) = memory.get_finished_spans()
 
         assert (
-            exported.attributes["input.value"]
-            == "the patient asked about a diagnosis"
+            exported.attributes["input.value"] == "the patient asked about a diagnosis"
         )
 
 
