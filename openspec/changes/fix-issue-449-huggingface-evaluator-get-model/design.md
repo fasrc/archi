@@ -209,8 +209,27 @@ widen the diff into `LocalProvider` for no behavioural gain.
   message. That covers the four things in-process construction could not — URL dialect,
   authentication, request payload, and response handling.
 
-  What it still does not cover: whether a particular vLLM or TGI deployment accepts that
-  request. No GPU endpoint was contacted, and none is reachable from the gate. Confirming a
-  named deployment answers is a `needs-deploy` activity, tracked separately; it is a property
-  of the endpoint an operator configures, not of this call site, and no shipped configuration
-  selects `huggingface` today.
+  What it still does not cover, stated exactly, because review asked twice and the
+  boundary is structural rather than a choice:
+
+  - **The RAGAS wrapper seam.** `evaluate_ragas` wraps the judge at
+    `service_benchmark.py:1726` — `LangchainLLMWrapper(self.get_ragas_llm_evaluator())`.
+    No unit test can reach it: `ragas` is **not installed in the gate environment**, which
+    is why the import at `:1691` is lazy and carries the comment "ragas (and its transitive
+    `datasets` dep) is benchmark-only and absent from the unit-test environment".
+    `pip show ragas` in the gate env reports "Package(s) not found". So the seam is
+    untestable here for *every* evaluator provider, not only this one — the shipped
+    `huit_bedrock`, `local` and `anthropic` arms have no such coverage either.
+  - **A named GPU deployment.** No vLLM or TGI endpoint is reachable from the gate or from
+    CI; probed for one (`:11434`, `:8000`, an `ollama` process) before writing the socket
+    test and found none. Whether a given endpoint answers is a property of the endpoint an
+    operator configures, not of this call site.
+
+  Residual risk is low and bounded: `LangchainLLMWrapper` adds prompt formatting and retry
+  configuration around a LangChain chat model and nothing client-type-specific, and the
+  socket test proves this client completes a real streamed exchange. And the blast radius
+  stays latent — no shipped configuration selects `huggingface`
+  (`docs/docs/benchmarking.md:449` and both files under
+  `examples/benchmarking/hierarchical_rerank_ab/` use `huit_bedrock`), so there is no
+  deployment whose judge this change alters. A full benchmark run against a named
+  deployment remains a `needs-deploy` activity for whoever first configures the provider.
