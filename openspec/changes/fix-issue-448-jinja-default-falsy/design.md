@@ -187,3 +187,64 @@ still reads correctly.
   getting the value they asked for.
 - **`diff-cover` sees no template lines**, so patch coverage is decided entirely by the new
   test file. Keep the tests in `tests/unit/`, where the gate collects them.
+
+## D8. Where "rendered" stops and "honored" begins
+
+Review round 3 raised five findings asking this change to make the newly rendered flags
+take effect: wire `services.data_manager.enabled` into deployment planning, honor
+`links.enabled` in `ScraperManager`, normalize `visible` against stored `source_type`
+values, and gate `git-`/`sso-`/`elog-` entries in `input_lists` behind their source flags.
+
+**They describe real gaps, and none of them is this change.** This change moves a Jinja
+filter. Every gap above predates it: before the fix, an explicit `false` never reached the
+config at all, so no consumer could have honored it either. Fixing the rendering does not
+regress anything and does not, by itself, deliver the flag's promise — those are two
+separate pieces of work, and merging four subsystem changes into a template fix would make
+the diff unreviewable and the bisect useless.
+
+What this change owes the operator is an **honest account of which flags now do what**,
+and that account was wrong in five places. Corrected in `docs/docs/configuration.md`:
+
+| Claim | Measured |
+| --- | --- |
+| `local_files.enabled` — "no consumer reads it" | wrong. `stage_local_files_to_volume()` returns without staging when it is `false`, logging `local_files disabled; skipping staging.` Removed from the list; its real limitation (an already-populated volume keeps its files) documented instead |
+| `html_scraper.reset_data` is honored | wrong. It appears only in the template, tests and docs — `ScraperManager` reads `verify_urls` and `enable_warnings` out of the `html_scraper` block and nothing else. Added to the list |
+| `visible: false` "removes that content from citations" | wrong for most sources. `ChatWrapper._get_doc_visibility` looks up `metadata["source_type"]` in `data_manager.sources`, but links, Indico and ELOG persist `web` and Jira and Redmine persist `ticket` — none of which is a config key. The lookup misses, logs `Source type … not found in config`, and defaults to visible. Works only for `git`, `sso` and `local_files`, whose stored type equals their key |
+| `enabled: false` is acted on by the `git` and `sso` collectors | wrong when `input_lists` carries prefixed entries. `collect_all_from_config()` sets `git_enabled = True` for any `git-` URL and `sso_enabled = True` for any `sso-` URL without consulting the flag, and ELOG URLs are collected as `extra_urls` regardless. Documented as a CAUTION with the workaround |
+| `redmine.visible` is one of the 21 | wrong. Its expression is still `default(false, true)`; the default is already `false`, so an explicit `false` always rendered as `false`. Listing it made the list 22 items long. Removed, along with the same note for `elog.visible` |
+
+The two functional gaps with user-visible consequences are filed as their own issues rather
+than carried as comments here:
+
+- **#459** — the `visible`/`source_type` mismatch, which leaves content in chat citations
+  that an operator asked to hide. End-user-visible, and silent from the operator's side.
+- **#460** — the `input_lists` override, which can fetch a source configured as disabled,
+  possibly after CLI validation skipped that source's required secrets.
+
+The other three findings need no issue. `services.data_manager.enabled` and
+`links.enabled` were already documented as not-yet-honored before this round, and
+`reset_data` joins them; all three are inert flags, not wrong behaviour, and the
+documentation is the correct disposition until someone decides they gate a release.
+
+## D9. What the AST guard can and cannot read
+
+Review round 3 also found a hole in the guard from D4: both predicates tested
+`isinstance(first_arg, nodes.Const)`, and Jinja parses `-1` as `nodes.Neg` wrapping a
+`Const`. So `default(-1, true)` — a truthiness substitution, the exact form D4 exists to
+keep out — passed both advertised guards silently. Fixed by folding unary signs in
+`_literal_default` before either predicate runs.
+
+The fold declines booleans deliberately. `bool` is an `int` subclass, so folding
+`default(-true, true)` would produce `-1` and report a truthy non-boolean — moving a
+boolean-literal default out of the guard built to reject it. Pinned by
+`test_guard_folds_a_signed_literal_without_losing_the_boolean_check`.
+
+**The wider fix was tried and rejected on measurement.** The finding's alternative was to
+fail on every `default(<expr>, true)` the walker cannot read. Implemented, that reported 12
+lines in the current template: `default({}, true)`, `default([], true)` and
+`default('localhost' if host_mode else 'data-manager', true)`. A dict, list or conditional
+default cannot stand in for a boolean, so none is in the bug class — the same argument the
+test module's docstring already makes for list defaults. Twelve false failures on lines
+that were always correct is not a stronger guard. The boundary is now enforced by
+`test_guard_leaves_container_and_computed_defaults_out_of_scope` instead of asserted in a
+comment, so a future attempt at that widening fails a test that explains why.

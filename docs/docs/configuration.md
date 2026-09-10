@@ -7,15 +7,21 @@ Archi deployments are configured via YAML files passed to the CLI with `--config
 ## Explicit `false`, `0`, and `null`
 
 A value you write reaches the deployed configuration. `enabled: false` renders as `false`,
-`0` renders as `0`, and `null` renders as that key's documented default — none of the three
-is read as "unset and therefore ignorable".
+and `null` renders as that key's documented default — neither is read as "unset and
+therefore ignorable".
+
+`0` is narrower: it survives on the **four numeric bounds** listed below and nowhere else.
+Every other numeric key still runs through the old filter, so a `0` written there is
+replaced by that key's default — `data_manager.sources.jira.max_tickets: 0` renders as
+`10000000000.0`, and `services.chat_app.num_responses_until_feedback: 0` renders as `3`.
+Check the four-row table before writing a `0` and expecting it to arrive.
 
 This was not always true. Before the fix in issue #448, a set of boolean flags went through
 a Jinja filter that could not tell `false` from a missing key, so an explicit `false` was
 discarded and the default rendered in its place.
 
 **Rendered is not the same as honored.** This change fixes the rendering. Whether a given
-consumer then acts on the value is a separate question, and for three keys the answer is
+consumer then acts on the value is a separate question, and for several keys the answer is
 still no — they are listed at the end of this section. Check that list before you rely on a
 flag.
 
@@ -26,20 +32,33 @@ flag.
 - `services.data_manager.enabled` and `data_manager.reset_collection`
 - `data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.encode_kwargs.normalize_embeddings`
 - `data_manager.processing.html_to_markdown.enabled`
-- `enabled` and `visible` on the `local_files`, `links`, `git`, `sso`, `jira` and `redmine`
-  sources, and `visible` on `indico`
+- `enabled` and `visible` on the `local_files`, `links`, `git`, `sso` and `jira` sources,
+  `visible` on `indico`, and `enabled` on `redmine`
 - `data_manager.sources.links.html_scraper.reset_data`
 - `data_manager.sources.redmine.anonymize_data` and `data_manager.sources.elog.verify_ssl`
 - the two `headless` flags, on the CERN SSO scraper and on `indico.sso_kwargs`
 
+`redmine.visible` and `elog.visible` are **not** in this list. Their template expressions
+default to `false`, so an explicit `false` already rendered as `false` before this change
+and their semantics did not move.
+
 Of these, `enabled: false` is acted on by the `git`, `sso`, `indico`, `jira`, `redmine` and
-`elog` collectors, and by the Selenium scraper — those sources are now genuinely skipped.
+`elog` collectors, and by the Selenium scraper — with one exception for `git` and `sso`,
+described in the next paragraph.
+
+**CAUTION: a `git-` or `sso-` entry in `input_lists` overrides `enabled: false` for that
+source.** `ScraperManager.collect_all_from_config()` sets `git_enabled = True` when the
+input lists yield any `git-` URL, and `sso_enabled = True` for any `sso-` URL, without
+consulting the flag. ELOG URLs are passed through as `extra_urls` and collected regardless
+of `elog.enabled`. So an ingest can fetch a source you configured as disabled — possibly
+after CLI validation skipped that source's required secrets. To disable one of these,
+remove its entries from `input_lists` as well as setting `enabled: false`. Tracked as
+[issue #460](https://github.com/fasrc/archi/issues/460).
 
 **`anonymize_data: false` is the row to check first.** It was silently ignored before and is
-honored now, and it widens what a reader can see. `visible: false` moves the other way: it
-was ignored before, so content appeared in chat citations, and honoring it removes that
-content from citations. Neither direction is wrong, but they are opposite, and an upgrade
-changes both at once.
+honored now, and it widens what a reader can see. `visible: false` is the opposite
+direction — but see the list at the end of this section: for most sources it still does not
+reach chat citations, so the upgrade does not remove content there.
 
 ### 7 flags where an explicit `null` rendered as the string `'None'`
 
@@ -77,19 +96,29 @@ breaches the ceiling, and an empty one falls below the floor. If you mean "asser
 sitemap is empty", set `min_pages: 0` alongside it. If you mean "crawl fewer pages", this is
 not the key: use `data_manager.sources.links.max_pages`, which is a real budget.
 
-### Three flags that render but are not yet acted on
+### Flags that render but are not yet acted on
 
-The value reaches the deployed configuration and nothing reads it. Do not rely on these to
-turn anything off:
+The value reaches the deployed configuration and no consumer acts on it. Do not rely on
+these to turn anything off or to hide anything:
 
 | Key | What ignores it |
 |---|---|
 | `services.data_manager.enabled` | the data-manager service is registered `auto_enable=True`, and the service registry adds every auto-enable service unconditionally, so the container is deployed either way |
 | `data_manager.sources.links.enabled` | `ScraperManager` assigns `links_enabled = True` without reading the config, so link input lists are still crawled |
-| `data_manager.sources.local_files.enabled` | no consumer reads it |
+| `data_manager.sources.links.html_scraper.reset_data` | no consumer reads it — `ScraperManager` extracts the `html_scraper` block but reads only `verify_urls` and `enable_warnings` when it builds link scrapers |
+| `visible` on `links`, `indico`, `jira`, `redmine` and `elog` | citations are filtered by the `source_type` stored on each document, and these sources persist `source_type` values that are not their config keys — `web` for links, Indico and ELOG, `ticket` for Jira and Redmine. The lookup misses, so the document defaults to visible (and the service logs `Source type … not found in config`). Tracked as [issue #459](https://github.com/fasrc/archi/issues/459) |
+
+`visible: false` **does** work for `git`, `sso` and `local_files`, whose stored
+`source_type` matches the config key.
 
 To keep a link source out of an ingest today, remove it from `input_lists` rather than
 setting `enabled: false`.
+
+`data_manager.sources.local_files.enabled` is **not** in this list: it does have a
+consumer. `stage_local_files_to_volume()` reads it and returns without staging when it is
+`false`, logging `local_files disabled; skipping staging.` The limitation is narrower —
+staging is what it controls, so a volume already populated by an earlier deploy keeps its
+files, and the data manager still ingests whatever is in that volume.
 
 ---
 

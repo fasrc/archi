@@ -309,6 +309,33 @@ def _boolean_argument(node):
     return None
 
 
+_UNREADABLE = object()
+
+
+def _literal_default(node):
+    """Resolve a ``default()`` first argument to its literal value.
+
+    Returns ``_UNREADABLE`` when the expression is not a literal this walker models.
+
+    Jinja does not parse ``-1`` as a ``Const``: it parses ``nodes.Neg`` wrapping
+    ``Const(1)``. A predicate that only accepts ``Const`` therefore skips
+    ``default(-1, true)`` -- a truthiness substitution -- while reporting green. Unary
+    signs are folded here so both guards see one value instead of two node shapes.
+    """
+    if isinstance(node, nodes.Const):
+        return node.value
+    if isinstance(node, (nodes.Neg, nodes.Pos)):
+        inner = _literal_default(node.node)
+        if inner is _UNREADABLE or isinstance(inner, bool):
+            # bool is an int subclass, so -true would fold to -1 and lose the fact
+            # that the author wrote a boolean literal. Leave it to the other branch.
+            return _UNREADABLE
+        if not isinstance(inner, (int, float)):
+            return _UNREADABLE
+        return -inner if isinstance(node, nodes.Neg) else +inner
+    return _UNREADABLE
+
+
 def _walk_default_filters(source):
     """Walk the Jinja2 AST for ``| default(...)`` calls.
 
@@ -330,23 +357,18 @@ def _walk_default_filters(source):
         first_arg = node.args[0]
         second_arg = _boolean_argument(node)
 
-        if isinstance(first_arg, nodes.Const) and isinstance(first_arg.value, bool):
-            is_allowed = (
-                first_arg.value is False
-                and second_arg is not None
-                and isinstance(second_arg, nodes.Const)
-                and second_arg.value is True
-            )
-            if not is_allowed:
-                bad_boolean.append(node.lineno)
-        elif (
-            isinstance(first_arg, nodes.Const)
-            and bool(first_arg.value)
-            and not isinstance(first_arg.value, bool)
-            and second_arg is not None
+        value = _literal_default(first_arg)
+        boolean_on = (
+            second_arg is not None
             and isinstance(second_arg, nodes.Const)
             and second_arg.value is True
-        ):
+        )
+
+        if isinstance(value, bool):
+            is_allowed = value is False and boolean_on
+            if not is_allowed:
+                bad_boolean.append(node.lineno)
+        elif value is not _UNREADABLE and bool(value) and boolean_on:
             truthy_non_bool.append(node.lineno)
 
     return bad_boolean, truthy_non_bool
@@ -392,17 +414,24 @@ def _default_filter_signatures(source):
         # `default(0, true)` on a flag renders int 0 where the operator wrote
         # `false`, and 0 is not a boolean literal, so the other guard is blind to
         # it. Freezing every non-boolean literal leaves it nowhere to arrive.
-        if not (
-            isinstance(first_arg, nodes.Const)
-            and not isinstance(first_arg.value, bool)
-            and second_arg is not None
+        boolean_on = (
+            second_arg is not None
             and isinstance(second_arg, nodes.Const)
             and second_arg.value is True
-        ):
+        )
+        if not boolean_on:
+            continue
+        value = _literal_default(first_arg)
+        if isinstance(value, bool) or value is _UNREADABLE:
+            # Boolean literals belong to the other guard. _UNREADABLE here means a
+            # non-scalar or computed default -- `default({}, true)`,
+            # `default([], true)`, `default('a' if x else 'b', true)` -- which cannot
+            # stand in for a boolean and is outside the bug class by the same argument
+            # the module docstring makes for list defaults.
             continue
         path = _call_site_path(node.node)
         signatures.append(
-            f"{path}={first_arg.value!r}"
+            f"{path}={value!r}"
             if path is not None
             else f"<unresolved>@line{node.lineno}"
         )
@@ -718,3 +747,76 @@ def test_guard_permits_the_keyword_spelling_of_the_allowed_form():
     )
     bad_lines, _ = _walk_default_filters(rewritten)
     assert bad_lines == []
+
+
+def test_guard_sees_a_negative_literal_default():
+    """``default(-1, true)`` is a truthiness substitution both guards used to miss.
+
+    Jinja parses ``-1`` as ``nodes.Neg`` wrapping a ``Const``, not as a ``Const``. Both
+    predicates tested ``isinstance(first_arg, nodes.Const)``, so a future
+    meaningful-zero field written this way would replace a configured ``0`` with ``-1``
+    while every advertised guard stayed green -- the exact form this change exists to
+    keep out, readmitted under a unary minus.
+    """
+    source = _get_template_source()
+    anchor = "  chunk_size: {{ data_manager.chunk_size | default(1000, true) }}"
+    assert anchor in source, "anchor line moved; update this test's fixture"
+    smuggled = source.replace(
+        anchor,
+        anchor
+        + "\n  neg_smuggled: {{ data_manager.neg_smuggled | default(-1, true) }}",
+        1,
+    )
+
+    signatures = _default_filter_signatures(smuggled)
+    assert "data_manager.neg_smuggled=-1" in signatures
+    assert signatures != sorted(_NON_BOOL_DEFAULT_BASELINE)
+
+
+def test_guard_folds_a_signed_literal_without_losing_the_boolean_check():
+    """Folding unary signs must not swallow a boolean literal.
+
+    ``bool`` is an ``int`` subclass, so a naive fold turns ``default(-true, true)``
+    into ``-1`` and reports a truthy non-boolean -- moving a boolean-literal default
+    out of the guard that exists to reject it. The fold declines booleans instead, so
+    the boolean guard still sees the call.
+    """
+    source = _get_template_source()
+    anchor = "  chunk_size: {{ data_manager.chunk_size | default(1000, true) }}"
+    smuggled = source.replace(
+        anchor,
+        anchor
+        + "\n  signed_bool: {{ data_manager.signed_bool | default(-true, true) }}",
+        1,
+    )
+    signatures = _default_filter_signatures(smuggled)
+    assert not any("signed_bool" in signature for signature in signatures)
+
+
+def test_guard_leaves_container_and_computed_defaults_out_of_scope():
+    """Non-scalar and computed defaults stay outside both guards, on purpose.
+
+    ``default({}, true)``, ``default([], true)`` and
+    ``default('a' if flag else 'b', true)`` are all in the template today. None can
+    stand in for a boolean, so none is in the bug class -- the same argument the module
+    docstring already makes for list defaults. Pinned here so the boundary is enforced
+    rather than only asserted in a comment, and so widening the walker to fail on every
+    shape it cannot read does not land silently: that reads as a fix and is really a
+    dozen false failures on lines that were always fine.
+    """
+    source = _get_template_source()
+    bad_lines, _ = _walk_default_filters(source)
+    assert bad_lines == []
+
+    for fixture in (
+        "  dict_default: {{ data_manager.dict_default | default({}, true) }}",
+        "  list_default: {{ data_manager.list_default | default([], true) }}",
+        "  cond_default: "
+        "{{ data_manager.cond_default | default('a' if verbosity else 'b', true) }}",
+    ):
+        smuggled = source + "\n" + fixture
+        smuggled_bad, _ = _walk_default_filters(smuggled)
+        assert smuggled_bad == [], f"{fixture!r} must not be reported as a bad boolean"
+        assert _default_filter_signatures(smuggled) == sorted(
+            _NON_BOOL_DEFAULT_BASELINE
+        ), f"{fixture!r} must not join the frozen baseline"
