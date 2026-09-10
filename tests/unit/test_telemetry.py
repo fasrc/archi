@@ -1230,9 +1230,7 @@ class TestTheDatabaseStatementIsNotAContentChannel:
 
         (exported,) = memory.get_finished_spans()
 
-        assert (
-            exported.attributes["db.statement"] == "INSERT INTO t VALUES ('?', '?')"
-        )
+        assert exported.attributes["db.statement"] == "INSERT INTO t VALUES ('?', '?')"
 
     def test_a_long_pathological_statement_scrubs_in_bounded_time(self):
         """An unterminated dollar quote and an unterminated string, both long.
