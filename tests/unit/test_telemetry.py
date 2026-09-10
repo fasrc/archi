@@ -9,8 +9,10 @@ module can hurt a service that never asked for telemetry:
 3. It exports no prompt, no completion and no URL query string.
 """
 
+import ast
 import logging
 import os
+from pathlib import Path
 
 import pytest
 
@@ -557,3 +559,55 @@ class _ConfigCapturingInstrumentor:
 
     def uninstrument(self, **_kwargs):
         pass
+TELEMETRY_HELPERS = frozenset({"init_telemetry", "instrument_flask_app"})
+
+
+def _entrypoint_paths():
+    root = Path(__file__).resolve().parents[2]
+    return list((root / "src" / "bin").glob("service_*.py"))
+
+
+def _telemetry_names_used(tree):
+    return {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id in TELEMETRY_HELPERS
+    }
+
+
+def _names_bound_by_imports(tree):
+    bound = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                bound.add(alias.asname or alias.name)
+    return bound
+
+
+class TestEntrypointsImportWhatTheyCall:
+    """A call site without its import is a NameError at start, not at import.
+
+    ``py_compile`` accepts the file, the unit suite never imports these modules,
+    and the service dies on the first deployment instead. This guard reads the
+    entrypoints as source and checks the binding, so the class of mistake cannot
+    reach a container again.
+    """
+
+    @pytest.mark.parametrize("path", sorted(_entrypoint_paths()))
+    def test_a_telemetry_helper_is_imported_where_it_is_called(self, path):
+        import ast
+
+        tree = ast.parse(path.read_text())
+        called = _telemetry_names_used(tree)
+        if not called:
+            pytest.skip(f"{path.name} calls no telemetry helper")
+
+        missing = called - _names_bound_by_imports(tree)
+
+        assert not missing, (
+            f"{path.name} calls {sorted(missing)} without importing it. "
+            "The module starts, reaches the call, and raises NameError."
+        )

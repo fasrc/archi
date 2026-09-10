@@ -20,6 +20,7 @@ from src.utils.config_service import ConfigService
 from src.utils.env import read_secret
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
+from src.utils.telemetry import instrument_flask_app
 
 logger = get_logger(__name__)
 
