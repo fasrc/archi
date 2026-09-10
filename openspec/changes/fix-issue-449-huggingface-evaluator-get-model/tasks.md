@@ -55,7 +55,7 @@ Standing notes for every task:
 
 ## 1. The fix and its tests
 
-- [ ] 1.1 Make the `huggingface` arm return a client, in `src/bin/service_benchmark.py`.
+- [x] 1.1 Make the `huggingface` arm return a client, in `src/bin/service_benchmark.py`.
       RED first: append to `tests/unit/test_ragas_evaluator_local_mode.py`, under a
       `# --- issue #449: the huggingface judge arm must build a client ---` banner, a test
       named `test_huggingface_judge_uses_the_configured_evaluator_url` that calls `_bench`

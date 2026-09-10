@@ -62,3 +62,25 @@ def test_local_explicit_provider_mode_forces_openai_compatible():
     )
     llm = bench.get_ragas_llm_evaluator()
     assert isinstance(llm, ChatOpenAI)
+
+
+# --- issue #449: the huggingface judge arm must build a client ---
+
+
+def test_huggingface_judge_uses_the_configured_evaluator_url():
+    bench = _bench(
+        {
+            "model": "qwen-x",
+            "mode_settings": {
+                "ragas_settings": {
+                    "evaluator_provider": "huggingface",
+                    "evaluator_model": "judge-x",
+                    "evaluator_ollama_url": "http://judge-host:8001/v1",
+                }
+            },
+        }
+    )
+    llm = bench.get_ragas_llm_evaluator()
+    assert isinstance(llm, ChatOpenAI)
+    assert llm.openai_api_base == "http://judge-host:8001/v1"
+    assert llm.model_name == "judge-x"

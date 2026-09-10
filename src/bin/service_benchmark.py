@@ -1415,7 +1415,7 @@ class Benchmarker:
             case "huggingface":
                 base_url = ollama_url or "http://localhost:8000/v1"
                 return get_model(
-                    "local", model_name, base_url=base_url, local_mode="openai_compat"
+                    "local", model_name, {"base_url": base_url, "mode": "openai_compat"}
                 )
             case "anthropic":
                 from langchain_anthropic import ChatAnthropic
