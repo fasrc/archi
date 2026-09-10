@@ -1,3 +1,24 @@
+{#
+  Boolean-flag and zero-meaningful-integer rule
+  -----------------------------------------------
+  A boolean flag, and any number whose 0 is meaningful, must use:
+    {%- set v = <path> %}
+    {{ v if v is defined and v is not none else <default> }}
+
+  Do NOT use the `default` filter for these values:
+    - `default(<truthy>, true)` hides an explicit `false`: Jinja2 treats
+      `false` as falsey, so the default fires and the configured value is
+      silently ignored.
+    - `default(<boolean>)` renders an explicit null as the string 'None':
+      yaml.safe_load reads it back as the string, not a boolean.
+
+  The one permitted boolean use of `default` is `default(false, true)` —
+  the second argument makes `false` truthy in Jinja2's sense, so it fires
+  only when the key is absent, not when it is explicitly `false`.
+
+  The guard test in tests/unit/test_base_config_falsy_defaults_render.py
+  enforces this rule.
+#}
 name: {{ name | default("default", true) }}
 
 global:

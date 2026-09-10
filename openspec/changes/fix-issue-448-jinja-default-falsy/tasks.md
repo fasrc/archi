@@ -138,7 +138,7 @@ Two traps in that table:
 
 ## 6. State the rule once
 
-- [ ] 6.1 `model: sonnet` — Add a comment block near the top of
+- [x] 6.1 `model: sonnet` — Add a comment block near the top of
       `src/cli/templates/base-config.yaml` stating the rule: a boolean flag, and any number
       whose `0` is meaningful, uses `{%- set v = <path> %}` plus
       `{{ v if v is defined and v is not none else <default> }}`; `default(<truthy>, true)`
