@@ -78,8 +78,11 @@ computes a per-step `duration_ms` (`base_react.py:611-623`) and normalizes token
 
 ### 1.4 Database and HTTP clients
 
-psycopg2 is the only database driver. Most access goes through `ConnectionPool`
-(`src/utils/connection_pool.py:36`). 11 modules import `requests` directly. One module
+psycopg2 is the only Postgres driver. Most access goes through `ConnectionPool`
+(`src/utils/connection_pool.py:36`). Five modules use `sqlite3` directly: the QA
+evaluator (`src/evaluation/qa/workflow.py:4`, `workspace.py:5`, `scoring.py:5`,
+`catalog.py:8`) and the source index (`src/data_manager/collectors/utils/index_utils.py:4`).
+11 modules import `requests` directly. One module
 uses `httpx` directly, and the LangChain OpenAI, Anthropic, Gemini, and Ollama clients
 use it internally. `urllib.request` appears in `local_provider.py` and
 `src/bin/service_benchmark.py:1105`.
@@ -161,7 +164,7 @@ is unavoidable under either option in 2.2. After the rebuild,
 `scripts/dev/update_service_base_images.py` bumps the digest pin in 15 service
 Dockerfiles (`src/cli/templates/dockerfiles/Dockerfile-chat:2-3` and its siblings).
 
-Packages, all at one suite version:
+OpenTelemetry packages, all at one suite version:
 
 - `opentelemetry-sdk`
 - `opentelemetry-exporter-otlp-proto-http`. HTTP, not gRPC: no grpcio wheel, and
@@ -171,10 +174,17 @@ Packages, all at one suite version:
 - `opentelemetry-instrumentation-httpx`
 - `opentelemetry-instrumentation-urllib`, for the `LocalProvider` model probes.
 - `opentelemetry-instrumentation-psycopg2`
+- `opentelemetry-instrumentation-sqlite3`, for the QA evaluator and the source index.
 - `opentelemetry-instrumentation-logging`
-- `openinference-instrumentation-langchain`, if Phoenix is the receiver. Phoenix
-  classifies spans by the `openinference.span.kind` attribute (LLM, TOOL, RETRIEVER,
-  CHAIN). Plain OpenTelemetry spans show as unknown kind.
+
+One package outside the suite, pinned on its own:
+
+- `openinference-instrumentation-langchain`, if Phoenix is the receiver. It is
+  versioned independently of OpenTelemetry. Version 0.1.74 resolved with both option A
+  and option B in the Appendix A dry runs, together with `openinference-instrumentation`
+  0.1.61 and `openinference-semantic-conventions` 0.1.35. Phoenix classifies spans by
+  the `openinference.span.kind` attribute (LLM, TOOL, RETRIEVER, CHAIN). Plain
+  OpenTelemetry spans show as unknown kind.
 
 No threading instrumentor. The chat stream copies the caller's context and enters its
 worker through `ctx.run` (section 1.2), so the request span is already active there.
@@ -182,14 +192,16 @@ worker through `ctx.run` (section 1.2), so the request span is already active th
 ### 2.4 One bootstrap module at five seams
 
 Add one module, `src/utils/telemetry.py`, with one function
-`init_telemetry(service_name)`.
+`init_telemetry(service_name=None)`. The name comes from `OTEL_SERVICE_NAME` when set,
+else from the argument, else from the entrypoint script name (`service_chat` from
+`sys.argv[0]`), so `setup_logging()` stays parameterless.
 
 | Seam | Anchor | What it gives |
 |---|---|---|
 | `setup_logging()` | `src/utils/logging.py:23-36` | one init point for all 9 `src/bin/service_*.py` processes; the format string gains trace-ID placeholders here |
 | Flask apps | `service_chat.py:41`, `service_grader.py:25`, `service_data_manager.py:189` | one server span per request |
 | Agent worker thread | `src/interfaces/chat_app/app.py:2245,2264` | no instrumentor. The stream copies the caller's context and advances the generator through `ctx.run`, so the request span is already active in the worker. A test pins it |
-| LangChain callbacks | `base_react.py:401-419` | LLM, tool, and graph spans with no edit inside the 2460-line file |
+| LangChain | `invoke` at `base_react.py:401-419`, `stream` at `:518-557`, `astream` at `:897` | LLM, tool, and graph spans. The global `LangChainInstrumentor` covers all three entry points. Callbacks alone cover only `invoke`; forwarding them from `stream` and `astream` is an edit to `base_react.py`. See 2.8 |
 | `ConnectionPool` | `src/utils/connection_pool.py:36` | database spans; the instrumentor must run before the pool is created |
 
 Rules:
@@ -204,6 +216,12 @@ Rules:
   `OTEL_EXPORTER_OTLP_ENDPOINT` at process start, before the Postgres-seeded config
   loads. The compose template already passes an `env_file` and a per-service
   `environment` map (`src/cli/templates/base-compose.yaml:53-59`).
+- **One service name per process.** The shared `.env` cannot carry a per-service
+  `OTEL_SERVICE_NAME`, and no service block renders one today. Every service has its
+  own `environment` block (`base-compose.yaml:43,214,299,425,553,618,684`), so render a
+  distinct value into each: `archi-chat`, `archi-grader`, `archi-data-manager`, and so
+  on. The fallback in `init_telemetry()` (above) covers processes started outside
+  compose. A test asserts the resource `service.name` for at least two entrypoints.
 - **Content hidden by default.** See 2.7. A second, separate flag is the only way to
   export prompts, completions, or documents.
 - **Trace ID in log lines.** The logging instrumentor adds `otelTraceID` and
@@ -232,11 +250,12 @@ Rules:
 |---|---|---|---|
 | Inbound HTTP | Flask | flask | 3 app processes; exclude the SSO routes, see 2.7 |
 | Agent worker | `ThreadPoolExecutor` entered through `ctx.run` | none needed | context already propagates, `app.py:2245,2264`; a test covers it, see 2.8 |
-| LLM calls | LangChain: `ChatOpenAI`, `ChatAnthropic`, `ChatGoogleGenerativeAI`, `ChatOllama`, `HuitBedrockChat` | openinference-langchain, or a callback handler | all five are `BaseChatModel`, so callbacks cover them |
+| LLM calls | LangChain: `ChatOpenAI`, `ChatAnthropic`, `ChatGoogleGenerativeAI`, `ChatOllama`, `HuitBedrockChat` | openinference-langchain, global | all five are `BaseChatModel`; a callback handler alone covers only `invoke`, see 2.8 |
 | LLM egress | httpx inside langchain-openai, langchain-anthropic, langchain-google-genai, langchain-ollama | httpx | |
 | HUIT Bedrock, scrapers, Mattermost, Piazza | requests | requests | 11 modules |
 | Model discovery | urllib.request | urllib | `local_provider.py`, benchmark harness |
 | Postgres | psycopg2 | psycopg2 | pooled and direct calls |
+| SQLite | sqlite3 | sqlite3 | QA evaluator and source index, 5 modules |
 | Logs | stdlib logging | logging | trace ID injection; OTLP log export is optional |
 | Metrics | none today | none | needs a MeterProvider and a receiver; see 2.6 |
 
@@ -289,13 +308,27 @@ purpose, and the same rule must hold for spans. The bootstrap module must:
 - Cover the off path, the fail-open path, and the on path with an in-memory span
   exporter. The fail-open test must induce an instrumentor failure after the enable
   flag is set and assert that a later log record still renders in the plain format.
+  A second fail-open case points the exporter at an unreachable endpoint, forces a
+  flush, and asserts one warning in the log and continued operation. Exporter errors
+  surface later in the batch processor, not at init, so the first case cannot stand in
+  for this one.
 - Assert spans for: one Flask request; the agent `invoke` and stream paths; one
   `HuitBedrockChat` call; one pooled psycopg2 call; and one captured log line with a
   trace ID, emitted from a worker thread inside an active span.
 - Assert redaction: no prompt, document text, query string, or OAuth code appears in
   any exported span with the default flags.
-- `src/interfaces/chat_app/app.py` is not imported by unit tests. Keep the call site
-  there to one line, per `CLAUDE.md`.
+- Eleven unit modules import `src/interfaces/chat_app/app.py`, among them
+  `tests/unit/test_chat_timeout_guard.py` and `test_chat_timing_field_validation.py`,
+  so the `CLAUDE.md` line that calls the module unimported is stale. The coverage risk
+  behind that line still holds: the module is more than 5000 lines and lightly covered,
+  so new lines there can fail the 80 percent patch gate. Keep the call site to one
+  line, put the logic in `src/utils/telemetry.py`, and cover the call site from one of
+  the tests that already import the app.
+- **Deployed validation.** Unit spans are not the finish line. `AGENTS.md:61-63`
+  requires at least one end-to-end check against the running deployment. Phase 2 ends
+  with one streamed chat request against the preview deploy, or the dev stack, with an
+  OTLP endpoint set. Then confirm two things: the exported span for that request at
+  the receiver, and the correlated log line with the same trace ID in the service log.
 - Do not edit `base_react.py` for spans **on the `invoke` path** — its `callbacks`
   parameter (`base_react.py:396-419`) is enough there. It is not enough for chat.
   Normal chat calls `stream()`, which takes `**kwargs` only, never forwards a
@@ -316,9 +349,11 @@ Phase the work. Each phase is one PR.
    files from 2.3, rebuild the base image once, bump 15 digests. Under option B this
    PR also bumps protobuf. Validate through the preview deploy and the smoke suite
    before merge. No OpenTelemetry code yet.
-2. **Traces.** Bootstrap module, Flask, requests, httpx, urllib, psycopg2,
-   LangChain callbacks, log format. Default off. Content hidden. Exporter endpoint
-   from environment. Redaction tests green.
+2. **Traces.** Bootstrap module, Flask, requests, httpx, urllib, psycopg2, sqlite3,
+   LangChain instrumentation (the global `LangChainInstrumentor`, or callback
+   forwarding in `stream` and `astream`; decide it per 2.8), log format, one service
+   name per process. Default off. Content hidden. Exporter endpoint from environment.
+   Redaction tests green. Ends with the deployed validation in 2.8.
 3. **Receiver.** Phoenix as a compose service behind a flag like `grafana_enabled`.
    Point the claw stack at its own Phoenix only after a recorded probe.
 4. **Metrics.** MeterProvider, request and LLM histograms, Prometheus, Grafana
@@ -365,7 +400,10 @@ Pip dry runs on 2026-09-08 with pip from the conda `archi` env (Python 3.11.15):
    with the packages in section 2.3, first unpinned, then at each suite version in the
    2.2 table.
 3. Repeat the unpinned run with the `protobuf` line removed.
-4. Resolve the whole base set with `protobuf` free. protobuf lands at 7.36.1. The only
+4. Record the OpenInference result separately, because that package is not part of
+   the OpenTelemetry suite: `openinference-instrumentation-langchain==0.1.74` resolved
+   in both the 1.27.0 and the 1.44.0 runs.
+5. Resolve the whole base set with `protobuf` free. protobuf lands at 7.36.1. The only
    non-extra constraint is `onnxruntime==1.29.0 requires protobuf>=4.25.8`.
 
 A dry run proves that the resolver is satisfied. It does not prove that the packages
