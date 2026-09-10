@@ -4,6 +4,61 @@ Archi deployments are configured via YAML files passed to the CLI with `--config
 
 > **Tip:** Start from one of the example configs in `examples/deployments/` and customize from there.
 
+## Explicit `false`, `0`, and `null`
+
+A value you write is the value you get. `enabled: false` disables the thing, `0` is a
+budget of zero, and `null` means "use the documented default" — none of the three is read
+as "unset and therefore ignorable".
+
+This was not always true. Before the fix in issue #448, a set of boolean flags went through
+a Jinja filter that could not tell `false` from a missing key, so an explicit `false` was
+discarded and the default rendered in its place.
+
+**Read this before you upgrade.** If a deployment relies on one of the keys below being
+ignored, it will start taking effect.
+
+### 21 flags where an explicit `false` was discarded
+
+`false` now disables what it names:
+
+- `services.data_manager.enabled` — the data-manager service is no longer deployed
+- `data_manager.reset_collection` — the existing collection is kept instead of reset
+- `data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.encode_kwargs.normalize_embeddings`
+- `data_manager.processing.html_to_markdown.enabled`
+- `enabled` and `visible` on the `local_files`, `links`, `git`, `sso`, `jira` and `redmine`
+  sources, and `visible` on `indico` — `enabled: false` skips the source, `visible: false`
+  keeps its content out of chat citations
+- `data_manager.sources.links.html_scraper.reset_data`
+- `data_manager.sources.redmine.anonymize_data` and `data_manager.sources.elog.verify_ssl`
+- the two `headless` flags, on the CERN SSO scraper and on `indico.sso_kwargs`
+
+The `visible: false` and `anonymize_data: false` rows are the ones to check first: both
+widen what a reader can see, and both were silently ignored before.
+
+### 7 flags where an explicit `null` rendered as the string `'None'`
+
+`null` now renders that flag's documented default as a real boolean:
+
+- `services.benchmarking.anchors.enabled`
+- `services.chat_app.flask_debug_mode` and `services.grader_app.flask_debug_mode`
+- `services.data_manager.auth.enabled`
+- `data_manager.retrievers.hierarchical_rerank.enabled`
+- `data_manager.sources.indico.use_sso` and
+  `data_manager.sources.indico.slide_conversion.enabled`
+
+### 4 numeric bounds where `0` is a request, not an empty value
+
+| Key | `0` means | Unset means |
+|---|---|---|
+| `data_manager.sources.links.base_source_depth` | crawl no page at all for this seed | `1` — the seed page alone |
+| `data_manager.sources.links.max_pages` | fetch no pages | no cap |
+| `data_manager.sources.links.sitemap.max_pages` | no page budget | `20000` |
+| `data_manager.sources.elog.max_entries` | fetch no entries | no cap |
+
+Depth counts levels of pages, so `base_source_depth: 1` is the base page on its own and `0`
+is nothing. To index the base page only, write `1`. To turn a source off, prefer
+`enabled: false` over a zero bound — it says what you mean and it reads better in a diff.
+
 ---
 
 ## Top-Level Fields
