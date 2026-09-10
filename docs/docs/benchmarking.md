@@ -452,6 +452,12 @@ services:
 
 The `huit_bedrock` provider is Harvard's Anthropic-compatible Bedrock proxy. Pinning Sonnet 4.5 (rather than the rolling-alias 4.6) makes scores reproducible across rounds. Requires `HUIT_API_KEY` in `~/.archi/.env.benchmark`.
 
+The `huggingface` provider names an **unauthenticated** OpenAI-compatible judge endpoint — the convention vLLM and Text Generation Inference (TGI) serve. The endpoint URL is read from `evaluator_ollama_url`; if that key is absent, the provider falls back to the system-under-test `ollama_url`, and then to `http://localhost:8000/v1`. Because the provider always builds an OpenAI-compatible client, it must not be pointed at a native Ollama port (which speaks a different protocol).
+
+There is no way to give this provider a credential: the client is built through the local provider seam, which sends the placeholder token `not-needed`. An endpoint behind bearer authentication rejects every score request. Use `huit_bedrock` for an authenticated judge.
+
+`huggingface` is an evaluator-only provider name. Setting `services.benchmarking.provider: huggingface` for the system under test fails at startup, because the agent providers do not include it.
+
 #### Tool calling and structured output on `huit_bedrock`
 
 The provider supports **bound tools for a single request-and-response round**, which is

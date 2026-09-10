@@ -21,6 +21,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
+from src.archi.providers.local_provider import normalize_base_url
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
 from src.utils.benchmark_provenance import (
     asserted_config_divergence,
@@ -1399,10 +1400,22 @@ class Benchmarker:
                     "evaluator_provider_mode"
                 ) or benchmark_cfg.get("provider_mode")
                 if resolve_local_mode(ollama_url, explicit_mode) == "openai_compat":
+                    # base_url twice: see the huggingface arm below — OLLAMA_HOST
+                    # would otherwise redirect this judge to the system under test.
+                    # Only when there is one, though: the keyword lands last, so a
+                    # None would erase the provider's own local default and send the
+                    # judge to the public OpenAI endpoint. An override with nothing
+                    # to override with is not an override.
+                    override = (
+                        {"base_url": normalize_base_url(ollama_url)}
+                        if ollama_url
+                        else {}
+                    )
                     return get_model(
                         "local",
                         model_name,
                         {"base_url": ollama_url, "mode": "openai_compat"},
+                        **override,
                     )
                 from langchain_ollama import ChatOllama
 
@@ -1414,8 +1427,15 @@ class Benchmarker:
                 )
             case "huggingface":
                 base_url = ollama_url or "http://localhost:8000/v1"
+                # base_url twice, on purpose. load_new_configuration exports the SUT
+                # url as OLLAMA_HOST, and LocalProvider overwrites config.base_url
+                # with it — so the config copy alone points the judge at the system
+                # under test. The keyword reaches ChatOpenAI last and wins.
                 return get_model(
-                    "local", model_name, base_url=base_url, local_mode="openai_compat"
+                    "local",
+                    model_name,
+                    {"base_url": base_url, "mode": "openai_compat"},
+                    base_url=normalize_base_url(base_url),
                 )
             case "anthropic":
                 from langchain_anthropic import ChatAnthropic

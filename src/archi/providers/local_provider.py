@@ -15,6 +15,19 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def normalize_base_url(url: Optional[str]) -> Optional[str]:
+    """Ensure a base URL has a scheme so urllib requests succeed.
+
+    Public because a caller that overrides the endpoint past the provider seam has to
+    apply the same rule; two copies of it would drift.
+    """
+    if not url:
+        return url
+    if url.startswith(("http://", "https://")):
+        return url
+    return f"http://{url}"
+
+
 class LocalProvider(BaseProvider):
     """
     Provider for local LLM servers (Ollama, vLLM, LM Studio, etc.)
@@ -35,11 +48,7 @@ class LocalProvider(BaseProvider):
     @staticmethod
     def _normalize_base_url(url: Optional[str]) -> Optional[str]:
         """Ensure the base URL has a scheme so urllib requests succeed."""
-        if not url:
-            return url
-        if url.startswith(("http://", "https://")):
-            return url
-        return f"http://{url}"
+        return normalize_base_url(url)
 
     def __init__(self, config: Optional[ProviderConfig] = None):
         import os
