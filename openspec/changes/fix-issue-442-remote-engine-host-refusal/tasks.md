@@ -175,7 +175,7 @@ Standing notes for every task:
 
 ## 5. Close out
 
-- [ ] 5.1 Verify the acceptance criteria end to end, then push and open the PR.
+- [x] 5.1 Verify the acceptance criteria end to end, then push and open the PR.
 
       Confirm each criterion from issue #442:
 
