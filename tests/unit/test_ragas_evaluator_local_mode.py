@@ -84,3 +84,50 @@ def test_huggingface_judge_uses_the_configured_evaluator_url():
     assert isinstance(llm, ChatOpenAI)
     assert llm.openai_api_base == "http://judge-host:8001/v1"
     assert llm.model_name == "judge-x"
+
+
+def test_huggingface_judge_defaults_to_the_local_openai_compatible_port():
+    """Over-reach guard — passes once 1.1 has landed; not a new defect test."""
+    bench = _bench(
+        {
+            "model": "qwen-x",
+            "mode_settings": {
+                "ragas_settings": {
+                    "evaluator_provider": "huggingface",
+                    "evaluator_model": "judge-x",
+                }
+            },
+        }
+    )
+    llm = bench.get_ragas_llm_evaluator()
+    assert isinstance(llm, ChatOpenAI)
+    assert llm.openai_api_base == "http://localhost:8000/v1"
+    assert llm.model_name == "judge-x"
+
+
+def test_huggingface_sut_provider_key_reaches_the_judge_arm():
+    """Over-reach guard — passes once 1.1 has landed; not a new defect test."""
+    bench = _bench(
+        {
+            "provider": "huggingface",
+            "model": "qwen-x",
+        }
+    )
+    llm = bench.get_ragas_llm_evaluator()
+    assert isinstance(llm, ChatOpenAI)
+    assert llm.openai_api_base == "http://localhost:8000/v1"
+    assert llm.model_name == "qwen-x"
+
+
+def test_huggingface_judge_inherits_the_sut_url_when_no_judge_url_is_set():
+    """Over-reach guard — passes once 1.1 has landed; not a new defect test."""
+    bench = _bench(
+        {
+            "provider": "huggingface",
+            "model": "qwen-x",
+            "ollama_url": "http://sut-host:9000/v1",
+        }
+    )
+    llm = bench.get_ragas_llm_evaluator()
+    assert isinstance(llm, ChatOpenAI)
+    assert llm.openai_api_base == "http://sut-host:9000/v1"

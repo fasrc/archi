@@ -86,7 +86,7 @@ Standing notes for every task:
       Re-run `python -m pytest tests/unit/test_ragas_evaluator_local_mode.py -q`, confirm
       4 tests pass, then run `bash scripts/gate.sh` and commit.
 
-- [ ] 1.2 Pin the remaining three configuration routes, in
+- [x] 1.2 Pin the remaining three configuration routes, in
       `tests/unit/test_ragas_evaluator_local_mode.py` only. These tests pass once 1.1 has
       landed — they are over-reach guards, so do not contrive a failure for any of them, and
       say so in each docstring. Append after the 1.1 test:
