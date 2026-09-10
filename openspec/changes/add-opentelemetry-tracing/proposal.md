@@ -14,19 +14,38 @@ parts together. Issues #258 and #227 ask for exactly that tie: a correlation ID 
 
 ### The decisions this change closes
 
-**Suite version: option A.** The readiness document measured two coherent choices. Option A
-pins the OpenTelemetry suite at 1.27.0 / 0.48b0 and leaves `protobuf==4.25.8`
-(`requirements/requirements-base.txt:81`) alone. Option B bumps protobuf to 7.x and takes the
-1.44.0 suite. This change takes option A. A three-major-version protobuf bump reaches all 15
-service images, and it is a separate risk from tracing. Option A carries that risk in no
-image.
+**Suite version: option B, and option A is not installable.** The readiness document
+measured two choices with a pip dry run. Option A pins the suite at 1.27.0 / 0.48b0 and keeps
+`protobuf==4.25.8`. Option B bumps protobuf and takes the current suite. It recommended
+option A as the lower-risk one, and it warned that a dry run proves only that the resolver is
+satisfied, never that the packages work together at runtime. That warning was the right one.
 
-A probe on 2026-09-09 confirms the pin is safe in both directions. In a clean virtual
-environment, `opentelemetry-exporter-otlp-proto-http==1.27.0` installs protobuf 4.25.9 and
-imports. The same exporter still imports after protobuf is forced to 7.35.1, which is the
-version the local conda `archi` environment carries. So the pinned suite works at the pinned
-protobuf that CI and the images use, and it also works in a developer environment that has
-drifted forward.
+A runtime probe on 2026-09-09 refutes option A. `opentelemetry-instrumentation==0.48b0`
+imports `pkg_resources` at module scope (`dependencies.py:4`), and setuptools 82 removed that
+module. The package declares only `setuptools>=16.0`, so a fresh install takes the newest
+setuptools, and every instrumentor import then raises `ModuleNotFoundError`. Measured in the
+conda `archi` environment, which carries setuptools 82.0.1, and again in a clean virtual
+environment, which resolved setuptools 84.0.0. Under option A, telemetry would fail open on
+every start and emit nothing, forever.
+
+No middle version exists. `opentelemetry-proto` needs protobuf 5 or newer from 1.28 onward, so
+1.27.0 is the last core release that accepts protobuf 4. `opentelemetry-instrumentation`
+dropped `pkg_resources` in 0.50b0, which pairs with core 1.29.0. The two ranges do not
+overlap, so a working OTLP exporter today requires protobuf 5 or newer.
+
+So this change takes option B: core packages at 1.44.0, instrumentation packages at 0.65b0,
+and `protobuf` from 4.25.8 to 7.36.1. The same probe installed all nine instrumentors plus
+`openinference-instrumentation-langchain==0.1.74` under setuptools 84 and imported every one.
+
+The protobuf bump is the cost, and it is real. It reaches all 15 service images. Only one
+package in the base set constrains protobuf: `onnxruntime`, which `flashrank` pulls in, and
+which asks for `protobuf>=4.25.8` with no upper bound. `pulsar-client==3.5.0` bounds protobuf
+at 3.20.3 only under the `all` and `functions` extras, and this project installs neither.
+That is resolver evidence. The runtime evidence is the deployed check in `tasks.md`, and it
+must pass before merge.
+
+This change also corrects section 2.2 of `docs/docs/proposals/opentelemetry-readiness.md`, so
+the merged document does not keep recommending an option that cannot be installed.
 
 **LangChain seam: the global instrumentor.** Section 2.8 of the readiness document left this
 open. `stream()` (`src/archi/pipelines/agents/base_react.py:518-557`) and `astream()`

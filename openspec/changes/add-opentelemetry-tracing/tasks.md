@@ -12,14 +12,18 @@ to one line and put the logic in `src/utils/telemetry.py`.
 
 ## 1. Dependencies
 
-- [ ] 1.1 `model: sonnet` — **Pin the suite in four files.**
-  Add the OpenTelemetry packages at 1.27.0, the instrumentation packages at 0.48b0, and
+- [x] 1.1 `model: sonnet` — **Pin the suite in four files, and move protobuf.**
+  Add the OpenTelemetry core packages at 1.44.0, the instrumentation packages at 0.65b0, and
   `openinference-instrumentation-langchain==0.1.74` to `pyproject.toml` and
-  `requirements/requirements-base.txt`. Regenerate the two base-image files with the same
-  command `scripts/dev/build_docker_images.sh:80-86` runs. Leave `protobuf==4.25.8` alone.
+  `requirements/requirements-base.txt`. Move `protobuf` from 4.25.8 to 7.36.1 in the second
+  file. Regenerate the two base-image files with the same command
+  `scripts/dev/build_docker_images.sh:80-86` runs.
   `tests/unit/test_requirements_generated_in_sync.py` proves the regeneration.
   Install the same pins into the local conda `archi` environment so the gate can run the
   tests that follow.
+  Correct section 2.2 of `docs/docs/proposals/opentelemetry-readiness.md`: it recommends
+  option A, and option A cannot be installed. Record the measurement, not the conclusion
+  alone.
 
 ## 2. The bootstrap module
 
