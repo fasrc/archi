@@ -120,11 +120,18 @@ def _resolve_context_endpoint() -> str | None | object:
 
         if not matches:
             return None
+        # A `Host` that is neither a string nor absent cannot be classified, and it
+        # cannot be deduplicated either: a list or dict is unhashable, so building a
+        # set of the matches would raise and the outer handler would report "no
+        # context" for the whole store — hiding a valid remote sibling. Refuse before
+        # touching the set. Unclassifiable is not evidence of a local engine.
+        if any(host is not None and not isinstance(host, str) for host in matches):
+            return _AMBIGUOUS
         # More than one entry claiming the selected name, disagreeing about the
         # endpoint: taking the first is taking whichever the filesystem listed first,
         # and a stale duplicate naming a local socket would hide the real remote one.
         # Ambiguity is not evidence of a local engine, so refuse rather than pick.
-        if len({host for host in matches}) > 1:
+        if len(set(matches)) > 1:
             return _AMBIGUOUS
         return matches[0]
     except Exception:

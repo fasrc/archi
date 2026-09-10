@@ -597,6 +597,51 @@ def test_conflicting_duplicate_context_entries_refuse(monkeypatch, tmp_path):
     assert container_endpoint_is_provably_local() is False
 
 
+@pytest.mark.parametrize(
+    "stale_host", ["[]", "{}", '["unix:///var/run/docker.sock"]', '{"a": 1}']
+)
+def test_an_unhashable_duplicate_host_does_not_abort_the_scan(
+    monkeypatch, tmp_path, stale_host
+):
+    """A same-name entry whose `Host` is a list or object must not fail open.
+
+    The duplicate check deduplicates the matches, and a `set` of them raises
+    `TypeError` on a list or dict. That escapes to the outer handler, which returns
+    None, and the caller reads a None endpoint as "no context configured" -- so the
+    valid remote entry alongside it goes unseen and the CLI machine gets stamped.
+
+    Introduced by the duplicate-refusal fix itself: the earlier non-string guard
+    covered a hashable `1`, and conflicting *strings* were the only conflict shape
+    tested, so both new guards had a hole between them.
+    """
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotebox")
+    meta_root = tmp_path / ".docker" / "contexts" / "meta"
+
+    stale = meta_root / "stale"
+    stale.mkdir(parents=True)
+    (stale / "meta.json").write_text(
+        '{"Name": "remotebox", "Endpoints": {"docker": {"Host": ' + stale_host + "}}}"
+    )
+    _write_context_meta(tmp_path, "real", "remotebox", "ssh://user@remote.example.com")
+
+    _pin_glob_order(
+        monkeypatch,
+        [stale / "meta.json", meta_root / "real" / "meta.json"],
+    )
+    assert container_endpoint_is_provably_local() is False
+
+
+def test_a_lone_unhashable_context_host_is_not_local(monkeypatch, tmp_path):
+    """The same shape with no sibling: unclassifiable is not evidence of local."""
+    monkeypatch.setenv("DOCKER_CONTEXT", "remotebox")
+    meta_dir = tmp_path / ".docker" / "contexts" / "meta" / "abc"
+    meta_dir.mkdir(parents=True)
+    (meta_dir / "meta.json").write_text(
+        '{"Name": "remotebox", "Endpoints": {"docker": {"Host": ["nope"]}}}'
+    )
+    assert container_endpoint_is_provably_local() is False
+
+
 def test_agreeing_duplicate_context_entries_still_classify(monkeypatch, tmp_path):
     """Duplicates that agree are not ambiguous, so they resolve normally."""
     monkeypatch.setenv("DOCKER_CONTEXT", "myctx")

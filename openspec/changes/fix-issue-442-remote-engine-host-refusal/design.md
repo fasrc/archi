@@ -288,6 +288,35 @@ deployment predates the field, or `archi create` refused to capture one because 
 engine was not provably local", which keeps the field informative: a reader can still tell an
 old deploy from a refusal, which an empty string or a missing key would not.
 
+### 13. Two defects the previous round's own fixes introduced
+
+Review round 5 found both, and both are worth recording because they are the cost of
+fixing things: a guard can open a hole beside itself.
+
+**Decision 11's duplicate check could not deduplicate an unhashable `Host`.** It built a
+`set` of the matches, and a stale same-name entry holding `"Host": []` or `"Host": {}` is
+valid JSON that raises `TypeError` on hashing. That escaped to the outer handler, which
+returned `None`, and the caller read a `None` endpoint as "no context configured" — so a
+valid remote sibling went unseen and the CLI machine was stamped. Exactly the fail-open
+decision 11 was written to close, reintroduced by the line that closed it.
+
+The two guards had a hole between them: decision 9's `isinstance` check covers the *shape
+of the metadata*, and the earlier non-string `Host` test used a hashable `1`, which reaches
+`endpoint_is_local` and is refused there. A list or dict passed the shape check, never
+reached the classifier, and broke the dedupe instead. Non-string matches now refuse before
+the set is built. Five tests, parameterised over `[]`, `{}`, a populated list and a
+populated dict, plus the lone-entry case.
+
+**Decision 12's replacement text named two of the four null-host causes.** It read "either
+this deployment predates the field, or `archi create` refused to capture", which is false
+on the other two paths from decision 7 — an unreadable or blank hostname, and an unreadable
+`git_info.yaml`. So the fix for one false exhaustive claim shipped another, narrower one.
+
+`add_metadata()` cannot tell the four apart: it reads a `git_info.yaml` that does not record
+which one applied. So the text names all four and asserts none of them, and the test checks
+for each cause by name plus the absence of "either", so a later edit cannot quietly narrow
+it again.
+
 ## Risks / Trade-offs
 
 - **A false refusal on a local `DOCKER_HOST` form this table does not know.** Mitigated by

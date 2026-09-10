@@ -158,6 +158,34 @@ def test_no_host_means_no_same_machine_assertion(monkeypatch, tmp_path, _sb_isol
     assert "no host" in captured_at.lower()
 
 
+def test_the_null_host_text_names_every_cause(monkeypatch, tmp_path, _sb_isolate):
+    """Four causes produce a null host, so naming two is a new false exhaustive claim.
+
+    `add_metadata()` cannot tell them apart -- it reads a `git_info.yaml` that does
+    not record which one applied -- so the text has to list all four rather than pick.
+    An earlier version of this replacement string named only the missing-field and
+    refusal causes, which is the same kind of overclaim the conditional was added to
+    remove. The causes are enumerated in design decision 7.
+    """
+    git_info = tmp_path / "git_info.yaml"
+    git_info.write_text("last_commit: abc\n")
+    monkeypatch.setattr(sb, "EXTRA_METADATA_PATH", str(git_info))
+
+    ResultHandler.add_metadata()
+
+    captured_at = ResultHandler.metadata["host_captured_at"].lower()
+    # 1. the deploy predates the field
+    assert "predates" in captured_at
+    # 2. capture ran and the hostname was unreadable or blank
+    assert "hostname" in captured_at
+    # 3. git_info.yaml itself was unreadable
+    assert "git_info.yaml" in captured_at
+    # 4. the container endpoint was not provably local, so capture refused
+    assert "provably local" in captured_at
+    # And it must not claim to know which one applied.
+    assert "either" not in captured_at
+
+
 def test_metadata_records_null_when_file_is_unreadable(
     monkeypatch, tmp_path, _sb_isolate
 ):
