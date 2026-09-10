@@ -1399,10 +1399,13 @@ class Benchmarker:
                     "evaluator_provider_mode"
                 ) or benchmark_cfg.get("provider_mode")
                 if resolve_local_mode(ollama_url, explicit_mode) == "openai_compat":
+                    # base_url twice: see the huggingface arm below — OLLAMA_HOST
+                    # would otherwise redirect this judge to the system under test.
                     return get_model(
                         "local",
                         model_name,
                         {"base_url": ollama_url, "mode": "openai_compat"},
+                        base_url=ollama_url,
                     )
                 from langchain_ollama import ChatOllama
 
@@ -1414,8 +1417,15 @@ class Benchmarker:
                 )
             case "huggingface":
                 base_url = ollama_url or "http://localhost:8000/v1"
+                # base_url twice, on purpose. load_new_configuration exports the SUT
+                # url as OLLAMA_HOST, and LocalProvider overwrites config.base_url
+                # with it — so the config copy alone points the judge at the system
+                # under test. The keyword reaches ChatOpenAI last and wins.
                 return get_model(
-                    "local", model_name, {"base_url": base_url, "mode": "openai_compat"}
+                    "local",
+                    model_name,
+                    {"base_url": base_url, "mode": "openai_compat"},
+                    base_url=base_url,
                 )
             case "anthropic":
                 from langchain_anthropic import ChatAnthropic

@@ -9,6 +9,7 @@ an OpenAI-compatible client for a ``/v1`` judge endpoint while native Ollama sti
 uses ``ChatOllama``.
 """
 
+import pytest
 from langchain_openai import ChatOpenAI
 
 from src.bin.service_benchmark import Benchmarker
@@ -105,29 +106,108 @@ def test_huggingface_judge_defaults_to_the_local_openai_compatible_port():
     assert llm.model_name == "judge-x"
 
 
-def test_huggingface_sut_provider_key_reaches_the_judge_arm():
-    """Over-reach guard — passes once 1.1 has landed; not a new defect test."""
-    bench = _bench(
-        {
-            "provider": "huggingface",
-            "model": "qwen-x",
-        }
-    )
-    llm = bench.get_ragas_llm_evaluator()
-    assert isinstance(llm, ChatOpenAI)
-    assert llm.openai_api_base == "http://localhost:8000/v1"
-    assert llm.model_name == "qwen-x"
-
-
 def test_huggingface_judge_inherits_the_sut_url_when_no_judge_url_is_set():
-    """Over-reach guard — passes once 1.1 has landed; not a new defect test."""
+    """One endpoint serving both roles is configured once, on the SUT key.
+
+    The system under test stays on a provider that exists — `huggingface` is an
+    evaluator-only name — so this is a configuration an operator can actually run.
+    """
     bench = _bench(
         {
-            "provider": "huggingface",
+            "provider": "local",
             "model": "qwen-x",
             "ollama_url": "http://sut-host:9000/v1",
+            "mode_settings": {"ragas_settings": {"evaluator_provider": "huggingface"}},
         }
     )
     llm = bench.get_ragas_llm_evaluator()
     assert isinstance(llm, ChatOpenAI)
     assert llm.openai_api_base == "http://sut-host:9000/v1"
+    assert llm.model_name == "qwen-x"
+
+
+# --- the judge endpoint must survive OLLAMA_HOST (review round 1) ---
+
+
+def test_huggingface_judge_url_survives_the_sut_ollama_host(monkeypatch):
+    """load_new_configuration exports the SUT url as OLLAMA_HOST before the judge is built.
+
+    LocalProvider then replaces even an explicitly supplied base_url with that
+    variable, so without the kwarg the judge scores its own answers against the
+    system under test.
+    """
+    monkeypatch.setenv("OLLAMA_HOST", "http://sut-host:9000/v1")
+    bench = _bench(
+        {
+            "provider": "local",
+            "model": "qwen-x",
+            "ollama_url": "http://sut-host:9000/v1",
+            "mode_settings": {
+                "ragas_settings": {
+                    "evaluator_provider": "huggingface",
+                    "evaluator_model": "judge-x",
+                    "evaluator_ollama_url": "http://judge-host:8001/v1",
+                }
+            },
+        }
+    )
+    llm = bench.get_ragas_llm_evaluator()
+    assert llm.openai_api_base == "http://judge-host:8001/v1"
+
+
+def test_local_judge_url_survives_the_sut_ollama_host(monkeypatch):
+    """The local arm reaches the same provider seam and had the same hijack."""
+    monkeypatch.setenv("OLLAMA_HOST", "http://sut-host:9000/v1")
+    bench = _bench(
+        {
+            "provider": "local",
+            "model": "qwen-x",
+            "ollama_url": "http://sut-host:9000/v1",
+            "mode_settings": {
+                "ragas_settings": {
+                    "evaluator_provider": "local",
+                    "evaluator_model": "judge-x",
+                    "evaluator_ollama_url": "http://judge-host:8001/v1",
+                }
+            },
+        }
+    )
+    llm = bench.get_ragas_llm_evaluator()
+    assert llm.openai_api_base == "http://judge-host:8001/v1"
+
+
+def test_huggingface_judge_default_url_survives_the_sut_ollama_host(monkeypatch):
+    """The fallback endpoint is the judge's own default, not the SUT's."""
+    monkeypatch.setenv("OLLAMA_HOST", "http://sut-host:9000/v1")
+    bench = _bench(
+        {
+            "model": "qwen-x",
+            "mode_settings": {
+                "ragas_settings": {
+                    "evaluator_provider": "huggingface",
+                    "evaluator_model": "judge-x",
+                }
+            },
+        }
+    )
+    llm = bench.get_ragas_llm_evaluator()
+    assert llm.openai_api_base == "http://localhost:8000/v1"
+
+
+# --- huggingface is an evaluator-only provider name (review round 1) ---
+
+
+def test_huggingface_is_not_a_system_under_test_provider():
+    """A `huggingface` SUT provider is rejected before any judge is built.
+
+    `ProviderType` has no such member, and `load_new_configuration` constructs the
+    SUT through `archi(...)` first, so `services.benchmarking.provider: huggingface`
+    raises at pipeline construction. The judge arm is reachable only through
+    `evaluator_provider`, and the spec says so.
+    """
+    from src.archi.providers import get_model
+    from src.archi.providers.base import ProviderType
+
+    assert "huggingface" not in {member.value for member in ProviderType}
+    with pytest.raises(ValueError, match="Invalid provider type 'huggingface'"):
+        get_model("huggingface", "qwen-x", {})

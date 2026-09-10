@@ -10,9 +10,16 @@ one, built through the same provider seam and the same `openai_compat` mode the 
 provider uses for a `/v1` endpoint, so that one judge-construction path serves both.
 
 The provider SHALL be resolved from `mode_settings.ragas_settings.evaluator_provider` when
-that key carries a value, and from `services.benchmarking.provider` when it does not. Both
-routes reach this requirement; `evaluator_provider` is rendered into every generated
-deployment config, so it is an operator surface and not internal state.
+that key carries a value, and from `services.benchmarking.provider` when it does not.
+`evaluator_provider` is rendered into every generated deployment config, so it is an
+operator surface and not internal state.
+
+`huggingface` is an evaluator-only provider name, and the spec SHALL NOT claim the
+system-under-test key reaches this arm. `ProviderType` has no `huggingface` member, and
+`load_new_configuration` builds the system under test through `archi(...)` before any judge
+exists, so `services.benchmarking.provider: huggingface` raises at pipeline construction.
+The resolution order above is shared by every evaluator arm and stays as it is; what does
+not exist is a deployment that arrives here by that route.
 
 The judge model SHALL come from `mode_settings.ragas_settings.evaluator_model`, falling back
 to `services.benchmarking.model`. The fallback exists so an operator can point the judge at a
@@ -29,11 +36,11 @@ different endpoint without restating the model.
 - **WHEN** `evaluator_provider` is `huggingface`, `evaluator_model` is `judge-x`, and the system under test is configured with a different model
 - **THEN** the returned client is bound to `judge-x` rather than to the system-under-test model
 
-#### Scenario: The system-under-test provider key reaches the same arm
+#### Scenario: The system-under-test provider name is rejected earlier
 
-- **WHEN** no `evaluator_provider` is configured and `services.benchmarking.provider` is `huggingface`
-- **THEN** the harness returns an OpenAI-compatible chat client bound to the system-under-test model
-- **AND** no exception is raised while building it
+- **WHEN** `services.benchmarking.provider` is `huggingface`
+- **THEN** building the system under test raises, because `ProviderType` has no such member
+- **AND** the judge arm is reachable only through `evaluator_provider`
 
 ### Requirement: An unconfigured huggingface judge falls back to the local OpenAI-compatible port
 
@@ -69,3 +76,27 @@ served; refusing or auto-detecting that case is out of scope here.
 - **WHEN** the `huggingface` judge endpoint is resolved to the default, whose host is local and whose path ends in `/v1`
 - **THEN** the client is OpenAI-compatible because the provider says so, not because the URL was inspected
 - **AND** the other evaluator providers keep the client each of them builds today
+
+### Requirement: The resolved judge endpoint outranks OLLAMA_HOST
+
+The judge client SHALL be bound to the endpoint this capability resolves, and SHALL NOT be redirected to the system under test by the `OLLAMA_HOST` environment variable.
+
+`load_new_configuration` exports the system-under-test URL as `OLLAMA_HOST`, and
+`LocalProvider` replaces even an explicitly supplied `base_url` with that variable. Passing
+the endpoint only inside the provider configuration therefore loses it: the judge silently
+scores against the system under test, which either fails because the judge model is not
+served there or invalidates the run by making the system under test its own judge. The
+second outcome is the dangerous one, because it produces numbers rather than an error.
+
+The endpoint SHALL therefore be supplied where the provider seam cannot rewrite it. This
+applies to every arm that builds its client through that seam, not only to `huggingface`.
+
+#### Scenario: A configured judge endpoint outranks the exported system-under-test host
+
+- **WHEN** `OLLAMA_HOST` names the system-under-test endpoint and `evaluator_ollama_url` names a different judge endpoint
+- **THEN** the returned client's base URL is the judge endpoint
+
+#### Scenario: The default judge endpoint outranks the exported system-under-test host
+
+- **WHEN** `OLLAMA_HOST` names the system-under-test endpoint and no judge URL and no system-under-test URL are configured
+- **THEN** the returned client's base URL is `http://localhost:8000/v1`
