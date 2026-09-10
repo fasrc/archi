@@ -67,8 +67,28 @@ _INSTRUMENTORS: Tuple[Tuple[str, str, str], ...] = (
     ("urllib", "opentelemetry.instrumentation.urllib", "URLLibInstrumentor"),
     ("psycopg2", "opentelemetry.instrumentation.psycopg2", "Psycopg2Instrumentor"),
     ("sqlite3", "opentelemetry.instrumentation.sqlite3", "SQLite3Instrumentor"),
+    (
+        "langchain",
+        "openinference.instrumentation.langchain",
+        "LangChainInstrumentor",
+    ),
     ("logging", "opentelemetry.instrumentation.logging", "LoggingInstrumentor"),
 )
+
+# Arguments a particular instrumentor needs, built when it is installed.
+#
+# logging: the record factory adds otelTraceID and otelSpanID only when it is asked
+# to inject context. The instrumentor asks for that itself when it is also told to
+# own the log format, and it then calls basicConfig with a format of its own.
+# setup_logging() owns the format here, so the injection has to be requested
+# directly and the format left alone.
+#
+# langchain: this is the seam that gives Phoenix its span kinds, and the one that
+# would otherwise export every prompt. See build_trace_config().
+_INSTRUMENTOR_KWARGS = {
+    "logging": lambda: {"inject_trace_context": True, "set_logging_format": False},
+    "langchain": lambda: {"config": build_trace_config()},
+}
 
 _LOGGING_INSTRUMENTOR = "logging"
 
@@ -79,6 +99,14 @@ _LOGGING_INSTRUMENTOR = "logging"
 # reach them.
 _URL_ATTRIBUTES = frozenset({"http.url", "url.full", "http.target", "url.path"})
 _QUERY_ATTRIBUTES = frozenset({"url.query"})
+
+# Routes that get no span at all. The OAuth callback
+# (src/interfaces/chat_app/app.py:3321,3457-3464) receives an authorization code in
+# its query string. A request that carries a credential is better off with no span
+# than with a span whose safety depends on the scrubber above. The value is a
+# comma-separated list of regular expressions, and the instrumentor searches each
+# one against the request URL.
+EXCLUDED_URLS = r"/redirect(\?|$)"
 
 
 @dataclass(frozen=True)
@@ -261,6 +289,38 @@ def _set_global_tracer_provider(provider) -> None:
     trace.set_tracer_provider(provider)
 
 
+def instrument_flask_app(app) -> bool:
+    """Give one Flask application a server span per request, and never raise.
+
+    Call it once per application, right after the application is built. It calls
+    ``init_telemetry()`` itself, which is idempotent, so an entrypoint needs one
+    line and no knowledge of the order.
+
+    The SSO redirect route is excluded rather than scrubbed. It receives an OAuth
+    authorization code, and a request that carries a credential is better off with
+    no span at all than with a span someone has to trust the scrubber for.
+    """
+    status = init_telemetry()
+    if not status.enabled:
+        return False
+    try:
+        from opentelemetry.instrumentation.flask import FlaskInstrumentor
+
+        FlaskInstrumentor().instrument_app(
+            app,
+            tracer_provider=status.tracer_provider,
+            excluded_urls=EXCLUDED_URLS,
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - fail open, always
+        logger.warning(
+            "OpenTelemetry did not instrument the Flask application, "
+            "continuing without request spans: %s",
+            exc,
+        )
+        return False
+
+
 def _scrub_attributes(attributes):
     """Return attributes with no query string, or None when nothing had one."""
     if not attributes:
@@ -357,7 +417,10 @@ def _install_instrumentors(provider) -> list:
         try:
             module = importlib.import_module(module_path)
             instrumentor = getattr(module, class_name)()
-            instrumentor.instrument(tracer_provider=provider)
+            extra = _INSTRUMENTOR_KWARGS.get(name)
+            instrumentor.instrument(
+                tracer_provider=provider, **(extra() if extra else {})
+            )
             _INSTALLED.append(instrumentor)
         except Exception as exc:  # noqa: BLE001 - fail open, per instrumentor
             failures.append(name)

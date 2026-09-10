@@ -444,3 +444,116 @@ class TestExporterWiring:
 
         assert status.enabled is True
         assert status.exporting is False
+
+
+class TestTheFlaskSeam:
+    """One line per entrypoint, and the SSO route never reaches a span.
+
+    The Flask instrumentor is applied to an application object rather than to the
+    ``Flask`` class. Every entrypoint runs ``from flask import Flask`` at module
+    import, so it holds the original class before this module runs, and a global
+    patch of ``flask.Flask`` would never reach the object it builds.
+    """
+
+    def test_it_does_nothing_when_telemetry_is_off(self):
+        from flask import Flask
+
+        assert telemetry.instrument_flask_app(Flask("archi-test")) is False
+
+    def test_a_request_is_traced_and_the_sso_route_is_not(self, monkeypatch):
+        monkeypatch.setenv(ENABLE, "true")
+        status = telemetry.init_telemetry()
+        memory = _attach_memory_exporter(status.tracer_provider)
+        app = _app_with_routes()
+
+        assert telemetry.instrument_flask_app(app) is True
+
+        client = app.test_client()
+        client.get("/health?q=payroll")
+        client.get("/redirect?code=s3cret&state=xyz")
+
+        spans = memory.get_finished_spans()
+        names = [span.name for span in spans]
+        recorded = str([dict(span.attributes) for span in spans])
+
+        assert any("/health" in name for name in names)
+        assert not any("redirect" in name for name in names)
+        assert "s3cret" not in recorded
+        assert "payroll" not in recorded
+
+    def test_it_fails_open_when_the_instrumentor_raises(self, monkeypatch, caplog):
+        monkeypatch.setenv(ENABLE, "true")
+        telemetry.init_telemetry()
+
+        with caplog.at_level(logging.WARNING):
+            instrumented = telemetry.instrument_flask_app(object())
+
+        assert instrumented is False
+        assert _warning_count(caplog) == 1
+
+
+def _app_with_routes():
+    from flask import Flask
+
+    app = Flask("archi-test")
+
+    @app.route("/health")
+    def health():
+        return "ok"
+
+    @app.route("/redirect")
+    def sso_callback():
+        return "ok"
+
+    return app
+
+
+def _attach_memory_exporter(provider):
+    """Read the spans a provider produces, through the same scrubber production uses."""
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    memory = InMemorySpanExporter()
+    provider.add_span_processor(
+        SimpleSpanProcessor(telemetry.RedactingSpanExporter(memory))
+    )
+    return memory
+
+
+class TestLangChainCarriesTheContentConfig:
+    """The seam that would otherwise export every prompt."""
+
+    def test_the_instrumentor_receives_a_hiding_config(self, monkeypatch):
+        monkeypatch.setenv(ENABLE, "true")
+        monkeypatch.setattr(
+            telemetry,
+            "_INSTRUMENTORS",
+            (("langchain", __name__, "_ConfigCapturingInstrumentor"),),
+        )
+        captured = {}
+        monkeypatch.setattr(_ConfigCapturingInstrumentor, "captured", captured)
+
+        telemetry.init_telemetry()
+
+        assert captured["config"].hide_inputs is True
+        assert captured["config"].hide_outputs is True
+
+    def test_the_real_instrumentor_installs(self, monkeypatch):
+        """The package is a dependency, so its absence is a broken install."""
+        monkeypatch.setenv(ENABLE, "true")
+
+        status = telemetry.init_telemetry()
+
+        assert "langchain" not in status.failures
+
+
+class _ConfigCapturingInstrumentor:
+    captured: dict = {}
+
+    def instrument(self, **kwargs):
+        self.captured.update(kwargs)
+
+    def uninstrument(self, **_kwargs):
+        pass

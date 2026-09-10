@@ -191,6 +191,7 @@ def main() -> None:
         template_folder=data_manager_cfg.get("template_folder"),
         static_folder=data_manager_cfg.get("static_folder"),
     )
+    instrument_flask_app(app)
 
     from src.utils.ingestion_status import build_ingestion_helpers
 

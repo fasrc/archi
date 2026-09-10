@@ -41,6 +41,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-data-manager
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -139,6 +143,10 @@ services:
       db-migrate:
         condition: service_completed_successfully
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-config-seed
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -212,6 +220,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-chat
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -340,7 +352,17 @@ services:
       PGUSER: archi
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
+    # CAUTION: this is the grader's SECOND `environment:` key. YAML keeps the last
+    # one, so the block above -- PGHOST, PGPORT, PGDATABASE, PGUSER, PG_PASSWORD --
+    # is discarded when the compose file is parsed. That is a pre-existing defect
+    # and it is not fixed here, because restoring those variables changes how the
+    # grader reaches Postgres and needs its own change and its own deploy check.
+    # OTEL_SERVICE_NAME sits in this block because this is the block that survives.
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-grader
       {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
@@ -423,6 +445,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-piazza
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -475,6 +501,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-mattermost
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -551,6 +581,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-redmine
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -616,6 +650,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-mailbox
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -682,6 +720,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-benchmark
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db

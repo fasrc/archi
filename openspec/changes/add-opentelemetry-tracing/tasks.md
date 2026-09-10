@@ -58,23 +58,23 @@ to one line and put the logic in `src/utils/telemetry.py`.
 
 ## 3. The seams
 
-- [ ] 3.1 `model: opus` — **Trace IDs in the log, in the right order.**
+- [x] 3.1 `model: opus` — **Trace IDs in the log, in the right order.**
   RED first: telemetry off renders the plain format; a failed logging instrumentor still
   renders the plain format; a line logged inside an active span carries that span's trace ID.
   Then change `setup_logging()` to select the format after the instrumentor succeeds.
 
-- [ ] 3.2 `model: sonnet` — **One Flask seam per app.**
+- [x] 3.2 `model: sonnet` — **One Flask seam per app.**
   RED first: `instrument_flask_app()` is a no-op when telemetry is off, and it excludes the
   SSO redirect route when telemetry is on. Then add one call line to
   `src/bin/service_chat.py`, `src/bin/service_grader.py` and
   `src/bin/service_data_manager.py`.
 
-- [ ] 3.3 `model: sonnet` — **A service name per compose block.**
+- [x] 3.3 `model: sonnet` — **A service name per compose block.**
   RED first: extend the compose rendering test so every service block that runs an archi
   process renders a distinct `OTEL_SERVICE_NAME`. Then edit
   `src/cli/templates/base-compose.yaml`.
 
-- [ ] 3.4 `model: opus` — **The worker thread already carries the context.**
+- [x] 3.4 `model: opus` — **The worker thread already carries the context.**
   RED first, and this one is a pin, not a fix: log a line from a `ThreadPoolExecutor` worker
   entered through `contextvars.copy_context().run`, inside an active span, and assert the
   trace ID reaches it. `src/interfaces/chat_app/app.py:2245,2264` is the shape this test
