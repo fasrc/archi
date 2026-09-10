@@ -98,7 +98,7 @@ Two traps in that table:
 
 ## 3. Null-safety for the seven sites that already honor false
 
-- [ ] 3.1 `model: sonnet` — Add the 7 **null** rows to the same parametrized table. The RED
+- [x] 3.1 `model: sonnet` — Add the 7 **null** rows to the same parametrized table. The RED
       case is the explicit-`None` input: today `:43 :122 :163 :188 :280 :360 :378` render
       the four characters `None`, which `yaml.safe_load` reads as the string `'None'`, so
       an identity assertion against the row's default fails. Note that `:163` defaults to
