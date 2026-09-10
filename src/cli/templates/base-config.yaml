@@ -40,7 +40,8 @@ services:
     # mount sits at the configured one, so a custom bank is staged somewhere the
     # runtime never looks and the run silently loses its anchors.
     anchors:
-      enabled: {{ services.benchmarking.anchors.enabled | default(true) }}
+      {%- set v_bench_anchors_enabled = services.benchmarking.anchors.enabled %}
+      enabled: {{ v_bench_anchors_enabled if v_bench_anchors_enabled is defined and v_bench_anchors_enabled is not none else true }}
       path: {{ services.benchmarking.anchors.path | default("examples/benchmarking/anchor_questions.json", true) }}
     {%- endif %}
     modes:
@@ -119,7 +120,8 @@ services:
     static_folder: "{{ services.chat_app.static_folder | default('/root/archi/src/interfaces/chat_app/static', true) }}"
     num_responses_until_feedback: {{ services.chat_app.num_responses_until_feedback | default(3, true) }}
     include_copy_button: {{ services.chat_app.include_copy_button | default(false, true) }}
-    flask_debug_mode: {{ services.chat_app.flask_debug_mode | default(true, false) }}
+    {%- set v_chat_flask_debug = services.chat_app.flask_debug_mode %}
+    flask_debug_mode: {{ v_chat_flask_debug if v_chat_flask_debug is defined and v_chat_flask_debug is not none else true }}
     evaluations:
       enabled: {{ services.chat_app.evaluations.enabled is sameas true }}
       # tojson, not a raw scalar inside double quotes: the value is loaded once
@@ -160,7 +162,8 @@ services:
         {%- endfor %}
   data_manager:
     auth:
-      enabled: {{ services.data_manager.auth.enabled | default(false) }}
+      {%- set v_dm_auth_enabled = services.data_manager.auth.enabled %}
+      enabled: {{ v_dm_auth_enabled if v_dm_auth_enabled is defined and v_dm_auth_enabled is not none else false }}
     {%- set v_svc_dm_enabled = services.data_manager.enabled %}
     enabled: {{ v_svc_dm_enabled if v_svc_dm_enabled is defined and v_svc_dm_enabled is not none else true }}
     port: {{ services.data_manager.port | default(7871, true) }}
@@ -186,7 +189,8 @@ services:
     num_problems: {{ services.grader_app.num_problems | default(1, true) }}
     local_rubric_dir: "{{ services.grader_app.local_rubric_dir }}"
     local_users_csv_dir: "{{ services.grader_app.local_users_csv_dir }}"
-    flask_debug_mode: {{ services.grader_app.flask_debug_mode | default(true, false) }}
+    {%- set v_grader_flask_debug = services.grader_app.flask_debug_mode %}
+    flask_debug_mode: {{ v_grader_flask_debug if v_grader_flask_debug is defined and v_grader_flask_debug is not none else true }}
   vectorstore:
     # PostgreSQL with pgvector is the storage backend
     backend: postgres
@@ -278,9 +282,8 @@ data_manager:
       # Hierarchical retriever with CPU cross-encoder reranking. Enabled by
       # default (ADR 0003: +19% RAGAS in the issue #32 A/B). Set
       # `enabled: false` to opt out and fall back to the hybrid_retriever above.
-      # NOTE: bare `default(true)` (no boolean arg) so an explicit `false` is
-      # honored — `default(true, true)` would treat falsy `false` as unset.
-      enabled: {{ data_manager.retrievers.hierarchical_rerank.enabled | default(true) }}
+      {%- set v_hier_enabled = data_manager.retrievers.hierarchical_rerank.enabled %}
+      enabled: {{ v_hier_enabled if v_hier_enabled is defined and v_hier_enabled is not none else true }}
       # Number of child candidates fetched from hybrid_search before reranking.
       candidate_pool_size: {{ data_manager.retrievers.hierarchical_rerank.candidate_pool_size | default(20, true) }}
       # Number of (deduplicated) parent nodes returned after reranking.
@@ -371,7 +374,8 @@ data_manager:
       visible: {{ v_indico_visible if v_indico_visible is defined and v_indico_visible is not none else true }}
       schedule: '{{ data_manager.sources.indico.schedule | default("", true) }}'
       base_url: {{ data_manager.sources.indico.base_url | default('https://indico.cern.ch', true) }}
-      use_sso: {{ data_manager.sources.indico.use_sso | default(true) }}
+      {%- set v_indico_use_sso = data_manager.sources.indico.use_sso %}
+      use_sso: {{ v_indico_use_sso if v_indico_use_sso is defined and v_indico_use_sso is not none else true }}
       # Day filtering (all optional - if none set, scrapes all days)
       {%- if data_manager.sources.indico.max_days is defined %}
       max_days: {{ data_manager.sources.indico.max_days }}
@@ -390,7 +394,8 @@ data_manager:
         headless: {{ v_indico_sso_headless if v_indico_sso_headless is defined and v_indico_sso_headless is not none else true }}
         site_type: {{ data_manager.sources.indico.sso_kwargs.site_type | default('generic', true) }}
       slide_conversion:
-        enabled: {{ data_manager.sources.indico.slide_conversion.enabled | default(true) }}
+        {%- set v_indico_sc_enabled = data_manager.sources.indico.slide_conversion.enabled %}
+        enabled: {{ v_indico_sc_enabled if v_indico_sc_enabled is defined and v_indico_sc_enabled is not none else true }}
         store_originals: {{ data_manager.sources.indico.slide_conversion.store_originals | default(false, true) }}
         formats:
           {%- set indico_formats = data_manager.sources.indico.slide_conversion.formats | default(['pdf', 'pptx', 'ppt', 'odp'], true) %}
