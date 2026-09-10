@@ -112,7 +112,7 @@ Standing notes for every task:
 
 ## 2. Documentation
 
-- [ ] 2.1 Document the provider, in `docs/docs/benchmarking.md`. Add one paragraph to the
+- [x] 2.1 Document the provider, in `docs/docs/benchmarking.md`. Add one paragraph to the
       "Judge/SUT split" section (`docs/docs/benchmarking.md:435`), immediately after the
       paragraph that begins "The `huit_bedrock` provider is Harvard's Anthropic-compatible
       Bedrock proxy". State that `evaluator_provider: huggingface` names any
