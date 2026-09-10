@@ -62,7 +62,7 @@ reports `archi`. Set `OTEL_SERVICE_NAME` yourself to override either.
 ## Privacy
 
 **Spans carry no prompt, no completion, no retrieved document and no credential by
-default.** Five separate rules produce that result:
+default.** Six separate rules produce that result:
 
 1. The OpenInference config hides model inputs and outputs. Each field is named in
    code rather than left to an environment variable, because one variable an
@@ -81,12 +81,20 @@ default.** Five separate rules produce that result:
    two webhooks whose entire URL comes from a secret, Mattermost and Slack, and for
    those there is nothing after the `?` to strip. The host and the marker segment
    survive; the token does not. Ordinary paths are untouched.
-5. The SSO redirect route is excluded from spans entirely. It receives an OAuth
+5. Exception messages and stack traces do not leave the host. An exception can
+   quote model output, and one in this codebase does: the HUIT Bedrock provider puts
+   500 characters of the upstream response body into its error. Nothing can tell that
+   message from an ordinary one, so on the default path both fields, and the span's
+   status description, are replaced with `__REDACTED__`. The exception type and the
+   error status code survive, and the service log still holds the full text.
+6. The SSO redirect route is excluded from spans entirely. It receives an OAuth
    authorization code, and a request that carries a credential is better off with no
    span than with one whose safety rests on a scrubber.
 
-`ARCHI_OTEL_CAPTURE_CONTENT=true` reverses rules 1 and 2. It never reverses rules 3,
-4 and 5, because a credential is not model content and no flag releases one.
+`ARCHI_OTEL_CAPTURE_CONTENT=true` reverses rules 1, 2 and 5. It never reverses rules
+3, 4 and 6, because a credential is not model content and no flag releases one: an
+exception message restored by that flag still loses the credentials in any URL it
+quotes.
 Treat turning it on as a privacy decision with an owner, not a debugging
 convenience.
 
@@ -111,15 +119,27 @@ user-facing endpoint.
 
 ## Failure behaviour
 
-Telemetry never stops a service. A missing package, a failed instrumentor or a
-bootstrap error logs one warning and leaves the service running with no tracing.
+Telemetry never stops a service, and a failure costs only what it has to.
+
+A bootstrap error logs one warning and leaves the service running with no tracing at
+all. A single instrumentor that is missing or raises is narrower: it logs one warning
+naming itself, and the other instrumentors still install. Tracing stays on, the
+exporter stays attached, and the traces are missing that one kind of span. So a
+warning about, say, the psycopg2 instrumentor means database spans are gone, not that
+tracing stopped. `init_telemetry()` reports which ones failed, and a failure of the
+logging instrumentor is the one that also changes the log format back.
 
 An unreachable receiver is a different failure, and it happens later. The batch
 processor exports on its own thread and drops spans in silence when export fails, so
-archi logs one warning per run of failures. One broken receiver produces one warning,
-not one per batch. The OTLP exporter underneath logs its own error on every retry of
-every batch, so archi holds that logger back for the length of the failure streak and
-lets it speak again after the next successful export.
+something has to say so.
+
+The first failure of a streak produces two lines: the exporter's own error, which
+names the endpoint and the HTTP code, and one archi warning. Every later failure in
+the same streak produces nothing. archi holds the exporter's logger back for the
+length of the streak and lets it speak again after the next successful export, so a
+receiver that stays down costs two lines rather than two lines per batch. The
+exporter's line is kept rather than suppressed because it carries the detail needed
+to fix the problem.
 
 If the logging instrumentor fails, the log keeps its plain format. The trace-aware
 format reads record fields that only that instrumentor installs, so archi selects it

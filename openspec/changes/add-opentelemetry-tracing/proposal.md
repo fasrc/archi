@@ -2,6 +2,26 @@
 
 ## Why
 
+### Where the decision to do this came from
+
+The release plan parks every observability issue, and `release-plan-2026.md:213` still
+lists #258 and #227 in the parked table. That table is not overridden here. The rule
+it enforces is that **automation** never schedules parked work, and that an issue
+leaves parked only when a human decides it does. A human asked for this work
+directly, on 2026-09-09, naming the merged readiness proposal as the thing to build.
+That request is the decision the rule asks for.
+
+What this change deliberately does not do:
+
+- It closes no parked issue. #258, #227, #204 and #193 stay exactly where they are.
+- It moves nothing into a milestone and re-triages nothing.
+- It removes nothing from the parked table.
+
+Trace-ID correlation in the log is a capability this work happens to deliver, and it
+is what #258 and #227 describe. Whether that capability lets those issues close is a
+plan decision with an owner, and it is not made here.
+
+
 `docs/docs/proposals/opentelemetry-readiness.md` (PR #446, merged) records what archi needs
 before it can emit OpenTelemetry data. It measured the tree and left four decisions open.
 This change closes three of them and builds phases 1 and 2 of its recommendation.

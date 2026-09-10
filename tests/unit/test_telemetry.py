@@ -849,6 +849,185 @@ class TestTheInnerExporterDoesNotFloodTheLog:
         assert list(inner_logger.filters) == before
 
 
+class TestRelativeUrlsInExceptionTextAreScrubbed:
+    """The standard requests failure does not quote an absolute URL.
+
+    urllib3 raises ``Max retries exceeded with url: /redirect?code=…``. The path is
+    relative, so a rule that matches only ``http://`` leaves the credential in place
+    in exactly the message an operator is most likely to see.
+    """
+
+    def test_a_relative_target_loses_its_query_string(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("GET") as span:
+            span.add_event(
+                "note",
+                {
+                    "detail": (
+                        "Max retries exceeded with url: /redirect?code=s3cret "
+                        "(Caused by NewConnectionError)"
+                    )
+                },
+            )
+
+        (exported,) = memory.get_finished_spans()
+        (event,) = exported.events
+
+        assert "s3cret" not in event.attributes["detail"]
+        assert "/redirect" in event.attributes["detail"]
+        assert "NewConnectionError" in event.attributes["detail"]
+
+    def test_a_relative_webhook_path_loses_its_token(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("POST") as span:
+            span.add_event(
+                "note",
+                {"detail": "Max retries exceeded with url: /services/T01/B02/Xy7SeCrEt"},
+            )
+
+        (exported,) = memory.get_finished_spans()
+        (event,) = exported.events
+
+        assert "Xy7SeCrEt" not in event.attributes["detail"]
+
+    def test_ordinary_prose_with_a_slash_is_untouched(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("step") as span:
+            span.add_event("note", {"detail": "retrying 2/3 for /v1/models"})
+
+        (exported,) = memory.get_finished_spans()
+        (event,) = exported.events
+
+        assert event.attributes["detail"] == "retrying 2/3 for /v1/models"
+
+
+class TestExceptionTextIsContentUntilProvenOtherwise:
+    """An exception message can carry model output, and often does.
+
+    ``src/archi/providers/huit_bedrock_provider.py:270`` puts the first 500
+    characters of the upstream response body into a ``RuntimeError``. The global
+    LangChain instrumentor records that string in the span's exception event and its
+    status. ``hide_inputs`` and ``hide_outputs`` cover input and output attributes,
+    not arbitrary exception text, so nothing else stops it.
+
+    No rule can tell a message that quotes a model from one that does not, so on the
+    default path the message and the stack trace do not leave the host. The service
+    log still has both in full.
+    """
+
+    def test_the_exception_message_does_not_leave_by_default(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("llm") as span:
+            span.add_event(
+                "exception",
+                {
+                    "exception.type": "RuntimeError",
+                    "exception.message": (
+                        "HUIT Bedrock request failed: HTTP 500 — "
+                        "the patient records show a diagnosis of"
+                    ),
+                    "exception.stacktrace": "Traceback… the same text again",
+                },
+            )
+
+        (exported,) = memory.get_finished_spans()
+        (event,) = exported.events
+
+        assert event.attributes["exception.message"] == "__REDACTED__"
+        assert event.attributes["exception.stacktrace"] == "__REDACTED__"
+        assert event.attributes["exception.type"] == "RuntimeError"
+
+    def test_the_status_description_does_not_leave_by_default(self):
+        from opentelemetry.trace import Status, StatusCode
+
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("llm") as span:
+            span.set_status(
+                Status(StatusCode.ERROR, "RuntimeError: the model said something")
+            )
+
+        (exported,) = memory.get_finished_spans()
+
+        assert exported.status.description == "__REDACTED__"
+        assert exported.status.status_code.name == "ERROR"
+
+    def test_the_content_flag_restores_the_message_but_not_the_credential(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv(CONTENT, "true")
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("llm") as span:
+            span.add_event(
+                "exception",
+                {
+                    "exception.message": (
+                        "posting to https://hooks.slack.com/services/T01/B02/Xy7SeCrEt "
+                        "failed with the model output attached"
+                    )
+                },
+            )
+
+        (exported,) = memory.get_finished_spans()
+        (event,) = exported.events
+        message = event.attributes["exception.message"]
+
+        assert "the model output attached" in message
+        assert "Xy7SeCrEt" not in message
+
+
+class TestTheFirstFailedBatchDoesNotLogTwiceOver:
+    """The inner exporter logs during ``export()``, not after it.
+
+    A filter installed once ``export()`` has returned is installed too late for the
+    batch that just failed, and a test that logs through the inner logger afterwards
+    cannot see the difference. This one logs from inside the exporter, which is where
+    the real one logs.
+    """
+
+    def test_the_inner_logger_speaks_once_across_a_failure_streak(self, caplog):
+        inner_name = "opentelemetry.exporter.otlp.proto.http.trace_exporter"
+        exporter = telemetry.RedactingSpanExporter(_LoggingFailingExporter())
+
+        with caplog.at_level(logging.WARNING):
+            exporter.export([])
+            exporter.export([])
+            exporter.export([])
+
+        from_inner = [r for r in caplog.records if r.name == inner_name]
+        from_archi = [r for r in caplog.records if r.name == telemetry.logger.name]
+
+        assert len(from_inner) == 1, "the exporter must not log once per batch"
+        assert len(from_archi) == 1
+
+
+class _LoggingFailingExporter:
+    """Fails, and logs on its own logger from inside export(), as the real one does."""
+
+    def export(self, spans):
+        logging.getLogger(
+            "opentelemetry.exporter.otlp.proto.http.trace_exporter"
+        ).error("Failed to export batch code: 000, reason: connection refused")
+        return _span_export_result().FAILURE
+
+    def shutdown(self):
+        pass
+
+    def force_flush(self, timeout_millis=30000):
+        return True
+
+
 TELEMETRY_HELPERS = frozenset({"init_telemetry", "instrument_flask_app"})
 
 

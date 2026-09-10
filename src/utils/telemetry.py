@@ -140,7 +140,25 @@ _CREDENTIAL_PATH_MARKERS = ("/hooks/", "/services/")
 # Free-text fields that can quote a URL. An exception message and a stack trace are
 # not attributes, so scrubbing only span.attributes lets the same secret out through
 # a different door.
-_URL_IN_TEXT = re.compile(r"https?://[^\s\"'<>)\]]+")
+#
+# The second branch matches a relative path, and it has to. The commonest requests
+# failure does not quote an absolute URL at all: urllib3 raises "Max retries exceeded
+# with url: /redirect?code=…". Matching every path is harmless, because _scrub_url()
+# returns an ordinary path unchanged.
+_URL_IN_TEXT = re.compile(r"https?://[^\s\"'<>)\]]+|/[^\s\"'<>)\]]*")
+
+# Event attributes that are content until proven otherwise. An exception message can
+# carry model output and often does: src/archi/providers/huit_bedrock_provider.py:270
+# puts the first 500 characters of the upstream response body into a RuntimeError,
+# and the LangChain instrumentor records that string on the span. hide_inputs and
+# hide_outputs cover input and output attributes, not arbitrary exception text.
+#
+# No rule can tell a message that quotes a model from one that does not, so on the
+# default path these do not leave the host. The service log still holds both in full,
+# which is where an operator debugging a failure is already looking.
+_CONTENT_BEARING_EVENT_ATTRIBUTES = frozenset(
+    {"exception.message", "exception.stacktrace"}
+)
 
 # The OTLP exporter logs its own error on every retry of every batch. Reporting once
 # from the wrapper while this logger repeats underneath is the same flood with an
@@ -328,11 +346,12 @@ def _set_global_tracer_provider(provider) -> None:
     trace.set_tracer_provider(provider)
 
 
-def _scrub_events(events):
-    """Return cleaned events, or None when no event quoted a URL.
+def _scrub_events(events, redact_content: bool = True):
+    """Return cleaned events, or None when nothing needed cleaning.
 
-    An exception event carries ``exception.message`` and ``exception.stacktrace``,
-    and a failed request quotes the URL it could not reach in both.
+    Two rules. An exception message and a stack trace are content, so they do not
+    leave the host unless the operator turned content capture on. Every other string
+    keeps its text and loses only the credentials inside any URL it quotes.
     """
     if not events:
         return None
@@ -344,24 +363,34 @@ def _scrub_events(events):
     for event in events:
         attributes = dict(event.attributes or {})
         for key, value in attributes.items():
-            if isinstance(value, str):
-                scrubbed = _scrub_text(value)
-                if scrubbed != value:
-                    attributes[key] = scrubbed
-                    changed = True
+            if not isinstance(value, str):
+                continue
+            if redact_content and key in _CONTENT_BEARING_EVENT_ATTRIBUTES:
+                attributes[key] = REDACTED_VALUE
+                changed = True
+                continue
+            scrubbed = _scrub_text(value)
+            if scrubbed != value:
+                attributes[key] = scrubbed
+                changed = True
         rebuilt.append(
             Event(name=event.name, attributes=attributes, timestamp=event.timestamp)
         )
     return rebuilt if changed else None
 
 
-def _scrub_status(status):
-    """Return a cleaned status, or None when its description quoted no URL."""
+def _scrub_status(status, redact_content: bool = True):
+    """Return a cleaned status, or None when the description needed no cleaning.
+
+    The SDK builds this description from the exception that ended the span, so it
+    carries the same risk as the exception message and answers to the same flag. The
+    status code survives either way, so a reader still sees that the span failed.
+    """
     description = getattr(status, "description", None)
     if not description:
         return None
 
-    scrubbed = _scrub_text(description)
+    scrubbed = REDACTED_VALUE if redact_content else _scrub_text(description)
     if scrubbed == description:
         return None
 
@@ -502,8 +531,8 @@ class RedactingSpanExporter:
 
     def _redact(self, span):
         cleaned = _scrub_attributes(span.attributes, self._redact_content)
-        events = _scrub_events(span.events)
-        status = _scrub_status(span.status)
+        events = _scrub_events(span.events, self._redact_content)
+        status = _scrub_status(span.status, self._redact_content)
         if cleaned is None and events is None and status is None:
             return span
 
