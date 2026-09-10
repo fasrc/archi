@@ -1388,6 +1388,62 @@ class TestTheDatabaseStatementIsNotAContentChannel:
         assert scrubbed == "__REDACTED__"
         assert elapsed < 0.05, f"scrubbing took {elapsed:.2f}s"
 
+    @pytest.mark.parametrize(
+        ("label", "statement"),
+        [
+            ("ordinary", "SELECT 'the patient asked about a diagnosis"),
+            ("escape string", "SELECT E'the patient asked about a diagnosis"),
+            ("dollar quoted", "SELECT $t$the patient asked about a diagnosis"),
+        ],
+    )
+    def test_an_unterminated_literal_takes_the_whole_statement(self, label, statement):
+        """A literal with no closing delimiter matches nothing, so it survived.
+
+        Instrumentation that truncates a long statement produces exactly this, and
+        the text after the opening delimiter is the part that would leave.
+        """
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("SELECT") as span:
+            span.set_attribute("db.statement", statement)
+
+        (exported,) = memory.get_finished_spans()
+        scrubbed = exported.attributes["db.statement"]
+
+        assert "diagnosis" not in scrubbed, label
+        assert scrubbed == "__REDACTED__", label
+
+    def test_a_lowercase_array_is_still_an_array(self):
+        """PostgreSQL keywords do not care about case, and neither should the rule."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("archi-db") as span:
+            span.set_attribute(
+                "db.statement",
+                "INSERT INTO document_chunks VALUES (array[0.1, 0.2, 0.3])",
+            )
+
+        (exported,) = memory.get_finished_spans()
+        scrubbed = exported.attributes["db.statement"]
+
+        assert "0.1" not in scrubbed
+        assert "3 numbers" in scrubbed
+
+    def test_a_bound_parameter_is_not_an_unterminated_literal(self):
+        """``$1`` leaves a dollar sign behind and must not trip the residue check."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+        statement = "SELECT sender FROM conversations WHERE id = $1 AND role = $2"
+
+        with tracer.start_as_current_span("SELECT") as span:
+            span.set_attribute("db.statement", statement)
+
+        (exported,) = memory.get_finished_spans()
+
+        assert exported.attributes["db.statement"] == statement
+
     def test_a_statement_inside_the_budget_still_keeps_its_shape(self):
         """The budget must not swallow the statements this rule exists to keep."""
         memory, provider = _recording_provider()

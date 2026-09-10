@@ -196,7 +196,16 @@ _SQL_LITERAL = re.compile(
 # An embedding is the chunk in another form, and it costs every ingest trace real
 # bytes. Arrays that are not all numbers are left alone, and so is a number standing
 # on its own — that one is an identifier or a limit.
-_SQL_NUMBER_ARRAY = re.compile(r"ARRAY\s*\[[\s,]*[-+0-9][-+0-9.eE,\s]*\]")
+_SQL_NUMBER_ARRAY = re.compile(
+    r"ARRAY\s*\[[\s,]*[-+0-9][-+0-9.eE,\s]*\]", re.IGNORECASE
+)
+
+# What a finished scrub is allowed to leave behind: the markers it wrote, and a bound
+# parameter. Anything else holding a quote or a dollar sign means a delimiter never
+# closed, and the text after it is the part that did not get read.
+#
+# Instrumentation that truncates a long statement produces exactly that.
+_SCRUB_RESIDUE = re.compile(r"'\?'|ARRAY\[/\* \d+ numbers \*/\]|\$\d+", re.IGNORECASE)
 
 # The sequence no reader can settle from the text alone. See _scrub_statement().
 _AMBIGUOUS_QUOTE = "\\'"
@@ -587,7 +596,17 @@ def _scrub_statement(value: str) -> str:
         return REDACTED_VALUE
     if any(marker in value for marker in _UNREADABLE_CONSTRUCTS):
         return REDACTED_VALUE
-    return _SQL_NUMBER_ARRAY.sub(_collapse_number_array, _SQL_LITERAL.sub("'?'", value))
+
+    scrubbed = _SQL_NUMBER_ARRAY.sub(
+        _collapse_number_array, _SQL_LITERAL.sub("'?'", value)
+    )
+
+    # A delimiter that never closed matches nothing, so the text after it came
+    # through untouched. Check the residue rather than trust the substitution.
+    residue = _SCRUB_RESIDUE.sub("", scrubbed)
+    if "'" in residue or "$" in residue:
+        return REDACTED_VALUE
+    return scrubbed
 
 
 def _scrub_attributes(attributes, redact_content: bool = True):
