@@ -27,32 +27,32 @@ to one line and put the logic in `src/utils/telemetry.py`.
 
 ## 2. The bootstrap module
 
-- [ ] 2.1 `model: opus` — **The off path and the enable rule.**
+- [x] 2.1 `model: opus` — **The off path and the enable rule.**
   RED first in `tests/unit/test_telemetry.py`: with no environment variable set,
   `init_telemetry()` returns a disabled status and installs nothing. Then the endpoint alone
   enables it, the archi flag alone enables it, and the flag set to a false value beats a
   present endpoint. Use `monkeypatch.setenv`, the pattern at
   `tests/unit/test_fasrc_docs_agent.py:109`.
 
-- [ ] 2.2 `model: opus` — **The service name, and the entrypoint fallback.**
+- [x] 2.2 `model: opus` — **The service name, and the entrypoint fallback.**
   RED first: `OTEL_SERVICE_NAME` wins; the argument comes next; the derived name comes last.
   `src/bin/service_chat.py` derives `archi-chat`. Assert the `service.name` resource
   attribute for at least two entrypoints.
 
-- [ ] 2.3 `model: opus` — **Fail open at init.**
+- [x] 2.3 `model: opus` — **Fail open at init.**
   RED first: force an instrumentor to raise, then assert that `init_telemetry()` returns a
   disabled status, logs one warning, and raises nothing.
 
-- [ ] 2.4 `model: opus` — **Fail open on export.**
+- [x] 2.4 `model: opus` — **Fail open on export.**
   RED first: point the exporter at an unreachable endpoint, force a flush, and assert one
   warning in the log and a live process. An export failure surfaces on the batch processor's
   thread, not at init, so task 2.3 cannot stand in for this one.
 
-- [ ] 2.5 `model: opus` — **Drop the query string from URL attributes.**
+- [x] 2.5 `model: opus` — **Drop the query string from URL attributes.**
   RED first: a span with a URL attribute that holds `?code=secret` exports without the query
   string. Cover `http.url`, `url.full` and `http.target`.
 
-- [ ] 2.6 `model: opus` — **Hide model content by default.**
+- [x] 2.6 `model: opus` — **Hide model content by default.**
   RED first: with default flags the OpenInference `TraceConfig` hides inputs and outputs;
   with `ARCHI_OTEL_CAPTURE_CONTENT=true` it does not.
 
