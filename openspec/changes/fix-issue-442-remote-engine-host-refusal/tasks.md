@@ -51,7 +51,7 @@ Standing notes for every task:
       sentence in the module docstring, with the reason a presence check is wrong (the
       FASRC `export DOCKER_HOST=unix:/$(podman info …)` line). Gate green; commit.
 
-- [ ] 1.2 Extend `tests/unit/test_container_endpoint.py` with RED tests for
+- [x] 1.2 Extend `tests/unit/test_container_endpoint.py` with RED tests for
       `container_endpoint_is_provably_local()` reading the environment. Use
       `monkeypatch.setenv` and `monkeypatch.delenv(..., raising=False)` so no test leaks a
       variable. Cases: no variable set → `True`; `DOCKER_HOST=unix:///var/run/docker.sock`
@@ -65,7 +65,7 @@ Standing notes for every task:
 
       Then implement the environment half. Gate green; commit.
 
-- [ ] 1.3 Extend `tests/unit/test_container_endpoint.py` with RED tests for the Docker
+- [x] 1.3 Extend `tests/unit/test_container_endpoint.py` with RED tests for the Docker
       context. Build a fake store under `tmp_path` and set `HOME` to it with
       `monkeypatch.setenv`. Layout, taken from `docker context inspect`'s own
       `MetadataPath` output: `.docker/contexts/meta/<any-dir-name>/meta.json`, each file
