@@ -110,6 +110,15 @@ Standing notes for every task:
       Restore the fix and confirm 7 tests pass before you go on — **do not commit while the
       line is reverted.** Read the collected count and confirm it is 7. Gate green; commit.
 
+      **Final counts differ from the plan above, and the plan is left as written rather than
+      back-edited.** Four review rounds added six more tests, for ten added and `14 passed`
+      collected. The additions: `OLLAMA_HOST` survival for the `huggingface` arm, the same
+      for the `local` arm, the `huggingface` default URL under `OLLAMA_HOST`, the negative
+      route (`services.benchmarking.provider: huggingface` raises before a judge exists,
+      which retired planned test (d) — that route is not reachable), the `local` arm's
+      no-URL default, scheme-less URL normalization, and a socket-level round trip against
+      an OpenAI-compatible server. `proposal.md` carries the reconciled description.
+
 ## 2. Documentation
 
 - [x] 2.1 Document the provider, in `docs/docs/benchmarking.md`. Add one paragraph to the

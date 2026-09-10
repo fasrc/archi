@@ -26,8 +26,10 @@ def get_model(
 The arm passes `base_url` and `local_mode` as keyword arguments and supplies no
 `provider_config`, so Python raises before the function body runs.
 
-**Measured on this branch** (`origin/dev` `c6112167`, 2026-09-10). Three configuration routes
-reach the arm, and all three raise:
+**Measured on this branch** (`origin/dev` `c6112167`, 2026-09-10). Three configurations were
+run against the arm, and all three raise. Only the first two are reachable routes — the third
+is recorded here because the first draft counted it as one; the paragraph after this block
+explains why it is not:
 
 ```
 configured url:   TypeError: get_model() missing 1 required positional argument: 'provider_config'
@@ -73,16 +75,34 @@ base URL; only the call shape is wrong.
 
 ## What Changes
 
-- **One call in `src/bin/service_benchmark.py`.** The `huggingface` arm passes its
+- **Two calls in `src/bin/service_benchmark.py`.** The `huggingface` arm passes its
   configuration dictionary positionally, in the form the `local` arm two arms above already
   uses: `get_model("local", model_name, {"base_url": base_url, "mode": "openai_compat"})`.
   The local `base_url` variable stays, because it carries the arm's
   `http://localhost:8000/v1` default; `ollama_url` is not copied from the `local` arm, since
   it can be `None` here and supplying that default is the reason the variable exists.
-- **Four tests appended to `tests/unit/test_ragas_evaluator_local_mode.py`**, covering the
-  configured judge URL, the `http://localhost:8000/v1` default, the SUT `provider` fallback
-  route, and the inherited SUT `ollama_url`. That file already builds a `Benchmarker` through
-  `object.__new__` and a hand-made `self.config`; its `_bench` helper is reused unchanged.
+  Both arms also pass `base_url` a second time as a keyword, because
+  `load_new_configuration` exports the system-under-test URL as `OLLAMA_HOST` and
+  `LocalProvider` overwrites `config.base_url` with it — the dictionary copy alone points
+  the judge at the system under test. The `local` arm sends the keyword only when a URL
+  exists, since a `None` would erase the provider's own default. Both review-driven
+  additions; see D7 in `design.md`.
+- **One helper promoted in `src/archi/providers/local_provider.py`.**
+  `LocalProvider._normalize_base_url` becomes the module-level `normalize_base_url` and the
+  static method delegates to it. The keyword override lands after the provider's own
+  normalization step, so a scheme-less judge URL would otherwise reach `ChatOpenAI`
+  unusable; the caller past the seam has to apply the same rule, and two copies of it would
+  drift. Review-driven addition (D8).
+- **Ten tests appended to `tests/unit/test_ragas_evaluator_local_mode.py`**, covering the
+  configured judge URL, the `http://localhost:8000/v1` default, the inherited SUT
+  `ollama_url`, `OLLAMA_HOST` survival for both arms, scheme-less URL normalization, the
+  `local` arm's no-URL default, and a socket-level round trip against an
+  OpenAI-compatible server. One of the ten pins the negative route: it asserts that
+  `services.benchmarking.provider: huggingface` raises before a judge is built, which is
+  the correction recorded in the Why section above and replaces the "SUT-provider
+  fallback" route an earlier draft of this proposal counted as supported. That file already
+  builds a `Benchmarker` through `object.__new__` and a hand-made `self.config`; its
+  `_bench` helper is reused unchanged.
 - **One paragraph in `docs/docs/benchmarking.md`**, in the "Judge/SUT split" section
   (`:435`), recording that `huggingface` is a valid `evaluator_provider` naming an
   OpenAI-compatible endpoint and that it defaults to `http://localhost:8000/v1`.
@@ -119,10 +139,14 @@ against it would not validate, so this change uses ADDED against a new capabilit
 
 ## Impact
 
-- `src/bin/service_benchmark.py` — one line inside one `case` arm. No signature, no control
-  flow, and no other arm changes.
-- `tests/unit/test_ragas_evaluator_local_mode.py` — four tests appended. The file has 3 tests
-  and 64 lines today; no existing test changes.
+- `src/bin/service_benchmark.py` — the `huggingface` arm's call, plus a keyword and a guard
+  on the `local` arm's call and one added import. No signature and no control flow changes;
+  no other `case` arm moves.
+- `src/archi/providers/local_provider.py` — `_normalize_base_url`'s body moves to a
+  module-level `normalize_base_url` and the static method delegates to it. No behaviour
+  change for any existing caller.
+- `tests/unit/test_ragas_evaluator_local_mode.py` — ten tests appended. The file had 3 tests
+  and 64 lines before this change; no existing test changes.
 - `docs/docs/benchmarking.md` — one paragraph added to "Judge/SUT split". Prose only.
 - **Measured behaviour after the fix**, taken by patching the arm, importing the module, and
   reading the built client (2026-09-10; the patch was reverted and `git status` is empty):
@@ -133,8 +157,21 @@ against it would not validate, so this change uses ADDED against a new capabilit
   | no judge URL and no SUT URL | `TypeError` | `ChatOpenAI` base `http://localhost:8000/v1`, model `judge-x` |
   | SUT `ollama_url: http://sut-host:9000/v1` inherited, judge key set | `TypeError` | `ChatOpenAI` base `http://sut-host:9000/v1`, model `qwen-x` |
 
-  The three existing tests in `tests/unit/test_ragas_evaluator_local_mode.py` pass unchanged
-  against the patched file (`3 passed`), so no other arm moves.
+  The three pre-existing tests in `tests/unit/test_ragas_evaluator_local_mode.py` pass
+  unchanged against the patched file, so no other arm moves. The file collects `14 passed`
+  with this change applied (measured 2026-09-10).
+- **Measured against a running server**, added in review round 4 to answer the objection
+  that in-process construction proves nothing about the request itself. A standard-library
+  HTTP server speaking the OpenAI `/v1/chat/completions` dialect binds an ephemeral loopback
+  port; the `huggingface` arm is pointed at it while `OLLAMA_HOST` names a dead port. The
+  judge issues `POST /v1/chat/completions` with an `Authorization` header and the configured
+  model `judge-x`, and the streamed reply parses back to `"4"`. Reverting the keyword
+  override sends the same request to the dead `OLLAMA_HOST` port instead, so the check binds
+  to this fix. Kept as
+  `test_huggingface_judge_answers_over_a_real_socket` rather than reported as a one-off
+  measurement. It is not a GPU model server: it proves URL dialect, authentication, payload
+  shape, and response parsing, and claims nothing about whether a given vLLM or TGI
+  deployment answers.
 
   A fourth row measured in the first draft — the system-under-test key on its own — has been
   removed rather than corrected. It was taken through `object.__new__(Benchmarker)`, which
@@ -143,11 +180,11 @@ against it would not validate, so this change uses ADDED against a new capabilit
 - **Patch coverage does protect this change.** The gate measures `--cov=src`
   (`scripts/gate.sh`) and the changed line is under `src/`, so `diff-cover` scores it. Every
   changed line is executed by the tests added in task 1.1.
-- **Formatting is stable.** `src/bin/service_benchmark.py` and
-  `tests/unit/test_ragas_evaluator_local_mode.py` are both black 24.10.0 and isort 6.0.1 clean
-  today. The replacement line is exactly 88 characters, black's limit, and
-  `black --check` leaves the patched copy unchanged (measured 2026-09-10) — so the edit does
-  not reflow the file and the diff stays at one line.
+- **Formatting is stable.** `src/bin/service_benchmark.py`,
+  `src/archi/providers/local_provider.py`, and
+  `tests/unit/test_ragas_evaluator_local_mode.py` are all black 24.10.0 and isort 6.0.1 clean
+  with this change applied (measured 2026-09-10), so no edit reflows a file it touches and
+  every diff hunk stays where it was written.
 - **No open pull request touches any file this change edits.** Checked by file list on
   2026-09-10 against the three open PRs: #453 (`bd2ee627`, OpenTelemetry), #455 (`6d4550ef`,
   issue #442), #456 (`2e1d9c35`, issue #448). The nearest neighbour is #456, which edits

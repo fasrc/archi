@@ -288,3 +288,92 @@ def test_judge_url_without_a_scheme_is_normalized(monkeypatch):
         )
         llm = bench.get_ragas_llm_evaluator()
         assert llm.openai_api_base == "http://judge-host:8001/v1", provider
+
+
+def test_huggingface_judge_answers_over_a_real_socket(monkeypatch):
+    """The judge must complete a request against a server, not just be constructed.
+
+    Every other test here asserts client type and URL in process. None of them prove
+    the OpenAI dialect, the auth header, the request payload, or the response parsing
+    survive a real round trip -- and those only run when RAGAS invokes the judge. This
+    binds an OpenAI-compatible server on an ephemeral loopback port, points the
+    `huggingface` arm at it, and asserts the reply parses. `OLLAMA_HOST` names a dead
+    port throughout, so a judge that inherits the system-under-test URL cannot pass.
+    """
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    received = []
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length).decode())
+            received.append(
+                {
+                    "path": self.path,
+                    "authorized": "Authorization" in self.headers,
+                    "model": body.get("model"),
+                }
+            )
+            # The provider builds a streaming client, so answer in the SSE dialect.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            delta = {
+                "id": "chatcmpl-test",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": body.get("model"),
+                "choices": [
+                    {"index": 0, "delta": {"content": "4"}, "finish_reason": None}
+                ],
+            }
+            stop = {
+                "id": "chatcmpl-test",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": body.get("model"),
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            }
+            self.wfile.write(f"data: {json.dumps(delta)}\n\n".encode())
+            self.wfile.write(f"data: {json.dumps(stop)}\n\n".encode())
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+
+        def log_message(self, format, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        judge_url = f"http://127.0.0.1:{server.server_address[1]}/v1"
+        monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:9/v1")
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        bench = _bench(
+            {
+                "mode_settings": {
+                    "ragas_settings": {
+                        "evaluator_provider": "huggingface",
+                        "evaluator_model": "judge-x",
+                        "evaluator_ollama_url": judge_url,
+                    }
+                }
+            }
+        )
+        llm = bench.get_ragas_llm_evaluator()
+        assert llm.openai_api_base == judge_url
+
+        reply = llm.invoke("What is 2 + 2? Answer with the number only.")
+        assert reply.content == "4"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+    assert received == [
+        {"path": "/v1/chat/completions", "authorized": True, "model": "judge-x"}
+    ]

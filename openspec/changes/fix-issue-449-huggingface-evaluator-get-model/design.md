@@ -143,6 +143,42 @@ The section is not touched by any open PR — #455 edits
 `docs/docs/interpreting_benchmark_results.md`, a different file, and #453 edits
 `docs/docs/observability.md` and `docs/mkdocs.yml` (checked 2026-09-10).
 
+### D7 — `base_url` is passed twice, as a dictionary entry and as a keyword
+
+Review round 1 found that the positional dictionary alone does not reach `ChatOpenAI`.
+`load_new_configuration` exports the system-under-test URL as `OLLAMA_HOST`, and
+`LocalProvider.__init__` overwrites `config.base_url` from that variable — so a correct
+dictionary still builds a judge pointed at the system under test, which is the original
+defect wearing a different mask. `get_model` forwards `**kwargs` to the client after the
+provider has resolved its configuration, so the keyword lands last and wins.
+
+The `local` arm sends the keyword conditionally and the `huggingface` arm sends it always.
+That asymmetry is deliberate: the `huggingface` arm computes
+`base_url = ollama_url or "http://localhost:8000/v1"` and therefore always holds a value,
+while the `local` arm's `ollama_url` can be `None`. A `None` keyword would not be a no-op —
+it lands last and erases the provider's own local default, sending the judge to the public
+OpenAI endpoint. An override with nothing to override with is not an override.
+
+Rejected alternative: stop exporting `OLLAMA_HOST`, or teach `LocalProvider` to ignore it
+when a caller supplied an explicit `base_url`. Both change shared provider behaviour that
+the system-under-test path depends on, for a judge-construction defect. That belongs in its
+own change with its own evidence.
+
+### D8 — `_normalize_base_url` is promoted to a module-level function
+
+The keyword from D7 bypasses `LocalProvider._normalize_base_url`, which prefixes a
+scheme-less base URL with `http://`. An operator who writes `evaluator_ollama_url:
+judge-host:8001/v1` would get a client whose transport cannot resolve the address, failing
+on the first judge request — a new defect introduced by the fix for the old one. Found in
+review round 3.
+
+The rule now lives once, as the module-level `normalize_base_url`, and the static method
+delegates to it. The alternative — inlining the scheme check at both call sites in
+`service_benchmark.py` — puts three copies of one rule in the tree and invites exactly the
+drift this change exists to remove. The static method is kept as a delegating wrapper rather
+than deleted, because it is the provider's own internal call path and removing it would
+widen the diff into `LocalProvider` for no behavioural gain.
+
 ## Risks / Trade-offs
 
 - **A wrong fix passes the gate.** Writing `local_mode` into the dictionary, or dropping the
@@ -164,7 +200,17 @@ The section is not touched by any open PR — #455 edits
 - **A reused test name deletes a test.** The gate runs no linter, so a duplicated
   `def test_...` overwrites the earlier one while staying green. The file collects 3 tests
   today; task 1.1 and task 1.2 each require reading the collected count.
-- **The fix is unverified against a real server.** Every measurement here is in-process client
-  construction; no HTTP request is made, and no vLLM or TGI endpoint was contacted. The change
-  proves the arm builds the right client at the right URL, and claims nothing about whether a
-  given endpoint answers. A live judge run is a `needs-deploy` activity and is out of scope.
+- **The fix is verified over a socket, not against a model server.** Review round 4 replaced
+  the original in-process-only evidence. `test_huggingface_judge_answers_over_a_real_socket`
+  binds a standard-library HTTP server that speaks the OpenAI `/v1/chat/completions` dialect
+  on an ephemeral loopback port, points the arm at it with `OLLAMA_HOST` set to a dead port,
+  and asserts the round trip: the judge sends `POST /v1/chat/completions` carrying an
+  `Authorization` header and the configured model, and the streamed reply parses back to a
+  message. That covers the four things in-process construction could not — URL dialect,
+  authentication, request payload, and response handling.
+
+  What it still does not cover: whether a particular vLLM or TGI deployment accepts that
+  request. No GPU endpoint was contacted, and none is reachable from the gate. Confirming a
+  named deployment answers is a `needs-deploy` activity, tracked separately; it is a property
+  of the endpoint an operator configures, not of this call site, and no shipped configuration
+  selects `huggingface` today.
