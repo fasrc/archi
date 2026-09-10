@@ -248,3 +248,34 @@ test module's docstring already makes for list defaults. Twelve false failures o
 that were always correct is not a stronger guard. The boundary is now enforced by
 `test_guard_leaves_container_and_computed_defaults_out_of_scope` instead of asserted in a
 comment, so a future attempt at that widening fails a test that explains why.
+
+## D10. The null guarantee is not a whole-file guarantee
+
+Review round 4 found the opening paragraph's `null` promise as over-broad as its `0`
+promise had been. Measured against the template:
+
+| Input | Result |
+| --- | --- |
+| `global.DATA_PATH: null` | `/root/data/` — the default, as promised |
+| `data_manager.sources.jira.max_tickets: null` | `10000000000.0` — the default |
+| `services.chat_app.num_responses_until_feedback: null` | `3` — the default |
+| **`global.ACCEPTED_FILES: null`** | **`TypeError: 'NoneType' object is not iterable`** |
+| **`services.benchmarking.modes: null`** | **the same** |
+
+Those two take a bare `default([...])` with no `boolean=true`, which replaces only an
+*undefined* value, and both are iterated directly by a `{%- for %}`. So an explicit `null`
+reaches the loop and raises. This is worse than rendering the wrong value: `archi create`
+cannot render the config at all, so the deploy is blocked.
+
+Swept the rest rather than fixing the two instances: every other bare-`default()` call site
+with a container value — `ragas_settings.metrics`, `chat_app.providers`,
+`anonymizer.names` — renders fine under an explicit `null`, because nothing iterates the
+result at template level. Two keys, not a class.
+
+Documented rather than converted. Adding `boolean=true` to those two would change what an
+explicit empty list means at both sites (an empty `ACCEPTED_FILES` would silently become the
+21-extension default, which is the truthiness-substitution bug this change exists to
+remove), so it is a separate decision with its own blast radius. Pinned by
+`test_null_on_an_iterated_container_key_fails_the_render`, with a contrast test for a
+`default(…, true)` site, so the documented exception cannot rot: if a later change converts
+these, the test fails and the doc paragraph comes out with it.

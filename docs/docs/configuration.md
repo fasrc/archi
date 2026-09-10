@@ -7,8 +7,20 @@ Archi deployments are configured via YAML files passed to the CLI with `--config
 ## Explicit `false`, `0`, and `null`
 
 A value you write reaches the deployed configuration. `enabled: false` renders as `false`,
-and `null` renders as that key's documented default — neither is read as "unset and
-therefore ignorable".
+and is not read as "unset and therefore ignorable".
+
+`null` renders as that key's documented default on the flags this change converted and on
+every key whose template default is applied with `default(…, true)`, which is most of them.
+It is **not** a whole-file guarantee. Two keys the template iterates directly take a bare
+`default([…])`, which only replaces an *undefined* value, so an explicit `null` reaches the
+loop and fails the render rather than falling back:
+
+| Key | `null` does this |
+|---|---|
+| `global.ACCEPTED_FILES` | `TypeError: 'NoneType' object is not iterable` — `archi create` cannot render the config |
+| `services.benchmarking.modes` | the same |
+
+Omit those keys to get their defaults; do not write `null` on them.
 
 `0` is narrower: it survives on the **four numeric bounds** listed below and nowhere else.
 Every other numeric key still runs through the old filter, so a `0` written there is

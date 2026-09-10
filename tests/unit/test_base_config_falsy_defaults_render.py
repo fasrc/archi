@@ -773,6 +773,32 @@ def test_guard_sees_a_negative_literal_default():
     assert signatures != sorted(_NON_BOOL_DEFAULT_BASELINE)
 
 
+@pytest.mark.parametrize(
+    "path", ["global.ACCEPTED_FILES", "services.benchmarking.modes"]
+)
+def test_null_on_an_iterated_container_key_fails_the_render(path):
+    """Pins the two keys where the null guarantee does not hold.
+
+    Both take a bare ``default([...])``, which replaces only an *undefined* value, and
+    both are iterated directly by a ``{%- for %}``. So an explicit ``null`` reaches the
+    loop and raises rather than falling back to the default -- and `archi create`
+    cannot render the config at all.
+
+    Documented in `docs/docs/configuration.md` rather than fixed: converting these is
+    a separate change with its own blast radius, and the doc claim needs a test or it
+    silently rots. If a later change adds ``boolean=true`` here, this test fails and
+    the documented exception comes out with it.
+    """
+    with pytest.raises(TypeError, match="not iterable"):
+        _render(**_expand(path, None))
+
+
+def test_null_on_a_boolean_flagged_default_still_yields_the_default():
+    """The contrast case, so the exception above reads as narrow rather than general."""
+    cfg = _render(**_expand("global.DATA_PATH", None))
+    assert cfg["global"]["DATA_PATH"] == "/root/data/"
+
+
 def test_guard_folds_a_signed_literal_without_losing_the_boolean_check():
     """Folding unary signs must not swallow a boolean literal.
 
