@@ -119,6 +119,15 @@ The other 31 truthy numeric defaults (ports, timeouts, worker counts, `num_docum
 retrieve`) have no meaningful `0`, and the issue says to leave them alone. They are frozen
 by D4 rather than changed.
 
+**"Only those four" scopes this change, not the file.** Three numeric keys already
+preserved a configured `0` before it, through the same ternary:
+`data_manager.scrape_workers` (default `8`), `data_manager.scrape_per_host_workers`
+(default `4`) — both carrying a comment that says exactly why — and
+`sources.links.sitemap.min_pages` (default `1`). Review round 5 caught the operator docs
+claiming the four converted here were the only numeric keys where a `0` survives, which is
+false; corrected there. Nothing changes here, but a reader comparing the two documents
+needs the distinction.
+
 ## D4. The guard, and the contradiction in acceptance criterion 4
 
 Acceptance criterion 4 asks for a test that "fails if any `default(` in the template passes
@@ -279,3 +288,51 @@ remove), so it is a separate decision with its own blast radius. Pinned by
 `test_null_on_an_iterated_container_key_fails_the_render`, with a contrast test for a
 `default(…, true)` site, so the documented exception cannot rot: if a later change converts
 these, the test fails and the doc paragraph comes out with it.
+
+## D11. The change also makes SSO a source, and that needs saying
+
+Review round 5 found the largest behaviour change in this PR, and it has nothing to do with
+the `default` filter. Converting the `indico.use_sso` line replaced a `{% endif -%}` with
+`{% endif %}` on the line above `sso:`, and the trailing `-` had been stripping the newline
+that put `sso:` at its own indentation.
+
+**Measured, rendering the template from `origin/dev` and from this branch.** At
+`origin/dev`:
+
+```yaml
+    git:
+      enabled: True
+      visible: True
+      schedule: ''
+      sso:            # a null key inside git, not a source
+      enabled: True   # SSO's rows, as DUPLICATE keys inside git:
+      visible: True
+      schedule: ''
+```
+
+`data_manager.sources` had no `sso` key at all — its keys were `elog, git, indico, jira,
+links, local_files, redmine` — and YAML's last-wins rule meant the SSO block's rows replaced
+Git's. Operator-visible consequences, each rendered both ways:
+
+| Configuration | `origin/dev` | this branch |
+| --- | --- | --- |
+| `sources.git.enabled: false` | `true` — **discarded** | `false` |
+| `sources.git.schedule: "0 3 * * *"` | `''` — **discarded** | `0 3 * * *` |
+| `sources.sso.enabled: false` | `sources.sso` absent | `false` |
+| nothing configured | no `sources.sso` key | `sso` with `enabled: true` |
+
+So `git.enabled: false` has been silently ignored on `dev`, and this change starts honouring
+it. That is a fix, not a regression — but it is a rollout event, because a deployment that
+has been carrying an ignored `git.enabled: false` will stop ingesting Git on its next
+`archi create`, and one with an SSO schedule and no explicit `sso.enabled` will start.
+
+Documented as its own subsection with a CAUTION in `docs/docs/configuration.md`, rather than
+folded into the falsy-value story, because an operator auditing the falsy-flag list would
+never look for it there. Two tests pin it: the structural property (`sso` is a sibling, and
+neither source lost a row) and the operator-visible one (`git.enabled: false` and
+`git.schedule` survive). Neither would be caught by anything else in the file — it is an
+indentation property of a Jinja template, and one re-added `-` puts it back.
+
+Not reverted to keep the diff narrow. Leaving the marker would mean shipping a change that
+converts `use_sso` while leaving `sso` structurally lost, and the next person to touch that
+line would hit the same thing with less context.

@@ -310,12 +310,20 @@ def _boolean_argument(node):
 
 
 _UNREADABLE = object()
+# A signed boolean literal: `default(-true, true)`. Its own sentinel, because it must
+# reach the BOOLEAN guard rather than the non-boolean one. Folding it to a number
+# (`bool` is an `int` subclass, so `-True` is `-1`) would hand a boolean-literal
+# default to the truthy-non-boolean branch; returning _UNREADABLE would drop it from
+# both. Either way it renders `-1` and replaces a configured `false` while every
+# advertised guard reports green.
+_SIGNED_BOOL = object()
 
 
 def _literal_default(node):
     """Resolve a ``default()`` first argument to its literal value.
 
-    Returns ``_UNREADABLE`` when the expression is not a literal this walker models.
+    Returns ``_UNREADABLE`` when the expression is not a literal this walker models,
+    and ``_SIGNED_BOOL`` for a signed boolean literal.
 
     Jinja does not parse ``-1`` as a ``Const``: it parses ``nodes.Neg`` wrapping
     ``Const(1)``. A predicate that only accepts ``Const`` therefore skips
@@ -326,10 +334,10 @@ def _literal_default(node):
         return node.value
     if isinstance(node, (nodes.Neg, nodes.Pos)):
         inner = _literal_default(node.node)
-        if inner is _UNREADABLE or isinstance(inner, bool):
-            # bool is an int subclass, so -true would fold to -1 and lose the fact
-            # that the author wrote a boolean literal. Leave it to the other branch.
+        if inner is _UNREADABLE:
             return _UNREADABLE
+        if inner is _SIGNED_BOOL or isinstance(inner, bool):
+            return _SIGNED_BOOL
         if not isinstance(inner, (int, float)):
             return _UNREADABLE
         return -inner if isinstance(node, nodes.Neg) else +inner
@@ -368,6 +376,10 @@ def _walk_default_filters(source):
             is_allowed = value is False and boolean_on
             if not is_allowed:
                 bad_boolean.append(node.lineno)
+        elif value is _SIGNED_BOOL:
+            # `default(-true, ...)` is a boolean literal wearing a minus sign. Only
+            # `default(false, true)` is permitted, and this is not that spelling.
+            bad_boolean.append(node.lineno)
         elif value is not _UNREADABLE and bool(value) and boolean_on:
             truthy_non_bool.append(node.lineno)
 
@@ -422,7 +434,7 @@ def _default_filter_signatures(source):
         if not boolean_on:
             continue
         value = _literal_default(first_arg)
-        if isinstance(value, bool) or value is _UNREADABLE:
+        if isinstance(value, bool) or value in (_UNREADABLE, _SIGNED_BOOL):
             # Boolean literals belong to the other guard. _UNREADABLE here means a
             # non-scalar or computed default -- `default({}, true)`,
             # `default([], true)`, `default('a' if x else 'b', true)` -- which cannot
@@ -773,8 +785,48 @@ def test_guard_sees_a_negative_literal_default():
     assert signatures != sorted(_NON_BOOL_DEFAULT_BASELINE)
 
 
+def test_sso_is_a_sibling_source_not_nested_under_git():
+    """`sso:` must render as its own source, and must not overwrite Git's rows.
+
+    A trailing whitespace-control marker on the line above `sso:` used to pull the key
+    up one level: `sources.sso` did not exist, `git.sso` was a null key, and the SSO
+    block's `enabled`/`visible`/`schedule` landed as duplicate keys inside `git:`,
+    where YAML's last-wins rule replaced Git's own. So `git.enabled: false` and
+    `git.schedule` were silently discarded.
+
+    Pinned because it is an indentation property of a Jinja template, which no other
+    test in this file would notice, and because a single re-added `-` puts it back.
+    """
+    cfg = _render()
+    sources = cfg["data_manager"]["sources"]
+
+    assert "sso" in sources, "sso must be a top-level source"
+    assert isinstance(sources["sso"], dict)
+    assert "sso" not in sources["git"], "sso must not be nested inside git"
+    for key in ("enabled", "visible", "schedule"):
+        assert key in sources["sso"], f"sso lost its {key} row"
+        assert key in sources["git"], f"git lost its {key} row"
+
+
+def test_a_configured_git_value_is_not_overwritten_by_the_sso_block():
+    """The operator-visible half of the same defect."""
+    cfg = _render(**_expand("data_manager.sources.git.enabled", False))
+    assert cfg["data_manager"]["sources"]["git"]["enabled"] is False
+
+    cfg = _render(**_expand("data_manager.sources.git.schedule", "0 3 * * *"))
+    assert cfg["data_manager"]["sources"]["git"]["schedule"] == "0 3 * * *"
+
+
 @pytest.mark.parametrize(
-    "path", ["global.ACCEPTED_FILES", "services.benchmarking.modes"]
+    "path",
+    [
+        "global.ACCEPTED_FILES",
+        "services.benchmarking.modes",
+        "services.benchmarking.ragas_settings.enabled_metrics",
+        "data_manager.utils.anonymizer.excluded_words",
+        "data_manager.utils.anonymizer.greeting_patterns",
+        "data_manager.utils.anonymizer.signoff_patterns",
+    ],
 )
 def test_null_on_an_iterated_container_key_fails_the_render(path):
     """Pins the two keys where the null guarantee does not hold.
@@ -799,24 +851,37 @@ def test_null_on_a_boolean_flagged_default_still_yields_the_default():
     assert cfg["global"]["DATA_PATH"] == "/root/data/"
 
 
-def test_guard_folds_a_signed_literal_without_losing_the_boolean_check():
-    """Folding unary signs must not swallow a boolean literal.
+@pytest.mark.parametrize("spelling", ["-true", "-false", "+true", "--true"])
+def test_guard_rejects_a_signed_boolean_literal(spelling):
+    """``default(-true, true)`` is a boolean literal wearing a sign, and is rejected.
 
-    ``bool`` is an ``int`` subclass, so a naive fold turns ``default(-true, true)``
-    into ``-1`` and reports a truthy non-boolean -- moving a boolean-literal default
-    out of the guard that exists to reject it. The fold declines booleans instead, so
-    the boolean guard still sees the call.
+    It has to reach the BOOLEAN guard specifically. Folding it to a number would hand
+    it to the truthy-non-boolean branch (``bool`` is an ``int`` subclass, so ``-True``
+    is ``-1``), and treating it as unreadable would drop it from both -- which is what
+    an earlier version of this fold did. Either way Jinja renders ``-1``, a configured
+    ``false`` is replaced, and every advertised guard reports green.
+
+    Asserting the rejection, not merely the absence from the non-boolean baseline:
+    absence there is also what a silently-skipped site looks like, so that assertion
+    alone passed with the hole still open.
     """
     source = _get_template_source()
     anchor = "  chunk_size: {{ data_manager.chunk_size | default(1000, true) }}"
+    assert anchor in source, "anchor line moved; update this test's fixture"
     smuggled = source.replace(
         anchor,
         anchor
-        + "\n  signed_bool: {{ data_manager.signed_bool | default(-true, true) }}",
+        + "\n  signed_bool: {{ data_manager.signed_bool | default("
+        + spelling
+        + ", true) }}",
         1,
     )
-    signatures = _default_filter_signatures(smuggled)
-    assert not any("signed_bool" in signature for signature in signatures)
+
+    bad_lines, _ = _walk_default_filters(smuggled)
+    assert bad_lines, "a signed boolean literal must be rejected by the boolean guard"
+
+    # And it must not slip into the non-boolean baseline instead.
+    assert _default_filter_signatures(smuggled) == sorted(_NON_BOOL_DEFAULT_BASELINE)
 
 
 def test_guard_leaves_container_and_computed_defaults_out_of_scope():

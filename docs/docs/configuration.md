@@ -11,22 +11,35 @@ and is not read as "unset and therefore ignorable".
 
 `null` renders as that key's documented default on the flags this change converted and on
 every key whose template default is applied with `default(…, true)`, which is most of them.
-It is **not** a whole-file guarantee. Two keys the template iterates directly take a bare
-`default([…])`, which only replaces an *undefined* value, so an explicit `null` reaches the
-loop and fails the render rather than falling back:
+It is **not** a whole-file guarantee.
 
-| Key | `null` does this |
-|---|---|
-| `global.ACCEPTED_FILES` | `TypeError: 'NoneType' object is not iterable` — `archi create` cannot render the config |
-| `services.benchmarking.modes` | the same |
+**CAUTION: on these six keys, writing `null` stops the deploy.** Each is iterated directly
+by the template through a bare `default([…])`, which replaces only an *undefined* value, so
+an explicit `null` reaches the loop and raises `TypeError: 'NoneType' object is not
+iterable`. `archi create` cannot render the config at all.
 
-Omit those keys to get their defaults; do not write `null` on them.
+- `global.ACCEPTED_FILES`
+- `services.benchmarking.modes`
+- `services.benchmarking.ragas_settings.enabled_metrics`
+- `data_manager.utils.anonymizer.excluded_words`
+- `data_manager.utils.anonymizer.greeting_patterns`
+- `data_manager.utils.anonymizer.signoff_patterns`
 
-`0` is narrower: it survives on the **four numeric bounds** listed below and nowhere else.
-Every other numeric key still runs through the old filter, so a `0` written there is
-replaced by that key's default — `data_manager.sources.jira.max_tickets: 0` renders as
+Omit the key to get its default; do not write `null` on it. (Four other list-valued keys —
+`categorization.categories`, `jira.projects`, `redmine.projects` and
+`chat_app.alerts.managers` — are written the same way but sit inside a block that does not
+render when the key is absent, so `null` is harmless there.)
+
+`0` is the narrowest of the three. **This change converted four numeric bounds**, listed in
+the table below. Three other numeric keys already preserved a configured `0` before it —
+`data_manager.scrape_workers`, `data_manager.scrape_per_host_workers` and
+`data_manager.sources.links.sitemap.min_pages`, the last of which this page tells you to set
+to `0` further down. Everywhere else a `0` still runs through the old filter and is replaced
+by that key's default: `data_manager.sources.jira.max_tickets: 0` renders as
 `10000000000.0`, and `services.chat_app.num_responses_until_feedback: 0` renders as `3`.
-Check the four-row table before writing a `0` and expecting it to arrive.
+
+So there is no single rule for `0`. Check the key before writing one and expecting it to
+arrive.
 
 This was not always true. Before the fix in issue #448, a set of boolean flags went through
 a Jinja filter that could not tell `false` from a missing key, so an explicit `false` was
@@ -53,6 +66,42 @@ flag.
 `redmine.visible` and `elog.visible` are **not** in this list. Their template expressions
 default to `false`, so an explicit `false` already rendered as `false` before this change
 and their semantics did not move.
+
+### The SSO source becomes a source
+
+This change fixes a second, unrelated defect in the same template, and it is the one most
+likely to change what your next deploy does.
+
+A whitespace-control marker on the line above `sso:` was pulling that key up one level, so
+the rendered config nested it inside `git:` — and the SSO block's own rows landed as
+**duplicate keys inside `git:`**, where YAML's last-wins rule silently replaced Git's:
+
+```yaml
+    git:
+      enabled: True
+      visible: True
+      schedule: ''
+      sso:            # a null key, not a source
+      enabled: True   # SSO's rows, overwriting Git's
+      visible: True
+      schedule: ''
+```
+
+Two consequences, both measured against the template before and after:
+
+| Configuration | Before | After |
+|---|---|---|
+| `sources.git.enabled: false` | rendered `true` — **discarded** | `false` |
+| `sources.git.schedule: "0 3 * * *"` | rendered `''` — **discarded** | `0 3 * * *` |
+| `sources.sso.enabled: false` | `sources.sso` absent entirely | `false` |
+| nothing set | no `sources.sso` key at all | `sso` with `enabled: true` |
+
+**CAUTION: check your Git source settings before the first deploy after this change.**
+If you had `git.enabled: false` or a `git.schedule`, they were being ignored and now take
+effect. And because `sources.sso` did not previously exist, an omitted `sso.enabled` now
+renders the default `true` — so a deployment carrying an SSO schedule can begin collecting
+where it was silently skipped before. Set `sources.sso.enabled: false` explicitly if you do
+not want that.
 
 Of these, `enabled: false` is acted on by the `git`, `sso`, `indico`, `jira`, `redmine` and
 `elog` collectors, and by the Selenium scraper — with one exception for `git` and `sso`,
