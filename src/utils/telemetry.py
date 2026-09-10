@@ -137,6 +137,32 @@ REDACTED_VALUE = "__REDACTED__"
 # make the traces useless.
 _CREDENTIAL_PATH_MARKERS = ("/hooks/", "/services/")
 
+# The statement a database span records. Nearly every archi statement is
+# parameterised, so the values reach the driver separately and the statement text is
+# only shape. SQL_INSERT_CONVO (src/utils/sql.py:7) is the exception: it goes through
+# psycopg2.extras.execute_values, which expands the rows into the statement before
+# sending it. That is correct use of the driver, and it leaves the finished statement
+# holding the question and the whole answer — which is what the instrumentor records.
+#
+# Measured on the deployed check, not derived: one streamed chat request put a user's
+# question and archi's reply into db.statement on the span named after the database.
+#
+# The literals go and the shape stays, so a database span still names its table and
+# its kind of statement. Numbers are left alone: a bare number is an identifier or a
+# limit, never the conversation, and losing them would cost real debugging value.
+_STATEMENT_ATTRIBUTES = frozenset({"db.statement", "db.query.text"})
+
+# Three ways Postgres writes a string, in the order they must be tried. A dollar-quoted
+# body can hold anything including quotes; an E'' string escapes with a backslash; an
+# ordinary string escapes a quote by doubling it. A rule that knew only the last form
+# would stop early on the other two and leave the rest of the row in the clear.
+_SQL_LITERAL = re.compile(
+    r"\$(?P<tag>[A-Za-z_][A-Za-z0-9_]*|)\$.*?\$(?P=tag)\$"
+    r"|[Ee]'(?:[^'\\]|\\.|'')*'"
+    r"|'(?:[^']|'')*'",
+    re.DOTALL,
+)
+
 # Free-text fields that can quote a URL. An exception message and a stack trace are
 # not attributes, so scrubbing only span.attributes lets the same secret out through
 # a different door.
@@ -450,6 +476,11 @@ def _scrub_text(value: str) -> str:
     return _URL_IN_TEXT.sub(lambda match: _scrub_url(match.group(0)), value)
 
 
+def _scrub_statement(value: str) -> str:
+    """Replace every string literal in a SQL statement, and keep the shape."""
+    return _SQL_LITERAL.sub("'?'", value)
+
+
 def _scrub_attributes(attributes, redact_content: bool = True):
     """Return cleaned attributes, or None when nothing needed cleaning.
 
@@ -476,6 +507,12 @@ def _scrub_attributes(attributes, redact_content: bool = True):
             cleaned[key] = REDACTED_VALUE
             changed = True
             continue
+        if redact_content and key in _STATEMENT_ATTRIBUTES and isinstance(value, str):
+            scrubbed = _scrub_statement(value)
+            if scrubbed != value:
+                cleaned[key] = scrubbed
+                changed = True
+                continue
         cleaned[key] = value
     return cleaned if changed else None
 

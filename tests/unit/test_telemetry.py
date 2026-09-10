@@ -1030,6 +1030,157 @@ class _LoggingFailingExporter:
         return True
 
 
+class TestTheDatabaseStatementIsNotAContentChannel:
+    """A SQL statement can carry the conversation, and one of archi's does.
+
+    Most archi statements are parameterised — ``VALUES (%s, %s, %s)`` — and the
+    values never reach the driver as statement text. ``SQL_INSERT_CONVO`` is the
+    exception: ``psycopg2.extras.execute_values`` expands the rows into the
+    statement before sending it, which is correct use of the driver and leaves the
+    finished statement holding the question and the whole answer. The psycopg2
+    instrumentor records that finished statement in ``db.statement``.
+
+    Found on the deployed check, not in this file: every other content path had a
+    test, and this one exported a user's question to the receiver anyway. The rule
+    is therefore about the attribute, not about the call site — a statement is
+    scrubbed whatever built it.
+
+    Literals go and the shape stays. An operator still sees which table was
+    written and by what kind of statement, which is most of what a database span
+    is for.
+    """
+
+    STATEMENT = (
+        "\nINSERT INTO conversations (\n"
+        "    archi_service, conversation_id, sender, content, ts\n"
+        ")\n"
+        "VALUES ('Chatbot',1,'User','What is in the seed document?',"
+        "'2026-09-10T12:27:20+00:00'::timestamptz),"
+        "('Chatbot',1,'archi','The seed document is a test file.',"
+        "'2026-09-10T12:27:21+00:00'::timestamptz)\n"
+        "RETURNING message_id;\n"
+    )
+
+    def test_the_conversation_does_not_leave_inside_the_statement(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("archi-db") as span:
+            span.set_attribute("db.statement", self.STATEMENT)
+            span.set_attribute("db.system", "postgresql")
+
+        (exported,) = memory.get_finished_spans()
+        statement = exported.attributes["db.statement"]
+
+        assert "What is in the seed document?" not in statement
+        assert "The seed document is a test file." not in statement
+        assert "Chatbot" not in statement
+
+    def test_the_shape_of_the_statement_survives(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("archi-db") as span:
+            span.set_attribute("db.statement", self.STATEMENT)
+
+        (exported,) = memory.get_finished_spans()
+        statement = exported.attributes["db.statement"]
+
+        assert "INSERT INTO conversations" in statement
+        assert "RETURNING message_id" in statement
+        assert "archi_service, conversation_id, sender, content, ts" in statement
+
+    def test_a_parameterised_statement_is_left_alone(self):
+        """The common case has no literal in it, so nothing should change."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+        parameterised = (
+            "\nINSERT INTO timing (\n    message_id,\n    msg_duration\n)\n"
+            "VALUES (%s, %s);\n"
+        )
+
+        with tracer.start_as_current_span("INSERT") as span:
+            span.set_attribute("db.statement", parameterised)
+
+        (exported,) = memory.get_finished_spans()
+
+        assert exported.attributes["db.statement"] == parameterised
+
+    def test_a_doubled_quote_inside_a_literal_does_not_end_it(self):
+        """``'it''s'`` is one literal. A rule that stops at the second quote
+        would leave the rest of the row in the clear."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("archi-db") as span:
+            span.set_attribute(
+                "db.statement",
+                "INSERT INTO conversations VALUES ('it''s the patient record','x')",
+            )
+
+        (exported,) = memory.get_finished_spans()
+        statement = exported.attributes["db.statement"]
+
+        assert "patient record" not in statement
+        assert "INSERT INTO conversations VALUES" in statement
+
+    def test_an_escape_string_literal_is_covered_too(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("archi-db") as span:
+            span.set_attribute(
+                "db.statement",
+                r"INSERT INTO conversations VALUES (E'line\'s secret text', 2)",
+            )
+
+        (exported,) = memory.get_finished_spans()
+        statement = exported.attributes["db.statement"]
+
+        assert "secret text" not in statement
+
+    def test_a_dollar_quoted_body_is_covered_too(self):
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("archi-db") as span:
+            span.set_attribute(
+                "db.statement",
+                "INSERT INTO conversations VALUES ($tag$the whole answer$tag$)",
+            )
+
+        (exported,) = memory.get_finished_spans()
+        statement = exported.attributes["db.statement"]
+
+        assert "the whole answer" not in statement
+
+    def test_the_new_semantic_convention_key_is_covered(self):
+        """Newer instrumentation writes ``db.query.text`` for the same thing."""
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("archi-db") as span:
+            span.set_attribute("db.query.text", self.STATEMENT)
+
+        (exported,) = memory.get_finished_spans()
+
+        assert "What is in the seed document?" not in (
+            exported.attributes["db.query.text"]
+        )
+
+    def test_the_content_flag_restores_the_statement(self, monkeypatch):
+        monkeypatch.setenv(CONTENT, "true")
+        memory, provider = _recording_provider()
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("archi-db") as span:
+            span.set_attribute("db.statement", self.STATEMENT)
+
+        (exported,) = memory.get_finished_spans()
+
+        assert exported.attributes["db.statement"] == self.STATEMENT
+
+
 TELEMETRY_HELPERS = frozenset({"init_telemetry", "instrument_flask_app"})
 
 
