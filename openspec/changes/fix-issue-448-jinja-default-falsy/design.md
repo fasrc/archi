@@ -251,12 +251,29 @@ boolean-literal default out of the guard built to reject it. Pinned by
 **The wider fix was tried and rejected on measurement.** The finding's alternative was to
 fail on every `default(<expr>, true)` the walker cannot read. Implemented, that reported 12
 lines in the current template: `default({}, true)`, `default([], true)` and
-`default('localhost' if host_mode else 'data-manager', true)`. A dict, list or conditional
-default cannot stand in for a boolean, so none is in the bug class — the same argument the
-test module's docstring already makes for list defaults. Twelve false failures on lines
-that were always correct is not a stronger guard. The boundary is now enforced by
-`test_guard_leaves_container_and_computed_defaults_out_of_scope` instead of asserted in a
-comment, so a future attempt at that widening fails a test that explains why.
+`default('localhost' if host_mode else 'data-manager', true)`. A dict or list default cannot stand in
+for a boolean, so neither is in the bug class — the same argument the test module's
+docstring already makes for list defaults. Twelve false failures on lines that were always
+correct is not a stronger guard. That boundary is enforced by
+`test_guard_leaves_container_literal_defaults_out_of_scope` instead of asserted in a
+comment, so a future attempt at the widening fails a test that explains why.
+
+**Corrected in round 6: "computed" did not belong in that sentence.** The reasoning above
+holds for containers and fails for a *computed* default.
+`default(data_manager.other_flag, true)` resolves at render time, and if that flag is truthy
+it replaces a configured `false` — the exact substitution this change removes, under a
+non-literal spelling. Lumping it in with `{}` and `[]` and skipping them all was right for
+the containers and wrong for these.
+
+Split accordingly: container literals (`nodes.Dict`, `nodes.List`, `nodes.Tuple`) stay out
+of both guards; everything else unreadable is **frozen into the signature baseline** as
+`<computed>@<NodeType>`. Frozen rather than rejected because the template carries one
+legitimate computed default — `default('localhost' if host_mode else 'data-manager', true)`,
+a conditional between two string literals, which cannot substitute for a boolean — and the
+baseline is exactly the mechanism that lets a form stay while nothing new joins it. That
+site is now the only `<computed>` entry in the baseline, so a second one breaks the test.
+`test_guard_freezes_a_computed_default` covers a name, a dotted path, arithmetic and a
+conditional.
 
 ## D10. The null guarantee is not a whole-file guarantee
 
@@ -322,9 +339,33 @@ Git's. Operator-visible consequences, each rendered both ways:
 | nothing configured | no `sources.sso` key | `sso` with `enabled: true` |
 
 So `git.enabled: false` has been silently ignored on `dev`, and this change starts honouring
-it. That is a fix, not a regression — but it is a rollout event, because a deployment that
-has been carrying an ignored `git.enabled: false` will stop ingesting Git on its next
-`archi create`, and one with an SSO schedule and no explicit `sso.enabled` will start.
+it. That is a fix, not a regression — but it is a rollout event, because a deployment
+carrying an ignored `git.enabled: false` will stop ingesting Git on its next `archi create`.
+
+**The SSO half of that sentence was wrong, and round 6 caught it.** The table above is the
+bare template; the deployed path is not. `archi create` and `archi evaluate` both call
+`ConfigurationManager.set_sources_enabled()` before rendering (`src/cli/cli_main.py:248`
+and `:879`), and `config_manager.py:458-463` writes `enabled: false` into every managed
+source the config does not select. `sso` is a managed source (`source_registry.py:35`), and
+a `schedule` alone does not select one — `enabled_sources` comes from
+`get_enabled_sources()` — so an omitted `sso.enabled` reaches the template as an explicit
+`false`. Re-measured through that normalised shape:
+
+| Configuration (CLI-normalised) | `origin/dev` | this branch |
+| --- | --- | --- |
+| operator set nothing | `sso` absent | `sso.enabled: false` |
+| `git.enabled: false` | `true` — discarded | `false` |
+| `git.schedule: "0 3 * * *"` | `''` — discarded | `0 3 * * *` |
+
+So SSO does **not** switch itself on, the Git half of the finding stands unchanged, and the
+template's `true` default is reachable only when something renders `base-config.yaml`
+outside the CLI — which the unit tests do and no deployment does. `resolve_dependencies`
+does not pull `sso` in either; `_conditional_secrets` adds SSO *credentials* when Indico
+uses SSO, not the source.
+
+The lesson generalises past this row: the first measurement rendered the template directly,
+which is not the code path a deploy takes. A claim about deployed behaviour has to be
+measured through the deployed path.
 
 Documented as its own subsection with a CAUTION in `docs/docs/configuration.md`, rather than
 folded into the falsy-value story, because an operator auditing the falsy-flag list would

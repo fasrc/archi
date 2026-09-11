@@ -310,6 +310,10 @@ def _boolean_argument(node):
 
 
 _UNREADABLE = object()
+# A container literal used as a default: `default({}, true)`, `default([], true)`. Out of
+# the bug class by construction -- a dict or list cannot stand in for a boolean -- so these
+# stay outside both guards.
+_CONTAINER_LITERAL_NODES = (nodes.Dict, nodes.List, nodes.Tuple)
 # A signed boolean literal: `default(-true, true)`. Its own sentinel, because it must
 # reach the BOOLEAN guard rather than the non-boolean one. Folding it to a number
 # (`bool` is an `int` subclass, so `-True` is `-1`) would hand a boolean-literal
@@ -434,19 +438,27 @@ def _default_filter_signatures(source):
         if not boolean_on:
             continue
         value = _literal_default(first_arg)
-        if isinstance(value, bool) or value in (_UNREADABLE, _SIGNED_BOOL):
-            # Boolean literals belong to the other guard. _UNREADABLE here means a
-            # non-scalar or computed default -- `default({}, true)`,
-            # `default([], true)`, `default('a' if x else 'b', true)` -- which cannot
-            # stand in for a boolean and is outside the bug class by the same argument
-            # the module docstring makes for list defaults.
+        if isinstance(value, bool) or value is _SIGNED_BOOL:
+            # Boolean literals, signed or not, belong to the other guard.
             continue
         path = _call_site_path(node.node)
-        signatures.append(
-            f"{path}={value!r}"
-            if path is not None
-            else f"<unresolved>@line{node.lineno}"
-        )
+        prefix = path if path is not None else f"<unresolved>@line{node.lineno}"
+        if value is _UNREADABLE:
+            if isinstance(first_arg, _CONTAINER_LITERAL_NODES):
+                # A dict or list default cannot stand in for a boolean, so it is out
+                # of the bug class by construction and stays out of the baseline.
+                continue
+            # Everything else unreadable is COMPUTED, and a computed default can be
+            # truthy at render time: `default(data_manager.other_flag, true)` replaces
+            # a configured `false` with whatever that flag holds. Skipping these is
+            # how the truthiness substitution would return under a non-literal
+            # spelling. Frozen here rather than rejected, because the template already
+            # carries a legitimate one -- a conditional between two string literals --
+            # and the baseline is the mechanism that lets the form stay while nothing
+            # new joins it.
+            signatures.append(f"{prefix}=<computed>@{type(first_arg).__name__}")
+            continue
+        signatures.append(f"{prefix}={value!r}")
     return sorted(signatures)
 
 
@@ -553,6 +565,13 @@ _NON_BOOL_DEFAULT_BASELINE = [
     "services.chat_app.trained_on='No description provided.'",
     "services.data_manager.external_port=7871",
     "services.data_manager.host='0.0.0.0'",
+    # The one legitimate COMPUTED default in the file:
+    # `default('localhost' if host_mode else 'data-manager', true)`. Both branches are
+    # string literals, so it cannot substitute for a boolean. Frozen rather than
+    # rejected so the form can stay while nothing new joins it -- a computed default
+    # that resolves to another config value WOULD substitute, which is the reason
+    # computed defaults are baselined at all.
+    "services.data_manager.hostname=<computed>@CondExpr",
     "services.data_manager.port=7871",
     "services.data_manager.static_folder='/root/archi/src/interfaces/chat_app/static'",
     "services.data_manager.template_folder='/root/archi/src/interfaces/chat_app/templates'",
@@ -884,16 +903,15 @@ def test_guard_rejects_a_signed_boolean_literal(spelling):
     assert _default_filter_signatures(smuggled) == sorted(_NON_BOOL_DEFAULT_BASELINE)
 
 
-def test_guard_leaves_container_and_computed_defaults_out_of_scope():
-    """Non-scalar and computed defaults stay outside both guards, on purpose.
+def test_guard_leaves_container_literal_defaults_out_of_scope():
+    """A dict or list default stays outside both guards, on purpose.
 
-    ``default({}, true)``, ``default([], true)`` and
-    ``default('a' if flag else 'b', true)`` are all in the template today. None can
-    stand in for a boolean, so none is in the bug class -- the same argument the module
-    docstring already makes for list defaults. Pinned here so the boundary is enforced
-    rather than only asserted in a comment, and so widening the walker to fail on every
-    shape it cannot read does not land silently: that reads as a fix and is really a
-    dozen false failures on lines that were always fine.
+    ``default({}, true)`` and ``default([], true)`` are in the template today. Neither
+    can stand in for a boolean, so neither is in the bug class -- the same argument the
+    module docstring makes for list defaults. Pinned so the boundary is enforced rather
+    than asserted in a comment, and so widening the walker to fail on every shape it
+    cannot read does not land silently: that reads as a fix and is really a dozen false
+    failures on lines that were always fine.
     """
     source = _get_template_source()
     bad_lines, _ = _walk_default_filters(source)
@@ -902,8 +920,6 @@ def test_guard_leaves_container_and_computed_defaults_out_of_scope():
     for fixture in (
         "  dict_default: {{ data_manager.dict_default | default({}, true) }}",
         "  list_default: {{ data_manager.list_default | default([], true) }}",
-        "  cond_default: "
-        "{{ data_manager.cond_default | default('a' if verbosity else 'b', true) }}",
     ):
         smuggled = source + "\n" + fixture
         smuggled_bad, _ = _walk_default_filters(smuggled)
@@ -911,3 +927,40 @@ def test_guard_leaves_container_and_computed_defaults_out_of_scope():
         assert _default_filter_signatures(smuggled) == sorted(
             _NON_BOOL_DEFAULT_BASELINE
         ), f"{fixture!r} must not join the frozen baseline"
+
+
+@pytest.mark.parametrize(
+    "default_expr",
+    [
+        "data_manager.other_enabled",
+        "data_manager.a.b.c",
+        "data_manager.n + 1",
+        "'a' if verbosity else 'b'",
+    ],
+    ids=["name", "dotted", "arithmetic", "conditional"],
+)
+def test_guard_freezes_a_computed_default(default_expr):
+    """A COMPUTED default is not out of scope: it can be truthy at render time.
+
+    `default(data_manager.other_enabled, true)` replaces a configured `false` with
+    whatever that flag holds, so the truthiness substitution this change removes could
+    return under a non-literal spelling. An earlier version of this walker lumped these
+    in with dict and list defaults and skipped them all, which was right for the
+    containers and wrong for these.
+
+    Frozen rather than rejected, because the template already carries one legitimate
+    computed default -- a conditional between two string literals -- and the baseline
+    is the mechanism that lets a form stay while nothing new joins it.
+    """
+    source = _get_template_source()
+    smuggled = (
+        source
+        + "\n  computed: {{ data_manager.computed | default("
+        + default_expr
+        + ", true) }}"
+    )
+    signatures = _default_filter_signatures(smuggled)
+    assert any(
+        "computed=<computed>@" in signature for signature in signatures
+    ), f"a computed default must join the baseline, got no entry for {default_expr!r}"
+    assert signatures != sorted(_NON_BOOL_DEFAULT_BASELINE)

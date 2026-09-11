@@ -94,14 +94,20 @@ Two consequences, both measured against the template before and after:
 | `sources.git.enabled: false` | rendered `true` — **discarded** | `false` |
 | `sources.git.schedule: "0 3 * * *"` | rendered `''` — **discarded** | `0 3 * * *` |
 | `sources.sso.enabled: false` | `sources.sso` absent entirely | `false` |
-| nothing set | no `sources.sso` key at all | `sso` with `enabled: true` |
+| nothing set | no `sources.sso` key at all | `sso` with `enabled: false` (see below) |
 
 **CAUTION: check your Git source settings before the first deploy after this change.**
 If you had `git.enabled: false` or a `git.schedule`, they were being ignored and now take
-effect. And because `sources.sso` did not previously exist, an omitted `sso.enabled` now
-renders the default `true` — so a deployment carrying an SSO schedule can begin collecting
-where it was silently skipped before. Set `sources.sso.enabled: false` explicitly if you do
-not want that.
+effect — measured through the CLI's own normalised config, not just the bare template.
+
+**SSO does not switch itself on.** The last row above says `false` rather than the
+template's `true` default because `archi create` and `archi evaluate` both call
+`ConfigurationManager.set_sources_enabled()` before rendering
+(`src/cli/cli_main.py:248` and `:879`), and that writes `enabled: false` into every managed
+source the config does not select. A `schedule` alone does not select a source, so an
+omitted `sso.enabled` reaches the template as an explicit `false`. The template's `true`
+default is only reachable when something renders `base-config.yaml` outside the CLI — which
+the unit tests do, and no deployment does. To turn SSO on, set `sources.sso.enabled: true`.
 
 Of these, `enabled: false` is acted on by the `git`, `sso`, `indico`, `jira`, `redmine` and
 `elog` collectors, and by the Selenium scraper — with one exception for `git` and `sso`,
