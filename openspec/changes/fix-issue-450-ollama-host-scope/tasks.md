@@ -84,7 +84,7 @@
 
 ## 2. Correct the comments that describe the removed behavior
 
-- [ ] 2.1 Fix the two stale `OLLAMA_HOST` comments in `src/bin/service_benchmark.py`.
+- [x] 2.1 Fix the two stale `OLLAMA_HOST` comments in `src/bin/service_benchmark.py`.
 
   `src/bin/service_benchmark.py:1420-1425` and `:1447-1450` both state as current fact
   that `LocalProvider` overwrites `config.base_url` with `OLLAMA_HOST`. After task 1 that
