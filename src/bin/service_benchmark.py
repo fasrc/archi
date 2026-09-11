@@ -473,9 +473,26 @@ class ResultHandler:
             # host is recorded at deploy time from the machine running `archi create`.
             # A container cannot move to another host, so a --rerun necessarily ran
             # on the same machine. Say so in the artifact rather than in a comment.
+            #
+            # Conditional, because the sentence is an assertion about a machine and
+            # there is no machine to assert when `host` is null -- either the deploy
+            # predates the field, or `archi create` refused to capture because the
+            # container engine was not provably local. Leaving the same-machine text
+            # beside `host: null` keeps exactly the false claim this change exists to
+            # remove: the reports guard their host line on `host`, so it never shows
+            # there, and it survives in the raw artifact that consumers parse.
             "host_captured_at": (
                 "deploy (`archi create`), on the machine this stack runs on"
                 " — a container cannot move hosts, so a --rerun ran here too"
+                if host
+                # Every cause, because this function cannot tell them apart: it
+                # reads a git_info.yaml that does not record which one applied.
+                # Naming a subset would be a fresh exhaustive claim that is false on
+                # the paths it omits — the same overclaim the conditional removed.
+                else "no host recorded — the deployment predates the field, or its"
+                " hostname was unreadable or blank, or git_info.yaml could not be"
+                " read, or `archi create` refused to capture because the container"
+                " engine was not provably local"
             ),
             # What the frozen commit above cannot provide: an identity for the
             # code this run actually executed. Digested from the `src` package

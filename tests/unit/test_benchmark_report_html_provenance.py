@@ -357,3 +357,26 @@ def test_an_html_null_host_does_not_claim_the_deploy_recorded_no_host():
     assert "predates the field" in html_null
     assert "capture failed" in html_null
     assert "metadata could not be read" in html_null
+
+
+def test_an_html_null_host_names_the_remote_engine_refusal_cause():
+    """HTML mirror: null host must name the fourth cause — remote engine refusal.
+
+    When capture is refused because the container endpoint is not provably local,
+    ``host`` is ``None``. The HTML null text must say so alongside the three
+    existing causes; an operator with a remote engine must not be told to look for
+    a failed capture or a missing mount.
+    """
+    html_null = format_version_html(
+        {
+            "code_version": {"digest": "code-digest-1"},
+            "config_version": {},
+            "host": None,
+        }
+    )
+
+    assert "container engine" in html_null
+    # All three previous causes remain.
+    assert "capture failed" in html_null
+    assert "metadata could not be read" in html_null
+    assert "predates the field" in html_null

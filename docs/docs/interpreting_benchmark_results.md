@@ -748,7 +748,7 @@ they shared one deployment — even though they ran different code. The field na
 the deploy, not the image. It is kept, and labelled, for exactly that reason.
 `metadata.host` does not share this freeze trap: a container cannot move to another
 machine, so the host recorded at deploy is the host every run in that deployment
-used.
+used. The host is written only when the container endpoint is provably local; `archi create` records `null` rather than a guess when it is not.
 
 Use the digests instead. Each is a content hash: **equal digest means equal
 input**, and the property is readable from the finished file forever, with no need

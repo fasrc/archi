@@ -58,14 +58,16 @@ def load_benchmark_results(filepath):
 _INGEST_NOT_RECORDED = object()
 
 #: Sentinel for ``provenance["host"]``: the artifact predates host stamping.
-#: ``None`` means no host reached this artifact, which has THREE causes: the
-#: deploy predates the field, capture ran and the hostname was unreadable, or the
+#: ``None`` means no host reached this artifact, which has FOUR causes: the
+#: deploy predates the field, capture ran and the hostname was unreadable, the
 #: benchmark could not read ``git_info.yaml`` at all -- ``add_metadata`` catches
 #: ``OSError`` on that read and carries on with no host
 #: (``src/bin/service_benchmark.py:449-460``), so a missing mount or a permissions
-#: fault lands here even though capture succeeded on the deploy host. None of the
-#: three are distinguishable from this field alone, so the null text names all
-#: three rather than asserting a lookup that may never have run, or a capture that
+#: fault lands here even though capture succeeded on the deploy host -- or the
+#: container engine was not provably local, so ``collect_host_information``
+#: refused to capture (``src/utils/container_endpoint.py``). None of the four
+#: are distinguishable from this field alone, so the null text names all four
+#: rather than asserting a lookup that may never have run, or a capture that
 #: may never have been read. Its lead clause claims only the ARTIFACT ("no host
 #: reached this artifact"), never the deploy: on the unreadable-metadata path the
 #: deploy did record a host, so "this deploy recorded no host" would state as
@@ -76,8 +78,9 @@ _HOST_NOT_RECORDED = object()
 _MD_HOST_NOT_RECORDED = "*not recorded — this artifact predates host stamping*"
 _MD_HOST_NULL = (
     "*not available — no host reached this artifact"
-    " (the deploy predates the field, capture failed, or the metadata could not"
-    " be read)*"
+    " (the deploy predates the field, capture failed, the metadata could not"
+    " be read, or the container engine was not provably local, so no host was"
+    " recorded)*"
 )
 
 _HTML_HOST_NOT_RECORDED = (
@@ -85,8 +88,9 @@ _HTML_HOST_NOT_RECORDED = (
 )
 _HTML_HOST_NULL = (
     "<em>not available &mdash; no host reached this artifact"
-    " (the deploy predates the field, capture failed, or the metadata could not"
-    " be read)</em>"
+    " (the deploy predates the field, capture failed, the metadata could not"
+    " be read, or the container engine was not provably local, so no host was"
+    " recorded)</em>"
 )
 
 

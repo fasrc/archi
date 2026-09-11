@@ -20,6 +20,7 @@ from src.utils.benchmark_schema import (
     anchor_source_path,
     anchors_enabled,
 )
+from src.utils.container_endpoint import container_endpoint_is_provably_local
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -93,6 +94,10 @@ EVALUATION_MCP_RUNTIME_PATH = (
 
 
 def collect_host_information() -> Optional[Dict[str, Optional[str]]]:
+    # Refusal, not a failure: host_captured_at asserts the CLI host and the
+    # container engine host are the same machine; a remote engine voids that.
+    if not container_endpoint_is_provably_local():
+        return None
     try:
         hostname = socket.getfqdn()
     except Exception:

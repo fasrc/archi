@@ -2,7 +2,7 @@
 
 ### Requirement: The deploy records the host in `git_info.yaml`
 
-`archi create` SHALL record the machine it runs on in `git_info.yaml`, as a `host` block holding a `hostname` and a `cpu_model`.
+`archi create` SHALL record the machine it runs on in `git_info.yaml`, as a `host` block holding a `hostname` and a `cpu_model`, when the container endpoint is provably local (classification rule: change `fix-issue-442-remote-engine-host-refusal`); when it is not, `archi create` SHALL record `null` rather than a guess.
 
 The capture belongs at deploy time, on the host. A hostname read inside the benchmark
 container returns the container id, which is different on every run and identifies nothing.
@@ -57,6 +57,12 @@ belongs in an artifact that is committed to the repository and read months later
 - **WHEN** the hostname lookup returns a real name surrounded by whitespace
 - **THEN** the `host` entry names that hostname with the surrounding whitespace removed
 
+#### Scenario: A not-provably-local container endpoint records no host
+
+- **WHEN** the container endpoint is not provably local (for example a `tcp://` address in `DOCKER_HOST`)
+- **THEN** `archi create` raises nothing
+- **AND** the `host` entry is `null`
+
 ### Requirement: Every artifact's metadata carries the host exactly once
 
 The benchmark harness SHALL write a `host` key into every artifact's `metadata`, holding either the recorded host object or `null`, and SHALL leave no second copy of that block inside `metadata.git_info`.
@@ -69,17 +75,23 @@ order.
 
 The three states are distinct facts and SHALL stay distinct. The key is **absent** when the
 artifact predates this field. The value is **`null`** when the deploy predates the field,
-capture failed, or the harness could not read `git_info.yaml` at all. The value is an
-**object** when the host is known. The harness SHALL never write an empty string and SHALL
-never write a placeholder such as `"unknown"`.
+capture failed, the harness could not read `git_info.yaml` at all, or the container endpoint
+was not provably local so capture refused to run. The value is an **object** when the host
+is known. The harness SHALL never write an empty string and SHALL never write a placeholder
+such as `"unknown"`.
 
-That third cause is not a variant of the second. `add_metadata` catches `OSError` on the
-`git_info.yaml` read and carries on with no host, so a missing mount or a permissions fault
-produces `null` even though capture succeeded on the deploy host. Since the field alone
-cannot separate the three, any prose the reports render for `null` SHALL name all three
-causes. Naming a subset states a positive, false claim about the ones it omits, and would
-send an operator to diagnose a deploy age when the real fault is a broken provenance
-channel.
+Those are **four** causes, not three. The third is not a variant of the second:
+`add_metadata` catches `OSError` on the `git_info.yaml` read and carries on with no host, so
+a missing mount or a permissions fault produces `null` even though capture succeeded on the
+deploy host. The fourth is not a variant of the second either — see the scenario above and
+the requirement that adds it. "Capture failed" would send an operator to debug
+`socket.getfqdn()` on a machine where nothing failed; the refusal is a decision the tool
+made.
+
+Since the field alone cannot separate them, any prose the reports render for `null` SHALL
+name all four causes. Naming a subset states a positive, false claim about the ones it
+omits, and would send an operator to diagnose a deploy age when the real fault is a broken
+provenance channel — or a remote engine.
 
 That prose SHALL make its leading claim about the **artifact**, never about the deploy. On
 the unreadable-metadata path the deploy did record a host, so a lead clause such as "this
