@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Callable, Iterable, Optional, Sequence, Tuple
 
 from langchain.tools import tool
@@ -13,18 +14,53 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+# Metadata key the hierarchical retriever records its cross-encoder score under
+# (``hierarchical_retriever.py``). A retriever that returns bare ``Document``
+# objects has nowhere else to put a score: ``BaseRetriever.invoke()`` is
+# contractually ``List[Document]``, so it cannot hand back tuples the way
+# ``HybridRetriever`` does.
+_METADATA_SCORE_KEY = "rerank_score"
+
+
+def _coerce_score(value: object) -> Optional[float]:
+    """Return ``value`` as a float, or None if it cannot be rendered as one.
+
+    ``bool`` is excluded deliberately: it subclasses ``int``, so True would
+    otherwise render as ``Score: 1.0000``. Non-finite floats are excluded too,
+    so a NaN never reaches the model as if it were a relevance score.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    score = float(value)
+    return score if math.isfinite(score) else None
+
+
 def _normalize_results(
     results: Iterable[object],
 ) -> Sequence[Tuple[Document, Optional[float]]]:
-    """Coerce retriever outputs into (Document, score) tuples."""
+    """Coerce retriever outputs into (Document, score) tuples.
+
+    A retriever states its score either by returning a ``(Document, score)``
+    tuple or by recording it on document metadata. An explicit tuple score wins
+    over a metadata one; the metadata score is read only when the tuple states
+    nothing, so the default hierarchical-rerank path stops rendering
+    ``Score: n/a`` for every document (issue #464).
+    """
     normalized: list[Tuple[Document, Optional[float]]] = []
+    doc: Document
+    stated: Optional[float]
     for item in results:
         if isinstance(item, Document):
-            normalized.append((item, None))
+            doc, stated = item, None
         elif (
             isinstance(item, tuple) and len(item) >= 2 and isinstance(item[0], Document)
         ):
-            normalized.append((item[0], item[1]))
+            doc, stated = item[0], _coerce_score(item[1])
+        else:
+            continue
+        if stated is None:
+            stated = _coerce_score(doc.metadata.get(_METADATA_SCORE_KEY))
+        normalized.append((doc, stated))
     return normalized
 
 
