@@ -129,12 +129,12 @@ and is reported as the null, not as a direction.
 ## Outcome (filled after the campaign)
 
 Filled 2026-09-11. Full report: [`docs/docs/feature_matrix_results_2026_09.md`](../../docs/feature_matrix_results_2026_09.md);
-ledger and operating log: plan §9 and §13. Data collection ran 2026-09-04 → 2026-09-09; 17
+ledger and operating log: plan §9 and §13. Data collection ran 2026-09-04 → 2026-09-09; 18
 archived RAGAS runs, 11 QA runs, zero degraded rows, every Procedure E check passed.
 
 | Arm | Claim under test | Primary Δ per run (MDE) | Verdict (pre-registered vocabulary) |
 |---|---|---|---|
-| 01 rerank off | disabling rerank lowers `context_precision` | −0.025 / −0.010 (0.063 / 0.064) | **no measurable difference** — claim not supported; `context_recall` lower in both runs (one outside MDE); gold atoms up 3–6σ; 45 % less time per question |
+| 01 rerank off | disabling rerank lowers `context_precision` | −0.025 / −0.010 (0.063 / 0.064) | **no measurable difference** — claim not supported; `context_recall` lower in both runs (one outside MDE); gold atoms up 4–12σ; 45 % less time per question |
 | 02 character chunking | lowers `context_precision` | −0.058 / −0.067 (0.081 / 0.082) re-based; −0.070 / −0.073 vs opening | **no measurable difference** — claim not established at this MDE; `context_recall` −0.16 / −0.19 hurts |
 | 03 categorization off | does not change `context_precision` | −0.004 / −0.002 (0.025 / 0.027) | **no measurable difference** — claim confirmed; ingest −19 min |
 | 04 stemming on | raises `context_recall` | −0.032 / −0.015 (0.040 / 0.055) re-based; −0.052 / −0.029 vs opening | **no measurable difference** — claim not supported; `context_precision` −0.09 hurts (secondary) |

@@ -10,7 +10,7 @@ production GPU host, eight configuration changes were each tested in isolation a
 shipped defaults, with the same 109 questions, the same judge, the same code and a locked
 protocol. The protocol, the pre-registered decision rules and the day-by-day operating log
 live in the [campaign plan](proposals/feature-matrix-campaign-2026.md) and the
-[pre-registration](https://github.com/fasrc/archi/blob/dev/docs/eval/preregs/2026-09-feature-matrix.md);
+[pre-registration](https://github.com/fasrc/archi/blob/bench/2026-09-feature-matrix/docs/eval/preregs/2026-09-feature-matrix.md);
 this page reports what came out. Times are EDT (the operating log's convention); artifact
 filenames carry UTC.
 
@@ -39,7 +39,7 @@ the primary metric in the pre-registered vocabulary (helps / hurts / no measurab
 
 | Feature under test | Primary verdict | What else moved | Cost |
 |---|---|---|---|
-| `retrievers.hierarchical_rerank.enabled: true → false` (reranker OFF) | **no measurable difference** (Δ −0.025 / −0.010, MDE 0.063) | retrieved-text recall lower in both runs (−0.072 / −0.052, one outside MDE); **answer-side gold atoms up on all three metrics, 3–6σ above the baseline floor** | **45 % less time per question**, a third fewer searches |
+| `retrievers.hierarchical_rerank.enabled: true → false` (reranker OFF) | **no measurable difference** (Δ −0.025 / −0.010, MDE 0.063) | retrieved-text recall lower in both runs (−0.072 / −0.052, one outside MDE); **answer-side gold atoms up on all three metrics, 4–12σ above the baseline floor** | **45 % less time per question**, a third fewer searches |
 | `retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 3` (k = 3) | **no measurable difference** (Δ −0.014 / −0.005, MDE 0.022) | recall **hurts** (−0.087 / −0.061); cited the right page 0.877 → 0.792 (p = 0.012 / 0.023) | no speed gain |
 | `retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 8` (k = 8) | **no measurable difference** (Δ −0.014 / −0.013, MDE 0.018) | recall up (+0.060 / +0.028, one outside MDE); **cited the right page 0.877 → 0.962 / 0.953 (p = 0.002 / 0.012)** | latency flat |
 | `chunking.strategy: sentence → character` + `hierarchical_rerank.enabled: true → false` (two keys, pre-registered) | **no measurable difference** (Δ −0.058 / −0.067, MDE 0.081) | recall **hurts, worst in the campaign** (−0.162 / −0.195); gold atoms up (the reranker-OFF half) | 45 % faster (the reranker-OFF half) |
@@ -89,7 +89,7 @@ Fixed for every arm: 1 091 documents from `config/lists/sources.list`, the 109-q
 (104 bank rows + 5 tripwire anchors), the production agent prompt `fasrc-docs.md`, the
 system under test (vLLM `Qwen3.6-35B-A3B-GPTQ-Int4`, temperature 0.3, 32 768-token in-loop
 context bound, `recursion_limit: 50`), the judge (`claude-sonnet-4-5` via HUIT Bedrock) and
-the code (lock `3e07ae79…`, runtime trees identical to `dev` tip `3170498c`). Totals: 17
+the code (lock `3e07ae79…`, runtime trees identical to `dev` tip `3170498c`). Totals: 18
 archived RAGAS runs, 11 QA runs, zero degraded rows, every configuration-divergence check
 passed, and no arm ran a configuration it did not declare (the one that tried was refused).
 
@@ -180,7 +180,7 @@ ADR 0003's +19 % still holds") is not supported: precision is inside its MDE in 
 What the reranker does buy is retrieved-text recall, about 0.06 of it. What it costs is time
 and, on the answer side, facts: without it the agent finishes most questions in a single
 search, never or rarely blows out, and its answers contain more of the required facts on all
-three gold-atom metrics, 3–6σ above the four-run floor. One G8 tripwire is a genuine signal
+three gold-atom metrics, 4–12σ above the four-run floor. One G8 tripwire is a genuine signal
 here, not the false-positive pattern of defect #14: on the "which SLURM partition for GPU
 jobs" anchor, reranker OFF drove `context_precision` to 0.000 in both runs (baseline
 0.29–0.34) — the hybrid retriever put the right page nowhere near the top for that question.
@@ -306,7 +306,7 @@ The stack deployed, ingested for 4 933 s and completed a full RAGAS pass, then
 `html_to_markdown.enabled = True`. The cause is in the config renderer
 (`src/cli/templates/base-config.yaml`): the key is rendered with Jinja's `default(true, true)`,
 whose second argument substitutes the default for *any falsy value*, so an explicit `false`
-becomes `true`. **This setting cannot be turned off in any archi deployment**, and 21 other
+becomes `true`. **This setting cannot be turned off in any archi deployment**, and 20 other
 boolean keys in the same template share the pattern. Filed as
 [fasrc/archi#448](https://github.com/fasrc/archi/issues/448) with the rendered config as
 evidence. The pre-registered claim ("raw HTML lowers precision and faithfulness") is untested.
@@ -335,8 +335,8 @@ Markdown-bearing part of the corpus") is refuted at the corpus level: precision 
 the retrieved text both fall by more than their MDEs in both runs. The bank carries no
 "Markdown-bearing page" slice, so the narrower claim was not tested. Yet the answers improved
 on all three gold-atom metrics and arrived 37 % sooner — the same signature as reranker OFF.
-Section 4.1 takes this up. As a default: `mixed` at best, and with a 55 % larger index; not
-recommended without the follow-up in section 5.
+Section 4.1 takes this up. As a default: hurts on the primary metric, with an answer-side
+trade-off and a 55 % larger index; not recommended without the follow-up in section 5.
 
 ---
 
@@ -386,9 +386,10 @@ searches per normal question at every k).
 ![Cost: seconds per question, searches per question, blowouts, ingest time and index size, per run](_static/feature_matrix_2026_09/fig5_cost.png)
 
 On the baseline configuration 7–13 of 109 questions per run end in a blowout (150–250 s each
-against 23–40 s for a normal question). 23 distinct questions blew out at least once across
-the three opening runs; 7 did so in two or more, so there is a question-intrinsic core plus a
-stochastic tail, and 17 of the 23 are `reasoning` items. The baseline's 48 s mean per question
+against 23–40 s for a normal question). In the operating log's hand analysis of the three
+opening runs (plan §13.5, 2026-09-06 13:05, under its own blowout count), 23 distinct
+questions blew out at least once, 7 did so in two or more — a question-intrinsic core plus
+a stochastic tail — and 17 of the 23 are `reasoning` items. The baseline's 48 s mean per question
 is 34 s without them. This is a production behaviour, not a benchmark artifact, and it moves
 every latency number more than any retrieval knob except the two that also cut the searches
 per question (reranker OFF, markdown chunking). Proposed as a follow-up in section 5.
@@ -478,7 +479,7 @@ the operator to open or decline against the release plan's gate bar.
 - Every archived run passed the gates: identical 109-question bank (G4), one pinned corpus
   per arm (G3, overridden by declaration for ingest arms), empty configuration divergence
   (Procedure E), one code digest and one baseline config digest across all replicates, zero
-  degraded rows in 17 runs.
+  degraded rows in 18 runs.
 - The noise floor was measured on this campaign's own prompt, corpus and code, and came in
   below the planning prior on every metric, so the pre-registered N = 2 stood.
 - The one run that executed a configuration other than the one it declared (arm 06) was
@@ -523,7 +524,7 @@ repository (`fasrc/archi-bench-out`) checked out inside the archi tree.
 | Campaign lock (bank, anchors, prompt, sources, SUT, judge, arm hashes, runtime trees) | `bench_out/feature_matrix/campaign.lock`, sha256 `3e07ae79…` |
 | Arm configs | `config/benchmarking/feature_matrix/*.yaml` (archi-config) |
 | Machine ledger, one row per run | `bench_out/feature_matrix/ledger.json` |
-| RAGAS artifacts (17 archived + the refused arm-06 run) | `bench_out/feature_matrix/benchmarking-fm-*.json` |
+| RAGAS artifacts (18 archived + the refused arm-06 run) | `bench_out/feature_matrix/benchmarking-fm-*.json` |
 | QA runs | `bench_out/feature_matrix/qa/<stack>-arm<arm>-r<n>/` |
 | Per-arm reports (deltas from `compare_runs.py` only) | `bench_out/feature_matrix/reports/arm-*.md` and `.json` |
 | Figure data and scripts | `bench_out/feature_matrix/figures/extract_figure_data.py` → `figures/data/*.csv`; `figures/make_figures.R` → `docs/docs/_static/feature_matrix_2026_09/*.png` |
