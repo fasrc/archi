@@ -367,6 +367,22 @@ The lesson generalises past this row: the first measurement rendered the templat
 which is not the code path a deploy takes. A claim about deployed behaviour has to be
 measured through the deployed path.
 
+**And then round 7 found the path where the original warning was right.** `archi restart
+--config` / `--config-dir` (`cli_main.py:587` onward) computes `enabled_sources`, calls
+`validate_configs`, and renders — with **no** `set_sources_enabled()` call in between. So on
+that path the operator's raw config reaches the template and an omitted `sso.enabled` does
+render `true`, with SSO's credentials unvalidated because the source is absent from
+`enabled_sources`.
+
+Not fixed here, and not by flipping the template default. All six managed sources default to
+`true` in the template (`:318 :338 :387 :396 :440 :454`), so the gap is the missing
+normalisation call and it has applied to the other five all along; `sso` is merely newly
+reachable, because before D11 the mis-indented block meant `sources.sso` did not exist in
+any rendered config. Changing one source's default would address one of six and would also
+change what a direct render produces, which the unit tests depend on. Filed as **#461** and
+documented as a CAUTION with the workaround — write `enabled` explicitly, prefer
+`archi create` when changing which sources are on.
+
 Documented as its own subsection with a CAUTION in `docs/docs/configuration.md`, rather than
 folded into the falsy-value story, because an operator auditing the falsy-flag list would
 never look for it there. Two tests pin it: the structural property (`sso` is a sibling, and

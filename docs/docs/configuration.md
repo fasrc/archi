@@ -105,9 +105,19 @@ template's `true` default because `archi create` and `archi evaluate` both call
 `ConfigurationManager.set_sources_enabled()` before rendering
 (`src/cli/cli_main.py:248` and `:879`), and that writes `enabled: false` into every managed
 source the config does not select. A `schedule` alone does not select a source, so an
-omitted `sso.enabled` reaches the template as an explicit `false`. The template's `true`
-default is only reachable when something renders `base-config.yaml` outside the CLI — which
-the unit tests do, and no deployment does. To turn SSO on, set `sources.sso.enabled: true`.
+omitted `sso.enabled` reaches the template as an explicit `false`. To turn SSO on, set
+`sources.sso.enabled: true`.
+
+**CAUTION: `archi restart --config` does not do that normalisation.** It renders the
+configuration without calling `set_sources_enabled()`, so every source whose `enabled` you
+omitted takes the template default of `true` — and its required credentials are not
+validated, because the source is absent from the enabled-source list the preflight checks.
+That applies to all six managed sources (`local_files`, `links`, `git`, `sso`, `jira`,
+`redmine`), not just SSO, and it means `archi create` and `archi restart --config` can
+produce different deployed configurations from the same input. Tracked as
+[issue #461](https://github.com/fasrc/archi/issues/461). Until it is fixed, write `enabled`
+explicitly on every source you care about rather than relying on the default, and prefer
+`archi create` when changing which sources are on.
 
 Of these, `enabled: false` is acted on by the `git`, `sso`, `indico`, `jira`, `redmine` and
 `elog` collectors, and by the Selenium scraper — with one exception for `git` and `sso`,
@@ -140,10 +150,14 @@ reach chat citations, so the upgrade does not remove content there.
 
 ### 4 numeric bounds where `0` is a request, not an empty value
 
-These four, and only these four. Other numeric keys still run through the old filter, so a
-`0` written there is replaced by the default — `data_manager.sources.jira.max_tickets: 0`
-renders as `10000000000.0`, and `services.chat_app.num_responses_until_feedback: 0` renders
-as `3`.
+**The four this change converted.** They are not the only keys where a `0` survives —
+`data_manager.scrape_workers`, `data_manager.scrape_per_host_workers` and
+`data_manager.sources.links.sitemap.min_pages` already did, and still do. Those three are
+supported settings; a `0` on any of them reaches the deployment.
+
+Most other numeric keys still run through the old filter, so a `0` written there is replaced
+by the default — `data_manager.sources.jira.max_tickets: 0` renders as `10000000000.0`, and
+`services.chat_app.num_responses_until_feedback: 0` renders as `3`.
 
 | Key | `0` means | Unset means |
 |---|---|---|

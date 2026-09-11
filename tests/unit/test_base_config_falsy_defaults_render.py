@@ -445,8 +445,13 @@ def _default_filter_signatures(source):
         prefix = path if path is not None else f"<unresolved>@line{node.lineno}"
         if value is _UNREADABLE:
             if isinstance(first_arg, _CONTAINER_LITERAL_NODES):
-                # A dict or list default cannot stand in for a boolean, so it is out
-                # of the bug class by construction and stays out of the baseline.
+                # FROZEN, not exempt. A dict or list cannot stand in for a boolean,
+                # which is why the boolean guard ignores it -- but written on a
+                # boolean row, `enabled | default([], true)` still replaces a
+                # configured `false`, and with something that is not even a boolean.
+                # Exempting the shape let that arrive unnoticed; freezing the call
+                # sites keeps the three legitimate ones and breaks on a fourth.
+                signatures.append(f"{prefix}=<container>@{type(first_arg).__name__}")
                 continue
             # Everything else unreadable is COMPUTED, and a computed default can be
             # truthy at render time: `default(data_manager.other_flag, true)` replaces
@@ -599,7 +604,30 @@ _NON_BOOL_DEFAULT_BASELINE = [
     "services.redmine_mailbox.url=''",
     "services.vectorstore.distance_metric='cosine'",
     "utils.postgres.host='postgres'",
+    # --- container-literal defaults, frozen by path -------------------------------
+    # `default([], true)` / `default({}, true)`. The boolean guard ignores these
+    # because a dict or list cannot stand in for a boolean -- but on a BOOLEAN row,
+    # `enabled | default([], true)` would still replace a configured `false`, and
+    # with a value that is not even a boolean. Exempting the shape let that arrive
+    # unnoticed, so the sites are frozen instead. Every one below is a list- or
+    # dict-valued key, where the default is correct; a twelfth entry, or any of these
+    # moving onto a boolean row, breaks the baseline.
+    "data_manager.processing.categorization.categories=<container>@List",
+    "data_manager.sources.indico.slide_conversion.formats=<container>@List",
+    "data_manager.sources.jira.projects=<container>@List",
+    "data_manager.sources.links.input_lists=<container>@List",
+    "data_manager.sources.links.sitemap.allowed_hosts=<container>@List",
+    "data_manager.sources.local_files.paths=<container>@List",
+    "data_manager.sources.redmine.projects=<container>@List",
+    "mcp_servers=<container>@Dict",
+    "services.chat_app.alerts.managers=<container>@List",
+    "services.chat_app.prompts=<container>@Dict",
+    "services.chat_app.tools=<container>@Dict",
 ]
+
+# Config paths the baseline already covers, so a test can assert a NEW site appeared
+# rather than just that some container entry exists.
+_BASELINE_PATHS = {entry.split("=")[0] for entry in _NON_BOOL_DEFAULT_BASELINE}
 
 
 def test_guard_default_filter_baseline_is_unchanged():
@@ -903,15 +931,20 @@ def test_guard_rejects_a_signed_boolean_literal(spelling):
     assert _default_filter_signatures(smuggled) == sorted(_NON_BOOL_DEFAULT_BASELINE)
 
 
-def test_guard_leaves_container_literal_defaults_out_of_scope():
-    """A dict or list default stays outside both guards, on purpose.
+def test_guard_freezes_container_literal_defaults():
+    """A dict or list default is frozen by path, not exempted by shape.
 
-    ``default({}, true)`` and ``default([], true)`` are in the template today. Neither
-    can stand in for a boolean, so neither is in the bug class -- the same argument the
-    module docstring makes for list defaults. Pinned so the boundary is enforced rather
-    than asserted in a comment, and so widening the walker to fail on every shape it
-    cannot read does not land silently: that reads as a fix and is really a dozen false
-    failures on lines that were always fine.
+    The boolean guard ignores these, and correctly: a dict or list cannot stand in for
+    a boolean. But that is not the same as harmless. Written on a BOOLEAN row,
+    ``enabled | default([], true)`` still replaces a configured ``false`` -- with a
+    value that is not even a boolean, so the deployed config carries a list where the
+    consumer expects a flag. An earlier version of this walker exempted the shape, and
+    an earlier version of this test *required* such a call to pass, which is the hole
+    the exemption opens.
+
+    Frozen rather than rejected because the template has eleven legitimate ones, all
+    on list- or dict-valued keys. A twelfth breaks the baseline, and so does any of
+    the eleven moving onto a boolean row.
     """
     source = _get_template_source()
     bad_lines, _ = _walk_default_filters(source)
@@ -920,13 +953,21 @@ def test_guard_leaves_container_literal_defaults_out_of_scope():
     for fixture in (
         "  dict_default: {{ data_manager.dict_default | default({}, true) }}",
         "  list_default: {{ data_manager.list_default | default([], true) }}",
+        # The case that matters: a container default on a row named like a flag.
+        "  enabled: {{ data_manager.some_flag | default([], true) }}",
     ):
         smuggled = source + "\n" + fixture
         smuggled_bad, _ = _walk_default_filters(smuggled)
-        assert smuggled_bad == [], f"{fixture!r} must not be reported as a bad boolean"
-        assert _default_filter_signatures(smuggled) == sorted(
-            _NON_BOOL_DEFAULT_BASELINE
-        ), f"{fixture!r} must not join the frozen baseline"
+        assert (
+            smuggled_bad == []
+        ), f"{fixture!r} is not a boolean literal, so that guard stays silent"
+        signatures = _default_filter_signatures(smuggled)
+        assert any(
+            "<container>@" in signature
+            and signature.split("=")[0] not in _BASELINE_PATHS
+            for signature in signatures
+        ), f"{fixture!r} must join the frozen baseline"
+        assert signatures != sorted(_NON_BOOL_DEFAULT_BASELINE)
 
 
 @pytest.mark.parametrize(
