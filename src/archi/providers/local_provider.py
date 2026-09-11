@@ -50,6 +50,19 @@ class LocalProvider(BaseProvider):
         """Ensure the base URL has a scheme so urllib requests succeed."""
         return normalize_base_url(url)
 
+    @staticmethod
+    def _is_openai_compat(mode: Optional[str]) -> bool:
+        """Whether ``local_mode`` selects the OpenAI-dialect client.
+
+        The one place that answers this question. ``get_chat_model`` builds
+        ``ChatOpenAI`` only for the exact string ``openai_compat`` and falls back to
+        ``ChatOllama`` for every other value — including ``None`` and a typo — so
+        endpoint resolution has to ask it the same way. Two copies of the test drift:
+        an unrecognized mode then resolves an openai-compat endpoint and hands that
+        URL to an Ollama client, which speaks a different route.
+        """
+        return mode == "openai_compat"
+
     def __init__(self, config: Optional[ProviderConfig] = None):
         import os
 
@@ -68,15 +81,15 @@ class LocalProvider(BaseProvider):
                 extra_kwargs={"local_mode": "ollama"},
             )
         else:
-            mode = config.extra_kwargs.get("local_mode", "ollama")
-            if mode == "ollama":
+            if self._is_openai_compat(config.extra_kwargs.get("local_mode")):
+                if not config.base_url:
+                    config.base_url = self.DEFAULT_OPENAI_COMPAT_BASE_URL
+            else:
                 # Let env override the config base_url when provided (useful in CI)
                 if env_ollama_host:
                     config.base_url = env_ollama_host
                 elif not config.base_url:
                     config.base_url = default_ollama_host
-            elif not config.base_url:
-                config.base_url = self.DEFAULT_OPENAI_COMPAT_BASE_URL
             config.base_url = self._normalize_base_url(config.base_url)
         super().__init__(config)
 
@@ -89,7 +102,7 @@ class LocalProvider(BaseProvider):
         """Get a local chat model instance."""
         mode = kwargs.pop("local_mode", self.local_mode)
 
-        if mode == "openai_compat":
+        if self._is_openai_compat(mode):
             return self._get_openai_compat_model(model_name, **kwargs)
         else:
             return self._get_ollama_model(model_name, **kwargs)

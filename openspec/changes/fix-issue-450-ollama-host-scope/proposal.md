@@ -13,7 +13,12 @@ points it at an Ollama daemon. The configured vLLM host never sees the request.
 ## What Changes
 
 - Read `local_mode` from the incoming `ProviderConfig` before the environment override
-  applies, and apply the `OLLAMA_HOST` override only in `ollama` mode.
+  applies, and withhold the `OLLAMA_HOST` override in `openai_compat` mode.
+- Ask "is this mode `openai_compat`?" in one place, `LocalProvider._is_openai_compat`, and
+  read it from both the endpoint resolution and `get_chat_model`. `local_mode` arrives from
+  operator config unvalidated, and `get_chat_model` builds `ChatOllama` for every value that
+  is not exactly `openai_compat`, so a looser "not `ollama`" test in the constructor would
+  hand an openai-compat URL to an Ollama client.
 - Make the "no configured `base_url`" fallback mode-aware: `openai_compat` falls back to
   `DEFAULT_OPENAI_COMPAT_BASE_URL`, not to the Ollama default or to `OLLAMA_HOST`.
 - **BREAKING (test-visible, one benchmark path):** two existing tests in

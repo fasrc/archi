@@ -1,8 +1,8 @@
 ## ADDED Requirements
 
-### Requirement: Environment endpoint override is scoped to Ollama mode
+### Requirement: Environment endpoint override is withheld from openai_compat mode
 
-The `local` provider SHALL apply the `OLLAMA_HOST` override only when its local mode is `ollama`.
+The `local` provider SHALL withhold the `OLLAMA_HOST` override when its local mode is `openai_compat`, and apply it in every other mode.
 
 `OLLAMA_HOST` names an Ollama daemon. In `openai_compat` mode the provider builds a
 `ChatOpenAI` client, so applying that address there points an OpenAI-dialect client at a
@@ -52,6 +52,33 @@ from `OLLAMA_HOST` or from the Ollama default.
 #### Scenario: An Ollama fallback uses the Ollama default
 
 - **WHEN** the local mode is `ollama`, no `base_url` is configured, and `OLLAMA_HOST` is unset
+- **THEN** the provider resolves `DEFAULT_OLLAMA_BASE_URL`
+
+### Requirement: The endpoint rule and the client dialect read the local mode the same way
+
+The `local` provider SHALL treat only the exact mode `openai_compat` as OpenAI-compatible, in endpoint resolution and in client construction alike.
+
+`get_chat_model` builds `ChatOpenAI` for the exact string `openai_compat` and
+`ChatOllama` for every other value, including `None` and a misspelling. `local_mode`
+reaches the provider straight from operator config and no seam validates or
+canonicalizes it. So a second, looser test — "anything that is not `ollama`" — would
+resolve an openai-compat endpoint for a mode that then gets an Ollama client, and the
+client would request an Ollama route against an OpenAI port. One shared predicate keeps
+the two answers from drifting.
+
+#### Scenario: An unrecognized mode resolves the Ollama endpoint
+
+- **WHEN** the local mode is `vllm`, no `base_url` is configured, and `OLLAMA_HOST` is unset
+- **THEN** the provider resolves `DEFAULT_OLLAMA_BASE_URL`, because that mode builds an Ollama client
+
+#### Scenario: An unrecognized mode still yields to the environment
+
+- **WHEN** the local mode is `vllm` and `OLLAMA_HOST` is set
+- **THEN** the provider resolves the `OLLAMA_HOST` value
+
+#### Scenario: A null mode resolves the Ollama endpoint
+
+- **WHEN** `extra_kwargs` carries `local_mode: null`, no `base_url` is configured, and `OLLAMA_HOST` is unset
 - **THEN** the provider resolves `DEFAULT_OLLAMA_BASE_URL`
 
 ### Requirement: A resolved endpoint always carries a scheme

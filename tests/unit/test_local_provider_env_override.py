@@ -90,3 +90,70 @@ def test_openai_compat_configured_base_url_is_normalized_and_ignores_ollama_host
 ):
     provider = _build(monkeypatch, None, "gpu-vllm:8000/v1", "openai_compat")
     assert provider.config.base_url == "http://gpu-vllm:8000/v1"
+
+
+def test_unknown_mode_falls_back_to_the_ollama_default(monkeypatch):
+    """An unrecognized mode gets the Ollama client, so it gets the Ollama endpoint."""
+    provider = _build(monkeypatch, None, None, "vllm")
+    assert provider.config.base_url == LocalProvider.DEFAULT_OLLAMA_BASE_URL
+
+
+def test_unknown_mode_still_honors_ollama_host(monkeypatch):
+    provider = _build(monkeypatch, "http://ollama-box:11434", None, "vllm")
+    assert provider.config.base_url == "http://ollama-box:11434"
+
+
+def test_unknown_mode_configured_base_url_yields_to_ollama_host(monkeypatch):
+    provider = _build(
+        monkeypatch, "http://ollama-box:11434", "http://gpu-vllm:8000/v1", "vllm"
+    )
+    assert provider.config.base_url == "http://ollama-box:11434"
+
+
+def test_null_mode_falls_back_to_the_ollama_default(monkeypatch):
+    """``extra_kwargs: {local_mode: null}`` shadows the default, so the key holds None."""
+    provider = _build(monkeypatch, None, None, None)
+    assert provider.config.base_url == LocalProvider.DEFAULT_OLLAMA_BASE_URL
+
+
+def test_unknown_mode_endpoint_and_client_agree(monkeypatch):
+    """The endpoint rule and the client dispatch must read the mode the same way.
+
+    ``get_chat_model`` builds ``ChatOpenAI`` only for the exact string
+    ``openai_compat``, so any other mode that resolves an openai-compat endpoint hands
+    an OpenAI URL to an Ollama client.
+    """
+    provider = _build(monkeypatch, None, None, "vllm")
+    calls = []
+    monkeypatch.setattr(
+        LocalProvider,
+        "_get_ollama_model",
+        lambda self, name, **kw: calls.append("ollama"),
+    )
+    monkeypatch.setattr(
+        LocalProvider,
+        "_get_openai_compat_model",
+        lambda self, name, **kw: calls.append("openai_compat"),
+    )
+    provider.get_chat_model("some-model")
+    assert calls == ["ollama"]
+    assert provider.config.base_url == LocalProvider.DEFAULT_OLLAMA_BASE_URL
+
+
+def test_openai_compat_endpoint_and_client_agree(monkeypatch):
+    """The counterpart: the canonical compat mode keeps its endpoint and its client."""
+    provider = _build(monkeypatch, None, None, "openai_compat")
+    calls = []
+    monkeypatch.setattr(
+        LocalProvider,
+        "_get_ollama_model",
+        lambda self, name, **kw: calls.append("ollama"),
+    )
+    monkeypatch.setattr(
+        LocalProvider,
+        "_get_openai_compat_model",
+        lambda self, name, **kw: calls.append("openai_compat"),
+    )
+    provider.get_chat_model("some-model")
+    assert calls == ["openai_compat"]
+    assert provider.config.base_url == LocalProvider.DEFAULT_OPENAI_COMPAT_BASE_URL

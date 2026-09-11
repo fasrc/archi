@@ -27,6 +27,9 @@ calls `get_provider()`, which instantiates the class at line 136.
 - Stop `OLLAMA_HOST` from retargeting an `openai_compat` provider, whether the caller
   configured a `base_url` or left it absent.
 - Keep `OLLAMA_HOST` authoritative in `ollama` mode, so the CI smoke path is unaffected.
+- Keep the endpoint rule and the client dialect reading `local_mode` through one predicate,
+  so an unrecognized or null mode cannot resolve one dialect's endpoint and then get the
+  other dialect's client.
 - Give `openai_compat` a fallback in its own dialect and on its own port.
 - Leave the suite honest: update the two tests that pin the old values, and say why in
   their docstrings.
