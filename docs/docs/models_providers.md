@@ -129,6 +129,30 @@ The `local` provider supports two modes:
 - **`ollama`** (default): Uses `ChatOllama`. Models are dynamically fetched from the Ollama server's `/api/tags` endpoint.
 - **`openai_compat`**: Uses `ChatOpenAI` with a custom base URL. Suitable for vLLM, LM Studio, or other OpenAI-compatible servers.
 
+#### Local provider endpoint precedence
+
+The two modes speak different dialects on different default ports, so each resolves its
+endpoint from its own mode. The `OLLAMA_HOST` environment variable names an Ollama daemon,
+so it applies in `ollama` mode only.
+
+In **`ollama`** mode, in order:
+
+1. `OLLAMA_HOST`, if set and non-empty — it overrides a configured `base_url`.
+2. The configured `base_url`.
+3. `http://localhost:11434`.
+
+In **`openai_compat`** mode, in order:
+
+1. The configured `base_url`. `OLLAMA_HOST` is ignored — pointing an OpenAI-dialect client
+   at an Ollama daemon would send requests to a route it does not serve.
+2. `http://localhost:8000/v1`.
+
+An endpoint with no scheme gets `http://` prefixed in both modes, so `gpu-host:8000/v1`
+resolves to `http://gpu-host:8000/v1`.
+
+The mode is fixed when the provider is built, and the endpoint is resolved once from it.
+Set `mode` in the provider config; it cannot be changed per request.
+
 > **Note:** For GPU setup with local models, see [Advanced Setup & Deployment](advanced_setup_deploy.md#running-llms-locally-on-your-gpus).
 
 ---

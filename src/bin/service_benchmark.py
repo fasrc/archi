@@ -1417,12 +1417,13 @@ class Benchmarker:
                     "evaluator_provider_mode"
                 ) or benchmark_cfg.get("provider_mode")
                 if resolve_local_mode(ollama_url, explicit_mode) == "openai_compat":
-                    # base_url twice: see the huggingface arm below — OLLAMA_HOST
-                    # would otherwise redirect this judge to the system under test.
-                    # Only when there is one, though: the keyword lands last, so a
-                    # None would erase the provider's own local default and send the
-                    # judge to the public OpenAI endpoint. An override with nothing
-                    # to override with is not an override.
+                    # base_url twice: see the huggingface arm below — in openai_compat
+                    # mode LocalProvider now honors the configured base_url instead of
+                    # OLLAMA_HOST, so the keyword agrees with the config copy instead
+                    # of outranking it. Only when there is one, though: the keyword
+                    # lands last, so a None would erase the provider's own local
+                    # default and send the judge to the public OpenAI endpoint. An
+                    # override with nothing to override with is not an override.
                     override = (
                         {"base_url": normalize_base_url(ollama_url)}
                         if ollama_url
@@ -1445,9 +1446,9 @@ class Benchmarker:
             case "huggingface":
                 base_url = ollama_url or "http://localhost:8000/v1"
                 # base_url twice, on purpose. load_new_configuration exports the SUT
-                # url as OLLAMA_HOST, and LocalProvider overwrites config.base_url
-                # with it — so the config copy alone points the judge at the system
-                # under test. The keyword reaches ChatOpenAI last and wins.
+                # url as OLLAMA_HOST, but in openai_compat mode LocalProvider now
+                # honors the configured base_url instead of OLLAMA_HOST, so the
+                # keyword agrees with the config copy instead of outranking it.
                 return get_model(
                     "local",
                     model_name,
