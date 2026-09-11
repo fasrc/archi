@@ -75,17 +75,23 @@ order.
 
 The three states are distinct facts and SHALL stay distinct. The key is **absent** when the
 artifact predates this field. The value is **`null`** when the deploy predates the field,
-capture failed, or the harness could not read `git_info.yaml` at all. The value is an
-**object** when the host is known. The harness SHALL never write an empty string and SHALL
-never write a placeholder such as `"unknown"`.
+capture failed, the harness could not read `git_info.yaml` at all, or the container endpoint
+was not provably local so capture refused to run. The value is an **object** when the host
+is known. The harness SHALL never write an empty string and SHALL never write a placeholder
+such as `"unknown"`.
 
-That third cause is not a variant of the second. `add_metadata` catches `OSError` on the
-`git_info.yaml` read and carries on with no host, so a missing mount or a permissions fault
-produces `null` even though capture succeeded on the deploy host. Since the field alone
-cannot separate the three, any prose the reports render for `null` SHALL name all three
-causes. Naming a subset states a positive, false claim about the ones it omits, and would
-send an operator to diagnose a deploy age when the real fault is a broken provenance
-channel.
+Those are **four** causes, not three. The third is not a variant of the second:
+`add_metadata` catches `OSError` on the `git_info.yaml` read and carries on with no host, so
+a missing mount or a permissions fault produces `null` even though capture succeeded on the
+deploy host. The fourth is not a variant of the second either — see the scenario above and
+the requirement that adds it. "Capture failed" would send an operator to debug
+`socket.getfqdn()` on a machine where nothing failed; the refusal is a decision the tool
+made.
+
+Since the field alone cannot separate them, any prose the reports render for `null` SHALL
+name all four causes. Naming a subset states a positive, false claim about the ones it
+omits, and would send an operator to diagnose a deploy age when the real fault is a broken
+provenance channel — or a remote engine.
 
 That prose SHALL make its leading claim about the **artifact**, never about the deploy. On
 the unreadable-metadata path the deploy did record a host, so a lead clause such as "this
