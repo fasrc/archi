@@ -68,11 +68,15 @@ class LocalProvider(BaseProvider):
                 extra_kwargs={"local_mode": "ollama"},
             )
         else:
-            # Let env override the config base_url when provided (useful in CI)
-            if env_ollama_host:
-                config.base_url = env_ollama_host
+            mode = config.extra_kwargs.get("local_mode", "ollama")
+            if mode == "ollama":
+                # Let env override the config base_url when provided (useful in CI)
+                if env_ollama_host:
+                    config.base_url = env_ollama_host
+                elif not config.base_url:
+                    config.base_url = default_ollama_host
             elif not config.base_url:
-                config.base_url = default_ollama_host
+                config.base_url = self.DEFAULT_OPENAI_COMPAT_BASE_URL
             config.base_url = self._normalize_base_url(config.base_url)
         super().__init__(config)
 

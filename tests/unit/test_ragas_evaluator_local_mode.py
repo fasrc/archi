@@ -223,6 +223,9 @@ def test_local_openai_compat_judge_without_a_url_keeps_the_provider_default(
     and erases LocalProvider's own local default — sending judge prompts to the
     public OpenAI endpoint. The keyword is an override, so it is only supplied
     when there is something to override with.
+
+    #450 scoped the openai_compat fallback to its own default, so the expected
+    endpoint moved from the Ollama port to the openai-compat one.
     """
     monkeypatch.delenv("OLLAMA_HOST", raising=False)
     bench = _bench(
@@ -239,13 +242,18 @@ def test_local_openai_compat_judge_without_a_url_keeps_the_provider_default(
         }
     )
     llm = bench.get_ragas_llm_evaluator()
-    assert llm.openai_api_base == "http://localhost:11434"
+    assert llm.openai_api_base == "http://localhost:8000/v1"
 
 
-def test_local_openai_compat_judge_without_a_url_still_inherits_ollama_host(
+def test_local_openai_compat_judge_without_a_url_ignores_the_sut_ollama_host(
     monkeypatch,
 ):
-    """With no judge URL configured, the exported host is the only signal left."""
+    """A URL-less judge no longer inherits the system under test.
+
+    #450 scoped `OLLAMA_HOST` to `ollama` mode, so an openai_compat judge with no
+    configured URL no longer inherits the exported SUT host — the self-scoring hijack
+    this test used to pin is gone, and it now falls back to its own default instead.
+    """
     monkeypatch.setenv("OLLAMA_HOST", "http://sut-host:9000/v1")
     bench = _bench(
         {
@@ -261,7 +269,7 @@ def test_local_openai_compat_judge_without_a_url_still_inherits_ollama_host(
         }
     )
     llm = bench.get_ragas_llm_evaluator()
-    assert llm.openai_api_base == "http://sut-host:9000/v1"
+    assert llm.openai_api_base == "http://localhost:8000/v1"
 
 
 def test_judge_url_without_a_scheme_is_normalized(monkeypatch):

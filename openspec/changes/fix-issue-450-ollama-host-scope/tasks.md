@@ -1,6 +1,6 @@
 ## 1. Scope the endpoint resolution to the local mode
 
-- [ ] 1.1 Make `OLLAMA_HOST` and the fallback endpoint mode-aware in one commit.
+- [x] 1.1 Make `OLLAMA_HOST` and the fallback endpoint mode-aware in one commit.
 
   Do the steps in this order. The task ends green and commits; do not stop while the
   suite is red.
