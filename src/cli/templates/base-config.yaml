@@ -1,3 +1,24 @@
+{#
+  Boolean-flag and zero-meaningful-integer rule
+  -----------------------------------------------
+  A boolean flag, and any number whose 0 is meaningful, must use:
+    {%- set v = <path> %}
+    {{ v if v is defined and v is not none else <default> }}
+
+  Do NOT use the `default` filter for these values:
+    - `default(<truthy>, true)` hides an explicit `false`: Jinja2 treats
+      `false` as falsey, so the default fires and the configured value is
+      silently ignored.
+    - `default(<boolean>)` renders an explicit null as the string 'None':
+      yaml.safe_load reads it back as the string, not a boolean.
+
+  The one permitted boolean use of `default` is `default(false, true)` —
+  the second argument makes `false` truthy in Jinja2's sense, so it fires
+  only when the key is absent, not when it is explicitly `false`.
+
+  The guard test in tests/unit/test_base_config_falsy_defaults_render.py
+  enforces this rule.
+#}
 name: {{ name | default("default", true) }}
 
 global:
@@ -40,7 +61,8 @@ services:
     # mount sits at the configured one, so a custom bank is staged somewhere the
     # runtime never looks and the run silently loses its anchors.
     anchors:
-      enabled: {{ services.benchmarking.anchors.enabled | default(true) }}
+      {%- set v_bench_anchors_enabled = services.benchmarking.anchors.enabled %}
+      enabled: {{ v_bench_anchors_enabled if v_bench_anchors_enabled is defined and v_bench_anchors_enabled is not none else true }}
       path: {{ services.benchmarking.anchors.path | default("examples/benchmarking/anchor_questions.json", true) }}
     {%- endif %}
     modes:
@@ -119,7 +141,8 @@ services:
     static_folder: "{{ services.chat_app.static_folder | default('/root/archi/src/interfaces/chat_app/static', true) }}"
     num_responses_until_feedback: {{ services.chat_app.num_responses_until_feedback | default(3, true) }}
     include_copy_button: {{ services.chat_app.include_copy_button | default(false, true) }}
-    flask_debug_mode: {{ services.chat_app.flask_debug_mode | default(true, false) }}
+    {%- set v_chat_flask_debug = services.chat_app.flask_debug_mode %}
+    flask_debug_mode: {{ v_chat_flask_debug if v_chat_flask_debug is defined and v_chat_flask_debug is not none else true }}
     evaluations:
       enabled: {{ services.chat_app.evaluations.enabled is sameas true }}
       # tojson, not a raw scalar inside double quotes: the value is loaded once
@@ -160,8 +183,10 @@ services:
         {%- endfor %}
   data_manager:
     auth:
-      enabled: {{ services.data_manager.auth.enabled | default(false) }}
-    enabled: {{ services.data_manager.enabled | default(true, true) }}
+      {%- set v_dm_auth_enabled = services.data_manager.auth.enabled %}
+      enabled: {{ v_dm_auth_enabled if v_dm_auth_enabled is defined and v_dm_auth_enabled is not none else false }}
+    {%- set v_svc_dm_enabled = services.data_manager.enabled %}
+    enabled: {{ v_svc_dm_enabled if v_svc_dm_enabled is defined and v_svc_dm_enabled is not none else true }}
     port: {{ services.data_manager.port | default(7871, true) }}
     external_port: {{ services.data_manager.external_port | default(7871, true) }}
     host: {{ services.data_manager.host | default("0.0.0.0", true) }}
@@ -185,7 +210,8 @@ services:
     num_problems: {{ services.grader_app.num_problems | default(1, true) }}
     local_rubric_dir: "{{ services.grader_app.local_rubric_dir }}"
     local_users_csv_dir: "{{ services.grader_app.local_users_csv_dir }}"
-    flask_debug_mode: {{ services.grader_app.flask_debug_mode | default(true, false) }}
+    {%- set v_grader_flask_debug = services.grader_app.flask_debug_mode %}
+    flask_debug_mode: {{ v_grader_flask_debug if v_grader_flask_debug is defined and v_grader_flask_debug is not none else true }}
   vectorstore:
     # PostgreSQL with pgvector is the storage backend
     backend: postgres
@@ -211,7 +237,8 @@ data_manager:
         model_kwargs:
           device: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.model_kwargs.device | default('cpu', true) }}
         encode_kwargs:
-          normalize_embeddings: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.encode_kwargs.normalize_embeddings | default(true, true) }}
+          {%- set v_normalize_embeddings = data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.encode_kwargs.normalize_embeddings %}
+          normalize_embeddings: {{ v_normalize_embeddings if v_normalize_embeddings is defined and v_normalize_embeddings is not none else true }}
       similarity_score_reference: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.similarity_score_reference | default(0.0, true) }}
       query_embedding_instructions: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.query_embedding_instructions | default("null", true) }}
   chunk_size: {{ data_manager.chunk_size | default(1000, true) }}
@@ -256,7 +283,8 @@ data_manager:
   # so a configured 0 would render as the default and never reach the runtime clamp.
   scrape_workers: {{ scrape_workers if scrape_workers is defined and scrape_workers is not none else 8 }}
   scrape_per_host_workers: {{ scrape_per_host_workers if scrape_per_host_workers is defined and scrape_per_host_workers is not none else 4 }}
-  reset_collection: {{ data_manager.reset_collection | default(true, true) }}
+  {%- set v_reset_collection = data_manager.reset_collection %}
+  reset_collection: {{ v_reset_collection if v_reset_collection is defined and v_reset_collection is not none else true }}
   stemming:
     enabled: {{ data_manager.stemming.enabled | default(false, true) }}
   distance_metric: {{ data_manager.distance_metric | default('cosine', true) }}
@@ -275,9 +303,8 @@ data_manager:
       # Hierarchical retriever with CPU cross-encoder reranking. Enabled by
       # default (ADR 0003: +19% RAGAS in the issue #32 A/B). Set
       # `enabled: false` to opt out and fall back to the hybrid_retriever above.
-      # NOTE: bare `default(true)` (no boolean arg) so an explicit `false` is
-      # honored — `default(true, true)` would treat falsy `false` as unset.
-      enabled: {{ data_manager.retrievers.hierarchical_rerank.enabled | default(true) }}
+      {%- set v_hier_enabled = data_manager.retrievers.hierarchical_rerank.enabled %}
+      enabled: {{ v_hier_enabled if v_hier_enabled is defined and v_hier_enabled is not none else true }}
       # Number of child candidates fetched from hybrid_search before reranking.
       candidate_pool_size: {{ data_manager.retrievers.hierarchical_rerank.candidate_pool_size | default(20, true) }}
       # Number of (deduplicated) parent nodes returned after reranking.
@@ -287,8 +314,10 @@ data_manager:
         model: {{ data_manager.retrievers.hierarchical_rerank.reranker.model | default('ms-marco-MiniLM-L-12-v2', true) }}
   sources:
     local_files:
-      enabled: {{ data_manager.sources.local_files.enabled | default(true, true) }}
-      visible: {{ data_manager.sources.local_files.visible | default(true, true) }}
+      {%- set v_local_files_enabled = data_manager.sources.local_files.enabled %}
+      enabled: {{ v_local_files_enabled if v_local_files_enabled is defined and v_local_files_enabled is not none else true }}
+      {%- set v_local_files_visible = data_manager.sources.local_files.visible %}
+      visible: {{ v_local_files_visible if v_local_files_visible is defined and v_local_files_visible is not none else true }}
       schedule: '{{ data_manager.sources.local_files.schedule | default("", true) }}'
       paths:
         {%- set paths = data_manager.sources.local_files.paths | default([], true) %}
@@ -296,10 +325,19 @@ data_manager:
         - {{ path }}
         {%- endfor %}
     links:
-      base_source_depth: {{ data_manager.sources.links.base_source_depth | default(1, true) }}
-      max_pages: {{ data_manager.sources.links.max_pages | default(null, true) }}
-      enabled: {{ data_manager.sources.links.enabled | default(true, true) }}
-      visible: {{ data_manager.sources.links.visible | default(true, true) }}
+      {%- set v_base_source_depth = data_manager.sources.links.base_source_depth %}
+      # Depth counts levels of pages, so 1 is the seed page alone and 0 is no page
+      # at all — a configured 0 turns this seed off, it does not shrink it to the
+      # base page. See crawl_iter's `depth < max_depth` loop.
+      base_source_depth: {{ v_base_source_depth if v_base_source_depth is defined and v_base_source_depth is not none else 1 }}
+      # 0 is a real budget here, not "unset": LinkScraper stops at once for 0 and
+      # crawls without a cap for null, so the default filter would invert the request.
+      {%- set v_links_max_pages = data_manager.sources.links.max_pages %}
+      max_pages: {{ v_links_max_pages if v_links_max_pages is defined and v_links_max_pages is not none else "null" }}
+      {%- set v_links_enabled = data_manager.sources.links.enabled %}
+      enabled: {{ v_links_enabled if v_links_enabled is defined and v_links_enabled is not none else true }}
+      {%- set v_links_visible = data_manager.sources.links.visible %}
+      visible: {{ v_links_visible if v_links_visible is defined and v_links_visible is not none else true }}
       schedule: '{{ data_manager.sources.links.schedule | default("", true) }}'
       input_lists:
         {%- set link_lists = data_manager.sources.links.input_lists | default([], true) %}
@@ -307,7 +345,8 @@ data_manager:
         - {{ input_list }}
         {%- endfor %}
       html_scraper:
-        reset_data: {{ data_manager.sources.links.html_scraper.reset_data | default(true, true) }}
+        {%- set v_html_reset_data = data_manager.sources.links.html_scraper.reset_data %}
+        reset_data: {{ v_html_reset_data if v_html_reset_data is defined and v_html_reset_data is not none else true }}
         verify_urls: {{ data_manager.sources.links.html_scraper.verify_urls | default(false, true) }}
         enable_warnings: {{ data_manager.sources.links.html_scraper.enable_warnings | default(false, true) }}
       sitemap:
@@ -329,7 +368,8 @@ data_manager:
           {%- endif %}
         {%- set sitemap_min = data_manager.sources.links.sitemap.min_pages %}
         min_pages: {{ sitemap_min if sitemap_min is defined and sitemap_min is not none else 1 }}
-        max_pages: {{ data_manager.sources.links.sitemap.max_pages | default(20000, true) }}
+        {%- set sitemap_max = data_manager.sources.links.sitemap.max_pages %}
+        max_pages: {{ sitemap_max if sitemap_max is defined and sitemap_max is not none else 20000 }}
       selenium_scraper:
         enabled: {{ data_manager.sources.links.selenium_scraper.selenium_scraper.enabled | default(false, True) }}
         visible: {{ data_manager.sources.links.selenium_scraper.selenium_scraper.visible | default(false, true) }}
@@ -340,24 +380,31 @@ data_manager:
           CERNSSOScraper:
             class: {{ data_manager.sources.links.selenium_scraper.selenium_class_map.CERNSSOScraper.class | default('CERNSSOScraper', true) }}
             kwargs:
-              headless:  {{ data_manager.sources.links.selenium_scraper.selenium_class_map.CERNSSOScraper.kwargs.headless | default(true, true) }}
+              {%- set v_cernsso_headless = data_manager.sources.links.selenium_scraper.selenium_class_map.CERNSSOScraper.kwargs.headless %}
+              headless:  {{ v_cernsso_headless if v_cernsso_headless is defined and v_cernsso_headless is not none else true }}
     git:
-      enabled: {{ data_manager.sources.git.enabled | default(true, true) }}
-      visible: {{ data_manager.sources.git.visible | default(true, true) }}
+      {%- set v_git_enabled = data_manager.sources.git.enabled %}
+      enabled: {{ v_git_enabled if v_git_enabled is defined and v_git_enabled is not none else true }}
+      {%- set v_git_visible = data_manager.sources.git.visible %}
+      visible: {{ v_git_visible if v_git_visible is defined and v_git_visible is not none else true }}
       schedule: '{{ data_manager.sources.git.schedule | default("", true) }}'
       {% if data_manager.sources.git.code_suffixes is defined and data_manager.sources.git.code_suffixes is sequence and data_manager.sources.git.code_suffixes is not string -%}
       code_suffixes: {{ data_manager.sources.git.code_suffixes }}
-      {% endif -%}
+      {% endif %}
     sso:
-      enabled: {{ data_manager.sources.sso.enabled | default(true, true) }}
-      visible: {{ data_manager.sources.sso.visible | default(true, true) }}
+      {%- set v_sso_enabled = data_manager.sources.sso.enabled %}
+      enabled: {{ v_sso_enabled if v_sso_enabled is defined and v_sso_enabled is not none else true }}
+      {%- set v_sso_visible = data_manager.sources.sso.visible %}
+      visible: {{ v_sso_visible if v_sso_visible is defined and v_sso_visible is not none else true }}
       schedule: '{{ data_manager.sources.sso.schedule | default("", true) }}'
     indico:
       enabled: {{ data_manager.sources.indico.enabled | default(false, true) }}
-      visible: {{ data_manager.sources.indico.visible | default(true, true) }}
+      {%- set v_indico_visible = data_manager.sources.indico.visible %}
+      visible: {{ v_indico_visible if v_indico_visible is defined and v_indico_visible is not none else true }}
       schedule: '{{ data_manager.sources.indico.schedule | default("", true) }}'
       base_url: {{ data_manager.sources.indico.base_url | default('https://indico.cern.ch', true) }}
-      use_sso: {{ data_manager.sources.indico.use_sso | default(true) }}
+      {%- set v_indico_use_sso = data_manager.sources.indico.use_sso %}
+      use_sso: {{ v_indico_use_sso if v_indico_use_sso is defined and v_indico_use_sso is not none else true }}
       # Day filtering (all optional - if none set, scrapes all days)
       {%- if data_manager.sources.indico.max_days is defined %}
       max_days: {{ data_manager.sources.indico.max_days }}
@@ -372,10 +419,12 @@ data_manager:
       date_range: {{ data_manager.sources.indico.date_range | tojson }}
       {%- endif %}
       sso_kwargs:
-        headless: {{ data_manager.sources.indico.sso_kwargs.headless | default(true, true) }}
+        {%- set v_indico_sso_headless = data_manager.sources.indico.sso_kwargs.headless %}
+        headless: {{ v_indico_sso_headless if v_indico_sso_headless is defined and v_indico_sso_headless is not none else true }}
         site_type: {{ data_manager.sources.indico.sso_kwargs.site_type | default('generic', true) }}
       slide_conversion:
-        enabled: {{ data_manager.sources.indico.slide_conversion.enabled | default(true) }}
+        {%- set v_indico_sc_enabled = data_manager.sources.indico.slide_conversion.enabled %}
+        enabled: {{ v_indico_sc_enabled if v_indico_sc_enabled is defined and v_indico_sc_enabled is not none else true }}
         store_originals: {{ data_manager.sources.indico.slide_conversion.store_originals | default(false, true) }}
         formats:
           {%- set indico_formats = data_manager.sources.indico.slide_conversion.formats | default(['pdf', 'pptx', 'ppt', 'odp'], true) %}
@@ -387,9 +436,11 @@ data_manager:
       plot_extraction:
         enabled: {{ data_manager.sources.indico.plot_extraction.enabled | default(false, true) }}
     jira:
-      enabled: {{ data_manager.sources.jira.enabled | default(true, true) }}
+      {%- set v_jira_enabled = data_manager.sources.jira.enabled %}
+      enabled: {{ v_jira_enabled if v_jira_enabled is defined and v_jira_enabled is not none else true }}
       url: {{ data_manager.sources.jira.url | default('', true) }}
-      visible: {{ data_manager.sources.jira.visible | default(true, true) }}
+      {%- set v_jira_visible = data_manager.sources.jira.visible %}
+      visible: {{ v_jira_visible if v_jira_visible is defined and v_jira_visible is not none else true }}
       schedule: '{{ data_manager.sources.jira.schedule | default("", true) }}'
       projects:
         {%- for project in data_manager.sources.jira.projects | default([], true) %}
@@ -399,7 +450,8 @@ data_manager:
       max_tickets: {{ data_manager.sources.jira.max_tickets | default(1e10, true) }}
       cutoff_date: {{ data_manager.sources.jira.cutoff_date | default('', true) }}
     redmine:
-      enabled: {{ data_manager.sources.redmine.enabled | default(true, true) }}
+      {%- set v_redmine_enabled = data_manager.sources.redmine.enabled %}
+      enabled: {{ v_redmine_enabled if v_redmine_enabled is defined and v_redmine_enabled is not none else true }}
       url: {{ data_manager.sources.redmine.url | default('', true) }}
       projects:
         {%- for project in data_manager.sources.redmine.projects | default([], true) %}
@@ -407,13 +459,18 @@ data_manager:
         {%- endfor %}
       visible: {{ data_manager.sources.redmine.visible | default(false, true) }}
       schedule: '{{ data_manager.sources.redmine.schedule | default("", true) }}'
-      anonymize_data: {{ data_manager.sources.redmine.anonymize_data | default(true, true) }}
+      {%- set v_redmine_anonymize = data_manager.sources.redmine.anonymize_data %}
+      anonymize_data: {{ v_redmine_anonymize if v_redmine_anonymize is defined and v_redmine_anonymize is not none else true }}
     elog:
       enabled: {{ data_manager.sources.elog.enabled | default(false, true) }}
       visible: {{ data_manager.sources.elog.visible | default(false, true) }}
       url: '{{ data_manager.sources.elog.url | default('', true) }}'
-      max_entries: {{ data_manager.sources.elog.max_entries | default(null, true) }}
-      verify_ssl: {{ data_manager.sources.elog.verify_ssl | default(true, true) }}
+      # 0 caps the fetch at nothing; null means no cap. ElogScraper reads the two
+      # apart, so the configured 0 has to survive rendering.
+      {%- set v_elog_max_entries = data_manager.sources.elog.max_entries %}
+      max_entries: {{ v_elog_max_entries if v_elog_max_entries is defined and v_elog_max_entries is not none else "null" }}
+      {%- set v_elog_verify_ssl = data_manager.sources.elog.verify_ssl %}
+      verify_ssl: {{ v_elog_verify_ssl if v_elog_verify_ssl is defined and v_elog_verify_ssl is not none else true }}
       schedule: '{{ data_manager.sources.elog.schedule | default("", true) }}'
   # Per-document processing stage applied at the persistence seam (before a resource
   # is written to disk), shared across scheduled ingest and the uploader UI.
@@ -423,7 +480,8 @@ data_manager:
     # lists, tables, and links survive into chunks, and the persisted file becomes
     # .md (loaded via TextLoader instead of BSHTMLLoader).
     html_to_markdown:
-      enabled: {{ data_manager.processing.html_to_markdown.enabled | default(true, true) }}
+      {%- set v_html_md_enabled = data_manager.processing.html_to_markdown.enabled %}
+      enabled: {{ v_html_md_enabled if v_html_md_enabled is defined and v_html_md_enabled is not none else true }}
     # Optional LLM categorization. OFF by default (one LLM call per document). When
     # enabled, each document is tagged with one label from `categories`, stored under
     # metadata.llm_category (a key distinct from any source-provided `category`). The

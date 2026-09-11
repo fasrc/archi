@@ -4,6 +4,203 @@ Archi deployments are configured via YAML files passed to the CLI with `--config
 
 > **Tip:** Start from one of the example configs in `examples/deployments/` and customize from there.
 
+## Explicit `false`, `0`, and `null`
+
+A value you write reaches the deployed configuration. `enabled: false` renders as `false`,
+and is not read as "unset and therefore ignorable".
+
+`null` renders as that key's documented default on the flags this change converted and on
+every key whose template default is applied with `default(…, true)`, which is most of them.
+It is **not** a whole-file guarantee.
+
+**CAUTION: on these six keys, writing `null` stops the deploy.** Each is iterated directly
+by the template through a bare `default([…])`, which replaces only an *undefined* value, so
+an explicit `null` reaches the loop and raises `TypeError: 'NoneType' object is not
+iterable`. `archi create` cannot render the config at all.
+
+- `global.ACCEPTED_FILES`
+- `services.benchmarking.modes`
+- `services.benchmarking.ragas_settings.enabled_metrics`
+- `data_manager.utils.anonymizer.excluded_words`
+- `data_manager.utils.anonymizer.greeting_patterns`
+- `data_manager.utils.anonymizer.signoff_patterns`
+
+Omit the key to get its default; do not write `null` on it. (Four other list-valued keys —
+`categorization.categories`, `jira.projects`, `redmine.projects` and
+`chat_app.alerts.managers` — are written the same way but sit inside a block that does not
+render when the key is absent, so `null` is harmless there.)
+
+`0` is the narrowest of the three. **This change converted four numeric bounds**, listed in
+the table below. Three other numeric keys already preserved a configured `0` before it —
+`data_manager.scrape_workers`, `data_manager.scrape_per_host_workers` and
+`data_manager.sources.links.sitemap.min_pages`, the last of which this page tells you to set
+to `0` further down. Everywhere else a `0` still runs through the old filter and is replaced
+by that key's default: `data_manager.sources.jira.max_tickets: 0` renders as
+`10000000000.0`, and `services.chat_app.num_responses_until_feedback: 0` renders as `3`.
+
+So there is no single rule for `0`. Check the key before writing one and expecting it to
+arrive.
+
+This was not always true. Before the fix in issue #448, a set of boolean flags went through
+a Jinja filter that could not tell `false` from a missing key, so an explicit `false` was
+discarded and the default rendered in its place.
+
+**Rendered is not the same as honored.** This change fixes the rendering. Whether a given
+consumer then acts on the value is a separate question, and for several keys the answer is
+still no — they are listed at the end of this section. Check that list before you rely on a
+flag.
+
+### 21 flags where an explicit `false` was discarded
+
+`false` now reaches the deployed configuration for:
+
+- `services.data_manager.enabled` and `data_manager.reset_collection`
+- `data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.encode_kwargs.normalize_embeddings`
+- `data_manager.processing.html_to_markdown.enabled`
+- `enabled` and `visible` on the `local_files`, `links`, `git`, `sso` and `jira` sources,
+  `visible` on `indico`, and `enabled` on `redmine`
+- `data_manager.sources.links.html_scraper.reset_data`
+- `data_manager.sources.redmine.anonymize_data` and `data_manager.sources.elog.verify_ssl`
+- the two `headless` flags, on the CERN SSO scraper and on `indico.sso_kwargs`
+
+`redmine.visible` and `elog.visible` are **not** in this list. Their template expressions
+default to `false`, so an explicit `false` already rendered as `false` before this change
+and their semantics did not move.
+
+### The SSO source becomes a source
+
+This change fixes a second, unrelated defect in the same template, and it is the one most
+likely to change what your next deploy does.
+
+A whitespace-control marker on the line above `sso:` was pulling that key up one level, so
+the rendered config nested it inside `git:` — and the SSO block's own rows landed as
+**duplicate keys inside `git:`**, where YAML's last-wins rule silently replaced Git's:
+
+```yaml
+    git:
+      enabled: True
+      visible: True
+      schedule: ''
+      sso:            # a null key, not a source
+      enabled: True   # SSO's rows, overwriting Git's
+      visible: True
+      schedule: ''
+```
+
+Two consequences, both measured against the template before and after:
+
+| Configuration | Before | After |
+|---|---|---|
+| `sources.git.enabled: false` | rendered `true` — **discarded** | `false` |
+| `sources.git.schedule: "0 3 * * *"` | rendered `''` — **discarded** | `0 3 * * *` |
+| `sources.sso.enabled: false` | `sources.sso` absent entirely | `false` |
+| nothing set | no `sources.sso` key at all | `sso` with `enabled: false` (see below) |
+
+**CAUTION: check your Git source settings before the first deploy after this change.**
+If you had `git.enabled: false` or a `git.schedule`, they were being ignored and now take
+effect — measured through the CLI's own normalised config, not just the bare template.
+
+**SSO does not switch itself on.** The last row above says `false` rather than the
+template's `true` default because `archi create` and `archi evaluate` both call
+`ConfigurationManager.set_sources_enabled()` before rendering
+(`src/cli/cli_main.py:248` and `:879`), and that writes `enabled: false` into every managed
+source the config does not select. A `schedule` alone does not select a source, so an
+omitted `sso.enabled` reaches the template as an explicit `false`. To turn SSO on, set
+`sources.sso.enabled: true`.
+
+**CAUTION: `archi restart --config` does not do that normalisation.** It renders the
+configuration without calling `set_sources_enabled()`, so every source whose `enabled` you
+omitted takes the template default of `true` — and its required credentials are not
+validated, because the source is absent from the enabled-source list the preflight checks.
+That applies to all six managed sources (`local_files`, `links`, `git`, `sso`, `jira`,
+`redmine`), not just SSO, and it means `archi create` and `archi restart --config` can
+produce different deployed configurations from the same input. Tracked as
+[issue #461](https://github.com/fasrc/archi/issues/461). Until it is fixed, write `enabled`
+explicitly on every source you care about rather than relying on the default, and prefer
+`archi create` when changing which sources are on.
+
+Of these, `enabled: false` is acted on by the `git`, `sso`, `indico`, `jira`, `redmine` and
+`elog` collectors, and by the Selenium scraper — with one exception for `git` and `sso`,
+described in the next paragraph.
+
+**CAUTION: a `git-` or `sso-` entry in `input_lists` overrides `enabled: false` for that
+source.** `ScraperManager.collect_all_from_config()` sets `git_enabled = True` when the
+input lists yield any `git-` URL, and `sso_enabled = True` for any `sso-` URL, without
+consulting the flag. ELOG URLs are passed through as `extra_urls` and collected regardless
+of `elog.enabled`. So an ingest can fetch a source you configured as disabled — possibly
+after CLI validation skipped that source's required secrets. To disable one of these,
+remove its entries from `input_lists` as well as setting `enabled: false`. Tracked as
+[issue #460](https://github.com/fasrc/archi/issues/460).
+
+**`anonymize_data: false` is the row to check first.** It was silently ignored before and is
+honored now, and it widens what a reader can see. `visible: false` is the opposite
+direction — but see the list at the end of this section: for most sources it still does not
+reach chat citations, so the upgrade does not remove content there.
+
+### 7 flags where an explicit `null` rendered as the string `'None'`
+
+`null` now renders that flag's documented default as a real boolean:
+
+- `services.benchmarking.anchors.enabled`
+- `services.chat_app.flask_debug_mode` and `services.grader_app.flask_debug_mode`
+- `services.data_manager.auth.enabled`
+- `data_manager.retrievers.hierarchical_rerank.enabled`
+- `data_manager.sources.indico.use_sso` and
+  `data_manager.sources.indico.slide_conversion.enabled`
+
+### 4 numeric bounds where `0` is a request, not an empty value
+
+**The four this change converted.** They are not the only keys where a `0` survives —
+`data_manager.scrape_workers`, `data_manager.scrape_per_host_workers` and
+`data_manager.sources.links.sitemap.min_pages` already did, and still do. Those three are
+supported settings; a `0` on any of them reaches the deployment.
+
+Most other numeric keys still run through the old filter, so a `0` written there is replaced
+by the default — `data_manager.sources.jira.max_tickets: 0` renders as `10000000000.0`, and
+`services.chat_app.num_responses_until_feedback: 0` renders as `3`.
+
+| Key | `0` means | Unset means |
+|---|---|---|
+| `data_manager.sources.links.base_source_depth` | crawl no page at all for this seed | `1` — the seed page alone |
+| `data_manager.sources.links.max_pages` | fetch no pages | no cap |
+| `data_manager.sources.links.sitemap.max_pages` | fail the ingest if the sitemap emits any page | `20000` |
+| `data_manager.sources.elog.max_entries` | fetch no entries | no cap |
+
+Depth counts levels of pages, so `base_source_depth: 1` is the base page on its own and `0`
+is nothing. To index the base page only, write `1`.
+
+**CAUTION: `sitemap.max_pages` is a validation ceiling, not a crawl budget.** It is checked
+after expansion, and a sitemap that emits more pages than the ceiling fails the ingest
+rather than stopping at the limit. `sitemap.min_pages` is the matching floor and defaults to
+`1`. So `sitemap.max_pages: 0` on its own fails every expansion — a non-empty sitemap
+breaches the ceiling, and an empty one falls below the floor. If you mean "assert this
+sitemap is empty", set `min_pages: 0` alongside it. If you mean "crawl fewer pages", this is
+not the key: use `data_manager.sources.links.max_pages`, which is a real budget.
+
+### Flags that render but are not yet acted on
+
+The value reaches the deployed configuration and no consumer acts on it. Do not rely on
+these to turn anything off or to hide anything:
+
+| Key | What ignores it |
+|---|---|
+| `services.data_manager.enabled` | the data-manager service is registered `auto_enable=True`, and the service registry adds every auto-enable service unconditionally, so the container is deployed either way |
+| `data_manager.sources.links.enabled` | `ScraperManager` assigns `links_enabled = True` without reading the config, so link input lists are still crawled |
+| `data_manager.sources.links.html_scraper.reset_data` | no consumer reads it — `ScraperManager` extracts the `html_scraper` block but reads only `verify_urls` and `enable_warnings` when it builds link scrapers |
+| `visible` on `links`, `indico`, `jira`, `redmine` and `elog` | citations are filtered by the `source_type` stored on each document, and these sources persist `source_type` values that are not their config keys — `web` for links, Indico and ELOG, `ticket` for Jira and Redmine. The lookup misses, so the document defaults to visible (and the service logs `Source type … not found in config`). Tracked as [issue #459](https://github.com/fasrc/archi/issues/459) |
+
+`visible: false` **does** work for `git`, `sso` and `local_files`, whose stored
+`source_type` matches the config key.
+
+To keep a link source out of an ingest today, remove it from `input_lists` rather than
+setting `enabled: false`.
+
+`data_manager.sources.local_files.enabled` is **not** in this list: it does have a
+consumer. `stage_local_files_to_volume()` reads it and returns without staging when it is
+`false`, logging `local_files disabled; skipping staging.` The limitation is narrower —
+staging is what it controls, so a volume already populated by an earlier deploy keeps its
+files, and the data manager still ingests whatever is in that volume.
+
 ---
 
 ## Top-Level Fields
