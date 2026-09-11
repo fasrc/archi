@@ -157,3 +157,69 @@ def test_openai_compat_endpoint_and_client_agree(monkeypatch):
     provider.get_chat_model("some-model")
     assert calls == ["openai_compat"]
     assert provider.config.base_url == LocalProvider.DEFAULT_OPENAI_COMPAT_BASE_URL
+
+
+def _record_dispatch(monkeypatch):
+    """Capture which client ``get_chat_model`` builds, and with which kwargs."""
+    calls = []
+    monkeypatch.setattr(
+        LocalProvider,
+        "_get_ollama_model",
+        lambda self, name, **kw: calls.append(("ollama", kw)),
+    )
+    monkeypatch.setattr(
+        LocalProvider,
+        "_get_openai_compat_model",
+        lambda self, name, **kw: calls.append(("openai_compat", kw)),
+    )
+    return calls
+
+
+def test_a_per_call_mode_that_agrees_is_accepted(monkeypatch):
+    provider = _build(monkeypatch, None, None, "openai_compat")
+    calls = _record_dispatch(monkeypatch)
+    provider.get_chat_model("some-model", local_mode="openai_compat")
+    assert [mode for mode, _ in calls] == ["openai_compat"]
+
+
+def test_a_per_call_mode_never_reaches_the_client_kwargs(monkeypatch):
+    provider = _build(monkeypatch, None, None, "ollama")
+    calls = _record_dispatch(monkeypatch)
+    provider.get_chat_model("some-model", local_mode="ollama")
+    assert "local_mode" not in calls[0][1]
+
+
+def test_a_per_call_mode_cannot_move_the_dialect_off_the_compat_endpoint(monkeypatch):
+    """The endpoint is resolved once, at construction, from the stored mode.
+
+    A per-call mode that disagreed used to switch the dialect while leaving that
+    endpoint alone — an Ollama client against `http://localhost:8000/v1`. No caller in
+    the repository passes this keyword, so the override is closed rather than taught to
+    re-resolve the endpoint.
+    """
+    provider = _build(monkeypatch, None, None, "openai_compat")
+    assert provider.config.base_url == LocalProvider.DEFAULT_OPENAI_COMPAT_BASE_URL
+    with pytest.raises(ValueError) as excinfo:
+        provider.get_chat_model("some-model", local_mode="ollama")
+    assert "openai_compat" in str(excinfo.value)
+    assert "ollama" in str(excinfo.value)
+
+
+def test_a_per_call_mode_cannot_move_the_dialect_onto_the_ollama_endpoint(monkeypatch):
+    provider = _build(monkeypatch, None, None, "ollama")
+    assert provider.config.base_url == LocalProvider.DEFAULT_OLLAMA_BASE_URL
+    with pytest.raises(ValueError):
+        provider.get_chat_model("some-model", local_mode="openai_compat")
+
+
+def test_a_per_call_mode_cannot_promote_an_unrecognized_mode(monkeypatch):
+    provider = _build(monkeypatch, None, None, "vllm")
+    with pytest.raises(ValueError):
+        provider.get_chat_model("some-model", local_mode="openai_compat")
+
+
+def test_an_absent_per_call_mode_still_uses_the_stored_mode(monkeypatch):
+    provider = _build(monkeypatch, None, None, "openai_compat")
+    calls = _record_dispatch(monkeypatch)
+    provider.get_chat_model("some-model")
+    assert [mode for mode, _ in calls] == ["openai_compat"]

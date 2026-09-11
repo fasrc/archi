@@ -36,6 +36,10 @@ calls `get_provider()`, which instantiates the class at line 136.
 
 **Non-Goals:**
 
+- Canonicalizing or rejecting a non-canonical `local_mode` spelling (`OpenAI_Compat`,
+  `openai-compat`, `vllm`). The four config seams copy the operator value verbatim and
+  none validates it, so a mixed-case spelling of the compat mode builds an Ollama
+  client. That predates this change and belongs at the config seam; filed as issue #463.
 - The three other defects in the same file (per-call `base_url` ignored in Ollama mode,
   `list_models()` never querying `/v1/models`, `ChatOllama` dropping `extra_body`).
 - Removing the double-`base_url` call shape in `src/bin/service_benchmark.py`. The fix

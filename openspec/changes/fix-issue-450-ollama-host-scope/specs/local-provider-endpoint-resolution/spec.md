@@ -81,6 +81,32 @@ the two answers from drifting.
 - **WHEN** `extra_kwargs` carries `local_mode: null`, no `base_url` is configured, and `OLLAMA_HOST` is unset
 - **THEN** the provider resolves `DEFAULT_OLLAMA_BASE_URL`
 
+### Requirement: The local mode belongs to the provider, not to the call
+
+The `local` provider SHALL refuse a per-call `local_mode` that disagrees with the mode it was built for.
+
+The endpoint is resolved once, in the constructor, from the stored mode. A per-call mode
+that disagreed would pick the other dialect's client and leave that endpoint behind —
+the same endpoint-to-client mismatch as above, reached by a second route. No caller in
+the repository passes the keyword, so the provider refuses the switch instead of
+re-resolving the endpoint per call. The keyword is still consumed, so it cannot reach
+the client constructor as an unexpected argument.
+
+#### Scenario: A per-call mode that disagrees is refused
+
+- **WHEN** the provider was built for `openai_compat` and `get_chat_model` is called with `local_mode` of `ollama`
+- **THEN** the provider raises `ValueError` naming both the stored mode and the requested mode
+
+#### Scenario: A per-call mode that agrees is accepted
+
+- **WHEN** the provider was built for `openai_compat` and `get_chat_model` is called with `local_mode` of `openai_compat`
+- **THEN** the provider builds the OpenAI-dialect client and the keyword does not reach it
+
+#### Scenario: No per-call mode uses the stored mode
+
+- **WHEN** `get_chat_model` is called without a `local_mode` keyword
+- **THEN** the provider builds the client for the mode it was constructed with
+
 ### Requirement: A resolved endpoint always carries a scheme
 
 The `local` provider SHALL prefix a scheme-less resolved endpoint with `http://`.
