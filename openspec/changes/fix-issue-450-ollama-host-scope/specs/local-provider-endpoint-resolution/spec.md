@@ -1,0 +1,68 @@
+## ADDED Requirements
+
+### Requirement: Environment endpoint override is scoped to Ollama mode
+
+The `local` provider SHALL apply the `OLLAMA_HOST` override only when its local mode is `ollama`.
+
+`OLLAMA_HOST` names an Ollama daemon. In `openai_compat` mode the provider builds a
+`ChatOpenAI` client, so applying that address there points an OpenAI-dialect client at a
+server that does not serve the OpenAI route, and the configured host never sees the
+request. The override keeps its full effect in `ollama` mode, where the CI smoke path
+relies on it.
+
+#### Scenario: A configured openai_compat endpoint outranks the environment
+
+- **WHEN** `OLLAMA_HOST` is set, the local mode is `openai_compat`, and a `base_url` is configured
+- **THEN** the provider resolves the configured `base_url` and ignores `OLLAMA_HOST`
+
+#### Scenario: An Ollama-mode endpoint still yields to the environment
+
+- **WHEN** `OLLAMA_HOST` is set, the local mode is `ollama`, and a `base_url` is configured
+- **THEN** the provider resolves the `OLLAMA_HOST` value
+
+#### Scenario: An unset or empty variable never changes the endpoint
+
+- **WHEN** `OLLAMA_HOST` is unset or empty and a `base_url` is configured
+- **THEN** the provider resolves the configured `base_url` in both local modes
+
+### Requirement: The fallback endpoint matches the local mode
+
+The `local` provider SHALL pick its fallback endpoint from the local mode when no `base_url` is configured.
+
+The two modes speak different dialects on different default ports, so one shared fallback
+sends half of the callers to the wrong server. An `openai_compat` provider with no
+configured endpoint must not fall back to an Ollama address, whether that address comes
+from `OLLAMA_HOST` or from the Ollama default.
+
+#### Scenario: An openai_compat fallback ignores the environment
+
+- **WHEN** the local mode is `openai_compat`, no `base_url` is configured, and `OLLAMA_HOST` is set
+- **THEN** the provider resolves `DEFAULT_OPENAI_COMPAT_BASE_URL`
+
+#### Scenario: An openai_compat fallback ignores the Ollama default
+
+- **WHEN** the local mode is `openai_compat`, no `base_url` is configured, and `OLLAMA_HOST` is unset
+- **THEN** the provider resolves `DEFAULT_OPENAI_COMPAT_BASE_URL`
+
+#### Scenario: An Ollama fallback still prefers the environment
+
+- **WHEN** the local mode is `ollama`, no `base_url` is configured, and `OLLAMA_HOST` is set
+- **THEN** the provider resolves the `OLLAMA_HOST` value
+
+#### Scenario: An Ollama fallback uses the Ollama default
+
+- **WHEN** the local mode is `ollama`, no `base_url` is configured, and `OLLAMA_HOST` is unset
+- **THEN** the provider resolves `DEFAULT_OLLAMA_BASE_URL`
+
+### Requirement: A resolved endpoint always carries a scheme
+
+The `local` provider SHALL prefix a scheme-less resolved endpoint with `http://`.
+
+Normalization runs after the mode-aware resolution above, so it applies to a configured
+value, an `OLLAMA_HOST` value, and a per-mode default alike. A caller that overrides the
+endpoint past the provider seam has to apply the same rule.
+
+#### Scenario: A scheme-less configured endpoint is normalized
+
+- **WHEN** the configured `base_url` is `judge-host:8001/v1`
+- **THEN** the provider resolves `http://judge-host:8001/v1`
