@@ -562,7 +562,7 @@ the manifest format.
 | Variable | Description |
 |----------|-------------|
 | `ARCHI_DIR` | Override the deployment directory (default: `~/.archi`) |
-| `OLLAMA_HOST` | Ollama server address (default: `http://localhost:11434`) |
+| `OLLAMA_HOST` | Ollama server address (default: `http://localhost:11434`). Overrides the `local` provider's configured `base_url` in `ollama` mode only — an `openai_compat` provider ignores it. See [Local provider endpoint precedence](models_providers.md#local-provider-endpoint-precedence). |
 
 ---
 
