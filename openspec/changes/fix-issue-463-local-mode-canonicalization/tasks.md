@@ -92,7 +92,7 @@ Rules that apply to **every** task below:
 
 ## 2. The provider
 
-- [ ] 2.1 Canonicalize inside `LocalProvider` and re-point the predicate, in one commit.
+- [x] 2.1 Canonicalize inside `LocalProvider` and re-point the predicate, in one commit.
 
   1. Add tests to the **end** of `tests/unit/test_local_provider_env_override.py`. Build
      the provider directly, as the existing tests in that file do:
