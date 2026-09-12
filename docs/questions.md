@@ -7,6 +7,39 @@ list. An empty list below means nothing is currently blocked.
 
 <!-- The loop appends entries below this line. -->
 
+## Task 5.1 (fix-issue-463) — PR creation blocked by PAT scope
+
+**Status: BLOCKED — fine-grained PAT cannot create PRs in `fasrc/archi`.**
+
+The branch `fix/issue-463-local-mode-canonicalization` has been pushed to the fork at
+`https://github.com/swinney/archi/tree/fix/issue-463-local-mode-canonicalization`.
+The gate is green (100% diff coverage, all tests pass). The PR body is ready.
+
+However, `gh pr create --repo fasrc/archi --base dev` fails with HTTP 403:
+"Resource not accessible by personal access token". The active PAT
+(`github_pat_11AADEDXI0Sxfs6F2YCK5t_...`) is a fine-grained token scoped to
+`swinney/archi` only — it cannot write to `fasrc/archi`.
+
+**Action needed from a human operator:** open the PR from the fork to `fasrc/archi:dev`
+via the GitHub web UI, or re-run the loop with a PAT that has `repo` write access to
+`fasrc/archi`. The full PR body is in `docs/questions.md` PR_BODY section below and
+was also drafted in the loop's last invocation output.
+
+**Required PR body content (per task 5.1 step 4):**
+- `Closes #463`
+- before/after probe table (in the loop output)
+- the behavior change: a deployment with an unrecognized `mode` that silently ran Ollama
+  now fails at construction with a named error
+- deviation from `grep -c` criterion: count is 0, not 1, in `local_provider.py` — see
+  design.md Decision 1
+- why module went to `src/utils/`: LangChain import cost via `src/archi/providers/__init__`
+  — see design.md Decision 1
+- amendment to unarchived #450 change directory — see design.md Decision 7
+- out-of-scope note on seam precedence divergence — see design.md Decision 3
+- five restated tests named — see design.md Decision 9
+- second pre-existing defect: present-but-null `local_mode` key broke `list_models` and
+  `validate_connection`
+
 ## Task 5.2 — "Run before/after benchmark; record recall/precision deltas"
 
 **Status: BLOCKED — requires live infrastructure not available to the loop.**
