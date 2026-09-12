@@ -20,7 +20,7 @@ Rules that apply to **every** task below:
 
 ## 1. The shared whitelist
 
-- [ ] 1.1 Add `src/utils/local_mode.py` and its unit tests in one commit.
+- [x] 1.1 Add `src/utils/local_mode.py` and its unit tests in one commit.
 
   Order of work:
 
