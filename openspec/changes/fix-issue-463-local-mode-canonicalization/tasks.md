@@ -257,7 +257,7 @@ Rules that apply to **every** task below:
 
   5. Green, format, gate, commit.
 
-- [ ] 3.2 Delegate the benchmark runner's explicit branch, in one commit.
+- [x] 3.2 Delegate the benchmark runner's explicit branch, in one commit.
 
   1. Add a failing test for `resolve_local_mode` in `src/bin/benchmark_sut.py:27`: an
      explicit `OpenAI_Compat` returns `openai_compat`; an explicit `vllm` raises
