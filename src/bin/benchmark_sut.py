@@ -14,6 +14,8 @@ server or an OpenAI-compatible endpoint. See issue #73.
 
 from typing import Any, Dict, Optional
 
+from src.utils.local_mode import canonical_local_mode
+
 
 def resolve_local_mode(ollama_url: Any, explicit: Optional[str] = None) -> str:
     """Decide the local-provider mode for the SUT.
@@ -24,7 +26,7 @@ def resolve_local_mode(ollama_url: Any, explicit: Optional[str] = None) -> str:
     a native Ollama server.
     """
     if explicit:
-        return str(explicit).lower()
+        return canonical_local_mode(explicit)
     url = str(ollama_url or "").rstrip("/")
     return "openai_compat" if url.endswith("/v1") else "ollama"
 
