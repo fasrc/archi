@@ -186,7 +186,7 @@ Rules that apply to **every** task below:
 
 ## 3. The four config seams
 
-- [ ] 3.1 Wire every seam to `apply_local_mode`, in one commit.
+- [x] 3.1 Wire every seam to `apply_local_mode`, in one commit.
 
   1. Write the failing tests first, one per seam — **all four are testable**:
 
