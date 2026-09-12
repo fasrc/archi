@@ -13,32 +13,27 @@ list. An empty list below means nothing is currently blocked.
 
 The branch `fix/issue-463-local-mode-canonicalization` has been pushed to the fork at
 `https://github.com/swinney/archi/tree/fix/issue-463-local-mode-canonicalization`.
-The gate is green (100% diff coverage, all tests pass). The PR body is ready.
+The gate is green (4392 passed, 100% diff coverage on 39 lines, re-confirmed 2026-09-12).
 
-However, `gh pr create --repo fasrc/archi --base dev` fails with HTTP 403:
+`gh pr create --repo fasrc/archi --base dev` fails with HTTP 403:
 "Resource not accessible by personal access token". The active PAT
 (`github_pat_11AADEDXI0Sxfs6F2YCK5t_...`) is a fine-grained token scoped to
-`swinney/archi` only — it cannot write to `fasrc/archi`.
+`swinney/archi` only — it cannot write to `fasrc/archi`. Cross-fork `gh pr create
+--head swinney:fix/...` also fails with the same 403.
 
-**Action needed from a human operator:** open the PR from the fork to `fasrc/archi:dev`
-via the GitHub web UI, or re-run the loop with a PAT that has `repo` write access to
-`fasrc/archi`. The full PR body is in `docs/questions.md` PR_BODY section below and
-was also drafted in the loop's last invocation output.
+**Action needed from a human operator:** run these two commands with a PAT that has
+`repo` write access to `fasrc/archi`, or open the PR via the GitHub web UI:
 
-**Required PR body content (per task 5.1 step 4):**
-- `Closes #463`
-- before/after probe table (in the loop output)
-- the behavior change: a deployment with an unrecognized `mode` that silently ran Ollama
-  now fails at construction with a named error
-- deviation from `grep -c` criterion: count is 0, not 1, in `local_provider.py` — see
-  design.md Decision 1
-- why module went to `src/utils/`: LangChain import cost via `src/archi/providers/__init__`
-  — see design.md Decision 1
-- amendment to unarchived #450 change directory — see design.md Decision 7
-- out-of-scope note on seam precedence divergence — see design.md Decision 3
-- five restated tests named — see design.md Decision 9
-- second pre-existing defect: present-but-null `local_mode` key broke `list_models` and
-  `validate_connection`
+```
+git push -u origin fix/issue-463-local-mode-canonicalization
+gh pr create \
+  --repo fasrc/archi \
+  --base dev \
+  --title "fix(#463): canonicalize and validate the local provider's mode at the config seams" \
+  --body-file docs/pr-body-463.md
+```
+
+The complete PR body is in `docs/pr-body-463.md` (committed on this branch).
 
 ## Task 5.2 — "Run before/after benchmark; record recall/precision deltas"
 
