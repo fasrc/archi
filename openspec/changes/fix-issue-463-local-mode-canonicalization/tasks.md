@@ -277,7 +277,7 @@ Rules that apply to **every** task below:
 
 ## 4. Docs and spec reconciliation
 
-- [ ] 4.1 Update the docs and the superseded #450 scenarios, in one commit.
+- [x] 4.1 Update the docs and the superseded #450 scenarios, in one commit.
 
   1. `docs/docs/configuration.md:441,858` and `docs/docs/models_providers.md:105,120` show
      `mode:`. State there that the value is matched without regard to case or surrounding
