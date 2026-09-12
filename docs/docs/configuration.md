@@ -446,6 +446,8 @@ services:
         enabled: true
 ```
 
+The `mode` value is matched without regard to case or surrounding whitespace. Any value other than `ollama` or `openai_compat` is rejected at startup with an error that names the valid values.
+
 ### `services.postgres`
 
 PostgreSQL database settings.

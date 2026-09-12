@@ -129,6 +129,8 @@ The `local` provider supports two modes:
 - **`ollama`** (default): Uses `ChatOllama`. Models are dynamically fetched from the Ollama server's `/api/tags` endpoint.
 - **`openai_compat`**: Uses `ChatOpenAI` with a custom base URL. Suitable for vLLM, LM Studio, or other OpenAI-compatible servers.
 
+The value is matched without regard to case or surrounding whitespace — `Ollama`, `OLLAMA`, and `  openai_compat  ` are all accepted. Any value other than `ollama` or `openai_compat` is rejected at startup with an error that names the valid values.
+
 #### Local provider endpoint precedence
 
 The two modes speak different dialects on different default ports, so each resolves its

@@ -10,6 +10,7 @@ from src.archi.providers.base import (
     ProviderConfig,
     ProviderType,
 )
+from src.utils.local_mode import MODE_OLLAMA, MODE_OPENAI_COMPAT, canonical_local_mode
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -55,13 +56,11 @@ class LocalProvider(BaseProvider):
         """Whether ``local_mode`` selects the OpenAI-dialect client.
 
         The one place that answers this question. ``get_chat_model`` builds
-        ``ChatOpenAI`` only for the exact string ``openai_compat`` and falls back to
-        ``ChatOllama`` for every other value — including ``None`` and a typo — so
-        endpoint resolution has to ask it the same way. Two copies of the test drift:
-        an unrecognized mode then resolves an openai-compat endpoint and hands that
-        URL to an Ollama client, which speaks a different route.
+        ``ChatOpenAI`` only for the exact string ``openai_compat`` (the shared
+        constant). Any unrecognized mode is rejected at construction by
+        ``canonical_local_mode``; only ``None`` falls back to Ollama.
         """
-        return mode == "openai_compat"
+        return mode == MODE_OPENAI_COMPAT
 
     def __init__(self, config: Optional[ProviderConfig] = None):
         import os
@@ -81,6 +80,11 @@ class LocalProvider(BaseProvider):
                 extra_kwargs={"local_mode": "ollama"},
             )
         else:
+            if "local_mode" in config.extra_kwargs:
+                canonical = canonical_local_mode(config.extra_kwargs["local_mode"])
+                config.extra_kwargs["local_mode"] = (
+                    canonical if canonical is not None else MODE_OLLAMA
+                )
             if self._is_openai_compat(config.extra_kwargs.get("local_mode")):
                 if not config.base_url:
                     config.base_url = self.DEFAULT_OPENAI_COMPAT_BASE_URL

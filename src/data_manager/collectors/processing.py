@@ -33,6 +33,7 @@ from bs4 import BeautifulSoup, Comment, Doctype, NavigableString, Tag
 from markdownify import STRIP, STRIP_ONE, MarkdownConverter, strip1_pre, strip_pre
 
 from src.data_manager.collectors.resource_base import BaseResource
+from src.utils.local_mode import apply_local_mode
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -1010,8 +1011,7 @@ def _resolve_provider_config(
 
     extra = dict(cfg.get("extra_kwargs", {}) or {})
     mode = cfg.get("mode")
-    if mode and "local_mode" not in extra:
-        extra["local_mode"] = mode
+    apply_local_mode(extra, mode, overwrite=False)
 
     return {
         "base_url": cfg.get("base_url"),

@@ -24,6 +24,7 @@ from src.archi.providers.base import (
     ProviderConfig,
     ProviderType,
 )
+from src.utils.local_mode import apply_local_mode
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -271,8 +272,7 @@ def get_model(
         mode = (
             provider_config.get("mode") if isinstance(provider_config, dict) else None
         )
-        if mode and "local_mode" not in extra_kwargs:
-            extra_kwargs["local_mode"] = mode
+        apply_local_mode(extra_kwargs, mode, overwrite=False)
 
     config = ProviderConfig(
         provider_type=provider_type_enum,
