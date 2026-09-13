@@ -157,6 +157,11 @@ convention, which already yields canonical values.
 - **WHEN** `resolve_local_mode` is given an explicit mode of `false` or `0`
 - **THEN** it raises `ValueError` rather than falling through to the URL convention
 
+#### Scenario: The judge's own mode reaches the whitelist
+
+- **WHEN** `get_ragas_llm_evaluator` reads an `evaluator_provider_mode` of `false`
+- **THEN** it passes that value to `resolve_local_mode` and raises, rather than substituting the SUT's mode
+
 #### Scenario: An empty explicit mode still auto-detects from the URL
 
 - **WHEN** `resolve_local_mode` is given an empty explicit mode and a URL ending in `/v1`

@@ -1413,9 +1413,20 @@ class Benchmarker:
                 # ChatOllama (which 404s against /v1). An explicit provider_mode
                 # (judge-specific or inherited from the SUT) overrides the
                 # /v1 auto-detection.
-                explicit_mode = ragas_configs.get(
-                    "evaluator_provider_mode"
-                ) or benchmark_cfg.get("provider_mode")
+                #
+                # Selected by presence, not by truthiness: YAML decodes
+                # `evaluator_provider_mode: false` to False and `: 0` to 0, and an
+                # `or` here discarded both in favour of the SUT's mode — so the
+                # judge scored in a dialect nobody configured and
+                # `resolve_local_mode`'s refusal of a non-string never fired on
+                # this path. The empty string stays the one "not configured"
+                # spelling that still inherits.
+                evaluator_mode = ragas_configs.get("evaluator_provider_mode")
+                explicit_mode = (
+                    evaluator_mode
+                    if evaluator_mode not in (None, "")
+                    else benchmark_cfg.get("provider_mode")
+                )
                 if resolve_local_mode(ollama_url, explicit_mode) == "openai_compat":
                     # base_url twice: see the huggingface arm below — in openai_compat
                     # mode LocalProvider now honors the configured base_url instead of
