@@ -5,6 +5,12 @@ MODE_OPENAI_COMPAT = "openai_compat"
 
 LOCAL_MODES = {MODE_OLLAMA, MODE_OPENAI_COMPAT}
 
+# The provider key whose ``mode`` this module is allowed to judge. Seams that
+# cannot import ``ProviderType`` (``processing.py`` keeps ``src.archi.providers``
+# — and therefore ``langchain_core`` — out of the ingest path) compare against
+# this instead; a test pins it to ``ProviderType.LOCAL.value``.
+LOCAL_PROVIDER_KEY = "local"
+
 
 def canonical_local_mode(value: Optional[str]) -> Optional[str]:
     if value is None:

@@ -122,6 +122,11 @@ seam canonicalizes the raw value before it decides whether to write the key.
 - **WHEN** any of those four seams reads a local `mode` of `vllm`
 - **THEN** it raises `ValueError` naming the rejected value and the valid values
 
+#### Scenario: The ingest seam leaves a non-local provider's mode alone
+
+- **WHEN** `_resolve_provider_config` reads an `anthropic` config whose `mode` is `batch`
+- **THEN** it returns that config unchanged and writes no `local_mode`, without raising
+
 #### Scenario: A seam preserves its existing extra_kwargs precedence
 
 - **WHEN** a seam that guards on `local_mode` already being present reads a config carrying both keys
