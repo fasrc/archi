@@ -146,3 +146,20 @@ def test_resolve_local_mode_explicit_unrecognized_raises():
 
 def test_resolve_local_mode_empty_explicit_autodetects_from_url():
     assert resolve_local_mode("http://host:8001/v1", explicit="") == "openai_compat"
+
+
+def test_resolve_local_mode_explicit_false_raises():
+    """``provider_mode: false`` is a set value, not an omitted one.
+
+    YAML decodes it to ``False``, which is falsy, so the truthiness guard used to
+    route it to URL auto-detection — the same outcome as saying nothing. The
+    whitelist refuses every other unusable spelling; a boolean is no different.
+    """
+    with pytest.raises(ValueError):
+        resolve_local_mode("http://host:8001/v1", explicit=False)
+
+
+def test_resolve_local_mode_explicit_zero_raises():
+    """``provider_mode: 0`` reaches the runner as ``int`` and is not a mode."""
+    with pytest.raises(ValueError):
+        resolve_local_mode("http://host:11434", explicit=0)

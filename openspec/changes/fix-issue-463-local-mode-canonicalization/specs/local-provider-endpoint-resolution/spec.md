@@ -152,6 +152,11 @@ convention, which already yields canonical values.
 - **WHEN** `resolve_local_mode` is given an explicit mode of `vllm`
 - **THEN** it raises `ValueError`
 
+#### Scenario: A non-string explicit mode is refused
+
+- **WHEN** `resolve_local_mode` is given an explicit mode of `false` or `0`
+- **THEN** it raises `ValueError` rather than falling through to the URL convention
+
 #### Scenario: An empty explicit mode still auto-detects from the URL
 
 - **WHEN** `resolve_local_mode` is given an empty explicit mode and a URL ending in `/v1`
