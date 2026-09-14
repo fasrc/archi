@@ -33,6 +33,7 @@ from bs4 import BeautifulSoup, Comment, Doctype, NavigableString, Tag
 from markdownify import STRIP, STRIP_ONE, MarkdownConverter, strip1_pre, strip_pre
 
 from src.data_manager.collectors.resource_base import BaseResource
+from src.utils.local_mode import LOCAL_PROVIDER_KEY, apply_local_mode
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -1010,8 +1011,15 @@ def _resolve_provider_config(
 
     extra = dict(cfg.get("extra_kwargs", {}) or {})
     mode = cfg.get("mode")
-    if mode and "local_mode" not in extra:
-        extra["local_mode"] = mode
+    # Only the local provider's ``mode`` names a local_mode. The three sibling
+    # seams all gate the canonicalizer on ``ProviderType.LOCAL``; without the same
+    # gate, another provider's own ``mode`` value is measured against the local
+    # whitelist and an unrecognized one aborts the ingest pipeline, while the very
+    # same config keeps working in chat. Compared as a string because this module
+    # keeps ``src.archi.providers`` (and its ``langchain_core`` import) out of the
+    # conversion-only ingest path — see ``_default_model_factory``.
+    if provider_key == LOCAL_PROVIDER_KEY:
+        apply_local_mode(extra, mode, overwrite=False)
 
     return {
         "base_url": cfg.get("base_url"),

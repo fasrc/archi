@@ -44,6 +44,7 @@ from src.archi.pipelines.agents.utils.thinking_gate import (
 from src.archi.providers import get_model
 from src.archi.providers.base import ProviderType
 from src.archi.utils.output_dataclass import PipelineOutput
+from src.utils.local_mode import apply_local_mode
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -1337,10 +1338,10 @@ class BaseReActAgent:
         extra = dict(cfg.get("extra_kwargs", {}) or {})
         try:
             provider_type = ProviderType(provider_key)
-            if provider_type == ProviderType.LOCAL and cfg.get("mode"):
-                extra["local_mode"] = cfg.get("mode")
-        except Exception:
-            pass
+        except ValueError:
+            provider_type = None
+        if provider_type == ProviderType.LOCAL:
+            apply_local_mode(extra, cfg.get("mode"))
 
         return {
             "base_url": cfg.get("base_url"),

@@ -59,27 +59,23 @@ from `OLLAMA_HOST` or from the Ollama default.
 The `local` provider SHALL treat only the exact mode `openai_compat` as OpenAI-compatible, in endpoint resolution and in client construction alike.
 
 `get_chat_model` builds `ChatOpenAI` for the exact string `openai_compat` and
-`ChatOllama` for every other value, including `None` and a misspelling. `local_mode`
-reaches the provider straight from operator config and no seam validates or
-canonicalizes it. So a second, looser test — "anything that is not `ollama`" — would
-resolve an openai-compat endpoint for a mode that then gets an Ollama client, and the
-client would request an Ollama route against an OpenAI port. One shared predicate keeps
-the two answers from drifting.
-
-#### Scenario: An unrecognized mode resolves the Ollama endpoint
-
-- **WHEN** the local mode is `vllm`, no `base_url` is configured, and `OLLAMA_HOST` is unset
-- **THEN** the provider resolves `DEFAULT_OLLAMA_BASE_URL`, because that mode builds an Ollama client
-
-#### Scenario: An unrecognized mode still yields to the environment
-
-- **WHEN** the local mode is `vllm` and `OLLAMA_HOST` is set
-- **THEN** the provider resolves the `OLLAMA_HOST` value
+`ChatOllama` when `local_mode` is `None` (the default). All four config seams
+canonicalize the value before it reaches the provider — stripping whitespace and
+lowercasing — so a misspelling raises at construction rather than silently building an
+Ollama client. A second, looser test — "anything that is not `ollama`" — would resolve
+an openai-compat endpoint for a mode that then gets an Ollama client, and the client
+would request an Ollama route against an OpenAI port. One shared predicate keeps the
+two answers from drifting.
 
 #### Scenario: A null mode resolves the Ollama endpoint
 
 - **WHEN** `extra_kwargs` carries `local_mode: null`, no `base_url` is configured, and `OLLAMA_HOST` is unset
-- **THEN** the provider resolves `DEFAULT_OLLAMA_BASE_URL`
+- **THEN** the provider resolves `DEFAULT_OLLAMA_BASE_URL`, because that mode builds an Ollama client
+
+#### Scenario: A null mode still yields to the environment
+
+- **WHEN** `extra_kwargs` carries `local_mode: null` and `OLLAMA_HOST` is set
+- **THEN** the provider resolves the `OLLAMA_HOST` value
 
 ### Requirement: The local mode belongs to the provider, not to the call
 

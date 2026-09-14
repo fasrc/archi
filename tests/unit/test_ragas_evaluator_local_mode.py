@@ -385,3 +385,57 @@ def test_huggingface_judge_answers_over_a_real_socket(monkeypatch):
     assert received == [
         {"path": "/v1/chat/completions", "authorized": True, "model": "judge-x"}
     ]
+
+
+def test_evaluator_provider_mode_of_false_is_refused_not_silently_replaced():
+    """A set-but-unusable judge mode must reach the whitelist, not be laundered.
+
+    ``explicit_mode`` was selected with ``or``, so a YAML
+    ``evaluator_provider_mode: false`` decoded to ``False``, tested falsy, and was
+    replaced by the SUT's ``provider_mode``. The judge then scored with a dialect
+    the operator never asked for, and ``resolve_local_mode``'s refusal of ``False``
+    could never fire on this path. Selection is by presence, so the value reaches
+    the whitelist and is refused.
+    """
+    bench = _bench(
+        {
+            "provider": "local",
+            "model": "qwen-x",
+            "ollama_url": "http://localhost:11434",
+            "provider_mode": "ollama",
+            "mode_settings": {
+                "ragas_settings": {
+                    "evaluator_provider": "local",
+                    "evaluator_model": "judge-x",
+                    "evaluator_provider_mode": False,
+                }
+            },
+        }
+    )
+    with pytest.raises(ValueError):
+        bench.get_ragas_llm_evaluator()
+
+
+def test_evaluator_provider_mode_left_empty_still_inherits_the_sut_mode():
+    """An empty judge mode means "not configured" and must keep inheriting.
+
+    The empty string is the one value the runner treats as unset — the spec keeps
+    it auto-detecting rather than refusing it — so tightening the selection above
+    must not turn an unconfigured judge into a hard failure.
+    """
+    bench = _bench(
+        {
+            "provider": "local",
+            "model": "qwen-x",
+            "ollama_url": "http://localhost:11434",
+            "provider_mode": "openai_compat",
+            "mode_settings": {
+                "ragas_settings": {
+                    "evaluator_provider": "local",
+                    "evaluator_model": "judge-x",
+                    "evaluator_provider_mode": "",
+                }
+            },
+        }
+    )
+    assert isinstance(bench.get_ragas_llm_evaluator(), ChatOpenAI)
