@@ -43,9 +43,15 @@ services:
     agent_class: {{ services.benchmarking.agent_class | default("", true) }}
     agent_md_file: "{{ services.benchmarking.agent_md_file | default("", true) }}"
     provider: {{ services.benchmarking.provider | default("", true) }}
-    {%- if services.benchmarking.provider_mode %}
+    {%- if services.benchmarking.provider_mode is defined and services.benchmarking.provider_mode is not none %}
     # Forces the local-provider client when the base URL does not end in /v1
     # (otherwise benchmark_sut.resolve_local_mode auto-detects from the URL).
+    #
+    # Emitted by presence, not by truthiness. YAML decodes `provider_mode: false` to
+    # False and `: 0` to 0; a truthiness guard dropped both, so an unusable value
+    # arrived at apply_sut_local_provider as None and silently auto-detected a dialect
+    # instead of reaching canonical_local_mode's refusal. An absent key and a key
+    # written with no value are the two spellings that still mean "not configured".
     provider_mode: {{ services.benchmarking.provider_mode }}
     {%- endif %}
     model: {{ services.benchmarking.model | default("", true) }}
