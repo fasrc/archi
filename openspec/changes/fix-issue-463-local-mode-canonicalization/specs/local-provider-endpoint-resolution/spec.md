@@ -34,6 +34,16 @@ comparison, so one operator intent has one outcome.
 - **WHEN** the local mode is `Ollama`
 - **THEN** `get_chat_model` builds the Ollama client
 
+#### Scenario: A per-call mode matching the stored one is not a change
+
+- **WHEN** a provider built for `OpenAI_Compat` is called with `local_mode="OpenAI_Compat"`
+- **THEN** `get_chat_model` builds the OpenAI-dialect client rather than raising
+
+#### Scenario: A per-call mode is canonicalized before it is compared
+
+- **WHEN** a provider built for `ollama` is called with `local_mode=" OLLAMA "`
+- **THEN** `get_chat_model` builds the Ollama client rather than raising
+
 ### Requirement: An unrecognized local mode is refused before a client is built
 
 The `local` provider SHALL raise `ValueError` when an explicitly set mode is neither `ollama` nor `openai_compat`.
@@ -161,6 +171,16 @@ convention, which already yields canonical values.
 
 - **WHEN** `get_ragas_llm_evaluator` reads an `evaluator_provider_mode` of `false`
 - **THEN** it passes that value to `resolve_local_mode` and raises, rather than substituting the SUT's mode
+
+#### Scenario: The CLI render carries a falsy mode to the whitelist
+
+- **WHEN** the CLI renders `base-config.yaml` from a source `provider_mode` of `false` or `0`
+- **THEN** the rendered config keeps the key, so `apply_sut_local_provider` reaches `resolve_local_mode` and raises
+
+#### Scenario: The CLI render omits a mode nobody configured
+
+- **WHEN** the CLI renders `base-config.yaml` from an absent or null `provider_mode`
+- **THEN** the rendered config omits the key, so the URL auto-detect stays the default
 
 #### Scenario: An empty explicit mode still auto-detects from the URL
 

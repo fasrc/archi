@@ -112,9 +112,16 @@ class LocalProvider(BaseProvider):
         repository passes this keyword, so the override is refused rather than taught
         to re-resolve the endpoint. It is still popped, so it cannot reach the client
         constructor as an unexpected argument.
+
+        The requested value is canonicalized before the comparison. ``__init__``
+        rewrites the stored mode to canonical form, so comparing the raw spelling
+        refused a caller that asked for the very mode this provider was built for —
+        ``OpenAI_Compat`` in both places read as a change. Canonicalizing also refuses
+        an unusable per-call spelling on its own terms, with the message that names
+        the valid values.
         """
         requested = kwargs.pop("local_mode", None)
-        if requested is not None and requested != self.local_mode:
+        if requested is not None and canonical_local_mode(requested) != self.local_mode:
             raise ValueError(
                 f"local_mode cannot change per call: this provider was built for "
                 f"'{self.local_mode}' and resolved its endpoint "

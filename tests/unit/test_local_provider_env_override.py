@@ -417,3 +417,50 @@ def test_null_local_mode_validate_connection_probes_ollama_tags(monkeypatch):
     assert probed_urls[0].endswith(
         "/api/tags"
     ), f"expected /api/tags endpoint, got {probed_urls[0]}"
+
+
+# === PR #467 review: the per-call guard must compare canonical spellings ===
+
+
+def test_a_matching_noncanonical_per_call_mode_is_accepted(monkeypatch):
+    """The same supported spelling in both places is not a per-call mode change.
+
+    ``__init__`` rewrites ``extra_kwargs['local_mode']`` to canonical form, so a raw
+    comparison in ``get_chat_model`` refused the very mode the provider was built for
+    whenever the operator spelled it noncanonically in both places.
+    """
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    config = ProviderConfig(
+        provider_type=ProviderType.LOCAL,
+        base_url="http://gpu-vllm:8000/v1",
+        extra_kwargs={"local_mode": "OpenAI_Compat"},
+    )
+    provider = LocalProvider(config)
+    calls = _record_dispatch(monkeypatch)
+    provider.get_chat_model("some-model", local_mode="OpenAI_Compat")
+    assert [mode for mode, _ in calls] == ["openai_compat"]
+
+
+def test_a_noncanonical_per_call_mode_matching_a_canonical_store_is_accepted(
+    monkeypatch,
+):
+    """Spellings need only agree after canonicalization, in either direction."""
+    provider = _build(monkeypatch, None, None, "ollama")
+    calls = _record_dispatch(monkeypatch)
+    provider.get_chat_model("some-model", local_mode="  OLLAMA  ")
+    assert [mode for mode, _ in calls] == ["ollama"]
+
+
+def test_an_unrecognized_per_call_mode_is_refused(monkeypatch):
+    """An unusable per-call spelling is still refused, and names itself."""
+    provider = _build(monkeypatch, None, None, "ollama")
+    with pytest.raises(ValueError) as excinfo:
+        provider.get_chat_model("some-model", local_mode="not-a-mode")
+    assert "not-a-mode" in str(excinfo.value)
+
+
+def test_a_non_string_per_call_mode_is_refused(monkeypatch):
+    """A non-string per-call mode is refused rather than compared by identity."""
+    provider = _build(monkeypatch, None, None, "ollama")
+    with pytest.raises(ValueError):
+        provider.get_chat_model("some-model", local_mode=False)
