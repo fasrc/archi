@@ -52,7 +52,13 @@ services:
     # arrived at apply_sut_local_provider as None and silently auto-detected a dialect
     # instead of reaching canonical_local_mode's refusal. An absent key and a key
     # written with no value are the two spellings that still mean "not configured".
-    provider_mode: {{ services.benchmarking.provider_mode }}
+    #
+    # Serialized with tojson, not interpolated bare. JSON scalars are valid YAML and
+    # carry their own type, so the operator's value reaches the validator as written.
+    # A bare interpolation let YAML 1.1 retype it first: the strings "null", "Null"
+    # and "~" came back as None and auto-detected silently, and "on"/"off"/"yes"/"no"
+    # came back as booleans and were refused for the wrong reason.
+    provider_mode: {{ services.benchmarking.provider_mode | tojson }}
     {%- endif %}
     model: {{ services.benchmarking.model | default("", true) }}
     ollama_url: {{ services.benchmarking.ollama_url | default("", true) }}

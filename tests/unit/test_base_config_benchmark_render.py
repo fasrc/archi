@@ -58,9 +58,17 @@ def test_false_provider_mode_survives_the_render():
 
 
 def test_zero_provider_mode_survives_the_render():
-    """``provider_mode: 0`` is the other falsy YAML spelling the guard swallowed."""
-    cfg = _render({"benchmarking": {"provider": "local", "provider_mode": 0}})
-    assert cfg["services"]["benchmarking"]["provider_mode"] == 0
+    """``provider_mode: 0`` is the other falsy YAML spelling the guard swallowed.
+
+    The type is asserted, not only the value: ``False == 0`` in Python, so a render
+    that collapsed every falsy value to ``false`` would satisfy a bare equality check
+    and the neighbouring ``is False`` test at the same time.
+    """
+    value = _render({"benchmarking": {"provider": "local", "provider_mode": 0}})[
+        "services"
+    ]["benchmarking"]["provider_mode"]
+    assert type(value) is int
+    assert value == 0
 
 
 def test_rendered_false_provider_mode_is_refused_downstream():
@@ -76,3 +84,39 @@ def test_null_provider_mode_stays_absent_preserving_autodetect():
     """A key written with no value still means "not configured"."""
     cfg = _render({"benchmarking": {"provider": "local", "provider_mode": None}})
     assert "provider_mode" not in cfg["services"]["benchmarking"]
+
+
+# === PR #467 review round 2: the render must not retype the operator's scalar ===
+
+# YAML 1.1 re-reads these bare words as null or as a boolean, so a raw interpolation
+# changes the type of a string the operator wrote before any validator sees it.
+YAML_SPECIAL_MODE_STRINGS = ["null", "Null", "NULL", "~", "on", "off", "yes", "no"]
+
+
+@pytest.mark.parametrize("raw", YAML_SPECIAL_MODE_STRINGS)
+def test_a_yaml_special_mode_string_keeps_its_string_type(raw):
+    """A configured string must reach the validator as the string that was written."""
+    cfg = _render({"benchmarking": {"provider": "local", "provider_mode": raw}})
+    assert cfg["services"]["benchmarking"]["provider_mode"] == raw
+
+
+@pytest.mark.parametrize("raw", YAML_SPECIAL_MODE_STRINGS)
+def test_a_yaml_special_mode_string_is_refused_not_auto_detected(raw):
+    """``provider_mode: "null"`` is an unusable mode, not an absent one.
+
+    Interpolated bare, it round-tripped to ``None`` and auto-detected a dialect the
+    operator never asked for — the same silent substitution the presence guard fixed
+    for ``false`` and ``0``.
+    """
+    cfg = _render({"benchmarking": {"provider": "local", "provider_mode": raw}})
+    with pytest.raises(ValueError):
+        resolve_local_mode(
+            "http://gpu-vllm:8000", cfg["services"]["benchmarking"]["provider_mode"]
+        )
+
+
+def test_an_empty_mode_string_still_auto_detects():
+    """The empty string stays the one configured value that means "not configured"."""
+    cfg = _render({"benchmarking": {"provider": "local", "provider_mode": ""}})
+    value = cfg["services"]["benchmarking"]["provider_mode"]
+    assert resolve_local_mode("http://gpu-vllm:8000/v1", value) == "openai_compat"

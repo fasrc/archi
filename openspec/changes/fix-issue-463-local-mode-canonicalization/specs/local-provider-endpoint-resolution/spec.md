@@ -182,6 +182,11 @@ convention, which already yields canonical values.
 - **WHEN** the CLI renders `base-config.yaml` from an absent or null `provider_mode`
 - **THEN** the rendered config omits the key, so the URL auto-detect stays the default
 
+#### Scenario: The CLI render preserves the operator's scalar type
+
+- **WHEN** the CLI renders `base-config.yaml` from a `provider_mode` string that YAML 1.1 re-reads as a null or a boolean, such as `null`, `~` or `on`
+- **THEN** the rendered config keeps it a string, so `resolve_local_mode` refuses the value the operator wrote instead of auto-detecting
+
 #### Scenario: An empty explicit mode still auto-detects from the URL
 
 - **WHEN** `resolve_local_mode` is given an empty explicit mode and a URL ending in `/v1`
