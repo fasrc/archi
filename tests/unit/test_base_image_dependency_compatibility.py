@@ -48,6 +48,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CPU_HEADER = REPO_ROOT / "requirements" / "cpu-requirementsHEADER.txt"
 GPU_HEADER = REPO_ROOT / "requirements" / "gpu-requirementsHEADER.txt"
 BASE_REQUIREMENTS = REPO_ROOT / "requirements" / "requirements-base.txt"
+PYTORCH_BASE_DOCKERFILE = (
+    REPO_ROOT
+    / "src"
+    / "cli"
+    / "templates"
+    / "dockerfiles"
+    / "base-pytorch-image"
+    / "Dockerfile"
+)
+
+# ``FROM docker.io/pytorch/pytorch:2.7.0-cuda12.6-cudnn9-devel`` -> ("2.7.0", "12.6")
+_PYTORCH_FROM_PATTERN = re.compile(
+    r"^FROM\s+\S*pytorch/pytorch:(\d+(?:\.\d+)*)-cuda(\d+(?:\.\d+)*)", re.MULTILINE
+)
 
 # ``vllm`` capped the OpenTelemetry SDK from below its own floor until 0.9.0 dropped
 # the upper bound. Measured from PyPI ``requires_dist`` on 2026-09-15:
@@ -219,6 +233,48 @@ class TestXformersMatchesTheTorchPin:
             f"xformers {xformers} requires torch=={_fmt(expected_torch)}, but the "
             f"GPU header pins torch=={torch}. xformers ships one build per torch "
             f"release, so this set cannot resolve."
+        )
+
+
+class TestPytorchBaseImageMatchesTheTorchPin:
+    """The ``FROM`` image already ships a torch, and ``pip`` then installs the pin.
+
+    When the two disagree, ``pip`` replaces the base image's torch with a PyPI wheel
+    while the image keeps the older CUDA and cuDNN system libraries underneath. The
+    build still succeeds, so nothing fails until a GPU import or a kernel launch —
+    and ``vllm`` and ``xformers`` both carry native extensions compiled against one
+    specific torch and CUDA pair.
+
+    This guard needs no measured table and no network: both values live in this
+    repository, so it cannot rot the way ``XFORMERS_TORCH`` and
+    ``TORCH_SYMPY_FLOOR`` can. It compares only the torch version. Whether the
+    image's CUDA matches the ``nvidia-*-cu12`` wheels the set resolves to is a
+    resolver question, not a text question — see the module docstring.
+    """
+
+    def test_from_image_declares_the_pinned_torch(self, gpu_pins):
+        torch = gpu_pins.get("torch")
+        assert torch is not None, "gpu-requirementsHEADER.txt must pin torch"
+
+        content = PYTORCH_BASE_DOCKERFILE.read_text(encoding="utf-8")
+        match = _PYTORCH_FROM_PATTERN.search(content)
+        assert match, (
+            f"{PYTORCH_BASE_DOCKERFILE} has no recognizable "
+            f"``FROM .../pytorch/pytorch:<torch>-cuda<ver>`` line. If the base image "
+            f"moved to a different publisher, update _PYTORCH_FROM_PATTERN rather "
+            f"than deleting this guard."
+        )
+        image_torch, image_cuda = match.group(1), match.group(2)
+
+        assert _release(image_torch) == _release(torch), (
+            f"the PyTorch base image is built FROM pytorch/pytorch:{image_torch}-"
+            f"cuda{image_cuda}, but gpu-requirementsHEADER.txt pins torch=={torch}. "
+            f"pip would install the pinned wheel over the image's torch and leave "
+            f"CUDA {image_cuda} underneath it, so the build succeeds and the failure "
+            f"lands at GPU import or kernel launch instead. vllm and xformers carry "
+            f"native extensions, so the pair has to agree. Move the FROM tag to a "
+            f"torch {torch} image whose CUDA matches the nvidia-*-cu12 wheels the "
+            f"requirement set resolves to."
         )
 
 
